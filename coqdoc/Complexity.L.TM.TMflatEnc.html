@@ -1,0 +1,110 @@
+
+From Undecidability.L.Tactics Require Import LTactics GenEncode.  
+From Undecidability.L.Datatypes Require Import LNat Lists LProd LOptions
+LBool.  
+From Undecidability.L Require Import Functions.Decoding.  
+  
+From Complexity.L.TM Require Export TMflat.  
+From Undecidability.L.TM Require Import TMEncoding.  
+  
+Import Nat TM_facts.  
+Import TMflat.  
+Import GenEncode.  
+MetaCoq Run (tmGenEncode "flatTM_enc" flatTM).  
+Hint Resolve flatTM_enc_correct : Lrewrite.  
+  
+Instance term_Build_TM : computableTime' (Build_flatTM) (fun _ _ => (1,fun _ _
+=> (1,fun _ _ => (1,fun _ _ => (1,fun _ _ => (1,fun _ _ => (1,tt))))))).  
+Proof.  
+  extract constructor. solverec.  
+Qed.  
+  
+Instance term_sig : computableTime' sig (fun _ _ => (9,tt)).  
+Proof.  
+  extract. solverec.  
+Qed.  
+  
+Instance term_tapes : computableTime' tapes (fun _ _ => (9,tt)).  
+Proof.  
+  extract. solverec.  
+Qed.  
+  
+Instance term_states : computableTime' states (fun _ _ => (9,tt)).  
+Proof.  
+  extract. solverec.  
+Qed.  
+  
+Instance term_trans : computableTime' trans (fun _ _ => (9,tt)).  
+Proof.  
+  extract. solverec.  
+Qed.  
+  
+Instance term_start : computableTime' start (fun _ _ => (9,tt)).  
+Proof.  
+  extract. solverec.  
+Qed.  
+  
+Instance term_halt : computableTime' halt (fun _ _ => (9,tt)).  
+Proof.  
+  extract. solverec.  
+Qed.  
+  
+  
+Lemma size_TM (M:flatTM):  
+  size (enc M) = let (a,b,c,d,e,f) := M in size (enc a) + size (enc b) +size
+(enc c) +size (enc d) + size (enc e) + size (enc f) + 8.  
+Proof.  
+  unfold enc;cbn. destruct M as []. cbn. solverec.  
+Qed.  
+  
+From Complexity.Complexity Require Export EncodableP LinTimeDecodable.  
+  
+Instance term_move_enc  
+  :computableTime' (enc (X:=move)) (fun x _ => (15,tt)).  
+Proof.  
+  unfold enc;cbn. extract. solverec.  
+Qed.  
+  
+Instance regP_move : encodableP TM.move.  
+Proof.  
+  evar (c:nat).  
+  exists c.  
+  eexists _.  
+  eapply computesTime_timeLeq.  
+  2:now apply term_move_enc.  
+  intros l _. split. 2:easy.  
+  cbn.  
+  [c]:exact (4). unfold c.  
+  destruct l;cbv. all:lia.  
+Qed.  
+  
+Definition c__encTM := max (c__regP (list (nat * list (option nat) * (nat *
+list (option nat * TM.move))))) (max (c__regP nat) (max (c__regP (list bool))
+4)).  
+  
+Instance term_TM_enc  
+  :computableTime' (enc (X:=flatTM)) (fun x _ => (size (enc x) *
+c__encTM,tt)).  
+Proof.  
+  unfold enc;cbn.  
+  extract.  
+  intros _ M [].  
+  recRel_prettify2. cbn [size].  
+  repeat (lazymatch goal with |- context C [ @size ?a] => generalize (@size
+a);intro end).  
+  assert (H':c__encTM <= c__encTM) by easy.  
+  repeat setoid_rewrite Nat.max_lub_iff in H'.  
+  destruct H' as (H1&H2&H3&H4).  
+  repeat rewrite H1. repeat rewrite H2. repeat rewrite H3. lia.  
+Qed.  
+  
+Instance regP_TM : encodableP flatTM.  
+Proof.  
+  exists c__encTM.  
+  eexists _.  
+  eapply computesTime_timeLeq.  
+  2:now apply term_TM_enc.  
+  intros l _. split. 2:easy.  
+  cbn [fst]. reflexivity.  
+Qed.  
+

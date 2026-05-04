@@ -1,0 +1,37 @@
+
+From Undecidability.TM.Hoare Require Import HoareLogic.  
+Definition abbreviate {A:Type} (x:A) := x.  
+Arguments abbreviate {A} {x}.  
+  
+  
+Tactic Notation "abbreviate" constr(y) "as" ident(x) :=  
+  (first [ is_var y  
+          | let x' := fresh x in pose (x':= @abbreviate _ y);  
+              change y with x']).  
+  
+Tactic Notation "abbreviate" constr(y) ":" constr(t) "as" ident(x) :=  
+   (first [ is_var y  
+           | let x' := fresh x in pose (x':= @abbreviate t y);  
+               change y with x']).  
+  
+Ltac unfold_abbrev :=  
+  repeat match goal with H := @abbreviate _ _ |- _ =>  
+                        unfold H, abbreviate; clear H  
+            end.  
+  
+Ltac clear_abbrevs := repeat match goal with  
+                        | H := @abbreviate (_ -> Assert _ _) _ |- _ => clear H  
+                        | H := @abbreviate (Assert _) _ |- _ => clear H  
+                        end.  
+  
+Ltac force_sequential :=  
+lazymatch goal with  
+  
+| |- TripleT _ _ _ ?P => abbreviate P as POSTCONDITION  
+| |- Triple _ _ ?P => abbreviate P as POSTCONDITION  
+end.  
+  
+Ltac abbreviate_TM := force_sequential.  
+  
+Ltac start_TM := abbreviate_TM.  
+
