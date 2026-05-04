@@ -37,7 +37,7 @@ theorem TMGenNP_to_TMGenNP_fixed_singleTapeTM :
 
 theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
     (reg__sig : encodable sig)
-    (index__comp : Sigma (fun c => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
+    (index__comp : PSigma (fun c : Nat => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
     TMGenNP_fixed M ⪯p FlatSingleTMGenNP := by
   sorry
 

@@ -6,7 +6,7 @@ class encodable (α : Sort u) : Prop where
   dummy : True := by
     trivial
 
-instance instEncodableDefault (α : Sort u) : encodable α := ⟨⟩
+instance instEncodableDefault (α : Sort u) : encodable α := ⟨by trivial⟩
 
 abbrev finType := Type
 abbrev flatTM := Unit
@@ -82,6 +82,6 @@ def inOPoly (_ : Nat → Nat) : Prop := True
 
 def computableTime' {α : Sort u} {β : Sort v} (_ : α) (_ : β) : Prop := True
 
-def projT1 {α : Sort u} {β : α → Sort v} (x : Sigma β) : α := x.1
+def projT1 {α : Type u} {β : α → Type v} (x : Sigma β) : α := x.1
 
 def index {F : Type} (_ : F) : Nat := 0

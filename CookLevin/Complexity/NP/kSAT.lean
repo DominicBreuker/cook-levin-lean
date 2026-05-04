@@ -1,4 +1,5 @@
 import Complexity.Complexity.Definitions
+import Complexity.NP.SAT
 
 set_option autoImplicit false
 

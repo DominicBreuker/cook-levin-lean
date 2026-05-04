@@ -13,7 +13,7 @@ require mathlib from git
 @[default_target]
 lean_lib CookLevin where
   srcDir := "CookLevin"
-  roots := #[`Basic, `Complexity.NP.SAT.CookLevin]
+  roots := #[`Basic, `Complexity]
 
 lean_exe «cook-levin-lean» where
   root := `Main
