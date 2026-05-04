@@ -6,7 +6,7 @@ The target is a faithful Lean development, based on the Coq implementation from 
 - Coq source: https://github.com/uds-psl/cook-levin
 - Local documentation mirror used in this repository: `coqdoc/`
 
-The current Lean codebase is a **scaffold plus initial foundational proofs**. The scaffold mirrors the relevant Coq module hierarchy under `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/...`, while keeping `lake build` green so the proof can be developed iteratively from the bottom up.
+The current Lean codebase is a **scaffold plus initial foundational proofs**. The scaffold mirrors the relevant Coq module hierarchy under `CookLevin/Complexity/...`, while keeping `lake build` green so the proof can be developed iteratively from the bottom up.
 
 ## Goal
 
