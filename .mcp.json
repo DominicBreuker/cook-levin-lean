@@ -1,0 +1,16 @@
+{
+  "mcpServers": {
+    "lean-lsp": {
+      "type": "stdio",
+      "command": "uvx",
+      "args": [
+        "--from",
+        "lean-lsp-mcp==0.26.1",
+        "lean-lsp-mcp"
+      ],
+      "env": {
+        "LEAN_REPL": "true"
+      }
+    }
+  }
+}
