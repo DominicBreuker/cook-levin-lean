@@ -10,13 +10,15 @@ instance instEncodableDefault (α : Sort u) : encodable α := ⟨by trivial⟩
 
 abbrev finType := Type
 abbrev flatTM := Unit
-abbrev TM (σ : Type) (_ : Nat) := Unit
+abbrev TM (_σ : Type) (_ : Nat) := Unit
 
 abbrev var := Nat
 abbrev literal := Bool × var
 abbrev clause := List literal
 abbrev cnf := List clause
 abbrev assgn := List var
+
+def evalVar (a : assgn) (v : var) : Bool := decide (v ∈ a)
 
 inductive formula where
   | ftrue
@@ -34,7 +36,6 @@ structure FlatCC where
   cards : List Unit
   final : List (List Nat)
   steps : Nat
-
 deriving Repr
 
 structure BinaryCC where
@@ -44,7 +45,6 @@ structure BinaryCC where
   cards : List Unit
   final : List (List Bool)
   steps : Nat
-
 deriving Repr
 
 structure FlatTCC where
@@ -53,7 +53,6 @@ structure FlatTCC where
   cards : List Unit
   final : List (List Nat)
   steps : Nat
-
 deriving Repr
 
 abbrev CC := Unit
