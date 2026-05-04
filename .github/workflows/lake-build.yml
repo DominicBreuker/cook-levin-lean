@@ -1,0 +1,28 @@
+name: Lake Build
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+
+jobs:
+  lake-build:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Lean toolchain, cache, and build artifacts
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          build: false
+          test: false
+          lint: false
+
+      - name: Build project
+        run: lake build
