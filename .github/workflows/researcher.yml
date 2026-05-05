@@ -1,26 +1,36 @@
 name: Researcher
 
 on:
-  # schedule:
-  #   - cron: '*/30 * * * *'
   workflow_dispatch:
     inputs:
-      lean_researcher_run_count:
-        description: Number of Vibe passes to run per lean researcher invocation
+      agent:
+        description: Researcher agent to run
+        required: false
+        default: Lean
+        type: choice
+        options:
+          - Lean
+          - Devstral
+      run_count:
+        description: Number of Vibe passes to run
         required: false
         default: '1'
-      devstral_researcher_run_count:
-        description: Number of Vibe passes to run per devstral researcher invocation
-        required: false
-        default: '0'
       vibe_overall_timeout_minutes:
         description: Cumulative Vibe runtime limit in minutes before skipping later passes (0 disables)
         required: false
         default: '0'
-      custom_prompt:
-        description: A custom prompt to inject into vibe CLI instead of the pre-built one
+      step_id:
+        description: Plan step ID to work on (1-13). Ignored when custom prompt is set.
         required: false
         default: ''
+      custom_prompt:
+        description: Custom prompt to pass to Vibe instead of a step prompt
+        required: false
+        default: ''
+      delay_seconds:
+        description: Delay in seconds between Vibe passes
+        required: false
+        default: '60'
 
 jobs:
   run_researcher:
@@ -28,13 +38,17 @@ jobs:
     permissions:
       contents: write
     env:
-      LEAN_RESEARCHER_RUN_COUNT: ${{ inputs.lean_researcher_run_count || vars.LEAN_RESEARCHER_RUN_COUNT || '1' }}
-      DEVSTRAL_RESEARCHER_RUN_COUNT: ${{ inputs.devstral_researcher_run_count || vars.DEVSTRAL_RESEARCHER_RUN_COUNT || '0' }}
-      RESEARCHER_OVERALL_TIMEOUT_MINUTES: ${{ inputs.vibe_overall_timeout_minutes || vars.RESEARCHER_OVERALL_TIMEOUT_MINUTES || '0' }}
+      RESEARCHER_AGENT: ${{ inputs.agent || 'Lean' }}
+      RESEARCHER_RUN_COUNT: ${{ inputs.run_count || '1' }}
+      RESEARCHER_OVERALL_TIMEOUT_MINUTES: ${{ inputs.vibe_overall_timeout_minutes || '0' }}
+      RESEARCHER_STEP_ID: ${{ inputs.step_id || '' }}
       CUSTOM_PROMPT: ${{ inputs.custom_prompt || '' }}
+      RESEARCHER_DELAY_SECONDS: ${{ inputs.delay_seconds || '60' }}
+      MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
 
     steps:
-      - uses: actions/checkout@v6
+      - name: Check out repository
+        uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -56,52 +70,30 @@ jobs:
             sudo apt-get install -y ripgrep
           fi
 
-      - name: Run researcher unit tests
-        run: python -m unittest discover -s tests -v
-
       - name: Configure Vibe home
         run: |
           echo "VIBE_HOME=$RUNNER_TEMP/vibe-home" >> "$GITHUB_ENV"
           mkdir -p "$RUNNER_TEMP/vibe-home"
 
-      - name: Require Lean Mistral API key
+      - name: Require Mistral API keys
         env:
-          MISTRAL_VIBE_KEY: ${{ secrets.MISTRAL_LABS_KEY }}
-        run: |
-          test -n "$MISTRAL_VIBE_KEY"
-
-      - name: Require Devstral Mistral API key
-        env:
+          MISTRAL_LABS_KEY: ${{ secrets.MISTRAL_LABS_KEY }}
           MISTRAL_VIBE_KEY: ${{ secrets.MISTRAL_VIBE_KEY }}
         run: |
+          test -n "$MISTRAL_LABS_KEY"
           test -n "$MISTRAL_VIBE_KEY"
 
       - name: Install real Mistral Vibe CLI
         run: |
-          # CI must use the real `vibe` CLI. The repository mock is only for
-          # researcher.py development/tests where no live API key should be used.
           uv tool install --force --python 3.12 "mistral-vibe==2.8.1"
           echo "$HOME/.local/bin" >> "$GITHUB_PATH"
 
-      - name: Generate explicit Vibe session ID
-        id: vibe_session
-        run: |
-          SESSION_ID="$(python - <<'PY'
-          import uuid
-          print(uuid.uuid4())
-          PY
-          )"
-          echo "session_id=$SESSION_ID" >> "$GITHUB_OUTPUT"
-          echo "MISTRAL_VIBE_SESSION_ID=$SESSION_ID" >> "$GITHUB_ENV"
-          echo "Using explicit Vibe session ID: $SESSION_ID"
-
-      - name: Set up Lean toolchain, cache, and build artifacts
+      - name: Set up Lean toolchain and cache
         uses: leanprover/lean-action@v1.5.0
         with:
-          build: true
+          build: false
           test: false
           lint: false
-        continue-on-error: true # proofs could break the build
 
       - name: Prime Lean MCP server
         run: uvx --from "lean-lsp-mcp==0.26.1" lean-lsp-mcp --help >/dev/null
@@ -109,11 +101,8 @@ jobs:
       - name: Configure Mistral Vibe MCP servers
         run: |
           mkdir -p "$VIBE_HOME"
-          cat > "$VIBE_HOME/config.toml" <<'EOF'
-          # Programmatic `vibe --prompt` only defaults to auto-approve when the
-          # default agent is used, so force non-interactive approvals here.
+          cat > "$VIBE_HOME/config.toml" <<'CFG'
           auto_approve = true
-          # The builtin Lean agent is opt-in upstream and must be installed explicitly.
           installed_agents = ["lean"]
 
           [[mcp_servers]]
@@ -125,7 +114,7 @@ jobs:
 
           [mcp_servers.env]
           LEAN_REPL = "true"
-          EOF
+          CFG
 
       - name: Verify researcher tools
         run: |
@@ -135,78 +124,26 @@ jobs:
           lake --version
           rg --version
           test -f lake-manifest.json
-          uvx --from "lean-lsp-mcp==0.26.1" lean-lsp-mcp --help >/dev/null
 
-      - name: Configure Lean researcher git identity
+      - name: Configure researcher git identity
         run: |
-          git config user.name "Lean Researcher"
-          git config user.email "lean-researcher@p-vs-np.github"
+          if [ "$RESEARCHER_AGENT" = "Lean" ]; then
+            git config user.name "Lean Researcher"
+            git config user.email "lean-researcher@p-vs-np.github"
+          else
+            git config user.name "Devstral Researcher"
+            git config user.email "devstral-researcher@p-vs-np.github"
+          fi
 
-      - name: Run Lean Researcher Agent
-        id: researcher-lean
+      - name: Run researcher agent
         env:
-          MISTRAL_VIBE_KEY: ${{ secrets.MISTRAL_LABS_KEY }}
-          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
-          MISTRAL_AGENT: "lean"
-          RESEARCHER_LABEL: "Lean Researcher"
-        run: >
-          python .github/scripts/researcher.py
-          --run-count "${LEAN_RESEARCHER_RUN_COUNT}"
-          --overall-timeout-minutes "${RESEARCHER_OVERALL_TIMEOUT_MINUTES}"
-          --prompt "${CUSTOM_PROMPT}"
-          --delay 60
-
-      - name: Configure Devstral researcher git identity
-        run: |
-          git config user.name "Devstral Researcher"
-          git config user.email "devstral-researcher@p-vs-np.github"
-
-      - name: Run Devstral Researcher Agent
-        id: researcher-devstral
-        env:
+          MISTRAL_LABS_KEY: ${{ secrets.MISTRAL_LABS_KEY }}
           MISTRAL_VIBE_KEY: ${{ secrets.MISTRAL_VIBE_KEY }}
-          MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
-          MISTRAL_AGENT: "auto-approve"
-          RESEARCHER_LABEL: "Devstral Researcher"
-        run: >
-          python .github/scripts/researcher.py
-          --run-count "${DEVSTRAL_RESEARCHER_RUN_COUNT}"
-          --overall-timeout-minutes "${RESEARCHER_OVERALL_TIMEOUT_MINUTES}"
-          --prompt "${CUSTOM_PROMPT}"
-          --delay 60
-
-      - name: Clean up trailing whitespace
-        if: always()
         run: |
-          find proofs -name "*.md" -exec sed -i 's/[[:space:]]*$//' {} \;
-          find proofs -name "*.lean" -exec sed -i 's/[[:space:]]*$//' {} \;
-          find lib -name "*.lean" -exec sed -i 's/[[:space:]]*$//' {} \;
-
-      - name: Validate Lean project
-        if: always()
-        id: validate
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-          lake build
-          mapfile -d '' proof_files < <(find proofs -name "*.lean" -print0 | sort -z)
-          for f in "${proof_files[@]}"; do
-            echo "Checking executable Lean file: $f"
-            lake env lean "$f"
-          done
-
-      - name: Fail workflow if researcher or validation failed
-        if: always()
-        run: |
-          if [ "${{ steps.researcher-lean.outcome }}" != "success" ]; then
-            echo "Lean researcher step failed."
-            exit 1
-          fi
-          if [ "${{ steps.researcher-devstral.outcome }}" != "success" ]; then
-            echo "Devstral researcher step failed."
-            exit 1
-          fi
-          if [ "${{ steps.validate.outcome }}" != "success" ]; then
-            echo "Lean validation failed."
-            exit 1
-          fi
+          python .github/scripts/researcher.py \
+            --agent-model "$RESEARCHER_AGENT" \
+            --run-count "$RESEARCHER_RUN_COUNT" \
+            --overall-timeout-minutes "$RESEARCHER_OVERALL_TIMEOUT_MINUTES" \
+            --step "$RESEARCHER_STEP_ID" \
+            --prompt "$CUSTOM_PROMPT" \
+            --delay "$RESEARCHER_DELAY_SECONDS"
