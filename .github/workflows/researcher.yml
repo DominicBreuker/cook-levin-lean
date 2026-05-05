@@ -1,0 +1,149 @@
+name: Researcher
+
+on:
+  workflow_dispatch:
+    inputs:
+      agent:
+        description: Researcher agent to run
+        required: false
+        default: Lean
+        type: choice
+        options:
+          - Lean
+          - Devstral
+      run_count:
+        description: Number of Vibe passes to run
+        required: false
+        default: '1'
+      vibe_overall_timeout_minutes:
+        description: Cumulative Vibe runtime limit in minutes before skipping later passes (0 disables)
+        required: false
+        default: '0'
+      step_id:
+        description: Plan step ID to work on (1-13). Ignored when custom prompt is set.
+        required: false
+        default: ''
+      custom_prompt:
+        description: Custom prompt to pass to Vibe instead of a step prompt
+        required: false
+        default: ''
+      delay_seconds:
+        description: Delay in seconds between Vibe passes
+        required: false
+        default: '60'
+
+jobs:
+  run_researcher:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      RESEARCHER_AGENT: ${{ inputs.agent || 'Lean' }}
+      RESEARCHER_RUN_COUNT: ${{ inputs.run_count || '1' }}
+      RESEARCHER_OVERALL_TIMEOUT_MINUTES: ${{ inputs.vibe_overall_timeout_minutes || '0' }}
+      RESEARCHER_STEP_ID: ${{ inputs.step_id || '' }}
+      CUSTOM_PROMPT: ${{ inputs.custom_prompt || '' }}
+      RESEARCHER_DELAY_SECONDS: ${{ inputs.delay_seconds || '60' }}
+      MISTRAL_MODEL: ${{ vars.MISTRAL_MODEL }}
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: '3.12'
+
+      - name: Install uv
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install --user uv
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Ensure ripgrep is available
+        run: |
+          if ! command -v rg >/dev/null 2>&1; then
+            sudo apt-get update
+            sudo apt-get install -y ripgrep
+          fi
+
+      - name: Configure Vibe home
+        run: |
+          echo "VIBE_HOME=$RUNNER_TEMP/vibe-home" >> "$GITHUB_ENV"
+          mkdir -p "$RUNNER_TEMP/vibe-home"
+
+      - name: Require Mistral API keys
+        env:
+          MISTRAL_LABS_KEY: ${{ secrets.MISTRAL_LABS_KEY }}
+          MISTRAL_VIBE_KEY: ${{ secrets.MISTRAL_VIBE_KEY }}
+        run: |
+          test -n "$MISTRAL_LABS_KEY"
+          test -n "$MISTRAL_VIBE_KEY"
+
+      - name: Install real Mistral Vibe CLI
+        run: |
+          uv tool install --force --python 3.12 "mistral-vibe==2.8.1"
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+
+      - name: Set up Lean toolchain and cache
+        uses: leanprover/lean-action@v1.5.0
+        with:
+          build: false
+          test: false
+          lint: false
+
+      - name: Prime Lean MCP server
+        run: uvx --from "lean-lsp-mcp==0.26.1" lean-lsp-mcp --help >/dev/null
+
+      - name: Configure Mistral Vibe MCP servers
+        run: |
+          mkdir -p "$VIBE_HOME"
+          cat > "$VIBE_HOME/config.toml" <<'CFG'
+          auto_approve = true
+          installed_agents = ["lean"]
+
+          [[mcp_servers]]
+          name = "lean-lsp"
+          transport = "stdio"
+          command = "uvx"
+          args = ["--from", "lean-lsp-mcp==0.26.1", "lean-lsp-mcp"]
+          tool_timeout_sec = 600
+
+          [mcp_servers.env]
+          LEAN_REPL = "true"
+          CFG
+
+      - name: Verify researcher tools
+        run: |
+          python --version
+          vibe --version
+          lean --version
+          lake --version
+          rg --version
+          test -f lake-manifest.json
+
+      - name: Configure researcher git identity
+        run: |
+          if [ "$RESEARCHER_AGENT" = "Lean" ]; then
+            git config user.name "Lean Researcher"
+            git config user.email "lean-researcher@p-vs-np.github"
+          else
+            git config user.name "Devstral Researcher"
+            git config user.email "devstral-researcher@p-vs-np.github"
+          fi
+
+      - name: Run researcher agent
+        env:
+          MISTRAL_LABS_KEY: ${{ secrets.MISTRAL_LABS_KEY }}
+          MISTRAL_VIBE_KEY: ${{ secrets.MISTRAL_VIBE_KEY }}
+        run: |
+          python .github/scripts/researcher.py \
+            --agent-model "$RESEARCHER_AGENT" \
+            --run-count "$RESEARCHER_RUN_COUNT" \
+            --overall-timeout-minutes "$RESEARCHER_OVERALL_TIMEOUT_MINUTES" \
+            --step "$RESEARCHER_STEP_ID" \
+            --prompt "$CUSTOM_PROMPT" \
+            --delay "$RESEARCHER_DELAY_SECONDS"
