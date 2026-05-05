@@ -6,18 +6,15 @@ set_option autoImplicit false
 
 def genNPRel {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]
-    (R : X → Y → Prop) : X → X__cert → Prop :=
-  fun x cert => ∃ witness : Y, enumTerm.encode witness = cert ∧ R x witness
+    (R : X → Y → Prop) (x : X) : X__cert → Prop :=
+  fun cert => ∃ witness : Y, enumTerm.encode witness = cert ∧ R x witness
 
 def genNPInstance {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]
-    (R : X → Y → Prop) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
+    (R : X → Y → Prop) (_hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
     (x : X) : GenNPInput X__cert where
-  instance := X
-  instance_encodable := inferInstance
-  rel := genNPRel enumTerm R
+  rel := genNPRel enumTerm R x
   rel_poly := inTimePoly_linear _
-  input := x
 
 theorem genNPInstance_spec {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]

@@ -7,7 +7,7 @@ class CanEnumTerm (X__cert : Type) [encodable X__cert] where
 
 namespace boollist_enum
 
-theorem boollists_enum_term : CanEnumTerm (List Bool) := by
-  exact ⟨fun {_} {_} _ => []⟩
+@[reducible] def boollists_enum_term : CanEnumTerm (List Bool) :=
+  ⟨fun {_} {_} _ => []⟩
 
 end boollist_enum

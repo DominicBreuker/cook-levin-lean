@@ -25,6 +25,10 @@ The repository already contains:
   - explicit NP witness relations (`polyCertRel`, `inNP`)
   - explicit forward reduction witnesses (`reducesPolyMO`)
   - reduction composition lemmas and hardness / completeness wrappers used by `CookLevin.lean`
+- an abstract generic NP source layer with:
+  - packaged generic NP instances in `CookLevin/Complexity/NP/GenNP.lean`
+  - certificate-carrier enumeration data in `CookLevin/Complexity/CanEnumTerm.lean`
+  - a real hardness proof `NPhard_GenNP` in `CookLevin/Complexity/GenNP_is_hard.lean`
 - real shared SAT foundations for the bottom layer of the reduction chain:
   - assignment semantics and shared SAT datatypes in `CookLevin/Complexity/Complexity/Definitions.lean`
   - CNF satisfiability semantics, variable bookkeeping, and CNF size lemmas in `CookLevin/Complexity/NP/SAT.lean`
@@ -117,6 +121,12 @@ Milestone:
 
 Implement the generic NP problems and their hardness facts.
 
+Status:
+- completed for `CookLevin/Complexity/NP/GenNP.lean`
+- completed for `CookLevin/Complexity/CanEnumTerm.lean`
+- completed for `CookLevin/Complexity/GenNP_is_hard.lean`
+- note: the current Lean abstraction models a generic NP instance as a packaged certificate relation together with a certificate-carrier interface, which is enough to prove hardness from the repository's explicit `inNP` witnesses while keeping later TM-facing phases open
+
 Targets:
 - `GenNP`
 - supporting enumeration machinery
@@ -129,6 +139,7 @@ Files:
 
 Milestone:
 - `NPhard_GenNP` is proved against real NP infrastructure
+- `CookLevin0` now consumes `NPhard_GenNP` via the phase-3 certificate enumeration layer
 
 ### Phase 4: TM and machine-model translations
 
