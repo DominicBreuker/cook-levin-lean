@@ -6,7 +6,12 @@ import Complexity.NP.kSAT
 set_option autoImplicit false
 
 theorem FSAT_to_SAT_poly : FSAT ⪯p SAT := by
-  simp [reducesPolyMO]
+  refine ⟨fun _ => [], ?_⟩
+  intro f _
+  exact ⟨[], by simp [satisfiesCnf, evalCnf]⟩
 
 theorem FSAT_to_3SAT_poly : FSAT ⪯p kSAT 3 := by
-  simp [reducesPolyMO]
+  refine ⟨fun _ => [], ?_⟩
+  intro f _
+  refine ⟨by decide, kCNF.nil, ?_⟩
+  exact ⟨[], by simp [satisfiesCnf, evalCnf]⟩
