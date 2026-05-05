@@ -24,7 +24,7 @@ What is true today:
 What is **not** true today:
 
 - The current Lean development does **not** yet faithfully model polynomial-time computation.
-- The current Lean development does **not** yet faithfully model polynomial-time many-one reductions.
+- The current Lean development does **not** yet faithfully model polynomial-time many–one reductions.
 - The current Lean development does **not** yet faithfully model the Turing machines used in the Cook-Levin argument.
 - Therefore, the current theorem named `CookLevin` should be understood as a theorem in the repository's **placeholder complexity framework**, not yet as the intended mathematical Cook-Levin theorem.
 
@@ -193,7 +193,7 @@ For every step below, the agent working on it should:
 
 ### Step 3 — Redefine polynomial-time many-one reduction
 
-**Goal:** make `⪯p` match the Coq notion of polynomial-time many-one reducibility.
+**Goal:** make `⪯p` match the Coq notion of polynomial-time many–one reducibility.
 
 **Primary files:**
 
