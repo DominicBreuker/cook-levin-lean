@@ -35,12 +35,18 @@ def positionCompatible (N : cnf) (p q : Nat × Nat) : Bool :=
     | some l₁, some l₂ => !(literalsConflict l₁ l₂)
     | _, _ => false
 
+def positionBase (N : cnf) : Nat :=
+  (N.foldr (fun C acc => Nat.max C.length acc) 0) + 1
+
+def encodePosition (N : cnf) (p : Nat × Nat) : Nat :=
+  p.1 * positionBase N + p.2
+
 def addCompatibleEdges (N : cnf) (positions : List (Nat × Nat)) (p : Nat × Nat) :
     List fedge :=
-  (positions.filter (positionCompatible N p)).map (fun q => (p.1 * 1000 + p.2, q.1 * 1000 + q.2))
+  (positions.filter (positionCompatible N p)).map (fun q => (encodePosition N p, encodePosition N q))
 
 def cliqueVertices (N : cnf) : List Nat :=
-  (clausePositions N).map (fun p => p.1 * 1000 + p.2)
+  (clausePositions N).map (encodePosition N)
 
 def concatEdges : List (List fedge) → List fedge
   | [] => []

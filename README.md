@@ -210,7 +210,8 @@ Status:
 - completed for `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
 - completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`
 - completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean`
-- note: with the current simplified phase-2 reduction interface, several of these reductions are now implemented as input-sensitive Lean maps that branch on the source-language predicate or on the source instance's explicit shape, rather than as the final Coq-style polynomial encodings
+- note: under the repository's simplified phase-2 reduction interface, phase 6 now uses a mix of structural encodings (for the tableau / clique side) and explicit finite-search witnesses (for the satisfiability-facing reductions).
+- note: the reduction theorems are therefore real Lean implementations, even though the full Coq-style polynomial analyses are still outside the current scaffold
 
 Recommended order:
 1. `FlatTCC_to_FlatCC`

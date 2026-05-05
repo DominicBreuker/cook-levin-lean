@@ -7,6 +7,9 @@ set_option autoImplicit false
 
 open Classical
 
+/-- Pad the flat input by three symbols so the resulting tableau word satisfies
+the `FlatTCC_wellformed` lower bound `init.length ≥ 3` even when the source
+input is empty. -/
 def padSymbols : List Nat := [0, 0, 0]
 
 theorem padSymbols_valid : list_ofFlatType 1 padSymbols := by
