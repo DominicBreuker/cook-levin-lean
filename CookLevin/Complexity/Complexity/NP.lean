@@ -27,7 +27,7 @@ theorem inNP_intro {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) : i
 
 theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P := by
   intro _
-  simp [inP, inTimePoly, inNP]
+  simp [inNP]
 
 theorem reducesPolyMO_elim {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → True := by

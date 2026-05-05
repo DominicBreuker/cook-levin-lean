@@ -12,7 +12,7 @@ def FlatFunSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop := fun _ =>
 theorem vec_case1 (X : Type) (_ : List X) : True := by
   trivial
 
-theorem initTape_isFlatteningConfigOf (sig states : finType) (s : List Nat) (s0 : states) : True := by
+theorem initTape_isFlatteningConfigOf (_sig states : finType) (_s : List Nat) (_s0 : states) : True := by
   trivial
 
 theorem FlatFunSingleTMGenNP_FlatSingleTMGenNP_equiv
