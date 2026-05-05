@@ -23,7 +23,7 @@ The repository already contains:
 - placeholder modules for the intermediate Cook-Levin subproblems and reductions
 - a basic NP infrastructure layer in `CookLevin/Complexity/Complexity/NP.lean` with:
   - explicit NP witness relations (`polyCertRel`, `inNP`)
-  - explicit reduction witnesses (`reducesPolyMO`)
+  - explicit forward reduction witnesses (`reducesPolyMO`)
   - reduction composition lemmas and hardness / completeness wrappers used by `CookLevin.lean`
 - real shared SAT foundations for the bottom layer of the reduction chain:
   - assignment semantics and shared SAT datatypes in `CookLevin/Complexity/Complexity/Definitions.lean`
@@ -95,6 +95,7 @@ Formalize the abstract complexity layer needed to compose reductions.
 Status:
 - completed for `CookLevin/Complexity/Complexity/NP.lean`
 - completed for the reduction-chaining theorems consumed by `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+- note: this phase currently models explicit witness relations and forward reduction maps; later phases can still refine these proofs toward the full Coq development
 
 Targets:
 - `inTimePoly`

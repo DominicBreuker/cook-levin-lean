@@ -67,14 +67,13 @@ theorem kSAT_to_FlatClique (k : Nat) : kSAT k ⪯p FlatClique := by
   exact kSAT_to_FlatClique_poly k
 
 theorem FlatSingleTMGenNP_to_3SAT : FlatSingleTMGenNP ⪯p kSAT 3 := by
-  exact
-    reducesPolyMO_transitive _ _ _
-      FlatSingleTMGenNP_to_FlatTCC
-      (reducesPolyMO_transitive _ _ _
-        FlatTCC_to_FlatCC
-        (reducesPolyMO_transitive _ _ _
-          FlatCC_to_BinaryCC
-          (reducesPolyMO_transitive _ _ _ BinaryCC_to_FSAT FSAT_to_3SAT)))
+  have h₁ : FlatSingleTMGenNP ⪯p FlatCCLang :=
+    reducesPolyMO_transitive _ _ _ FlatSingleTMGenNP_to_FlatTCC FlatTCC_to_FlatCC
+  have h₂ : FlatSingleTMGenNP ⪯p BinaryCCLang :=
+    reducesPolyMO_transitive _ _ _ h₁ FlatCC_to_BinaryCC
+  have h₃ : FlatSingleTMGenNP ⪯p FSAT :=
+    reducesPolyMO_transitive _ _ _ h₂ BinaryCC_to_FSAT
+  exact reducesPolyMO_transitive _ _ _ h₃ FSAT_to_3SAT
 
 theorem GenNP_to_3SAT : GenNP (List Bool) ⪯p kSAT 3 := by
   exact reducesPolyMO_transitive _ _ _ GenNP_to_SingleTMGenNP FlatSingleTMGenNP_to_3SAT

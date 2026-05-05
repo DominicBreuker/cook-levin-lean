@@ -2,18 +2,20 @@ import Complexity.Complexity.Definitions
 
 set_option autoImplicit false
 
+/-- Phase 2 keeps only the abstract polynomial-bound bookkeeping. Later phases can
+refine this into the full Coq-style time model without changing downstream theorem shapes. -/
 def inTimePoly {X : Type} (_ : X → Prop) : Prop :=
   ∃ f : Nat → Nat, inOPoly f ∧ monotonic f
 
 theorem inTimePoly_trivial {X : Type} (P : X → Prop) : inTimePoly P := by
   refine ⟨fun n => n, ?_, ?_⟩ <;> simp [inOPoly, monotonic]
 
-structure PolyCertRel {X Y : Type} (P : X → Prop) (R : X → Y → Prop) where
+structure PolyCertRelWitness {X Y : Type} (P : X → Prop) (R : X → Y → Prop) where
   sound : ∀ ⦃x y⦄, R x y → P x
   complete : ∀ ⦃x⦄, P x → ∃ y, R x y
 
 abbrev polyCertRel {X Y : Type} (P : X → Prop) (R : X → Y → Prop) : Prop :=
-  Nonempty (PolyCertRel P R)
+  Nonempty (PolyCertRelWitness P R)
 
 structure InNPWitness {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) where
   rel : X → Y → Prop
@@ -99,9 +101,9 @@ theorem red_NPhard {X Y : Type} [encodable X] [encodable Y]
   rcases hHard with ⟨Z, hEncZ, hZ⟩
   exact ⟨Z, hEncZ, reducesPolyMO_transitive _ _ _ hZ hPQ⟩
 
-theorem NPhard_sig (X : Type) [encodable X] (vX : X → Prop) (P : X → Prop) :
-    NPhard (fun x : {x // vX x} => P x.1) → NPhard P := by
+theorem NPhard_sig (X : Type) [encodable X] (pred : X → Prop) (P : X → Prop) :
+    NPhard (fun x : {x // pred x} => P x.1) → NPhard P := by
   intro hHard
-  apply red_NPhard (P := fun x : {x // vX x} => P x.1)
+  apply red_NPhard (P := fun x : {x // pred x} => P x.1)
   · exact ⟨⟨Subtype.val, fun {x} hx => hx⟩⟩
   · exact hHard
