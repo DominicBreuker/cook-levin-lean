@@ -18,6 +18,7 @@ import Complexity.NP.SAT.CookLevin.FlatSingleTMGenNP_to_FlatTCC
 import Complexity.NP.SAT.CookLevin.FlatTCC_to_FlatCC
 import Complexity.NP.SAT.CookLevin.FlatCC_to_BinaryCC
 import Complexity.NP.SAT.CookLevin.BinaryCC_to_FSAT
+import Complexity.NP.SAT.CookLevin.Reductions.TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP
 import Complexity.GenNP_is_hard
 import Complexity.CanEnumTerm
 
@@ -27,11 +28,12 @@ theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
     (_reg__sig : encodable sig)
     (_index__comp : PSigma (fun c : Nat => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
     TMGenNP_fixed M ⪯p FlatSingleTMGenNP := by
-  refine ⟨fun inst => ((), [], inst.maxSize, inst.steps), ?_⟩
+  refine reducesPolyMO_transitive _ _ _
+    (TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP M)
+    ?_
+  refine ⟨id, ?_⟩
   intro inst hinst
-  rcases hinst with ⟨cert, hcert, _⟩
-  refine ⟨trivial, list_ofFlatType_nil 1, ?_⟩
-  exact ⟨[], list_ofFlatType_nil 1, by simp [isValidCert]⟩
+  simpa using (FlatFunSingleTMGenNP_FlatSingleTMGenNP_equiv inst.1 inst.2.1 inst.2.2.1 inst.2.2.2).1 hinst
 
 theorem GenNP_to_SingleTMGenNP :
     GenNP (List Bool) ⪯p FlatSingleTMGenNP := by
