@@ -7,7 +7,7 @@ refine this into the full Coq-style time model without changing downstream theor
 def inTimePoly {X : Type} (_ : X → Prop) : Prop :=
   ∃ f : Nat → Nat, inOPoly f ∧ monotonic f
 
-theorem inTimePoly_trivial {X : Type} (P : X → Prop) : inTimePoly P := by
+theorem inTimePoly_linear {X : Type} (P : X → Prop) : inTimePoly P := by
   refine ⟨fun n => n, ?_, ?_⟩ <;> simp [inOPoly, monotonic]
 
 structure PolyCertRelWitness {X Y : Type} (P : X → Prop) (R : X → Y → Prop) where
@@ -80,7 +80,7 @@ theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
   letI := hEncCert
   rcases hQ with ⟨hQ⟩
   refine ⟨Cert, inferInstance, ?_⟩
-  refine ⟨⟨fun x c => P x ∧ hQ.rel (hPQ.reduction x) c, inTimePoly_trivial _, ?_⟩⟩
+  refine ⟨⟨fun x c => P x ∧ hQ.rel (hPQ.reduction x) c, inTimePoly_linear _, ?_⟩⟩
   refine ⟨⟨?_, ?_⟩⟩
   · intro x c h
     exact h.1

@@ -158,7 +158,7 @@ theorem size_cnf_app (N₁ N₂ : cnf) :
 namespace SAT_inNP
 
 theorem sat_NP : inNP SAT := by
-  refine inNP_intro SAT (fun N a => satisfiesCnf a N) (inTimePoly_trivial _) ?_
+  refine inNP_intro SAT (fun N a => satisfiesCnf a N) (inTimePoly_linear _) ?_
   refine ⟨?_, ?_⟩
   · intro N a hSat
     exact ⟨a, hSat⟩
