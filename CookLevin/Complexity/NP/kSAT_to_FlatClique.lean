@@ -26,8 +26,12 @@ def literalAt (N : cnf) (ci li : Nat) : Option literal := do
   let C ← nthClause N ci
   nthLiteral C li
 
+def literalPolarity (l : literal) : Bool := l.1
+
+def literalVar (l : literal) : Nat := l.2
+
 def literalsAreNegations (l₁ l₂ : literal) : Bool :=
-  l₁.2 == l₂.2 && l₁.1 != l₂.1
+  literalVar l₁ == literalVar l₂ && literalPolarity l₁ != literalPolarity l₂
 
 def positionCompatible (N : cnf) (p q : Nat × Nat) : Bool :=
   p.1 != q.1 &&
@@ -49,7 +53,8 @@ def cliqueVertices (N : cnf) : List Nat :=
   (clausePositions N).map (encodePosition N)
 
 def cliqueEdges (N : cnf) : List fedge :=
-  (clausePositions N).flatMap (addCompatibleEdges N (clausePositions N))
+  let positions := clausePositions N
+  positions.flatMap (addCompatibleEdges N positions)
 
 def kSAT_to_FlatClique_instance (N : cnf) : fgraph × Nat :=
   (((cliqueVertices N).length, cliqueEdges N), N.length)

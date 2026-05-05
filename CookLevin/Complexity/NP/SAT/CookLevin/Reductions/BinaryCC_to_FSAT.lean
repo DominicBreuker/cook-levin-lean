@@ -128,12 +128,11 @@ noncomputable def acceptingRunsFrom (C : BinaryCC) : Nat → List Bool → List 
   | 0, s =>
       if satFinal C.offset C.init.length C.final s then [[s]] else []
   | n + 1, s =>
-      List.flatMap
-        (fun t =>
-          if validStep C.offset C.width C.cards s t then
-            (acceptingRunsFrom C n t).map (fun trace => s :: trace)
-          else [])
-        (allBitStrings C.init.length)
+      let extendRun (t : List Bool) :=
+        if validStep C.offset C.width C.cards s t then
+          (acceptingRunsFrom C n t).map (fun trace => s :: trace)
+        else []
+      (allBitStrings C.init.length).flatMap extendRun
 
 theorem acceptingRunsFrom_complete (C : BinaryCC) :
     ∀ {n s sf}, relpower (validStep C.offset C.width C.cards) n s sf →

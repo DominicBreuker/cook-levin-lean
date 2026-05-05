@@ -8,7 +8,7 @@ set_option autoImplicit false
 open Classical
 
 def encodeSymbol {k : Nat} (x : Fin k) : List Bool :=
-  (List.range k).map (fun i => decide (i = x.1))
+  (List.range k).map (fun idx => decide (idx = x.1))
 
 def encodeString {k : Nat} : List (Fin k) → List Bool
   | [] => []
