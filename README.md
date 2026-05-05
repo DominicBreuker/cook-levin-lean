@@ -9,7 +9,7 @@ The current Lean development builds successfully and the Lean sources in this re
 
 ## Main results
 
-The final composition theorems are proved in `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin.lean`:
+The final composition theorems are proved in `CookLevin/Complexity/NP/SAT/CookLevin.lean`:
 
 - `GenNP_to_SingleTMGenNP`
 - `FlatSingleTMGenNP_to_3SAT`
