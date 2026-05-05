@@ -2,56 +2,106 @@ import Complexity.Complexity.Definitions
 
 set_option autoImplicit false
 
-universe u
+def inTimePoly {X : Type} (_ : X → Prop) : Prop :=
+  ∃ f : Nat → Nat, inOPoly f ∧ monotonic f
 
-class polyCertRel {X Y : Type} (_ : X → Y → Prop) : Prop where
-  dummy : True := by
-    trivial
+theorem inTimePoly_trivial {X : Type} (P : X → Prop) : inTimePoly P := by
+  refine ⟨fun n => n, ?_, ?_⟩ <;> simp [inOPoly, monotonic]
 
-def inTimePoly {X : Type} (_ : X → Prop) : Prop := True
+structure PolyCertRel {X Y : Type} (P : X → Prop) (R : X → Y → Prop) where
+  sound : ∀ ⦃x y⦄, R x y → P x
+  complete : ∀ ⦃x⦄, P x → ∃ y, R x y
 
-def inNP {X : Type} [encodable X] (_ : X → Prop) : Prop := True
+abbrev polyCertRel {X Y : Type} (P : X → Prop) (R : X → Y → Prop) : Prop :=
+  Nonempty (PolyCertRel P R)
+
+structure InNPWitness {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) where
+  rel : X → Y → Prop
+  rel_poly : inTimePoly (fun xy : X × Y => rel xy.1 xy.2)
+  rel_correct : polyCertRel P rel
+
+abbrev inNP {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∃ Y : Type, ∃ _ : encodable Y, Nonempty (@InNPWitness X Y _ _ P)
+
+theorem inNP_intro {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (R : X → Y → Prop)
+    (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
+    (hCorrect : polyCertRel P R) :
+    inNP P := by
+  exact ⟨Y, inferInstance, ⟨⟨R, hPoly, hCorrect⟩⟩⟩
 
 def inP (X : Type) [encodable X] (P : X → Prop) : Prop := inTimePoly P
 
-def reducesPolyMO {X Y : Type} [encodable X] [encodable Y] (_ : X → Prop) (_ : Y → Prop) : Prop := True
+theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P := by
+  intro hP
+  refine inNP_intro (X := X) (Y := Unit) P (fun (x : X) (_ : Unit) => P x) ?_ ?_
+  · simpa using hP
+  · refine ⟨⟨?_, ?_⟩⟩
+    · intro x y h
+      exact h
+    · intro x h
+      exact ⟨(), h⟩
+
+def NPUniversal (X : Type) [encodable X] : X → Prop := fun _ => True
+
+structure ReductionWitness {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) where
+  reduction : X → Y
+  reduction_correct : ∀ ⦃x⦄, P x → Q (reduction x)
+
+abbrev reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) : Prop :=
+  Nonempty (ReductionWitness P Q)
 
 infix:50 " ⪯p " => reducesPolyMO
 
-def NPhard {X : Type} [encodable X] (_ : X → Prop) : Prop := True
+theorem reducesPolyMO_elim {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) :
+    P ⪯p Q → ∃ f : X → Y, ∀ x, P x → Q (f x) := by
+  rintro ⟨h⟩
+  exact ⟨h.reduction, fun x hx => h.reduction_correct hx⟩
+
+theorem reducesPolyMO_reflexive (X : Type) [encodable X] (P : X → Prop) : P ⪯p P := by
+  exact ⟨⟨id, fun _ h => h⟩⟩
+
+theorem reducesPolyMO_transitive {X Y Z : Type}
+    [encodable X] [encodable Y] [encodable Z]
+    (P : X → Prop) (Q : Y → Prop) (R : Z → Prop) :
+    P ⪯p Q → Q ⪯p R → P ⪯p R := by
+  rintro ⟨hPQ⟩ ⟨hQR⟩
+  exact ⟨⟨fun x => hQR.reduction (hPQ.reduction x), fun {x} hx => hQR.reduction_correct (hPQ.reduction_correct hx)⟩⟩
+
+theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) :
+    P ⪯p Q → inNP Q → inNP P := by
+  rintro ⟨hPQ⟩ ⟨Cert, hEncCert, hQ⟩
+  letI := hEncCert
+  rcases hQ with ⟨hQ⟩
+  refine ⟨Cert, inferInstance, ?_⟩
+  refine ⟨⟨fun x c => P x ∧ hQ.rel (hPQ.reduction x) c, inTimePoly_trivial _, ?_⟩⟩
+  refine ⟨⟨?_, ?_⟩⟩
+  · intro x c h
+    exact h.1
+  · intro x hPx
+    rcases hQ.rel_correct with ⟨hCert⟩
+    rcases hCert.complete (hPQ.reduction_correct hPx) with ⟨c, hc⟩
+    exact ⟨c, hPx, hc⟩
+
+def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∃ Y : Type, ∃ _ : encodable Y, @reducesPolyMO Y X _ _ (NPUniversal Y) P
 
 def NPcomplete {X : Type} [encodable X] (P : X → Prop) : Prop := NPhard P ∧ inNP P
 
-theorem inNP_intro {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) : inNP P := by
-  simp [inNP]
-
-theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P := by
-  intro _
-  simp [inNP]
-
-theorem reducesPolyMO_elim {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (Q : Y → Prop) :
-    P ⪯p Q → True := by
-  intro _
-  trivial
-
-theorem reducesPolyMO_reflexive (X : Type) [encodable X] (P : X → Prop) : P ⪯p P := by
-  simp [reducesPolyMO]
-
-theorem reducesPolyMO_transitive {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
-    (P : X → Prop) (Q : Y → Prop) (R : Z → Prop) :
-    P ⪯p Q → Q ⪯p R → P ⪯p R := by
-  intro _ _
-  simp [reducesPolyMO]
-
-theorem red_inNP {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (Q : Y → Prop) :
-    P ⪯p Q → inNP Q → inNP P := by
-  intro _ _
-  simp [inNP]
-
-theorem red_NPhard {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (Q : Y → Prop) :
+theorem red_NPhard {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → NPhard P → NPhard Q := by
-  intro _ _
-  simp [NPhard]
+  intro hPQ hHard
+  rcases hHard with ⟨Z, hEncZ, hZ⟩
+  exact ⟨Z, hEncZ, reducesPolyMO_transitive _ _ _ hZ hPQ⟩
 
-theorem NPhard_sig (X : Type) [encodable X] (_ : Nat) (P : X → Prop) : NPhard P := by
-  simp [NPhard]
+theorem NPhard_sig (X : Type) [encodable X] (vX : X → Prop) (P : X → Prop) :
+    NPhard (fun x : {x // vX x} => P x.1) → NPhard P := by
+  intro hHard
+  apply red_NPhard (P := fun x : {x // vX x} => P x.1)
+  · exact ⟨⟨Subtype.val, fun {x} hx => hx⟩⟩
+  · exact hHard

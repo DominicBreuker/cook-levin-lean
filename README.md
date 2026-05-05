@@ -21,6 +21,10 @@ The repository already contains:
 - a Lean project configured with `lake`
 - a Cook-Levin scaffold that mirrors the top-level Coq reduction chain
 - placeholder modules for the intermediate Cook-Levin subproblems and reductions
+- a basic NP infrastructure layer in `CookLevin/Complexity/Complexity/NP.lean` with:
+  - explicit NP witness relations (`polyCertRel`, `inNP`)
+  - explicit reduction witnesses (`reducesPolyMO`)
+  - reduction composition lemmas and hardness / completeness wrappers used by `CookLevin.lean`
 - real shared SAT foundations for the bottom layer of the reduction chain:
   - assignment semantics and shared SAT datatypes in `CookLevin/Complexity/Complexity/Definitions.lean`
   - CNF satisfiability semantics, variable bookkeeping, and CNF size lemmas in `CookLevin/Complexity/NP/SAT.lean`
@@ -33,21 +37,17 @@ A review of the current Lean port against the relevant Coq documentation shows t
 
 The main gaps are:
 
-1. **Complexity infrastructure is still skeletal**
-   - `inNP`, `reducesPolyMO`, `NPhard`, and related notions are still placeholders.
-   - The closure lemmas and reduction combinators are not yet implemented.
-
-2. **Turing-machine infrastructure is still skeletal**
+1. **Turing-machine infrastructure is still skeletal**
    - `TM`, `flatTM`, and the machine-conversion modules are still stubs.
    - This blocks the early reductions from generic NP problems to tableau-style encodings.
 
-3. **Cook-Levin subproblems are only scaffolded**
+2. **Cook-Levin subproblems are only scaffolded**
    - `FlatTCC`, `FlatCC`, `BinaryCC`, and `SingleTMGenNP` still need their real data structures, wellformedness conditions, and equivalence lemmas.
 
-4. **Major reduction implementations are still scaffolded**
+3. **Major reduction implementations are still scaffolded**
    - The reductions in the Cook-Levin chain are present as theorem shells, but not yet implemented.
 
-5. **The scaffold needs to stay buildable throughout**
+4. **The scaffold needs to stay buildable throughout**
    - The intended development style is not “replace everything at once”, but “fill in one bottom layer at a time while keeping `lake build` passing”.
 
 ## Bottom-up implementation plan
@@ -92,6 +92,10 @@ Milestone:
 
 Formalize the abstract complexity layer needed to compose reductions.
 
+Status:
+- completed for `CookLevin/Complexity/Complexity/NP.lean`
+- completed for the reduction-chaining theorems consumed by `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
 Targets:
 - `inTimePoly`
 - `inNP`
@@ -106,6 +110,7 @@ Files:
 
 Milestone:
 - all reduction-chaining lemmas used in `CookLevin.lean` are available without `sorry`
+- the Cook-Levin composition file now uses the structural reduction lemmas instead of simplifying placeholder definitions
 
 ### Phase 3: generic NP source problems
 
