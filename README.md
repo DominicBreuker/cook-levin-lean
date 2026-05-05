@@ -179,7 +179,9 @@ Status:
 - completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
 - completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
 - completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
-- note: the current Lean port now uses explicit wellformedness predicates, canonical unflattening to `Fin`-indexed alphabets for `FlatTCC` and `FlatCC`, and real bookkeeping predicates for the single-tape source problem while the downstream reduction files still use placeholder maps that target fixed positive instances until phase 6 is implemented
+- note: the current Lean port now uses explicit wellformedness predicates and real bookkeeping predicates for the single-tape source problem
+- note: `FlatTCC` and `FlatCC` now support canonical unflattening to `Fin`-indexed alphabets with flatten/unflatten correctness lemmas
+- note: the downstream reduction files still use placeholder maps that target fixed positive instances until phase 6 is implemented
 
 Targets:
 - `SingleTMGenNP`

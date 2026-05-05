@@ -140,9 +140,8 @@ theorem flatten_unflattenCardP (k : Nat) (card : TCCCardP Nat) (h : TCCCardP_ofF
 theorem flatten_unflattenCard (k : Nat) (card : TCCCard Nat) (h : TCCCard_ofFlatType card k) :
     flattenCard (unflattenCard k card h) = card := by
   cases card
-  cases h with
-  | intro hp hc =>
-      simp [unflattenCard, flattenCard, flatten_unflattenCardP, hp, hc]
+  rcases h with ⟨hp, hc⟩
+  simp [unflattenCard, flattenCard, flatten_unflattenCardP, hp, hc]
 
 theorem flatten_unflattenCards (k : Nat) :
     ∀ cards (h : isValidFlatCards cards k), (unflattenCards k cards h).map flattenCard = cards
@@ -168,7 +167,7 @@ theorem unflatten_flattenCardP {k : Nat} (card : TCCCardP (Fin k)) :
     unflattenCardP k (flattenCardP card) (TCCCardP_ofFlatType_flatten card) = card := by
   cases card
   simp [unflattenCardP, flattenCardP]
-  repeat' constructor <;> apply Fin.ext <;> rfl
+  repeat constructor <;> apply Fin.ext <;> rfl
 
 theorem unflatten_flattenCard {k : Nat} (card : TCCCard (Fin k)) :
     unflattenCard k (flattenCard card) (TCCCard_ofFlatType_flatten card) = card := by

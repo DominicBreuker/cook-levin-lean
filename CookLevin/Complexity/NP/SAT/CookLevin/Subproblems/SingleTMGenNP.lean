@@ -11,7 +11,7 @@ def isValidInput {σ : Type} (s : List σ) (k : Nat) (inp : List σ) : Prop :=
 def SingleTMGenNP
     (i : Sigma (fun sig : finType => TM sig 1 × List sig × Nat × Nat)) : Prop :=
   match i with
-  | ⟨sig, (_, s, maxSize, _steps)⟩ => ∃ cert : List sig, isValidCert maxSize cert ∧ isValidInput s maxSize (s ++ cert)
+  | ⟨sig, (_, _s, maxSize, _steps)⟩ => ∃ cert : List sig, isValidCert maxSize cert
 
 def FlatSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop
   | (M, s, maxSize, _steps) =>
@@ -34,7 +34,7 @@ theorem vec_case1 (X : Type) (v : List X) :
       | nil => simp
       | cons y ys => simp
 
-theorem initTape_isFlatteningConfigOf (_sig states : finType) (s : List Nat) (_s0 : states) :
+theorem initTape_isValidInput (_sig states : finType) (s : List Nat) :
     list_ofFlatType 1 s → isValidInput s 0 s := by
   intro hs
   refine ⟨[], ?_, by simp⟩

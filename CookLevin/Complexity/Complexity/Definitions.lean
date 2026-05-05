@@ -213,12 +213,16 @@ theorem isFlatListOf_unflattenList {k : Nat} (xs : List Nat) (h : list_ofFlatTyp
     isFlatListOf xs (unflattenList k xs h) := by
   exact flatten_unflattenList k xs h
 
+theorem fin_eta {k : Nat} (x : Fin k) : ⟨x.1, x.2⟩ = x := by
+  cases x
+  rfl
+
 theorem unflatten_flattenString {k : Nat} :
     ∀ xs : List (Fin k), unflattenList k (flattenString xs) (flattenString_list_ofFlatType xs) = xs
   | [] => rfl
   | x :: xs => by
-      change ⟨x.1, x.2⟩ :: unflattenList k (flattenString xs) (flattenString_list_ofFlatType xs) = x :: xs
-      simp [unflatten_flattenString xs]
+      simp [flattenString, unflattenList, fin_eta]
+      exact unflatten_flattenString xs
 
 def validFlatTM (_ : flatTM) : Prop := True
 
