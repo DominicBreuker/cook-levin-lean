@@ -2,14 +2,17 @@ import Complexity.Complexity.Definitions
 
 set_option autoImplicit false
 
-/-- Phase 2 keeps only the abstract polynomial-bound bookkeeping. Later phases can
-refine this into the full Coq-style time model without changing downstream theorem shapes. -/
+/-- Phase-2 polynomial-time bookkeeping. The predicate argument is already kept
+in the interface, even though the current scaffold only records the existence
+of a polynomial bound and does not yet model the underlying machine semantics. -/
 def inTimePoly {X : Type} (_ : X → Prop) : Prop :=
   ∃ f : Nat → Nat, inOPoly f ∧ monotonic f
 
 theorem inTimePoly_linear {X : Type} (P : X → Prop) : inTimePoly P := by
   refine ⟨fun n => n, ?_, ?_⟩ <;> simp [inOPoly, monotonic]
 
+/-- A witness that `R` behaves like a certificate relation for `P`: witnesses
+are sound for `P`, and every positive instance of `P` has some witness. -/
 structure PolyCertRelWitness {X Y : Type} (P : X → Prop) (R : X → Y → Prop) where
   sound : ∀ ⦃x y⦄, R x y → P x
   complete : ∀ ⦃x⦄, P x → ∃ y, R x y
@@ -17,6 +20,8 @@ structure PolyCertRelWitness {X Y : Type} (P : X → Prop) (R : X → Y → Prop
 abbrev polyCertRel {X Y : Type} (P : X → Prop) (R : X → Y → Prop) : Prop :=
   Nonempty (PolyCertRelWitness P R)
 
+/-- A witness that `P` is in NP: an encodable certificate type together with a
+polynomially bounded certificate relation that is sound and complete for `P`. -/
 structure InNPWitness {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) where
   rel : X → Y → Prop
   rel_poly : inTimePoly (fun xy : X × Y => rel xy.1 xy.2)
@@ -44,8 +49,12 @@ theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P
     · intro x h
       exact ⟨(), h⟩
 
+/-- The current scaffold's universal NP source problem on `X`. Later phases can
+refine this placeholder into the full generic NP source used by the Coq proof. -/
 def NPUniversal (X : Type) [encodable X] : X → Prop := fun _ => True
 
+/-- A witness that `P` forward-reduces to `Q`: a map together with a proof that
+membership in `P` is preserved by the map. -/
 structure ReductionWitness {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) where
   reduction : X → Y
