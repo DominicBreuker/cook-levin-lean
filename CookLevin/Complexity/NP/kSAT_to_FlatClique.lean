@@ -26,13 +26,13 @@ def literalAt (N : cnf) (ci li : Nat) : Option literal := do
   let C ← nthClause N ci
   nthLiteral C li
 
-def literalsConflict (l₁ l₂ : literal) : Bool :=
+def literalsAreNegations (l₁ l₂ : literal) : Bool :=
   l₁.2 == l₂.2 && l₁.1 != l₂.1
 
 def positionCompatible (N : cnf) (p q : Nat × Nat) : Bool :=
   p.1 != q.1 &&
     match literalAt N p.1 p.2, literalAt N q.1 q.2 with
-    | some l₁, some l₂ => !(literalsConflict l₁ l₂)
+    | some l₁, some l₂ => !(literalsAreNegations l₁ l₂)
     | _, _ => false
 
 def positionBase (N : cnf) : Nat :=
