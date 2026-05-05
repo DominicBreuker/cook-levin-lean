@@ -163,6 +163,12 @@ def orList : List formula → formula
   | [] => .fneg .ftrue
   | f :: fs => .forr f (orList fs)
 
+theorem fsat_of_or_eval {a : assgn} {f g : formula} :
+    evalFormula a f = true ∨ evalFormula a g = true → FSAT (.forr f g) := by
+  intro h
+  refine ⟨a, ?_⟩
+  simpa [satisfiesFormula, Bool.or_eq_true, evalFormula] using h
+
 theorem FSAT_orList_of_mem :
     ∀ {fs f}, f ∈ fs → FSAT f → FSAT (orList fs)
   | [], _, h, _ => by cases h
@@ -170,13 +176,9 @@ theorem FSAT_orList_of_mem :
       rcases hf with ⟨a, ha⟩
       simp at h
       rcases h with rfl | h
-      · exact ⟨a, by
-          change (evalFormula a f || evalFormula a (orList gs)) = true
-          simpa [satisfiesFormula, Bool.or_eq_true] using (Or.inl ha : evalFormula a f = true ∨ evalFormula a (orList gs) = true)⟩
+      · exact fsat_of_or_eval (Or.inl ha)
       · rcases FSAT_orList_of_mem h ⟨a, ha⟩ with ⟨a', ha'⟩
-        exact ⟨a', by
-          change (evalFormula a' g || evalFormula a' (orList gs)) = true
-          simpa [satisfiesFormula, Bool.or_eq_true] using (Or.inr ha' : evalFormula a' g = true ∨ evalFormula a' (orList gs) = true)⟩
+        exact fsat_of_or_eval (Or.inr ha')
 
 noncomputable def BinaryCC_to_FSAT_instance (C : BinaryCC) : formula :=
   orList ((acceptingRunsFrom C C.steps C.init).map encodeTrace)

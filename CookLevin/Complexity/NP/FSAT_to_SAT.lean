@@ -97,6 +97,8 @@ def FSAT_to_SAT_reduction (f : formula) : cnf :=
 
 def FSAT_to_3SAT_yes : cnf := [[(true, 0), (true, 1), (true, 2)]]
 
+/-- An explicit unsatisfiable 3-CNF over three variables, obtained by listing
+all eight truth-table rows as forbidden clauses. -/
 def FSAT_to_3SAT_no : cnf :=
   [
     [(true, 0), (true, 1), (true, 2)],
