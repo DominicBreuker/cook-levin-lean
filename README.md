@@ -425,9 +425,9 @@ For every step below, the agent working on it should:
 
 Use one of these per step, after replacing the step number.
 
-> Review `README.md`, then complete **Step N** of the implementation plan. Follow the referenced Lean files and the matching `coqdoc/` files closely, keep the change mathematically faithful, update `README.md` to mark the new status, and validate with `lake build`.
+> Review `README.md`, then complete **Step N** of the implementation plan. Follow the referenced Lean files and the matching `coqdoc/` files closely, keep the change mathematically faithful, update the `Current status at a glance` section and mark Step N as complete in the plan, and validate with `lake build`.
 
-> Complete **Step N** from `README.md` only. Do not skip prerequisites. Port the corresponding Coq definitions and proofs as closely as practical, remove placeholder complexity machinery touched by this step, update the status section in `README.md`, and run `lake build`.
+> Complete **Step N** from `README.md` only. Do not skip prerequisites. Port the corresponding Coq definitions and proofs as closely as practical, remove placeholder complexity machinery touched by this step, update the `Current status at a glance` section and mark Step N as complete in the plan, and run `lake build`.
 
 ## Minimum acceptance standard for claiming success
 
