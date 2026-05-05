@@ -21,10 +21,11 @@ The repository already contains:
 - a Lean project configured with `lake`
 - a Cook-Levin scaffold that mirrors the top-level Coq reduction chain
 - placeholder modules for the intermediate Cook-Levin subproblems and reductions
-- initial real definitions and proofs for foundational SAT-style objects:
-  - CNF satisfiability semantics in `CookLevin/Complexity/NP/SAT.lean`
-  - formula satisfiability semantics in `CookLevin/Complexity/NP/FSAT.lean`
-  - `kCNF` and basic `kSAT` lemmas in `CookLevin/Complexity/NP/kSAT.lean`
+- real shared SAT foundations for the bottom layer of the reduction chain:
+  - assignment semantics and shared SAT datatypes in `CookLevin/Complexity/Complexity/Definitions.lean`
+  - CNF satisfiability semantics, variable bookkeeping, and CNF size lemmas in `CookLevin/Complexity/NP/SAT.lean`
+  - formula satisfiability semantics, variable bookkeeping, and formula size in `CookLevin/Complexity/NP/FSAT.lean`
+  - `kCNF`, basic `kSAT` lemmas, and a boolean `kCNF` checker in `CookLevin/Complexity/NP/kSAT.lean`
 
 ## Review of the current scaffold
 
@@ -63,6 +64,12 @@ The plan below is designed so that each phase can be completed while preserving 
 ### Phase 1: shared SAT foundations
 
 Implement and complete the basic semantics used by the whole reduction chain.
+
+Status:
+- completed for `CookLevin/Complexity/Complexity/Definitions.lean`
+- completed for `CookLevin/Complexity/NP/SAT.lean`
+- completed for `CookLevin/Complexity/NP/FSAT.lean`
+- completed for `CookLevin/Complexity/NP/kSAT.lean`
 
 Targets:
 - assignment semantics (`evalVar`)

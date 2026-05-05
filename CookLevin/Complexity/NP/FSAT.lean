@@ -19,6 +19,10 @@ theorem evalFormula_and_iff (a : assgn) (f₁ f₂ : formula) :
     evalFormula a (.fand f₁ f₂) = true ↔ evalFormula a f₁ = true ∧ evalFormula a f₂ = true := by
   simp [evalFormula, Bool.and_eq_true]
 
+theorem evalFormula_and_iff' (a : assgn) (f₁ f₂ : formula) :
+    evalFormula a (.fand f₁ f₂) = false ↔ evalFormula a f₁ = false ∨ evalFormula a f₂ = false := by
+  cases h₁ : evalFormula a f₁ <;> cases h₂ : evalFormula a f₂ <;> simp [evalFormula, h₁, h₂]
+
 theorem evalFormula_or_iff (a : assgn) (f₁ f₂ : formula) :
     evalFormula a (.forr f₁ f₂) = true ↔ evalFormula a f₁ = true ∨ evalFormula a f₂ = true := by
   simp [evalFormula, Bool.or_eq_true]
@@ -89,3 +93,10 @@ theorem formula_varsIn_bound (f : formula) (c : Nat) :
         ih₂ (fun v hv => h v (varInFormula.orRight _ _ hv))⟩
   | fneg f ih =>
       simpa [formula_maxVar] using ih (fun v hv => h v (varInFormula.neg _ hv))
+
+def formula_size : formula → Nat
+  | .ftrue => 1
+  | .fvar _ => 1
+  | .fand f₁ f₂ => formula_size f₁ + formula_size f₂ + 1
+  | .forr f₁ f₂ => formula_size f₁ + formula_size f₂ + 1
+  | .fneg f => formula_size f + 1

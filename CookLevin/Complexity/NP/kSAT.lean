@@ -47,4 +47,13 @@ theorem kCNF_app (k : Nat) (N₁ N₂ : cnf) :
     · exact h₁ C hC
     · exact h₂ C hC
 
+def clause_length_decb (k : Nat) (C : clause) : Bool := C.length == k
+
+def kCNF_decb (k : Nat) (N : cnf) : Bool := N.all (clause_length_decb k)
+
+theorem kCNF_decb_iff (k : Nat) (N : cnf) :
+    kCNF_decb k N = true ↔ kCNF k N := by
+  rw [kCNF_clause_length]
+  simp [kCNF_decb, clause_length_decb]
+
 def kSAT (k : Nat) : cnf → Prop := fun N => 0 < k ∧ kCNF k N ∧ SAT N
