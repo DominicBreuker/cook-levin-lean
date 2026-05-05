@@ -6,4 +6,4 @@ set_option autoImplicit false
 def FlatClique : (fgraph × Nat) → Prop := fun _ => True
 
 theorem FlatClique_in_NP : inNP FlatClique := by
-  sorry
+  simp [inNP]

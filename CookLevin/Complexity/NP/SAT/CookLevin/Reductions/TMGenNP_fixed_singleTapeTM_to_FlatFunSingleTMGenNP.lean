@@ -6,4 +6,4 @@ set_option autoImplicit false
 
 theorem TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP {sig : finType} (M : TM sig 1) :
     TMGenNP_fixed M ⪯p FlatFunSingleTMGenNP := by
-  sorry
+  simp [reducesPolyMO]

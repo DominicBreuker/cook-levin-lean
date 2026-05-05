@@ -111,6 +111,6 @@ theorem size_cnf_app (N₁ N₂ : cnf) :
 namespace SAT_inNP
 
 theorem sat_NP : inNP SAT := by
-  sorry
+  simp [inNP]
 
 end SAT_inNP
