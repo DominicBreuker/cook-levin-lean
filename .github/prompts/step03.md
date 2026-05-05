@@ -4,10 +4,10 @@
 Strengthen `⪯p` so reductions include real polynomial-time computability and full correctness, not just a forward implication.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/Complexity/NP.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.NP.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
+- `README.md`
+- `CookLevin/Complexity/Complexity/NP.lean`
+- `coqdoc/Complexity.Complexity.NP.txt`
+- `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
 
 ## Required work
 1. Redefine `ReductionWitness` / `reducesPolyMO` so a reduction includes:

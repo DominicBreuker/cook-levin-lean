@@ -4,7 +4,7 @@
 Make the repository self-describing so contributors can immediately tell what is faithful, what remains incomplete, and which major repair steps are done.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
+- `README.md`
 - any current status/audit notes already present in the repository
 
 ## Required work

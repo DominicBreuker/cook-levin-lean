@@ -4,12 +4,12 @@
 Replace the `Unit`-based machine model with real machine syntax, encoding, execution, and time-bounded computation notions.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/Complexity/Definitions.lean`
-- relevant machine files already present under `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.TM.TMGenNP.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Undecidability.TM.TM.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.L.TM.TMflat.txt`
+- `README.md`
+- `CookLevin/Complexity/Complexity/Definitions.lean`
+- relevant machine files already present under `CookLevin/Complexity/`
+- `coqdoc/Complexity.NP.TM.TMGenNP.txt`
+- `coqdoc/Undecidability.TM.TM.txt`
+- `coqdoc/Complexity.L.TM.TMflat.txt`
 
 ## Required work
 1. Replace `TM := Unit` and `flatTM := Unit` with real machine-level datatypes or faithful imports/ports of the Coq structures.

@@ -4,12 +4,12 @@
 Eliminate assignment search from the satisfiability reductions and replace it with syntactic Tseitin-style transformations.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/FSAT_to_SAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.SAT.FSAT.FSAT_to_SAT.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/FSAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/kSAT.lean`
+- `README.md`
+- `CookLevin/Complexity/NP/FSAT_to_SAT.lean`
+- `coqdoc/Complexity.NP.SAT.FSAT.FSAT_to_SAT.txt`
+- `CookLevin/Complexity/NP/FSAT.lean`
+- `CookLevin/Complexity/NP/SAT.lean`
+- `CookLevin/Complexity/NP/kSAT.lean`
 
 ## Required work
 1. Remove `FSAT_search` and any related search-based reduction logic.

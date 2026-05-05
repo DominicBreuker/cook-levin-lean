@@ -4,11 +4,11 @@
 Make the NP-membership layer mathematically meaningful by requiring an actual verifier/decider with polynomial running time and explicit certificate-size bounds.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/Complexity/NP.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/GenNP.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.NP.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
+- `README.md`
+- `CookLevin/Complexity/Complexity/NP.lean`
+- `CookLevin/Complexity/NP/GenNP.lean`
+- `coqdoc/Complexity.Complexity.NP.txt`
+- `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
 
 ## Required work
 1. Redefine `inTimePoly` so it depends on a real decider or verifier together with a polynomial bound.

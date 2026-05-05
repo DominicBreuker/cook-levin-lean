@@ -4,13 +4,13 @@
 Repair the generic NP source problem so hardness starts from a mathematically valid formulation rather than scaffolded placeholder witnesses.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/GenNP.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/GenNP_is_hard.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/CanEnumTerm.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.L.GenNP.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.L.GenNP_is_hard.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.L.CanEnumTerm.txt`
+- `README.md`
+- `CookLevin/Complexity/NP/GenNP.lean`
+- `CookLevin/Complexity/GenNP_is_hard.lean`
+- `CookLevin/Complexity/CanEnumTerm.lean`
+- `coqdoc/Complexity.NP.L.GenNP.txt`
+- `coqdoc/Complexity.NP.L.GenNP_is_hard.txt`
+- `coqdoc/Complexity.NP.L.CanEnumTerm.txt`
 
 ## Required work
 1. Repair `GenNPInput` so its verifier side depends on the new nontrivial NP machinery.

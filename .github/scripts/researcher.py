@@ -407,7 +407,7 @@ def main() -> None:
     failure_message = ""
     exit_code = 0
 
-    print(f"Using {AGENT_CONFIG[agent_model]['display_name']} researcher agent ({vibe_agent}).")
+    print(f"Using {AGENT_CONFIG[agent_model]['display_name']} researcher agent.")
     print(f"Prompt source: {prompt_source}")
 
     for run_index in range(1, args.run_count + 1):

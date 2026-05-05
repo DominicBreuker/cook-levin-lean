@@ -4,13 +4,13 @@
 Make the `GenNP → LM → mTM → single-tape TM` pipeline encode genuine bounded machine computations instead of forwarding placeholder predicates.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/L_to_LM.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/LM_to_mTM.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/mTM_to_singleTapeTM.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/TM/IntermediateProblems.lean`
-- matching Coq docs under `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.TM.*`
+- `README.md`
+- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
+- `CookLevin/Complexity/L_to_LM.lean`
+- `CookLevin/Complexity/LM_to_mTM.lean`
+- `CookLevin/Complexity/mTM_to_singleTapeTM.lean`
+- `CookLevin/Complexity/NP/TM/IntermediateProblems.lean`
+- matching Coq docs under `coqdoc/Complexity.NP.TM.*`
 
 ## Required work
 1. Replace trivial certificate-size bookkeeping such as `certificateMeasure := 0` with real size bounds.

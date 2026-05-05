@@ -4,9 +4,9 @@
 Build the FSAT instance directly from tableau constraints instead of enumerating all traces.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
-- matching Coq docs under `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.SAT.CookLevin.Reductions.*`
+- `README.md`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
+- matching Coq docs under `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.*`
 - the repaired BinaryCC and FSAT infrastructure from earlier steps
 
 ## Required work

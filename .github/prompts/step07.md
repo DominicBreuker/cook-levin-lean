@@ -4,12 +4,12 @@
 Preserve the useful tableau encodings while reconnecting them to real machine semantics and explicit complexity bounds.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
-- matching Coq docs under `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.*`
+- `README.md`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
+- matching Coq docs under `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.*`
 
 ## Required work
 1. Re-check the meaning of every intermediate-language definition against the repaired machine layer.

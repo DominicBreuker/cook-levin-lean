@@ -4,10 +4,10 @@
 Ensure that no reduction theorem survives merely because the old reduction notion was too weak.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- every reduction file under `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin/Reductions/`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/kSAT_to_SAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
+- `README.md`
+- every reduction file under `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/`
+- `CookLevin/Complexity/NP/kSAT_to_SAT.lean`
+- `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
 - matching Coq docs for the corresponding reductions
 
 ## Required work

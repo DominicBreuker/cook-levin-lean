@@ -4,10 +4,10 @@
 Rebuild the final Cook-Levin composition theorems so they now rest entirely on the repaired foundations.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT/CookLevin.lean`
+- `README.md`
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
 - the repaired hardness, reduction, and NP-membership files from earlier steps
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.NP.SAT.CookLevin.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.txt`
 
 ## Required work
 1. Rebuild the composition proofs for the main reduction chain using the repaired intermediate theorems.

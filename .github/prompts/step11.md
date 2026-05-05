@@ -4,11 +4,11 @@
 Make the “in NP” side of the completeness theorems mathematically faithful under the repaired verifier infrastructure.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/SAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/FSAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/kSAT.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/NP/FlatClique.lean`
+- `README.md`
+- `CookLevin/Complexity/NP/SAT.lean`
+- `CookLevin/Complexity/NP/FSAT.lean`
+- `CookLevin/Complexity/NP/kSAT.lean`
+- `CookLevin/Complexity/NP/FlatClique.lean`
 - any dedicated in-NP helper files
 - matching Coq docs for SAT, kSAT, and clique NP membership
 

@@ -4,12 +4,12 @@
 Replace the `True`-based complexity placeholders with real encoding, size, monotonicity, and polynomial-growth infrastructure that future steps can build on.
 
 ## Read first
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/README.md`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/Complexity/Definitions.lean`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.Definitions.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.ONotation.txt`
-- `/home/runner/work/cook-levin-lean/cook-levin-lean/coqdoc/Complexity.Complexity.Monotonic.txt`
+- `README.md`
+- `CookLevin/Complexity/Complexity/Definitions.lean`
+- `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
+- `coqdoc/Complexity.Complexity.Definitions.txt`
+- `coqdoc/Complexity.Complexity.ONotation.txt`
+- `coqdoc/Complexity.Complexity.Monotonic.txt`
 
 ## Required work
 1. Replace the placeholder `encodable` scaffold with a meaningful encoding and size interface, or port the corresponding Coq setup closely enough that size bounds can be stated and used downstream.
