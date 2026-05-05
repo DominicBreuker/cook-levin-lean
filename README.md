@@ -4,6 +4,8 @@ This repository currently **builds successfully**, and the Lean sources currentl
 
 The repository presently contains a **compiling scaffold** with the expected theorem names and reduction chain, but several foundational definitions are placeholders that make the current NP-completeness statements too weak to support the intended theorem.
 
+## References
+
 - Coq source: https://github.com/uds-psl/cook-levin
 - Local Coq documentation mirror: `coqdoc/`
 
