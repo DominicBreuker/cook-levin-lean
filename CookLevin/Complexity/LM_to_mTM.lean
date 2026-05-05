@@ -4,7 +4,7 @@ set_option autoImplicit false
 
 namespace M
 
-def M : Sigma (fun tm : TM Bool 2 => Unit) := ⟨(), ()⟩
+def M : Sigma (fun _ : TM Bool 2 => Unit) := ⟨(), ()⟩
 
 end M
 
@@ -19,4 +19,4 @@ theorem LMGenNP_to_TMGenNP_mTM :
   refine ⟨⟨lmToMTMInput, ?_⟩⟩
   intro inst hInst
   rcases hInst with ⟨cert, hSize, hAccepts⟩
-  exact ⟨cert, by simpa [certificateMeasure] using hSize, hAccepts⟩
+  exact ⟨cert, by simp [certificateMeasure], hAccepts⟩
