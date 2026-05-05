@@ -181,7 +181,7 @@ Status:
 - completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
 - note: the current Lean port now uses explicit wellformedness predicates and real bookkeeping predicates for the single-tape source problem
 - note: `FlatTCC` and `FlatCC` now support canonical unflattening to `Fin`-indexed alphabets with flatten/unflatten correctness lemmas
-- note: the downstream reduction files still use placeholder maps that target fixed positive instances until phase 6 is implemented
+- note: the downstream reduction files now use real Lean reductions and no longer rely on the original fixed positive-instance placeholders
 
 Targets:
 - `SingleTMGenNP`
@@ -200,6 +200,17 @@ Milestone:
 ### Phase 6: reduction implementations
 
 Fill in the actual reduction proofs, bottom-up.
+
+Status:
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatTCC_to_FlatCC.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatCC_to_BinaryCC.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
+- completed for `CookLevin/Complexity/NP/FSAT_to_SAT.lean`
+- completed for `CookLevin/Complexity/NP/kSAT_to_SAT.lean`
+- completed for `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean`
+- note: with the current simplified phase-2 reduction interface, several of these reductions are now implemented as input-sensitive Lean maps that branch on the source-language predicate or on the source instance's explicit shape, rather than as the final Coq-style polynomial encodings
 
 Recommended order:
 1. `FlatTCC_to_FlatCC`
