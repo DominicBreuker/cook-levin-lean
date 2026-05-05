@@ -101,9 +101,9 @@ theorem red_NPhard {X Y : Type} [encodable X] [encodable Y]
   rcases hHard with ⟨Z, hEncZ, hZ⟩
   exact ⟨Z, hEncZ, reducesPolyMO_transitive _ _ _ hZ hPQ⟩
 
-theorem NPhard_sig (X : Type) [encodable X] (pred : X → Prop) (P : X → Prop) :
-    NPhard (fun x : {x // pred x} => P x.1) → NPhard P := by
+theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop) (P : X → Prop) :
+    NPhard (fun x : {x // subtype_pred x} => P x.1) → NPhard P := by
   intro hHard
-  apply red_NPhard (P := fun x : {x // pred x} => P x.1)
+  apply red_NPhard (P := fun x : {x // subtype_pred x} => P x.1)
   · exact ⟨⟨Subtype.val, fun {x} hx => hx⟩⟩
   · exact hHard
