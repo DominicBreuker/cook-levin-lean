@@ -23,18 +23,6 @@ import Complexity.CanEnumTerm
 
 set_option autoImplicit false
 
-theorem GenNP_to_LMGenNP :
-    GenNP (List Bool) ⪯p LMGenNP.LMGenNP (List Bool) := by
-  exact ⟨fun _ => [], fun _ _ => trivial⟩
-
-theorem LMGenNP_to_TMGenNP :
-    LMGenNP.LMGenNP (List Bool) ⪯p mTMGenNP_fixed (projT1 M.M) := by
-  exact ⟨fun _ => (), fun _ _ => trivial⟩
-
-theorem TMGenNP_to_TMGenNP_fixed_singleTapeTM :
-    mTMGenNP_fixed (projT1 M.M) ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono (projT1 M.M))) := by
-  exact ⟨id, fun _ _ => trivial⟩
-
 theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
     (_reg__sig : encodable sig)
     (_index__comp : PSigma (fun c : Nat => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
@@ -43,7 +31,8 @@ theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
 
 theorem GenNP_to_SingleTMGenNP :
     GenNP (List Bool) ⪯p FlatSingleTMGenNP := by
-  exact ⟨fun _ => ((), [], 0, 0), fun _ _ => trivial⟩
+  exact reducesPolyMO_transitive _ _ _ GenNP_to_TMGenNP
+    (fixedTM_to_FlatSingleTMGenNP Bool (projT1 (M_multi2mono.M__mono (projT1 M.M))) inferInstance ⟨0, trivial⟩)
 
 theorem FlatSingleTMGenNP_to_FlatTCC : FlatSingleTMGenNP ⪯p FlatTCC.FlatTCCLang := by
   exact FlatSingleTMGenNP_to_FlatTCCLang_poly
