@@ -64,6 +64,7 @@ class VibeRunResult:
 
 
 def positive_int(value: str) -> int:
+    """Parse a strictly positive integer argument."""
     parsed = int(value)
     if parsed <= 0:
         raise argparse.ArgumentTypeError("value must be a positive integer")
@@ -71,6 +72,7 @@ def positive_int(value: str) -> int:
 
 
 def non_negative_int(value: str) -> int:
+    """Parse a non-negative integer argument."""
     parsed = int(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be a non-negative integer")
@@ -78,6 +80,7 @@ def non_negative_int(value: str) -> int:
 
 
 def non_negative_float(value: str) -> float:
+    """Parse a non-negative floating-point argument."""
     parsed = float(value)
     if parsed < 0:
         raise argparse.ArgumentTypeError("value must be non-negative")
@@ -85,6 +88,7 @@ def non_negative_float(value: str) -> float:
 
 
 def parse_args(argv: list[str] | None = None) -> argparse.Namespace:
+    """Parse command-line arguments for the researcher runner."""
     parser = argparse.ArgumentParser(description="Run the Cook-Levin researcher agent.")
     parser.add_argument("--agent-model", type=str, required=True, help="Lean or Devstral")
     parser.add_argument("--run-count", type=positive_int, default=1, help="number of Vibe passes to execute")
