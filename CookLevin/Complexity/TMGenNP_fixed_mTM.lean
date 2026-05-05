@@ -8,7 +8,7 @@ set_option autoImplicit false
 surrounding scaffold still uses a placeholder `encodable` interface, so the
 machine-facing problems record explicit size and time bounds while the concrete
 certificate measure is deferred to later phases. -/
-def certificateMeasure {α : Sort _} [encodable α] (_cert : α) : Nat := 0
+def certificateMeasure {α : Sort _} [encodable α] (cert : α) : Nat := 0
 
 theorem certificateMeasure_eq_zero {α : Sort _} [encodable α] (x : α) :
     certificateMeasure x = 0 := rfl
