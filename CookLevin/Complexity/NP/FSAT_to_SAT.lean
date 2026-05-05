@@ -17,9 +17,19 @@ theorem FSAT_to_SAT_yes_sat : SAT FSAT_to_SAT_yes := by
 noncomputable def FSAT_to_SAT_reduction (f : formula) : cnf :=
   if FSAT f then FSAT_to_SAT_yes else FSAT_to_SAT_no
 
-def FSAT_to_3SAT_yes : cnf := [[(true, 0), (true, 0), (true, 0)]]
+def FSAT_to_3SAT_yes : cnf := [[(true, 0), (true, 1), (true, 2)]]
 
-def FSAT_to_3SAT_no : cnf := [[(true, 0), (true, 0), (true, 0)], [(false, 0), (false, 0), (false, 0)]]
+def FSAT_to_3SAT_no : cnf :=
+  [
+    [(true, 0), (true, 1), (true, 2)],
+    [(false, 0), (false, 1), (false, 2)],
+    [(true, 0), (true, 1), (false, 2)],
+    [(true, 0), (false, 1), (true, 2)],
+    [(false, 0), (true, 1), (true, 2)],
+    [(true, 0), (false, 1), (false, 2)],
+    [(false, 0), (true, 1), (false, 2)],
+    [(false, 0), (false, 1), (true, 2)]
+  ]
 
 theorem FSAT_to_3SAT_yes_sat : kSAT 3 FSAT_to_3SAT_yes := by
   refine ⟨by decide, ?_, ?_⟩
