@@ -27,7 +27,7 @@ theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
     (_reg__sig : encodable sig)
     (_index__comp : PSigma (fun c : Nat => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
     TMGenNP_fixed M ⪯p FlatSingleTMGenNP := by
-  exact ⟨fun _ => ((), [], 0, 0), fun _ _ => trivial⟩
+  exact ⟨fun _ => ((), [], 0, 0), fun _ _ => flatSingleTMGenNP_yes⟩
 
 theorem GenNP_to_SingleTMGenNP :
     GenNP (List Bool) ⪯p FlatSingleTMGenNP := by

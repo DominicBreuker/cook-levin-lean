@@ -45,8 +45,9 @@ The main gaps are:
    - `TM`, `flatTM`, and the machine-conversion modules are still stubs.
    - This blocks the early reductions from generic NP problems to tableau-style encodings.
 
-2. **Cook-Levin subproblems are only scaffolded**
-   - `FlatTCC`, `FlatCC`, `BinaryCC`, and `SingleTMGenNP` still need their real data structures, wellformedness conditions, and equivalence lemmas.
+2. **Cook-Levin subproblems now have real intermediate languages**
+   - `FlatTCC`, `FlatCC`, `BinaryCC`, and `SingleTMGenNP` now carry real Lean predicates with wellformedness conditions and canonical flattening / unflattening lemmas.
+   - The remaining work is to replace the still-constant phase-6 reductions by the actual constructions from the Coq development.
 
 3. **Major reduction implementations are still scaffolded**
    - The reductions in the Cook-Levin chain are present as theorem shells, but not yet implemented.
@@ -172,6 +173,13 @@ Milestone:
 ### Phase 5: Cook-Levin subproblems
 
 Implement the intermediate encodings used to move from TM computations to SAT-like objects.
+
+Status:
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
+- completed for `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
+- note: the current Lean port now uses explicit wellformedness predicates, canonical unflattening to `Fin`-indexed alphabets for `FlatTCC` and `FlatCC`, and real bookkeeping predicates for the single-tape source problem while the downstream reduction files still use placeholder maps that target fixed positive instances until phase 6 is implemented
 
 Targets:
 - `SingleTMGenNP`

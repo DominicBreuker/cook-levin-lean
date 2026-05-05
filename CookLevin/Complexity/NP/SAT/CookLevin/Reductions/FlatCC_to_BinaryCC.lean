@@ -5,4 +5,4 @@ import Complexity.NP.SAT.CookLevin.Subproblems.BinaryCC
 set_option autoImplicit false
 
 theorem FlatCC_to_BinaryCC_poly : FlatCCLang ⪯p BinaryCCLang := by
-  exact ⟨fun _ => ⟨0, 0, [], [], [], 0⟩, fun _ _ => trivial⟩
+  exact ⟨fun _ => binaryCCYesInstance, fun _ _ => binaryCCYesInstance_valid⟩
