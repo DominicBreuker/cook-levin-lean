@@ -2,20 +2,54 @@ import Complexity.Complexity.Definitions
 
 set_option autoImplicit false
 
+def isValidCert {σ : Type} (k : Nat) (cert : List σ) : Prop :=
+  cert.length ≤ k
+
+def isValidInput {σ : Type} (s : List σ) (k : Nat) (inp : List σ) : Prop :=
+  ∃ cert, isValidCert k cert ∧ inp = s ++ cert
+
 def SingleTMGenNP
-    (_i : Sigma (fun sig : finType => TM sig 1 × List sig × Nat × Nat)) : Prop := True
+    (i : Sigma (fun sig : finType => TM sig 1 × List sig × Nat × Nat)) : Prop :=
+  match i with
+  | ⟨sig, (_, _s, maxSize, _steps)⟩ => ∃ cert : List sig, isValidCert maxSize cert
 
-def FlatSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop := fun _ => True
+def FlatSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop
+  | (M, s, maxSize, _steps) =>
+      validFlatTM M ∧
+      list_ofFlatType 1 s ∧
+      ∃ cert, list_ofFlatType 1 cert ∧ isValidCert maxSize cert
 
-def FlatFunSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop := fun _ => True
+def FlatFunSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop
+  | (M, s, maxSize, _steps) =>
+      validFlatTM M ∧
+      list_ofFlatType 1 s ∧
+      ∃ cert, list_ofFlatType 1 cert ∧ isValidCert maxSize cert
 
-theorem vec_case1 (X : Type) (_ : List X) : True := by
-  trivial
+theorem vec_case1 (X : Type) (v : List X) :
+    v.length = 1 → ∃ x, v = [x] := by
+  cases v with
+  | nil => simp
+  | cons x xs =>
+      cases xs with
+      | nil => simp
+      | cons y ys => simp
 
-theorem initTape_isFlatteningConfigOf (_sig states : finType) (_s : List Nat) (_s0 : states) : True := by
-  trivial
+theorem initTape_isValidInput (_sig states : finType) (s : List Nat) :
+    list_ofFlatType 1 s → isValidInput s 0 s := by
+  intro hs
+  refine ⟨[], ?_, by simp⟩
+  simp [isValidCert]
 
 theorem FlatFunSingleTMGenNP_FlatSingleTMGenNP_equiv
     (M : flatTM) (s : List Nat) (maxSize steps : Nat) :
     FlatFunSingleTMGenNP (M, s, maxSize, steps) ↔ FlatSingleTMGenNP (M, s, maxSize, steps) := by
   simp [FlatFunSingleTMGenNP, FlatSingleTMGenNP]
+
+theorem flatSingleTMGenNP_yes :
+    FlatSingleTMGenNP ((), [], 0, 0) := by
+  refine ⟨trivial, list_ofFlatType_nil 1, ?_⟩
+  refine ⟨[], list_ofFlatType_nil 1, by simp [isValidCert]⟩
+
+theorem flatFunSingleTMGenNP_yes :
+    FlatFunSingleTMGenNP ((), [], 0, 0) := by
+  simpa [FlatFunSingleTMGenNP, FlatSingleTMGenNP] using flatSingleTMGenNP_yes
