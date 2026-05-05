@@ -99,20 +99,20 @@ theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     exact ⟨c, hPx, hc⟩
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
-  ∃ Y : Type, ∃ _ : encodable Y, @reducesPolyMO Y X _ _ (NPUniversal Y) P
+  ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P
 
 def NPcomplete {X : Type} [encodable X] (P : X → Prop) : Prop := NPhard P ∧ inNP P
 
 theorem red_NPhard {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → NPhard P → NPhard Q := by
-  intro hPQ hHard
-  rcases hHard with ⟨Z, hEncZ, hZ⟩
-  exact ⟨Z, hEncZ, reducesPolyMO_transitive _ _ _ hZ hPQ⟩
+  intro hPQ hHard Z hEncZ R hR
+  exact reducesPolyMO_transitive _ _ _ (hHard Z hEncZ R hR) hPQ
 
 theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop) (P : X → Prop) :
     NPhard (fun x : {x // subtype_pred x} => P x.1) → NPhard P := by
   intro hHard
-  apply red_NPhard (P := fun x : {x // subtype_pred x} => P x.1)
-  · exact ⟨⟨Subtype.val, fun {x} hx => hx⟩⟩
-  · exact hHard
+  intro Y hEncY Q hQ
+  exact reducesPolyMO_transitive _ _ _
+    (hHard Y hEncY Q hQ)
+    ⟨⟨Subtype.val, fun {x} hx => hx⟩⟩

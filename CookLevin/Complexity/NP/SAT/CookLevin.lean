@@ -25,7 +25,7 @@ set_option autoImplicit false
 
 theorem GenNP_to_LMGenNP :
     GenNP (List Bool) ⪯p LMGenNP.LMGenNP (List Bool) := by
-  exact ⟨id, fun _ _ => trivial⟩
+  exact ⟨fun _ => [], fun _ _ => trivial⟩
 
 theorem LMGenNP_to_TMGenNP :
     LMGenNP.LMGenNP (List Bool) ⪯p mTMGenNP_fixed (projT1 M.M) := by
@@ -79,7 +79,7 @@ theorem GenNP_to_3SAT : GenNP (List Bool) ⪯p kSAT 3 := by
   exact reducesPolyMO_transitive _ _ _ GenNP_to_SingleTMGenNP FlatSingleTMGenNP_to_3SAT
 
 theorem CookLevin0 : NPcomplete (kSAT 3) := by
-  refine ⟨red_NPhard _ _ GenNP_to_3SAT (NPhard_GenNP (List Bool)), inNP_kSAT 3⟩
+  refine ⟨red_NPhard _ _ GenNP_to_3SAT (NPhard_GenNP (List Bool) boollist_enum.boollists_enum_term), inNP_kSAT 3⟩
 
 /-- The Cook-Levin-Theorem: SAT is NP-complete. -/
 theorem CookLevin : NPcomplete SAT := by
