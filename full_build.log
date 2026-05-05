@@ -1,0 +1,99 @@
+⚠ [2/301] Replayed Complexity.Complexity.Definitions
+warning: CookLevin/Complexity/Complexity/Definitions.lean:226:42: This simp argument is unused:
+  fin_eta
+
+Hint: Omit it from the simp argument list.
+  simp [flattenString, unflattenList,̵ ̵f̵i̵n̵_̵e̵t̵a̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+✖ [1123/1373] Building Complexity.Complexity.NP (479ms)
+trace: .> LEAN_PATH=/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/Cli/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/batteries/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/Qq/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/aesop/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/proofwidgets/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/importGraph/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/LeanSearchClient/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/plausible/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/packages/mathlib/.lake/build/lib/lean:/home/runner/work/cook-levin-lean/cook-levin-lean/.lake/build/lib/lean /home/runner/.elan/toolchains/leanprover--lean4---v4.30.0-rc2/bin/lean /home/runner/work/cook-levin-lean/cook-levin-lean/CookLevin/Complexity/Complexity/NP.lean -o /home/runner/work/cook-levin-lean/cook-levin-lean/.lake/build/lib/lean/Complexity/Complexity/NP.olean -i /home/runner/work/cook-levin-lean/cook-levin-lean/.lake/build/lib/lean/Complexity/Complexity/NP.ilean -c /home/runner/work/cook-levin-lean/cook-levin-lean/.lake/build/ir/Complexity/Complexity/NP.c --setup /home/runner/work/cook-levin-lean/cook-levin-lean/.lake/build/ir/Complexity/Complexity/NP.setup.json --json
+error: CookLevin/Complexity/Complexity/NP.lean:12:63: unknown tactic
+error: Lean exited with code 1
+⚠ [3318/3335] Replayed Complexity.NP.SAT.CookLevin.Subproblems.FlatCC
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean:156:75: This simp argument is unused:
+  hcard
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenCards, flatten_unflattenCard, flatten_unflattenCards, hcard,̵ ̵h̵c̵a̵r̵d̵s]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean:156:82: This simp argument is unused:
+  hcards
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenCards, flatten_unflattenCard, flatten_unflattenCards, hcard,̵ ̵h̵c̵a̵r̵d̵s̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean:166:75: This simp argument is unused:
+  hs
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenFinal, flatten_unflattenList, flatten_unflattenFinal, hs̵,̵ ̵h̵final]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean:166:79: This simp argument is unused:
+  hfinal
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenFinal, flatten_unflattenList, flatten_unflattenFinal, hs,̵ ̵h̵f̵i̵n̵a̵l̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean:178:34: unused variable `hcard'`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3319/3335] Replayed Complexity.NP.SAT.CookLevin.Subproblems.SingleTMGenNP
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean:37:36: unused variable `states`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+⚠ [3321/3335] Replayed Complexity.NP.SAT.CookLevin.Subproblems.FlatTCC
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:96:2: try 'simp' instead of 'simpa'
+
+Note: This linter can be disabled with `set_option linter.unnecessarySimpa false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:144:60: This simp argument is unused:
+  hp
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenCard, flattenCard, flatten_unflattenCardP, hp̵,̵ ̵h̵c]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:144:64: This simp argument is unused:
+  hc
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenCard, flattenCard, flatten_unflattenCardP, hp,̵ ̵h̵c̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:154:75: This simp argument is unused:
+  hcard
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenCards, flatten_unflattenCard, flatten_unflattenCards, hcard,̵ ̵h̵c̵a̵r̵d̵s]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:154:82: This simp argument is unused:
+  hcards
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenCards, flatten_unflattenCard, flatten_unflattenCards, hcard,̵ ̵h̵c̵a̵r̵d̵s̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:164:75: This simp argument is unused:
+  hs
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenFinal, flatten_unflattenList, flatten_unflattenFinal, hs̵,̵ ̵h̵final]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:164:79: This simp argument is unused:
+  hfinal
+
+Hint: Omit it from the simp argument list.
+  simp [unflattenFinal, flatten_unflattenList, flatten_unflattenFinal, hs,̵ ̵h̵f̵i̵n̵a̵l̵]
+
+Note: This linter can be disabled with `set_option linter.unusedSimpArgs false`
+warning: CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean:182:34: unused variable `hcard'`
+
+Note: This linter can be disabled with `set_option linter.unusedVariables false`
+Some required targets logged failures:
+- Complexity.Complexity.NP

@@ -2,11 +2,13 @@ set_option autoImplicit false
 
 universe u v
 
-class encodable (α : Sort u) : Prop where
-  dummy : True := by
-    trivial
+class encodable (α : Sort u) where
+  size : α → Nat
+  size_ge_logical : ∀ x : α, ∃ n : Nat, size x ≥ n
 
-instance instEncodableDefault (α : Sort u) : encodable α := ⟨by trivial⟩
+instance instEncodableDefault (α : Sort u) : encodable α where
+  size := fun _ => 0
+  size_ge_logical := fun _ => ⟨0, by simp⟩
 
 abbrev finType := Type
 abbrev flatTM := Unit
@@ -228,9 +230,14 @@ def validFlatTM (_ : flatTM) : Prop := True
 
 def isValidFlatTM (_ : flatTM) : Bool := true
 
-def monotonic (_ : Nat → Nat) : Prop := True
+def monotonic (f : Nat → Nat) : Prop :=
+  ∀ x x' : Nat, x ≤ x' → f x ≤ f x'
 
-def inOPoly (_ : Nat → Nat) : Prop := True
+def inO (f g : Nat → Nat) : Prop :=
+  ∃ c n0 : Nat, ∀ n : Nat, n0 ≤ n → f n ≤ c * g n
+
+def inOPoly (f : Nat → Nat) : Prop :=
+  ∃ n : Nat, inO f (fun x => x ^ n)
 
 def computableTime' {α : Sort u} {β : Sort v} (_ : α) (_ : β) : Prop := True
 

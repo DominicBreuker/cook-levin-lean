@@ -8,8 +8,8 @@ of a polynomial bound and does not yet model the underlying machine semantics. -
 def inTimePoly {X : Type} (_ : X → Prop) : Prop :=
   ∃ f : Nat → Nat, inOPoly f ∧ monotonic f
 
-theorem inTimePoly_linear {X : Type} (P : X → Prop) : inTimePoly P := by
-  refine ⟨fun n => n, ?_, ?_⟩ <;> simp [inOPoly, monotonic]
+theorem inTimePoly_linear {X : Type} (P : X → Prop) : inTimePoly P :=
+  ⟨fun n => n, ⟨1, 0, fun n _ => Nat.le_mul_of_pos_left n (by norm_num)⟩, fun x x' h => h⟩
 
 /-- A witness that `R` behaves like a certificate relation for `P`: witnesses
 are sound for `P`, and every positive instance of `P` has some witness. -/
