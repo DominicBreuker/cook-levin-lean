@@ -7,10 +7,6 @@ set_option autoImplicit false
 
 open Classical
 
-def concatMap {α β : Type} (f : α → List β) : List α → List β
-  | [] => []
-  | x :: xs => f x ++ concatMap f xs
-
 def allBitStrings : Nat → List (List Bool)
   | 0 => [[]]
   | n + 1 =>
@@ -128,19 +124,11 @@ theorem encodeTrace_sat (trace : List (List Bool)) : FSAT (encodeTrace trace) :=
   refine ⟨trueVarsAt 0 (concatBits trace), ?_⟩
   simpa [encodeTrace] using encodeBitsAt_sat 0 (concatBits trace)
 
-theorem mem_concatMap {α β : Type} (f : α → List β) (xs : List α) (y : β) :
-    y ∈ concatMap f xs ↔ ∃ x, x ∈ xs ∧ y ∈ f x := by
-  induction xs with
-  | nil =>
-      simp [concatMap]
-  | cons x xs ih =>
-      simp [concatMap, ih]
-
 noncomputable def acceptingRunsFrom (C : BinaryCC) : Nat → List Bool → List (List (List Bool))
   | 0, s =>
       if satFinal C.offset C.init.length C.final s then [[s]] else []
   | n + 1, s =>
-      concatMap
+      List.flatMap
         (fun t =>
           if validStep C.offset C.width C.cards s t then
             (acceptingRunsFrom C n t).map (fun trace => s :: trace)
@@ -160,7 +148,17 @@ theorem acceptingRunsFrom_complete (C : BinaryCC) :
       have hnextMem : t ∈ allBitStrings C.init.length := allBitStrings_complete t hnextLen
       rcases acceptingRunsFrom_complete C hrest hnextLen hfinal with ⟨trace, htrace⟩
       refine ⟨s :: trace, ?_⟩
-      exact (mem_concatMap _ _ _).2 ⟨t, hnextMem, by simp [acceptingRunsFrom, hstep, htrace]⟩
+      have hmem :
+          s :: trace ∈ List.flatMap
+            (fun t =>
+              if validStep C.offset C.width C.cards s t then
+                (acceptingRunsFrom C n t).map (fun trace => s :: trace)
+              else [])
+            (allBitStrings C.init.length) := by
+        rw [List.mem_flatMap]
+        refine ⟨t, hnextMem, ?_⟩
+        simp [hstep, htrace]
+      simpa [acceptingRunsFrom] using hmem
 
 def orList : List formula → formula
   | [] => .fneg .ftrue

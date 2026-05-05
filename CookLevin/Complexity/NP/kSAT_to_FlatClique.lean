@@ -48,12 +48,8 @@ def addCompatibleEdges (N : cnf) (positions : List (Nat × Nat)) (p : Nat × Nat
 def cliqueVertices (N : cnf) : List Nat :=
   (clausePositions N).map (encodePosition N)
 
-def concatEdges : List (List fedge) → List fedge
-  | [] => []
-  | es :: ess => es ++ concatEdges ess
-
 def cliqueEdges (N : cnf) : List fedge :=
-  concatEdges ((clausePositions N).map (addCompatibleEdges N (clausePositions N)))
+  (clausePositions N).flatMap (addCompatibleEdges N (clausePositions N))
 
 def kSAT_to_FlatClique_instance (N : cnf) : fgraph × Nat :=
   (((cliqueVertices N).length, cliqueEdges N), N.length)
