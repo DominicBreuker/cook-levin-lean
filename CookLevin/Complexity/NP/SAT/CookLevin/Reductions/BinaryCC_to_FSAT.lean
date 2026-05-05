@@ -5,4 +5,4 @@ import Complexity.NP.FSAT
 set_option autoImplicit false
 
 theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
-  sorry
+  simp [reducesPolyMO]
