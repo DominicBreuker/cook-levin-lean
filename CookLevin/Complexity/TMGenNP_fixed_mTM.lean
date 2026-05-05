@@ -8,7 +8,7 @@ set_option autoImplicit false
 surrounding scaffold still uses a placeholder `encodable` interface, so the
 machine-facing problems record explicit size and time bounds while the concrete
 certificate measure is deferred to later phases. -/
-def certificateMeasure {α : Sort _} [encodable α] (_ : α) : Nat := 0
+def certificateMeasure {α : Sort _} [encodable α] (_cert : α) : Nat := 0
 
 theorem certificateMeasure_eq_zero {α : Sort _} [encodable α] (x : α) :
     certificateMeasure x = 0 := rfl
@@ -26,10 +26,6 @@ structure Instance (X : Type) [encodable X] where
 
 def LMGenNP (X : Type) [encodable X] : Instance X → Prop :=
   fun inst => ∃ cert : X, certificateMeasure cert ≤ inst.maxSize ∧ inst.source.rel cert
-
-theorem lmGenNP_iff {X : Type} [encodable X] (inst : Instance X) :
-    LMGenNP X inst ↔ ∃ cert : X, certificateMeasure cert ≤ inst.maxSize ∧ inst.source.rel cert := by
-  rfl
 
 end LMGenNP
 
