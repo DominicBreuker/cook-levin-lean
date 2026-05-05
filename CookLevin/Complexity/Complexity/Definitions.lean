@@ -20,6 +20,30 @@ abbrev assgn := List var
 
 def evalVar (a : assgn) (v : var) : Bool := decide (v ∈ a)
 
+def assgnSubset (a a' : assgn) : Prop := ∀ ⦃v : var⦄, v ∈ a → v ∈ a'
+
+def assgnEquiv (a a' : assgn) : Prop := assgnSubset a a' ∧ assgnSubset a' a
+
+theorem evalVar_in_iff (a : assgn) (v : var) :
+    evalVar a v = true ↔ v ∈ a := by
+  simp [evalVar]
+
+theorem evalVar_monotonic {a a' : assgn} (hSubset : assgnSubset a a') (v : var) :
+    evalVar a v = true → evalVar a' v = true := by
+  intro hEval
+  rw [evalVar_in_iff] at hEval ⊢
+  exact hSubset hEval
+
+theorem evalVar_assgn_equiv {a a' : assgn} (hEq : assgnEquiv a a') (v : var) :
+    evalVar a v = evalVar a' v := by
+  by_cases hv : v ∈ a <;> by_cases hv' : v ∈ a'
+  · simp [evalVar, hv, hv']
+  · exfalso
+    exact hv' (hEq.1 hv)
+  · exfalso
+    exact hv (hEq.2 hv')
+  · simp [evalVar, hv, hv']
+
 inductive formula where
   | ftrue
   | fvar (v : var)

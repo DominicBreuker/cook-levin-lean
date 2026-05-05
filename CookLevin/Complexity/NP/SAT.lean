@@ -15,6 +15,26 @@ def satisfiesCnf (a : assgn) (N : cnf) : Prop := evalCnf a N = true
 
 def SAT (N : cnf) : Prop := ∃ a : assgn, satisfiesCnf a N
 
+theorem evalClause_step_inv (a : assgn) (C : clause) (l : literal) (b : Bool) :
+    evalClause a (l :: C) = b ↔
+      ∃ b₁ b₂, evalClause a C = b₂ ∧ evalLiteral a l = b₁ ∧ b = (b₁ || b₂) := by
+  constructor
+  · intro h
+    refine ⟨evalLiteral a l, evalClause a C, rfl, rfl, ?_⟩
+    simpa [evalClause] using h.symm
+  · rintro ⟨b₁, b₂, rfl, rfl, h⟩
+    simpa [evalClause] using h.symm
+
+theorem evalCnf_step_inv (a : assgn) (N : cnf) (C : clause) (b : Bool) :
+    evalCnf a (C :: N) = b ↔
+      ∃ b₁ b₂, evalCnf a N = b₂ ∧ evalClause a C = b₁ ∧ b = (b₁ && b₂) := by
+  constructor
+  · intro h
+    refine ⟨evalClause a C, evalCnf a N, rfl, rfl, ?_⟩
+    simpa [evalCnf] using h.symm
+  · rintro ⟨b₁, b₂, rfl, rfl, h⟩
+    simpa [evalCnf] using h.symm
+
 theorem evalLiteral_var_iff (a : assgn) (b : Bool) (v : var) :
     evalLiteral a (b, v) = true ↔ evalVar a v = b := by
   simp [evalLiteral]
@@ -64,6 +84,33 @@ theorem evalCnf_app_iff (a : assgn) (N₁ N₂ : cnf) :
     rcases List.mem_append.mp hC with hC | hC
     · exact h₁ C hC
     · exact h₂ C hC
+
+theorem evalLiteral_assgn_equiv {a₁ a₂ : assgn} (hEq : assgnEquiv a₁ a₂) (l : literal) :
+    evalLiteral a₁ l = evalLiteral a₂ l := by
+  rcases l with ⟨b, v⟩
+  rw [evalLiteral, evalLiteral, evalVar_assgn_equiv hEq v]
+
+theorem evalClause_assgn_equiv {a₁ a₂ : assgn} (hEq : assgnEquiv a₁ a₂) (C : clause) :
+    evalClause a₁ C = evalClause a₂ C := by
+  induction C with
+  | nil =>
+      rfl
+  | cons l C ih =>
+      have hLit : evalLiteral a₁ l = evalLiteral a₂ l := evalLiteral_assgn_equiv hEq l
+      have ih' : C.any (evalLiteral a₁) = C.any (evalLiteral a₂) := by
+        simpa [evalClause] using ih
+      simp [evalClause, hLit, ih']
+
+theorem evalCnf_assgn_equiv {a₁ a₂ : assgn} (hEq : assgnEquiv a₁ a₂) (N : cnf) :
+    evalCnf a₁ N = evalCnf a₂ N := by
+  induction N with
+  | nil =>
+      rfl
+  | cons C N ih =>
+      have hClause : evalClause a₁ C = evalClause a₂ C := evalClause_assgn_equiv hEq C
+      have ih' : N.all (evalClause a₁) = N.all (evalClause a₂) := by
+        simpa [evalCnf] using ih
+      simp [evalCnf, hClause, ih']
 
 def varInLiteral (v : var) (l : literal) : Prop := ∃ b, l = (b, v)
 
