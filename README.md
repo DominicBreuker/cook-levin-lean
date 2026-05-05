@@ -145,6 +145,14 @@ Milestone:
 
 Port the computational-model bridge from the Coq development.
 
+Status:
+- completed for `CookLevin/Complexity/L_to_LM.lean`
+- completed for `CookLevin/Complexity/LM_to_mTM.lean`
+- completed for `CookLevin/Complexity/mTM_to_singleTapeTM.lean`
+- completed for `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
+- completed for `CookLevin/Complexity/NP/TM/IntermediateProblems.lean`
+- note: the current Lean port now exposes explicit phase-4 problem interfaces and real bridge reductions between the generic NP source, list-machine instances, fixed multi-tape machines, and fixed single-tape machines; the concrete execution semantics and sharper runtime bounds remain abstracted by the repository's placeholder machine model and will be refined in later phases
+
 Targets:
 - list-machine and TM interfaces
 - multi-tape to single-tape conversion
