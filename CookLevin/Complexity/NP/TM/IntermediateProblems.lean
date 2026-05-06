@@ -6,12 +6,18 @@ import Complexity.mTM_to_singleTapeTM
 
 set_option autoImplicit false
 
+abbrev IntermediateTMTarget : TMGenNPFixedInput Bool → Prop :=
+  fun inst =>
+    ∃ cert : List Bool,
+      @certificateMeasure (List Bool) (@instEncodableList Bool instEncodableBool) cert ≤ inst.maxSize ∧
+        inst.accepts cert
+
 theorem GenNP_to_TMGenNP :
-    GenNP (List Bool) ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono (projT1 M.M))) := by
+    GenNP (List Bool) ⪯p IntermediateTMTarget := by
   have hLM : GenNP (List Bool) ⪯p LMGenNP.LMGenNP (List Bool) :=
     GenNP_to_LMGenNP (List Bool)
-  have hmTM : LMGenNP.LMGenNP (List Bool) ⪯p mTMGenNP_fixed (projT1 M.M) :=
+  have hmTM : LMGenNP.LMGenNP (List Bool) ⪯p LMtoMTMTarget :=
     LMGenNP_to_TMGenNP_mTM
-  have hTM : mTMGenNP_fixed (projT1 M.M) ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono (projT1 M.M))) :=
-    TMGenNP_mTM_to_TMGenNP_singleTM (projT1 M.M)
+  have hTM : LMtoMTMTarget ⪯p IntermediateTMTarget := by
+    simpa [IntermediateTMTarget] using ExplicitMTMTarget_to_TMGenNP_singleTM (projT1 M.M)
   exact reducesPolyMO_transitive _ _ _ (reducesPolyMO_transitive _ _ _ hLM hmTM) hTM

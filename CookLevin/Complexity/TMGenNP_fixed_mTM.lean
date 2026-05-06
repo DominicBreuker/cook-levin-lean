@@ -37,8 +37,10 @@ structure mTMGenNPFixedInput (σ : Type) where
   steps : Nat
   accepts : List σ → Prop
 
-def mTMGenNP_fixed {σ : Type} (_ : TM σ 2) : mTMGenNPFixedInput σ → Prop :=
-  fun inst => ∃ cert : List σ, certificateMeasure cert ≤ inst.maxSize ∧ inst.accepts cert
+def mTMGenNP_fixed {σ : Type} [instσ : encodable σ] (_ : TM σ 2) : mTMGenNPFixedInput σ → Prop :=
+  fun inst =>
+    ∃ cert : List σ,
+      @certificateMeasure (List σ) (@instEncodableList σ instσ) cert ≤ inst.maxSize ∧ inst.accepts cert
 
 structure TMGenNPFixedInput (σ : Type) where
   input : List σ
@@ -48,5 +50,7 @@ structure TMGenNPFixedInput (σ : Type) where
 
 def initTape_singleTapeTM {σ : Type} (s : List σ) : List σ := s
 
-def TMGenNP_fixed {σ : Type} (_ : TM σ 1) : TMGenNPFixedInput σ → Prop :=
-  fun inst => ∃ cert : List σ, certificateMeasure cert ≤ inst.maxSize ∧ inst.accepts cert
+def TMGenNP_fixed {σ : Type} [instσ : encodable σ] (_ : TM σ 1) : TMGenNPFixedInput σ → Prop :=
+  fun inst =>
+    ∃ cert : List σ,
+      @certificateMeasure (List σ) (@instEncodableList σ instσ) cert ≤ inst.maxSize ∧ inst.accepts cert
