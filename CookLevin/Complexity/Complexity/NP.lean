@@ -132,50 +132,49 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
     [encodable X] [encodable Y] [encodable Z]
     (P : X → Prop) (Q : Y → Prop) (R : Z → Prop) :
     P ⪯p Q → Q ⪯p R → P ⪯p R := by
-  -- This is the polynomial-composition argument from the Coq `reducesPolyMO_transitive`
-  -- proof in `coqdoc/Complexity.Complexity.NP.txt`; the Lean scaffold now exposes the
-  -- stronger witnesses needed for the result, but the final composed `inOPoly` proof and
-  -- its associated size-bound bookkeeping still need to be ported faithfully.
   intros hPQ hQR
-  -- Extract the witnesses from our hypotheses
   rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
   rcases hQR with ⟨⟨g, hg_poly, hg_correct⟩⟩
-  -- Construct the composition reduction
   refine ⟨⟨g ∘ f, ?_, fun {x} => ?_⟩⟩
-  -- We need to prove: polyTimeComputable (g ∘ f)
-  -- Extract polynomial witnesses
   rcases hf_poly with ⟨⟨bound_f, hbound_poly_f, hbound_mono_f, hbound_valid_f⟩⟩
   rcases hg_poly with ⟨⟨bound_g, hbound_poly_g, hbound_mono_g, hbound_valid_g⟩⟩
-  -- Construct polynomial bound for composition
-  -- We use that encodable.size ((g ∘ f) x) = encodable.size (g (f x))
-  -- ≤ bound_g (encodable.size (f x))  (by hbound_valid_g)
-  -- ≤ bound_g (bound_f (encodable.size x))  (by hbound_valid_f and monotonicity)
   have hbound_valid_comp : ∀ x : X, encodable.size ((g ∘ f) x) ≤ (bound_g ∘ bound_f) (encodable.size x) := by
     intro x
     calc encodable.size ((g ∘ f) x)
       _ = encodable.size (g (f x)) := rfl
       _ ≤ bound_g (encodable.size (f x)) := hbound_valid_g (f x)
       _ ≤ bound_g (bound_f (encodable.size x)) := by apply hbound_mono_g; exact hbound_valid_f x
-  -- Construct the polynomial computable witness for the composition
-  sorry
+  · exact ⟨⟨bound_g ∘ bound_f, inOPoly_comp hbound_poly_f hbound_poly_g,
+        monotonic_comp hbound_mono_f hbound_mono_g, hbound_valid_comp⟩⟩
+  · simpa using Iff.trans (@hf_correct x) (@hg_correct (f x))
 
 
 theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → inNP Q → inNP P := by
   intros hPQ hQinNP
-  -- Extract the reduction witness  
   rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
-  -- Extract the NP witness for Q
+  rcases hf_poly with ⟨⟨bound_f, hbound_poly_f, hbound_mono_f, hbound_valid_f⟩⟩
   rcases hQinNP with ⟨Y_cert, _, ⟨⟨R, hR_poly, hR_cert⟩⟩⟩
-  -- Construct the certificate relation for P: fun x cert => R (f x) cert
-  use Y_cert
-  use inferInstance
+  rcases hR_poly with ⟨time_R, hdec_R, htime_poly_R, htime_mono_R⟩
+  rcases hR_cert with ⟨⟨cert_bound, hsound_R, hcomplete_R, hcert_poly_R, hcert_mono_R⟩⟩
+  refine ⟨Y_cert, inferInstance, ?_⟩
   refine ⟨⟨fun x cert => R (f x) cert, ?_, ?_⟩⟩
-  -- Show that the new relation is polynomial-time decidable
-  sorry
-  -- Show that the new relation is a polynomial certificate relation for P
-  sorry
+  · refine ⟨time_R, ?_, htime_poly_R, htime_mono_R⟩
+    rcases hdec_R with ⟨dec_R, hdec_R⟩
+    refine ⟨fun xc => dec_R (f xc.1, xc.2), ?_⟩
+    intro xc
+    simpa using hdec_R (f xc.1, xc.2)
+  · refine ⟨⟨cert_bound ∘ bound_f, ?_, ?_, inOPoly_comp hbound_poly_f hcert_poly_R,
+        monotonic_comp hbound_mono_f hcert_mono_R⟩⟩
+    · intro x cert hrel
+      exact hf_correct.mpr (hsound_R hrel)
+    · intro x hx
+      rcases hcomplete_R (hf_correct.mp hx) with ⟨cert, hcert, hsize⟩
+      refine ⟨cert, hcert, ?_⟩
+      calc
+        encodable.size cert ≤ cert_bound (encodable.size (f x)) := hsize
+        _ ≤ cert_bound (bound_f (encodable.size x)) := hcert_mono_R _ _ (hbound_valid_f x)
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P
@@ -194,18 +193,10 @@ theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop)
   intro Y hEncY Q hQ
   have subtype_reduction : (fun x : {x // subtype_pred x} => P x.1) ⪯p P := by
     refine ⟨⟨Subtype.val, ?_, fun {x} => Iff.rfl⟩⟩
-    -- Show that Subtype.val is polynomial-time computable
-    -- The size of val x is bounded by the size of x
     refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
-    -- bound_poly: inOPoly (fun n => n) (the identity function is linear, hence polynomial)
-    · refine ⟨1, ?_⟩
-      refine ⟨1, ?_⟩
-      intros n hn
-      simp
-    -- bound_mono: monotonic (fun n => n) (the identity function is monotonic)
+    · exact inOPoly_id
     · intros x x' h
       exact h
-    -- bound_valid: encodable.size (Subtype.val x) ≤ bound (encodable.size x)
     · intro x
-      simp
+      exact subtype_size_val_le x
   exact reducesPolyMO_transitive _ _ _ (hHard Y hEncY Q hQ) subtype_reduction
