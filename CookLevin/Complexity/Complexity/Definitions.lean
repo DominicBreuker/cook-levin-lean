@@ -292,11 +292,22 @@ def validFlatTM_default : flatTM :=
 def monotonic (f : Nat → Nat) : Prop :=
   ∀ x x' : Nat, x ≤ x' → f x ≤ f x'
 
+-- Monotonic composition lemma
+theorem monotonic_comp {f g : Nat → Nat} : monotonic f → monotonic g → monotonic (g ∘ f) := by
+  intros hf hg x x' hxx'
+  apply hg
+  apply hf
+  exact hxx'
+
 def inO (f g : Nat → Nat) : Prop :=
   ∃ c n0 : Nat, ∀ n : Nat, n0 ≤ n → f n ≤ c * g n
 
 def inOPoly (f : Nat → Nat) : Prop :=
   ∃ n : Nat, inO f (fun x => x ^ n)
+
+-- Polynomial composition lemma for inO functions
+theorem inOPoly_comp {f g : Nat → Nat} : inOPoly f → inOPoly g → inOPoly (g ∘ f) := by
+  sorry
 
 
 

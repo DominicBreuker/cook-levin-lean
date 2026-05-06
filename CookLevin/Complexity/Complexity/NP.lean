@@ -136,11 +136,45 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
   -- proof in `coqdoc/Complexity.Complexity.NP.txt`; the Lean scaffold now exposes the
   -- stronger witnesses needed for the result, but the final composed `inOPoly` proof and
   -- its associated size-bound bookkeeping still need to be ported faithfully.
+  intros hPQ hQR
+  -- Extract the witnesses from our hypotheses
+  rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
+  rcases hQR with ⟨⟨g, hg_poly, hg_correct⟩⟩
+  -- Construct the composition reduction
+  refine ⟨⟨g ∘ f, ?_, fun {x} => ?_⟩⟩
+  -- We need to prove: polyTimeComputable (g ∘ f)
+  -- Extract polynomial witnesses
+  rcases hf_poly with ⟨⟨bound_f, hbound_poly_f, hbound_mono_f, hbound_valid_f⟩⟩
+  rcases hg_poly with ⟨⟨bound_g, hbound_poly_g, hbound_mono_g, hbound_valid_g⟩⟩
+  -- Construct polynomial bound for composition
+  -- We use that encodable.size ((g ∘ f) x) = encodable.size (g (f x))
+  -- ≤ bound_g (encodable.size (f x))  (by hbound_valid_g)
+  -- ≤ bound_g (bound_f (encodable.size x))  (by hbound_valid_f and monotonicity)
+  have hbound_valid_comp : ∀ x : X, encodable.size ((g ∘ f) x) ≤ (bound_g ∘ bound_f) (encodable.size x) := by
+    intro x
+    calc encodable.size ((g ∘ f) x)
+      _ = encodable.size (g (f x)) := rfl
+      _ ≤ bound_g (encodable.size (f x)) := hbound_valid_g (f x)
+      _ ≤ bound_g (bound_f (encodable.size x)) := by apply hbound_mono_g; exact hbound_valid_f x
+  -- Construct the polynomial computable witness for the composition
   sorry
+
 
 theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → inNP Q → inNP P := by
+  intros hPQ hQinNP
+  -- Extract the reduction witness  
+  rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
+  -- Extract the NP witness for Q
+  rcases hQinNP with ⟨Y_cert, _, ⟨⟨R, hR_poly, hR_cert⟩⟩⟩
+  -- Construct the certificate relation for P: fun x cert => R (f x) cert
+  use Y_cert
+  use inferInstance
+  refine ⟨⟨fun x cert => R (f x) cert, ?_, ?_⟩⟩
+  -- Show that the new relation is polynomial-time decidable
+  sorry
+  -- Show that the new relation is a polynomial certificate relation for P
   sorry
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
@@ -159,5 +193,19 @@ theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop)
   intro hHard
   intro Y hEncY Q hQ
   have subtype_reduction : (fun x : {x // subtype_pred x} => P x.1) ⪯p P := by
-    refine ⟨⟨Subtype.val, by sorry, fun {x} => Iff.rfl⟩⟩
+    refine ⟨⟨Subtype.val, ?_, fun {x} => Iff.rfl⟩⟩
+    -- Show that Subtype.val is polynomial-time computable
+    -- The size of val x is bounded by the size of x
+    refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
+    -- bound_poly: inOPoly (fun n => n) (the identity function is linear, hence polynomial)
+    · refine ⟨1, ?_⟩
+      refine ⟨1, ?_⟩
+      intros n hn
+      simp
+    -- bound_mono: monotonic (fun n => n) (the identity function is monotonic)
+    · intros x x' h
+      exact h
+    -- bound_valid: encodable.size (Subtype.val x) ≤ bound (encodable.size x)
+    · intro x
+      simp
   exact reducesPolyMO_transitive _ _ _ (hHard Y hEncY Q hQ) subtype_reduction
