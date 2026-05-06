@@ -1,39 +1,31 @@
-# Step 08 — Repair the `FlatSingleTMGenNP → FlatTCC` stage
+# Step 08 — Finish `FlatSingleTMGenNP → FlatTCC`
 
-## Why this task still exists
+## Read first
 
-The current `FlatSingleTMGenNP_to_FlatTCC` reduction still uses placeholder bounds and ends with a `sorry`.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatSingleTMGenNP_to_FlatTCC.txt`
 - `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.PTCC_Preludes.txt`
 - `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatTCC.txt`
-- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.TCC.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- the reduction file still sets `steps := 0`,
-- `FlatSingleTMGenNP_to_FlatTCC_poly` still ends with a `sorry`,
-- later stages need explicit wellformedness and size facts from `Subproblems/FlatTCC.lean`.
+- the reduction file now preserves the source `steps` field in the generated witness skeleton.
+- the helper `mkTCCWitness` and flatten/unflatten support compile.
+- correctness is still admitted.
 
-## Required work
+## What still needs to be implemented
 
-1. Replace the placeholder step / size bookkeeping in the reduction with honest values derived from the source instance.
-2. Finish `FlatSingleTMGenNP_to_FlatTCC_poly` without `sorry`.
-3. Add whichever `FlatTCC` helper lemmas are really needed downstream, instead of forcing later files to duplicate them.
-4. Keep the Lean names aligned with the Coq reduction and subproblem files.
+1. Replace the toy tableau witness with the real Coq-style tableau construction.
+2. Finish `FlatSingleTMGenNP_to_FlatTCCLang_poly` without `sorry`.
+3. Add only the helper lemmas that are genuinely needed by Steps 09 and 10.
+4. Ensure the translation preserves bounded execution semantics from the new single-tape problem definition.
 
-## Done when
+## Deliverable
 
-- the reduction no longer hard-codes zero bounds,
-- `FlatSingleTMGenNP_to_FlatTCC_poly` is honest,
-- the README can say the first tableau stage is real.
+A compiling and faithful first Cook-Levin tableau reduction whose produced `FlatTCC` instance carries the right structural data and correctness proof.

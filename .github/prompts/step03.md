@@ -1,44 +1,34 @@
-# Step 03 — Replace the dummy FlatTM execution layer
+# Step 03 — Align the flat machine semantics with Coq
 
-## Why this task still exists
+## Read first
 
-The old Step 4 introduced `FlatTM` syntax, but not real machine semantics.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/Complexity/MachineSemantics.lean`
 - `CookLevin/Complexity/Complexity/Definitions.lean`
-- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
-- `CookLevin/Complexity/Complexity/NP.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Undecidability.TM.TM.txt`
 - `coqdoc/Complexity.L.TM.TMflat.txt`
 - `coqdoc/Complexity.L.TM.TMflatFun.txt`
 - `coqdoc/Complexity.L.TM.TMflatComp.txt`
-- `coqdoc/Complexity.L.TM.TMflatEnc.txt`
 - `coqdoc/Complexity.NP.TM.TMGenNP.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `execFlatTM` always returns the initial configuration.
-- `acceptsFlatTM` is only a heuristic check on machine metadata.
-- `validFlatTM` is still `True` in `Definitions.lean`.
-- Later steps need real machine execution to justify time bounds and acceptance predicates.
+- `validFlatTM` is now structural, not `True`.
+- `execFlatTM` now steps through transitions.
+- `acceptsFlatTM` is tied to the reached halting state.
+- the project currently compiles.
 
-## Required work
+## What still needs to be implemented
 
-1. Implement real step-by-step execution for the current `FlatTM` representation, or port the relevant Coq structure closely enough to obtain genuine execution semantics.
-2. Replace the heuristic `acceptsFlatTM` / `acceptsInTime` layer with a definition tied to actual execution.
-3. Replace `validFlatTM : Prop := True` with a meaningful wellformedness predicate.
-4. Repair any immediate users of the machine layer that break because the semantics became real.
-5. Keep the API stable where practical: later files already depend on `execFlatTM`, `acceptsFlatTM`, and `acceptsInTime`.
+1. Check the new step semantics against the Coq flattening development and repair any mismatch in tape movement, blank handling, or halting behavior.
+2. Replace any remaining simplifications in `acceptsInTime` and the machine-size bookkeeping with Coq-faithful definitions.
+3. Add correctness lemmas connecting the flat execution layer to the later TM bridge files.
+4. Keep the APIs `execFlatTM`, `acceptsFlatTM`, and `acceptsInTime` stable unless a Coq-faithful replacement absolutely requires a coordinated update.
 
-## Done when
+## Deliverable
 
-- machine execution is no longer dummy,
-- machine validity is no longer trivial,
-- time-bounded acceptance means real bounded execution,
-- the updated README explains which machine semantics are now trustworthy.
+A compiling flat machine semantics layer whose definitions match the intended Coq model closely enough that later TM simulations can be proved on top of it without reworking the interface.

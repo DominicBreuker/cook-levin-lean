@@ -1,41 +1,32 @@
 # Step 11 — Replace brute-force `BinaryCC → FSAT`
 
-## Why this task still exists
+## Read first
 
-This is still the major exponential-time placeholder in the Cook-Levin chain.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
 - `CookLevin/Complexity/NP/FSAT.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT.txt`
 - `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.BinaryCC.txt`
 - `coqdoc/Complexity.NP.SAT.FSAT.FSAT.txt`
 - `coqdoc/Complexity.NP.SAT.FSAT.FormulaEncoding.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `allBitStrings` enumerates all candidate rows.
-- `acceptingRunsFrom` enumerates all candidate traces.
-- the final reduction formula is an OR over enumerated traces.
-- `BinaryCC_to_FSAT_poly` still ends with a `sorry`.
+- the current file compiles, but it still uses `allBitStrings`, `acceptingRunsFrom`, and an OR over enumerated traces.
+- this is still the main exponential placeholder in the chain.
 
-## Required work
+## What still needs to be implemented
 
-1. Remove the brute-force search path from the reduction.
-2. Construct the FSAT formula directly from the BinaryCC tableau constraints.
+1. Delete the brute-force search path from the proof-critical reduction.
+2. Port the direct Coq formula construction from binary tableau constraints to FSAT.
 3. Prove both directions of correctness for the direct encoding.
-4. Prove polynomial output size and polynomial-time computability for the new construction.
-5. Keep the theorem name `BinaryCC_to_FSAT_poly` if possible; the final theorem file already imports it.
+4. Prove polynomial output-size / computability for the new construction under the current reduction API.
+5. Keep `BinaryCC_to_FSAT_poly` as the exported theorem name.
 
-## Done when
+## Deliverable
 
-- `allBitStrings` and `acceptingRunsFrom` are no longer on the proof-critical path,
-- the reduction is direct and syntactic,
-- the README explicitly says the exponential BinaryCC placeholder is gone.
+A compiling direct `BinaryCC → FSAT` reduction with no trace enumeration on the critical path.

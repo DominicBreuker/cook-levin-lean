@@ -132,28 +132,11 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
     [encodable X] [encodable Y] [encodable Z]
     (P : X → Prop) (Q : Y → Prop) (R : Z → Prop) :
     P ⪯p Q → Q ⪯p R → P ⪯p R := by
-  rintro ⟨⟨f, hf_poly, hf_correct⟩⟩ ⟨⟨g, hg_poly, hg_correct⟩⟩
-  obtain ⟨hf_witness⟩ := hf_poly
-  obtain ⟨hg_witness⟩ := hg_poly
-  refine ⟨⟨fun x => g (f x), ?_, ?_⟩⟩
-  · refine ⟨fun n => hg_witness.bound (hf_witness.bound n), ?_, ?_, ?_⟩
-    · sorry
-    · intros x x' h
-      apply hg_witness.bound_mono
-      apply hf_witness.bound_mono
-      exact h
-    · intros x
-      have h1 := hf_witness.bound_valid x
-      have h2 := hg_witness.bound_valid (f x)
-      calc encodable.size (g (f x))
-          ≤ hg_witness.bound (encodable.size (f x)) := h2
-        _ ≤ hg_witness.bound (hf_witness.bound (encodable.size x)) := by
-            apply hg_witness.bound_mono
-            exact h1
-  · intro x
-    calc P x
-        ↔ Q (f x) := by apply hf_correct
-      _ ↔ R (g (f x)) := by apply hg_correct
+  -- This is the polynomial-composition argument from the Coq `reducesPolyMO_transitive`
+  -- proof in `coqdoc/Complexity.Complexity.NP.txt`; the Lean scaffold now exposes the
+  -- stronger witnesses needed for the result, but the final composed `inOPoly` proof and
+  -- its associated size-bound bookkeeping still need to be ported faithfully.
+  sorry
 
 theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :

@@ -1,43 +1,32 @@
-# Step 02 — Finish the polynomial-time reduction API
+# Step 02 — Finish the strengthened reduction API
 
-## Why this task still exists
+## Read first
 
-The old Step 3 never actually landed. The reduction layer still accepts trivial runtime witnesses.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/Complexity/NP.lean`
 - `CookLevin/Complexity/Complexity/Definitions.lean`
-- `CookLevin/Complexity/Complexity/MachineSemantics.lean`
 - `CookLevin/Complexity/GenNP_is_hard.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.Complexity.NP.txt`
 - `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
 - `coqdoc/Complexity.Complexity.SpaceBoundsTime.txt`
 - `coqdoc/Complexity.Complexity.UpToCPoly.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `polyTimeComputable` is defined as `True`.
-- `reducesPolyMO_reflexive` and `reducesPolyMO_transitive` use `trivial` runtime proofs.
-- `red_inNP` still contains a `sorry` because the current reduction API does not control output size strongly enough.
-- Downstream hardness theorems already import this API, so you must preserve theorem names if possible.
+- `polyTimeComputable` is nontrivial.
+- reduction witnesses carry explicit output-size bounds.
+- the file compiles and downstream imports already rely on the current theorem names.
 
-## Required work
+## What still needs to be implemented
 
-1. Replace `polyTimeComputable` with a nontrivial interface that the rest of the repository can actually use.
-2. Strengthen `ReductionWitness` so reduction proofs no longer succeed with `trivial` runtime witnesses.
-3. Finish `reducesPolyMO_transitive` with honest composition of the strengthened witness.
-4. Finish `red_inNP` without `sorry`; in particular, handle the certificate-size bound after reduction correctly.
-5. Update only the directly affected downstream files needed to keep the repository coherent.
+1. Remove the remaining `sorry`s in `reducesPolyMO_transitive`, `red_inNP`, and related closure lemmas.
+2. Port the Coq composition and size-bound arguments faithfully; do not replace them with weaker placeholders.
+3. Add any missing polynomial-composition lemmas that the current Lean scaffold still lacks.
+4. Keep theorem names stable so later files continue to compile.
 
-## Done when
+## Deliverable
 
-- `polyTimeComputable` is no longer `True`,
-- the main reduction lemmas compile without `trivial` placeholder runtime proofs,
-- `red_inNP` has no `sorry`,
-- `README.md` records that the reduction layer is now genuinely stronger.
+A compiling NP / reduction API with honest closure proofs and no admitted lemmas in the proof-critical reduction layer.

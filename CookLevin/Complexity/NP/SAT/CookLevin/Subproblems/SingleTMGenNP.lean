@@ -45,15 +45,17 @@ theorem FlatFunSingleTMGenNP_FlatSingleTMGenNP_equiv
     FlatFunSingleTMGenNP (M, s, maxSize, steps) ↔ FlatSingleTMGenNP (M, s, maxSize, steps) := by
   simp [FlatFunSingleTMGenNP, FlatSingleTMGenNP]
 
-theorem flatSingleTMGenNP_yes :
-    FlatSingleTMGenNP (validFlatTM_default, [], 0, 0) := by
-  refine ⟨?_, list_ofFlatType_nil 1, ?_⟩
+theorem validFlatTM_default_valid : validFlatTM validFlatTM_default := by
   constructor
   · simp [validFlatTM_default]
   constructor
   · simp [validFlatTM_default]
   · intro entry hentry
     cases hentry
+
+theorem flatSingleTMGenNP_yes :
+    FlatSingleTMGenNP (validFlatTM_default, [], 0, 0) := by
+  refine ⟨validFlatTM_default_valid, list_ofFlatType_nil 1, ?_⟩
   refine ⟨[], list_ofFlatType_nil 1, by simp [isValidCert], ?_⟩
   simp [acceptsFlatTM, execFlatTM, runFlatTM, haltingStateReached, validFlatTM_default, initFlatConfig]
 
