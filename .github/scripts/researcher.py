@@ -197,7 +197,7 @@ def format_vibe_output_line(line: str) -> str:
         return ""
     match = VIBE_TAG_PATTERN.fullmatch(stripped)
     if match:
-        return f"[vibe {match.group('tag')}] {match.group('message')}"
+        return f"🤖 \033[1m[vibe {match.group('tag')}] {match.group('message')}\033[0m"
     try:
         payload = json.loads(stripped)
     except json.JSONDecodeError:
@@ -207,7 +207,7 @@ def format_vibe_output_line(line: str) -> str:
         content = str(payload.get("content") or "").strip()
         reasoning = str(payload.get("reasoning_content") or "").strip()
         parts = [part for part in (reasoning, content) if part]
-        return f"[vibe {role}] {' | '.join(parts)}" if parts else f"[vibe {role}] {json.dumps(payload, ensure_ascii=False)}"
+        return f"🤖 \033[1m[vibe {role}] {' | '.join(parts)}\033[0m" if parts else f"🤖 \033[1m[vibe {role}] {json.dumps(payload, ensure_ascii=False)}\033[0m"
     return stripped
 
 
