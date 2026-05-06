@@ -1,6 +1,6 @@
-set_option autoImplicit false
-
 import CookLevin.Complexity.Complexity.MachineSemantics
+
+set_option autoImplicit false
 
 universe u v
 
