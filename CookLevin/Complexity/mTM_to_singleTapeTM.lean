@@ -4,7 +4,8 @@ set_option autoImplicit false
 
 namespace M_multi2mono
 
-def M__mono {σ : finType} (_ : TM σ 2) : Sigma (fun _ : TM σ 1 => Unit) := ⟨(), ()⟩
+def M__mono {σ : finType} (_ : TM σ 2) : Sigma (fun _ : TM σ 1 => Unit) := 
+  ⟨validFlatTM_default, ()⟩
 
 end M_multi2mono
 
