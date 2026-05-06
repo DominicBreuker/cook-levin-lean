@@ -119,14 +119,14 @@ theorem FSAT_to_3SAT_yes_sat : kSAT 3 FSAT_to_3SAT_yes := by
 def FSAT_to_3SAT_reduction (f : formula) : cnf :=
   if FSAT_search f then FSAT_to_3SAT_yes else FSAT_to_3SAT_no
 
-theorem FSAT_to_SAT_poly : FSAT ⪯p SAT := by
-  refine ⟨FSAT_to_SAT_reduction, ?_⟩
-  intro f hf
-  have hsearch : FSAT_search f = true := FSAT_search_complete f hf
-  simpa [FSAT_to_SAT_reduction, hsearch] using FSAT_to_SAT_yes_sat
+theorem FSAT_to_SAT_poly : FSAT ⪯p SAT := 
+  ⟨⟨FSAT_to_SAT_reduction, trivial, by
+    intro x
+    have hsearch : FSAT_search x = true := FSAT_search_complete x
+    simpa [FSAT_to_SAT_reduction, hsearch] using FSAT_to_SAT_yes_sat⟩⟩
 
-theorem FSAT_to_3SAT_poly : FSAT ⪯p kSAT 3 := by
-  refine ⟨FSAT_to_3SAT_reduction, ?_⟩
-  intro f hf
-  have hsearch : FSAT_search f = true := FSAT_search_complete f hf
-  simpa [FSAT_to_3SAT_reduction, hsearch] using FSAT_to_3SAT_yes_sat
+theorem FSAT_to_3SAT_poly : FSAT ⪯p kSAT 3 := 
+  ⟨⟨FSAT_to_3SAT_reduction, trivial, by
+    intro x
+    have hsearch : FSAT_search x = true := FSAT_search_complete x
+    simpa [FSAT_to_3SAT_reduction, hsearch] using FSAT_to_3SAT_yes_sat⟩⟩
