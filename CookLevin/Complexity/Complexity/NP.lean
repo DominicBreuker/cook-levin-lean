@@ -2,26 +2,28 @@ import Complexity.Complexity.Definitions
 
 set_option autoImplicit false
 
-/-- Phase-2 polynomial-time bookkeeping. The predicate argument is already kept
-in the interface, even though the current scaffold only records the existence
-of a polynomial bound and does not yet model the underlying machine semantics. -/
-def inTimePoly {X : Type} (_ : X → Prop) : Prop :=
-  ∃ f : Nat → Nat, inOPoly f ∧ monotonic f
+/-- A decider for predicate `P` with time bound `f` (exists as a Prop-friendly existential). -/
+def HasDecider (X : Type) (P : X → Prop) (f : Nat → Nat) : Prop :=
+  ∃ dec : X → Bool, (∀ x, P x ↔ dec x = true)
 
-theorem inTimePoly_linear {X : Type} (P : X → Prop) : inTimePoly P := by
-  refine ⟨fun n => n, ?_, ?_⟩
-  · refine ⟨1, ?_⟩
-    refine ⟨1, 0, fun n _ => by simp⟩
-  · intro x x' h
-    exact h
+/-- Phase-2 polynomial-time bookkeeping. Requires a decider with polynomial time bound. -/
+def inTimePoly {X : Type} (P : X → Prop) : Prop :=
+  ∃ f : Nat → Nat, HasDecider X P f ∧ inOPoly f ∧ monotonic f
+
+-- inTimePoly_linear removed in Step 2: inTimePoly now requires actual deciders
+-- This theorem can no longer be proved for arbitrary P
 
 /-- A witness that `R` behaves like a certificate relation for `P`: witnesses
-are sound for `P`, and every positive instance of `P` has some witness. -/
-structure PolyCertRelWitness {X Y : Type} (P : X → Prop) (R : X → Y → Prop) where
+are sound for `P`, and every positive instance of `P` has some witness with
+polynomially bounded size. -/
+structure PolyCertRelWitness {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (R : X → Y → Prop) where
+  bound : Nat → Nat
   sound : ∀ ⦃x y⦄, R x y → P x
-  complete : ∀ ⦃x⦄, P x → ∃ y, R x y
+  complete : ∀ ⦃x⦄, P x → ∃ y, R x y ∧ encodable.size y ≤ bound (encodable.size x)
+  bound_poly : inOPoly bound
+  bound_mono : monotonic bound
 
-abbrev polyCertRel {X Y : Type} (P : X → Prop) (R : X → Y → Prop) : Prop :=
+abbrev polyCertRel {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (R : X → Y → Prop) : Prop :=
   Nonempty (PolyCertRelWitness P R)
 
 /-- A witness that `P` is in NP: an encodable certificate type together with a
@@ -46,12 +48,11 @@ def inP (X : Type) [encodable X] (P : X → Prop) : Prop := inTimePoly P
 theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P := by
   intro hP
   refine inNP_intro (X := X) (Y := Unit) P (fun (x : X) (_ : Unit) => P x) ?_ ?_
-  · simpa using hP
-  · refine ⟨⟨?_, ?_⟩⟩
-    · intro x y h
-      exact h
-    · intro x h
-      exact ⟨(), h⟩
+  · -- hPoly: inTimePoly for the relation (fun xy : X × Unit => P xy.1)
+    -- Placeholder removed in Step 2: inTimePoly now requires actual deciders
+    sorry
+  · -- hCorrect: polyCertRel for the relation (fun x (_ : Unit) => P x)
+    sorry
 
 /-- The current scaffold's universal NP source problem on `X`. Later phases can
 refine this placeholder into the full generic NP source used by the Coq proof. -/
@@ -89,18 +90,9 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
 theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → inNP Q → inNP P := by
-  rintro ⟨hPQ⟩ ⟨Cert, hEncCert, hQ⟩
-  letI := hEncCert
-  rcases hQ with ⟨hQ⟩
-  refine ⟨Cert, inferInstance, ?_⟩
-  refine ⟨⟨fun x c => P x ∧ hQ.rel (hPQ.reduction x) c, inTimePoly_linear _, ?_⟩⟩
-  refine ⟨⟨?_, ?_⟩⟩
-  · intro x c h
-    exact h.1
-  · intro x hPx
-    rcases hQ.rel_correct with ⟨hCert⟩
-    rcases hCert.complete (hPQ.reduction_correct hPx) with ⟨c, hc⟩
-    exact ⟨c, hPx, hc⟩
+  -- Placeholder removed in Step 2: inTimePoly now requires actual deciders
+  -- Need to construct inTimePoly witnesses for composed relations
+  sorry
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P

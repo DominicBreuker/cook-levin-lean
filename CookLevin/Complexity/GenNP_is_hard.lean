@@ -11,10 +11,11 @@ def genNPRel {X__cert : Type} [encodable X__cert]
 
 def genNPInstance {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]
-    (R : X → Y → Prop) (_hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
-    (x : X) : GenNPInput X__cert where
-  rel := genNPRel enumTerm R x
-  rel_poly := inTimePoly_linear _
+    (R : X → Y → Prop) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
+    (x : X) : GenNPInput X__cert := by
+  -- Can't construct inTimePoly for genNPRel without knowing more about R
+  -- and genNPRel structure. Placeholder removed in Step 2.
+  sorry
 
 theorem genNPInstance_spec {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]
@@ -22,13 +23,9 @@ theorem genNPInstance_spec {X__cert : Type} [encodable X__cert]
     (hCorrect : polyCertRel Q R) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
     (x : X) :
     GenNP X__cert (genNPInstance enumTerm R hPoly x) ↔ Q x := by
-  rcases hCorrect with ⟨hCorrect⟩
-  constructor
-  · rintro ⟨cert, witness, hEncode, hRel⟩
-    exact hCorrect.sound hRel
-  · intro hx
-    rcases hCorrect.complete hx with ⟨witness, hRel⟩
-    exact ⟨enumTerm.encode witness, witness, rfl, hRel⟩
+  -- Placeholder removed in Step 2: inTimePoly and polyCertRel now have structure
+  -- that's not compatible with the old trivial proofs
+  sorry
 
 theorem NPhard_GenNP (X__cert : Type) [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) : NPhard (GenNP X__cert) := by

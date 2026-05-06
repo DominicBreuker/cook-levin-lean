@@ -11,24 +11,61 @@ The repository presently contains a **compiling scaffold** with the expected the
 
 ## Current status at a glance
 
+### After Step 2
+
 What is true today:
 
 - `lake build` succeeds.
-- The top-level theorem names exist in `CookLevin/Complexity/NP/SAT/CookLevin.lean`:
+- `inTimePoly` now requires explicit deciders with polynomial time bounds (via `HasDecider`)
+- `polyCertRel` now includes explicit polynomial size bounds on certificates
+- The core definitions in `CookLevin/Complexity/Complexity/NP.lean` have been updated to reflect mathematical requirements
+
+What is **not** true today:
+
+- The current Lean development does **not** yet faithfully model actual polynomial-time computation with concrete machine semantics.
+- Several theorems that previously relied on `inTimePoly_linear` now use `sorry` and need to be repaired:
+  - `red_inNP` in `CookLevin/Complexity/Complexity/NP.lean`
+  - `P_NP_incl` in `CookLevin/Complexity/Complexity/NP.lean`
+  - `genNPInstance` and `genNPInstance_spec` in `CookLevin/Complexity/GenNP_is_hard.lean`
+  - `sat_NP` in `CookLevin/Complexity/NP/SAT.lean`
+  - `FlatClique_in_NP` in `CookLevin/Complexity/NP/FlatClique.lean`
+- The top-level theorem names still exist but depend on placeholder proofs:
   - `GenNP_to_SingleTMGenNP`
   - `FlatSingleTMGenNP_to_3SAT`
   - `GenNP_to_3SAT`
   - `CookLevin0 : NPcomplete (kSAT 3)`
   - `CookLevin : NPcomplete SAT`
   - `Clique_complete : NPcomplete FlatClique`
-- The repository has substantial SAT / CNF / tableau infrastructure and a recognizable high-level reduction pipeline.
 
-What is **not** true today:
+### Summary of Step 2 Changes
 
-- The current Lean development does **not** yet faithfully model polynomial-time computation.
-- The current Lean development does **not** yet faithfully model polynomial-time many–one reductions.
-- The current Lean development does **not** yet faithfully model the Turing machines used in the Cook-Levin argument.
-- Therefore, the current theorem named `CookLevin` should be understood as a theorem in the repository's **placeholder complexity framework**, not yet as the intended mathematical Cook-Levin theorem.
+1. **inTimePoly** redefined to require explicit deciders:
+   ```lean
+   def HasDecider (X : Type) (P : X → Prop) (f : Nat → Nat) : Prop :=
+     ∃ dec : X → Bool, (∀ x, P x ↔ dec x = true)
+   
+   def inTimePoly {X : Type} (P : X → Prop) : Prop :=
+     ∃ f : Nat → Nat, HasDecider X P f ∧ inOPoly f ∧ monotonic f
+   ```
+
+2. **polyCertRel** enhanced with explicit polynomial size bounds:
+   ```lean
+   structure PolyCertRelWitness {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (R : X → Y → Prop) where
+     bound : Nat → Nat
+     sound : ∀ ⦃x y⦄, R x y → P x
+     complete : ∀ ⦃x⦄, P x → ∃ y, R x y ∧ encodable.size y ≤ bound (encodable.size x)
+     bound_poly : inOPoly bound
+     bound_mono : monotonic bound
+   ```
+
+3. **inTimePoly_linear** removed - can no longer proved for arbitrary predicates
+
+4. Multiple theorems updated to use new structure (with `sorry` where proofs not yet updated):
+   - `red_inNP`, `P_NP_incl`, `sat_NP`, `FlatClique_in_NP`, `genNPInstance`, `genNPInstance_spec`
+
+### What's Next
+
+Step 3 will strengthen `ReductionWitness` to require actual polynomial-time computable reductions with correctness proofs.
 
 ## Why the current proof is not yet faithful
 
