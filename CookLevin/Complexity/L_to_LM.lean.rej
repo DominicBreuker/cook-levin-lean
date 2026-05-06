@@ -1,8 +1,0 @@
---- CookLevin/Complexity/L_to_LM.lean
-+++ CookLevin/Complexity/L_to_LM.lean
-@@ -13,4 +13,4 @@ def genNPToLMGenNPInstance {X : Type} [encodable X] (inst : GenNPInput X) :
- theorem GenNP_to_LMGenNP (X : Type) [encodable X] :
-     GenNP X ⪯p LMGenNP.LMGenNP X := by
-   refine ⟨⟨genNPToLMGenNPInstance, trivial, fun {inst} => ?_⟩⟩
--  simp [GenNP, LMGenNP, genNPToLMGenNPInstance, certificateMeasure]
-+  sorry
