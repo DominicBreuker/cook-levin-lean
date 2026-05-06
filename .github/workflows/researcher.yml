@@ -147,3 +147,6 @@ jobs:
             --step "$RESEARCHER_STEP_ID" \
             --prompt "$CUSTOM_PROMPT" \
             --delay "$RESEARCHER_DELAY_SECONDS"
+
+      - name: Build project
+        run: lake build
