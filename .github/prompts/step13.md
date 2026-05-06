@@ -1,26 +1,39 @@
-# Step 13 — Add a permanent status and audit section
+# Step 13 — Rebuild the final theorem chain and final status docs
 
-## Objective
-Make the repository self-describing so contributors can immediately tell what is faithful, what remains incomplete, and which major repair steps are done.
+## Why this task still exists
 
-## Read first
+The final theorem file still has unfinished entry lemmas and is the file that currently breaks `lake build`.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- any current status/audit notes already present in the repository
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+- every Lean file repaired in Steps 01–12 that is imported by `CookLevin.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.SAT.CookLevin.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.SingleTMGenNP_to_TCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatSingleTMGenNP_to_FlatTCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatCC_to_BinaryCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT.txt`
+
+## Concrete problems visible today
+
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean` still has unfinished theorems `fixedTM_to_FlatSingleTMGenNP` and `GenNP_to_SingleTMGenNP`.
+- `lake build` currently fails in this file.
+- The README still needs to be updated one final time once the theorem chain is genuinely repaired.
 
 ## Required work
-1. Expand the README status reporting so it explicitly tracks completed and incomplete major repair steps.
-2. Keep or improve the existing “Current status at a glance” section so it remains honest and easy to scan.
-3. Add a durable audit/checklist view of remaining placeholders, deferred ports, or known mismatches with the Coq development.
-4. Ensure the documentation reflects the actual repository state after all prior technical steps.
 
-## Concrete expectations
-- Do not claim the repository faithfully proves Cook-Levin unless the codebase actually does.
-- Prefer concise, concrete status bullets over vague prose.
-- If there are still known gaps, list them explicitly.
+1. Make `CookLevin/Complexity/NP/SAT/CookLevin.lean` compile without `sorry`.
+2. Rebuild the composition lemmas only from repaired upstream theorems.
+3. Re-prove `CookLevin0`, `CookLevin`, and `Clique_complete` without relying on any placeholder theorem left over from earlier stages.
+4. Update `README.md` so the status section honestly reflects the final state after your repair.
 
-## Definition of done
-- A newcomer can read `README.md` and immediately understand the current proof status.
-- Major repair steps are visibly tracked.
-- Any remaining placeholders or deferred ports are documented explicitly.
-- `lake build` still succeeds if code changed as part of this step.
-- `README.md` becomes the authoritative status dashboard for the project.
+## Done when
+
+- `lake build` succeeds,
+- `CookLevin.lean` contains a real final theorem chain,
+- the README gives an honest final status with no stale claims.

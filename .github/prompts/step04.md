@@ -1,30 +1,42 @@
-# Step 04 — Introduce a meaningful Turing-machine layer
+# Step 04 — Finish the generic NP source problem
 
-## Objective
-Replace the `Unit`-based machine model with real machine syntax, encoding, execution, and time-bounded computation notions.
+## Why this task still exists
 
-## Read first
+The old Step 5 did not complete. The generic source problem is still blocked by placeholder encodings and an unfinished hardness proof.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- `CookLevin/Complexity/Complexity/Definitions.lean`
-- relevant machine files already present under `CookLevin/Complexity/`
-- `coqdoc/Complexity.NP.TM.TMGenNP.txt`
-- `coqdoc/Undecidability.TM.TM.txt`
-- `coqdoc/Complexity.L.TM.TMflat.txt`
+- `CookLevin/Complexity/NP/GenNP.lean`
+- `CookLevin/Complexity/GenNP_is_hard.lean`
+- `CookLevin/Complexity/CanEnumTerm.lean`
+- `CookLevin/Complexity/Complexity/NP.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.L.GenNP.txt`
+- `coqdoc/Complexity.NP.L.GenNP_is_hard.txt`
+- `coqdoc/Complexity.NP.L.GenNPBool.txt`
+- `coqdoc/Complexity.NP.L.CanEnumTerm.txt`
+- `coqdoc/Complexity.NP.L.CanEnumTerm_def.txt`
+
+## Concrete problems visible today
+
+- `GenNPInput` is still very small compared with the Coq source problem interface.
+- `genNPInstance` still contains a `sorry`.
+- `NPhard_GenNP` still relies on the unfinished reduction layer and weak encoding interface.
+- The current `CanEnumTerm` example instance is still placeholder-level.
 
 ## Required work
-1. Replace `TM := Unit` and `flatTM := Unit` with real machine-level datatypes or faithful imports/ports of the Coq structures.
-2. Introduce the execution semantics and the time-bounded computation predicates used later in the NP source problems.
-3. Replace placeholder machine-validation and machine-computability definitions such as `computableTime'` with meaningful statements.
-4. Adapt any directly affected files so the repository compiles against the new machine layer.
 
-## Concrete expectations
-- Prefer faithful reuse of the Coq machine architecture rather than inventing a substantially different model.
-- Make sure encodings and sizes integrate with the repaired complexity layer from earlier steps.
-- Do not leave a dummy machine constant standing in for real semantics.
+1. Make the Lean `GenNP` layer follow the Coq architecture much more closely.
+2. Finish `genNPInstance` and `genNPInstance_spec` without `sorry`.
+3. Re-prove `NPhard_GenNP` against the repaired `inNP` / reduction API.
+4. Carry whatever concrete encoding facts are needed from `CanEnumTerm` into the proof instead of hiding them in comments.
+5. Keep the source problem reusable for the downstream TM bridge.
 
-## Definition of done
-- Lean can state and prove nontrivial facts about real machine execution/time.
-- `computableTime'` is no longer `True`.
-- Placeholder machine abbreviations are gone from the core API.
-- `lake build` succeeds.
-- `README.md` records which machine semantics are now in place and what remains to be ported.
+## Done when
+
+- `GenNP` no longer depends on placeholder encodings,
+- `genNPInstance` and `NPhard_GenNP` are honest proofs,
+- the README says the generic hardness starting point is really available.

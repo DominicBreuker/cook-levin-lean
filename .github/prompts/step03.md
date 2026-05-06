@@ -1,31 +1,44 @@
-# Step 03 — Redefine polynomial-time many–one reduction
+# Step 03 — Replace the dummy FlatTM execution layer
 
-## Objective
-Strengthen `⪯p` so reductions include real polynomial-time computability and full correctness, not just a forward implication.
+## Why this task still exists
 
-## Read first
+The old Step 4 introduced `FlatTM` syntax, but not real machine semantics.
+
+## Read these files first
+
+### Lean files
 - `README.md`
+- `CookLevin/Complexity/Complexity/MachineSemantics.lean`
+- `CookLevin/Complexity/Complexity/Definitions.lean`
+- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
 - `CookLevin/Complexity/Complexity/NP.lean`
-- `coqdoc/Complexity.Complexity.NP.txt`
-- `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
+
+### Coq reference files
+- `coqdoc/Undecidability.TM.TM.txt`
+- `coqdoc/Complexity.L.TM.TMflat.txt`
+- `coqdoc/Complexity.L.TM.TMflatFun.txt`
+- `coqdoc/Complexity.L.TM.TMflatComp.txt`
+- `coqdoc/Complexity.L.TM.TMflatEnc.txt`
+- `coqdoc/Complexity.NP.TM.TMGenNP.txt`
+
+## Concrete problems visible today
+
+- `execFlatTM` always returns the initial configuration.
+- `acceptsFlatTM` is only a heuristic check on machine metadata.
+- `validFlatTM` is still `True` in `Definitions.lean`.
+- Later steps need real machine execution to justify time bounds and acceptance predicates.
 
 ## Required work
-1. Redefine `ReductionWitness` / `reducesPolyMO` so a reduction includes:
-   - the reduction function,
-   - a polynomial-time computability proof for that function,
-   - the intended correctness statement `P x ↔ Q (f x)`.
-2. Re-prove the standard interface lemmas, at least reflexivity, transitivity, elimination, and `red_inNP`.
-3. Ensure the new transitivity proof actually composes runtime and result-size bounds instead of bypassing them.
-4. Update direct users of `⪯p` only as far as necessary to keep the repository compiling honestly.
 
-## Concrete expectations
-- Do not leave a one-way implication hidden anywhere in the reduction API.
-- Reuse the Coq decomposition for composition lemmas where possible.
-- Keep theorem names stable when practical.
+1. Implement real step-by-step execution for the current `FlatTM` representation, or port the relevant Coq structure closely enough to obtain genuine execution semantics.
+2. Replace the heuristic `acceptsFlatTM` / `acceptsInTime` layer with a definition tied to actual execution.
+3. Replace `validFlatTM : Prop := True` with a meaningful wellformedness predicate.
+4. Repair any immediate users of the machine layer that break because the semantics became real.
+5. Keep the API stable where practical: later files already depend on `execFlatTM`, `acceptsFlatTM`, and `acceptsInTime`.
 
-## Definition of done
-- A reduction theorem can no longer be proved without a real polynomial-time map.
-- `reducesPolyMO_transitive` composes the stronger witnesses correctly.
-- The main NP lemmas depending on reductions compile again.
-- `lake build` succeeds.
-- `README.md` clearly records that the reduction notion is now non-placeholder.
+## Done when
+
+- machine execution is no longer dummy,
+- machine validity is no longer trivial,
+- time-bounded acceptance means real bounded execution,
+- the updated README explains which machine semantics are now trustworthy.

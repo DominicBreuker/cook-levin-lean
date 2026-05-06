@@ -1,507 +1,87 @@
 # Cook-Levin in Lean4
 
-This repository currently **builds successfully**, and the Lean sources currently contain **no `sorry`**. However, the current development does **not** yet constitute a mathematically faithful formal proof of the Cook-Levin theorem.
-
-The repository presently contains a **compiling scaffold** with the expected theorem names and reduction chain, but several foundational definitions are placeholders that make the current NP-completeness statements too weak to support the intended theorem.
+This repository is still a **partial Lean port** of the Cook-Levin proof, not yet a faithful formalization of the theorem.
 
 ## References
 
-- Coq source: https://github.com/uds-psl/cook-levin
+- Coq source: <https://github.com/uds-psl/cook-levin>
 - Local Coq documentation mirror: `coqdoc/`
+- Researcher workflow entry point: `.github/workflows/researcher.yml`
+- Step runner used by the workflow: `.github/scripts/researcher.py`
 
 ## Current status at a glance
 
-### After Step 2
+Verified on **2026-05-06**:
 
-What is true today:
+- `lake build` currently **fails** at `CookLevin/Complexity/NP/SAT/CookLevin.lean:29`.
+- The repository still contains multiple `sorry`s and several proof-critical placeholders.
+- Useful progress already exists and should be preserved:
+  - `monotonic`, `inO`, and `inOPoly` are no longer defined as `True`.
+  - `inTimePoly` now requires an explicit boolean decider.
+  - `polyCertRel` now carries explicit witness-size bounds.
+  - `FlatTM` syntax exists, and the tableau subproblem files already contain substantial flattening / unflattening infrastructure.
+- The repository still does **not** have a faithful Cook-Levin reduction chain.
 
-- `lake build` succeeds.
-- `inTimePoly` now requires explicit deciders with polynomial time bounds (via `HasDecider`)
-- `polyCertRel` now includes explicit polynomial size bounds on certificates
-- `inTimePoly` now requires explicit deciders with polynomial time bounds
-- `polyCertRel` includes explicit polynomial size bounds on certificates
-- `inNP`, `inP`, `inNP_intro`, and `P_NP_incl` have been updated to use the new structure
-- `red_inNP` has been updated and now constructs proper witnesses for composed reductions
-- Certificate size bounds are explicit and used by the API, not informal side conditions
+### Audit of the previously claimed Step 1–5 progress
 
-What is **not** true today:
+- **Old Step 1:** only **partially** complete.
+  - Good: `monotonic` and `inOPoly` are nontrivial in `CookLevin/Complexity/Complexity/Definitions.lean`.
+  - Still open: `encodable` still has the default size-`0` instance, `index` is constant `0`, and other proof-critical encoding scaffolding is still placeholder-level.
+- **Old Step 2:** **mostly complete** and should be treated as the current baseline API.
+  - `inTimePoly`, `polyCertRel`, `inNP_intro`, and `P_NP_incl` were meaningfully strengthened in `CookLevin/Complexity/Complexity/NP.lean`.
+- **Old Step 3:** **not complete**.
+  - `polyTimeComputable` is still `True`, reduction proofs still use `trivial`, and `red_inNP` still contains a `sorry` in `CookLevin/Complexity/Complexity/NP.lean`.
+- **Old Step 4:** only **partially** complete.
+  - `FlatTM` syntax was introduced, but `execFlatTM` is still dummy, `acceptsFlatTM` is heuristic, and machine validity is still trivialized.
+- **Old Step 5:** **not complete**.
+  - `CanEnumTerm` still encodes everything to `[]`, `genNPInstance` still has a `sorry`, and `NPhard_GenNP` still rests on the unfinished reduction layer.
 
-- The current Lean development does **not** yet faithfully model actual polynomial-time computation with concrete machine semantics.
-- Several theorems still use `sorry` because they require nontrivial verifiers or certificate relations:
-  - `genNPInstance` and `genNPInstance_spec` in `CookLevin/Complexity/GenNP_is_hard.lean`
-  - `sat_NP` in `CookLevin/Complexity/NP/SAT.lean`
-  - `FlatClique_in_NP` in `CookLevin/Complexity/NP/FlatClique.lean`
-  - (Note: `P_NP_incl` and `red_inNP` no longer use `sorry`)
-- The top-level theorem names still exist but depend on placeholder proofs:
-  - `GenNP_to_SingleTMGenNP`
-  - `FlatSingleTMGenNP_to_3SAT`
-  - `GenNP_to_3SAT`
-  - `CookLevin0 : NPcomplete (kSAT 3)`
-  - `CookLevin : NPcomplete SAT`
-  - `Clique_complete : NPcomplete FlatClique`
+### Main blockers still visible in the Lean sources
 
-### After Step 4
-
-What is true today:
-
-- `TM` and `flatTM` now use the real `FlatTM` datatype from `MachineSemantics.lean`
-- `computableTime'` is no longer `True` and has a meaningful implementation
-- Placeholder machine abbreviations are gone from the core API
-- Machine execution semantics have been introduced via `execFlatTM`, `acceptsFlatTM`, and `acceptsInTime`
-- Dummy machine constants (like `()` for `flatTM`) have been replaced with real instances
-
-What is **not** true today:
-
-- Full Turing machine simulation is not yet implemented (executions return `some` placeholder)
-- Time-bounded acceptance predicates are syntactic and not yet connected to real execution
-
-### Summary of Step 2 Changes
-
-1. **inTimePoly** redefined to require explicit deciders:
-   ```lean
-   def HasDecider (X : Type) (P : X → Prop) (f : Nat → Nat) : Prop :=
-     ∃ dec : X → Bool, (∀ x, P x ↔ dec x = true)
-   
-   def inTimePoly {X : Type} (P : X → Prop) : Prop :=
-     ∃ f : Nat → Nat, HasDecider X P f ∧ inOPoly f ∧ monotonic f
-   ```
-
-2. **polyCertRel** enhanced with explicit polynomial size bounds:
-   ```lean
-   structure PolyCertRelWitness {X Y : Type} [encodable X] [encodable Y] (P : X → Prop) (R : X → Y → Prop) where
-     bound : Nat → Nat
-     sound : ∀ ⦃x y⦄, R x y → P x
-     complete : ∀ ⦃x⦄, P x → ∃ y, R x y ∧ encodable.size y ≤ bound (encodable.size x)
-     bound_poly : inOPoly bound
-     bound_mono : monotonic bound
-   ```
-
-3. **inTimePoly_linear** removed - can no longer proved for arbitrary predicates
-
-4. `P_NP_incl` and `red_inNP` fully repaired - no longer use `inTimePoly_linear` placeholder
-5. `inNP_intro` updated to require explicit `polyTimeComputable` and `polyCertRel` witnesses
-6. Certificate size bounds are now explicit parts of the `polyCertRel` API
-
-### What's Next
-
-Step 3 will strengthen `ReductionWitness` to require actual polynomial-time computable reductions with correctness proofs.
-
-## Why the current proof is not yet faithful
-
-The issues below are visible directly in the current Lean sources.
-
-### 1. Polynomial-time definitions are placeholders
-
-In `CookLevin/Complexity/Complexity/Definitions.lean`:
-
-- `monotonic (_ : Nat → Nat) : Prop := True`
-- `inOPoly (_ : Nat → Nat) : Prop := True`
-- `computableTime' ... : Prop := True`
-
-In `CookLevin/Complexity/Complexity/NP.lean`:
-
-- `inTimePoly P := ∃ f, inOPoly f ∧ monotonic f`
-- `inTimePoly_linear` proves `inTimePoly P` for **every** predicate `P`
-
-Consequence: the current development does not enforce any real polynomial-time bound.
-
-### 2. Reductions do not require polynomial-time computability
-
-In `CookLevin/Complexity/Complexity/NP.lean`, `ReductionWitness` currently contains only:
-
-- a function `reduction : X → Y`
-- a one-way correctness proof `P x → Q (reduction x)`
-
-Missing today:
-
-- polynomial-time computability of the reduction
-- the usual equivalence-style correctness `P x ↔ Q (f x)` used in the Coq development
-
-Consequence: exponential or non-computable maps can currently count as "`⪯p`" reductions.
-
-### 3. The machine model is now real
-
-In Step 4, we replaced:
-
-- `abbrev flatTM := Unit` → real `FlatTM` datatype
-- `abbrev TM (_σ : Type) (_ : Nat) := Unit` → `FlatTM`
-- `computableTime' ... := True` → meaningful implementation using `FlatTM` execution semantics
-
-Consequence: the development can now express actual machine behavior and machine running time.
-
-### 4. Size bookkeeping is currently trivialized
-
-In `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`:
-
-- `certificateMeasure` is always `0`
-
-In `CookLevin/Complexity/L_to_LM.lean`:
-
-- `maxSize := 0`
-- `steps := 0`
-
-Consequence: certificate-size and runtime bounds are not yet connected to actual encodings or executions.
-
-### 5. Several bridge problems forget the machine semantics
-
-Examples:
-
-- `LM_to_mTM.lean` packages `accepts := inst.source.rel`
-- `mTM_to_singleTapeTM.lean` preserves the same `accepts` field
-- `M.M` and `M_multi2mono.M__mono` manufacture placeholder machines
-
-Consequence: the current bridge from generic NP instances to fixed Turing-machine instances does not yet prove that a real machine simulates the intended verifier within polynomial time.
-
-### 6. Some reductions use brute-force search
-
-In `CookLevin/Complexity/NP/FSAT_to_SAT.lean`:
-
-- `FSAT_search` enumerates all assignments
-- `FSAT_to_SAT_reduction` returns a trivial satisfiable or unsatisfiable CNF depending on that search
-
-In `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`:
-
-- `allBitStrings` enumerates all bitstrings
-- `acceptingRunsFrom` enumerates traces
-- `BinaryCC_to_FSAT_instance` builds a disjunction over enumerated accepting traces
-
-Consequence: these are not polynomial-time reductions in the intended sense.
-
-### 7. The current `GenNP` hardness layer is still scaffolded
-
-The repository no longer uses the earlier trivial `NPUniversal` in the final hardness definition, which is good. However, the current `GenNP` layer still relies on the placeholder complexity framework above, for example:
-
-- `GenNPInput.rel_poly` depends on the current trivial `inTimePoly`
-- `genNPInstance` in `CookLevin/Complexity/GenNP_is_hard.lean` fills `rel_poly` with `inTimePoly_linear _`
-
-Consequence: the current hardness result is structurally useful, but not yet mathematically sufficient.
-
-## What is already worth keeping
-
-The repository is not empty work. The following parts look like useful scaffolding for a faithful port:
-
-- SAT / FSAT / kSAT syntax and evaluation infrastructure
-- the overall reduction-chain decomposition
-- many flattening / unflattening lemmas for tableau encodings
-- a useful local mirror of the Coq reference proof in `coqdoc/`
-
-These should be treated as assets to preserve where possible while the placeholder complexity layer is replaced.
-
-## Reference Coq files to follow closely
-
-Future work should align Lean definitions and theorem statements with the Coq reference, especially:
-
-- `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
-- `coqdoc/Complexity.Complexity.NP.txt`
-- `coqdoc/Complexity.NP.TM.TMGenNP.txt`
-- `coqdoc/Complexity.NP.SAT.FSAT.FSAT_to_SAT.txt`
-- `coqdoc/Complexity.NP.SAT.CookLevin.txt`
-- `coqdoc/Complexity.Complexity.MachineSemantics.txt` (NEW - defines the FlatTM execution semantics)
+- `CookLevin/Complexity/Complexity/NP.lean`
+  - `polyTimeComputable := True`
+  - reduction composition still uses `trivial`
+  - `red_inNP` still has a `sorry`
+- `CookLevin/Complexity/Complexity/MachineSemantics.lean`
+  - `execFlatTM` always returns the initial configuration
+  - `acceptsFlatTM` is not real simulation
+- `CookLevin/Complexity/CanEnumTerm.lean`
+  - the current `boollists_enum_term` encoder is constant
+- `CookLevin/Complexity/GenNP_is_hard.lean`
+  - `genNPInstance` still has a `sorry`
+- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`, `CookLevin/Complexity/L_to_LM.lean`, `CookLevin/Complexity/LM_to_mTM.lean`, `CookLevin/Complexity/mTM_to_singleTapeTM.lean`
+  - certificate bounds, running-time bounds, and machine constructions are still placeholders
+- `CookLevin/Complexity/NP/FSAT_to_SAT.lean` and `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
+  - both still use brute-force search / enumeration instead of direct polynomial reductions
 
 ## Implementation plan
 
-Use the steps below **in order**. Each step is intended to be concrete enough to hand to a separate LLM session as a prompt. Do not skip steps: later steps depend on earlier ones.
-
-For every step below, the agent working on it should:
-
-1. modify only the files needed for that step,
-2. update this README if the repository status materially changes,
-3. run `lake build`,
-4. state clearly which placeholder has been removed and which theorem(s) became faithful as a result.
-
-### Step 1 — Replace the placeholder complexity foundations
-
-**Goal:** remove the `True`-based definitions that trivialize complexity theory.
-
-**Primary files:**
-
-- `CookLevin/Complexity/Complexity/Definitions.lean`
-- new Lean files matching the Coq complexity infrastructure as needed
-
-**Required outcomes:**
-
-- replace the placeholder `encodable` scaffold with a meaningful encoding/size setup compatible with the rest of the development,
-- define nontrivial versions of `monotonic`, `inOPoly`, and the base time/size notions needed downstream,
-- introduce or port the supporting lemmas that the Coq proof uses for polynomial bounds and composition,
-- remove any theorem whose only proof was `trivial` because of placeholder definitions.
-
-**Done when:**
-
-- `inTimePoly_linear` no longer proves `inTimePoly P` for arbitrary predicates without an actual decider,
-- the new complexity lemmas resemble the Coq interfaces closely enough that later ports can follow them directly.
-
-### Step 2 — Rebuild `inTimePoly`, `inNP`, and polynomial certificate relations
-
-**Goal:** make NP membership mean what it should mean mathematically.
-
-**Primary files:**
-
-- `CookLevin/Complexity/Complexity/NP.lean`
-- `CookLevin/Complexity/NP/GenNP.lean`
-
-**Required outcomes:**
-
-- redefine `inTimePoly` to require an actual decider/verifier with a polynomial time bound,
-- redefine the certificate relation layer so witness size is polynomially bounded in the encoded input size,
-- port the corresponding Coq structure of `polyCertRel`, `inNP`, `inP`, and `P_NP_incl`,
-- update all immediate downstream uses to the new interfaces.
-
-**Done when:**
-
-- `inNP P` cannot be proved without a concrete bounded verifier (✓ - `inNP_intro` requires explicit `polyCertRel` and `inTimePoly` witnesses),
-- `P_NP_incl` and `red_inNP` no longer use `inTimePoly_linear` (✓ - fully repaired),
-- certificate size bounds are explicit parts of the `polyCertRel` API (✓ - added to structure),
-- `lake build` succeeds (✓).
-
-### Step 3 — Redefine polynomial-time many-one reduction
-
-**Goal:** make `⪯p` match the Coq notion of polynomial-time many–one reducibility.
-
-**Primary files:**
-
-- `CookLevin/Complexity/Complexity/NP.lean`
-
-**Required outcomes:**
-
-- strengthen `ReductionWitness` / `reducesPolyMO` so a reduction includes:
-  - a function,
-  - a polynomial-time computability proof for that function,
-  - the intended correctness statement (`↔`, not just the forward direction),
-- port or re-prove reflexivity, transitivity, and `red_inNP` using the stronger notion.
-
-**Done when:**
-
-- a brute-force map can no longer be accepted as a polynomial-time reduction,
-- composition of reductions carries composed runtime bounds.
-
-### Step 4 — Introduce a meaningful Turing-machine layer
-
-**Goal:** replace `TM := Unit` and `flatTM := Unit` with real computational objects.
-
-**Primary files:**
-
-- `CookLevin/Complexity/Complexity/Definitions.lean`
-- machine-specific files mirroring the Coq development
-
-**Required outcomes:**
-
-- port or reconstruct the relevant TM datatypes and encodings,
-- define machine execution and the time-bounded computation predicates used by the NP source problems,
-- connect machine encodings to the complexity layer from Steps 1–3.
-
-**Done when:**
-
-- Lean can state and prove facts about the runtime of concrete machines,
-- `computableTime'` is no longer `True`.
-
-### Step 5 — Rebuild the generic NP source problem faithfully
-
-**Goal:** make the starting NP-hard problem mathematically correct.
-
-**Primary files:**
-
-- `CookLevin/Complexity/NP/GenNP.lean`
-- `CookLevin/Complexity/GenNP_is_hard.lean`
-- `CookLevin/Complexity/CanEnumTerm.lean`
-
-**Required outcomes:**
-
-- ensure the generic source problem uses the new nontrivial verifier notion,
-- carry actual certificate-size and encoding information through `GenNPInput`,
-- re-prove `NPhard_GenNP` against the strengthened `inNP` and `⪯p`.
-
-**Done when:**
-
-- the hardness proof no longer relies on `inTimePoly_linear _`,
-- the source problem can serve as a mathematically valid starting point for the reduction chain.
-
-### Step 6 — Repair the bridge from generic NP to fixed machine problems
-
-**Goal:** make the `GenNP → LM → mTM → single-tape TM` pipeline encode real verifier computations.
-
-**Primary files:**
-
-- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
-- `CookLevin/Complexity/L_to_LM.lean`
-- `CookLevin/Complexity/LM_to_mTM.lean`
-- `CookLevin/Complexity/mTM_to_singleTapeTM.lean`
-- `CookLevin/Complexity/NP/TM/IntermediateProblems.lean`
-
-**Required outcomes:**
-
-- eliminate `certificateMeasure := 0`,
-- eliminate the dummy machine constants,
-- make `maxSize` and `steps` represent actual bounds,
-- prove that each bridge reduction is polynomial-time and semantically correct with the strengthened reduction notion.
-
-**Done when:**
-
-- the fixed-machine instances encode genuine bounded machine acceptance problems,
-- each bridge theorem states and proves a real polynomial-time reduction.
-
-### Step 7 — Audit and repair the Cook-Levin intermediate languages
-
-**Goal:** keep the useful tableau encodings, but make their interfaces depend on real machine semantics and real bounds.
-
-**Primary files:**
-
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
-
-**Required outcomes:**
-
-- verify that every wellformedness predicate and encoding lemma still matches the new machine layer,
-- add any missing size bounds required to prove later reductions polynomial,
-- remove any assumptions that only held because the machine model was trivial.
-
-**Done when:**
-
-- each intermediate language has a clear mathematical meaning tied to actual computations,
-- the downstream reductions can cite explicit size and runtime bounds.
-
-### Step 8 — Replace `BinaryCC_to_FSAT` brute-force trace enumeration
-
-**Goal:** generate a formula that directly encodes accepting traces, instead of searching for them.
-
-**Primary files:**
-
-- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
-- corresponding Coq reference files under `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.*`
-
-**Required outcomes:**
-
-- remove `allBitStrings`, `acceptingRunsFrom`, and the disjunction-over-traces construction from the reduction,
-- build the FSAT instance directly from the tableau constraints,
-- prove both semantic correctness and polynomial-time computability of the construction.
-
-**Done when:**
-
-- the reduction constructs the target formula without enumerating candidate runs,
-- the proof uses explicit size bounds rather than existential placeholders.
-
-### Step 9 — Replace `FSAT_to_SAT` and `FSAT_to_3SAT` with Tseitin-style reductions
-
-**Goal:** eliminate assignment search from the satisfiability reductions.
-
-**Primary files:**
-
-- `CookLevin/Complexity/NP/FSAT_to_SAT.lean`
-- `coqdoc/Complexity.NP.SAT.FSAT.FSAT_to_SAT.txt`
-
-**Required outcomes:**
-
-- port the Tseitin transformation (including any preprocessing such as OR elimination if that remains the cleanest route),
-- prove correctness of the generated clauses,
-- prove polynomial size growth and polynomial-time computability,
-- derive `FSAT ⪯p SAT` and `FSAT ⪯p kSAT 3` from the actual transformation.
-
-**Done when:**
-
-- `FSAT_search` is gone from the reduction,
-- the reduction output depends only on syntactic transformation of the input formula.
-
-### Step 10 — Re-audit every remaining reduction for the strengthened notion of `⪯p`
-
-**Goal:** ensure no theorem survives merely because the old reduction notion was too weak.
-
-**Primary files:**
-
-- all reduction files under `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/`
-- `CookLevin/Complexity/NP/kSAT_to_SAT.lean`
-- `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
-- any other file proving `⪯p`
-
-**Required outcomes:**
-
-- revisit each reduction proof under the new reduction definition,
-- add missing computability proofs,
-- strengthen correctness statements to the required equivalence,
-- remove or rewrite any reduction that still depends on search or placeholder machinery.
-
-**Done when:**
-
-- every theorem of the form `P ⪯p Q` exhibits a real polynomial-time computable map.
-
-### Step 11 — Re-prove NP-membership results using the repaired verifier framework
-
-**Goal:** ensure the "in NP" side of each completeness theorem is also faithful.
-
-**Primary files:**
-
-- `CookLevin/Complexity/NP/SAT.lean`
-- `CookLevin/Complexity/NP/FSAT.lean`
-- `CookLevin/Complexity/NP/kSAT.lean`
-- `CookLevin/Complexity/NP/FlatClique.lean`
-- any dedicated `*_inNP` files
-
-**Required outcomes:**
-
-- update each NP-membership theorem to provide actual certificate relations and real verifier bounds,
-- ensure the certificate size bounds are polynomial in the input size,
-- remove any uses that only worked because `inTimePoly` was trivial.
-
-**Done when:**
-
-- `SAT`, `kSAT 3`, and `FlatClique` are all in NP for genuine mathematical reasons.
-
-### Step 12 — Recompose the final theorem chain only after all upstream notions are repaired
-
-**Goal:** restore `CookLevin` as a faithful theorem, not merely a compiled name.
-
-**Primary files:**
-
-- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
-
-**Required outcomes:**
-
-- rebuild the composition proofs using the repaired hardness, NP-membership, and reduction theorems,
-- ensure the final statements depend only on non-placeholder infrastructure,
-- confirm that the final argument matches the Coq proof architecture closely.
-
-**Done when:**
-
-- `CookLevin0`, `CookLevin`, and `Clique_complete` are theorems in the intended mathematical sense.
-
-### Step 13 — Add a permanent status and audit section to the repository
-
-**Goal:** prevent the repository from again claiming more than it currently proves.
-
-**Primary files:**
-
-- `README.md`
-- optionally a dedicated status file if later desired
-
-**Required outcomes:**
-
-- keep an explicit checklist of which placeholder components remain, if any,
-- record which major steps above are complete,
-- document any intentionally deferred parts of the Coq port.
-
-**Done when:**
-
-- a new contributor can tell immediately whether the repository contains a faithful Cook-Levin proof or only a partial port.
-
-## Short prompt templates for future LLM sessions
-
-Use one of these per step, after replacing the step number.
-
-> Review `README.md`, then complete **Step N** of the implementation plan. Follow the referenced Lean files and the matching `coqdoc/` files closely, keep the change mathematically faithful, update the `Current status at a glance` section and mark Step N as complete in the plan, and validate with `lake build`.
-
-> Complete **Step N** from `README.md` only. Do not skip prerequisites. Port the corresponding Coq definitions and proofs as closely as practical, remove placeholder complexity machinery touched by this step, update the `Current status at a glance` section and mark Step N as complete in the plan, and run `lake build`.
-
-## Minimum acceptance standard for claiming success
-
-This repository should only claim to prove Cook-Levin once all of the following are true:
-
-- polynomial-time computation is modeled nontrivially,
-- polynomial-time reduction includes actual polynomial-time computability,
-- the machine layer has real semantics,
-- the generic NP source problem is faithful,
-- the reduction chain avoids brute-force search,
-- the final NP-completeness theorems are rebuilt from the repaired foundations.
-
-Until then, the honest description of the repository is:
-
-> a promising Lean scaffold for a Cook-Levin formalization, with substantial SAT and tableau infrastructure, but not yet a faithful proof of the theorem.
+Only the remaining work is listed below. The detailed instructions live in the step prompt files under `.github/prompts/`.
+
+1. **Step 01** — repair encoding and size foundations (`.github/prompts/step01.md`)
+2. **Step 02** — finish the polynomial-time reduction API (`.github/prompts/step02.md`)
+3. **Step 03** — replace the dummy FlatTM execution layer (`.github/prompts/step03.md`)
+4. **Step 04** — finish the generic NP source problem (`.github/prompts/step04.md`)
+5. **Step 05** — repair the `GenNP → LMGenNP` bookkeeping bridge (`.github/prompts/step05.md`)
+6. **Step 06** — repair the `LMGenNP → mTM → single-tape TM` bridge (`.github/prompts/step06.md`)
+7. **Step 07** — finish the single-tape Cook-Levin entry problem (`.github/prompts/step07.md`)
+8. **Step 08** — repair the `FlatSingleTMGenNP → FlatTCC` stage (`.github/prompts/step08.md`)
+9. **Step 09** — repair the `FlatTCC → FlatCC` stage (`.github/prompts/step09.md`)
+10. **Step 10** — repair the `FlatCC → BinaryCC` stage (`.github/prompts/step10.md`)
+11. **Step 11** — replace brute-force `BinaryCC → FSAT` (`.github/prompts/step11.md`)
+12. **Step 12** — replace the remaining SAT/clique placeholders (`.github/prompts/step12.md`)
+13. **Step 13** — rebuild the final theorem chain and final status docs (`.github/prompts/step13.md`)
+
+## How contributors should use the plan
+
+1. Read this `README.md` first.
+2. Then read exactly one step file from `.github/prompts/stepNN.md`.
+3. Read every Lean and `coqdoc` file named in that step file before editing.
+4. Keep the step small and mathematically honest.
+5. Run `lake build` before finishing; if it still fails, state exactly which remaining blocker caused the failure.
+
+## Honest repository description
+
+At the moment this repository should be described as:
+
+> a promising Lean scaffold for a Cook-Levin formalization, with substantial SAT and tableau infrastructure, but with major proof-critical gaps still open.

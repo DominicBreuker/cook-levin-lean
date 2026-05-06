@@ -1,31 +1,40 @@
-# Step 09 — Replace `FSAT_to_SAT` and `FSAT_to_3SAT` with Tseitin-style reductions
+# Step 09 — Repair the `FlatTCC → FlatCC` stage
 
-## Objective
-Eliminate assignment search from the satisfiability reductions and replace it with syntactic Tseitin-style transformations.
+## Why this task still exists
 
-## Read first
+The current reduction still uses placeholder width/offset/step bookkeeping and has an unfinished proof.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- `CookLevin/Complexity/NP/FSAT_to_SAT.lean`
-- `coqdoc/Complexity.NP.SAT.FSAT.FSAT_to_SAT.txt`
-- `CookLevin/Complexity/NP/FSAT.lean`
-- `CookLevin/Complexity/NP/SAT.lean`
-- `CookLevin/Complexity/NP/kSAT.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatTCC_to_FlatCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.TCC_to_CC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatTCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.CC.txt`
+
+## Concrete problems visible today
+
+- `FlatTCC_to_FlatCC_instance` still sets `offset := 0`, `width := 0`, and `steps := 0`.
+- `FlatTCC_to_FlatCC_poly` still contains a `sorry`.
+- The flattening lemmas are already substantial; use them instead of rebuilding everything from scratch.
 
 ## Required work
-1. Remove `FSAT_search` and any related search-based reduction logic.
-2. Port or reconstruct the Tseitin transformation from the Coq reference, including any preprocessing such as OR elimination if still needed.
-3. Prove correctness of the generated CNF / 3-CNF encoding.
-4. Prove polynomial output-size growth and polynomial-time computability.
-5. Re-establish both `FSAT ⪯p SAT` and `FSAT ⪯p kSAT 3` using the repaired reduction notion.
 
-## Concrete expectations
-- The output instance must depend only on syntactic transformation of the input formula.
-- Keep auxiliary correctness lemmas organized so later maintenance is possible.
-- If helper definitions are imported from Coq in a slightly different shape, document that in code or README as appropriate.
+1. Make the translated `FlatCC` instance carry the correct offset, width, and step information.
+2. Finish `FlatTCC_to_FlatCC_poly` honestly.
+3. Add only the helper lemmas that are actually needed for this reduction and the next one.
+4. Reuse the existing flatten/unflatten infrastructure in `Subproblems/FlatTCC.lean` and `Subproblems/FlatCC.lean`.
 
-## Definition of done
-- Search-based satisfiability reduction code is gone.
-- The Lean development contains a real Tseitin-style reduction with correctness and complexity proofs.
-- Both FSAT reduction theorems compile under the strengthened `⪯p` definition.
-- `lake build` succeeds.
-- `README.md` records that the FSAT reductions are now syntactic and polynomial-time.
+## Done when
+
+- the translated instance no longer has zero bookkeeping fields,
+- the reduction theorem has no `sorry`,
+- the README records that the `TCC → CC` stage is real.

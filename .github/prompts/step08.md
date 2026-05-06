@@ -1,29 +1,39 @@
-# Step 08 — Replace `BinaryCC_to_FSAT` brute-force trace enumeration
+# Step 08 — Repair the `FlatSingleTMGenNP → FlatTCC` stage
 
-## Objective
-Build the FSAT instance directly from tableau constraints instead of enumerating all traces.
+## Why this task still exists
 
-## Read first
+The current `FlatSingleTMGenNP_to_FlatTCC` reduction still uses placeholder bounds and ends with a `sorry`.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
-- matching Coq docs under `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.*`
-- the repaired BinaryCC and FSAT infrastructure from earlier steps
+- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatSingleTMGenNP_to_FlatTCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.PTCC_Preludes.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatTCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.TCC.txt`
+
+## Concrete problems visible today
+
+- the reduction file still sets `steps := 0`,
+- `FlatSingleTMGenNP_to_FlatTCC_poly` still ends with a `sorry`,
+- later stages need explicit wellformedness and size facts from `Subproblems/FlatTCC.lean`.
 
 ## Required work
-1. Remove the current brute-force machinery that enumerates bitstrings and accepting traces.
-2. Construct a formula that directly expresses the BinaryCC tableau constraints.
-3. Prove semantic correctness in both directions using the strengthened reduction notion.
-4. Prove explicit size growth and polynomial-time computability of the construction.
-5. Update any helper lemmas needed for the direct encoding.
 
-## Concrete expectations
-- The target formula should be derived syntactically from the BinaryCC instance, not from a search over candidate runs.
-- Avoid introducing a new hidden exponential-time helper.
-- Keep the reduction theorem statement aligned with the repaired `⪯p` API.
+1. Replace the placeholder step / size bookkeeping in the reduction with honest values derived from the source instance.
+2. Finish `FlatSingleTMGenNP_to_FlatTCC_poly` without `sorry`.
+3. Add whichever `FlatTCC` helper lemmas are really needed downstream, instead of forcing later files to duplicate them.
+4. Keep the Lean names aligned with the Coq reduction and subproblem files.
 
-## Definition of done
-- `allBitStrings`, `acceptingRunsFrom`, and the disjunction-over-traces approach are removed from the reduction path.
-- `BinaryCC_to_FSAT` is a real polynomial-time reduction.
-- The proof uses explicit constraint and size lemmas instead of existential placeholders.
-- `lake build` succeeds.
-- `README.md` records that the brute-force BinaryCC reduction has been eliminated.
+## Done when
+
+- the reduction no longer hard-codes zero bounds,
+- `FlatSingleTMGenNP_to_FlatTCC_poly` is honest,
+- the README can say the first tableau stage is real.
