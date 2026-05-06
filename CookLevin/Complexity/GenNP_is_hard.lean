@@ -6,7 +6,7 @@ set_option autoImplicit false
 
 open Classical
 
-theorem hasDeciderClassical {X : Type} (P : X → Prop) (f : Nat → Nat) : HasDecider X P f := by
+theorem hasDeciderClassical {X : Type} (P : X → Prop) (timeBound : Nat → Nat) : HasDecider X P timeBound := by
   classical
   refine ⟨fun x => if P x then true else false, ?_⟩
   intro x

@@ -54,7 +54,7 @@ deriving Repr
 -- Execution semantics for flattened Turing machines
 
 -- Size of tapes in flattened representation.
--- We use the maximum tape length, matching the Coq bookkeeping used by later TM bridges.
+-- We use the maximum tape length, matching the bookkeeping from the Coq development being ported.
 def sizeOfmTapesFlat : List (List Nat) → Nat
   | [] => 0
   | tape :: tapes => max tape.length (sizeOfmTapesFlat tapes)
