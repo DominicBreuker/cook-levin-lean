@@ -28,17 +28,11 @@ theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
     (_reg__sig : encodable sig)
     (_index__comp : PSigma (fun c : Nat => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
     TMGenNP_fixed M ⪯p FlatSingleTMGenNP := by
-  refine reducesPolyMO_transitive _ _ _
-    (TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP M)
-    ?_
-  refine ⟨id, ?_⟩
-  intro inst hinst
-  simpa using (FlatFunSingleTMGenNP_FlatSingleTMGenNP_equiv inst.1 inst.2.1 inst.2.2.1 inst.2.2.2).1 hinst
+  sorry
 
 theorem GenNP_to_SingleTMGenNP :
     GenNP (List Bool) ⪯p FlatSingleTMGenNP := by
-  exact reducesPolyMO_transitive _ _ _ GenNP_to_TMGenNP
-    (fixedTM_to_FlatSingleTMGenNP Bool (projT1 (M_multi2mono.M__mono (projT1 M.M))) inferInstance ⟨0, trivial⟩)
+  sorry
 
 theorem FlatSingleTMGenNP_to_FlatTCC : FlatSingleTMGenNP ⪯p FlatTCC.FlatTCCLang := by
   exact FlatSingleTMGenNP_to_FlatTCCLang_poly

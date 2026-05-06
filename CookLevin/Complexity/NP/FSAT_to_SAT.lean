@@ -122,11 +122,9 @@ def FSAT_to_3SAT_reduction (f : formula) : cnf :=
 theorem FSAT_to_SAT_poly : FSAT ⪯p SAT := 
   ⟨⟨FSAT_to_SAT_reduction, trivial, by
     intro x
-    have hsearch : FSAT_search x = true := FSAT_search_complete x
-    simpa [FSAT_to_SAT_reduction, hsearch] using FSAT_to_SAT_yes_sat⟩⟩
+    sorry⟩⟩
 
 theorem FSAT_to_3SAT_poly : FSAT ⪯p kSAT 3 := 
   ⟨⟨FSAT_to_3SAT_reduction, trivial, by
     intro x
-    have hsearch : FSAT_search x = true := FSAT_search_complete x
-    simpa [FSAT_to_3SAT_reduction, hsearch] using FSAT_to_3SAT_yes_sat⟩⟩
+    sorry⟩⟩

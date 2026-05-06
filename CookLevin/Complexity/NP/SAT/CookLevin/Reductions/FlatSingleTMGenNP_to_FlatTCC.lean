@@ -68,9 +68,14 @@ noncomputable def FlatSingleTMGenNP_to_FlatTCC_instance :
 
 theorem FlatSingleTMGenNP_to_FlatTCCLang_poly : FlatSingleTMGenNP ⪯p FlatTCC.FlatTCCLang := by
   refine ⟨⟨FlatSingleTMGenNP_to_FlatTCC_instance, trivial, fun {inst} => ?_⟩⟩
-  rintro ⟨M, s, maxSize, steps⟩ h
-  rcases h with ⟨_, hs, _⟩
-  simp [FlatSingleTMGenNP_to_FlatTCC_instance, hs]
-  refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness s hs) (mkTCCWitness_valid s hs).1,
-    ⟨FlatTCC.isValidFlattening_flattenTCC _, ?_⟩⟩
-  simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid s hs
+  constructor
+  · intro h
+    rcases inst with ⟨M, s, maxSize, steps⟩
+    simp [FlatSingleTMGenNP] at h
+    rcases h with ⟨_, hs, _⟩
+    simp [FlatSingleTMGenNP_to_FlatTCC_instance, hs]
+    refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness s hs) (mkTCCWitness_valid s hs).1,
+      ⟨FlatTCC.isValidFlattening_flattenTCC _, ?_⟩⟩
+    simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid s hs
+  · intro h
+    sorry
