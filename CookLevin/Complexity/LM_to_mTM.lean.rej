@@ -1,0 +1,11 @@
+--- CookLevin/Complexity/LM_to_mTM.lean
++++ CookLevin/Complexity/LM_to_mTM.lean
+@@ -4,7 +4,7 @@ set_option autoImplicit false
+ 
+ namespace M
+ 
+-def M : Sigma (fun _ : TM Bool 2 => Unit) := ⟨(), ()⟩
++def M : Sigma (fun _ : TM Bool 2 => Unit) := ⟨validFlatTM_default, ()⟩
+ 
+ end M
+ 
