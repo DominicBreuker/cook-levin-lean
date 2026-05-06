@@ -13,8 +13,8 @@ instance instEncodableDefault (α : Sort u) : encodable α where
   size_ge_logical := fun _ => ⟨0, by simp⟩
 
 abbrev finType := Type
-abbrev flatTM := Unit
-abbrev TM (_σ : Type) (_ : Nat) := Unit
+abbrev flatTM := FlatTM
+abbrev TM (_σ : Type) (_ : Nat) := FlatTM
 
 abbrev var := Nat
 abbrev literal := Bool × var
