@@ -52,6 +52,17 @@ Important instructions:
 - Treat any files in the coqdoc folder as the blueprint for our desired outcome, they are documentation of a working proof written in Coq
 - Your final response must be exactly one short line suitable for use as a git commit message. Do not include quotes, markdown, or any extra explanation.
 
+Regarding your tooling:
+- Lean tooling is expected to be available before you start: `lean`, `lake`, Mathlib cache, `rg`, and the `lean-lsp` MCP server.
+- Prefer Lean MCP tools over blind guessing when working on `.lean` files:
+  - `lean_diagnostic_messages` for fast per-file errors/warnings
+  - `lean_goal` / `lean_term_goal` to inspect proof states
+  - `lean_local_search`, `lean_leansearch`, `lean_loogle`, and `lean_leanfinder` to find existing lemmas
+  - `lean_multi_attempt` to compare tactic candidates
+  - `lean_verify` before claiming a proof is complete or sound
+- Use `import Mathlib` explicitly in proof files when you need Mathlib lemmas or tactics.
+- Use `lake build` for whole-project checkpoints, but use Lean MCP diagnostics first for faster iteration.
+
 Step instructions from `{prompt_path}`:
 
 {step_prompt}
