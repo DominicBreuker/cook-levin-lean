@@ -6,7 +6,7 @@
 - Prefer Lean MCP tools over blind guessing when working on `.lean` files:
   - `lean_diagnostic_messages` for fast per-file errors/warnings
   - `lean_goal` / `lean_term_goal` to inspect proof states
-  - `lean_local_search`, `lean_leansearch`, `lean_loogle`, and `lean_leanfinder` to find existing lemmas
+  - `lean_local_search`, `lean_leansearch`, `lean_loogle`, and `lean_leanfinder` to find existing lemmas (loogle has a rate limit, 3 requests every 30 seconds)
   - `lean_multi_attempt` to compare tactic candidates
   - `lean_verify` before claiming a proof is complete or sound
 - Use `import Mathlib` explicitly in proof files when you need Mathlib lemmas or tactics.
