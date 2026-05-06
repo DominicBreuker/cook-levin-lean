@@ -1,5 +1,7 @@
 set_option autoImplicit false
 
+import CookLevin.Complexity.Complexity.MachineSemantics
+
 universe u v
 
 class encodable (α : Sort u) where
