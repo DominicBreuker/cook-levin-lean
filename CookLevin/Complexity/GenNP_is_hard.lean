@@ -9,15 +9,23 @@ def genNPRel {X__cert : Type} [encodable X__cert]
     (R : X → Y → Prop) (x : X) : X__cert → Prop :=
   fun cert => ∃ witness : Y, enumTerm.encode witness = cert ∧ R x witness
 
+-- Note: genNPRel_inTimePoly is not implemented in Step 5.
+-- The full proof requires the CanEnumTerm infrastructure which uses
+-- concrete TM encodings (lambda calculus terms in Coq).
+-- This is left as sorry for now and will be completed in later steps.
+
 def genNPInstance {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]
     (R : X → Y → Prop) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
     (x : X) : GenNPInput X__cert := by
-  refine ⟨fun cert => genNPRel enumTerm R x cert, ?_⟩
-  -- We need to show inTimePoly for genNPRel enumTerm R x
-  -- genNPRel enumTerm R x cert = ∃ witness : Y, enumTerm.encode witness = cert ∧ R x witness
-  -- The key observation: by polyCertRel (from hPoly), there's a polynomial bound on certificate size
-  -- So we only need to search witnesses up to that bound
+  refine ⟨fun cert => genNPRel enumTerm R (X := X) x cert, ?_⟩
+  -- We need to construct an inTimePoly witness for the relation
+  -- genNPRel x cert = ∃ y : Y, enumTerm.encode y = cert ∧ R x y
+  --
+  -- This is provable but requires nontrivial constructions.
+  -- For Step 5, we leave this as sorry since the technical machinery
+  -- needs the actual CanEnumTerm infrastructure from later per the Coq proof
+  -- which depends on lambda calculus terms.
   sorry
 
 theorem genNPInstance_spec {X__cert : Type} [encodable X__cert]
@@ -26,9 +34,22 @@ theorem genNPInstance_spec {X__cert : Type} [encodable X__cert]
     (hCorrect : polyCertRel Q R) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2))
     (x : X) :
     GenNP X__cert (genNPInstance enumTerm R hPoly x) ↔ Q x := by
-  -- Placeholder removed in Step 2: inTimePoly and polyCertRel now have structure
-  -- that's not compatible with the old trivial proofs
-  sorry
+  constructor
+  · -- Forward direction: GenNP ... implies Q x
+    intro ⟨cert, y, hy_eq, hR⟩
+    -- We have cert : X__cert, y : Y, enumTerm.encode y = cert, and R x y
+    -- Extract the PolyCertRelWitness
+    obtain ⟨witness⟩ := hCorrect
+    -- By witness.sound, R x y → Q x
+    exact witness.sound hR
+  · -- Backward direction: Q x implies GenNP ...
+    intro hQx
+    -- Extract the PolyCertRelWitness
+    obtain ⟨witness⟩ := hCorrect
+    -- By witness.complete, Q x → ∃ y, R x y ∧ encodable.size y ≤ bound (encodable.size x)
+    obtain ⟨y, hR, hy_bound⟩ := witness.complete hQx
+    -- Use y as the witness
+    refine ⟨enumTerm.encode y, y, rfl, hR⟩
 
 theorem NPhard_GenNP (X__cert : Type) [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) : NPhard (GenNP X__cert) := by
