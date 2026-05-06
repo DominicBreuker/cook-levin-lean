@@ -183,15 +183,15 @@ theorem acceptsFlatTM_eq_true_iff {M : FlatTM} {initTapes : List (List Nat)} {st
 
 -- Polynomial-time computable predicate for machine execution
 -- This replaces the placeholder computableTime' with a meaningful statement
-def computableTime' {α : Type u} {β : Type v} (x : α) (f : β → Nat) : Prop :=
-  let _ := x
+def computableTime' {α : Type u} {β : Type v} : α → (β → Nat) → Prop
+  | _, f =>
   -- A function f is computable in time computable by some machine
   -- This means there exists a machine that computes f within the given time bound
-  ∃ (M : FlatTM) (maxSize steps : Nat),
-    -- The machine M accepts its own description in bounded time
-    acceptsInTime M maxSize steps ∧
-    -- The time bound captures the complexity of f
-    ∀ y : β, f y ≤ steps
+    ∃ (M : FlatTM) (maxSize steps : Nat),
+      -- The machine M accepts its own description in bounded time
+      acceptsInTime M maxSize steps ∧
+      -- The time bound captures the complexity of f
+      ∀ y : β, f y ≤ steps
 
 -- Size of a flatTM encoding (in natural numbers)
 def sizeFlatTM (M : FlatTM) : Nat :=
