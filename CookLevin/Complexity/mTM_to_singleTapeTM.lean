@@ -16,7 +16,9 @@ def multiTapeToSingleTapeInput {σ : Type} (inst : mTMGenNPFixedInput σ) : TMGe
 
 theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} (M : TM σ 2) :
     mTMGenNP_fixed M ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono M)) := by
-  refine ⟨⟨multiTapeToSingleTapeInput, ?_⟩⟩
-  intro inst hInst
-  rcases hInst with ⟨cert, hSize, hAccepts⟩
-  exact ⟨cert, by simp [certificateMeasure], hAccepts⟩
+  refine ⟨⟨multiTapeToSingleTapeInput, trivial, ?_⟩⟩
+  intro inst
+  -- Goal: mTMGenNP_fixed M inst ↔ TMGenNP_fixed (projT1 (M_multi2mono.M__mono M)) (multiTapeToSingleTapeInput inst)
+  -- Both sides are ∃ cert, certificateMeasure cert ≤ maxSize ∧ accepts cert, so they're equivalent
+  simp [mTMGenNP_fixed, TMGenNP_fixed, certificateMeasure, multiTapeToSingleTapeInput]
+  <;> aesop

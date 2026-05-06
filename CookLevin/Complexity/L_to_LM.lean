@@ -12,7 +12,11 @@ def genNPToLMGenNPInstance {X : Type} [encodable X] (inst : GenNPInput X) :
 
 theorem GenNP_to_LMGenNP (X : Type) [encodable X] :
     GenNP X ⪯p LMGenNP.LMGenNP X := by
-  refine ⟨⟨genNPToLMGenNPInstance, ?_⟩⟩
-  intro inst hInst
-  rcases hInst with ⟨cert, hCert⟩
-  exact ⟨cert, by simp [certificateMeasure], hCert⟩
+  refine ⟨⟨genNPToLMGenNPInstance, trivial, ?_⟩⟩
+  intro inst
+  -- Goal: GenNP X inst ↔ LMGenNP.LMGenNP X (genNPToLMGenNPInstance inst)
+  -- GenNP X inst = ∃ cert, inst.rel cert
+  -- LMGenNP.LMGenNP X (genNPToLMGenNPInstance inst) = ∃ cert, certificateMeasure cert ≤ 0 ∧ (genNPToLMGenNPInstance inst).source.rel cert
+  -- Since (genNPToLMGenNPInstance inst).source = inst and certificateMeasure is always 0, these are equivalent
+  simp [GenNP, LMGenNP, certificateMeasure, genNPToLMGenNPInstance]
+  <;> aesop

@@ -102,7 +102,7 @@ theorem reducesPolyMO_elim {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → ∃ f : X → Y, (∀ x, P x → Q (f x)) ∧ (∀ x, P x ↔ Q (f x)) := by
   rintro ⟨⟨f, _, hf_correct⟩⟩
-  refine ⟨f, fun x hx => by have := hf_correct x; exact this.mp hx, fun x => hf_correct x⟩
+  refine ⟨f, fun x hx => (@hf_correct x).mp hx, fun x => @hf_correct x⟩
 
 theorem reducesPolyMO_reflexive (X : Type) [encodable X] (P : X → Prop) : P ⪯p P := by
   exact ⟨⟨id, trivial, fun _ => Iff.rfl⟩⟩
@@ -150,22 +150,17 @@ theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     rcases hWitness.rel_poly with ⟨f_bound, ⟨dec, hdec⟩, hf_poly, hf_mono⟩
     -- We construct a decider for the composed relation
     -- The decider checks: dec (hRed.reduction x, y')
-    have dec_P : (X × Y') → Bool := fun xy => dec (hRed.reduction xy.1, xy.2)
+    let dec_P : (X × Y') → Bool := fun xy => dec (hRed.reduction xy.1, xy.2)
     refine ⟨f_bound, ⟨dec_P, ?_⟩, hf_poly, hf_mono⟩
     intros xy
-    -- Need to show: P xy.1 ↔ dec_P xy = true
-    simp only [dec_P]
-    -- hdec gives us: hWitness.rel y y' ↔ dec (y, y') = true
-    -- We have: hWitness.rel (hRed.reduction xy.1) xy.2
-    -- So: dec (hRed.reduction xy.1, xy.2) = true ↔ hWitness.rel (hRed.reduction xy.1) xy.2
+    -- Need to show: (fun xy => hWitness.rel (hRed.reduction xy.1) xy.2) xy ↔ dec_P xy = true
+    -- Which simplifies to: hWitness.rel (hRed.reduction xy.1) xy.2 ↔ dec_P xy = true
+    -- We have dec_P xy = dec (hRed.reduction xy.1, xy.2) by definition
+    -- And hdec gives us: hWitness.rel y y' ↔ dec (y, y') = true
     have hRel : hWitness.rel (hRed.reduction xy.1) xy.2 ↔ dec (hRed.reduction xy.1, xy.2) = true := 
       hdec (hRed.reduction xy.1, xy.2)
-    rw [← hRel]
-    -- Now use hRed.reduction_correct to relate P xy.1 and Q (hRed.reduction xy.1)
-    -- We need: P xy.1 ↔ hWitness.rel (hRed.reduction xy.1) xy.2
-    -- But we only have: P xy.1 ↔ Q (hRed.reduction xy.1)
-    -- This is the limitation of our current approach
-    sorry
+    show hWitness.rel (hRed.reduction xy.1) xy.2 ↔ dec_P xy = true
+    rw [hRel]
   · -- hCorrect: polyCertRel for the new relation
     -- hWitness is an InNPWitness, which contains a polyCertRel internally
     obtain ⟨cert_witness⟩ := hWitness.rel_correct
