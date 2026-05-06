@@ -43,6 +43,7 @@ The detailed step instructions come from `{prompt_path}` and are reproduced belo
 
 Important instructions:
 - You may modify repository files as needed, but do not modify, create, delete, or move anything under `.github/`.
+- temporary files must be written to /tmp or, if you write then under the working directory, you must delete them before you finish 
 - Read `README.md` before making changes so your work stays aligned with the global plan.
 - Follow the step prompt closely and complete as much of the step as you can coherently finish in one run.
 - If your changes materially advance the repository status, update the `Current status at a glance` section in `README.md` and mark the relevant step progress in the plan.
