@@ -67,7 +67,11 @@ theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P
       intros x hx
       exact ⟨(), hx, Nat.zero_le _⟩
     · -- bound_poly: inOPoly bound (constant function is inOPoly)
-      sorry
+      refine' ⟨0, ?_⟩
+      refine' ⟨0, ?_⟩
+      refine' ⟨0, ?_⟩
+      intros
+      apply Nat.zero_le
     · -- bound_mono: monotonic bound (constant function is monotonic)
       intros x x' h
       apply Nat.zero_le
