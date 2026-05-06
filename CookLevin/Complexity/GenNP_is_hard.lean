@@ -6,7 +6,7 @@ set_option autoImplicit false
 
 open Classical
 
-theorem hasDecider_classical {X : Type} (P : X → Prop) (f : Nat → Nat) : HasDecider X P f := by
+theorem hasDeciderClassical {X : Type} (P : X → Prop) (f : Nat → Nat) : HasDecider X P f := by
   classical
   refine ⟨fun x => if P x then true else false, ?_⟩
   intro x
@@ -43,7 +43,7 @@ noncomputable def genNPInstance {X__cert : Type} [encodable X__cert]
   let steps := genNPTimeBound R hPoly (encodable.size x + certBound)
   { rel := genNPRel enumTerm (genNPCertBound R hCorrect) R x
     rel_poly := by
-      refine ⟨fun _ => steps, hasDecider_classical _ _, inOPoly_const _, ?_⟩
+      refine ⟨fun _ => steps, hasDeciderClassical _ _, inOPoly_const _, ?_⟩
       intro a b hab
       simp [steps]
     maxSize := certBound + 2
