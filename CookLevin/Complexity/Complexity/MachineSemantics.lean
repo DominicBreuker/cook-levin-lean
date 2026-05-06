@@ -53,9 +53,25 @@ deriving Repr
 
 -- Execution semantics for flattened Turing machines
 
--- Size of tapes in flattened representation
-def sizeOfmTapesFlat (t : List (List Nat)) : Nat :=
-  t.foldl (fun acc tape => acc + tape.length) 0
+-- Size of tapes in flattened representation.
+-- We use the maximum tape length, matching the bookkeeping from the Coq development being ported.
+def sizeOfmTapesFlat : List (List Nat) → Nat
+  | [] => 0
+  | tape :: tapes => max tape.length (sizeOfmTapesFlat tapes)
+
+def tapeSymbolsBounded (sig : Nat) (tape : List Nat) : Prop :=
+  ∀ x, x ∈ tape → x < sig
+
+def flatTapesWellFormed (M : FlatTM) (initTapes : List (List Nat)) : Prop :=
+  initTapes.length = M.tapes ∧
+    ∀ tape ∈ initTapes, tapeSymbolsBounded M.sig tape
+
+def isValidFlatTape (sig : Nat) (tape : List Nat) : Bool :=
+  tape.all (fun x => x < sig)
+
+def isValidFlatTapes (M : FlatTM) (initTapes : List (List Nat)) : Bool :=
+  decide (initTapes.length = M.tapes) &&
+    initTapes.all (isValidFlatTape M.sig)
 
 -- Initial configuration for a flattened TM
 -- Takes a flatTM and initial tape contents
@@ -78,7 +94,7 @@ def writeCurrentTapeSymbol (tape : List Nat × Nat × List Nat) (symbol : Option
   match symbol with
   | none => (left, head, right)
   | some sym =>
-      if h : head < right.length then
+      if _ : head < right.length then
         (left, head, right.take head ++ sym :: right.drop (head + 1))
       else
         (left, head, right ++ List.replicate (head - right.length) 0 ++ [sym])
@@ -97,7 +113,7 @@ def entryMatchesConfig (entry : FlatTMTransEntry) (cfg : FlatTMConfig) : Bool :=
     entry.src_tape_vals = cfg.tapes.map currentTapeSymbol
 
 def applyTransitionEntry (cfg : FlatTMConfig) (entry : FlatTMTransEntry) : Option FlatTMConfig :=
-  if hTapes : cfg.tapes.length = entry.dst_write_vals.length ∧ cfg.tapes.length = entry.move_dirs.length then
+  if _ : cfg.tapes.length = entry.dst_write_vals.length ∧ cfg.tapes.length = entry.move_dirs.length then
     some {
       state_idx := entry.dst_state
       tapes := List.zipWith (fun tape payload =>
@@ -110,18 +126,24 @@ def stepFlatTM (M : FlatTM) (cfg : FlatTMConfig) : Option FlatTMConfig := do
   let entry ← M.trans.find? (fun entry => entryMatchesConfig entry cfg)
   applyTransitionEntry cfg entry
 
+def haltingStateReached (M : FlatTM) (cfg : FlatTMConfig) : Bool :=
+  M.halt.getD cfg.state_idx false
+
 def runFlatTM : Nat → FlatTM → FlatTMConfig → Option FlatTMConfig
   | 0, _, cfg => some cfg
   | n + 1, M, cfg =>
-      match stepFlatTM M cfg with
-      | none => some cfg
-      | some cfg' => runFlatTM n M cfg'
+      if haltingStateReached M cfg then
+        some cfg
+      else
+        match stepFlatTM M cfg with
+        | none => some cfg
+        | some cfg' => runFlatTM n M cfg'
 
 def execFlatTM (M : FlatTM) (initTapes : List (List Nat)) (steps : Nat) : Option FlatTMConfig :=
-  runFlatTM steps M (initFlatConfig M initTapes)
-
-def haltingStateReached (M : FlatTM) (cfg : FlatTMConfig) : Bool :=
-  M.halt.getD cfg.state_idx false
+  if isValidFlatTapes M initTapes then
+    runFlatTM steps M (initFlatConfig M initTapes)
+  else
+    none
 
 def acceptsFlatTM (M : FlatTM) (initTapes : List (List Nat)) (steps : Nat) : Bool :=
   match execFlatTM M initTapes steps with
@@ -131,19 +153,45 @@ def acceptsFlatTM (M : FlatTM) (initTapes : List (List Nat)) (steps : Nat) : Boo
 -- Time-bounded acceptance predicate
 def acceptsInTime (M : FlatTM) (maxSize : Nat) (steps : Nat) : Prop :=
   ∃ initTapes : List (List Nat),
+    isValidFlatTapes M initTapes = true ∧
     sizeOfmTapesFlat initTapes ≤ maxSize ∧
     acceptsFlatTM M initTapes steps
 
+theorem runFlatTM_of_halting (M : FlatTM) (cfg : FlatTMConfig) (steps : Nat)
+    (h : haltingStateReached M cfg = true) :
+    runFlatTM steps M cfg = some cfg := by
+  cases steps with
+  | zero =>
+      simp [runFlatTM]
+  | succ n =>
+      simp [runFlatTM, h]
+
+theorem execFlatTM_eq_some_runFlatTM {M : FlatTM} {initTapes : List (List Nat)} {steps : Nat}
+    (h : isValidFlatTapes M initTapes = true) :
+    execFlatTM M initTapes steps = runFlatTM steps M (initFlatConfig M initTapes) := by
+  simp [execFlatTM, h]
+
+theorem acceptsFlatTM_eq_true_iff {M : FlatTM} {initTapes : List (List Nat)} {steps : Nat} :
+    acceptsFlatTM M initTapes steps = true ↔
+      ∃ cfg, execFlatTM M initTapes steps = some cfg ∧ haltingStateReached M cfg = true := by
+  unfold acceptsFlatTM
+  cases hExec : execFlatTM M initTapes steps with
+  | none =>
+      simp
+  | some cfg =>
+      simp
+
 -- Polynomial-time computable predicate for machine execution
 -- This replaces the placeholder computableTime' with a meaningful statement
-def computableTime' {α : Type u} {β : Type v} (x : α) (f : β → Nat) : Prop :=
+def computableTime' {α : Type u} {β : Type v} : α → (β → Nat) → Prop
+  | _, f =>
   -- A function f is computable in time computable by some machine
   -- This means there exists a machine that computes f within the given time bound
-  ∃ (M : FlatTM) (maxSize steps : Nat),
-    -- The machine M accepts its own description in bounded time
-    acceptsInTime M maxSize steps ∧
-    -- The time bound captures the complexity of f
-    ∀ y : β, f y ≤ steps
+    ∃ (M : FlatTM) (maxSize steps : Nat),
+      -- The machine M accepts its own description in bounded time
+      acceptsInTime M maxSize steps ∧
+      -- The time bound captures the complexity of f
+      ∀ y : β, f y ≤ steps
 
 -- Size of a flatTM encoding (in natural numbers)
 def sizeFlatTM (M : FlatTM) : Nat :=
