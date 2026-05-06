@@ -307,6 +307,8 @@ theorem encodable_size_list_nil {α : Type u} [encodable α] :
     encodable.size ([] : List α) = 0 := by
   rfl
 
+/-- Shifting the initial accumulator by a constant shifts the whole `foldl` result
+by the same constant for additive folds. -/
 theorem list_foldl_add {α : Type u} (w : α → Nat) :
     ∀ (xs : List α) (base offset : Nat),
       xs.foldl (fun acc x => acc + w x) (offset + base) =
@@ -449,6 +451,8 @@ def inO (f g : Nat → Nat) : Prop :=
 def inOPoly (f : Nat → Nat) : Prop :=
   ∃ n : Nat, inO f (fun x => x ^ n)
 
+/-- `maxPrefix f n` is the maximum value of `f` on the finite prefix `{0, …, n}`.
+It is used to control the small-output case in polynomial-composition arguments. -/
 def maxPrefix (f : Nat → Nat) : Nat → Nat
   | 0 => f 0
   | n + 1 => max (maxPrefix f n) (f (n + 1))

@@ -46,9 +46,12 @@ def boollists_enum_term : CanEnumTerm (List Bool) where
   encode_size_bound := by
     intro Y _ y
     by_cases hy : encodable.size y > 0
-    · rw [show encodable.size
-          (if encodable.size y > 0 then [true] ++ List.replicate (encodable.size y) false else [false]) =
-            encodable.size ([true] ++ List.replicate (encodable.size y) false) by simp [hy]]
+    · have hsize_eq :
+          encodable.size
+              (if encodable.size y > 0 then [true] ++ List.replicate (encodable.size y) false else [false]) =
+            encodable.size ([true] ++ List.replicate (encodable.size y) false) := by
+          simp [hy]
+      rw [hsize_eq]
       rw [size_bool_encoding]
       simp
     · simp [hy, encodable.size]
