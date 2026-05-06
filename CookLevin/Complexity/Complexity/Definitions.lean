@@ -1,4 +1,4 @@
-import CookLevin.Complexity.Complexity.MachineSemantics
+import Complexity.Complexity.MachineSemantics
 
 set_option autoImplicit false
 
