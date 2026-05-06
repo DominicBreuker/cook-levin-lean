@@ -183,7 +183,7 @@ theorem acceptsFlatTM_eq_true_iff {M : FlatTM} {initTapes : List (List Nat)} {st
 
 -- Polynomial-time computable predicate for machine execution
 -- This replaces the placeholder computableTime' with a meaningful statement
-def computableTime' {α : Type u} {β : Type v} (_ : α) (f : β → Nat) : Prop :=
+def computableTime' {α : Type u} {β : Type v} (_unused : α) (f : β → Nat) : Prop :=
   -- A function f is computable in time computable by some machine
   -- This means there exists a machine that computes f within the given time bound
   ∃ (M : FlatTM) (maxSize steps : Nat),
