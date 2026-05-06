@@ -1,31 +1,42 @@
-# Step 06 — Repair the bridge from generic NP to fixed machine problems
+# Step 06 — Repair the `LMGenNP → mTM → single-tape TM` bridge
 
-## Objective
-Make the `GenNP → LM → mTM → single-tape TM` pipeline encode genuine bounded machine computations instead of forwarding placeholder predicates.
+## Why this task still exists
 
-## Read first
+The current machine bridge still manufactures dummy machines and forwards acceptance predicates directly.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
-- `CookLevin/Complexity/L_to_LM.lean`
 - `CookLevin/Complexity/LM_to_mTM.lean`
 - `CookLevin/Complexity/mTM_to_singleTapeTM.lean`
 - `CookLevin/Complexity/NP/TM/IntermediateProblems.lean`
-- matching Coq docs under `coqdoc/Complexity.NP.TM.*`
+- `CookLevin/Complexity/TMGenNP_fixed_mTM.lean`
+- `CookLevin/Complexity/Complexity/MachineSemantics.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.TM.LM_to_mTM.txt`
+- `coqdoc/Complexity.NP.TM.mTM_to_singleTapeTM.txt`
+- `coqdoc/Complexity.NP.TM.M_LM2TM.txt`
+- `coqdoc/Complexity.NP.TM.M_multi2mono.txt`
+- `coqdoc/Complexity.NP.TM.IntermediateProblems.txt`
+
+## Concrete problems visible today
+
+- `M.M` and `M_multi2mono.M__mono` still return `validFlatTM_default`.
+- `lmToMTMInput.accepts := inst.source.rel` simply forwards the source predicate.
+- `TMGenNP_mTM_to_TMGenNP_singleTM` is currently just `Iff.rfl` after flattening the tapes.
+- None of these theorems currently express real machine simulation.
 
 ## Required work
-1. Replace trivial certificate-size bookkeeping such as `certificateMeasure := 0` with real size bounds.
-2. Remove dummy machine constants and replace them with real machine constructions or faithful ports of the Coq artifacts.
-3. Make `maxSize` and `steps` express genuine bounds tied to the encoded computation.
-4. Re-prove each bridge reduction using the repaired reduction notion and real machine semantics.
 
-## Concrete expectations
-- Do not merely rename the placeholder fields; connect them to actual encodings/executions.
-- Preserve the high-level reduction structure from the README unless a documented correction is required.
-- Keep the bridge theorems individually understandable and composable.
+1. Replace the dummy machine constructions with real ones, following the Coq bridge files closely.
+2. Make the intermediate machine languages talk about genuine bounded acceptance of those machines.
+3. Re-prove `LMGenNP_to_TMGenNP_mTM`, `TMGenNP_mTM_to_TMGenNP_singleTM`, and the composed theorem in `IntermediateProblems.lean` honestly.
+4. Preserve theorem names if possible: later stages already import them.
 
-## Definition of done
-- The bridge problems encode genuine bounded machine acceptance questions.
-- `LM_to_mTM`, `mTM_to_singleTapeTM`, and the composed intermediate results are real polynomial-time reductions.
-- Placeholder constants like the current manufactured machines are gone from the proof-critical path.
-- `lake build` succeeds.
-- `README.md` records which bridge problems are now faithful.
+## Done when
+
+- no dummy machine stands on the proof-critical path,
+- the bridge theorems are no longer `Iff.rfl` wrappers around unchanged predicates,
+- the README can honestly say the TM bridge encodes real machine computations.

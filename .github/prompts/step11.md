@@ -1,30 +1,41 @@
-# Step 11 — Re-prove NP-membership results using the repaired verifier framework
+# Step 11 — Replace brute-force `BinaryCC → FSAT`
 
-## Objective
-Make the “in NP” side of the completeness theorems mathematically faithful under the repaired verifier infrastructure.
+## Why this task still exists
 
-## Read first
+This is still the major exponential-time placeholder in the Cook-Levin chain.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- `CookLevin/Complexity/NP/SAT.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
 - `CookLevin/Complexity/NP/FSAT.lean`
-- `CookLevin/Complexity/NP/kSAT.lean`
-- `CookLevin/Complexity/NP/FlatClique.lean`
-- any dedicated in-NP helper files
-- matching Coq docs for SAT, kSAT, and clique NP membership
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.BinaryCC.txt`
+- `coqdoc/Complexity.NP.SAT.FSAT.FSAT.txt`
+- `coqdoc/Complexity.NP.SAT.FSAT.FormulaEncoding.txt`
+
+## Concrete problems visible today
+
+- `allBitStrings` enumerates all candidate rows.
+- `acceptingRunsFrom` enumerates all candidate traces.
+- the final reduction formula is an OR over enumerated traces.
+- `BinaryCC_to_FSAT_poly` still ends with a `sorry`.
 
 ## Required work
-1. Rebuild the NP-membership witnesses for SAT, kSAT, FlatClique, and any other proof-critical languages.
-2. Provide explicit certificate relations and polynomial-size witness bounds.
-3. Prove that the repaired verifiers run in polynomial time using the new complexity framework.
-4. Remove any NP-membership theorem that still succeeds only because of older trivial infrastructure.
 
-## Concrete expectations
-- Keep the witness relations simple and explicit.
-- Reuse common certificate-verifier lemmas where possible to avoid duplication.
-- Make sure the final completeness theorems will be able to cite these NP-membership results directly.
+1. Remove the brute-force search path from the reduction.
+2. Construct the FSAT formula directly from the BinaryCC tableau constraints.
+3. Prove both directions of correctness for the direct encoding.
+4. Prove polynomial output size and polynomial-time computability for the new construction.
+5. Keep the theorem name `BinaryCC_to_FSAT_poly` if possible; the final theorem file already imports it.
 
-## Definition of done
-- The main target languages used in the final theorem chain are in NP for genuine mathematical reasons.
-- The NP-membership theorems compile against the repaired complexity and reduction layers.
-- `lake build` succeeds.
-- `README.md` records which in-NP results are now fully faithful.
+## Done when
+
+- `allBitStrings` and `acceptingRunsFrom` are no longer on the proof-critical path,
+- the reduction is direct and syntactic,
+- the README explicitly says the exponential BinaryCC placeholder is gone.

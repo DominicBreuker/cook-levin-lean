@@ -1,31 +1,40 @@
-# Step 10 — Re-audit every remaining reduction under the strengthened `⪯p`
+# Step 10 — Repair the `FlatCC → BinaryCC` stage
 
-## Objective
-Ensure that no reduction theorem survives merely because the old reduction notion was too weak.
+## Why this task still exists
 
-## Read first
+This stage still hard-codes placeholder bounds and has not been finished under the stronger reduction notion.
+
+## Read these files first
+
+### Lean files
 - `README.md`
-- every reduction file under `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/`
-- `CookLevin/Complexity/NP/kSAT_to_SAT.lean`
-- `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
-- matching Coq docs for the corresponding reductions
+- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatCC_to_BinaryCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatCC_to_BinaryCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.CC_to_BinaryCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.CC_homomorphisms.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatCC.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.BinaryCC.txt`
+
+## Concrete problems visible today
+
+- `FlatCC_to_BinaryCC_instance` still sets `offset := 0`, `width := 0`, and `steps := 0`.
+- `FlatCC_to_BinaryCC_poly` still ends with a `sorry`.
+- The binary subproblem file already contains the target language definition; the missing work is mainly the honest reduction and its bookkeeping.
 
 ## Required work
-1. Visit every theorem of the form `P ⪯p Q` that still remains in the repository.
-2. Check that each one now supplies:
-   - a real polynomial-time map,
-   - full correctness (`↔`),
-   - any required output-size bounds or helper lemmas.
-3. Repair or replace any reduction that still depends on search, placeholder semantics, or forward-only correctness.
-4. Clean up theorem statements or helper APIs where earlier placeholder choices left technical debt.
 
-## Concrete expectations
-- This is a systematic audit, not just spot fixes.
-- Prefer small local helper lemmas over ad hoc proof duplication.
-- If a reduction must be deferred, document the exact blocker in `README.md` rather than silently leaving a weak theorem in place.
+1. Use the Coq `CC_to_BinaryCC` construction as the blueprint.
+2. Replace the placeholder bookkeeping fields with real values.
+3. Finish `FlatCC_to_BinaryCC_poly` under the repaired `⪯p` API.
+4. Add only the binary-encoding lemmas that are genuinely needed.
 
-## Definition of done
-- Every surviving `⪯p` theorem in the repository uses the strengthened reduction notion honestly.
-- Remaining reduction files compile without relying on placeholder complexity facts.
-- `lake build` succeeds.
-- `README.md` lists any reductions still pending and why; ideally none remain in scope for this step.
+## Done when
+
+- the translated BinaryCC instance carries real bounds,
+- `FlatCC_to_BinaryCC_poly` has no `sorry`,
+- the README can say the `CC → BinaryCC` stage is no longer placeholder-level.

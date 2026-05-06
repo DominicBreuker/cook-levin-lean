@@ -1,30 +1,43 @@
-# Step 02 — Rebuild `inTimePoly`, `inNP`, and polynomial certificate relations
+# Step 02 — Finish the polynomial-time reduction API
 
-## Objective
-Make the NP-membership layer mathematically meaningful by requiring an actual verifier/decider with polynomial running time and explicit certificate-size bounds.
+## Why this task still exists
 
-## Read first
+The old Step 3 never actually landed. The reduction layer still accepts trivial runtime witnesses.
+
+## Read these files first
+
+### Lean files
 - `README.md`
 - `CookLevin/Complexity/Complexity/NP.lean`
-- `CookLevin/Complexity/NP/GenNP.lean`
+- `CookLevin/Complexity/Complexity/Definitions.lean`
+- `CookLevin/Complexity/Complexity/MachineSemantics.lean`
+- `CookLevin/Complexity/GenNP_is_hard.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
+### Coq reference files
 - `coqdoc/Complexity.Complexity.NP.txt`
 - `coqdoc/Complexity.Complexity.PolyTimeComputable.txt`
+- `coqdoc/Complexity.Complexity.SpaceBoundsTime.txt`
+- `coqdoc/Complexity.Complexity.UpToCPoly.txt`
+
+## Concrete problems visible today
+
+- `polyTimeComputable` is defined as `True`.
+- `reducesPolyMO_reflexive` and `reducesPolyMO_transitive` use `trivial` runtime proofs.
+- `red_inNP` still contains a `sorry` because the current reduction API does not control output size strongly enough.
+- Downstream hardness theorems already import this API, so you must preserve theorem names if possible.
 
 ## Required work
-1. Redefine `inTimePoly` so it depends on a real decider or verifier together with a polynomial bound.
-2. Rework `polyCertRel` so witness existence is paired with an explicit polynomial size bound in the encoded input size.
-3. Port or rebuild `inNP`, `inP`, `inNP_intro`, and `P_NP_incl` around the repaired complexity notions.
-4. Update immediate downstream call sites that rely on the old placeholder API, but do not yet try to repair the entire reduction chain.
-5. Remove any uses of the old trivial `inTimePoly_linear` shortcut in this layer.
 
-## Concrete expectations
-- Follow the Coq structure as closely as practical.
-- Make the size bound part of the certificate relation API, not an informal side condition.
-- Preserve theorem names when possible to minimize churn downstream.
+1. Replace `polyTimeComputable` with a nontrivial interface that the rest of the repository can actually use.
+2. Strengthen `ReductionWitness` so reduction proofs no longer succeed with `trivial` runtime witnesses.
+3. Finish `reducesPolyMO_transitive` with honest composition of the strengthened witness.
+4. Finish `red_inNP` without `sorry`; in particular, handle the certificate-size bound after reduction correctly.
+5. Update only the directly affected downstream files needed to keep the repository coherent.
 
-## Definition of done
-- `inNP P` now requires a concrete relation with a real polynomial-time verifier.
-- Certificate-size bounds are explicit in the Lean structures.
-- Core NP lemmas compile against the new definitions.
-- `lake build` succeeds.
-- `README.md` reflects that Step 2 is complete and summarizes the new NP API.
+## Done when
+
+- `polyTimeComputable` is no longer `True`,
+- the main reduction lemmas compile without `trivial` placeholder runtime proofs,
+- `red_inNP` has no `sorry`,
+- `README.md` records that the reduction layer is now genuinely stronger.

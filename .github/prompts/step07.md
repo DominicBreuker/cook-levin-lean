@@ -1,30 +1,39 @@
-# Step 07 — Audit and repair the Cook-Levin intermediate languages
+# Step 07 — Finish the single-tape Cook-Levin entry problem
 
-## Objective
-Preserve the useful tableau encodings while reconnecting them to real machine semantics and explicit complexity bounds.
+## Why this task still exists
 
-## Read first
+The subproblem layer that starts the Cook-Levin tableau chain is still only lightly connected to the repaired TM bridge.
+
+## Read these files first
+
+### Lean files
 - `README.md`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/SingleTMGenNP.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/BinaryCC.lean`
-- matching Coq docs under `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.*`
+- `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean`
+- `CookLevin/Complexity/NP/TM/IntermediateProblems.lean`
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
+
+### Coq reference files
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.SingleTMGenNP.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.TM_single.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.txt`
+- `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.SingleTMGenNP_to_TCC.txt`
+
+## Concrete problems visible today
+
+- `FlatSingleTMGenNP` / `FlatFunSingleTMGenNP` are present, but the bridge theorem from the repaired single-tape TM problem is still a `sorry`.
+- `CookLevin/Complexity/NP/SAT/CookLevin.lean` still has unfinished entry lemmas `fixedTM_to_FlatSingleTMGenNP` and `GenNP_to_SingleTMGenNP`.
+- Later tableau reductions depend on the exact shape of this language, so keep the interface close to Coq.
 
 ## Required work
-1. Re-check the meaning of every intermediate-language definition against the repaired machine layer.
-2. Add any missing wellformedness or size lemmas needed to prove later reductions polynomial-time.
-3. Remove assumptions that were only harmless because the machine model used to be trivial.
-4. Keep the flattening/unflattening infrastructure if it is still mathematically sound, but adapt it as needed to the real encodings.
 
-## Concrete expectations
-- Be explicit about which invariants each subproblem is meant to enforce.
-- Do not postpone necessary size-bound lemmas if later reductions clearly depend on them.
-- Reuse existing useful lemmas rather than re-encoding the same facts from scratch.
+1. Finish `TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` honestly.
+2. Re-check the definitions in `Subproblems/SingleTMGenNP.lean` against the Coq subproblem files and repair them where needed.
+3. Make the bridge into `FlatSingleTMGenNP` strong enough that `CookLevin.lean` can compose it without hacks.
+4. Do not move on to `FlatTCC` yet; this step is only about the entry problem and its immediate bridge.
 
-## Definition of done
-- Each intermediate language has a clear meaning tied to real computations.
-- The subproblem files expose the wellformedness and bound lemmas later reductions need.
-- The preserved flattening infrastructure remains correct under the repaired semantics.
-- `lake build` succeeds.
-- `README.md` reflects which intermediate subproblems are now trustworthy.
+## Done when
+
+- the single-tape entry reduction has no `sorry`,
+- `CookLevin.lean` can import a real bridge into `FlatSingleTMGenNP`,
+- the README explains that the Cook-Levin chain now starts from a real single-tape machine problem.
