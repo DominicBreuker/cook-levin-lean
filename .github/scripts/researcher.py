@@ -50,6 +50,7 @@ Important instructions:
 - Validate your work with `lake build` before finishing.
 - Leave the repository in a consistent state. Run lake build first and if the build has errors, you must fix them first.
 - Treat any files in the coqdoc folder as the blueprint for our desired outcome, they are documentation of a working proof written in Coq
+- When you are happy with your changes, try to commit and push them to the remote!
 - Your final response must be exactly one short line suitable for use as a git commit message. Do not include quotes, markdown, or any extra explanation.
 
 Regarding your tooling:
