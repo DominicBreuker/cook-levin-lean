@@ -456,14 +456,15 @@ def main() -> None:
         commit_message = extract_commit_message(result.stdout) or fallback_commit_message(resolved_step_id)
         last_commit_message = commit_message
 
-        if repository_has_changes():
-            try:
-                last_pushed_branch = commit_and_push(commit_message)
-                print(f"Committed and pushed changes on {last_pushed_branch}: {commit_message}")
-            except Exception as exc:
-                failure_message = f"Commit/push failed after pass {run_index}/{args.run_count}: {exc}"
-                exit_code = 1
-                break
+        # Sometimes the agents commits himself but does not push, and we then think here that nothing changed - we must handle this properly at some point ()
+        # if repository_has_changes():
+        try:
+            last_pushed_branch = commit_and_push(commit_message)
+            print(f"Committed and pushed changes on {last_pushed_branch}: {commit_message}")
+        except Exception as exc:
+            failure_message = f"Commit/push failed after pass {run_index}/{args.run_count}: {exc}"
+            exit_code = 1
+            break
         else:
             print(f"Pass {run_index}/{args.run_count} produced no repository changes; skipping commit and push.")
 
