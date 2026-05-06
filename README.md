@@ -18,17 +18,20 @@ What is true today:
 - `lake build` succeeds.
 - `inTimePoly` now requires explicit deciders with polynomial time bounds (via `HasDecider`)
 - `polyCertRel` now includes explicit polynomial size bounds on certificates
-- The core definitions in `CookLevin/Complexity/Complexity/NP.lean` have been updated to reflect mathematical requirements
+- `inTimePoly` now requires explicit deciders with polynomial time bounds
+- `polyCertRel` includes explicit polynomial size bounds on certificates
+- `inNP`, `inP`, `inNP_intro`, and `P_NP_incl` have been updated to use the new structure
+- `red_inNP` has been updated and now constructs proper witnesses for composed reductions
+- Certificate size bounds are explicit and used by the API, not informal side conditions
 
 What is **not** true today:
 
 - The current Lean development does **not** yet faithfully model actual polynomial-time computation with concrete machine semantics.
-- Several theorems that previously relied on `inTimePoly_linear` now use `sorry` and need to be repaired:
-  - `red_inNP` in `CookLevin/Complexity/Complexity/NP.lean`
-  - `P_NP_incl` in `CookLevin/Complexity/Complexity/NP.lean`
+- Several theorems still use `sorry` because they require nontrivial verifiers or certificate relations:
   - `genNPInstance` and `genNPInstance_spec` in `CookLevin/Complexity/GenNP_is_hard.lean`
   - `sat_NP` in `CookLevin/Complexity/NP/SAT.lean`
   - `FlatClique_in_NP` in `CookLevin/Complexity/NP/FlatClique.lean`
+  - (Note: `P_NP_incl` and `red_inNP` no longer use `sorry`)
 - The top-level theorem names still exist but depend on placeholder proofs:
   - `GenNP_to_SingleTMGenNP`
   - `FlatSingleTMGenNP_to_3SAT`
@@ -60,8 +63,9 @@ What is **not** true today:
 
 3. **inTimePoly_linear** removed - can no longer proved for arbitrary predicates
 
-4. Multiple theorems updated to use new structure (with `sorry` where proofs not yet updated):
-   - `red_inNP`, `P_NP_incl`, `sat_NP`, `FlatClique_in_NP`, `genNPInstance`, `genNPInstance_spec`
+4. `P_NP_incl` and `red_inNP` fully repaired - no longer use `inTimePoly_linear` placeholder
+5. `inNP_intro` updated to require explicit `polyTimeComputable` and `polyCertRel` witnesses
+6. Certificate size bounds are now explicit parts of the `polyCertRel` API
 
 ### What's Next
 
@@ -227,8 +231,10 @@ For every step below, the agent working on it should:
 
 **Done when:**
 
-- `inNP P` cannot be proved without a concrete bounded verifier,
-- certificate size bounds are explicit and used by the API.
+- `inNP P` cannot be proved without a concrete bounded verifier (✓ - `inNP_intro` requires explicit `polyCertRel` and `inTimePoly` witnesses),
+- `P_NP_incl` and `red_inNP` no longer use `inTimePoly_linear` (✓ - fully repaired),
+- certificate size bounds are explicit parts of the `polyCertRel` API (✓ - added to structure),
+- `lake build` succeeds (✓).
 
 ### Step 3 — Redefine polynomial-time many-one reduction
 

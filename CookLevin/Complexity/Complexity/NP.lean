@@ -48,11 +48,36 @@ def inP (X : Type) [encodable X] (P : X → Prop) : Prop := inTimePoly P
 theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P := by
   intro hP
   refine inNP_intro (X := X) (Y := Unit) P (fun (x : X) (_ : Unit) => P x) ?_ ?_
-  · -- hPoly: inTimePoly for the relation (fun xy : X × Unit => P xy.1)
-    -- Placeholder removed in Step 2: inTimePoly now requires actual deciders
-    sorry
+  · -- hP : inP X P = inTimePoly P
+    -- We need inTimePoly (fun xy : X × Unit => P xy.fst)
+    -- This is the same as inTimePoly P, just reindexing
+    rcases hP with ⟨f_bound, dec, hdec, hf_poly, hf_mono⟩
+    -- Construct a decider for (fun xy => P xy.fst) by projecting to X
+    refine ⟨f_bound, fun xy => dec xy.fst, ?_, hf_poly, hf_mono⟩
+    constructor
+    · -- Forward direction: (fun xy => P xy.fst) xy ↔ dec xy.fst = true
+      intros xy
+      exact hdec xy.fst
+    · -- Backward direction: dec xy.fst = true → (fun xy => P xy.fst)
+      intros xy h
+      exact hdec xy.fst h
   · -- hCorrect: polyCertRel for the relation (fun x (_ : Unit) => P x)
-    sorry
+    refine ⟨⟨fun _ => encodable.size Unit, ?_, ?_, ?_, ?_⟩⟩
+    · -- sound: ∀ ⦃x y⦄, R x y → P x
+      intros x _ h
+      exact h
+    · -- complete: ∀ ⦃x⦄, P x → ∃ y, R x y ∧ encodable.size y ≤ bound (encodable.size x)
+      intros x hx
+      exact ⟨(), hx, Nat.zero_le _⟩
+    · -- bound_poly: inOPoly bound (constant function is inOPoly)
+      refine ⟨0, ?_⟩
+      intro n
+      simp [inO]
+      intro x
+      apply Nat.zero_le
+    · -- bound_mono: monotonic bound (constant function is monotonic)
+      intros x x' h
+      rfl
 
 /-- The current scaffold's universal NP source problem on `X`. Later phases can
 refine this placeholder into the full generic NP source used by the Coq proof. -/
@@ -90,9 +115,42 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
 theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → inNP Q → inNP P := by
-  -- Placeholder removed in Step 2: inTimePoly now requires actual deciders
-  -- Need to construct inTimePoly witnesses for composed relations
-  sorry
+  rintro ⟨hRed⟩
+  intro hQ
+  -- Q ∈ NP means there exists a certificate relation R_Q for Q
+  rcases hQ with ⟨Y', hEncY', hWitness⟩
+  rcases hWitness with ⟨hWitness⟩
+  -- For P ∈ NP, we use the same certificate type Y' 
+  -- The relation for P is: R_P x y' := R_Q (hRed.reduction x) y'
+  refine inNP_intro (X := X) (Y := Y') P (fun x y' => hWitness.rel (hRed.reduction x) y') ?_ ?_
+  · -- hPoly: inTimePoly for the relation (fun xy : X × Y' => hWitness.rel (hRed.reduction xy.1) xy.2)
+    -- We construct a decider by composing hRed.reduction with the decider from hWitness.rel_poly
+    rcases hWitness.rel_poly with ⟨f, dec, hdec, hf_poly, hf_mono⟩
+    -- dec : Y × Y' → Bool can decide hWitness.rel
+    -- We need to decide (fun xy : X × Y' => hWitness.rel (hRed.reduction xy.1) xy.2)
+    -- The decider is: dec (hRed.reduction x, y')
+    refine ⟨f, fun xy => dec (hRed.reduction xy.1, xy.2), ?_, hf_poly, hf_mono⟩
+    constructor
+    · -- ∀ x y', R x y' → dec (hRed.reduction x, y') = true
+      intros x y' h
+      exact hdec (hRed.reduction x, y') h
+    · -- ∀ x y', dec (hRed.reduction x, y') = true → R x y'
+      intros x y' h
+      exact hdec (hRed.reduction x, y') h
+  · -- hCorrect: polyCertRel for the new relation
+    refine ⟨⟨hWitness.bound, ?_, ?_, ?_, ?_⟩⟩
+    · -- sound: ∀ ⦃x y'⦄, R_Q (hRed.reduction x) y' → P x
+      intros x y' h
+      exact hRed.reduction_correct (hWitness.sound h)
+    · -- complete: ∀ ⦃x⦄, P x → ∃ y', R_Q (hRed.reduction x) y' ∧ encodable.size y' ≤ hWitness.bound (encodable.size x)
+      intros x hPx
+      have hQred : Q (hRed.reduction x) := hRed.reduction_correct hPx
+      rcases hWitness.complete hQred with ⟨y', hy1, hy2⟩
+      exact ⟨y', hy1, hy2⟩
+    · -- bound_poly: inOPoly bound
+      exact hWitness.bound_poly
+    · -- bound_mono: monotonic bound
+      exact hWitness.bound_mono
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P

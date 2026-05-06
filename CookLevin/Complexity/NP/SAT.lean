@@ -158,7 +158,12 @@ theorem size_cnf_app (N₁ N₂ : cnf) :
 namespace SAT_inNP
 
 theorem sat_NP : inNP SAT := by
-  -- Placeholder removed in Step 2: inTimePoly now requires actual deciders
-  sorry
+  refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
+  · -- inTimePoly for the relation (fun (N, a) => satisfiesCnf a N)
+    -- We construct a decider based on evalCnf
+    -- The decider wraps evalCnf and checks if it returns true
+    sorry
+  · -- polyCertRel for SAT
+    sorry
 
 end SAT_inNP
