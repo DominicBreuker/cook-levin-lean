@@ -52,7 +52,7 @@ noncomputable def genNPInstance {X__cert : Type} [encodable X__cert]
       intro cert hrel
       rcases hrel with ⟨witness, hwitness, _, hwitnessBound⟩
       calc
-        encodable.size cert = encodable.size (enumTerm.encode witness) := by simp [hwitness]
+        encodable.size cert = encodable.size (enumTerm.encode witness) := by simpa [hwitness]
         _ ≤ encodable.size witness + 2 := enumTerm.encode_size_bound witness
         _ ≤ genNPCertBound R hCorrect (encodable.size x) + 2 := Nat.add_le_add_right hwitnessBound 2 }
 

@@ -53,7 +53,8 @@ deriving Repr
 
 -- Execution semantics for flattened Turing machines
 
--- Size of tapes in flattened representation
+-- Size of tapes in flattened representation.
+-- We use the maximum tape length, matching the Coq bookkeeping used by later TM bridges.
 def sizeOfmTapesFlat : List (List Nat) → Nat
   | [] => 0
   | tape :: tapes => max tape.length (sizeOfmTapesFlat tapes)
@@ -61,7 +62,7 @@ def sizeOfmTapesFlat : List (List Nat) → Nat
 def tapeSymbolsBounded (sig : Nat) (tape : List Nat) : Prop :=
   ∀ x, x ∈ tape → x < sig
 
-def validFlatTapes (M : FlatTM) (initTapes : List (List Nat)) : Prop :=
+def flatTapesWellFormed (M : FlatTM) (initTapes : List (List Nat)) : Prop :=
   initTapes.length = M.tapes ∧
     ∀ tape ∈ initTapes, tapeSymbolsBounded M.sig tape
 
