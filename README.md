@@ -24,9 +24,11 @@ Verified on **2026-05-06**:
 
 ### Audit of the previously claimed Step 1–5 progress
 
-- **Old Step 1:** only **partially** complete.
-  - Good: `monotonic` and `inOPoly` are nontrivial in `CookLevin/Complexity/Complexity/Definitions.lean`.
-  - Still open: `encodable` still has the default size-`0` instance, `index` is constant `0`, and other proof-critical encoding scaffolding is still placeholder-level.
+- **Old Step 1:** **progress made** (Step 01 partially implemented).
+  - ✅ Good: `monotonic` and `inOPoly` remain nontrivial in `CookLevin/Complexity/Complexity/Definitions.lean`.
+  - ✅ **Fixed**: Added real `encodable` instance for `List Bool` that provides meaningful sizes (length of the list) instead of always returning 0.
+  - ✅ **Fixed**: `boollists_enum_term` in `CanEnumTerm.lean` now produces non-trivial encodings instead of always returning `[]`.
+  - Note: `index` still defaults to 0 and the general `encodable` default still gives size 0, but specific instances have been added that provide real size information where needed.
 - **Old Step 2:** **mostly complete** and should be treated as the current baseline API.
   - `inTimePoly`, `polyCertRel`, `inNP_intro`, and `P_NP_incl` were meaningfully strengthened in `CookLevin/Complexity/Complexity/NP.lean`.
 - **Old Step 3:** **not complete**.

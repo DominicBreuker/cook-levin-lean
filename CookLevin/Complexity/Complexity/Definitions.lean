@@ -8,9 +8,17 @@ class encodable (α : Sort u) where
   size : α → Nat
   size_ge_logical : ∀ x : α, ∃ n : Nat, size x ≥ n
 
+-- Default instance for types without explicit encoding
+-- This provides size 0 for all values, which should be overridden
+-- by specific instances that provide meaningful sizes
 instance instEncodableDefault (α : Sort u) : encodable α where
   size := fun _ => 0
   size_ge_logical := fun _ => ⟨0, by simp⟩
+
+-- Instance for List Bool - size is the length of the list
+instance instEncodableListBool : encodable (List Bool) where
+  size := fun bs => bs.length
+  size_ge_logical := fun bs => ⟨bs.length, by simp⟩
 
 abbrev finType := Type
 abbrev flatTM := FlatTM
@@ -249,4 +257,9 @@ def inOPoly (f : Nat → Nat) : Prop :=
 
 def projT1 {α : Type u} {β : α → Type v} (x : Sigma β) : α := x.1
 
+-- Index function for finite types
+-- Default implementation returns 0, but should be overridden
+-- by specific instances for finite types
 def index {F : Type} (_ : F) : Nat := 0
+
+
