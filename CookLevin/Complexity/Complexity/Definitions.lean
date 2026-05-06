@@ -23,9 +23,21 @@ instance : encodable Bool where
   size := fun b => cond b 1 0
   size_ge_logical := fun b => ⟨cond b 1 0, Nat.le_refl _⟩
 
+instance : encodable Unit where
+  size := fun _ => 0
+  size_ge_logical := fun _ => ⟨0, Nat.le_refl _⟩
+
 instance {α : Type u} [encodable α] : encodable (List α) where
   size := fun xs => xs.foldl (fun acc x => acc + encodable.size x + 1) 0
   size_ge_logical := fun xs => ⟨xs.foldl (fun acc x => acc + encodable.size x + 1) 0, Nat.le_refl _⟩
+
+instance {α : Type u} [encodable α] : encodable (Option α) where
+  size
+    | none => 0
+    | some x => encodable.size x + 1
+  size_ge_logical
+    | none => ⟨0, Nat.le_refl _⟩
+    | some x => ⟨encodable.size x + 1, Nat.le_refl _⟩
 
 instance {α : Type u} {β : Type v} [encodable α] [encodable β] : encodable (α × β) where
   size := fun x => encodable.size x.1 + encodable.size x.2 + 1
@@ -35,9 +47,43 @@ instance {k : Nat} : encodable (Fin k) where
   size := fun x => x.1
   size_ge_logical := fun x => ⟨x.1, Nat.le_refl _⟩
 
+instance {α : Type u} {p : α → Prop} [encodable α] : encodable { x // p x } where
+  size := fun x => encodable.size x.1 + 1
+  size_ge_logical := fun x => ⟨encodable.size x.1 + 1, Nat.le_refl _⟩
+
+instance {α : Type u} {β : α → Type v} [encodable α] [∀ a, encodable (β a)] :
+    encodable (Sigma β) where
+  size := fun x => encodable.size x.1 + encodable.size x.2 + 1
+  size_ge_logical := fun x => ⟨encodable.size x.1 + encodable.size x.2 + 1, Nat.le_refl _⟩
+
 abbrev finType := Type
 abbrev flatTM := FlatTM
 abbrev TM (_σ : Type) (_ : Nat) := FlatTM
+
+instance : encodable TMMove where
+  size
+    | .Lmove => 1
+    | .Rmove => 1
+    | .Nmove => 1
+  size_ge_logical := fun _ => ⟨_, Nat.le_refl _⟩
+
+instance : encodable FlatTMConfig where
+  size := fun cfg => encodable.size cfg.state_idx + encodable.size cfg.tapes + 1
+  size_ge_logical := fun cfg => ⟨encodable.size cfg.state_idx + encodable.size cfg.tapes + 1, Nat.le_refl _⟩
+
+instance : encodable FlatTMTransEntry where
+  size := fun entry =>
+    encodable.size entry.src_state + encodable.size entry.src_tape_vals +
+      encodable.size entry.dst_state + encodable.size entry.dst_write_vals +
+      encodable.size entry.move_dirs + 1
+  size_ge_logical := fun entry =>
+    ⟨encodable.size entry.src_state + encodable.size entry.src_tape_vals +
+        encodable.size entry.dst_state + encodable.size entry.dst_write_vals +
+        encodable.size entry.move_dirs + 1, Nat.le_refl _⟩
+
+instance : encodable FlatTM where
+  size := sizeFlatTM
+  size_ge_logical := fun M => ⟨sizeFlatTM M, Nat.le_refl _⟩
 
 abbrev var := Nat
 abbrev literal := Bool × var
@@ -79,16 +125,35 @@ inductive formula where
   | fneg (φ : formula)
 deriving Repr, DecidableEq
 
+instance : encodable formula where
+  size
+    | .ftrue => 1
+    | .fvar v => encodable.size v + 1
+    | .fand φ ψ => encodable.size φ + encodable.size ψ + 1
+    | .forr φ ψ => encodable.size φ + encodable.size ψ + 1
+    | .fneg φ => encodable.size φ + 1
+  size_ge_logical := fun _ =>
+    ⟨_, Nat.le_refl _⟩
+
 structure CCCard (α : Type u) where
   prem : List α
   conc : List α
 deriving Repr
+
+instance {α : Type u} [encodable α] : encodable (CCCard α) where
+  size := fun c => encodable.size c.prem + encodable.size c.conc + 1
+  size_ge_logical := fun c => ⟨encodable.size c.prem + encodable.size c.conc + 1, Nat.le_refl _⟩
 
 structure TCCCardP (α : Type u) where
   cardEl1 : α
   cardEl2 : α
   cardEl3 : α
 deriving Repr
+
+instance {α : Type u} [encodable α] : encodable (TCCCardP α) where
+  size := fun c => encodable.size c.cardEl1 + encodable.size c.cardEl2 + encodable.size c.cardEl3 + 1
+  size_ge_logical := fun c =>
+    ⟨encodable.size c.cardEl1 + encodable.size c.cardEl2 + encodable.size c.cardEl3 + 1, Nat.le_refl _⟩
 
 def TCCCardP.toList {α : Type u} (card : TCCCardP α) : List α :=
   [card.cardEl1, card.cardEl2, card.cardEl3]
@@ -101,6 +166,10 @@ structure TCCCard (α : Type u) where
   conc : TCCCardP α
 deriving Repr
 
+instance {α : Type u} [encodable α] : encodable (TCCCard α) where
+  size := fun c => encodable.size c.prem + encodable.size c.conc + 1
+  size_ge_logical := fun c => ⟨encodable.size c.prem + encodable.size c.conc + 1, Nat.le_refl _⟩
+
 structure FlatCC where
   Sigma : Nat
   offset : Nat
@@ -111,6 +180,16 @@ structure FlatCC where
   steps : Nat
 deriving Repr
 
+instance : encodable FlatCC where
+  size := fun C =>
+    encodable.size C.Sigma + encodable.size C.offset + encodable.size C.width +
+      encodable.size C.init + encodable.size C.cards + encodable.size C.final +
+      encodable.size C.steps + 1
+  size_ge_logical := fun C =>
+    ⟨encodable.size C.Sigma + encodable.size C.offset + encodable.size C.width +
+        encodable.size C.init + encodable.size C.cards + encodable.size C.final +
+        encodable.size C.steps + 1, Nat.le_refl _⟩
+
 structure BinaryCC where
   offset : Nat
   width : Nat
@@ -120,6 +199,14 @@ structure BinaryCC where
   steps : Nat
 deriving Repr
 
+instance : encodable BinaryCC where
+  size := fun C =>
+    encodable.size C.offset + encodable.size C.width + encodable.size C.init +
+      encodable.size C.cards + encodable.size C.final + encodable.size C.steps + 1
+  size_ge_logical := fun C =>
+    ⟨encodable.size C.offset + encodable.size C.width + encodable.size C.init +
+        encodable.size C.cards + encodable.size C.final + encodable.size C.steps + 1, Nat.le_refl _⟩
+
 structure FlatTCC where
   Sigma : Nat
   init : List Nat
@@ -127,6 +214,14 @@ structure FlatTCC where
   final : List (List Nat)
   steps : Nat
 deriving Repr
+
+instance : encodable FlatTCC where
+  size := fun C =>
+    encodable.size C.Sigma + encodable.size C.init + encodable.size C.cards +
+      encodable.size C.final + encodable.size C.steps + 1
+  size_ge_logical := fun C =>
+    ⟨encodable.size C.Sigma + encodable.size C.init + encodable.size C.cards +
+        encodable.size C.final + encodable.size C.steps + 1, Nat.le_refl _⟩
 
 structure CC where
   Sigma : Nat
@@ -138,6 +233,16 @@ structure CC where
   steps : Nat
 deriving Repr
 
+instance : encodable CC where
+  size := fun C =>
+    encodable.size C.Sigma + encodable.size C.offset + encodable.size C.width +
+      encodable.size C.init + encodable.size C.cards + encodable.size C.final +
+      encodable.size C.steps + 1
+  size_ge_logical := fun C =>
+    ⟨encodable.size C.Sigma + encodable.size C.offset + encodable.size C.width +
+        encodable.size C.init + encodable.size C.cards + encodable.size C.final +
+        encodable.size C.steps + 1, Nat.le_refl _⟩
+
 structure TCC where
   Sigma : Nat
   init : List (Fin Sigma)
@@ -145,6 +250,14 @@ structure TCC where
   final : List (List (Fin Sigma))
   steps : Nat
 deriving Repr
+
+instance : encodable TCC where
+  size := fun C =>
+    encodable.size C.Sigma + encodable.size C.init + encodable.size C.cards +
+      encodable.size C.final + encodable.size C.steps + 1
+  size_ge_logical := fun C =>
+    ⟨encodable.size C.Sigma + encodable.size C.init + encodable.size C.cards +
+        encodable.size C.final + encodable.size C.steps + 1, Nat.le_refl _⟩
 
 abbrev fvertex := Nat
 abbrev fedge := fvertex × fvertex
@@ -189,6 +302,35 @@ theorem list_ofFlatType_app {k : Nat} {xs ys : List Nat} :
     rcases hz with hz | hz
     · exact hxs z hz
     · exact hys z hz
+
+theorem encodable_size_list_nil {α : Type u} [encodable α] :
+    encodable.size ([] : List α) = 0 := by
+  rfl
+
+/-- Shifting the initial accumulator by a constant shifts the whole `foldl` result
+by the same constant for additive folds. -/
+theorem list_foldl_add {α : Type u} (w : α → Nat) :
+    ∀ (xs : List α) (base offset : Nat),
+      xs.foldl (fun acc x => acc + w x) (offset + base) =
+        offset + xs.foldl (fun acc x => acc + w x) base
+  | [], base, offset => by
+      simp
+  | x :: xs, base, offset => by
+      simpa [Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using
+        list_foldl_add w xs (base + w x) offset
+
+theorem encodable_size_list_cons {α : Type u} [encodable α] (x : α) (xs : List α) :
+    encodable.size (x :: xs) = encodable.size x + 1 + encodable.size xs := by
+  simpa [encodable.size, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm] using
+    list_foldl_add (fun y : α => encodable.size y + 1) xs 0 (encodable.size x + 1)
+
+theorem encodable_size_list_append {α : Type u} [encodable α] (xs ys : List α) :
+    encodable.size (xs ++ ys) = encodable.size xs + encodable.size ys := by
+  induction xs with
+  | nil =>
+      simp [encodable.size]
+  | cons x xs ih =>
+      simp [encodable_size_list_cons, ih, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm]
 
 def isPrefix {α : Type u} (xs ys : List α) : Prop :=
   ∃ rest, ys = xs ++ rest
@@ -292,6 +434,10 @@ def validFlatTM_default : flatTM :=
 def monotonic (f : Nat → Nat) : Prop :=
   ∀ x x' : Nat, x ≤ x' → f x ≤ f x'
 
+theorem subtype_size_val_le {α : Type u} {p : α → Prop} [encodable α] (x : { y // p y }) :
+    encodable.size x.1 ≤ encodable.size x := by
+  simp [encodable.size]
+
 -- Monotonic composition lemma
 theorem monotonic_comp {f g : Nat → Nat} : monotonic f → monotonic g → monotonic (g ∘ f) := by
   intros hf hg x x' hxx'
@@ -305,9 +451,93 @@ def inO (f g : Nat → Nat) : Prop :=
 def inOPoly (f : Nat → Nat) : Prop :=
   ∃ n : Nat, inO f (fun x => x ^ n)
 
+/-- `maxPrefix f n` is the maximum value of `f` on the finite prefix `{0, …, n}`.
+It is used to control the small-output case in polynomial-composition arguments. -/
+def maxPrefix (f : Nat → Nat) : Nat → Nat
+  | 0 => f 0
+  | n + 1 => max (maxPrefix f n) (f (n + 1))
+
+theorem le_maxPrefix (f : Nat → Nat) :
+    ∀ {m n : Nat}, m ≤ n → f m ≤ maxPrefix f n
+  | m, 0, h => by
+      have hm : m = 0 := Nat.eq_zero_of_le_zero h
+      subst hm
+      simp [maxPrefix]
+  | m, n + 1, h => by
+      by_cases hm : m = n + 1
+      · subst hm
+        exact Nat.le_max_right _ _
+      · have hmn : m ≤ n := Nat.le_of_lt_succ (Nat.lt_of_le_of_ne h hm)
+        exact Nat.le_trans (le_maxPrefix f hmn) (Nat.le_max_left _ _)
+
+theorem inOPoly_const (c : Nat) : inOPoly (fun _ => c) := by
+  refine ⟨1, ?_⟩
+  refine ⟨c, 1, ?_⟩
+  intro n hn
+  have hn1 : 1 ≤ n := Nat.le_trans (by decide : 1 ≤ 1) hn
+  calc
+    c = c * 1 := by simp
+    _ ≤ c * n := Nat.mul_le_mul_left _ hn1
+    _ = c * n ^ 1 := by simp
+
+theorem inOPoly_id : inOPoly (fun n => n) := by
+  refine ⟨1, ?_⟩
+  refine ⟨1, 0, ?_⟩
+  intro n _
+  simp
+
+theorem inOPoly_add {f g : Nat → Nat} :
+    inOPoly f → inOPoly g → inOPoly (fun n => f n + g n) := by
+  rintro ⟨df, ⟨cf, n0f, hf⟩⟩ ⟨dg, ⟨cg, n0g, hg⟩⟩
+  refine ⟨max df dg + 1, ⟨cf + cg, max (max n0f n0g) 1, ?_⟩⟩
+  intro n hn
+  have hn0f : n0f ≤ n := Nat.le_trans (Nat.le_max_left _ _) (Nat.le_trans (Nat.le_max_left _ _) hn)
+  have hn0g : n0g ≤ n := Nat.le_trans (Nat.le_max_right _ _) (Nat.le_trans (Nat.le_max_left _ _) hn)
+  have hn1 : 1 ≤ n := Nat.le_trans (Nat.le_max_right _ _) hn
+  have hpowf : n ^ df ≤ n ^ (max df dg + 1) := by
+    exact Nat.pow_le_pow_right hn1 (Nat.le_trans (Nat.le_max_left _ _) (Nat.le_succ _))
+  have hpowg : n ^ dg ≤ n ^ (max df dg + 1) := by
+    exact Nat.pow_le_pow_right hn1 (Nat.le_trans (Nat.le_max_right _ _) (Nat.le_succ _))
+  have hf' := hf n hn0f
+  have hg' := hg n hn0g
+  calc
+    f n + g n ≤ cf * n ^ df + cg * n ^ dg := Nat.add_le_add hf' hg'
+    _ ≤ cf * n ^ (max df dg + 1) + cg * n ^ (max df dg + 1) := by
+      exact Nat.add_le_add (Nat.mul_le_mul_left _ hpowf) (Nat.mul_le_mul_left _ hpowg)
+    _ = (cf + cg) * n ^ (max df dg + 1) := by rw [Nat.add_mul]
+
 -- Polynomial composition lemma for inO functions
 theorem inOPoly_comp {f g : Nat → Nat} : inOPoly f → inOPoly g → inOPoly (g ∘ f) := by
-  sorry
+  rintro ⟨df, ⟨cf, n0f, hf⟩⟩ ⟨dg, ⟨cg, n0g, hg⟩⟩
+  refine ⟨df * dg + 1, ⟨max (maxPrefix g n0g) (cg * cf ^ dg), max n0f 1, ?_⟩⟩
+  intro n hn
+  have hn0f : n0f ≤ n := Nat.le_trans (Nat.le_max_left _ _) hn
+  have hn1 : 1 ≤ n := Nat.le_trans (Nat.le_max_right _ _) hn
+  have hf' := hf n hn0f
+  by_cases hsmall : f n < n0g
+  · calc
+      g (f n) ≤ maxPrefix g n0g := le_maxPrefix g (Nat.le_of_lt hsmall)
+      _ ≤ max (maxPrefix g n0g) (cg * cf ^ dg) := Nat.le_max_left _ _
+      _ = max (maxPrefix g n0g) (cg * cf ^ dg) * 1 := by simp
+      _ ≤ max (maxPrefix g n0g) (cg * cf ^ dg) * n ^ (df * dg + 1) := by
+        apply Nat.mul_le_mul_left
+        exact Nat.one_le_pow _ _ hn1
+  · have hn0g' : n0g ≤ f n := Nat.le_of_not_gt hsmall
+    have hpowf : (f n) ^ dg ≤ (cf * n ^ df) ^ dg := by
+      exact Nat.pow_le_pow_left hf' dg
+    have hnPow : n ^ (df * dg) ≤ n ^ (df * dg + 1) := by
+      exact Nat.pow_le_pow_right hn1 (Nat.le_succ _)
+    calc
+      g (f n) ≤ cg * (f n) ^ dg := hg (f n) hn0g'
+      _ ≤ cg * (cf * n ^ df) ^ dg := Nat.mul_le_mul_left _ hpowf
+      _ = cg * (cf ^ dg * (n ^ df) ^ dg) := by rw [Nat.mul_pow]
+      _ = cg * (cf ^ dg * n ^ (df * dg)) := by rw [Nat.pow_mul]
+      _ ≤ cg * (cf ^ dg * n ^ (df * dg + 1)) := by
+        apply Nat.mul_le_mul_left
+        exact Nat.mul_le_mul_left _ hnPow
+      _ = (cg * cf ^ dg) * n ^ (df * dg + 1) := by rw [Nat.mul_assoc]
+      _ ≤ max (maxPrefix g n0g) (cg * cf ^ dg) * n ^ (df * dg + 1) := by
+        exact Nat.mul_le_mul_right _ (Nat.le_max_right _ _)
 
 
 
