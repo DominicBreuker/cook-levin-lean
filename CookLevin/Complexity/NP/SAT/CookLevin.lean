@@ -25,8 +25,7 @@ import Complexity.CanEnumTerm
 set_option autoImplicit false
 
 theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
-    (_reg__sig : encodable sig)
-    (_index__comp : PSigma (fun c : Nat => computableTime' (index (F := sig)) (fun _ : sig => fun _ : Nat => (c, ()))) ) :
+    (_reg__sig : encodable sig) :
     TMGenNP_fixed M ⪯p FlatSingleTMGenNP := by
   sorry
 

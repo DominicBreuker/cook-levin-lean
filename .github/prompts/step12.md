@@ -1,48 +1,35 @@
-# Step 12 — Replace the remaining SAT / clique placeholders
+# Step 12 — Repair the SAT and clique side
 
-## Why this task still exists
+## Read first
 
-Even after the Cook-Levin tableau chain is repaired, the repository still has separate placeholder reductions and NP-membership proofs on the SAT / clique side.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/NP/FSAT_to_SAT.lean`
 - `CookLevin/Complexity/NP/SAT.lean`
 - `CookLevin/Complexity/NP/FSAT.lean`
-- `CookLevin/Complexity/NP/kSAT.lean`
 - `CookLevin/Complexity/NP/kSAT_to_SAT.lean`
 - `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`
 - `CookLevin/Complexity/NP/FlatClique.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.NP.SAT.FSAT.FSAT_to_SAT.txt`
-- `coqdoc/Complexity.NP.SAT.FSAT.FSAT.txt`
-- `coqdoc/Complexity.NP.SAT.FSAT.FormulaEncoding.txt`
-- `coqdoc/Complexity.NP.SAT.SAT.txt`
 - `coqdoc/Complexity.NP.SAT.SAT_inNP.txt`
-- `coqdoc/Complexity.NP.SAT.kSAT.txt`
 - `coqdoc/Complexity.NP.SAT.kSAT_to_SAT.txt`
 - `coqdoc/Complexity.NP.Clique.FlatClique.txt`
 - `coqdoc/Complexity.NP.Clique.kSAT_to_FlatClique.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `FSAT_to_SAT.lean` still uses `FSAT_search` and constant yes/no output instances.
-- `SAT_inNP.sat_NP` still has two `sorry`s.
-- `kSAT_to_SAT_poly`, `kSAT_to_FlatClique_poly`, and `FlatClique_in_NP` are still unfinished.
-- The final theorem file depends on all of these theorems directly.
+- `FlatClique` is now a real flat clique predicate over wellformed graphs.
+- the files compile, but the main SAT/clique theorems still use `sorry` and `FSAT_to_SAT` is still search-based.
 
-## Required work
+## What still needs to be implemented
 
-1. Replace the search-based `FSAT → SAT` / `FSAT → 3SAT` construction with a direct syntactic transformation, following Coq.
-2. Finish the NP-membership proofs for SAT and FlatClique honestly.
-3. Finish `kSAT_to_SAT_poly` and `kSAT_to_FlatClique_poly` under the repaired reduction API.
-4. Keep theorem names stable so `CookLevin.lean` only needs minimal cleanup later.
+1. Replace the search-based `FSAT → SAT` / `FSAT → 3SAT` constructions with direct syntactic translations.
+2. Finish `SAT_inNP.sat_NP`, `kSAT_to_SAT`, `kSAT_to_FlatClique_poly`, and `FlatClique_in_NP` honestly.
+3. Keep the new `FlatClique` definition mathematically meaningful; do not collapse it back to `True`.
+4. Ensure the final theorem file can use these exports unchanged.
 
-## Done when
+## Deliverable
 
-- no search-based SAT reduction remains,
-- `sat_NP`, `kSAT_to_SAT_poly`, `kSAT_to_FlatClique_poly`, and `FlatClique_in_NP` are honest proofs,
-- the README says the non-Cook-Levin side of the theorem chain is repaired.
+A compiling SAT/clique side with honest NP-membership proofs and direct polynomial reductions.

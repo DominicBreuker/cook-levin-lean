@@ -4,17 +4,15 @@ import Complexity.NP.GenNP
 
 set_option autoImplicit false
 
-/-- The current phase-4 port keeps certificate-size bookkeeping abstract.  The
-surrounding scaffold still uses a placeholder `encodable` interface, so the
-machine-facing problems record explicit size and time bounds while the concrete
-certificate measure is deferred to later phases. -/
-def certificateMeasure {α : Sort _} [encodable α] (cert : α) : Nat := 0
+/-- Certificate size is measured by the repository-wide `encodable.size`
+interface so every bridge stage talks about the same notion of input size. -/
+def certificateMeasure {α : Sort _} [encodable α] (cert : α) : Nat := encodable.size cert
 
-theorem certificateMeasure_eq_zero {α : Sort _} [encodable α] (x : α) :
-    certificateMeasure x = 0 := rfl
+theorem certificateMeasure_eq_size {α : Sort _} [encodable α] (x : α) :
+    certificateMeasure x = encodable.size x := rfl
 
-theorem certificateMeasure_le {α : Sort _} [encodable α] (x : α) (n : Nat) :
-    certificateMeasure x ≤ n := by
+theorem certificateMeasure_le_add_right {α : Sort _} [encodable α] (x : α) (n : Nat) :
+    certificateMeasure x ≤ certificateMeasure x + n := by
   simp [certificateMeasure]
 
 namespace LMGenNP
@@ -25,7 +23,11 @@ structure Instance (X : Type) [encodable X] where
   steps : Nat
 
 def LMGenNP (X : Type) [encodable X] : Instance X → Prop :=
-  fun inst => ∃ cert : X, certificateMeasure cert ≤ inst.maxSize ∧ inst.source.rel cert
+  fun inst =>
+    ∃ cert : X,
+      certificateMeasure cert ≤ inst.maxSize ∧
+      certificateMeasure cert ≤ inst.source.maxSize ∧
+      inst.source.rel cert
 
 end LMGenNP
 

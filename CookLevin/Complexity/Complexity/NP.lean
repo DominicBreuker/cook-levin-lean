@@ -132,112 +132,16 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
     [encodable X] [encodable Y] [encodable Z]
     (P : X → Prop) (Q : Y → Prop) (R : Z → Prop) :
     P ⪯p Q → Q ⪯p R → P ⪯p R := by
-  rintro ⟨⟨f, _, hf_correct⟩⟩ ⟨⟨g, _, hg_correct⟩⟩
-  -- Compose the reductions: first apply f, then g
-  -- The correctness is (P x ↔ Q (f x)) and (Q y ↔ R (g y))
-  -- So P x ↔ R ((g ∘ f) x)
-  refine ⟨⟨fun x => g (f x), ?_, ?_⟩⟩
-  · refine ⟨fun n => hg_witness.bound (hf_witness.bound n), ?_, ?_, ?_⟩
-    · exact hg_witness.bound_poly
-    · intros x x' h
-      apply hg_witness.bound_mono
-      apply hf_witness.bound_mono
-      exact h
-    · intros x
-      have h1 := hf_witness.bound_valid x
-      have h2 := hg_witness.bound_valid (f x)
-      calc encodable.size (g (f x))
-          ≤ hg_witness.bound (encodable.size (f x)) := h2
-        _ ≤ hg_witness.bound (hf_witness.bound (encodable.size x)) := by
-            apply hg_witness.bound_mono
-            exact h1
-  · intro x
-    calc P x
-        ↔ Q (f x) := by apply hf_correct
-      _ ↔ R (g (f x)) := by apply hg_correct
-  intro x
-  -- Need to show: P x ↔ R (g (f x))
-  calc P x
-      ↔ Q (f x) := by apply hf_correct
-    _ ↔ R (g (f x)) := by apply hg_correct
+  -- This is the polynomial-composition argument from the Coq `reducesPolyMO_transitive`
+  -- proof in `coqdoc/Complexity.Complexity.NP.txt`; the Lean scaffold now exposes the
+  -- stronger witnesses needed for the result, but the final composed `inOPoly` proof and
+  -- its associated size-bound bookkeeping still need to be ported faithfully.
+  sorry
 
 theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) :
     P ⪯p Q → inNP Q → inNP P := by
-  rintro ⟨hRed⟩
-  intro hQ
-  -- Q ∈ NP means there exists a certificate relation R_Q for Q
-  rcases hQ with ⟨Y', hEncY', hWitness⟩
-  rcases hWitness with ⟨hWitness⟩
-  -- For P ∈ NP, we use the same certificate type Y' 
-  -- The relation for P is: R_P x y' := R_Q (hRed.reduction x) y'
-  refine inNP_intro (X := X) (Y := Y') P (fun x y' => hWitness.rel (hRed.reduction x) y') ?_ ?_
-  · -- hPoly: inTimePoly for the relation (fun xy : X × Y' => hWitness.rel (hRed.reduction xy.1) xy.2)
-    -- We construct a decider by composing hRed.reduction with the decider from hWitness.rel_poly
-    -- 
-    -- We have:
-    -- - hWitness.rel_poly : inTimePoly (fun (xy : Y × Y') => hWitness.rel xy.1 xy.2)
-    -- - hRed.reduction : X → Y with hRed.reduction_correct : P x ↔ Q (hRed.reduction x)
-    -- 
-    -- We need: inTimePoly (fun (xy : X × Y') => hWitness.rel (hRed.reduction xy.1) xy.2)
-    -- 
-    -- The idea: if R_Q(y, y') holds iff the decider for R_Q returns true for (y, y'),
-    -- and hRed.reduction is polynomial-time computable (placeholder: trivial),
-    -- then R_P(x, y') holds iff the decider for R_Q returns true for (hRed.reduction x, y').
-    -- 
-    -- For the placeholder, we use the fact that computableTime' is True
-    rcases hWitness.rel_poly with ⟨f_bound, ⟨dec, hdec⟩, hf_poly, hf_mono⟩
-    -- We construct a decider for the composed relation
-    -- The decider checks: dec (hRed.reduction x, y')
-    let dec_P : (X × Y') → Bool := fun xy => dec (hRed.reduction xy.1, xy.2)
-    refine ⟨f_bound, ⟨dec_P, ?_⟩, hf_poly, hf_mono⟩
-    intros xy
-    -- Need to show: (fun xy => hWitness.rel (hRed.reduction xy.1) xy.2) xy ↔ dec_P xy = true
-    -- Which simplifies to: hWitness.rel (hRed.reduction xy.1) xy.2 ↔ dec_P xy = true
-    -- We have dec_P xy = dec (hRed.reduction xy.1, xy.2) by definition
-    -- And hdec gives us: hWitness.rel y y' ↔ dec (y, y') = true
-    have hRel : hWitness.rel (hRed.reduction xy.1) xy.2 ↔ dec (hRed.reduction xy.1, xy.2) = true := 
-      hdec (hRed.reduction xy.1, xy.2)
-    show hWitness.rel (hRed.reduction xy.1) xy.2 ↔ dec_P xy = true
-    rw [hRel]
-  · -- hCorrect: polyCertRel for the new relation
-    -- hWitness is an InNPWitness, which contains a polyCertRel internally
-    obtain ⟨cert_witness⟩ := hWitness.rel_correct
-    -- The new bound needs to account for the size of the reduced instance
-    -- We use the composition: bound_new(n) = bound_old(size_of_reduction(n))
-    -- For now, we use a simple bound that works with our placeholder
-    refine ⟨⟨fun n => cert_witness.bound n, ?_, ?_, ?_, ?_⟩⟩
-    · -- sound: ∀ ⦃x y'⦄, R_Q (hRed.reduction x) y' → P x
-      intros x y' h
-      -- We know R_Q (hRed.reduction x) y', which by cert_witness.sound gives Q (hRed.reduction x)
-      -- We need P x, and we have P x ↔ Q (hRed.reduction x)
-      have hQ : Q (hRed.reduction x) := cert_witness.sound h
-      exact by apply Iff.mpr; apply hRed.reduction_correct; exact hQ
-    · -- complete: ∀ ⦃x⦄, P x → ∃ y', R_Q (hRed.reduction x) y' ∧ encodable.size y' ≤ cert_witness.bound (encodable.size x)
-      intros x hPx
-      -- We have P x, and we need R_Q (hRed.reduction x) y' for some y'
-      -- From hRed.reduction_correct, we have P x ↔ Q (hRed.reduction x)
-      -- So from hPx, we get Q (hRed.reduction x)
-      have hQred : Q (hRed.reduction x) := by apply Iff.mp; apply hRed.reduction_correct; exact hPx
-      -- Now we can use cert_witness.complete to get a witness y' for Q (hRed.reduction x)
-      rcases cert_witness.complete hQred with ⟨y', hy1, hy2⟩
-      refine ⟨y', hy1, ?_⟩
-      -- We need to show: encodable.size y' ≤ cert_witness.bound (encodable.size x)
-      -- We have: encodable.size y' ≤ cert_witness.bound (encodable.size (hRed.reduction x))
-      -- 
-      -- ISSUE: The bound depends on encodable.size (hRed.reduction x), not encodable.size x.
-      -- For polynomial-time reductions, we would need to prove:
-      --   encodable.size (hRed.reduction x) ≤ p(encodable.size x)  for some polynomial p
-      -- and then use monotonicity to get:
-      --   cert_witness.bound (encodable.size (hRed.reduction x)) ≤ cert_witness.bound (p(encodable.size x))
-      -- 
-      -- For now, as a placeholder, we assume the bound function works correctly.
-      -- This will be properly addressed in Step 4 when we have actual machine semantics.
-      sorry
-    · -- bound_poly: inOPoly bound (composition preserves polynomiality)
-      exact cert_witness.bound_poly
-    · -- bound_mono: monotonic bound
-      exact cert_witness.bound_mono
+  sorry
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P
@@ -255,18 +159,5 @@ theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop)
   intro hHard
   intro Y hEncY Q hQ
   have subtype_reduction : (fun x : {x // subtype_pred x} => P x.1) ⪯p P := by
-    refine ⟨⟨Subtype.val, ?_, fun {x} => Iff.rfl⟩⟩
-    refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
-    · have : inO (fun n => n) (fun x => x^1):= by
-        apply Exists.intro 1
-        apply Exists.intro 0
-        intros n hn
-        simp
-      apply Exists.intro 1
-      exact this
-    · intros x x' h
-      exact h
-    · intros x
-      simp
-      sorry -- Subtype.val output size doesn't directly relate to input size
+    refine ⟨⟨Subtype.val, by sorry, fun {x} => Iff.rfl⟩⟩
   exact reducesPolyMO_transitive _ _ _ (hHard Y hEncY Q hQ) subtype_reduction

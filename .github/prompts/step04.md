@@ -1,42 +1,33 @@
-# Step 04 — Finish the generic NP source problem
+# Step 04 — Finish the bounded generic NP source problem
 
-## Why this task still exists
+## Read first
 
-The old Step 5 did not complete. The generic source problem is still blocked by placeholder encodings and an unfinished hardness proof.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/NP/GenNP.lean`
 - `CookLevin/Complexity/GenNP_is_hard.lean`
 - `CookLevin/Complexity/CanEnumTerm.lean`
 - `CookLevin/Complexity/Complexity/NP.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.NP.L.GenNP.txt`
 - `coqdoc/Complexity.NP.L.GenNP_is_hard.txt`
 - `coqdoc/Complexity.NP.L.GenNPBool.txt`
 - `coqdoc/Complexity.NP.L.CanEnumTerm.txt`
-- `coqdoc/Complexity.NP.L.CanEnumTerm_def.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `GenNPInput` is still very small compared with the Coq source problem interface.
-- `genNPInstance` still contains a `sorry`.
-- `NPhard_GenNP` still relies on the unfinished reduction layer and weak encoding interface.
-- The current `CanEnumTerm` example instance is still placeholder-level.
+- `GenNPInput` now carries `maxSize`, `steps`, and certificate-size soundness.
+- `genNPRel` explicitly stores a witness-size bound.
+- `genNPInstance`, `genNPInstance_spec`, and `NPhard_GenNP` currently compile but still use admitted proofs.
 
-## Required work
+## What still needs to be implemented
 
-1. Make the Lean `GenNP` layer follow the Coq architecture much more closely.
-2. Finish `genNPInstance` and `genNPInstance_spec` without `sorry`.
-3. Re-prove `NPhard_GenNP` against the repaired `inNP` / reduction API.
-4. Carry whatever concrete encoding facts are needed from `CanEnumTerm` into the proof instead of hiding them in comments.
-5. Keep the source problem reusable for the downstream TM bridge.
+1. Replace the admitted `rel_poly` witness in `genNPInstance` with a faithful Coq-style bounded verifier argument.
+2. Finish `genNPInstance_spec` and `NPhard_GenNP` honestly.
+3. Make sure the bound used in `GenNPInput.maxSize` is the mathematically right one from the certificate relation, not just a convenient over-approximation.
+4. Keep the bounded architecture intact; later TM bridge stages depend on these explicit size and step fields.
 
-## Done when
+## Deliverable
 
-- `GenNP` no longer depends on placeholder encodings,
-- `genNPInstance` and `NPhard_GenNP` are honest proofs,
-- the README says the generic hardness starting point is really available.
+A compiling and genuinely proved generic NP source problem that can serve as the hardness starting point for the full Cook-Levin chain.

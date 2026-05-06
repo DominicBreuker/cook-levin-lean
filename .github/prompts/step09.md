@@ -1,40 +1,32 @@
-# Step 09 — Repair the `FlatTCC → FlatCC` stage
+# Step 09 — Finish `FlatTCC → FlatCC`
 
-## Why this task still exists
+## Read first
 
-The current reduction still uses placeholder width/offset/step bookkeeping and has an unfinished proof.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatTCC_to_FlatCC.lean`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatTCC.lean`
 - `CookLevin/Complexity/NP/SAT/CookLevin/Subproblems/FlatCC.lean`
-- `CookLevin/Complexity/NP/SAT/CookLevin.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC.txt`
 - `coqdoc/Complexity.NP.SAT.CookLevin.Reductions.TCC_to_CC.txt`
 - `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatTCC.txt`
 - `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.FlatCC.txt`
-- `coqdoc/Complexity.NP.SAT.CookLevin.Subproblems.CC.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `FlatTCC_to_FlatCC_instance` still sets `offset := 0`, `width := 0`, and `steps := 0`.
-- `FlatTCC_to_FlatCC_poly` still contains a `sorry`.
-- The flattening lemmas are already substantial; use them instead of rebuilding everything from scratch.
+- the structural `TCC_to_CC` translation now carries meaningful offset/width values.
+- flattening and unflattening lemmas already exist and compile.
+- the main reduction theorem still contains admitted proof obligations.
 
-## Required work
+## What still needs to be implemented
 
-1. Make the translated `FlatCC` instance carry the correct offset, width, and step information.
-2. Finish `FlatTCC_to_FlatCC_poly` honestly.
-3. Add only the helper lemmas that are actually needed for this reduction and the next one.
-4. Reuse the existing flatten/unflatten infrastructure in `Subproblems/FlatTCC.lean` and `Subproblems/FlatCC.lean`.
+1. Finish `FlatTCC_to_FlatCC_poly` honestly under the strengthened reduction API.
+2. Compare the chosen offset/width bookkeeping with the Coq reduction and tighten any provisional choices.
+3. Keep reusing the existing flatten/unflatten lemmas instead of re-encoding the same facts.
+4. Do not break the downstream `FlatCC → BinaryCC` file.
 
-## Done when
+## Deliverable
 
-- the translated instance no longer has zero bookkeeping fields,
-- the reduction theorem has no `sorry`,
-- the README records that the `TCC → CC` stage is real.
+A compiling and justified `FlatTCC → FlatCC` reduction ready for downstream binary encoding.

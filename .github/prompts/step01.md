@@ -1,43 +1,33 @@
-# Step 01 — Repair encoding and size foundations
+# Step 01 — Finish the encoding and size foundation
 
-## Why this task still exists
+## Read first
 
-The old Step 1 was only partially completed. `monotonic` and `inOPoly` are now nontrivial, but the proof-critical encoding layer is still placeholder-level.
-
-## Read these files first
-
-### Lean files
+### Lean
 - `README.md`
 - `CookLevin/Complexity/Complexity/Definitions.lean`
-- `CookLevin/Complexity/Complexity/Subtypes.lean`
 - `CookLevin/Complexity/CanEnumTerm.lean`
 - `CookLevin/Complexity/Complexity/NP.lean`
 
-### Coq reference files
+### Coq
 - `coqdoc/Complexity.Complexity.Definitions.txt`
 - `coqdoc/Complexity.Complexity.EncodableP.txt`
-- `coqdoc/Complexity.Complexity.Subtypes.txt`
 - `coqdoc/Complexity.NP.L.CanEnumTerm_def.txt`
 - `coqdoc/Complexity.NP.L.CanEnumTerm.txt`
 
-## Concrete problems visible today
+## Baseline you must preserve
 
-- `encodable` only stores `size`, and the default instance gives every value size `0`.
-- `index` is currently constant `0`.
-- `boollists_enum_term.encode` in `CookLevin/Complexity/CanEnumTerm.lean` always returns `[]`.
-- Later steps need real size information for certificate bounds and reduction-size bounds.
+- `encodable` sizes are no longer all zero.
+- `index` is no longer constant.
+- `CanEnumTerm` now exposes an explicit size-bound field.
+- `lake build` is green and must stay green.
 
-## Required work
+## What still needs to be implemented
 
-1. Repair the proof-critical encoding / size interface so later files can talk about real input and certificate sizes.
-2. Remove the dependency on the default size-`0` encoding in every file you touch.
-3. Make `CanEnumTerm` expose an actual encoding interface that can be used in the `GenNP` hardness proof.
-4. Keep names stable where practical; later steps already import these files.
-5. Do not try to fix the whole reduction chain here. Only repair the common encoding layer and the immediate fallout.
+1. Replace any remaining uses of the default low-priority `encodable` instance on proof-critical types with explicit meaningful instances.
+2. Prove the currently admitted `CanEnumTerm.encode_size_bound` obligations honestly.
+3. Compare the Lean size interface with the Coq encoding layer and add any missing helper lemmas needed by later steps.
+4. Do not weaken the new size-sensitive architecture back to tautological bounds.
 
-## Done when
+## Deliverable
 
-- the touched encoding definitions are no longer placeholder-level,
-- `CanEnumTerm` is no longer constant on the critical example instance,
-- the repository still compiles at least as far as before your change,
-- `README.md` is updated if the repository status materially improves.
+A compiling encoding layer where the important certificate / reduction datatypes all have deliberate, documented size behavior and the `CanEnumTerm` example is fully justified.
