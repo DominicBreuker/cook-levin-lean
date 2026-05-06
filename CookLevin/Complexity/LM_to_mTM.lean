@@ -16,4 +16,4 @@ def lmToMTMInput (inst : LMGenNP.Instance (List Bool)) : mTMGenNPFixedInput Bool
 
 theorem LMGenNP_to_TMGenNP_mTM :
     LMGenNP.LMGenNP (List Bool) ⪯p mTMGenNP_fixed (projT1 M.M) := by
-  refine ⟨⟨lmToMTMInput, trivial, fun {inst} => Iff.rfl⟩⟩
+  refine ⟨⟨lmToMTMInput, by sorry, fun {inst} => Iff.rfl⟩⟩

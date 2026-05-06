@@ -57,6 +57,6 @@ theorem NPhard_GenNP (X__cert : Type) [encodable X__cert]
   rcases hQ with ⟨Y, hEncY, hWitness⟩
   letI := hEncY
   rcases hWitness with ⟨witness⟩
-  refine ⟨⟨fun x => genNPInstance enumTerm witness.rel witness.rel_poly x, trivial, ?_⟩⟩
+  refine ⟨⟨fun x => genNPInstance enumTerm witness.rel witness.rel_poly x, by sorry, ?_⟩⟩
   intro x
   exact (genNPInstance_spec enumTerm witness.rel witness.rel_correct witness.rel_poly x).symm

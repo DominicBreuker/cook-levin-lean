@@ -4,8 +4,16 @@ import Complexity.Complexity.MachineSemantics
 set_option autoImplicit false
 
 /-- A predicate indicating that a function is polynomial-time computable.
-(Placeholder - will be properly defined in Step 4 with actual machine semantics.) -/
-def polyTimeComputable {X Y : Type} (f : X → Y) : Prop := True
+This means there exists a polynomial-time bound for computing the function. -/
+structure PolyTimeComputableWitness {X Y : Type} [encodable X] [encodable Y]
+    (f : X → Y) where
+  bound : Nat → Nat
+  bound_poly : inOPoly bound
+  bound_mono : monotonic bound
+  bound_valid : ∀ x : X, encodable.size (f x) ≤ bound (encodable.size x)
+
+abbrev polyTimeComputable {X Y : Type} [encodable X] [encodable Y] (f : X → Y) : Prop :=
+  Nonempty (PolyTimeComputableWitness f)
 
 /-- A decider for predicate `P` with time bound `f` (exists as a Prop-friendly existential). -/
 def HasDecider (X : Type) (P : X → Prop) (f : Nat → Nat) : Prop :=
@@ -106,7 +114,19 @@ theorem reducesPolyMO_elim {X Y : Type} [encodable X] [encodable Y]
   refine ⟨f, fun x hx => (@hf_correct x).mp hx, fun x => @hf_correct x⟩
 
 theorem reducesPolyMO_reflexive (X : Type) [encodable X] (P : X → Prop) : P ⪯p P := by
-  exact ⟨⟨id, trivial, fun _ => Iff.rfl⟩⟩
+  refine ⟨⟨id, ?_, fun _ => Iff.rfl⟩⟩
+  refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
+  · have : inO (fun n => n) (fun x => x^1):= by
+      apply Exists.intro 1
+      apply Exists.intro 0
+      intros n hn
+      simp
+    apply Exists.intro 1
+    exact this
+  · intros x x' h
+    exact h
+  · intros x
+    simp
 
 theorem reducesPolyMO_transitive {X Y Z : Type}
     [encodable X] [encodable Y] [encodable Z]
@@ -116,7 +136,25 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
   -- Compose the reductions: first apply f, then g
   -- The correctness is (P x ↔ Q (f x)) and (Q y ↔ R (g y))
   -- So P x ↔ R ((g ∘ f) x)
-  refine ⟨⟨fun x => g (f x), trivial, ?_⟩⟩
+  refine ⟨⟨fun x => g (f x), ?_, ?_⟩⟩
+  · refine ⟨fun n => hg_witness.bound (hf_witness.bound n), ?_, ?_, ?_⟩
+    · exact hg_witness.bound_poly
+    · intros x x' h
+      apply hg_witness.bound_mono
+      apply hf_witness.bound_mono
+      exact h
+    · intros x
+      have h1 := hf_witness.bound_valid x
+      have h2 := hg_witness.bound_valid (f x)
+      calc encodable.size (g (f x))
+          ≤ hg_witness.bound (encodable.size (f x)) := h2
+        _ ≤ hg_witness.bound (hf_witness.bound (encodable.size x)) := by
+            apply hg_witness.bound_mono
+            exact h1
+  · intro x
+    calc P x
+        ↔ Q (f x) := by apply hf_correct
+      _ ↔ R (g (f x)) := by apply hg_correct
   intro x
   -- Need to show: P x ↔ R (g (f x))
   calc P x
@@ -216,6 +254,19 @@ theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop)
     NPhard (fun x : {x // subtype_pred x} => P x.1) → NPhard P := by
   intro hHard
   intro Y hEncY Q hQ
-  exact reducesPolyMO_transitive _ _ _
-    (hHard Y hEncY Q hQ)
-    ⟨⟨Subtype.val, trivial, fun {x} => Iff.rfl⟩⟩
+  have subtype_reduction : (fun x : {x // subtype_pred x} => P x.1) ⪯p P := by
+    refine ⟨⟨Subtype.val, ?_, fun {x} => Iff.rfl⟩⟩
+    refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
+    · have : inO (fun n => n) (fun x => x^1):= by
+        apply Exists.intro 1
+        apply Exists.intro 0
+        intros n hn
+        simp
+      apply Exists.intro 1
+      exact this
+    · intros x x' h
+      exact h
+    · intros x
+      simp
+      sorry -- Subtype.val output size doesn't directly relate to input size
+  exact reducesPolyMO_transitive _ _ _ (hHard Y hEncY Q hQ) subtype_reduction

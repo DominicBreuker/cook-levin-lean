@@ -89,7 +89,7 @@ noncomputable def FlatTCC_to_FlatCC_instance (C : FlatTCC) : FlatCC :=
     flatCCNoInstance
 
 theorem FlatTCC_to_FlatCC_poly : FlatTCC.FlatTCCLang ⪯p FlatCCLang := by
-  refine ⟨⟨FlatTCC_to_FlatCC_instance, trivial, fun {inst} => ?_⟩⟩
+  refine ⟨⟨FlatTCC_to_FlatCC_instance, by sorry, fun {inst} => ?_⟩⟩
   constructor
   · rintro ⟨_, hflat, hlang⟩
     simp [FlatTCC_to_FlatCC_instance, hflat]

@@ -12,5 +12,5 @@ def genNPToLMGenNPInstance {X : Type} [encodable X] (inst : GenNPInput X) :
 
 theorem GenNP_to_LMGenNP (X : Type) [encodable X] :
     GenNP X ⪯p LMGenNP.LMGenNP X := by
-  refine ⟨⟨genNPToLMGenNPInstance, trivial, fun {inst} => ?_⟩⟩
+  refine ⟨⟨genNPToLMGenNPInstance, by sorry, fun {inst} => ?_⟩⟩
   sorry

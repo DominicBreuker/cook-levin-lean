@@ -184,7 +184,7 @@ noncomputable def BinaryCC_to_FSAT_instance (C : BinaryCC) : formula :=
   orList ((acceptingRunsFrom C C.steps C.init).map encodeTrace)
 
 theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
-  refine ⟨⟨BinaryCC_to_FSAT_instance, trivial, ?_⟩⟩
+  refine ⟨⟨BinaryCC_to_FSAT_instance, by sorry, ?_⟩⟩
   intro C
   constructor
   · intro hBC

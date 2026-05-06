@@ -184,7 +184,7 @@ noncomputable def FlatCC_to_BinaryCC_instance (C : FlatCC) : BinaryCC :=
     binaryCCNoInstance
 
 theorem FlatCC_to_BinaryCC_poly : FlatCCLang ⪯p BinaryCCLang := by
-  refine ⟨⟨FlatCC_to_BinaryCC_instance, trivial, ?_⟩⟩
+  refine ⟨⟨FlatCC_to_BinaryCC_instance, by sorry, ?_⟩⟩
   intro C
   constructor
   · intro hFlat

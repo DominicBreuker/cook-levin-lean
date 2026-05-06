@@ -17,4 +17,4 @@ def multiTapeToSingleTapeInput {σ : Type} (inst : mTMGenNPFixedInput σ) : TMGe
 
 theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} (M : TM σ 2) :
     mTMGenNP_fixed M ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono M)) := by
-  refine ⟨⟨multiTapeToSingleTapeInput, trivial, fun {inst} => Iff.rfl⟩⟩
+  refine ⟨⟨multiTapeToSingleTapeInput, by sorry, fun {inst} => Iff.rfl⟩⟩

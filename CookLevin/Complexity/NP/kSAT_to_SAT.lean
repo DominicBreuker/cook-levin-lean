@@ -5,7 +5,7 @@ import Complexity.NP.kSAT
 set_option autoImplicit false
 
 theorem kSAT_to_SAT (k : Nat) : kSAT k ⪯p SAT := by
-  refine ⟨⟨id, trivial, ?_⟩⟩
+  refine ⟨⟨id, by sorry, ?_⟩⟩
   intro N
   -- kSAT k N ↔ SAT (id N) = SAT N
   -- This is just unrolling the definitions

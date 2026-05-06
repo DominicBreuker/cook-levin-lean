@@ -60,5 +60,5 @@ def kSAT_to_FlatClique_instance (N : cnf) : fgraph × Nat :=
   (((cliqueVertices N).length, cliqueEdges N), N.length)
 
 theorem kSAT_to_FlatClique_poly (k : Nat) : kSAT k ⪯p FlatClique := by
-  refine ⟨⟨kSAT_to_FlatClique_instance, trivial, fun {x} => ?_⟩⟩
+  refine ⟨⟨kSAT_to_FlatClique_instance, by sorry, fun {x} => ?_⟩⟩
   sorry
