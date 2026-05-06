@@ -4,11 +4,11 @@ set_option autoImplicit false
 
 namespace MultiToMonoBridge
 
-def encodeTape {σ : Type} : List σ → List Nat
+def eraseTape {σ : Type} : List σ → List Nat
   | [] => []
-  | _ :: xs => 0 :: encodeTape xs
+  | _ :: xs => 0 :: eraseTape xs
 
-def machine {σ : finType} : TM σ 1 :=
+def bridgeMachine {σ : finType} : TM σ 1 :=
   { sig := 1
     tapes := 1
     states := 1
@@ -16,49 +16,49 @@ def machine {σ : finType} : TM σ 1 :=
     start := 0
     halt := [true] }
 
-theorem machine_valid {σ : finType} : validFlatTM (machine (σ := σ)) := by
+theorem bridgeMachine_valid {σ : finType} : validFlatTM (bridgeMachine (σ := σ)) := by
   constructor
-  · simp [machine]
+  · simp [bridgeMachine]
   constructor
-  · simp [machine]
+  · simp [bridgeMachine]
   · intro entry hentry
     cases hentry
 
-theorem isValidFlatTape_encodeTape {σ : Type} (xs : List σ) :
-    isValidFlatTape 1 (encodeTape xs) = true := by
+theorem isValidFlatTape_eraseTape {σ : Type} (xs : List σ) :
+    isValidFlatTape 1 (eraseTape xs) = true := by
   rw [isValidFlatTape, List.all_eq_true]
   intro x hx
   induction xs with
   | nil =>
       cases hx
   | cons a xs ih =>
-      simp [encodeTape] at hx ⊢
+      simp [eraseTape] at hx ⊢
       rcases hx with rfl | hx
       · simp
       · simpa using ih hx
 
 def tapes {σ : Type} (input cert : List σ) : List (List Nat) :=
-  [encodeTape (input ++ cert)]
+  [eraseTape (input ++ cert)]
 
-theorem machine_accepts {σ : finType} (input cert : List σ) (steps : Nat) :
-    acceptsFlatTM (machine (σ := σ)) (tapes input cert) steps = true := by
-  have hcert : isValidFlatTape 1 (encodeTape (input ++ cert)) = true := isValidFlatTape_encodeTape _
-  have hvalid : isValidFlatTapes (machine (σ := σ)) (tapes input cert) = true := by
-    simp [isValidFlatTapes, machine, tapes, hcert]
+theorem bridgeMachine_accepts {σ : finType} (input cert : List σ) (steps : Nat) :
+    acceptsFlatTM (bridgeMachine (σ := σ)) (tapes input cert) steps = true := by
+  have hcert : isValidFlatTape 1 (eraseTape (input ++ cert)) = true := isValidFlatTape_eraseTape _
+  have hvalid : isValidFlatTapes (bridgeMachine (σ := σ)) (tapes input cert) = true := by
+    simp [isValidFlatTapes, bridgeMachine, tapes, hcert]
   refine (acceptsFlatTM_eq_true_iff).2 ?_
-  refine ⟨initFlatConfig (machine (σ := σ)) (tapes input cert), ?_, ?_⟩
+  refine ⟨initFlatConfig (bridgeMachine (σ := σ)) (tapes input cert), ?_, ?_⟩
   · unfold execFlatTM
     rw [if_pos hvalid]
     apply runFlatTM_of_halting
-    simp [haltingStateReached, machine, initFlatConfig, tapes]
-  · simp [haltingStateReached, machine, initFlatConfig, tapes]
+    simp [haltingStateReached, bridgeMachine, initFlatConfig, tapes]
+  · simp [haltingStateReached, bridgeMachine, initFlatConfig, tapes]
 
 end MultiToMonoBridge
 
 namespace M_multi2mono
 
 def M__mono {σ : finType} (_ : TM σ 2) : Sigma (fun _ : TM σ 1 => Unit) := 
-  ⟨MultiToMonoBridge.machine, ()⟩
+  ⟨MultiToMonoBridge.bridgeMachine, ()⟩
 
 end M_multi2mono
 
@@ -95,7 +95,7 @@ theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} (M : TM σ 2) :
       exact Nat.le_refl _
   · constructor
     · rintro ⟨cert, hsize, hacc⟩
-      exact ⟨cert, hsize, ⟨hacc, MultiToMonoBridge.machine_accepts
+      exact ⟨cert, hsize, ⟨hacc, MultiToMonoBridge.bridgeMachine_accepts
         (initTape_singleTapeTM (inst.workTapes.foldr List.append [])) cert inst.steps⟩⟩
     · rintro ⟨cert, hsize, hacc, _⟩
       exact ⟨cert, hsize, hacc⟩
@@ -110,7 +110,7 @@ theorem ExplicitMTMTarget_to_TMGenNP_singleTM {σ : finType} [encodable σ] (M :
       exact Nat.le_refl _
   · constructor
     · rintro ⟨cert, hsize, hacc⟩
-      exact ⟨cert, hsize, ⟨hacc, MultiToMonoBridge.machine_accepts
+      exact ⟨cert, hsize, ⟨hacc, MultiToMonoBridge.bridgeMachine_accepts
         (initTape_singleTapeTM (inst.workTapes.foldr List.append [])) cert inst.steps⟩⟩
     · rintro ⟨cert, hsize, hacc, _⟩
       exact ⟨cert, hsize, hacc⟩
