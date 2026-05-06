@@ -67,7 +67,7 @@ noncomputable def FlatSingleTMGenNP_to_FlatTCC_instance :
         flatTCCNoInstance
 
 theorem FlatSingleTMGenNP_to_FlatTCCLang_poly : FlatSingleTMGenNP ⪯p FlatTCC.FlatTCCLang := by
-  refine ⟨FlatSingleTMGenNP_to_FlatTCC_instance, ?_⟩
+  refine ⟨⟨FlatSingleTMGenNP_to_FlatTCC_instance, trivial, fun {inst} => ?_⟩⟩
   rintro ⟨M, s, maxSize, steps⟩ h
   rcases h with ⟨_, hs, _⟩
   simp [FlatSingleTMGenNP_to_FlatTCC_instance, hs]

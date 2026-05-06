@@ -90,7 +90,7 @@ noncomputable def FlatTCC_to_FlatCC_instance (C : FlatTCC) : FlatCC :=
 
 theorem FlatTCC_to_FlatCC_poly : FlatTCC.FlatTCCLang ⪯p FlatCCLang := by
   refine ⟨⟨FlatTCC_to_FlatCC_instance, trivial, ?_⟩⟩
-  rintro C ⟨_, hflat, hlang⟩
+  rintro ⟨_, hflat, hlang⟩
   simp [FlatTCC_to_FlatCC_instance, hflat]
   refine ⟨flattenCC_wellformed (C := TCC_to_CC (FlatTCC.unflattenTCC C hflat)) (TCC_to_CC_lang _ hlang).1,
     ⟨isValidFlattening_flattenCC _, ?_⟩⟩
