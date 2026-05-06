@@ -371,27 +371,41 @@ def repository_has_changes() -> bool:
     return bool(result.stdout.strip())
 
 
-def commit_and_push(commit_message: str, *, remote_name: str = "origin") -> str:
-    branch_name = current_branch()
-    run_git("add", "-A")
-    commit = run_git("commit", "-m", commit_message, check=False)
-    if commit.returncode != 0:
-        raise RuntimeError(f"Failed to create commit: {completed_process_message(commit)}")
+def git_commit(branch_name: str, commit_message: str, *, remote_name: str = "origin") -> bool:
+    try:
+        run_git("add", "-A")
+        commit = run_git("commit", "-m", commit_message, check=False)
+        if commit.returncode != 0:
+            print(f"Failed to create commit: {completed_process_message(commit)}", file=sys.stderr)
+            return False
 
-    fetch = run_git("fetch", "--prune", remote_name, check=False)
-    if fetch.returncode != 0:
-        raise RuntimeError(f"Failed to fetch before push: {completed_process_message(fetch)}")
+        fetch = run_git("fetch", "--prune", remote_name, check=False)
+        if fetch.returncode != 0:
+            print(f"Failed to fetch before push: {completed_process_message(fetch)}", file=sys.stderr)
+            return False
 
-    if remote_branch_exists(remote_name, branch_name):
-        rebase = run_git("rebase", f"{remote_name}/{branch_name}", check=False)
-        if rebase.returncode != 0:
-            abort_rebase_if_needed()
-            raise RuntimeError(f"Failed to rebase before push: {completed_process_message(rebase)}")
+        if remote_branch_exists(remote_name, branch_name):
+            rebase = run_git("rebase", f"{remote_name}/{branch_name}", check=False)
+            if rebase.returncode != 0:
+                abort_rebase_if_needed()
+                print(f"Failed to rebase before push: {completed_process_message(rebase)}", file=sys.stderr)
+                return False
 
+    except Exception as e:
+        print(f"Unexpected error during commit: {e}", file=sys.stderr)
+        return False
+
+    print(f"Committed changes on {branch_name}: {commit_message}")
+    return True
+
+def git_push(branch_name: str, remote_name: str = "origin") -> bool:
     push = run_git("push", remote_name, f"HEAD:{branch_name}", check=False)
     if push.returncode != 0:
-        raise RuntimeError(f"Failed to push commit: {completed_process_message(push)}")
-    return branch_name
+        print(f"Failed to push commit: {completed_process_message(push)}", file=sys.stderr)
+        return False
+
+    print(f"Pushed changes on {branch_name} to {remote_name}")
+    return True
 
 
 def emit_github_output(name: str, value: str) -> None:
@@ -459,8 +473,9 @@ def main() -> None:
         # Sometimes the agents commits himself but does not push, and we then think here that nothing changed - we must handle this properly at some point ()
         # if repository_has_changes():
         try:
-            last_pushed_branch = commit_and_push(commit_message)
-            print(f"Committed and pushed changes on {last_pushed_branch}: {commit_message}")
+            last_pushed_branch = current_branch()
+            commit_ok = git_commit(last_pushed_branch, commit_message)
+            push_ok = git_push(last_pushed_branch, remote_name="origin")
         except Exception as exc:
             failure_message = f"Commit/push failed after pass {run_index}/{args.run_count}: {exc}"
             exit_code = 1
