@@ -184,9 +184,14 @@ noncomputable def BinaryCC_to_FSAT_instance (C : BinaryCC) : formula :=
   orList ((acceptingRunsFrom C C.steps C.init).map encodeTrace)
 
 theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
-  refine ⟨BinaryCC_to_FSAT_instance, ?_⟩
-  rintro C ⟨_, sf, hpow, hfinal⟩
-  rcases acceptingRunsFrom_complete C hpow rfl hfinal with ⟨trace, htrace⟩
-  have hmem : encodeTrace trace ∈ (acceptingRunsFrom C C.steps C.init).map encodeTrace := by
-    exact List.mem_map.mpr ⟨trace, htrace, rfl⟩
-  exact FSAT_orList_of_mem hmem (encodeTrace_sat trace)
+  refine ⟨⟨BinaryCC_to_FSAT_instance, trivial, ?_⟩⟩
+  intro C
+  constructor
+  · intro hBC
+    rcases hBC with ⟨_, sf, hpow, hfinal⟩
+    rcases acceptingRunsFrom_complete C hpow rfl hfinal with ⟨trace, htrace⟩
+    have hmem : encodeTrace trace ∈ (acceptingRunsFrom C C.steps C.init).map encodeTrace := by
+      exact List.mem_map.mpr ⟨trace, htrace, rfl⟩
+    exact FSAT_orList_of_mem hmem (encodeTrace_sat trace)
+  · intro hFSAT
+    sorry

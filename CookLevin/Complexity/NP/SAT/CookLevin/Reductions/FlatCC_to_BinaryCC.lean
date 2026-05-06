@@ -184,7 +184,12 @@ noncomputable def FlatCC_to_BinaryCC_instance (C : FlatCC) : BinaryCC :=
     binaryCCNoInstance
 
 theorem FlatCC_to_BinaryCC_poly : FlatCCLang ⪯p BinaryCCLang := by
-  refine ⟨FlatCC_to_BinaryCC_instance, ?_⟩
-  rintro C ⟨_, hflat, hlang⟩
-  simpa [FlatCC_to_BinaryCC_instance, hflat] using
-    CC_to_BinaryCC_lang (unflattenCC C hflat) hlang
+  refine ⟨⟨FlatCC_to_BinaryCC_instance, trivial, ?_⟩⟩
+  intro C
+  constructor
+  · intro hFlat
+    rcases hFlat with ⟨_, hflat, hlang⟩
+    simpa [FlatCC_to_BinaryCC_instance, hflat] using
+      CC_to_BinaryCC_lang (unflattenCC C hflat) hlang
+  · intro hBC
+    sorry
