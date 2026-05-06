@@ -48,7 +48,8 @@ Important instructions:
 - Follow the step prompt closely and complete as much of the step as you can coherently finish in one run.
 - If your changes materially advance the repository status, update the `Current status at a glance` section in `README.md` and mark the relevant step progress in the plan.
 - Validate your work with `lake build` before finishing.
-- Leave the repository in a consistent state.
+- Leave the repository in a consistent state. Run lake build first and if the build has errors, you must fix them first.
+- Treat any files in the coqdoc folder as the blueprint for our desired outcome, they are documentation of a working proof written in Coq
 - Your final response must be exactly one short line suitable for use as a git commit message. Do not include quotes, markdown, or any extra explanation.
 
 Step instructions from `{prompt_path}`:
