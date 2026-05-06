@@ -57,7 +57,8 @@ theorem flatSingleTMGenNP_yes :
     FlatSingleTMGenNP (validFlatTM_default, [], 0, 0) := by
   refine ⟨validFlatTM_default_valid, list_ofFlatType_nil 1, ?_⟩
   refine ⟨[], list_ofFlatType_nil 1, by simp [isValidCert], ?_⟩
-  simp [acceptsFlatTM, execFlatTM, runFlatTM, haltingStateReached, validFlatTM_default, initFlatConfig]
+  simp [acceptsFlatTM, execFlatTM, runFlatTM, haltingStateReached, validFlatTM_default,
+    initFlatConfig, isValidFlatTapes, isValidFlatTape]
 
 theorem flatFunSingleTMGenNP_yes :
     FlatFunSingleTMGenNP (validFlatTM_default, [], 0, 0) := by
