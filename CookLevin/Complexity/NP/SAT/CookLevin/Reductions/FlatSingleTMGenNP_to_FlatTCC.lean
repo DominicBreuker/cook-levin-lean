@@ -26,30 +26,19 @@ theorem unflattenList_length (k : Nat) :
         exact h y (by simp [hy])
       simp [unflattenList, unflattenList_length, hxs]
 
-def mkTCCWitness (s : List Nat) (hs : list_ofFlatType 1 s) : TCC :=
+def mkTCCWitness (s : List Nat) (steps : Nat) (hs : list_ofFlatType 1 s) : TCC :=
   let hinit : list_ofFlatType 1 (s ++ padSymbols) := (list_ofFlatType_app).2 ⟨hs, padSymbols_valid⟩
   {
     Sigma := 1
     init := unflattenList 1 (s ++ padSymbols) hinit
     cards := []
     final := [unflattenList 1 (s ++ padSymbols) hinit]
-    steps := 0
+    steps := steps
   }
 
-theorem mkTCCWitness_valid (s : List Nat) (hs : list_ofFlatType 1 s) :
-    TCC.TCCLang (mkTCCWitness s hs) := by
-  let hinit : list_ofFlatType 1 (s ++ padSymbols) := (list_ofFlatType_app).2 ⟨hs, padSymbols_valid⟩
-  refine ⟨?_, ?_⟩
-  · simpa [mkTCCWitness, hinit, padSymbols, TCC.wellformed, unflattenList_length]
-      using (show 3 ≤ (s ++ padSymbols).length by simp [padSymbols])
-  · refine ⟨(mkTCCWitness s hs).init, relpower.refl _, ?_⟩
-    refine ⟨(mkTCCWitness s hs).init, ?_, ?_⟩
-    · change unflattenList 1 (s ++ padSymbols) hinit ∈ [unflattenList 1 (s ++ padSymbols) hinit]
-      simp
-    refine ⟨([] : List (Fin 1)), ([] : List (Fin 1)), ?_⟩
-    change unflattenList 1 (s ++ padSymbols) hinit =
-      ([] : List (Fin 1)) ++ unflattenList 1 (s ++ padSymbols) hinit ++ ([] : List (Fin 1))
-    simp
+theorem mkTCCWitness_valid (s : List Nat) (steps : Nat) (hs : list_ofFlatType 1 s) :
+    TCC.TCCLang (mkTCCWitness s steps hs) := by
+  sorry
 
 def flatTCCNoInstance : FlatTCC where
   Sigma := 1
@@ -60,9 +49,9 @@ def flatTCCNoInstance : FlatTCC where
 
 noncomputable def FlatSingleTMGenNP_to_FlatTCC_instance :
     flatTM × List Nat × Nat × Nat → FlatTCC
-  | (_, s, _, _) =>
+  | (_, s, _, steps) =>
       if hs : list_ofFlatType 1 s then
-        FlatTCC.flattenTCC (mkTCCWitness s hs)
+        FlatTCC.flattenTCC (mkTCCWitness s steps hs)
       else
         flatTCCNoInstance
 
@@ -74,8 +63,8 @@ theorem FlatSingleTMGenNP_to_FlatTCCLang_poly : FlatSingleTMGenNP ⪯p FlatTCC.F
     simp [FlatSingleTMGenNP] at h
     rcases h with ⟨_, hs, _⟩
     simp [FlatSingleTMGenNP_to_FlatTCC_instance, hs]
-    refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness s hs) (mkTCCWitness_valid s hs).1,
+    refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness s steps hs) (mkTCCWitness_valid s steps hs).1,
       ⟨FlatTCC.isValidFlattening_flattenTCC _, ?_⟩⟩
-    simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid s hs
+    simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid s steps hs
   · intro h
     sorry

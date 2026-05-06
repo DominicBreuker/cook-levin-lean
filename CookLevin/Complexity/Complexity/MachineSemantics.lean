@@ -64,20 +64,69 @@ def initFlatConfig (M : FlatTM) (initTapes : List (List Nat)) : FlatTMConfig :=
     M.start
     (initTapes.map (fun tape => ([], 0, tape)))
 
--- Placeholder for execution - will be implemented in future work
--- For now, we just provide the type signatures needed by computableTime'
+def currentTapeSymbol (tape : List Nat × Nat × List Nat) : Option Nat :=
+  if h : tape.2.1 < tape.2.2.length then
+    some (tape.2.2.get ⟨tape.2.1, h⟩)
+  else
+    none
 
--- A simple dummy execution that returns a valid config
+def writeCurrentTapeSymbol (tape : List Nat × Nat × List Nat) (symbol : Option Nat) :
+    List Nat × Nat × List Nat :=
+  let left := tape.1
+  let head := tape.2.1
+  let right := tape.2.2
+  match symbol with
+  | none => (left, head, right)
+  | some sym =>
+      if h : head < right.length then
+        (left, head, right.take head ++ sym :: right.drop (head + 1))
+      else
+        (left, head, right ++ List.replicate (head - right.length) 0 ++ [sym])
+
+def moveTapeHead (tape : List Nat × Nat × List Nat) : TMMove → List Nat × Nat × List Nat
+  | .Lmove => (tape.1, tape.2.1 - 1, tape.2.2)
+  | .Rmove => (tape.1, tape.2.1 + 1, tape.2.2)
+  | .Nmove => tape
+
+def tapeStep (tape : List Nat × Nat × List Nat) (write : Option Nat) (move : TMMove) :
+    List Nat × Nat × List Nat :=
+  moveTapeHead (writeCurrentTapeSymbol tape write) move
+
+def entryMatchesConfig (entry : FlatTMTransEntry) (cfg : FlatTMConfig) : Bool :=
+  entry.src_state == cfg.state_idx &&
+    entry.src_tape_vals = cfg.tapes.map currentTapeSymbol
+
+def applyTransitionEntry (cfg : FlatTMConfig) (entry : FlatTMTransEntry) : Option FlatTMConfig :=
+  if hTapes : cfg.tapes.length = entry.dst_write_vals.length ∧ cfg.tapes.length = entry.move_dirs.length then
+    some {
+      state_idx := entry.dst_state
+      tapes := List.zipWith (fun tape payload =>
+        tapeStep tape payload.1 payload.2) cfg.tapes (List.zip entry.dst_write_vals entry.move_dirs)
+    }
+  else
+    none
+
+def stepFlatTM (M : FlatTM) (cfg : FlatTMConfig) : Option FlatTMConfig := do
+  let entry ← M.trans.find? (fun entry => entryMatchesConfig entry cfg)
+  applyTransitionEntry cfg entry
+
+def runFlatTM : Nat → FlatTM → FlatTMConfig → Option FlatTMConfig
+  | 0, _, cfg => some cfg
+  | n + 1, M, cfg =>
+      match stepFlatTM M cfg with
+      | none => some cfg
+      | some cfg' => runFlatTM n M cfg'
+
 def execFlatTM (M : FlatTM) (initTapes : List (List Nat)) (steps : Nat) : Option FlatTMConfig :=
-  some (initFlatConfig M initTapes)
+  runFlatTM steps M (initFlatConfig M initTapes)
 
--- Check if machine accepts (halts in accepting state)
--- This is a minimal implementation that can verify acceptance
+def haltingStateReached (M : FlatTM) (cfg : FlatTMConfig) : Bool :=
+  M.halt.getD cfg.state_idx false
+
 def acceptsFlatTM (M : FlatTM) (initTapes : List (List Nat)) (steps : Nat) : Bool :=
-  -- Simplified acceptance: check if there's any machine and tape that would be accepted
-  -- In a full implementation, this would simulate the TM execution
-  -- For now, we use a simple heuristic based on machine properties
-  M.halt.length > 0 && M.start < M.states
+  match execFlatTM M initTapes steps with
+  | none => false
+  | some cfg => haltingStateReached M cfg
 
 -- Time-bounded acceptance predicate
 def acceptsInTime (M : FlatTM) (maxSize : Nat) (steps : Nat) : Prop :=

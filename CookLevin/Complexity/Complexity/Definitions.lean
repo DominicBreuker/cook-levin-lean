@@ -11,14 +11,29 @@ class encodable (α : Sort u) where
 -- Default instance for types without explicit encoding
 -- This provides size 0 for all values, which should be overridden
 -- by specific instances that provide meaningful sizes
-instance instEncodableDefault (α : Sort u) : encodable α where
+instance (priority := low) instEncodableDefault (α : Sort u) : encodable α where
   size := fun _ => 0
   size_ge_logical := fun _ => ⟨0, by simp⟩
 
--- Instance for List Bool - size is the length of the list
-instance instEncodableListBool : encodable (List Bool) where
-  size := fun bs => bs.length
-  size_ge_logical := fun bs => ⟨bs.length, by simp⟩
+instance : encodable Nat where
+  size := id
+  size_ge_logical := fun n => ⟨n, Nat.le_refl n⟩
+
+instance : encodable Bool where
+  size := fun b => cond b 1 0
+  size_ge_logical := fun b => ⟨cond b 1 0, Nat.le_refl _⟩
+
+instance {α : Type u} [encodable α] : encodable (List α) where
+  size := fun xs => xs.foldl (fun acc x => acc + encodable.size x + 1) 0
+  size_ge_logical := fun xs => ⟨xs.foldl (fun acc x => acc + encodable.size x + 1) 0, Nat.le_refl _⟩
+
+instance {α : Type u} {β : Type v} [encodable α] [encodable β] : encodable (α × β) where
+  size := fun x => encodable.size x.1 + encodable.size x.2 + 1
+  size_ge_logical := fun x => ⟨encodable.size x.1 + encodable.size x.2 + 1, Nat.le_refl _⟩
+
+instance {k : Nat} : encodable (Fin k) where
+  size := fun x => x.1
+  size_ge_logical := fun x => ⟨x.1, Nat.le_refl _⟩
 
 abbrev finType := Type
 abbrev flatTM := FlatTM
@@ -135,7 +150,8 @@ abbrev fvertex := Nat
 abbrev fedge := fvertex × fvertex
 abbrev fgraph := Nat × List fedge
 
-def fgraph_wf (_ : fgraph) : Prop := True
+def fgraph_wf (G : fgraph) : Prop :=
+  ∀ e ∈ G.2, e.1 < G.1 ∧ e.2 < G.1
 
 def ofFlatType (k x : Nat) : Prop := x < k
 
@@ -236,13 +252,42 @@ theorem unflatten_flattenString {k : Nat} :
       simp [flattenString, unflattenList, fin_eta]
       exact unflatten_flattenString xs
 
-def validFlatTM (_ : flatTM) : Prop := True
+def flatTMOptionSymbolsBounded (sig : Nat) (xs : List (Option Nat)) : Prop :=
+  ∀ x ∈ xs, match x with | none => True | some v => v < sig
 
-def isValidFlatTM (_ : flatTM) : Bool := true
+def flatTMTransEntryValid (M : flatTM) (entry : FlatTMTransEntry) : Prop :=
+  entry.src_state < M.states ∧
+    entry.dst_state < M.states ∧
+    entry.src_tape_vals.length = M.tapes ∧
+    entry.dst_write_vals.length = M.tapes ∧
+    entry.move_dirs.length = M.tapes ∧
+    flatTMOptionSymbolsBounded M.sig entry.src_tape_vals ∧
+    flatTMOptionSymbolsBounded M.sig entry.dst_write_vals
+
+def validFlatTM (M : flatTM) : Prop :=
+  M.start < M.states ∧
+    M.halt.length = M.states ∧
+    ∀ entry ∈ M.trans, flatTMTransEntryValid M entry
+
+def isSomeNatBelow (sig : Nat) : Option Nat → Bool
+  | none => true
+  | some n => n < sig
+
+def isValidFlatTM (M : flatTM) : Bool :=
+  decide (M.start < M.states) &&
+    decide (M.halt.length = M.states) &&
+    M.trans.all (fun entry =>
+      decide (entry.src_state < M.states) &&
+      decide (entry.dst_state < M.states) &&
+      decide (entry.src_tape_vals.length = M.tapes) &&
+      decide (entry.dst_write_vals.length = M.tapes) &&
+      decide (entry.move_dirs.length = M.tapes) &&
+      entry.src_tape_vals.all (isSomeNatBelow M.sig) &&
+      entry.dst_write_vals.all (isSomeNatBelow M.sig))
 
 -- A default/empty valid flatTM for use in test cases
 def validFlatTM_default : flatTM :=
-  FlatTM.mk 0 0 0 [] 0 []
+  FlatTM.mk 1 1 1 [] 0 [true]
 
 def monotonic (f : Nat → Nat) : Prop :=
   ∀ x x' : Nat, x ≤ x' → f x ≤ f x'
@@ -260,6 +305,4 @@ def projT1 {α : Type u} {β : α → Type v} (x : Sigma β) : α := x.1
 -- Index function for finite types
 -- Default implementation returns 0, but should be overridden
 -- by specific instances for finite types
-def index {F : Type} (_ : F) : Nat := 0
-
-
+def index {F : Type} [encodable F] (x : F) : Nat := encodable.size x
