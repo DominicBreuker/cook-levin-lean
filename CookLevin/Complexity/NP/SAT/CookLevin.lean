@@ -27,11 +27,21 @@ set_option autoImplicit false
 theorem fixedTM_to_FlatSingleTMGenNP (sig : finType) (M : TM sig 1)
     (_reg__sig : encodable sig) :
     TMGenNP_fixed M ⪯p FlatSingleTMGenNP := by
-  sorry
+  have hFun : TMGenNP_fixed M ⪯p FlatFunSingleTMGenNP :=
+    TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP M
+  have hEquiv : FlatFunSingleTMGenNP ⪯p FlatSingleTMGenNP := by
+    refine ⟨⟨id, ?_, fun {inst} => ?_⟩⟩
+    · exact ⟨⟨fun n => n, inOPoly_id, (by intro a b hab; exact hab), by intro x; simp⟩⟩
+    · rcases inst with ⟨M, s, maxSize, steps⟩
+      simpa using FlatFunSingleTMGenNP_FlatSingleTMGenNP_equiv M s maxSize steps
+  exact reducesPolyMO_transitive _ _ _ hFun hEquiv
 
 theorem GenNP_to_SingleTMGenNP :
     GenNP (List Bool) ⪯p FlatSingleTMGenNP := by
-  sorry
+  have hTM : GenNP (List Bool) ⪯p TMGenNP_fixed (σ := Bool) validFlatTM_default := by
+    simpa [IntermediateTMTarget, TMGenNP_fixed] using GenNP_to_TMGenNP
+  exact reducesPolyMO_transitive _ _ _ hTM
+    (fixedTM_to_FlatSingleTMGenNP Bool validFlatTM_default instEncodableBool)
 
 theorem FlatSingleTMGenNP_to_FlatTCC : FlatSingleTMGenNP ⪯p FlatTCC.FlatTCCLang := by
   exact FlatSingleTMGenNP_to_FlatTCCLang_poly
