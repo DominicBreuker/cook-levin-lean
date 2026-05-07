@@ -812,7 +812,7 @@ private theorem encodeCardsAt_maxVar_le (C : BinaryCC) (startA startB n : Nat)
 private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodable.size C ≤ n) :
     encodable.size (encodeTableau C) ≤ 200 * n ^ 6 + 200 := by
   have hSizeEq : C.offset + C.width + encodable.size C.init + encodable.size C.cards +
-      encodable.size C.final + C.steps + 1 = encodable.size C := by simp [encodable.size]
+      encodable.size C.final + C.steps + 1 = encodable.size C := by rfl
   have hn1 : 1 ≤ n := by omega
   have hoffset : C.offset ≤ n := by omega
   have hwidth : C.width ≤ n := by omega
@@ -894,8 +894,15 @@ private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodab
           (line + 1) * C.init.length + step * C.offset := by
         have := Nat.mul_le_mul_right C.init.length (Nat.le_succ line); omega
       have hstartB : (line + 1) * C.init.length + step * C.offset ≤ 2 * n ^ 2 + n := by
-        nlinarith [Nat.mul_le_mul (Nat.succ_le_succ hline) hinitLen,
-                   Nat.mul_le_mul hstep hoffset]
+        have h1 : (line + 1) * C.init.length ≤ n ^ 2 + n :=
+          calc (line + 1) * C.init.length
+              ≤ (n + 1) * n := Nat.mul_le_mul (Nat.succ_le_succ hline) hinitLen
+            _ = n ^ 2 + n := by ring
+        have h2 : step * C.offset ≤ n ^ 2 :=
+          calc step * C.offset
+              ≤ n * n := Nat.mul_le_mul hstep hoffset
+            _ = n ^ 2 := by ring
+        linarith
       have hmv := encodeCardsAt_maxVar_le C
           (line * C.init.length + step * C.offset)
           ((line + 1) * C.init.length + step * C.offset)
@@ -923,7 +930,15 @@ private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodab
     intro step bits hstep hbits; unfold encodeFinalAtStep
     split_ifs with h
     · apply le_trans (encodeBitsAt_maxVar_le _ bits)
-      nlinarith [Nat.mul_le_mul hsteps hinitLen, Nat.mul_le_mul hstep hoffset]
+      have h1 : C.steps * C.init.length ≤ n ^ 2 :=
+        calc C.steps * C.init.length
+            ≤ n * n := Nat.mul_le_mul hsteps hinitLen
+          _ = n ^ 2 := by ring
+      have h2 : step * C.offset ≤ n ^ 2 :=
+        calc step * C.offset
+            ≤ n * n := Nat.mul_le_mul hstep hoffset
+          _ = n ^ 2 := by ring
+      linarith
     · simp [falseFml, formula_maxVar]
   -- (L) formula_maxVar of encodeFinalString ≤ 2n²+n
   have hFinalStringMaxVar : ∀ (bits : List Bool), bits.length ≤ n →
@@ -953,10 +968,22 @@ private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodab
     _ ≤ (9 * n ^ 4 + 22 * n ^ 3 + 17 * n ^ 2 + 14 * n + 7) * (2 * n ^ 2 + 2 * n + 2) := by
           apply Nat.mul_le_mul hTableauFsize (by omega)
     _ ≤ 500 * n ^ 6 + 500 := by
-          nlinarith [Nat.one_le_pow 2 n hn1, Nat.one_le_pow 3 n hn1,
-                     Nat.one_le_pow 4 n hn1, Nat.one_le_pow 5 n hn1, Nat.one_le_pow 6 n hn1,
-                     Nat.mul_le_mul_left (n^5) hn1, Nat.mul_le_mul_left (n^4) hn1,
-                     Nat.mul_le_mul_left (n^3) hn1, Nat.mul_le_mul_left (n^2) hn1]
+          have h_pos : 0 < n := hn1
+          have h43 : n ^ 3 ≤ n ^ 4 := Nat.pow_le_pow_right h_pos (by norm_num)
+          have h42 : n ^ 2 ≤ n ^ 4 := Nat.pow_le_pow_right h_pos (by norm_num)
+          have h41 : n ≤ n ^ 4 := by
+            have := Nat.pow_le_pow_right h_pos (show 1 ≤ 4 from by norm_num)
+            simpa [pow_one] using this
+          have h40 : 1 ≤ n ^ 4 := Nat.one_le_pow 4 n hn1
+          have h21 : n ≤ n ^ 2 := by
+            have := Nat.pow_le_pow_right h_pos (show 1 ≤ 2 from by norm_num)
+            simpa [pow_one] using this
+          have h20 : 1 ≤ n ^ 2 := Nat.one_le_pow 2 n hn1
+          calc (9 * n ^ 4 + 22 * n ^ 3 + 17 * n ^ 2 + 14 * n + 7) * (2 * n ^ 2 + 2 * n + 2)
+              ≤ 70 * n ^ 4 * (6 * n ^ 2) :=
+                  Nat.mul_le_mul (by linarith) (by linarith)
+            _ = 420 * n ^ 6 := by ring
+            _ ≤ 500 * n ^ 6 + 500 := by linarith [Nat.one_le_pow 6 n hn1]
 
 /-- The size of BinaryCC_to_FSAT_instance C is bounded by 200 * n^6 + 200. -/
 theorem BinaryCC_to_FSAT_instance_size_bound (C : BinaryCC) :
@@ -981,11 +1008,11 @@ theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
   refine ⟨⟨BinaryCC_to_FSAT_instance, ?_, ?_⟩⟩
   · -- Polynomial-time computability witness
     refine ⟨⟨fun n => 200 * n ^ 6 + 200, ?_, ?_, ?_⟩⟩
-    · -- inOPoly: 200 * n^6 + 200 ≤ 201 * n^6 for n ≥ 2
-      refine ⟨6, ⟨201, 2, ?_⟩⟩
+    · -- inOPoly: 200 * n^6 + 200 ≤ 400 * n^6 for n ≥ 1
+      refine ⟨6, ⟨400, 1, ?_⟩⟩
       intro n hn
       have hn6 : 1 ≤ n ^ 6 := Nat.one_le_pow 6 n (by omega)
-      nlinarith
+      linarith [Nat.mul_le_mul_left 200 hn6]
     · -- Monotonicity
       intro x x' hxx'
       have hpow : x ^ 6 ≤ x' ^ 6 := Nat.pow_le_pow_left hxx' 6
