@@ -272,7 +272,6 @@ theorem segments_of_coversHead {row row' : List Bool} {card : CCCard Bool}
 /-- Constraint for one local offset in one tableau row transition. -/
 def encodeStepConstraint (C : BinaryCC) (line step : Nat) : formula :=
   if h : step * C.offset + C.width ≤ C.init.length then
-    let hbound : step * C.offset + C.width ≤ C.init.length := h
     encodeCardsAt C (line * C.init.length + step * C.offset)
       ((line + 1) * C.init.length + step * C.offset)
   else
@@ -289,7 +288,6 @@ def encodeAllStepConstraints (C : BinaryCC) : formula :=
 /-- Encode that a final substring occurs at a chosen offset in the last row. -/
 def encodeFinalAtStep (C : BinaryCC) (step : Nat) (bits : List Bool) : formula :=
   if h : step * C.offset + bits.length ≤ C.init.length then
-    let hbound : step * C.offset + bits.length ≤ C.init.length := h
     encodeBitsAt (C.steps * C.init.length + step * C.offset) bits
   else
     falseFml
@@ -314,7 +312,7 @@ theorem rowBits_length (a : assgn) (C : BinaryCC) (line : Nat) :
     (rowBits a C line).length = C.init.length := by
   simp [rowBits, explicitAssignment_length]
 
-theorem projVars_all {xs : List Bool} (h : xs.length = xs.length) :
+theorem projVars_all (xs : List Bool) :
     projVars 0 xs.length xs = xs := by
   unfold projVars
   simp
@@ -575,7 +573,7 @@ theorem relpower_valid_to_assignment (C : BinaryCC) :
       refine ⟨x, by simpa [hlen], ?_, ?_, ?_⟩
       · unfold projVars
         simpa [hlen]
-      · simpa [hlen] using (projVars_all (xs := x) rfl)
+      · simpa [hlen] using (projVars_all x)
       · intro i hi
         cases Nat.not_lt_zero _ hi
   | n + 1, x, y, .step hstep hrest, hlenX => by
