@@ -55,7 +55,9 @@ theorem drop_replicate_zeroFin1 (n i : Nat) :
     List.drop i (List.replicate n zeroFin1) = List.replicate (n - i) zeroFin1 := by
   simp
 
-theorem replicate_tail_length (n i : Nat) (hi : i + 3 ≤ n) :
+/-- Arithmetic helper for splitting off the three-symbol window used by the
+tableau cards after dropping `i` symbols from a word of length `n`. -/
+theorem split_minus_three (n i : Nat) (hi : i + 3 ≤ n) :
     n - i = 3 + (n - i - 3) := by
   omega
 
@@ -68,12 +70,12 @@ theorem zeroWord_validStep (n : Nat) :
     constructor <;> refine ⟨List.replicate ((n + 3) - i - 3) zeroFin1, ?_⟩
     · rw [drop_replicate_zeroFin1]
       have hsplit : n + 3 - i = 3 + (n + 3 - i - 3) := by
-        exact replicate_tail_length (n + 3) i (by simpa using hi)
+        exact split_minus_three (n + 3) i (by simpa using hi)
       rw [hsplit, List.replicate_add]
       simp [zeroCard, zeroCardP, zeroFin1, TCCCardP.toList]
     · rw [drop_replicate_zeroFin1]
       have hsplit : n + 3 - i = 3 + (n + 3 - i - 3) := by
-        exact replicate_tail_length (n + 3) i (by simpa using hi)
+        exact split_minus_three (n + 3) i (by simpa using hi)
       rw [hsplit, List.replicate_add]
       simp [zeroCard, zeroCardP, zeroFin1, TCCCardP.toList]
 
