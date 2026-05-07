@@ -51,6 +51,14 @@ theorem unflattenList_one_eq_replicate :
       simpa [List.replicate_succ, unflattenList, zeroFin1] using
         congrArg (List.cons zeroFin1) ih
 
+theorem drop_replicate_zeroFin1 (n i : Nat) :
+    List.drop i (List.replicate n zeroFin1) = List.replicate (n - i) zeroFin1 := by
+  simp
+
+theorem replicate_tail_length (n i : Nat) (hi : i + 3 ≤ n) :
+    n - i = 3 + (n - i - 3) := by
+  omega
+
 theorem zeroWord_validStep (n : Nat) :
     TCC.validStep [zeroCard] (List.replicate (n + 3) zeroFin1) (List.replicate (n + 3) zeroFin1) := by
   constructor
@@ -58,20 +66,14 @@ theorem zeroWord_validStep (n : Nat) :
   · intro i hi
     refine ⟨zeroCard, by simp [zeroCard], ?_⟩
     constructor <;> refine ⟨List.replicate ((n + 3) - i - 3) zeroFin1, ?_⟩
-    · have hdrop : List.drop i (List.replicate (n + 3) zeroFin1) = List.replicate (n + 3 - i) zeroFin1 := by
-        simp
-      rw [hdrop]
+    · rw [drop_replicate_zeroFin1]
       have hsplit : n + 3 - i = 3 + (n + 3 - i - 3) := by
-        have : i + 3 ≤ n + 3 := by simpa using hi
-        omega
+        exact replicate_tail_length (n + 3) i (by simpa using hi)
       rw [hsplit, List.replicate_add]
       simp [zeroCard, zeroCardP, zeroFin1, TCCCardP.toList]
-    · have hdrop : List.drop i (List.replicate (n + 3) zeroFin1) = List.replicate (n + 3 - i) zeroFin1 := by
-        simp
-      rw [hdrop]
+    · rw [drop_replicate_zeroFin1]
       have hsplit : n + 3 - i = 3 + (n + 3 - i - 3) := by
-        have : i + 3 ≤ n + 3 := by simpa using hi
-        omega
+        exact replicate_tail_length (n + 3) i (by simpa using hi)
       rw [hsplit, List.replicate_add]
       simp [zeroCard, zeroCardP, zeroFin1, TCCCardP.toList]
 
