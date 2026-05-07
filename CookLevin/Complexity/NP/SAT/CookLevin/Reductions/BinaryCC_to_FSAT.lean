@@ -9,7 +9,7 @@ open Classical
 
 namespace BinaryCCToFSAT
 
-abbrev falseFormula : formula := .fneg .ftrue
+abbrev falseFml : formula := .fneg .ftrue
 
 /-- Conjunction over a list of formulas. -/
 def listAnd : List formula → formula
@@ -18,7 +18,7 @@ def listAnd : List formula → formula
 
 /-- Disjunction over a list of formulas. -/
 def listOr : List formula → formula
-  | [] => falseFormula
+  | [] => falseFml
   | f :: fs => .forr f (listOr fs)
 
 /-- Encode a single bit-string starting at variable `start`. -/
@@ -37,7 +37,8 @@ def encodeCardsAt (C : BinaryCC) (startA startB : Nat) : formula :=
 
 /-- Constraint for one local offset in one tableau row transition. -/
 def encodeStepConstraint (C : BinaryCC) (line step : Nat) : formula :=
-  if _ : step * C.offset + C.width ≤ C.init.length then
+  if h : step * C.offset + C.width ≤ C.init.length then
+    let _ : step * C.offset + C.width ≤ C.init.length := h
     encodeCardsAt C (line * C.init.length + step * C.offset)
       ((line + 1) * C.init.length + step * C.offset)
   else
@@ -53,10 +54,11 @@ def encodeAllStepConstraints (C : BinaryCC) : formula :=
 
 /-- Encode that a final substring occurs at a chosen offset in the last row. -/
 def encodeFinalAtStep (C : BinaryCC) (step : Nat) (bits : List Bool) : formula :=
-  if _ : step * C.offset ≤ C.init.length then
+  if h : step * C.offset ≤ C.init.length then
+    let _ : step * C.offset ≤ C.init.length := h
     encodeBitsAt (C.steps * C.init.length + step * C.offset) bits
   else
-    falseFormula
+    falseFml
 
 /-- Disjunction over all admissible offsets for one accepting substring. -/
 def encodeFinalString (C : BinaryCC) (bits : List Bool) : formula :=
@@ -72,13 +74,13 @@ def encodeTableau (C : BinaryCC) : formula :=
 
 /-- Non-wellformed instances are mapped to a trivial unsatisfiable formula. -/
 noncomputable def BinaryCC_to_FSAT_instance (C : BinaryCC) : formula :=
-  if _ : BinaryCC_wellformed C then encodeTableau C else falseFormula
+  if _ : BinaryCC_wellformed C then encodeTableau C else falseFml
 
 end BinaryCCToFSAT
 
 open BinaryCCToFSAT
 
-theorem falseFormula_unsat : ¬ FSAT falseFormula := by
+theorem falseFml_unsat : ¬ FSAT falseFml := by
   rintro ⟨a, h⟩
   simp [satisfiesFormula, evalFormula] at h
 
