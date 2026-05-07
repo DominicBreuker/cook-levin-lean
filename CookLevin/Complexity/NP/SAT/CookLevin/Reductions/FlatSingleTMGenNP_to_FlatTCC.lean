@@ -123,8 +123,8 @@ def flatTCCNoInstance : FlatTCC where
 noncomputable def FlatSingleTMGenNP_to_FlatTCC_instance :
     flatTM × List Nat × Nat × Nat → FlatTCC
   | (M, s, maxSize, steps) =>
-      if _h : FlatSingleTMGenNP (M, s, maxSize, steps) then
-        FlatTCC.yesInstance
+      if h : FlatSingleTMGenNP (M, s, maxSize, steps) then
+        FlatTCC.flattenTCC (mkTCCWitness s steps (flatSingleTMGenNP_input_valid h))
       else
         flatTCCNoInstance
 
@@ -132,18 +132,65 @@ theorem flatTCCNoInstance_not_lang : ¬ FlatTCC.FlatTCCLang flatTCCNoInstance :=
   intro h
   simpa [FlatTCC.FlatTCCLang, FlatTCC.FlatTCC_wellformed, flatTCCNoInstance] using h.1
 
+theorem mkTCCWitness_flatten_size (s : List Nat) (steps : Nat) (hs : list_ofFlatType 1 s) :
+    encodable.size (FlatTCC.flattenTCC (mkTCCWitness s steps hs)) =
+      2 * encodable.size s + steps + 13 := by
+  have hshape : FlatTCC.flattenTCC (mkTCCWitness s steps hs) =
+      { Sigma := 1
+        init := s ++ padSymbols
+        cards := [FlatTCC.flattenCard zeroCard]
+        final := [s ++ padSymbols]
+        steps := steps } := by
+    simp [mkTCCWitness, FlatTCC.flattenTCC, FlatTCC.flattenFinal, flatten_unflattenList]
+  rw [hshape]
+  have hinit : encodable.size (s ++ padSymbols) = encodable.size s + 3 := by
+    rw [encodable_size_list_append]
+    simp [padSymbols, encodable.size]
+  have hcard : encodable.size [FlatTCC.flattenCard zeroCard] = 4 := by
+    rw [encodable_size_list_cons]
+    simp [FlatTCC.flattenCard, FlatTCC.flattenCardP, zeroCard, zeroCardP, zeroFin1, encodable.size]
+  have hfinal : encodable.size [s ++ padSymbols] = encodable.size (s ++ padSymbols) + 1 := by
+    rw [encodable_size_list_cons]
+    simp [encodable.size]
+  change
+    1 + encodable.size (s ++ padSymbols) + encodable.size [FlatTCC.flattenCard zeroCard] +
+      encodable.size [s ++ padSymbols] + steps + 1 =
+        2 * encodable.size s + steps + 13
+  rw [hcard, hfinal]
+  omega
+
 theorem FlatSingleTMGenNP_to_FlatTCCLang_poly : FlatSingleTMGenNP ⪯p FlatTCC.FlatTCCLang := by
   refine ⟨⟨FlatSingleTMGenNP_to_FlatTCC_instance, ?_, fun {inst} => ?_⟩⟩
-  · refine ⟨⟨fun _ => encodable.size FlatTCC.yesInstance + 1, inOPoly_const _, ?_, ?_⟩⟩
+  · refine ⟨⟨fun n => 3 * n + 13, ?_, ?_, ?_⟩⟩
+    · refine ⟨1, 16, 1, ?_⟩
+      intro n hn
+      have : 3 * n + 13 ≤ 16 * n := by omega
+      simpa using this
     · intro a b hab
-      simp
+      nlinarith
     · intro x
       by_cases h : FlatSingleTMGenNP x
-      · simp [FlatSingleTMGenNP_to_FlatTCC_instance, h, encodable.size]
+      · rcases x with ⟨M, s, maxSize, steps⟩
+        have hs : list_ofFlatType 1 s := flatSingleTMGenNP_input_valid h
+        have hsize :
+            encodable.size (FlatSingleTMGenNP_to_FlatTCC_instance (M, s, maxSize, steps)) =
+              encodable.size (FlatTCC.flattenTCC (mkTCCWitness s steps hs)) := by
+          simp [FlatSingleTMGenNP_to_FlatTCC_instance, h]
+        rw [hsize, mkTCCWitness_flatten_size]
+        change 2 * encodable.size s + steps + 13 ≤
+          3 * encodable.size (M, s, maxSize, steps) + 13
+        simp [encodable.size]
+        omega
       · simp [FlatSingleTMGenNP_to_FlatTCC_instance, h, flatTCCNoInstance, encodable.size]
   constructor
   · intro h
-    simpa [FlatSingleTMGenNP_to_FlatTCC_instance, h] using FlatTCC.yesInstance_valid
+    rcases inst with ⟨M, s, maxSize, steps⟩
+    have hs : list_ofFlatType 1 s := flatSingleTMGenNP_input_valid h
+    simpa [FlatSingleTMGenNP_to_FlatTCC_instance, h, hs, FlatTCC.unflatten_flattenTCC] using
+      (show FlatTCC.FlatTCCLang (FlatTCC.flattenTCC (mkTCCWitness s steps hs)) by
+        refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness s steps hs) (mkTCCWitness_valid s steps hs).1,
+          ⟨FlatTCC.isValidFlattening_flattenTCC _, ?_⟩⟩
+        simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid s steps hs)
   · intro h
     by_cases hSrc : FlatSingleTMGenNP inst
     · exact hSrc
