@@ -676,6 +676,299 @@ theorem BinaryCC_to_FSAT_instance_correct (C : BinaryCC) :
       exfalso
       simpa [BinaryCC_to_FSAT_instance, hWf, falseFml, FSAT, satisfiesFormula, evalFormula] using h
 
+
+-- ─── Size-bound helpers ──────────────────────────────────────────────────────
+
+/-- encodable.size of a formula is bounded by formula_size * (formula_maxVar + 2). -/
+private theorem enc_le_fsize_maxvar (f : formula) :
+    encodable.size f ≤ formula_size f * (formula_maxVar f + 2) := by
+  induction f with
+  | ftrue => simp only [encodable_size_formula_ftrue, formula_size, formula_maxVar]; norm_num
+  | fvar v => simp only [encodable_size_formula_fvar, formula_size, formula_maxVar]; omega
+  | fand φ ψ ih₁ ih₂ =>
+      simp only [encodable_size_formula_fand, formula_size, formula_maxVar]
+      nlinarith [Nat.le_max_left (formula_maxVar φ) (formula_maxVar ψ),
+                 Nat.le_max_right (formula_maxVar φ) (formula_maxVar ψ)]
+  | forr φ ψ ih₁ ih₂ =>
+      simp only [encodable_size_formula_forr, formula_size, formula_maxVar]
+      nlinarith [Nat.le_max_left (formula_maxVar φ) (formula_maxVar ψ),
+                 Nat.le_max_right (formula_maxVar φ) (formula_maxVar ψ)]
+  | fneg φ ih =>
+      simp only [encodable_size_formula_fneg, formula_size, formula_maxVar]; nlinarith
+
+private theorem encodeBitsAt_maxVar_le (start : Nat) (bs : List Bool) :
+    formula_maxVar (encodeBitsAt start bs) ≤ start + bs.length := by
+  induction bs generalizing start with
+  | nil => simp [encodeBitsAt, formula_maxVar]
+  | cons b bs ih =>
+      simp only [encodeBitsAt, formula_maxVar, List.length_cons]
+      have hb : formula_maxVar (if b then formula.fvar start else (formula.fvar start).fneg) = start := by
+        cases b <;> simp [formula_maxVar]
+      rw [hb]
+      have hih := ih (start + 1)
+      simp only [Nat.max_le]; omega
+
+private theorem encodeBitsAt_fsize_le (start : Nat) (bs : List Bool) :
+    formula_size (encodeBitsAt start bs) ≤ 3 * bs.length + 1 := by
+  induction bs generalizing start with
+  | nil => simp [encodeBitsAt, formula_size]
+  | cons b bs ih =>
+      simp only [encodeBitsAt, formula_size, List.length_cons]
+      have hb : formula_size (if b then formula.fvar start else (formula.fvar start).fneg) ≤ 2 := by
+        cases b <;> simp [formula_size]
+      have hih := ih (start + 1); omega
+
+private theorem listOr_fsize (fs : List formula) :
+    formula_size (listOr fs) = (fs.map formula_size).sum + fs.length + 2 := by
+  induction fs with
+  | nil => simp [listOr, falseFml, formula_size]
+  | cons f fs ih =>
+      simp only [listOr, formula_size, List.map, List.sum_cons, List.length_cons]; omega
+
+private theorem listAnd_fsize (fs : List formula) :
+    formula_size (listAnd fs) = (fs.map formula_size).sum + fs.length + 1 := by
+  induction fs with
+  | nil => simp [listAnd, formula_size]
+  | cons f fs ih =>
+      simp only [listAnd, formula_size, List.map, List.sum_cons, List.length_cons]; omega
+
+private theorem list_sum_fsize_le {fs : List formula} {bound : Nat}
+    (h : ∀ f ∈ fs, formula_size f ≤ bound) :
+    (fs.map formula_size).sum ≤ fs.length * bound := by
+  induction fs with
+  | nil => simp
+  | cons f fs ih =>
+      simp only [List.map, List.sum_cons, List.length_cons]
+      nlinarith [h f (by simp), ih (fun g hg => h g (by simp [hg]))]
+
+private theorem list_length_le_size {α : Type} [encodable α] (xs : List α) :
+    xs.length ≤ encodable.size xs := by
+  induction xs with
+  | nil => simp [encodable.size]
+  | cons x xs ih => rw [encodable_size_list_cons]; simp [List.length]; omega
+
+private theorem list_elem_size_le {α : Type} [encodable α] {xs : List α} {x : α}
+    (hx : x ∈ xs) : encodable.size x ≤ encodable.size xs := by
+  induction xs with
+  | nil => simp at hx
+  | cons y ys ih =>
+      rw [encodable_size_list_cons]
+      cases List.mem_cons.mp hx with
+      | inl h => subst h; omega
+      | inr h => exact le_trans (ih h) (by omega)
+
+private theorem listOr_maxVar_le {fs : List formula} {M : Nat}
+    (h : ∀ f ∈ fs, formula_maxVar f ≤ M) : formula_maxVar (listOr fs) ≤ M := by
+  induction fs with
+  | nil => simp [listOr, falseFml, formula_maxVar]
+  | cons f fs ih =>
+      simp only [listOr, formula_maxVar, Nat.max_le]
+      exact ⟨h f (by simp), ih (fun g hg => h g (by simp [hg]))⟩
+
+private theorem listAnd_maxVar_le {fs : List formula} {M : Nat}
+    (h : ∀ f ∈ fs, formula_maxVar f ≤ M) : formula_maxVar (listAnd fs) ≤ M := by
+  induction fs with
+  | nil => simp [listAnd, formula_maxVar]
+  | cons f fs ih =>
+      simp only [listAnd, formula_maxVar, Nat.max_le]
+      exact ⟨h f (by simp), ih (fun g hg => h g (by simp [hg]))⟩
+
+private theorem encodeCardsAt_fsize_le (C : BinaryCC) (startA startB n : Nat)
+    (hcards : encodable.size C.cards ≤ n) :
+    formula_size (encodeCardsAt C startA startB) ≤ C.cards.length * (6 * n + 5) + C.cards.length + 2 := by
+  unfold encodeCardsAt; rw [listOr_fsize]
+  have hcprem : ∀ c ∈ C.cards, c.prem.length ≤ n := fun c hc =>
+    le_trans (list_length_le_size _)
+      (le_trans (by simp [encodable.size]; omega) (le_trans (list_elem_size_le hc) hcards))
+  have hcconc : ∀ c ∈ C.cards, c.conc.length ≤ n := fun c hc =>
+    le_trans (list_length_le_size _)
+      (le_trans (by simp [encodable.size]; omega) (le_trans (list_elem_size_le hc) hcards))
+  have hbound : ∀ f ∈ (C.cards.map (encodeCardAt startA startB)), formula_size f ≤ 6 * n + 5 := by
+    intro f hf; rcases List.mem_map.mp hf with ⟨c, hc, rfl⟩
+    simp only [encodeCardAt, formula_size]
+    linarith [encodeBitsAt_fsize_le startA c.prem, encodeBitsAt_fsize_le startB c.conc,
+              hcprem c hc, hcconc c hc]
+  have hsum := list_sum_fsize_le hbound
+  simp only [List.length_map] at hsum ⊢
+  linarith [hsum]
+
+private theorem encodeCardsAt_maxVar_le (C : BinaryCC) (startA startB n : Nat)
+    (hcards : encodable.size C.cards ≤ n) (hstartA : startA ≤ startB) :
+    formula_maxVar (encodeCardsAt C startA startB) ≤ startB + n := by
+  unfold encodeCardsAt
+  apply listOr_maxVar_le
+  intro f hf; rcases List.mem_map.mp hf with ⟨c, hc, rfl⟩
+  simp only [encodeCardAt, formula_maxVar, Nat.max_le]
+  have hcprem : c.prem.length ≤ n :=
+    le_trans (list_length_le_size _)
+      (le_trans (by simp [encodable.size]; omega) (le_trans (list_elem_size_le hc) hcards))
+  have hcconc : c.conc.length ≤ n :=
+    le_trans (list_length_le_size _)
+      (le_trans (by simp [encodable.size]; omega) (le_trans (list_elem_size_le hc) hcards))
+  exact ⟨by linarith [encodeBitsAt_maxVar_le startA c.prem],
+         by linarith [encodeBitsAt_maxVar_le startB c.conc]⟩
+
+/-- The tableau formula has encodable.size bounded by 200 * n^6 + 200. -/
+private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodable.size C ≤ n) :
+    encodable.size (encodeTableau C) ≤ 200 * n ^ 6 + 200 := by
+  have hSizeEq : C.offset + C.width + encodable.size C.init + encodable.size C.cards +
+      encodable.size C.final + C.steps + 1 = encodable.size C := by simp [encodable.size]
+  have hn1 : 1 ≤ n := by omega
+  have hoffset : C.offset ≤ n := by omega
+  have hwidth : C.width ≤ n := by omega
+  have hsteps : C.steps ≤ n := by omega
+  have hinit : encodable.size C.init ≤ n := by omega
+  have hcards : encodable.size C.cards ≤ n := by omega
+  have hfinal : encodable.size C.final ≤ n := by omega
+  have hinitLen : C.init.length ≤ n := le_trans (list_length_le_size _) hinit
+  have hcardsLen : C.cards.length ≤ n := le_trans (list_length_le_size _) hcards
+  have hfinalLen : C.final.length ≤ n := le_trans (list_length_le_size _) hfinal
+  -- (A) formula_size of each encodeStepConstraint ≤ 6n²+6n+2
+  have hStepFsize : ∀ line step,
+      formula_size (encodeStepConstraint C line step) ≤ 6 * n ^ 2 + 6 * n + 2 := by
+    intro line step; unfold encodeStepConstraint
+    split_ifs with h
+    · have hcs := encodeCardsAt_fsize_le C (line * C.init.length + step * C.offset)
+            ((line + 1) * C.init.length + step * C.offset) n hcards
+      have hmul : C.cards.length * (6 * n + 5) ≤ n * (6 * n + 5) :=
+        Nat.mul_le_mul_right _ hcardsLen
+      nlinarith [hcs]
+    · simp [formula_size]
+  -- (B) formula_size of each encodeLineConstraints ≤ 7n³+15n²+10n+3
+  have hLineFsize : ∀ line,
+      formula_size (encodeLineConstraints C line) ≤ 7 * n ^ 3 + 15 * n ^ 2 + 10 * n + 3 := by
+    intro line; unfold encodeLineConstraints; rw [listAnd_fsize]
+    have hbound : ∀ f ∈ (List.range (C.init.length + 1)).map (encodeStepConstraint C line),
+        formula_size f ≤ 6 * n ^ 2 + 6 * n + 2 := by
+      intro f hf; rcases List.mem_map.mp hf with ⟨step, _, rfl⟩; exact hStepFsize line step
+    have hsum := list_sum_fsize_le hbound
+    simp only [List.length_map, List.length_range] at hsum ⊢
+    nlinarith [hsum, Nat.one_le_pow 2 n hn1, Nat.one_le_pow 3 n hn1]
+  -- (C) formula_size of encodeAllStepConstraints ≤ 8n⁴+15n³+10n²+4n+1
+  have hAllStepFsize : formula_size (encodeAllStepConstraints C) ≤ 8 * n ^ 4 + 15 * n ^ 3 + 10 * n ^ 2 + 4 * n + 1 := by
+    unfold encodeAllStepConstraints; rw [listAnd_fsize]
+    have hbound : ∀ f ∈ (List.range C.steps).map (encodeLineConstraints C),
+        formula_size f ≤ 7 * n ^ 3 + 15 * n ^ 2 + 10 * n + 3 := by
+      intro f hf; rcases List.mem_map.mp hf with ⟨line, _, rfl⟩; exact hLineFsize line
+    have hsum := list_sum_fsize_le hbound
+    simp only [List.length_map, List.length_range] at hsum ⊢
+    nlinarith [hsum, Nat.one_le_pow 3 n hn1, Nat.one_le_pow 4 n hn1]
+  -- (D) formula_size of each encodeFinalAtStep ≤ 3n+2
+  have hFinalAtFsize : ∀ step (bits : List Bool), bits.length ≤ n →
+      formula_size (encodeFinalAtStep C step bits) ≤ 3 * n + 2 := by
+    intro step bits hbits; unfold encodeFinalAtStep
+    split_ifs with h
+    · exact le_trans (encodeBitsAt_fsize_le _ bits) (by omega)
+    · simp [falseFml, formula_size]
+  -- (E) formula_size of each encodeFinalString ≤ 4n²+6n+5
+  have hFinalStringFsize : ∀ (bits : List Bool), bits.length ≤ n →
+      formula_size (encodeFinalString C bits) ≤ 4 * n ^ 2 + 6 * n + 5 := by
+    intro bits hbits; unfold encodeFinalString; rw [listOr_fsize]
+    have hbound : ∀ f ∈ (List.range (C.init.length + 1)).map (fun step => encodeFinalAtStep C step bits),
+        formula_size f ≤ 3 * n + 2 := by
+      intro f hf; rcases List.mem_map.mp hf with ⟨step, _, rfl⟩; exact hFinalAtFsize step bits hbits
+    have hsum := list_sum_fsize_le hbound
+    simp only [List.length_map, List.length_range] at hsum ⊢
+    nlinarith [hsum, hinitLen, Nat.one_le_pow 2 n hn1]
+  -- (F) formula_size of encodeFinalConstraint ≤ 5n³+6n²+6n+2
+  have hFinalFsize : formula_size (encodeFinalConstraint C) ≤ 5 * n ^ 3 + 6 * n ^ 2 + 6 * n + 2 := by
+    unfold encodeFinalConstraint; rw [listOr_fsize]
+    have hbound : ∀ f ∈ C.final.map (encodeFinalString C), formula_size f ≤ 4 * n ^ 2 + 6 * n + 5 := by
+      intro f hf; rcases List.mem_map.mp hf with ⟨bits, hbits, rfl⟩
+      apply hFinalStringFsize
+      exact le_trans (list_length_le_size bits) (le_trans (list_elem_size_le hbits) hfinal)
+    have hsum := list_sum_fsize_le hbound
+    simp only [List.length_map] at hsum ⊢
+    nlinarith [hsum, Nat.one_le_pow 2 n hn1, Nat.one_le_pow 3 n hn1]
+  -- (G) formula_size of encodeTableau ≤ 9n⁴+22n³+17n²+14n+7
+  have hTableauFsize : formula_size (encodeTableau C) ≤ 9 * n ^ 4 + 22 * n ^ 3 + 17 * n ^ 2 + 14 * n + 7 := by
+    unfold encodeTableau; simp only [formula_size]
+    nlinarith [encodeBitsAt_fsize_le 0 C.init, hinitLen, hAllStepFsize, hFinalFsize,
+               Nat.zero_le (n^4), Nat.zero_le (n^3), Nat.zero_le (n^2)]
+  -- (H) formula_maxVar of encodeStepConstraint ≤ 2n²+2n (for line ≤ n, step ≤ n)
+  have hStepMaxVar : ∀ line step, line ≤ n → step ≤ n →
+      formula_maxVar (encodeStepConstraint C line step) ≤ 2 * n ^ 2 + 2 * n := by
+    intro line step hline hstep; unfold encodeStepConstraint
+    split_ifs with h
+    · have hstartA : line * C.init.length + step * C.offset ≤
+          (line + 1) * C.init.length + step * C.offset := by
+        have := Nat.mul_le_mul_right C.init.length (Nat.le_succ line); omega
+      have hstartB : (line + 1) * C.init.length + step * C.offset ≤ 2 * n ^ 2 + n := by
+        nlinarith [Nat.mul_le_mul (Nat.succ_le_succ hline) hinitLen,
+                   Nat.mul_le_mul hstep hoffset]
+      have hmv := encodeCardsAt_maxVar_le C
+          (line * C.init.length + step * C.offset)
+          ((line + 1) * C.init.length + step * C.offset)
+          n hcards hstartA
+      linarith [hmv]
+    · simp [formula_maxVar]
+  -- (I) formula_maxVar of encodeLineConstraints ≤ 2n²+2n (for line ≤ n)
+  have hLineMaxVar : ∀ line, line ≤ n →
+      formula_maxVar (encodeLineConstraints C line) ≤ 2 * n ^ 2 + 2 * n := by
+    intro line hline; unfold encodeLineConstraints
+    apply listAnd_maxVar_le
+    intro f hf; rcases List.mem_map.mp hf with ⟨step, hstep_mem, rfl⟩
+    apply hStepMaxVar line step hline
+    have := List.mem_range.mp hstep_mem; omega
+  -- (J) formula_maxVar of encodeAllStepConstraints ≤ 2n²+2n
+  have hAllStepMaxVar : formula_maxVar (encodeAllStepConstraints C) ≤ 2 * n ^ 2 + 2 * n := by
+    unfold encodeAllStepConstraints
+    apply listAnd_maxVar_le
+    intro f hf; rcases List.mem_map.mp hf with ⟨line, hline_mem, rfl⟩
+    apply hLineMaxVar line
+    have := List.mem_range.mp hline_mem; omega
+  -- (K) formula_maxVar of encodeFinalAtStep ≤ 2n²+n (for step ≤ n, bits.length ≤ n)
+  have hFinalAtMaxVar : ∀ step (bits : List Bool), step ≤ n → bits.length ≤ n →
+      formula_maxVar (encodeFinalAtStep C step bits) ≤ 2 * n ^ 2 + n := by
+    intro step bits hstep hbits; unfold encodeFinalAtStep
+    split_ifs with h
+    · apply le_trans (encodeBitsAt_maxVar_le _ bits)
+      nlinarith [Nat.mul_le_mul hsteps hinitLen, Nat.mul_le_mul hstep hoffset]
+    · simp [falseFml, formula_maxVar]
+  -- (L) formula_maxVar of encodeFinalString ≤ 2n²+n
+  have hFinalStringMaxVar : ∀ (bits : List Bool), bits.length ≤ n →
+      formula_maxVar (encodeFinalString C bits) ≤ 2 * n ^ 2 + n := by
+    intro bits hbits; unfold encodeFinalString
+    apply listOr_maxVar_le
+    intro f hf; rcases List.mem_map.mp hf with ⟨step, hstep_mem, rfl⟩
+    apply hFinalAtMaxVar step bits _ hbits
+    have := List.mem_range.mp hstep_mem; omega
+  -- (M) formula_maxVar of encodeFinalConstraint ≤ 2n²+n
+  have hFinalMaxVar : formula_maxVar (encodeFinalConstraint C) ≤ 2 * n ^ 2 + n := by
+    unfold encodeFinalConstraint
+    apply listOr_maxVar_le
+    intro f hf; rcases List.mem_map.mp hf with ⟨bits, hbits, rfl⟩
+    apply hFinalStringMaxVar
+    exact le_trans (list_length_le_size bits) (le_trans (list_elem_size_le hbits) hfinal)
+  -- (N) formula_maxVar of encodeTableau ≤ 2n²+2n
+  have hTableauMaxVar : formula_maxVar (encodeTableau C) ≤ 2 * n ^ 2 + 2 * n := by
+    unfold encodeTableau; simp only [formula_maxVar]
+    simp only [Nat.max_le]
+    exact ⟨⟨by linarith [encodeBitsAt_maxVar_le 0 C.init], hAllStepMaxVar⟩,
+           by linarith [hFinalMaxVar]⟩
+  -- (O) Combine: encodable.size ≤ formula_size * (maxVar + 2) ≤ polynomial
+  calc encodable.size (encodeTableau C)
+      ≤ formula_size (encodeTableau C) * (formula_maxVar (encodeTableau C) + 2) :=
+          enc_le_fsize_maxvar _
+    _ ≤ (9 * n ^ 4 + 22 * n ^ 3 + 17 * n ^ 2 + 14 * n + 7) * (2 * n ^ 2 + 2 * n + 2) := by
+          apply Nat.mul_le_mul hTableauFsize (by omega)
+    _ ≤ 500 * n ^ 6 + 500 := by
+          nlinarith [Nat.one_le_pow 2 n hn1, Nat.one_le_pow 3 n hn1,
+                     Nat.one_le_pow 4 n hn1, Nat.one_le_pow 5 n hn1, Nat.one_le_pow 6 n hn1,
+                     Nat.mul_le_mul_left (n^5) hn1, Nat.mul_le_mul_left (n^4) hn1,
+                     Nat.mul_le_mul_left (n^3) hn1, Nat.mul_le_mul_left (n^2) hn1]
+
+/-- The size of BinaryCC_to_FSAT_instance C is bounded by 200 * n^6 + 200. -/
+theorem BinaryCC_to_FSAT_instance_size_bound (C : BinaryCC) :
+    encodable.size (BinaryCC_to_FSAT_instance C) ≤ 200 * encodable.size C ^ 6 + 200 := by
+  unfold BinaryCC_to_FSAT_instance
+  split_ifs with hWf
+  · exact encodeTableau_enc_size_le C _ le_rfl
+  · -- falseFml has encodable.size = 2
+    have hn : 1 ≤ encodable.size C := by simp [encodable.size]
+    simp only [falseFml, encodable_size_formula_fneg, encodable_size_formula_ftrue]
+    nlinarith [Nat.one_le_pow 6 (encodable.size C) hn]
+
 end BinaryCCToFSAT
 
 open BinaryCCToFSAT
@@ -686,6 +979,19 @@ theorem falseFml_unsat : ¬ FSAT falseFml := by
 
 theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
   refine ⟨⟨BinaryCC_to_FSAT_instance, ?_, ?_⟩⟩
-  · sorry
+  · -- Polynomial-time computability witness
+    refine ⟨⟨fun n => 200 * n ^ 6 + 200, ?_, ?_, ?_⟩⟩
+    · -- inOPoly: 200 * n^6 + 200 ≤ 201 * n^6 for n ≥ 2
+      refine ⟨6, ⟨201, 2, ?_⟩⟩
+      intro n hn
+      have hn6 : 1 ≤ n ^ 6 := Nat.one_le_pow 6 n (by omega)
+      nlinarith
+    · -- Monotonicity
+      intro x x' hxx'
+      have hpow : x ^ 6 ≤ x' ^ 6 := Nat.pow_le_pow_left hxx' 6
+      linarith
+    · -- Bound valid
+      intro C
+      exact BinaryCC_to_FSAT_instance_size_bound C
   · intro C
     simpa using BinaryCC_to_FSAT_instance_correct C

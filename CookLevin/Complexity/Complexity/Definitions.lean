@@ -125,15 +125,31 @@ inductive formula where
   | fneg (φ : formula)
 deriving Repr, DecidableEq
 
+private def formulaEncSize : formula → Nat
+  | .ftrue => 1
+  | .fvar v => v + 1
+  | .fand φ ψ => formulaEncSize φ + formulaEncSize ψ + 1
+  | .forr φ ψ => formulaEncSize φ + formulaEncSize ψ + 1
+  | .fneg φ => formulaEncSize φ + 1
+
 instance : encodable formula where
-  size
-    | .ftrue => 1
-    | .fvar v => encodable.size v + 1
-    | .fand φ ψ => encodable.size φ + encodable.size ψ + 1
-    | .forr φ ψ => encodable.size φ + encodable.size ψ + 1
-    | .fneg φ => encodable.size φ + 1
-  size_ge_logical := fun _ =>
-    ⟨_, Nat.le_refl _⟩
+  size := formulaEncSize
+  size_ge_logical := fun _ => ⟨_, Nat.le_refl _⟩
+
+-- Simp lemmas for formula sizes (rfl since formulaEncSize is a proper recursive def)
+@[simp]
+theorem encodable_size_formula_ftrue : encodable.size formula.ftrue = 1 := rfl
+@[simp]
+theorem encodable_size_formula_fvar (v : var) : encodable.size (formula.fvar v) = v + 1 := rfl
+@[simp]
+theorem encodable_size_formula_fand (φ ψ : formula) :
+    encodable.size (formula.fand φ ψ) = encodable.size φ + encodable.size ψ + 1 := rfl
+@[simp]
+theorem encodable_size_formula_forr (φ ψ : formula) :
+    encodable.size (formula.forr φ ψ) = encodable.size φ + encodable.size ψ + 1 := rfl
+@[simp]
+theorem encodable_size_formula_fneg (φ : formula) :
+    encodable.size (formula.fneg φ) = encodable.size φ + 1 := rfl
 
 structure CCCard (α : Type u) where
   prem : List α
