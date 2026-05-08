@@ -808,9 +808,9 @@ private theorem encodeCardsAt_maxVar_le (C : BinaryCC) (startA startB n : Nat)
   exact ⟨by linarith [encodeBitsAt_maxVar_le startA c.prem],
          by linarith [encodeBitsAt_maxVar_le startB c.conc]⟩
 
-/-- The tableau formula has encodable.size bounded by 200 * n^6 + 200. -/
+/-- The tableau formula has encodable.size bounded by 500 * n^6 + 500. -/
 private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodable.size C ≤ n) :
-    encodable.size (encodeTableau C) ≤ 200 * n ^ 6 + 200 := by
+    encodable.size (encodeTableau C) ≤ 500 * n ^ 6 + 500 := by
   have hSizeEq : C.offset + C.width + encodable.size C.init + encodable.size C.cards +
       encodable.size C.final + C.steps + 1 = encodable.size C := by rfl
   have hn1 : 1 ≤ n := by omega
@@ -891,8 +891,8 @@ private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodab
     intro line step hline hstep; unfold encodeStepConstraint
     split_ifs with h
     · have hstartA : line * C.init.length + step * C.offset ≤
-          (line + 1) * C.init.length + step * C.offset := by
-        have := Nat.mul_le_mul_right C.init.length (Nat.le_succ line); omega
+          (line + 1) * C.init.length + step * C.offset :=
+        Nat.add_le_add_right (Nat.mul_le_mul_right _ (by omega)) _
       have hstartB : (line + 1) * C.init.length + step * C.offset ≤ 2 * n ^ 2 + n := by
         have h1 : (line + 1) * C.init.length ≤ n ^ 2 + n :=
           calc (line + 1) * C.init.length
@@ -959,7 +959,7 @@ private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodab
   have hTableauMaxVar : formula_maxVar (encodeTableau C) ≤ 2 * n ^ 2 + 2 * n := by
     unfold encodeTableau; simp only [formula_maxVar]
     simp only [Nat.max_le]
-    exact ⟨⟨by linarith [encodeBitsAt_maxVar_le 0 C.init], hAllStepMaxVar⟩,
+    exact ⟨by linarith [encodeBitsAt_maxVar_le 0 C.init], hAllStepMaxVar,
            by linarith [hFinalMaxVar]⟩
   -- (O) Combine: encodable.size ≤ formula_size * (maxVar + 2) ≤ polynomial
   calc encodable.size (encodeTableau C)
@@ -985,9 +985,9 @@ private theorem encodeTableau_enc_size_le (C : BinaryCC) (n : Nat) (hn : encodab
             _ = 420 * n ^ 6 := by ring
             _ ≤ 500 * n ^ 6 + 500 := by linarith [Nat.one_le_pow 6 n hn1]
 
-/-- The size of BinaryCC_to_FSAT_instance C is bounded by 200 * n^6 + 200. -/
+/-- The size of BinaryCC_to_FSAT_instance C is bounded by 500 * n^6 + 500. -/
 theorem BinaryCC_to_FSAT_instance_size_bound (C : BinaryCC) :
-    encodable.size (BinaryCC_to_FSAT_instance C) ≤ 200 * encodable.size C ^ 6 + 200 := by
+    encodable.size (BinaryCC_to_FSAT_instance C) ≤ 500 * encodable.size C ^ 6 + 500 := by
   unfold BinaryCC_to_FSAT_instance
   split_ifs with hWf
   · exact encodeTableau_enc_size_le C _ le_rfl
@@ -1007,12 +1007,12 @@ theorem falseFml_unsat : ¬ FSAT falseFml := by
 theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
   refine ⟨⟨BinaryCC_to_FSAT_instance, ?_, ?_⟩⟩
   · -- Polynomial-time computability witness
-    refine ⟨⟨fun n => 200 * n ^ 6 + 200, ?_, ?_, ?_⟩⟩
-    · -- inOPoly: 200 * n^6 + 200 ≤ 400 * n^6 for n ≥ 1
-      refine ⟨6, ⟨400, 1, ?_⟩⟩
+    refine ⟨⟨fun n => 500 * n ^ 6 + 500, ?_, ?_, ?_⟩⟩
+    · -- inOPoly: 500 * n^6 + 500 ≤ 1000 * n^6 for n ≥ 1
+      refine ⟨6, ⟨1000, 1, ?_⟩⟩
       intro n hn
       have hn6 : 1 ≤ n ^ 6 := Nat.one_le_pow 6 n (by omega)
-      linarith [Nat.mul_le_mul_left 200 hn6]
+      linarith [Nat.mul_le_mul_left 500 hn6]
     · -- Monotonicity
       intro x x' hxx'
       have hpow : x ^ 6 ≤ x' ^ 6 := Nat.pow_le_pow_left hxx' 6
