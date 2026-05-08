@@ -21,1032 +21,839 @@
 Also read this file to the end, it contains a guideline for implementation!
 One thing to do: The guide tells you to use Classical.byCases / Classical.dec for some deciders. Mark them with a `-- TODO(step14): replace classical decider with explicit Bool function` comment as you write them!
 
-## Baseline you must preserve
+# Step 12 finishing guide — closing the remaining sorries
 
-- `FlatClique` is now a real flat clique predicate over wellformed graphs.
-- the files compile, but the main SAT/clique theorems still use `sorry` and `FSAT_to_SAT` is still search-based.
+You have an excellent draft. Most of the structural work is done correctly: the Tseytin clause gadgets, their truth-table proofs, the recursive `tseytin'`, the `tseytin_formula_repr` invariant shape, the `eliminateOR` machinery, and the entire `FSAT_to_SAT_tseytin_correct` outer proof are sound. What remains are *gaps*, not architectural problems.
 
-## What still needs to be implemented
+There are **10 sorries** total spread across four files:
 
-1. Replace the search-based `FSAT → SAT` / `FSAT → 3SAT` constructions with direct syntactic translations.
-2. Finish `SAT_inNP.sat_NP`, `kSAT_to_SAT`, `kSAT_to_FlatClique_poly`, and `FlatClique_in_NP` honestly.
-3. Keep the new `FlatClique` definition mathematically meaningful; do not collapse it back to `True`.
-4. Ensure the final theorem file can use these exports unchanged.
+| File | Line(s) | What's missing |
+|---|---|---|
+| `FSAT_to_SAT.lean` | 270 | `fvar` "ext" clause |
+| `FSAT_to_SAT.lean` | 292, 332 | `fand`/`fneg` `cnf_varsIn` |
+| `FSAT_to_SAT.lean` | 295, 335 | `fand`/`fneg` "ext" |
+| `FSAT_to_SAT.lean` | 268 | `omega` bug in `fvar` `cnf_varsIn` |
+| `FSAT_to_SAT.lean` | 424 | size bound |
+| `SAT.lean` | 206 | compress assgn size bound |
+| `FlatClique.lean` | 38 | clique cert size bound |
+| `kSAT_to_FlatClique.lean` | 63, 64 | both sides of the reduction |
 
-## Deliverable
-
-A compiling SAT/clique side with honest NP-membership proofs and direct polynomial reductions.
-
-# Step 12 Implementation Guide — SAT / 3-SAT / FlatClique
-
-**Scope.** This guide covers `Complexity/NP/FSAT_to_SAT.lean`, `SAT.lean` (the `SAT_inNP` block at the bottom), `kSAT_to_SAT.lean`, `kSAT_to_FlatClique.lean`, and `FlatClique.lean`. Together they replace search-based reductions with direct syntactic Tseytin transformations and replace four `sorry`s with honest proofs.
-
-**Key context (from the previous review).** The framework's `polyTimeComputable` is a *size-bound* claim, not a real time-complexity claim. Step 12 must therefore: (a) produce reductions whose *output size* is genuinely polynomial in the input size, and (b) state correctness as a real `↔`. Time-complexity is a separate later concern.
+I'll address them in roughly the order you should attack them: easiest first, biggest last.
 
 ---
 
-## 0. The big picture and recommended order
+## Section A — `FSAT_to_SAT.lean` line 268 (the `omega` bug)
 
-The five files have the following dependency structure:
+The error message shows the `omega` call at line 268 receives the goal `nf < b ∨ nf ≤ nf ∧ nf < nf + 1` *with `b ≤ nf` and `v₀ < b`* in context, which is solvable. But it fails because `omega` cannot dispatch a disjunction goal — it only solves linear arithmetic on a single hypothesis context, not goals with `∨` in them.
 
+This is the actual issue: line 268 reads `right; omega`, which *first* picks the right disjunct, then asks `omega` to prove `nf ≤ nf ∧ nf < nf + 1`. The error message confusingly shows the *original* disjunction, not the post-`right` goal. The actual issue is somewhere else.
+
+Looking at the `simp [tseytinEquiv, varInCnf, varInClause, varInLiteral]` on line 265: this simp call probably *over*-simplifies `hu`. The `tseytinEquiv` has two clauses with three literals each, where `(true, v')` appears twice in clause 1 and `(true, v)` appears twice in clause 2. After `simp` deduplication, you only get the two distinct *variable* values, but the `rcases hu with ⟨_, rfl⟩ | ⟨_, rfl⟩` pattern then matches against an even-flatter form than expected.
+
+**The robust fix is to avoid `simp` flattening entirely and case on each literal explicitly.** Replace the whole `cnf_varsIn` block (lines 263–268) with:
+
+```lean
+· -- cnf_varsIn
+  intro u hu
+  obtain ⟨C, hC, l, hl, b', heq⟩ := hu
+  simp only [tseytinEquiv, List.mem_cons, List.mem_singleton,
+             List.mem_nil_iff, or_false] at hC
+  rcases hC with rfl | rfl
+  all_goals {
+    simp only [List.mem_cons, List.mem_singleton, List.mem_nil_iff, or_false] at hl
+    rcases hl with rfl | rfl | rfl <;>
+      (simp only [Prod.mk.injEq] at heq; obtain ⟨_, rfl⟩ := heq)
+  }
+  -- Now we have 6 goals: 2 clauses × 3 literals each
+  · exact Or.inl hv_lt                            -- clause 1, literal 1: var = v₀
+  · right; exact ⟨le_refl _, Nat.lt_succ_self _⟩  -- clause 1, literal 2: var = nf
+  · right; exact ⟨le_refl _, Nat.lt_succ_self _⟩  -- clause 1, literal 3: var = nf
+  · right; exact ⟨le_refl _, Nat.lt_succ_self _⟩  -- clause 2, literal 1: var = nf
+  · exact Or.inl hv_lt                            -- clause 2, literal 2: var = v₀
+  · exact Or.inl hv_lt                            -- clause 2, literal 3: var = v₀
 ```
-                 SAT.lean ─── (sat_NP)
-                    ▲
-                    │
-   FlatClique.lean (FlatClique_in_NP)
-                    ▲
-                    │
-   kSAT_to_FlatClique.lean
-                    ▲
-                    │
-   kSAT.lean
-                    ▲
-                    │
-   kSAT_to_SAT.lean ──┐
-                      │
-   FSAT.lean ◄────────┤
-                      │
-   FSAT_to_SAT.lean ◄─┘  (FSAT → SAT and FSAT → 3-SAT)
+
+If the goal count is different (perhaps `simp` already deduplicates duplicate literal positions), reduce the trailing list of `·` to match. Whichever order Lean produces them in, *each* goal is one of those two patterns.
+
+**Quick alternative: a sledgehammer.** Replace lines 263–268 with:
+
+```lean
+· intro u hu
+  obtain ⟨C, hC, l, hl, b', heq⟩ := hu
+  simp only [tseytinEquiv] at hC
+  rcases hC with rfl | rfl <;>
+    (simp only [List.mem_cons, List.mem_singleton, List.mem_nil_iff, or_false,
+                Prod.mk.injEq] at hl
+     rcases hl with ⟨_, rfl⟩ | ⟨_, rfl⟩ | ⟨_, rfl⟩ <;>
+       first
+       | (exact Or.inl hv_lt)
+       | (right; exact ⟨le_refl _, Nat.lt_succ_self _⟩)
+       | (subst heq; first | exact Or.inl hv_lt
+                          | (right; exact ⟨le_refl _, Nat.lt_succ_self _⟩)))
 ```
 
-I recommend implementing in this order, because each builds on the previous:
+The `first | ... | ... | ...` lets Lean pick whichever closes the goal. This is more brittle but shorter.
 
-1. **`kSAT_to_SAT`** — five-line proof, mostly definition unfolding. Warm-up.
-2. **`SAT_inNP.sat_NP`** — moderately tricky but well-scoped; must be done before kSAT inNP.
-3. **`FlatClique_in_NP`** — analogue of (2), structurally similar.
-4. **`FSAT_to_SAT_poly` / `FSAT_to_3SAT_poly` (Tseytin)** — the largest piece, mathematically rich.
-5. **`kSAT_to_FlatClique_poly`** — large but mostly mechanical once the encoding is laid out.
-
-The current files contain four `sorry`s in `SAT_inNP.sat_NP` (×2), `FlatClique_in_NP`, and `kSAT_to_SAT` (×2), plus `FSAT_to_SAT_poly` and `FSAT_to_3SAT_poly` use a fake search-based reduction that is logically valid but morally wrong. The plan is to replace them all with mathematically faithful constructions.
+**Why this matters now.** Until line 268 compiles, Lean reports the error there and skips the remaining `sorry`s. So fix this one *first* — the others may show clearer errors once the file gets past it.
 
 ---
 
-## 1. `kSAT_to_SAT.lean` — the warm-up
+## Section B — The "ext" sorry for `fvar` (line 270)
 
-The current file:
+This is the heart of the inductive invariant. The ext clause says:
 
-```lean
-theorem kSAT_to_SAT (k : Nat) : kSAT k ⪯p SAT := by
-  refine ⟨⟨id, by sorry, ?_⟩⟩
-  intro N
-  sorry
-```
+> For every assignment `a` with vars only in `[0, b)`, there exists `a'` with vars only in `[nf, nf+1)` such that `a' ++ a` satisfies `tseytinEquiv v₀ nf`.
 
-The reduction is the identity. There are two `sorry`s: a `polyTimeComputable id` and the `kSAT k N ↔ SAT N` direction.
+The mathematical content: `tseytinEquiv v₀ nf` says "var nf ↔ var v₀". So we need to make `nf`'s value match `v₀`'s value in `a`. Since `v₀ < b ≤ nf`, the value `evalVar a v₀` is determined by `a` alone (no influence from `a'`), and we can independently set `nf`'s value via `a'`.
 
-### Math
-
-`kSAT k N` is defined as `0 < k ∧ kCNF k N ∧ SAT N`. So the equivalence `kSAT k N ↔ SAT N` is *not actually true*; what holds is `kSAT k N → SAT N`. The reverse needs the `kCNF` and `0 < k` premises. A proper proof must provide a non-identity reduction in one direction or restrict the domain.
-
-**Look at the Coq.** The Coq port avoids this by treating `kSAT` as a *subtype* in the underlying complexity framework — instances are pairs `(k, N)` with the `kCNF k N` constraint built in. Lean's current type signature `kSAT (k : Nat) : cnf → Prop` does not bake the constraint in.
-
-**The honest fix.** Use a reduction that, on inputs that fail to be `kCNF`, returns a known unsatisfiable CNF, and on `kCNF` inputs returns `N` itself:
+**Construction:** if `evalVar a v₀ = true`, take `a' = [nf]`. Otherwise, `a' = []`.
 
 ```lean
-def kSAT_to_SAT_reduction (k : Nat) (N : cnf) : cnf :=
-  if kCNF_decb k N && decide (0 < k) then N else [[]]   -- [[]] is unsat (empty clause)
+· -- ext for fvar
+  intro a ha
+  by_cases hv₀ : evalVar a v₀ = true
+  · refine ⟨[nf], ?_, ?_⟩
+    · -- a' = [nf] has vars only in [nf, nf+1)
+      intro v hv
+      simp only [List.mem_singleton] at hv
+      subst hv
+      exact ⟨le_refl _, Nat.lt_succ_self _⟩
+    · -- [nf] ++ a satisfies tseytinEquiv v₀ nf
+      rw [tseytinEquiv_sat]
+      have h1 : evalVar ([nf] ++ a) nf = true := by
+        simp [evalVar]
+      -- evalVar ([nf] ++ a) v₀ = evalVar a v₀ = true
+      have h2 : evalVar ([nf] ++ a) v₀ = evalVar a v₀ := by
+        apply evalVar_append_fresh [nf] a v₀ nf
+        · intro w hw
+          simp only [List.mem_singleton] at hw; subst hw; exact le_refl _
+        · exact hv_lt.trans_le hnf
+      rw [h2, h1, hv₀]
+  · refine ⟨[], ?_, ?_⟩
+    · intro v hv; simp at hv
+    · -- [] ++ a satisfies tseytinEquiv v₀ nf
+      simp only [List.nil_append]
+      rw [tseytinEquiv_sat]
+      have h1 : evalVar a nf = false := by
+        -- nf is outside [0, b), so a (which has vars in [0, b)) doesn't contain nf
+        simp only [evalVar]
+        rw [if_neg]
+        intro hmem
+        have := ha nf hmem
+        omega
+      simp [Bool.not_eq_true.mp hv₀, h1]
 ```
 
-This is the same pattern Coq uses for `trivialNoInstance`. With this, `kSAT k N ↔ SAT (reduction N)` holds:
+**Three things to verify** in your codebase:
 
-- **Forward.** If `kSAT k N`, then both guards are true, so the reduction returns `N`, and `SAT N` is part of the hypothesis.
-- **Backward.** If `SAT (reduction N)`:
-  - Case 1: both guards true. Reduction returns `N`. `SAT N` holds. We also have `0 < k` and `kCNF k N` from the guards, so `kSAT k N` holds.
-  - Case 2: a guard fails. Reduction returns `[[]]`, which is unsat: any clause must be satisfied, but `[]` cannot be. So `SAT [[]]` is false; the hypothesis is false; the conclusion holds vacuously.
+- The application of `evalVar_append_fresh` requires `b ≤ n` for vars in `a'`, and `v₀ < b`. The signature in your file (line 209) is `(a' a : assgn) (v b : Nat) (ha' : ... fun n => b ≤ n) (hv : v < b)`. So `evalVar_append_fresh [nf] a v₀ nf` (with `b := nf`) needs `[nf]` to have vars `≥ nf` (true) and `v₀ < nf` (true since `v₀ < b ≤ nf`).
+- `evalVar a' v` for `a' : List Nat` is defined as `if v ∈ a' then true else false` (look at `Definitions.lean`). For `a' = [nf]`, `evalVar [nf] nf = true` because `nf ∈ [nf]`.
+- The fact that `ha : assgn_varsIn (fun n => n < b) a` gives `n ∈ a → n < b`, so `nf ∉ a` (since `b ≤ nf`).
 
-### Drop-in implementation
+**Subtle point.** Your `evalVar_append_fresh` (line 209) is correctly stated: prepending fresh vars (≥ b) doesn't change the evaluation of any var (< b). But in this ext proof you also need the *converse* shape: for var `nf` itself, `evalVar (a' ++ a) nf = evalVar a' nf` (because `a` doesn't contain `nf`). It's worth adding a small dual lemma:
 
 ```lean
-import Complexity.Complexity.NP
-import Complexity.NP.SAT
-import Complexity.NP.kSAT
-
-set_option autoImplicit false
-
-/-- The empty clause. Unsatisfiable: there is no literal in `[]`, so `evalClause`
-returns false for every assignment. -/
-def emptyClauseCnf : cnf := [[]]
-
-theorem emptyClauseCnf_unsat : ¬ SAT emptyClauseCnf := by
-  rintro ⟨a, ha⟩
-  -- ha : satisfiesCnf a [[]]
-  -- = evalCnf a [[]] = true
-  -- = (evalClause a [] && evalCnf a []) = true
-  -- = (false && true) = true   -- contradiction
-  simp [emptyClauseCnf, satisfiesCnf, evalCnf, evalClause] at ha
-
-/-- Direct identity-based reduction guarded by `kCNF_decb` and `0 < k`. On invalid
-inputs we fall through to a fixed unsatisfiable CNF, mirroring the Coq
-`trivialNoInstance` pattern. -/
-def kSAT_to_SAT_reduction (k : Nat) (N : cnf) : cnf :=
-  if kCNF_decb k N ∧ 0 < k then N else emptyClauseCnf
-
-theorem kSAT_to_SAT_reduction_correct (k : Nat) (N : cnf) :
-    kSAT k N ↔ SAT (kSAT_to_SAT_reduction k N) := by
-  unfold kSAT_to_SAT_reduction
-  by_cases h : kCNF_decb k N ∧ 0 < k
-  · simp [h]
-    constructor
-    · intro ⟨_, _, hsat⟩; exact hsat
-    · intro hsat
-      refine ⟨h.2, ?_, hsat⟩
-      exact (kCNF_decb_iff k N).mp h.1
-  · simp [h]
-    constructor
-    · rintro ⟨hk, hcnf, _⟩
-      exact absurd ⟨(kCNF_decb_iff k N).mpr hcnf, hk⟩ h
-    · intro hsat; exact absurd hsat emptyClauseCnf_unsat
-
-theorem kSAT_to_SAT (k : Nat) : kSAT k ⪯p SAT := by
-  refine ⟨⟨kSAT_to_SAT_reduction k, ?_, kSAT_to_SAT_reduction_correct k⟩⟩
-  -- polyTimeComputable: linear bound (output is either N or [[]])
-  refine ⟨⟨fun n => n + 2, ?_, ?_, ?_⟩⟩
-  · -- inOPoly (fun n => n + 2): bound by n^1 + 2
-    refine ⟨1, 1, 2, ?_⟩
-    intro n _; simp; omega
-  · -- monotonic
-    intro a b h; omega
-  · -- bound_valid
-    intro N
-    unfold kSAT_to_SAT_reduction
-    by_cases h : kCNF_decb k N ∧ 0 < k
-    · simp [h]
-    · simp [h, emptyClauseCnf]
-      -- size of [[]] = size of [[]] computed from encodable
-      -- = 1 (empty clause: 0+1) + 1 (outer cons) = 2
-      -- For safety we use a simple upper bound
-      simp [encodable.size, encodable_size_list_cons, encodable_size_list_nil]
-
-theorem inNP_kSAT (k : Nat) : inNP (kSAT k) := by
-  exact red_inNP (kSAT k) SAT (kSAT_to_SAT k) SAT_inNP.sat_NP
+theorem evalVar_append_old (a' a : assgn) (v b : Nat)
+    (ha : assgn_varsIn (fun n => n < b) a) (hv : b ≤ v) :
+    evalVar (a' ++ a) v = evalVar a' v := by
+  simp only [evalVar, List.mem_append]
+  have hva : v ∉ a := fun hmem => absurd (ha v hmem) (by omega)
+  by_cases h : v ∈ a' <;> simp [h, hva]
 ```
 
-**Notes:**
-- The `inOPoly` witness shape `⟨degree, ⟨lo, hi, proof⟩⟩` matches what we see used elsewhere in the codebase (e.g. `BinaryCC_to_FSAT.lean` line 1012). Adjust to whichever shape your `inOPoly` requires; the literal coefficients don't matter.
-- The `bound_valid` final calc is fragile; you may need to compute `encodable.size [[]]` explicitly. Worst case, replace `n + 2` with `n + 100` and the `omega` will eat it.
-- **Existing concern unchanged**: `inNP_kSAT` already routes through `sat_NP`, so once `sat_NP` is honest this becomes honest too.
+Add this once near `evalVar_append_fresh` and you can use it cleanly throughout.
+
+**Note on `tseytinEquiv_sat`.** Looking at line 127: it gives `satisfiesCnf a (tseytinEquiv v v') ↔ (evalVar a v = true ↔ evalVar a v' = true)`. So you need *both* sides to match. After substituting `h2` (which makes the v₀ side `evalVar a v₀ = true`), you have `(evalVar a v₀ = true ↔ evalVar ([nf] ++ a) nf = true)`. With `hv₀ : evalVar a v₀ = true` and `h1 : evalVar ([nf] ++ a) nf = true`, this becomes `(true ↔ true)`, which is `True`.
+
+In the `else` branch: `evalVar a v₀ = false` (from `hv₀`) and `evalVar ([] ++ a) nf = evalVar a nf = false` (since `a` has no vars ≥ b ≥ nf). Both sides false ⇒ iff holds.
+
+**One last gotcha.** The `evalVar` definition might use `decide` rather than direct membership; double-check by viewing `Definitions.lean` around `def evalVar`:
+
+```lean
+def evalVar (a : assgn) (v : var) : Bool :=
+  if v ∈ a then true else false
+```
+
+If it uses `Decidable` instances, the `simp [evalVar]` may not reduce cleanly — switch to explicit `unfold evalVar; rw [if_pos ...]` patterns.
 
 ---
 
-## 2. `SAT_inNP.sat_NP` — SAT ∈ NP
+## Section C — The "cnf_varsIn" sorries for `fand` and `fneg` (lines 292, 332)
 
-Current state:
+These follow directly from `cnf_varsIn_app` and the inductive hypotheses. The pattern: `N₁ ++ N₂ ++ tseytinAnd ...` has vars in the union of the var-sets of each piece, and we need to show the union is contained in `[0, b) ∪ [nf, nf'+1)`.
 
-```lean
-theorem sat_NP : inNP SAT := by
-  refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
-  · sorry  -- inTimePoly for the relation
-  · sorry  -- polyCertRel for SAT
-```
-
-This is a structurally important proof: it sets the witness type as `assgn` (the satisfying assignment), the relation as `satisfiesCnf`, and demands two things — that the relation is decidable in polynomial time, and that satisfying assignments can be polynomially bounded.
-
-### Math
-
-The Coq proof has two parts:
-
-1. **`inTimePoly` of the verifier.** A satisfying-assignment check `evalCnf a N = true` is implementable as a Boolean decider whose runtime is polynomial in `|(N, a)|`. The Lean framework only requires *output existence* (since `HasDecider` is currently not tied to time), so this collapses to "there exists a `Bool`-valued decider for the relation".
-
-2. **`polyCertRel`: certificates can be bounded.** For every satisfying `a`, there exists a `compressAssignment a N` (the variables of `a` restricted to those mentioned in `N`, deduplicated) that:
-   - still satisfies `N`,
-   - has size bounded by a polynomial in `|N|` (actually linear).
-
-### Drop-in implementation
+For **`fand`** (line 292):
 
 ```lean
-namespace SAT_inNP
-
--- The verifier is the Boolean version of `satisfiesCnf`.
-def sat_verifierb : cnf × assgn → Bool := fun ⟨N, a⟩ => evalCnf a N
-
--- The set of variables actually used in a CNF (with duplicates).
-def varsOfLiteral (l : literal) : List Nat := [l.2]
-
-def varsOfClause (C : clause) : List Nat := (C.map varsOfLiteral).flatten
-
-def varsOfCnf (N : cnf) : List Nat := (N.map varsOfClause).flatten
-
--- A "small" assignment: contained in varsOfCnf and duplicate-free.
-def assignment_small (N : cnf) (a : assgn) : Prop :=
-  (∀ v ∈ a, v ∈ varsOfCnf N) ∧ a.Nodup
-
--- Compress an assignment by intersecting with varsOfCnf and dedup.
-def compressAssignment (a : assgn) (N : cnf) : assgn :=
-  (a.filter (· ∈ varsOfCnf N)).dedup
-
-theorem compressAssignment_small (a : assgn) (N : cnf) :
-    assignment_small N (compressAssignment a N) := by
+· -- cnf_varsIn for fand: N₁ ++ N₂ ++ tseytinAnd nf₂ rv₁ rv₂
+  -- vars of N₁ are in [0, b) ∪ [nf, nf₁)
+  -- vars of N₂ are in [0, b) ∪ [nf₁, nf₂)
+  -- vars of tseytinAnd nf₂ rv₁ rv₂ are {nf₂, rv₁, rv₂}, all in [0, b) ∪ [nf, nf₂+1)
+  rw [cnf_varsIn_app]
   refine ⟨?_, ?_⟩
-  · intro v hv
-    have : v ∈ a.filter (· ∈ varsOfCnf N) := List.mem_dedup.mp hv
-    exact (List.mem_filter.mp this).2
-  · exact List.nodup_dedup _
+  rw [cnf_varsIn_app]
+  refine ⟨?_, ?_, ?_⟩
+  · -- vars of N₁ are in [0, b) ∨ nf ≤ n < nf₂+1
+    intro v hv
+    have := repr₁.1 v hv  -- v < b ∨ nf ≤ v < (tseytin' nf f₁).2.2 = nf₁
+    rcases this with h | ⟨h₁, h₂⟩
+    · exact Or.inl h
+    · right; refine ⟨h₁, ?_⟩; linarith [tseytin'_nf_mono _ f₂]
+  · -- vars of N₂ are in [0, b) ∨ nf ≤ n < nf₂+1
+    intro v hv
+    have := repr₂.1 v hv  -- v < b ∨ nf₁ ≤ v < nf₂
+    rcases this with h | ⟨h₁, h₂⟩
+    · exact Or.inl h
+    · right; refine ⟨?_, ?_⟩
+      · linarith [mono₁]  -- nf ≤ nf₁ ≤ v
+      · omega
+  · -- vars of tseytinAnd nf₂ rv₁ rv₂ are {nf₂, rv₁, rv₂}
+    intro v hv
+    obtain ⟨C, hC, l, hl, b', heq⟩ := hv
+    simp only [tseytinAnd, List.mem_cons, List.mem_singleton,
+               List.mem_nil_iff, or_false] at hC
+    -- C is one of three clauses
+    -- Each clause's literals come from {nf₂, rv₁, rv₂}
+    -- The conclusion is: each of these is in [0, b) ∪ [nf, nf₂+1)
+    have h_rv₁ : (tseytin' nf f₁).1 < (tseytin' nf f₁).2.2 := hrv₁_hi
+    have h_rv₁_lo : nf ≤ (tseytin' nf f₁).1 := hrv₁_lo
+    have h_rv₂ : (tseytin' (tseytin' nf f₁).2.2 f₂).1 < (tseytin' (tseytin' nf f₁).2.2 f₂).2.2 := hrv₂_hi
+    have h_rv₂_lo : (tseytin' nf f₁).2.2 ≤ (tseytin' (tseytin' nf f₁).2.2 f₂).1 := hrv₂_lo
+    rcases hC with rfl | rfl | rfl <;>
+      (simp only [List.mem_cons, List.mem_singleton, List.mem_nil_iff, or_false,
+                  Prod.mk.injEq] at hl
+       rcases hl with ⟨_, rfl⟩ | ⟨_, rfl⟩ | ⟨_, rfl⟩ <;>
+         (subst heq; right
+          first
+          | exact ⟨h_rv₁_lo, by linarith⟩
+          | exact ⟨by linarith [mono₁, h_rv₂_lo], by linarith⟩
+          | exact ⟨by linarith [mono₁, tseytin'_nf_mono _ f₂], by omega)))
+```
 
-theorem compressAssignment_evalVar (a : assgn) (N : cnf) (v : Nat)
-    (hv : v ∈ varsOfCnf N) :
-    evalVar a v = evalVar (compressAssignment a N) v := by
-  unfold evalVar compressAssignment
-  by_cases h : v ∈ a
-  · simp [h]
-    rw [List.mem_dedup, List.mem_filter]
-    exact ⟨h, hv⟩
-  · simp [h]
-    intro hcontra
-    rw [List.mem_dedup, List.mem_filter] at hcontra
-    exact h hcontra.1
+This is mechanical but long. **You may want to factor out `tseytinAnd_varsIn`:**
 
-theorem varsOfLiteral_iff (l : literal) (v : Nat) :
-    v ∈ varsOfLiteral l ↔ ∃ b, l = (b, v) := by
-  unfold varsOfLiteral; cases l with
-  | mk b w => simp; exact ⟨fun h => ⟨b, h ▸ rfl⟩, fun ⟨_, h⟩ => by injection h with _ h; exact h.symm⟩
+```lean
+private theorem tseytinAnd_varsIn (v v₁ v₂ : var) (p : Nat → Prop)
+    (hv : p v) (hv₁ : p v₁) (hv₂ : p v₂) :
+    cnf_varsIn p (tseytinAnd v v₁ v₂) := by
+  intro u hu
+  obtain ⟨C, hC, l, hl, b', heq⟩ := hu
+  simp only [tseytinAnd, List.mem_cons, List.mem_singleton,
+             List.mem_nil_iff, or_false] at hC hl
+  rcases hC with rfl | rfl | rfl <;>
+    rcases hl with rfl | rfl | rfl <;>
+      (simp only [Prod.mk.injEq] at heq; obtain ⟨_, rfl⟩ := heq) <;>
+      assumption
+```
 
-theorem varsOfClause_iff (C : clause) (v : Nat) :
-    v ∈ varsOfClause C ↔ ∃ l ∈ C, v ∈ varsOfLiteral l := by
-  unfold varsOfClause
-  simp [List.mem_flatten, List.mem_map]
-  constructor
-  · rintro ⟨xs, ⟨l, hl, rfl⟩, hv⟩; exact ⟨l, hl, hv⟩
-  · rintro ⟨l, hl, hv⟩; exact ⟨_, ⟨l, hl, rfl⟩, hv⟩
+Then the `fand` cnf_varsIn becomes:
 
-theorem varsOfCnf_iff (N : cnf) (v : Nat) :
-    v ∈ varsOfCnf N ↔ ∃ C ∈ N, v ∈ varsOfClause C := by
-  unfold varsOfCnf
-  simp [List.mem_flatten, List.mem_map]
-  constructor
-  · rintro ⟨xs, ⟨C, hC, rfl⟩, hv⟩; exact ⟨C, hC, hv⟩
-  · rintro ⟨C, hC, hv⟩; exact ⟨_, ⟨C, hC, rfl⟩, hv⟩
+```lean
+rw [cnf_varsIn_app, cnf_varsIn_app]
+refine ⟨⟨?_, ?_⟩, ?_⟩
+· -- repr₁ via monotonicity
+  apply cnf_varsIn_monotonic _ _ _ ?_ repr₁.1
+  intro n h; rcases h with h | ⟨hl, hr⟩
+  · exact Or.inl h
+  · exact Or.inr ⟨hl, by linarith [tseytin'_nf_mono _ f₂]⟩
+· -- repr₂ via monotonicity
+  apply cnf_varsIn_monotonic _ _ _ ?_ repr₂.1
+  intro n h; rcases h with h | ⟨hl, hr⟩
+  · exact Or.inl h
+  · exact Or.inr ⟨by linarith [mono₁], by omega⟩
+· -- tseytinAnd via the helper
+  apply tseytinAnd_varsIn
+  · exact Or.inr ⟨by linarith [mono₁, tseytin'_nf_mono _ f₂], Nat.lt_succ_self _⟩
+  · exact Or.inr ⟨hrv₁_lo, by linarith [tseytin'_nf_mono _ f₂]⟩
+  · exact Or.inr ⟨by linarith [mono₁, hrv₂_lo], by omega⟩
+```
 
-theorem evalLiteral_compress (a : assgn) (N : cnf) (C : clause) (l : literal)
-    (hC : C ∈ N) (hl : l ∈ C) :
-    evalLiteral a l = evalLiteral (compressAssignment a N) l := by
-  cases l with
-  | mk b v =>
-    simp [evalLiteral]
-    have hv : v ∈ varsOfCnf N := by
-      rw [varsOfCnf_iff]
-      refine ⟨C, hC, ?_⟩
-      rw [varsOfClause_iff]
-      exact ⟨_, hl, by rw [varsOfLiteral_iff]; exact ⟨b, rfl⟩⟩
-    rw [compressAssignment_evalVar a N v hv]
+The factored version is **much** more readable and you'll thank yourself later.
 
-theorem compressAssignment_cnf_equiv (a : assgn) (N : cnf) :
-    evalCnf a N = true ↔ evalCnf (compressAssignment a N) N = true := by
-  rw [evalCnf_clause_iff, evalCnf_clause_iff]
-  apply forall_congr'; intro C; apply imp_congr_right; intro hC
+For **`fneg`** (line 332), the structure is parallel but simpler — just one append and a `tseytinNot`:
+
+```lean
+private theorem tseytinNot_varsIn (v v' : var) (p : Nat → Prop)
+    (hv : p v) (hv' : p v') :
+    cnf_varsIn p (tseytinNot v v') := by
+  intro u hu
+  obtain ⟨C, hC, l, hl, b', heq⟩ := hu
+  simp only [tseytinNot, List.mem_cons, List.mem_singleton,
+             List.mem_nil_iff, or_false] at hC hl
+  rcases hC with rfl | rfl <;>
+    rcases hl with rfl | rfl | rfl <;>
+      (simp only [Prod.mk.injEq] at heq; obtain ⟨_, rfl⟩ := heq) <;>
+      assumption
+
+-- in fneg case:
+· rw [cnf_varsIn_app]
+  refine ⟨?_, ?_⟩
+  · apply cnf_varsIn_monotonic _ _ _ ?_ repr.1
+    intro n h; rcases h with h | ⟨hl, hr⟩
+    · exact Or.inl h
+    · exact Or.inr ⟨hl, by omega⟩
+  · apply tseytinNot_varsIn
+    · exact Or.inr ⟨by linarith [mono], Nat.lt_succ_self _⟩
+    · exact Or.inr ⟨hrv_lo, by omega⟩
+```
+
+---
+
+## Section D — The "ext" sorries for `fand` and `fneg` (lines 295, 335)
+
+This is conceptually the trickiest part. The ext clause produces an extension `a'` of the input assignment `a`. For composed cases, we need to *compose extensions*.
+
+### Strategy for `fand`
+
+We need to construct `a' ⊆ [nf, nf₂+1)` such that `a' ++ a` satisfies `N₁ ++ N₂ ++ tseytinAnd nf₂ rv₁ rv₂`.
+
+The plan:
+1. Apply `repr₁`'s ext to `a`. Get `a₁'` with vars in `[nf, nf₁)` such that `a₁' ++ a ⊨ N₁`.
+2. Apply `repr₂`'s ext to `a₁' ++ a` (which has vars in `[0, nf₁) ⊆ [0, b ∨ in nf-range up to nf₁)`). But careful: `repr₂` requires the input assignment to have vars in `[0, b₂)` where `b₂` is the *new* base for the second invariant. **`b₂ = (tseytin' nf f₁).2.2 = nf₁`**. So `repr₂.1` (the cnf_varsIn part) talks about vars in `[0, b₂) ∪ [nf₁, nf₂)`. And `repr₂.4` (the ext part) requires *input* assgns to have vars in `[0, b₂) = [0, nf₁)`.
+
+   So when we feed `a₁' ++ a` to `repr₂.4`, we need `a₁' ++ a` to have vars in `[0, nf₁)`. Both pieces qualify: `a` has vars in `[0, b) ⊆ [0, nf₁)` and `a₁'` has vars in `[nf, nf₁) ⊆ [0, nf₁)`. ✓
+
+3. Apply repr₂'s ext to `a₁' ++ a`. Get `a₂'` with vars in `[nf₁, nf₂)` such that `a₂' ++ (a₁' ++ a) ⊨ N₂`.
+4. Define the value of `nf₂`: it should equal `evalVar (a₁' ++ a) rv₁ ∧ evalVar (a₂' ++ a₁' ++ a) rv₂`. Since both sub-CNFs are satisfied, by `repr₁`'s and `repr₂`'s spec clauses, this matches `evalFormula (a₁' ++ a) f₁ ∧ evalFormula (a₂' ++ a₁' ++ a) f₂` = `evalFormula a (f₁ ∧ f₂)` (using append-fresh and `a` ⊆ b).
+5. So set `a' := (if (the conjunction) then [nf₂] else []) ++ a₂' ++ a₁'`.
+
+### Concrete code for `fand` ext
+
+```lean
+· -- ext for fand
+  intro a ha
+  -- Step 1: extend by a₁' for N₁
+  obtain ⟨a₁', ha₁'_vars, ha₁'_sat⟩ :=
+    repr₁.2.2.2.1 a ha  -- (4th component of conjunction in repr₁)
+
+  -- Step 2: a₁' ++ a has vars in [0, nf₁)
+  have h_join1_vars : assgn_varsIn (fun n => n < (tseytin' nf f₁).2.2) (a₁' ++ a) := by
+    intro v hv
+    rcases List.mem_append.mp hv with h | h
+    · exact (ha₁'_vars v h).2
+    · linarith [ha v h, hnf, mono₁]
+
+  -- Step 3: apply repr₂'s ext
+  obtain ⟨a₂', ha₂'_vars, ha₂'_sat⟩ :=
+    repr₂.2.2.2.1 (a₁' ++ a) h_join1_vars
+
+  -- Step 4: compute the truth value at the new representative variable nf₂
+  set rv₁ := (tseytin' nf f₁).1
+  set rv₂ := (tseytin' (tseytin' nf f₁).2.2 f₂).1
+  set nf₂ := (tseytin' (tseytin' nf f₁).2.2 f₂).2.2
+  -- The value is: rv₁ true AND rv₂ true
+  have hrv₁_val : evalVar (a₂' ++ a₁' ++ a) rv₁ = evalVar (a₁' ++ a) rv₁ := by
+    -- a₂' has vars in [nf₁, nf₂), rv₁ < nf₁, so a₂' doesn't affect rv₁
+    rw [List.append_assoc]
+    apply evalVar_append_fresh a₂' (a₁' ++ a) rv₁ (tseytin' nf f₁).2.2
+    · intro w hw; exact (ha₂'_vars w hw).1
+    · exact hrv₁_hi  -- rv₁ < nf₁
+
+  by_cases hcond : evalVar (a₁' ++ a) rv₁ = true ∧ evalVar (a₂' ++ a₁' ++ a) rv₂ = true
+  · -- Case: both representatives are true
+    refine ⟨[nf₂] ++ a₂' ++ a₁', ?_, ?_⟩
+    · -- a' has vars in [nf, nf₂ + 1)
+      intro v hv
+      rcases List.mem_append.mp hv with h12 | h1
+      · rcases List.mem_append.mp h12 with h_nf | h2
+        · simp only [List.mem_singleton] at h_nf; subst h_nf
+          exact ⟨by linarith [mono₁, tseytin'_nf_mono _ f₂], Nat.lt_succ_self _⟩
+        · have := ha₂'_vars v h2
+          exact ⟨by linarith [mono₁], by omega⟩
+      · have := ha₁'_vars v h1
+        exact ⟨this.1, by linarith [tseytin'_nf_mono _ f₂]⟩
+    · -- a' ++ a satisfies N₁ ++ N₂ ++ tseytinAnd
+      rw [satisfiesCnf, ← evalCnf_clause_iff]
+      have heq : ([nf₂] ++ a₂' ++ a₁') ++ a = [nf₂] ++ (a₂' ++ (a₁' ++ a)) := by
+        simp [List.append_assoc]
+      rw [heq]
+      intro C hC
+      simp only [List.mem_append] at hC
+      -- This case-split needs careful handling; expand below
+      sorry
+  · -- Case: one of them is false
+    -- Set nf₂'s value to false (i.e. a' = a₂' ++ a₁', no [nf₂] prepended)
+    refine ⟨a₂' ++ a₁', ?_, ?_⟩
+    · -- vars in [nf, nf₂ + 1)
+      sorry
+    · sorry
+```
+
+I've left the inner "satisfies CNF" calculation as `sorry` because it's tedious bookkeeping. The full version requires:
+
+- For each clause of `N₁`: it's already satisfied by `a₁' ++ a`; prepending `[nf₂] ++ a₂'` doesn't break it because `N₁`'s vars are in `[0, b) ∪ [nf, nf₁)`, all `< nf₁`, so the prepended pieces (in `[nf₁, nf₂+1)`) don't affect them. Use `evalVar_append_fresh` / `evalClause_append_fresh` / `evalCnf_append_fresh`.
+- For each clause of `N₂`: already satisfied by `a₂' ++ (a₁' ++ a)`; prepending `[nf₂]` doesn't affect because `N₂`'s vars are in `[0, nf₁) ∪ [nf₁, nf₂)`, all `< nf₂`.
+- For the three clauses of `tseytinAnd`: use `tseytinAnd_sat` to verify the iff matches the chosen `nf₂` value.
+
+**Suggested helper to add early:**
+
+```lean
+theorem evalCnf_append_fresh (a' a : assgn) (b : Nat) (N : cnf)
+    (ha' : assgn_varsIn (fun n => b ≤ n) a') (hN : cnf_varsIn (fun n => n < b) N) :
+    evalCnf (a' ++ a) N = evalCnf a N := by
+  rw [← evalCnf_clause_iff, ← evalCnf_clause_iff]
+  apply forall₂_congr
+  intro C
+  apply imp_congr_right
+  intro hC
+  -- evalClause (a' ++ a) C = evalClause a C
   rw [evalClause_literal_iff, evalClause_literal_iff]
-  apply exists_congr; intro l
-  refine ⟨?_, ?_⟩
-  · rintro ⟨hl, hev⟩; exact ⟨hl, by rw [← evalLiteral_compress a N C l hC hl]; exact hev⟩
-  · rintro ⟨hl, hev⟩; exact ⟨hl, by rw [evalLiteral_compress a N C l hC hl]; exact hev⟩
-
--- Size lemmas: |varsOfCnf N| ≤ size_cnf N (one var per literal), so dedup'd
--- subset has size ≤ encodable.size N up to a constant.
-theorem assignment_small_size (N : cnf) (a : assgn) (h : assignment_small N a) :
-    encodable.size a ≤ 2 * encodable.size N + 1 := by
-  -- This is the most fragile part; the precise constant doesn't matter.
-  sorry  -- See "Size analysis" subsection below for the proof outline.
-
-theorem sat_NP : inNP SAT := by
-  refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
-  · -- inTimePoly: a Boolean decider for the relation exists.
-    -- With the framework's current vacuous time-bound, we just supply a polynomial bound function.
-    refine ⟨fun n => n + 1, ?_, ?_, ?_⟩
-    · -- HasDecider: pair the relation with sat_verifierb
-      refine ⟨fun ⟨N, a⟩ => sat_verifierb (N, a), ?_⟩
-      intro ⟨N, a⟩; rfl
-    · -- inOPoly (fun n => n + 1)
-      exact ⟨1, 1, 1, by intro n _; simp; omega⟩
-    · -- monotonic
-      intro a b h; omega
-  · -- polyCertRel
-    refine ⟨⟨fun n => 2 * n + 1, ?_, ?_, ?_, ?_⟩⟩
-    · -- sound: if a is a witness, N is satisfiable
-      intro N a h; exact ⟨a, h⟩
-    · -- complete: every sat instance has a small witness
-      intro N hN
-      rcases hN with ⟨a, ha⟩
-      refine ⟨compressAssignment a N, ?_, ?_⟩
-      · -- still satisfies
-        unfold satisfiesCnf at *
-        exact (compressAssignment_cnf_equiv a N).mp ha
-      · -- size bound
-        exact assignment_small_size N _ (compressAssignment_small a N)
-    · -- inOPoly (fun n => 2 * n + 1)
-      exact ⟨1, 2, 1, by intro n _; simp; omega⟩
-    · -- monotonic
-      intro a b h; omega
-
-end SAT_inNP
+  apply exists_congr
+  intro l
+  apply and_congr_right
+  intro hl
+  rcases l with ⟨b', v⟩
+  simp only [evalLiteral]
+  rw [evalVar_append_fresh a' a v b ha']
+  · -- v < b because hN says all vars in N (including this one) are < b
+    exact hN v ⟨C, hC, ⟨b', v⟩, hl, b', rfl⟩
 ```
 
-### Size analysis (the `sorry` above)
-
-The hard step is proving `encodable.size a ≤ 2 * encodable.size N + 1` for the compressed assignment. The key facts:
-
-- `encodable.size N` for `N : cnf` unfolds (via the `List` instance) to roughly `Σ (size_clause C + 1) + 1` summed over `N`'s clauses. By `list_length_le_size`, also `|N| ≤ size N` and `|C| ≤ size C` for each clause.
-- Each variable in `varsOfCnf N` comes from some literal in some clause. So `|varsOfCnf N|` is at most the total number of literals, which is `Σ |C| ≤ size N`.
-- The compressed assignment is a sublist of `varsOfCnf N` (subset relation + nodup ⇒ length ≤). Each variable contributes `v + 1` to the encoded size. Each variable `v` was the second component of some literal in `N`, and `encodable.size (b, v) = 1 + 1 + v + 1 ≥ v + 1`. So `Σ (v_i + 1)` is bounded by the total literal-component cost, which is `≤ size N`.
-
-A concrete proof sketch:
+Or — even better — prove the more general:
 
 ```lean
--- An auxiliary lemma to slot in:
-private theorem sublist_dedup_size_le {a b : List Nat}
-    (hsub : ∀ v ∈ a, v ∈ b) (hdup : a.Nodup) :
-    encodable.size a ≤ encodable.size b + encodable.size b := by
-  -- Bound: encodable.size a ≤ |a| * (max v + 1)
-  --                      ≤ |b| * (max v + 1) since a ⊆ b and a is dup-free
-  -- and |b| * (max v + 1) ≤ encodable.size b * encodable.size b
-  -- Final ≤ 2 * encodable.size b suffices via Nat.add_le_add.
-  sorry  -- combinatorial details
+theorem satisfiesCnf_append_fresh (a' a : assgn) (b : Nat) (N : cnf)
+    (ha' : assgn_varsIn (fun n => b ≤ n) a') (hN : cnf_varsIn (fun n => n < b) N) :
+    satisfiesCnf (a' ++ a) N ↔ satisfiesCnf a N
 ```
 
-This is genuinely fiddly. **Pragmatic recommendation:** for Step 12, prove `encodable.size a ≤ encodable.size N * encodable.size N + 1` (a quadratic bound), which is much easier and is still polynomial. The framework only checks `inOPoly`, not the degree.
+And use it twice in the inner case-split.
+
+### Strategy for `fneg`
+
+Simpler: only one inner CNF. The plan:
+
+1. Apply `repr.4` (ext) to `a` to get `a'_inner` with `a'_inner ++ a ⊨ N`.
+2. The truth value at `nf'` should be the *negation* of `evalVar (a'_inner ++ a) rv`.
+3. So set `a' := if !evalVar (a'_inner ++ a) rv then [nf'] else [] ++ a'_inner`.
+
+Concretely:
+
+```lean
+· -- ext for fneg
+  intro a ha
+  obtain ⟨a'_inner, ha'_vars, ha'_sat⟩ := repr.2.2.2.1 a ha
+  set rv := (tseytin' nf f).1
+  set nf' := (tseytin' nf f).2.2
+  by_cases hrv : evalVar (a'_inner ++ a) rv = true
+  · -- inner formula evaluates true, so fneg evaluates false; nf' should be false
+    refine ⟨a'_inner, ?_, ?_⟩
+    · -- vars in [nf, nf'+1)
+      intro v hv
+      have := ha'_vars v hv
+      exact ⟨this.1, by omega⟩
+    · -- a'_inner ++ a ⊨ N ++ tseytinNot nf' rv
+      rw [satisfiesCnf, ← evalCnf_clause_iff]
+      intro C hC
+      simp only [List.mem_append] at hC
+      rcases hC with hC | hC
+      · exact (evalCnf_clause_iff _ _).mp ha'_sat C hC
+      · -- C ∈ tseytinNot nf' rv with nf' = false, rv = true
+        -- tseytinNot encodes nf' ↔ ¬rv; with rv = true, nf' should be false
+        rw [← satisfiesCnf, satisfiesCnf, ← evalCnf_clause_iff] at *
+        -- the C is one of the two clauses of tseytinNot
+        have : satisfiesCnf (a'_inner ++ a) (tseytinNot nf' rv) := by
+          rw [tseytinNot_sat]
+          have hnf'_false : evalVar (a'_inner ++ a) nf' = false := by
+            -- nf' ∉ a'_inner (which has vars < nf') and nf' ∉ a (vars < b ≤ nf < nf')
+            simp only [evalVar]
+            rw [if_neg]
+            intro hmem
+            rcases List.mem_append.mp hmem with h | h
+            · have := (ha'_vars nf' h).2; omega
+            · have := ha nf' h; omega
+          rw [hnf'_false, hrv]; simp
+        exact (evalCnf_clause_iff _ _).mp this C hC
+  · -- inner false; nf' should be true
+    refine ⟨[nf'] ++ a'_inner, ?_, ?_⟩
+    · intro v hv
+      rcases List.mem_append.mp hv with h | h
+      · simp at h; subst h; exact ⟨by linarith [tseytin'_nf_mono _ f], Nat.lt_succ_self _⟩
+      · have := ha'_vars v h
+        exact ⟨this.1, by omega⟩
+    · sorry  -- analogous; nf' is true now, need to verify both clauses
+```
+
+The two cases are mirror images. Once you have one working, the other is mechanical.
 
 ---
 
-## 3. `FlatClique_in_NP` — FlatClique ∈ NP
+## Section E — The size bound for FSAT_to_SAT (line 424)
 
-Currently a single `sorry`. Structurally analogous to `SAT_inNP.sat_NP`.
+You currently have `encodable.size (FSAT_to_SAT_tseytin f) ≤ encodable.size f ^ 2 + 200`. This is a quadratic bound, but the *actual* size of the Tseytin output is **linear** in `formula_size f`. Even so, the framework only checks `inOPoly`, not the exponent. Make life easier by **switching to a higher polynomial degree** that you can prove without sweat.
 
-### Math
+**Practical recommendation:** prove `encodable.size (FSAT_to_SAT_tseytin f) ≤ 1000 * encodable.size f ^ 2 + 1000`. The constant 1000 absorbs all bookkeeping. Then update the polynomial witness lines (430–433, 438–441) to match.
 
-`FlatClique (G, k) ↔ ∃ l, fgraph_wf G ∧ isfKClique k G l`. The certificate is `l : List fvertex`. The relation `R : (fgraph × Nat) → List fvertex → Prop` is `R (G, k) l := fgraph_wf G ∧ isfKClique k G l`.
+The size analysis breaks down as:
 
-For `inTimePoly`: the relation is decidable, since `fgraph_wf`, `Nodup`, length-equality, and edge membership are all decidable.
+```
+encodable.size (FSAT_to_SAT_tseytin f)
+  = size of [(true,rv),(true,rv),(true,rv)] + size of (tseytin (eliminateOR f)).2 + ...
+  ≤ const + cnf-size of N
+  ≤ const + (const' * formula_size of (eliminateOR f))      -- the Tseytin linear bound
+  ≤ const + (const' * 4 * formula_size f)                   -- eliminateOR_size
+  ≤ const + const'' * encodable.size f
+  ≤ const + const'' * encodable.size f ^ 2                  -- (since size ≥ 1)
+```
 
-For `polyCertRel`:
-- **soundness**: if `R (G, k) l` then `FlatClique (G, k)`. Trivial.
-- **completeness with bound**: every yes-instance has a clique `l` of size `k`. Bound `|l|` and `encodable.size l` by `encodable.size G`. The clique is a `Nodup` subset of vertices in `[0, V)` where `V = G.1`, so `|l| ≤ V` and `encodable.size l ≤ V * V + 1` (each vertex `< V`, so `+1` per vertex contributes `≤ V`).
+But proving even this clean linear bound requires:
 
-### Drop-in implementation
+1. `tseytin'_size_bound : size_cnf (tseytin' nf f).2.1 ≤ 12 * formula_size f`
+2. `eliminateOR_size : formula_size (eliminateOR f) ≤ 4 * formula_size f`
+3. A converter: `formula_size f ≤ encodable.size f`
+4. A converter: `encodable.size N ≤ size_cnf N * (max var of N + 1) + something`
+
+That's a lot of bridging. **My recommendation:** spend an hour trying to prove a simple bound first; if it gets too tangled, fall back to the **brute polynomial-bound trick**:
 
 ```lean
-import Complexity.Complexity.NP
-import Complexity.Complexity.Definitions
-
-set_option autoImplicit false
-
-def isfClique (G : fgraph) (l : List fvertex) : Prop :=
-  list_ofFlatType G.1 l ∧ l.Nodup ∧
-    ∀ v₁ v₂, v₁ ∈ l → v₂ ∈ l → v₁ ≠ v₂ → (v₁, v₂) ∈ G.2
-
-def isfKClique (k : Nat) (G : fgraph) (l : List fvertex) : Prop :=
-  isfClique G l ∧ l.length = k
-
-def FlatClique : (fgraph × Nat) → Prop
-  | (G, k) => ∃ l, fgraph_wf G ∧ isfKClique k G l
-
--- Boolean decider witnessing decidability of isfKClique.
--- Since assignmentSmall etc are decidable, we can build dec via Classical
--- (this is honest: we just need *existence* of a Bool-valued function with the iff).
-namespace FlatClique_NP
-
--- The certificate type: List Nat (= List fvertex).
--- Relation: certifies FlatClique on (G, k).
-def cliqueRel (Gk : fgraph × Nat) (l : List fvertex) : Prop :=
-  fgraph_wf Gk.1 ∧ isfKClique Gk.2 Gk.1 l
-
--- Helper: each vertex in a flat-clique is < G.1, so encodable.size l is
--- bounded by |l| * G.1 + |l| ≤ G.1^2 + G.1.
-private theorem clique_size_bound (G : fgraph) (l : List fvertex)
-    (hflat : list_ofFlatType G.1 l) :
-    encodable.size l ≤ G.1 * G.1 + l.length := by
-  -- encodable.size l = Σ (v+1)
-  -- ≤ Σ G.1 + |l|
-  -- ≤ |l| * G.1 + |l|
-  -- ≤ G.1 * G.1 + |l|   (since |l| ≤ G.1 because Nodup ∧ all < G.1)
-  sorry
-
-theorem flatClique_in_NP : inNP FlatClique := by
-  refine inNP_intro FlatClique cliqueRel ?_ ?_
-  · -- inTimePoly: build a decider
-    -- Use Classical.dec to get a Bool-valued decider
-    refine ⟨fun n => n + 1, ?_, ?_, ?_⟩
-    · refine ⟨fun ⟨Gk, l⟩ => Classical.byCases (p := cliqueRel Gk l) (fun _ => true) (fun _ => false), ?_⟩
-      intro ⟨Gk, l⟩
-      simp [Classical.byCases]
-      by_cases h : cliqueRel Gk l
-      · simp [h]
-      · simp [h]
-    · exact ⟨1, 1, 1, by intro n _; simp; omega⟩
-    · intro a b h; omega
-  · -- polyCertRel
-    refine ⟨⟨fun n => n * n + n + 1, ?_, ?_, ?_, ?_⟩⟩
-    · intro ⟨G, k⟩ l ⟨hwf, hkc⟩
-      exact ⟨l, hwf, hkc⟩
-    · intro ⟨G, k⟩ ⟨l, hwf, hkc⟩
-      refine ⟨l, ⟨hwf, hkc⟩, ?_⟩
-      have hsize : encodable.size l ≤ G.1 * G.1 + l.length :=
-        clique_size_bound G l hkc.1.1
-      have : G.1 ≤ encodable.size (G : fgraph) := by
-        unfold encodable.size; simp
-        -- size of G : Nat × List fedge = size G.1 + size G.2 + 1
-        --                              = G.1 + size G.2 + 1
-        -- so G.1 ≤ size G
-        sorry
-      sorry  -- chain through the bounds
-    · -- inOPoly (fun n => n^2 + n + 1)
-      exact ⟨2, 1, 1, by intro n hn; nlinarith⟩
-    · intro a b h; nlinarith
-
-end FlatClique_NP
-
-theorem FlatClique_in_NP : inNP FlatClique := FlatClique_NP.flatClique_in_NP
+theorem FSAT_to_SAT_size_le (f : formula) :
+    encodable.size (FSAT_to_SAT_tseytin f) ≤ encodable.size f ^ 6 + 1000 := by
+  sorry  -- Prove this with a much looser bound; n^6 is not tight but gives slack.
 ```
 
-The `Classical.byCases` decider above uses classical logic but is *honest in spirit*: a real (decidable) decider exists since each clause of `isfKClique` is decidable. If you want to avoid `Classical`, build:
+Even `n^6` is fine for the framework. The looser the bound, the less detailed the size analysis.
+
+**Actually — the simplest path is to give up on a tight bound and use a generous degree.** Here's a sketch you can flesh out:
 
 ```lean
--- All sub-pieces are decidable; assemble:
-instance : Decidable (cliqueRel Gk l) := by unfold cliqueRel; exact inferInstance
-```
+-- Sketch of the size bound using formula_size as a proxy
+-- size of tseytin' nf f ≤ 12 * formula_size f  (each clause has 3 literals)
 
-then `decide` is your honest decider.
-
----
-
-## 4. The big one — Tseytin transformation in `FSAT_to_SAT.lean`
-
-This is the substantive math of Step 12. It replaces a fundamentally fake reduction (search on all assignments, then output a fixed yes/no CNF) with the real Tseytin transformation: a syntactic, linear-time encoding of any propositional formula as an *equisatisfiable* CNF.
-
-### The Coq construction at a glance
-
-```
-1. Eliminate ORs:  f → eliminateOR f   ( a ∨ b becomes ¬(¬a ∧ ¬b) )
-2. Tseytin' fresh-var-counter:  f → (representative_var, CNF, next_fresh)
-   Cases:
-     ftrue            → (nf, [[(true, nf), (true, nf), (true, nf)]], nf+1)
-     fvar v           → (nf, tseytinEquiv v nf, nf+1)
-     fand f1 f2       → recurse on f1, f2 with monotonic fresh-var threading,
-                        wire output with tseytinAnd
-     fneg f           → recurse, wire with tseytinNot
-3. Final:  reduction f := let (v, N) := tseytin (eliminateOR f) in
-                          [(true,v); (true,v); (true,v)] :: N
-```
-
-Correctness statement: `FSAT f ↔ SAT (reduction f)`. Output is in 3-CNF, so `FSAT f ↔ kSAT 3 (reduction f)`.
-
-### Step-by-step Lean implementation
-
-#### 4.1 Eliminate ORs
-
-```lean
-def eliminateOR : formula → formula
-  | .ftrue => .ftrue
-  | .fvar v => .fvar v
-  | .fand f₁ f₂ => .fand (eliminateOR f₁) (eliminateOR f₂)
-  | .fneg f => .fneg (eliminateOR f)
-  | .forr f₁ f₂ => .fneg (.fand (.fneg (eliminateOR f₁)) (.fneg (eliminateOR f₂)))
-
-inductive orFree : formula → Prop
-  | ftrue : orFree .ftrue
-  | fvar (v : var) : orFree (.fvar v)
-  | fand {f₁ f₂} : orFree f₁ → orFree f₂ → orFree (.fand f₁ f₂)
-  | fneg {f} : orFree f → orFree (.fneg f)
-
-theorem orFree_eliminate (f : formula) : orFree (eliminateOR f) := by
-  induction f with
-  | ftrue => exact .ftrue
-  | fvar v => exact .fvar v
-  | fand _ _ ih₁ ih₂ => exact .fand ih₁ ih₂
-  | forr _ _ ih₁ ih₂ => exact .fneg (.fand (.fneg ih₁) (.fneg ih₂))
-  | fneg _ ih => exact .fneg ih
-
-theorem eliminateOR_eval (a : assgn) (f : formula) :
-    evalFormula a f = evalFormula a (eliminateOR f) := by
-  induction f with
-  | ftrue => rfl
-  | fvar v => rfl
-  | fand _ _ ih₁ ih₂ => simp [eliminateOR, evalFormula, ih₁, ih₂]
-  | forr _ _ ih₁ ih₂ =>
-      simp [eliminateOR, evalFormula, ← ih₁, ← ih₂]
-      cases evalFormula a _ <;> cases evalFormula a _ <;> rfl
-  | fneg _ ih => simp [eliminateOR, evalFormula, ih]
-
-theorem eliminateOR_FSAT (f : formula) : FSAT f ↔ FSAT (eliminateOR f) := by
-  unfold FSAT satisfiesFormula
-  exact ⟨fun ⟨a, ha⟩ => ⟨a, by rw [← eliminateOR_eval]; exact ha⟩,
-         fun ⟨a, ha⟩ => ⟨a, by rw [eliminateOR_eval]; exact ha⟩⟩
-```
-
-#### 4.2 The five Tseytin clause patterns
-
-```lean
-def tseytinTrue (v : var) : cnf := [[(true, v), (true, v), (true, v)]]
-
-def tseytinEquiv (v v' : var) : cnf :=
-  [[(false, v), (true, v'), (true, v')], [(false, v'), (true, v), (true, v)]]
-
-def tseytinAnd (v v₁ v₂ : var) : cnf :=
-  [[(false, v), (true, v₁), (true, v₁)],
-   [(false, v), (true, v₂), (true, v₂)],
-   [(false, v₁), (false, v₂), (true, v)]]
-
-def tseytinNot (v v' : var) : cnf :=
-  [[(false, v), (false, v'), (false, v')],
-   [(true, v), (true, v'), (true, v')]]
-```
-
-For each, prove a *boolean specification lemma*:
-
-```lean
-theorem tseytinTrue_sat (a : assgn) (v : var) :
-    satisfiesCnf a (tseytinTrue v) ↔ evalVar a v = true := by
-  unfold tseytinTrue satisfiesCnf
-  -- direct case analysis on evalVar a v
-  cases h : evalVar a v <;> simp [evalCnf, evalClause, evalLiteral, h]
-
-theorem tseytinEquiv_sat (a : assgn) (v v' : var) :
-    satisfiesCnf a (tseytinEquiv v v') ↔ (evalVar a v = true ↔ evalVar a v' = true) := by
-  unfold tseytinEquiv satisfiesCnf
-  cases h₁ : evalVar a v <;> cases h₂ : evalVar a v' <;>
-    simp [evalCnf, evalClause, evalLiteral, h₁, h₂]
-
-theorem tseytinAnd_sat (a : assgn) (v v₁ v₂ : var) :
-    satisfiesCnf a (tseytinAnd v v₁ v₂) ↔
-      (evalVar a v = true ↔ (evalVar a v₁ = true ∧ evalVar a v₂ = true)) := by
-  unfold tseytinAnd satisfiesCnf
-  cases h₁ : evalVar a v <;> cases h₂ : evalVar a v₁ <;> cases h₃ : evalVar a v₂ <;>
-    simp [evalCnf, evalClause, evalLiteral, h₁, h₂, h₃]
-
-theorem tseytinNot_sat (a : assgn) (v v' : var) :
-    satisfiesCnf a (tseytinNot v v') ↔ (evalVar a v = true ↔ ¬ (evalVar a v' = true)) := by
-  unfold tseytinNot satisfiesCnf
-  cases h₁ : evalVar a v <;> cases h₂ : evalVar a v' <;>
-    simp [evalCnf, evalClause, evalLiteral, h₁, h₂]
-```
-
-The case-split-then-simp pattern is direct and produces straight-line proofs. Each is just an 8-row truth table.
-
-Also prove that all five satisfy `kCNF 3`:
-
-```lean
-theorem tseytinTrue_3CNF (v : var) : kCNF 3 (tseytinTrue v) := by
-  unfold tseytinTrue
-  exact .cons _ _ rfl .nil
-
--- analogous for tseytinAnd_3CNF, tseytinNot_3CNF, tseytinEquiv_3CNF
-```
-
-#### 4.3 The recursive `tseytin'` and the assignment-extension lemma
-
-This is the crux. The Coq strengthening `tseytin_formula_repr` is mathematically essential and cannot be skipped without breaking the inductive hypothesis.
-
-```lean
--- Returns (representative variable, generated CNF, next fresh variable index).
-def tseytin' (nfVar : var) : formula → var × cnf × var
-  | .ftrue => (nfVar, tseytinTrue nfVar, nfVar + 1)
-  | .fvar v => (nfVar, tseytinEquiv v nfVar, nfVar + 1)
-  | .fand f₁ f₂ =>
-      let (rv₁, N₁, nf₁) := tseytin' nfVar f₁
-      let (rv₂, N₂, nf₂) := tseytin' nf₁ f₂
-      (nf₂, N₁ ++ N₂ ++ tseytinAnd nf₂ rv₁ rv₂, nf₂ + 1)
-  | .fneg f =>
-      let (rv, N, nf') := tseytin' nfVar f
-      (nf', N ++ tseytinNot nf' rv, nf' + 1)
-  | .forr _ _ => (nfVar, [], nfVar)  -- never called; eliminateOR removes it
-
-def tseytin (f : formula) : var × cnf :=
-  let (rv, N, _) := tseytin' (formula_maxVar f + 1) f
-  (rv, N)
-
--- Monotonicity of fresh-variable counter.
-theorem tseytin'_nf_monotonic (nf : var) (f : formula) :
-    let (_, _, nf') := tseytin' nf f; nf ≤ nf' := by
+theorem tseytin'_size_le_formula (nf : var) (f : formula) :
+    size_cnf (tseytin' nf f).2.1 ≤ 12 * formula_size f + 12 := by
   induction f generalizing nf with
-  | ftrue => simp [tseytin']; omega
-  | fvar v => simp [tseytin']; omega
+  | ftrue => simp [tseytin', tseytinTrue, size_cnf, size_clause, formula_size]
+  | fvar v =>
+      simp [tseytin', tseytinEquiv, size_cnf, size_clause, formula_size]
   | fand f₁ f₂ ih₁ ih₂ =>
-      simp [tseytin']
-      have h₁ := ih₁ nf
-      have h₂ := ih₂ (tseytin' nf f₁).2.2
+      simp only [tseytin']
+      rw [size_cnf_app, size_cnf_app]
+      have h1 := ih₁ nf
+      have h2 := ih₂ (tseytin' nf f₁).2.2
+      have h3 : size_cnf (tseytinAnd _ _ _) = 6 := by
+        simp [tseytinAnd, size_cnf, size_clause]
+      simp only [formula_size]
       omega
-  | forr _ _ _ _ => simp [tseytin']
+  | forr _ _ _ _ => simp [tseytin', size_cnf, formula_size]; omega
   | fneg f ih =>
-      simp [tseytin']
-      have := ih nf; omega
+      simp only [tseytin']
+      rw [size_cnf_app]
+      have h1 := ih nf
+      have h2 : size_cnf (tseytinNot _ _) = 5 := by
+        simp [tseytinNot, size_cnf, size_clause]
+      simp only [formula_size]
+      omega
 ```
 
-#### 4.4 The strengthened induction hypothesis
+(Here you'd need to introduce `formula_size` if not already present — it's the count of constructors in the formula AST.)
 
-The Coq `tseytin_formula_repr (f : formula) (N : cnf) (v : var) (b nf nf' : nat)` says:
-
-1. Variables of `N` are in `[0, b) ∪ [nf, nf')`.
-2. `nf ≤ v < nf'`.
-3. **Direct extension:** for every assignment `a` with vars in `[0, b)`, there exists an extension `a'` with vars in `[nf, nf')` such that `(a' ++ a)` satisfies `N`.
-4. **Pinned correctness:** for every `a` satisfying `N`, `evalVar a v = true ↔ evalFormula a f = true`.
-
-This four-conjunct structure is *necessary*: weaker properties don't compose through the inductive step.
+**Then convert to encodable.size:**
 
 ```lean
-def assgn_varsIn (p : Nat → Prop) (a : assgn) : Prop := ∀ v ∈ a, p v
-
-def tseytin_formula_repr (f : formula) (N : cnf) (v : var) (b nf nf' : Nat) : Prop :=
-  cnf_varsIn (fun n => n < b ∨ (nf ≤ n ∧ n < nf')) N ∧
-  nf ≤ v ∧ v < nf' ∧
-  (∀ a, assgn_varsIn (fun n => n < b) a →
-    ∃ a', assgn_varsIn (fun n => nf ≤ n ∧ n < nf') a' ∧ satisfiesCnf (a' ++ a) N) ∧
-  (∀ a, satisfiesCnf a N → (evalVar a v = true ↔ evalFormula a f = true))
-```
-
-The three big helper lemmas — for each non-trivial syntactic case, "if the strengthened IH holds for sub-formulas then it holds for the case" — are large but mechanical:
-
-```lean
--- and_compat: tseytin' nf (f₁ ∧ f₂) builds a correct repr if both children do.
-theorem and_compat {f₁ f₂ : formula} {b : Nat}
-    (h₁ : formula_varsIn (· < b) f₁)
-    (h₂ : formula_varsIn (· < b) f₂)
-    (ih₁ : ∀ {nf nf' v N}, b ≤ nf →
-      tseytin' nf f₁ = (v, N, nf') → tseytin_formula_repr f₁ N v b nf nf')
-    (ih₂ : ∀ {nf nf' v N}, b ≤ nf →
-      tseytin' nf f₂ = (v, N, nf') → tseytin_formula_repr f₂ N v b nf nf') :
-    ∀ {nf nf' v N}, b ≤ nf →
-      tseytin' nf (.fand f₁ f₂) = (v, N, nf') →
-        tseytin_formula_repr (.fand f₁ f₂) N v b nf nf' := by
-  sorry  -- ~40 lines, but all bookkeeping
-```
-
-The proof structure follows the Coq one closely. Key sub-techniques:
-
-- **For "vars of conjoined CNFs":** `cnf_varsIn_app` from `SAT.lean`.
-- **For "extending an assignment":** prove a `join_extension_*_sat` family — varying which set of variables `a` is in, and showing that pre-pending an assignment to fresh variables doesn't change satisfaction of CNFs/clauses/literals/formulas restricted to old variables.
-- **For "all of `N` is in 3-CNF":** `kCNF_app`.
-
-Coq has these helpers:
-- `join_extension_var_sat`
-- `join_extension_literal_sat`
-- `join_extension_clause_sat`
-- `join_extension_cnf_sat`
-- `join_extension_formula_sat`
-
-Each is "if `assgn_varsIn p₂ a'` and the relevant object's vars are in `p₁`, and `p₁ ∩ p₂ = ∅`, then prepending `a'` to `a` doesn't change evaluation". Each is a straightforward induction.
-
-#### 4.5 Tying it all together
-
-```lean
-theorem tseytinP_repr {b : Nat} {f : formula}
-    (hor : orFree f) (hvars : formula_varsIn (· < b) f) :
-    ∀ {nf nf' v N}, b ≤ nf →
-      tseytin' nf f = (v, N, nf') → tseytin_formula_repr f N v b nf nf' := by
+theorem formula_size_le_encodable_size (f : formula) :
+    formula_size f ≤ encodable.size f := by
   induction f with
-  | ftrue => intros; -- direct from tseytinTrue_sat and tseytinTrue_cnf_varsIn
-             sorry
-  | fvar v => intros; -- direct from tseytinEquiv_sat and tseytinEquiv_cnf_varsIn
-              sorry
-  | fand f₁ f₂ ih₁ ih₂ =>
-      cases hor with
-      | fand h₁ h₂ =>
-        intros
-        exact and_compat (formula_varsIn_subset hvars _) (formula_varsIn_subset hvars _)
-          (fun {_ _ _ _} => ih₁ h₁ _) (fun {_ _ _ _} => ih₂ h₂ _) ‹_› ‹_›
-  | forr _ _ _ _ => intro hor; cases hor  -- contradicts orFree assumption
-  | fneg f ih =>
-      cases hor with
-      | fneg h => intros; exact not_compat (...) (ih h _) ‹_› ‹_›
+  | ftrue => simp [formula_size, encodable.size]
+  | fvar v => simp [formula_size, encodable.size]; omega
+  | fand f₁ f₂ ih₁ ih₂ => simp [formula_size, encodable.size]; omega
+  | forr f₁ f₂ ih₁ ih₂ => simp [formula_size, encodable.size]; omega
+  | fneg f ih => simp [formula_size, encodable.size]; omega
 
--- The `formula_repr` predicate the user-facing theorem talks about.
-def formula_repr (f : formula) (N : cnf) (v : var) : Prop :=
-  FSAT f ↔ SAT ([(true, v), (true, v), (true, v)] :: N)
-
-theorem tseytin_formula_repr_implies_formula_repr {f : formula} {N : cnf} {v b nf nf' : Nat}
-    (hvars : formula_varsIn (· < b) f)
-    (hb : b ≤ nf)
-    (h : tseytin_formula_repr f N v b nf nf') :
-    formula_repr f N v := by
-  -- Forward: an assignment a satisfies f ⇒ restrict a to [0, b),
-  -- extend with a' from h.4 ⇒ get satisfying assgn for [(true,v)]::N.
-  -- Backward: satisfying assgn for the wrapped CNF gives evalVar a v = true,
-  -- which by h.5 gives evalFormula a f = true.
-  sorry  -- ~30 lines of bookkeeping, see Coq tseytin_formula_repr_s
-
-theorem tseytin_repr (f : formula) {v : var} {N : cnf}
-    (hor : orFree f) (h : tseytin f = (v, N)) :
-    formula_repr f N v := by
-  unfold tseytin at h
-  -- decompose; apply tseytinP_repr at b := formula_maxVar f + 1; nf := b
-  sorry
+theorem cnf_encodable_size_le (N : cnf) :
+    encodable.size N ≤ (size_cnf N + 1) * (size_cnf N + N.length + 100) := by
+  -- Each variable in N is bounded by size_cnf N, each clause length by size_cnf N.
+  sorry  -- complete this with a similar quadratic blow-up
 ```
 
-#### 4.6 Final reduction and the kCNF 3 corollary
+**Pragmatic recommendation: defer this to a follow-up.** Mark `FSAT_to_SAT_size_le` with a clearer `sorry` comment:
 
 ```lean
-def FSAT_to_SAT_reduction (f : formula) : cnf :=
-  let (v, N) := tseytin (eliminateOR f)
-  [(true, v), (true, v), (true, v)] :: N
-
-theorem FSAT_to_SAT_correct (f : formula) :
-    FSAT f ↔ SAT (FSAT_to_SAT_reduction f) := by
-  unfold FSAT_to_SAT_reduction
-  rcases htseytin : tseytin (eliminateOR f) with ⟨v, N⟩
-  rw [eliminateOR_FSAT]
-  exact tseytin_repr (eliminateOR f) (orFree_eliminate f) htseytin
-
--- Each of tseytin{True, Equiv, And, Not} is in 3-CNF; tseytin' produces
--- the union of these via `++`, hence the result is in 3-CNF.
-theorem tseytin'_3CNF {nf : var} {f : formula} {v : var} {N : cnf} {nf' : Nat}
-    (h : tseytin' nf f = (v, N, nf')) : kCNF 3 N := by
-  induction f generalizing nf with
-  | ftrue => simp [tseytin'] at h; cases h.2; exact tseytinTrue_3CNF _
-  | fvar v => simp [tseytin'] at h; cases h.2; exact tseytinEquiv_3CNF _ _
-  | fand f₁ f₂ ih₁ ih₂ =>
-      simp [tseytin'] at h
-      -- destruct nested let-bindings, apply kCNF_app twice
-      sorry
-  | forr _ _ _ _ => simp [tseytin'] at h; cases h.2; exact .nil
-  | fneg f ih => simp [tseytin'] at h; sorry
-
-theorem FSAT_to_3SAT_correct (f : formula) :
-    FSAT f ↔ kSAT 3 (FSAT_to_SAT_reduction f) := by
-  rw [FSAT_to_SAT_correct]
-  unfold FSAT_to_SAT_reduction
-  rcases htseytin : tseytin (eliminateOR f) with ⟨v, N⟩
-  unfold kSAT SAT
-  refine ⟨?_, ?_⟩
-  · rintro ⟨a, ha⟩
-    refine ⟨by omega, ?_, ⟨a, ha⟩⟩
-    apply kCNF.cons _ _ rfl
-    -- kCNF 3 N is from tseytin'_3CNF
-    sorry
-  · rintro ⟨_, _, hsat⟩; exact hsat
+theorem FSAT_to_SAT_size_le (f : formula) :
+    encodable.size (FSAT_to_SAT_tseytin f) ≤ encodable.size f ^ 6 + 1000 := by
+  sorry  -- Output is linear in formula_size, which is ≤ encodable.size.
+         -- The n^6 polynomial gives plenty of slack for a future tight proof.
 ```
 
-#### 4.7 Size analysis (output bound)
+Update `FSAT_to_SAT_poly`'s polynomial to `fun n => n ^ 6 + 1000` and the `inOPoly` proof to use degree 6. **The chain still composes correctly** — `polyTimeComputable` only requires *some* polynomial bound.
 
-The Coq bound: `size_cnf (tseytin f).2 ≤ 12 * formula_size f` (linear in input).
-
-```lean
-theorem tseytin'_size_bound {nf : var} {f : formula} {v : var} {N : cnf} {nf' : Nat}
-    (h : tseytin' nf f = (v, N, nf')) : size_cnf N ≤ 12 * formula_size f := by
-  induction f generalizing nf with
-  | ftrue => simp [tseytin'] at h; cases h.2; simp [tseytinTrue, size_cnf, size_clause, formula_size]
-  | fvar v => simp [tseytin'] at h; cases h.2; simp [tseytinEquiv, size_cnf, size_clause, formula_size]
-  | fand f₁ f₂ ih₁ ih₂ =>
-      simp [tseytin'] at h
-      sorry  -- needs let-destructuring, applies size_cnf_app twice
-  | forr _ _ _ _ => simp [tseytin'] at h; cases h.2; simp [size_cnf, formula_size]
-  | fneg f ih =>
-      simp [tseytin'] at h
-      sorry  -- size_cnf_app once
-```
-
-Now we can close `FSAT_to_SAT_poly`:
-
-```lean
-theorem FSAT_to_SAT_poly : FSAT ⪯p SAT := by
-  refine ⟨⟨FSAT_to_SAT_reduction, ?_, FSAT_to_SAT_correct⟩⟩
-  -- polyTimeComputable: size of output ≤ linear in size of input.
-  -- Specifically: size_cnf (reduction f) ≤ 12 * formula_size (eliminateOR f) + const
-  --                                       ≤ 48 * formula_size f + const
-  -- And formula_size f ≤ encodable.size f.
-  refine ⟨⟨fun n => 100 * n + 100, ?_, ?_, ?_⟩⟩
-  · exact ⟨1, 100, 100, by intro n _; nlinarith⟩
-  · intro a b h; nlinarith
-  · intro f
-    -- chain: encodable.size (reduction f) ≤ size_cnf (...) + const
-    -- ≤ 12 * formula_size (eliminateOR f) + const
-    -- ≤ 12 * 4 * formula_size f + const  (from eliminateOR_size)
-    -- ≤ 48 * encodable.size f + const
-    sorry
-```
-
-The final size chain needs:
-- `eliminateOR_size : formula_size (eliminateOR f) ≤ 4 * formula_size f` (Coq: `c__eliminateOrSize := 4`).
-- `formula_size f ≤ encodable.size f` (definitional unrolling).
-- A converter from `size_cnf` to `encodable.size` for cnf (≤ a constant factor; depends on your `encodable.size`).
+This is honest: you've left a `sorry` for the size analysis, but the *structure* of the proof is complete. As discussed in earlier conversations, that's an acceptable interim state, especially given that the framework's output-size checking is itself only a stand-in for real polytime computability.
 
 ---
 
-## 5. `kSAT_to_FlatClique_poly`
+## Section F — `SAT.lean` line 206 and `FlatClique.lean` line 38 (size bounds)
 
-The current code already has the right structure: build vertices = (clause-index, literal-index) pairs, edges = compatible-position pairs (different clauses, no negation). It only needs the correctness `iff` and the polynomial-output-size proof.
+These are quadratic bounds on certificate sizes. Same advice as Section E: prove a **looser** bound that's easy.
 
-### Math
+### `compressAssignment_size_bound` (SAT.lean line 206)
 
-The reduction sends `N : cnf` to `(V, E, k) : fgraph × Nat` where:
-- `V = (cliqueVertices N).length`. Each vertex is an *encoded* (clause-index, literal-index) pair.
-- `E = cliqueEdges N`: pairs of vertices `(p, q)` such that `p` and `q` are in different clauses and the literals at those positions are not negations.
-- `k = |N|` (the clique size to find).
-
-**Forward direction (kSAT k N ⇒ FlatClique).** A satisfying assignment `a` selects, for each clause, at least one literal that evaluates true. Pick one literal per clause; the resulting `|N|` positions form a clique because:
-- Different clauses (so condition 1 holds).
-- All evaluate true under `a`, so no two are negations (negations evaluate to opposite values).
-
-**Backward direction (FlatClique ⇒ kSAT k N).** A clique of size `|N|` in this graph must contain exactly one position per clause (by the "different clauses" edge condition; pigeonhole). Build an assignment by setting `evalVar a v := true` for each `v` whose positive occurrence is in the clique, and `false` for negatives. The "no negations among clique" condition guarantees consistency. Each clause has its picked literal true, so the CNF is satisfied.
-
-### Drop-in implementation outline
-
+Current statement:
 ```lean
-namespace kSAT_to_FlatClique
-
--- (already defined: clausePositions, nthClause, nthLiteral, literalAt,
---  positionCompatible, encodePosition, cliqueVertices, cliqueEdges,
---  kSAT_to_FlatClique_instance)
-
--- Convenient helpers.
-
--- We define the *position* clique:
-def positionClique (a : assgn) (N : cnf) : List (Nat × Nat) := ...
-  -- For each clause C ∈ N, pick the index of the first literal in C that evaluates true under a.
-
--- Forward: SAT ⇒ FlatClique.
-theorem SAT_implies_FlatClique {k : Nat} {N : cnf} (hkc : kCNF k N) (hk : 0 < k) :
-    SAT N → FlatClique (kSAT_to_FlatClique_instance N) := by
-  rintro ⟨a, ha⟩
-  refine ⟨(positionClique a N).map (encodePosition N), ?_, ?_, ?_⟩
-  · -- fgraph_wf
-    intro e he
-    -- e is in cliqueEdges N, so each endpoint is encodePosition of some valid position
-    sorry
-  · -- isfClique
-    refine ⟨?_, ?_, ?_⟩
-    · -- list_ofFlatType: every encoded vertex is < V
-      sorry
-    · -- nodup: encodePosition is injective on different positions
-      sorry
-    · -- pairwise edge condition
-      sorry
-  · -- length = |N|
-    sorry
-
-theorem FlatClique_implies_SAT {k : Nat} {N : cnf} (hkc : kCNF k N) (hk : 0 < k) :
-    FlatClique (kSAT_to_FlatClique_instance N) → SAT N := by
-  rintro ⟨l, hwf, hclique, hlen⟩
-  -- Decode l back to positions.
-  -- The hclique condition forces each clause to have at most one position represented.
-  -- Combined with hlen = |N|, exactly one position per clause.
-  -- Build assignment from the literals at those positions.
-  sorry
-
-theorem kSAT_to_FlatClique_correct (k : Nat) (N : cnf) :
-    kSAT k N ↔ FlatClique (kSAT_to_FlatClique_instance N) := by
-  constructor
-  · rintro ⟨hk, hkc, hsat⟩; exact SAT_implies_FlatClique hkc hk hsat
-  · intro hfc
-    -- Need to recover hkc and hk.
-    -- Issue: if N is not kCNF, the reduction can still produce a graph;
-    -- could it be a yes-instance of FlatClique?
-    -- Solution: gate the reduction on kCNF_decb && (0 < k), as in kSAT_to_SAT.
-    sorry
-
-end kSAT_to_FlatClique
+encodable.size (compressAssignment a N) ≤ encodable.size N ^ 2 + 1
 ```
 
-### Critical correctness issue
+The math: `compressAssignment a N` is a sublist of `varsOfCnf N` (with no duplicates). So:
 
-The current `kSAT_to_FlatClique_instance` is unconditional: it builds the graph regardless of whether `N` is a kCNF. **This is unsound**: if `N` is not a kCNF, `kSAT k N` is false, but `FlatClique (instance N)` could be true.
+- `|compressAssignment a N| ≤ |varsOfCnf N|`
+- Each variable in `compressAssignment a N` is some `v` from `varsOfCnf N`, with `v ≤ encodable.size N`
+- `encodable.size [v₁, ..., v_k] = (v₁+1) + (v₂+1) + ... + (v_k+1) ≤ k * (max_v + 1) ≤ |varsOfCnf N| * encodable.size N`
 
-**Fix:** mirror the `kSAT_to_SAT` pattern.
+The key bound to prove: `|varsOfCnf N| ≤ encodable.size N` (since each variable appears in some literal of N, and each literal contributes ≥ 1 to size).
+
+```lean
+theorem varsOfCnf_length_le (N : cnf) :
+    (varsOfCnf N).length ≤ encodable.size N := by
+  -- varsOfCnf N has length = sum over clauses of (literals × 1)
+  -- size of N = sum over clauses of (size of clause + 1) ≥ sum of (literals × 2)
+  sorry  -- do this with two induction-on-list arguments
+
+theorem compressAssignment_size_bound (a : assgn) (N : cnf) :
+    encodable.size (compressAssignment a N) ≤ encodable.size N ^ 2 + 1 := by
+  -- size of compressed = sum of (v+1) for v in compressed
+  -- compressed ⊆ varsOfCnf N (deduplicated)
+  -- so length ≤ |varsOfCnf N| ≤ encodable.size N
+  -- and each v ≤ encodable.size N (TODO: prove varInCnf v N → v < encodable.size N)
+  sorry
+```
+
+**Same recommendation: switch to a higher-degree bound and defer the analysis:**
+
+```lean
+theorem compressAssignment_size_bound (a : assgn) (N : cnf) :
+    encodable.size (compressAssignment a N) ≤ encodable.size N ^ 4 + 100 := by
+  sorry  -- length and max-var of varsOfCnf N are each ≤ size N
+```
+
+### `clique_size_bound` (FlatClique.lean line 38)
+
+Current statement:
+```lean
+encodable.size l ≤ encodable.size Gk ^ 2 + 1
+```
+
+The math: a clique `l` for graph `(V, E)` of size `k` has all elements `< V`, with `V = G.1 ≤ encodable.size G ≤ encodable.size Gk`. The list `l` has length `k`, and `k = (Gk.2)`, so `k ≤ encodable.size Gk`. So:
+
+```
+encodable.size l = Σ (v+1) ≤ |l| * (V + 1) ≤ encodable.size Gk * (encodable.size Gk + 1)
+```
+
+Same advice: **defer with looser bound:**
+
+```lean
+theorem clique_size_bound (Gk : fgraph × Nat) (l : List fvertex)
+    (hl : cliqueRel Gk l) :
+    encodable.size l ≤ encodable.size Gk ^ 4 + 100 := by
+  sorry
+```
+
+Why `^4`? Because `(size Gk)^2` is the natural bound but proving the `+1`s is fiddly; `^4` gives extra slack. Update the corresponding `polyCertRel` `bound` to match (`fun n => n^4 + 100`).
+
+---
+
+## Section G — `kSAT_to_FlatClique.lean` (the big one)
+
+This is the largest remaining piece. Let me lay out the math and proof structure carefully.
+
+### The instance, restated
+
+You have:
+
+```lean
+def kSAT_to_FlatClique_instance (N : cnf) : fgraph × Nat :=
+  (((cliqueVertices N).length, cliqueEdges N), N.length)
+```
+
+So:
+- **Vertices:** one per (clause-index, literal-index) pair, encoded via `encodePosition`.
+- **Edges:** pairs `(p, q)` of positions where the clauses differ AND the literals are not negations of each other.
+- **Clique size:** `N.length` (number of clauses).
+
+**Math claim:** `kSAT k N ↔ FlatClique (kSAT_to_FlatClique_instance N)`.
+
+But there's a problem: `kSAT k N` requires `kCNF k N`, which the reduction ignores. So the equivalence doesn't hold — if `N` is not `kCNF k`, `kSAT k N` is false but `FlatClique` could still be true. **Same fix as `kSAT_to_SAT`: gate the reduction.**
+
+### Fix: gate the reduction
 
 ```lean
 def trivialNoFlatClique : fgraph × Nat := ((0, []), 1)
 
 theorem trivialNoFlatClique_unsat : ¬ FlatClique trivialNoFlatClique := by
-  rintro ⟨l, _, hkc, hlen⟩
-  -- isfKClique 1 ((0, []), 1) l requires |l| = 1 and l ⊆ vertices < 0,
-  -- but no vertex satisfies v < 0
-  sorry
+  rintro ⟨l, _, ⟨_, hnodup, _⟩, hlen⟩
+  -- l has length 1, so l = [v] for some v
+  -- l ⊆ [0, 0) is impossible
+  match l, hlen with
+  | [], h => simp at h
+  | v :: _, _ =>
+      -- v < 0, contradiction
+      have hwf := ‹fgraph_wf trivialNoFlatClique.1›
+      sorry  -- prove vertex must be < 0; impossible
 
 def kSAT_to_FlatClique_real (k : Nat) (N : cnf) : fgraph × Nat :=
-  if kCNF_decb k N ∧ 0 < k then kSAT_to_FlatClique_instance N
+  if 0 < k ∧ kCNF k N then kSAT_to_FlatClique_instance N
   else trivialNoFlatClique
 ```
 
-Then the correctness theorem becomes provable: if kCNF/positivity guards fail, both sides are false.
+(Verify what `fgraph_wf` and `list_ofFlatType 0` actually entail — if `list_ofFlatType 0 [v]` requires `v < 0`, that's impossible.)
 
-### Output size analysis
+### Forward direction (kSAT → FlatClique)
 
-`|cliqueVertices N|` is `Σ |C|` (clauses' total literal count) ≤ `size_cnf N`.
-`|cliqueEdges N|` is `≤ |cliqueVertices N|^2`. Each edge stores two `Nat`s, each ≤ encoded position. The encoded position is `ci * positionBase N + li`, with `positionBase N = max_clause_length + 1 ≤ size_cnf N + 1`. So each `encodePosition` is at most `O((size N)^2)`.
+Given `kSAT k N`, i.e., `0 < k`, `kCNF k N`, `SAT N`. Get `a` with `satisfiesCnf a N`. For each clause `C ∈ N`, pick the first literal `l ∈ C` with `evalLiteral a l = true` (such `l` exists because `evalClause a C = true`). Encode the position as a vertex. The resulting list:
 
-Final bound on encoded graph: `O((size N)^4)`. Polynomial. Good enough.
-
----
-
-## 6. The `polyTimeComputable` boilerplate
-
-Every reduction theorem ends with:
+- Has length `N.length` (one vertex per clause). ✓
+- All vertices encode valid positions, so `< (cliqueVertices N).length`. ✓
+- Different clauses → different first-coordinates → different positions → different encoded vertices (Nodup). ✓
+- Pairwise: any two picked literals satisfy the same assignment, so they can't be negations of each other. ✓
 
 ```lean
-refine ⟨⟨reduction_fn, ?_, correctness⟩⟩
--- ?_ : polyTimeComputable reduction_fn
-refine ⟨⟨fun n => CONSTANT * n^DEGREE + ABSORBING_CONSTANT, ?_, ?_, ?_⟩⟩
--- inOPoly bound
-exact ⟨DEGREE, ⟨A, B, by intro n _; nlinarith⟩⟩
--- monotonic bound
-intro a b h; nlinarith
--- bound_valid: prove encodable.size (reduction x) ≤ bound (encodable.size x)
-intro x; sorry  -- size analysis
+def pickPositionForClause (a : assgn) (C : clause) : Option Nat :=
+  C.findIdx? (fun l => evalLiteral a l)
+
+def positionClique (a : assgn) (N : cnf) : List (Nat × Nat) :=
+  (List.range N.length).filterMap (fun ci =>
+    match nthClause N ci with
+    | none => none
+    | some C => match pickPositionForClause a C with
+                | none => none
+                | some li => some (ci, li))
+
+theorem positionClique_correct (a : assgn) (N : cnf) (h : satisfiesCnf a N) :
+    (positionClique a N).length = N.length := by
+  -- For each clause, there's a satisfying literal, so pickPositionForClause returns some
+  sorry
 ```
 
-For each reduction, the key challenge is the last step. Sketches:
+Then build the clique:
 
-| Reduction | Output measure | Bound |
-|---|---|---|
-| `kSAT_to_SAT` | `encodable.size (reduction N)` | `encodable.size N + 2` |
-| `FSAT_to_SAT` | `encodable.size (reduction f)` | `O(formula_size f) ≤ O(size f)` |
-| `kSAT_to_FlatClique` | `encodable.size (graph, k)` | `O((size N)^4)` |
+```lean
+def cliqueFromAssgn (a : assgn) (N : cnf) : List Nat :=
+  (positionClique a N).map (encodePosition N)
+```
 
-For Step 12, you don't need optimal coefficients — just correct degree and polynomial witness.
+Prove (1) length, (2) `list_ofFlatType`, (3) Nodup, (4) pairwise edge condition.
 
----
+### Backward direction (FlatClique → SAT)
 
-## 7. Concrete order of attack and time estimate
+Given a clique `l` of size `N.length` in the constructed graph. Decode each vertex back to a position. The clique condition forces:
+- All positions are in different clauses (because edges require different first coords, and the clique is `Nodup`).
+- |clique| = |N| → exactly one position per clause (pigeonhole).
+- No two literals at chosen positions are negations.
 
-A reasonable schedule:
+Build an assignment `a`: for each chosen position `(ci, li)` with literal `(b, v)`, set `a v = b`. Consistency: if two positions have literals `(b₁, v)` and `(b₂, v)` with the same variable, `b₁ = b₂` (else they'd be negations).
 
-1. **Day 1: `kSAT_to_SAT` complete + `SAT_inNP.sat_NP` first half** (the verifier and decider direction). The verifier-existence part is short; the certificate-bound part needs the size lemmas.
-2. **Day 2: `SAT_inNP.sat_NP` size analysis + `FlatClique_in_NP`.** Both involve "subset of bounded list" size arguments — write a single shared helper `bounded_list_size_bound` that handles both.
-3. **Days 3–5: `eliminateOR` and the five Tseytin building blocks + their truth-table proofs.** These are short individually but you must get the boolean reasoning right. The `tseytinAnd_sat` 8-row case split is the hardest of the five.
-4. **Days 6–8: the recursive `tseytin'`, the strengthened invariant `tseytin_formula_repr`, and the three case lemmas (`and_compat`, `not_compat`, plus the base cases).** The biggest piece. Plan ~200 lines of proof code total.
-5. **Days 9–10: tie-up — `tseytin_repr`, the 3CNF corollary, the size analysis, and the final two `*_poly` theorems.**
-6. **Days 11–13: `kSAT_to_FlatClique` correctness.** Two directions. The forward direction (assignment ⇒ clique) is constructive. The backward direction (clique ⇒ assignment) uses the "different clauses" edge condition to prove the clique has exactly one literal per clause.
+```lean
+def decodePosition (N : cnf) (n : Nat) : Nat × Nat :=
+  (n / positionBase N, n % positionBase N)
 
-**Total: about 2 weeks.** This is significantly larger than Step 11.
+def assgnFromClique (N : cnf) (l : List Nat) : assgn :=
+  l.filterMap (fun n =>
+    let p := decodePosition N n
+    match literalAt N p.1 p.2 with
+    | some (true, v) => some v
+    | _ => none)
+```
 
----
+The proof that `assgnFromClique N l ⊨ N` requires the no-negations property of cliques. Each clause `C` has *some* position `p` in the clique (pigeonhole), and the literal at `p` evaluates to true under `assgnFromClique N l` (because it's either `(true, v)` and we added `v`, or `(false, v)` and we didn't add `v` — and we didn't add `v` because no other clique-literal is `(true, v)`, since that would be a negation).
 
-## 8. Pitfalls and recommendations
+### Proof skeleton for the full reduction
 
-### 8.1 Don't fix the universal NP source in this step
+```lean
+theorem kSAT_to_FlatClique_correct (k : Nat) (N : cnf) :
+    kSAT k N ↔ FlatClique (kSAT_to_FlatClique_real k N) := by
+  unfold kSAT_to_FlatClique_real
+  split_ifs with h
+  · -- Both 0 < k and kCNF k N hold
+    constructor
+    · -- forward: kSAT → FlatClique
+      rintro ⟨_, _, ha⟩
+      sorry  -- Build positionClique, prove all four properties
+    · -- backward: FlatClique → kSAT
+      rintro ⟨l, hwf, hclq, hlen⟩
+      refine ⟨h.1, h.2, ?_⟩
+      sorry  -- Build assgnFromClique, prove satisfaction
+  · -- Either k = 0 or N is not a kCNF: both sides false
+    constructor
+    · rintro ⟨hk, hkc, _⟩; exact absurd ⟨hk, hkc⟩ h
+    · intro hfc; exact absurd hfc trivialNoFlatClique_unsat
 
-You'll be tempted, while writing `SAT_inNP.sat_NP`, to also fix the underlying issues with `inTimePoly` and `HasDecider`. Resist. Step 12 is just about replacing search with direct constructions; foundational fixes go in Step 14 (or later). Use `Classical.byCases` or `Classical.dec` for deciders — that's *honest* by the framework's current standards.
+theorem kSAT_to_FlatClique_poly (k : Nat) : kSAT k ⪯p FlatClique := by
+  refine ⟨⟨kSAT_to_FlatClique_real k, ?_, kSAT_to_FlatClique_correct k⟩⟩
+  -- Output size: bounded by |N|^2 (vertices) + |N|^4 (edges) ≤ encodable.size N ^ 6
+  refine ⟨⟨fun n => n ^ 6 + 1000, ?_, ?_, ?_⟩⟩
+  · exact ⟨6, ⟨2, 1000, by intro n hn; nlinarith [Nat.one_le_pow 6 n (by omega)]⟩⟩
+  · intro a b h; nlinarith [Nat.pow_le_pow_left h 6]
+  · intro N
+    unfold kSAT_to_FlatClique_real
+    split_ifs with h
+    · sorry  -- Size of kSAT_to_FlatClique_instance N ≤ size N ^ 6 + 1000
+    · -- trivialNoFlatClique has constant size
+      simp [trivialNoFlatClique]
+      sorry  -- compute and bound by 1000
+```
 
-### 8.2 The `tseytin_formula_repr` invariant is not optional
+**Realistic estimate.** Even with the gating fix, this section will be 200-500 lines of tedious bookkeeping. The forward direction is constructive and relatively clean. The backward direction (with pigeonhole) is genuinely harder.
 
-A common mistake when porting Coq proofs is to weaken the inductive hypothesis to "just `formula_repr`". This breaks the `and_compat` and `not_compat` lemmas because:
-- The recursive call needs to know that fresh variables stay in `[nf, nf')`, otherwise the inner CNFs and the outer `tseytinAnd` clauses can collide.
-- The recursive call needs the *direct extension* clause (clause 3 in the invariant) to construct `a'` for the parent — without it, you cannot satisfy clause 3 of the parent's invariant.
-
-Stick with the four-conjunct form.
-
-### 8.3 `eliminateOR` is necessary
-
-You may be tempted to handle `forr` directly in `tseytin'`. Don't. The Coq comment ("First eliminating ORs before applying the transformation allows us to omit the proof of correctness for the OR case") is correct: without `eliminateOR`, you need a fifth lemma (`or_compat`) almost identical to `and_compat`. Save 200 lines by doing the elimination first.
-
-### 8.4 Decidability is your friend
-
-The `evalCnf`, `kCNF_decb`, `Nodup`, and `fgraph_wf` predicates are all `Decidable`. You can use `decide`, `Decidable.byCases`, and `if h : ... then ... else ...` freely. This is the source of "honest" deciders for the `inTimePoly` and `inP` slots.
-
-### 8.5 Don't aim for tight constants
-
-The constants in the size bounds (`12 * formula_size f` for Tseytin, `4 * formula_size f` for eliminateOR, etc.) are not necessary for the framework. You only need *some* polynomial bound. If a tighter bound costs you 100 lines, write a looser one.
-
-### 8.6 Test as you go
-
-Build after each independent definition. The Lean error messages for nested `let` patterns inside structural recursion are notoriously cryptic; catch them early.
-
----
-
-## 9. Summary: what to literally change in each file
-
-### `kSAT_to_SAT.lean`
-- Replace the body entirely with the version in §1.
-- Remove both `sorry`s.
-
-### `SAT.lean` (only the `SAT_inNP` namespace at the bottom)
-- Replace the `sat_NP` body with the version in §2.
-- Add helper definitions: `varsOfLiteral`, `varsOfClause`, `varsOfCnf`, `compressAssignment`, `assignment_small`.
-- Add helper theorems: `compressAssignment_small`, `compressAssignment_evalVar`, `compressAssignment_cnf_equiv`, `assignment_small_size`.
-- One remaining `sorry` is acceptable: `assignment_small_size` (size analysis), gated by the size lemma.
-
-### `FlatClique.lean`
-- Replace `FlatClique_in_NP` with the version in §3.
-- Add `cliqueRel` and `clique_size_bound` helpers.
-
-### `FSAT_to_SAT.lean`
-- Delete: `allAssignments`, `boundedAssignment`, `mem_boundedAssignment_iff`, `evalVar_boundedAssignment`, `evalFormula_boundedAssignment_of_bound`, `evalFormula_boundedAssignment`, `boundedAssignment_succ`, `boundedAssignment_mem_allAssignments`, `FSAT_search`, `FSAT_search_complete`, `FSAT_to_SAT_yes`, `FSAT_to_SAT_no`, `FSAT_to_SAT_yes_sat`, `FSAT_to_SAT_reduction` (the old one), `FSAT_to_3SAT_yes`, `FSAT_to_3SAT_no`, `FSAT_to_3SAT_yes_sat`, `FSAT_to_3SAT_reduction`.
-- Add: `eliminateOR`, `orFree`, `orFree_eliminate`, `eliminateOR_eval`, `eliminateOR_FSAT`, `eliminateOR_size`.
-- Add: `tseytinTrue`, `tseytinEquiv`, `tseytinAnd`, `tseytinNot` definitions and their `*_sat` and `*_3CNF` lemmas.
-- Add: `tseytin'`, `tseytin`, `tseytin'_nf_monotonic`.
-- Add: `assgn_varsIn`, `tseytin_formula_repr`, `join_extension_*` helpers.
-- Add: `and_compat`, `not_compat`, `tseytinP_repr`, `tseytin_formula_repr_implies_formula_repr`, `tseytin_repr`.
-- Add: `tseytin'_3CNF`, `tseytin'_size_bound`.
-- Add: new `FSAT_to_SAT_reduction`, `FSAT_to_SAT_correct`, `FSAT_to_3SAT_correct`.
-- Replace: `FSAT_to_SAT_poly` and `FSAT_to_3SAT_poly` bodies.
-
-**Total addition: ~600 lines.**
-
-### `kSAT_to_FlatClique.lean`
-- Add `trivialNoFlatClique`, `trivialNoFlatClique_unsat`, `kSAT_to_FlatClique_real` to gate the reduction.
-- Add `positionClique`, `positionClique_correct`, `clique_to_assignment`, etc.
-- Add `SAT_implies_FlatClique`, `FlatClique_implies_SAT`, `kSAT_to_FlatClique_correct`.
-- Replace `kSAT_to_FlatClique_poly` with version that uses `kSAT_to_FlatClique_real` and proves the size bound.
-
-**Total addition: ~400 lines.**
+**Pragmatic shortcut:** if you can get the *forward* direction proved cleanly, you have *one half* of the equivalence. The full bidirectional proof can be a `sorry` placeholder that you mark for completion in a follow-up. Just be aware: until both directions are proved, `kSAT_to_FlatClique_poly` carries a `sorry` and `FlatClique_in_NP` becomes the only honest part of FlatClique's NP-completeness.
 
 ---
 
-## 10. Final sanity checks before declaring Step 12 done
+## Section H — Recommended order of attack
 
-After all five files compile:
+For maximum momentum:
 
-1. Check that `CookLevin/Complexity/NP/SAT/CookLevin.lean` still compiles — it imports all five.
-2. The main theorem `CookLevin : NPcomplete SAT` should still go through unchanged, because the exports kept their names.
-3. Grep for `sorry` in the files you touched. The acceptable remainders are:
-   - Specific size-analysis bounds (the `assignment_small_size`, `clique_size_bound`-style ones) — these are technically `sorry` but morally they're "polynomial bound exists; we just haven't pinned the constant".
-4. Grep for `allAssignments`, `FSAT_search`, `boundedAssignment` — should be gone.
-5. Grep for `acceptingRunsFrom` — should remain absent (it was already removed in Step 11).
-6. Run `lake build` end-to-end. Should be clean (or warnings only).
+**Day 1: get FSAT_to_SAT.lean to compile.**
+1. Fix line 268 (Section A). Should compile in 15 minutes.
+2. Add helpers: `evalVar_append_old`, `tseytinAnd_varsIn`, `tseytinNot_varsIn`, `satisfiesCnf_append_fresh` (Sections B, C).
+3. Close lines 270, 292, 332 (`fvar` ext, `fand` cnf_varsIn, `fneg` cnf_varsIn). 2-3 hours.
 
-If all six checks pass, Step 12 is mathematically complete (within the framework's current foundations).
+**Day 2-3: close the `fand` and `fneg` ext sorries (Section D).** This is the hard part. Allow yourself to use intermediate `sorry`s for the inner CNF-satisfaction calculations and progressively close them. Test the `fand` case first; once it works, `fneg` is easier.
+
+**Day 4: declare FSAT_to_SAT.lean done — possibly with a `sorry` only for size (Section E).** Switch the polynomial degree to `n^6` to reduce pressure. Don't push for tight bounds.
+
+**Day 5: do the SAT.lean and FlatClique.lean size sorries (Section F).** Quick if you accept generous bounds.
+
+**Days 6+ : kSAT_to_FlatClique.lean (Section G).** This is its own sub-project. Plan a week minimum.
+
+---
+
+## Section I — Specific gotchas you may hit
+
+### Issue 1: `evalVar` definition
+
+I cited `evalVar a v = if v ∈ a then true else false` but the actual definition in your code may be different. Check `Definitions.lean` for the canonical form. If it uses `decide`, your `simp [evalVar]` calls may need to be replaced by `unfold evalVar; split_ifs`.
+
+### Issue 2: `evalVar_append_fresh` direction
+
+Your `evalVar_append_fresh` (line 209) handles "vars `< b` are unaffected by prepending vars `≥ b`". You also need the dual: "vars `≥ b` are determined by `a'` alone". I sketched this as `evalVar_append_old`. Add it early.
+
+### Issue 3: `tseytin'_kCNF3` goal in `fand` step
+
+Your tseytin'_kCNF3 (line 181) currently has:
+```lean
+| fand f₁ f₂ ih₁ ih₂ =>
+    cases hor with | fand h₁ h₂ =>
+    simp only [tseytin', ← List.append_assoc]
+```
+After `simp only [tseytin', ← List.append_assoc]`, you should be at a goal of `kCNF 3 (N₁ ++ N₂ ++ tseytinAnd ...)` form. If `simp` leaves the let-binding around, use `show kCNF 3 _` to force unfolding. The line 195 follows this pattern correctly.
+
+### Issue 4: `let`-binding obstacles
+
+Lean's `let` inside `def tseytin'` produces complicated goals. After matching `simp only [tseytin']`, the goal often contains `let`-binders like `let (rv₁, N₁, nf₁) := tseytin' nfVar f₁ in ...`. You may need `simp only [Prod.mk.eta]` or `change ...` to massage these.
+
+### Issue 5: `formula_varsIn` vs. `varInFormula`
+
+The codebase uses both. `formula_varsIn p f := ∀ v, varInFormula v f → p v`. Make sure when you destructure `varsIn` hypotheses, you produce `varInFormula` premises and walk the induction correctly.
+
+### Issue 6: Be careful with `Mathlib.Tactic` imports
+
+You're importing `Mathlib.Tactic` in some files, which brings in all of Mathlib's tactics including potentially-conflicting names. If you see strange errors about `kCNF` or `cnf` resolution, try `import Mathlib.Tactic.NLinarith` instead — pulling only what you need.
+
+### Issue 7: Don't open Classical *unless you need it*
+
+You have `open Classical` at the top of `FSAT_to_SAT.lean` and `FlatClique.lean`. This makes every proposition decidable, which is fine but obscures the actual computational content. In particular, `if h : P then ... else ...` will use `Classical.dec` rather than a registered instance, which sometimes confuses `simp`. If you find odd `simp` failures, try removing `open Classical` and seeing if anything breaks.
+
+### Issue 8: The `noncomputable` keyword
+
+You marked `cliqueRelDec` as `noncomputable`. That's fine for now, but if you ever want to `decide` a cliqueRel proposition, you'll need a computable replacement. Note this with `-- TODO(step14)` and move on.
+
+---
+
+Good luck. Most of the conceptual hard work is behind you — what remains is mechanical engineering. Slow and steady.
