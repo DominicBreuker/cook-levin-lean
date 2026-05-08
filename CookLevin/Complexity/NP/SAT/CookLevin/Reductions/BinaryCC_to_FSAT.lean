@@ -1009,6 +1009,7 @@ theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
   · -- Polynomial-time computability witness
     refine ⟨⟨fun n => 500 * n ^ 6 + 500, ?_, ?_, ?_⟩⟩
     · -- inOPoly: 500 * n^6 + 500 ≤ 1000 * n^6 for n ≥ 1
+      -- degree 6: n^4 (formula_size) * n^2 (maxVar); constant 1000 because 1000 * 1^6 = 1000 ≥ 1000 = 500 + 500
       refine ⟨6, ⟨1000, 1, ?_⟩⟩
       intro n hn
       have hn6 : 1 ≤ n ^ 6 := Nat.one_le_pow 6 n (by omega)
