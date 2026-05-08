@@ -241,9 +241,12 @@ theorem tseytinP_repr {b : Nat} (f : formula)
       refine ⟨?_, le_refl _, Nat.lt_succ_self _, ?_, ?_⟩
       · -- cnf_varsIn
         intro v hv
-        simp [tseytinTrue, varInCnf, varInClause, varInLiteral] at hv
-        obtain ⟨b', hv'⟩ := hv; subst hv'
-        right; omega
+        unfold varInCnf varInClause varInLiteral at hv
+        obtain ⟨C, hC, l, hl, b', hlv⟩ := hv
+        simp only [tseytinTrue, List.mem_singleton] at hC; subst hC
+        simp only [List.mem_cons, List.mem_singleton, List.mem_nil_iff, or_false] at hl
+        rcases hl with rfl | rfl | rfl <;>
+          (simp only [Prod.mk.injEq] at hlv; obtain ⟨-, rfl⟩ := hlv; right; omega)
       · -- ext
         intro a _
         exact ⟨[nf], fun v hv => by simp at hv; subst hv; omega,
