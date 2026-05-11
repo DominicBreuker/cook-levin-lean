@@ -213,9 +213,9 @@ theorem evalVar_append_fresh (a' a : assgn) (v b : Nat)
   have hva' : v ∉ a' := fun hmem => absurd (ha' v hmem) (by omega)
   simp [hva']
 
--- If v ∉ prefix, prepending prefix doesn't change evalVar
-private theorem evalVar_prepend_notmem (prefix base : assgn) (v : Nat) (h : v ∉ prefix) :
-    evalVar (prefix ++ base) v = evalVar base v := by
+-- If v ∉ pfx, prepending pfx doesn't change evalVar
+private theorem evalVar_prepend_notmem (pfx base : assgn) (v : Nat) (h : v ∉ pfx) :
+    evalVar (pfx ++ base) v = evalVar base v := by
   simp [evalVar, List.mem_append, h]
 
 -- Inserting a middle assignment (disjoint from outer) doesn't change evalVar
@@ -226,10 +226,10 @@ private theorem evalVar_insert_notmem (outer middle inner : assgn) (v : Nat)
   by_cases hout : v ∈ outer <;> simp [hout, h]
 
 -- Prepending a disjoint assignment (no shared vars with N) preserves satisfiability
-private theorem satisfiesCnf_prepend_notmem (prefix base : assgn) (N : cnf)
-    (hdisjoint : ∀ v, varInCnf v N → v ∉ prefix)
+private theorem satisfiesCnf_prepend_notmem (pfx base : assgn) (N : cnf)
+    (hdisjoint : ∀ v, varInCnf v N → v ∉ pfx)
     (hsat : satisfiesCnf base N) :
-    satisfiesCnf (prefix ++ base) N := by
+    satisfiesCnf (pfx ++ base) N := by
   rw [satisfiesCnf, evalCnf_clause_iff]
   intro C hC
   rw [evalClause_literal_iff]
@@ -238,7 +238,7 @@ private theorem satisfiesCnf_prepend_notmem (prefix base : assgn) (N : cnf)
   rcases l with ⟨s, v⟩
   exact ⟨(s, v), hl, by
     simp only [evalLiteral] at *
-    rw [evalVar_prepend_notmem prefix base v
+    rw [evalVar_prepend_notmem pfx base v
       (hdisjoint v ⟨C, hC, (s, v), hl, s, rfl⟩)]
     exact heval⟩
 
@@ -276,6 +276,11 @@ theorem evalFormula_append_fresh (a' a : assgn) (b : Nat) (f : formula)
                          ih₂ (fun v hv => hf v (varInFormula.orRight _ _ hv))]
   | fneg f ih =>
       simp [evalFormula, ih (fun v hv => hf v (varInFormula.neg _ hv))]
+
+-- Splitting satisfiesCnf over append
+private theorem satisfiesCnf_app (a : assgn) (N₁ N₂ : cnf) :
+    satisfiesCnf a (N₁ ++ N₂) ↔ satisfiesCnf a N₁ ∧ satisfiesCnf a N₂ := by
+  simp [satisfiesCnf, evalCnf_app_iff]
 
 theorem tseytinP_repr {b : Nat} (f : formula)
     (hor : orFree f) (hvars : formula_varsIn (fun n => n < b) f)
@@ -332,7 +337,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
               simp [evalVar, List.mem_append, List.mem_singleton]
             have h_v₀ : evalVar ([nf] ++ a) v₀ = evalVar a v₀ :=
               evalVar_append_fresh [nf] a v₀ nf
-                (fun v hv => by simp only [List.mem_singleton] at hv; subst hv)
+                (fun v hv => by simp only [List.mem_singleton] at hv; subst hv; exact le_refl _)
                 (hv_lt.trans_le hnf)
             simp [h_v₀, h_nf, hv₀]
         · refine ⟨[], ?_, ?_⟩
@@ -342,7 +347,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
             have h_nf : evalVar a nf = false := by
               simp only [evalVar, decide_eq_false_iff_not]
               intro hmem; exact absurd (ha nf hmem) (by omega)
-            simp [Bool.not_eq_true.mp hv₀, h_nf]
+            simp [Bool.of_not_eq_true hv₀, h_nf]
       · -- spec
         intro a ha
         have := (tseytinEquiv_sat a v₀ nf).mp ha
@@ -365,35 +370,39 @@ theorem tseytinP_repr {b : Nat} (f : formula)
       simp only [tseytin', ← List.append_assoc, tseytin_formula_repr]
       refine ⟨?_, ?_, ?_, ?_, ?_⟩
       · -- cnf_varsIn: N₁ ++ N₂ ++ tseytinAnd, all vars in [0,b) ∪ [nf, nf₂+1)
-        rw [cnf_varsIn_app, cnf_varsIn_app]
-        refine ⟨?_, ?_, ?_⟩
-        · exact cnf_varsIn_monotonic _ _ _
-            (fun v hv => hv.imp_right (fun ⟨h1, h2⟩ => ⟨h1, by linarith⟩)) hcnf₁
-        · exact cnf_varsIn_monotonic _ _ _
-            (fun v hv => hv.imp_right (fun ⟨h1, h2⟩ => ⟨by linarith, by linarith⟩)) hcnf₂
-        · -- tseytinAnd vars: rv₁, rv₂, nf₂ – all in [nf, nf₂+1)
-          intro u hu
-          obtain ⟨C, hC, l, hl, s, heq⟩ := hu
-          simp only [tseytinAnd, List.mem_cons, List.mem_singleton,
-                     List.mem_nil_iff, or_false] at hC
-          rcases hC with rfl | rfl | rfl <;>
-            (simp only [List.mem_cons, List.mem_singleton,
-                        List.mem_nil_iff, or_false] at hl
-             rcases hl with rfl | rfl | rfl <;>
-               (simp only [Prod.mk.injEq] at heq
-                obtain ⟨-, rfl⟩ := heq)) <;>
-            exact Or.inr ?_
-          · exact ⟨by linarith, Nat.lt_succ_self _⟩
-          · exact ⟨hrv₁_lo, by linarith⟩
-          · exact ⟨hrv₁_lo, by linarith⟩
-          · exact ⟨by linarith, by linarith⟩
-          · exact ⟨by linarith, by linarith⟩
-          · exact ⟨by linarith, Nat.lt_succ_self _⟩
-          · exact ⟨hrv₁_lo, by linarith⟩
-          · exact ⟨hrv₁_lo, by linarith⟩
-          · exact ⟨by linarith, by linarith⟩
+        -- Use explicit intro/rcases to avoid cnf_varsIn_app typeclass issues
+        intro u ⟨C, hC, hVar⟩
+        rcases List.mem_append.mp hC with hC1 | hC2
+        · -- C ∈ N₁
+          rcases hcnf₁ u ⟨C, hC1, hVar⟩ with h | ⟨h1, h2⟩
+          · exact Or.inl h
+          · exact Or.inr ⟨h1, by linarith [mono₂]⟩
+        · rcases List.mem_append.mp hC2 with hC2a | hC3
+          · -- C ∈ N₂
+            rcases hcnf₂ u ⟨C, hC2a, hVar⟩ with h | ⟨h1, h2⟩
+            · exact Or.inl h
+            · exact Or.inr ⟨by linarith [mono₁], by omega⟩
+          · -- C ∈ tseytinAnd nf₂ rv₁ rv₂
+            simp only [tseytinAnd, List.mem_cons, List.mem_singleton,
+                       List.mem_nil_iff, or_false] at hC3
+            obtain ⟨l, hl, s, heq⟩ := hVar
+            rcases hC3 with rfl | rfl | rfl <;>
+              (simp only [List.mem_cons, List.mem_singleton,
+                          List.mem_nil_iff, or_false] at hl
+               rcases hl with rfl | rfl | rfl <;>
+                 (simp only [Prod.mk.injEq] at heq; obtain ⟨-, rfl⟩ := heq)) <;>
+              exact Or.inr ?_
+            · exact ⟨by linarith [mono₁, mono₂], Nat.lt_succ_self _⟩
+            · exact ⟨hrv₁_lo, by linarith [mono₂]⟩
+            · exact ⟨hrv₁_lo, by linarith [mono₂]⟩
+            · exact ⟨by linarith [mono₁], by omega⟩
+            · exact ⟨by linarith [mono₁, hrv₂_lo], by omega⟩
+            · exact ⟨by linarith [mono₁, mono₂], Nat.lt_succ_self _⟩
+            · exact ⟨hrv₁_lo, by linarith [mono₂]⟩
+            · exact ⟨hrv₁_lo, by linarith [mono₂]⟩
+            · exact ⟨by linarith [mono₁, hrv₂_lo], by omega⟩
       · -- nf ≤ nf₂
-        linarith
+        linarith [mono₁, mono₂]
       · -- nf₂ < nf₂ + 1
         exact Nat.lt_succ_self _
       · -- ext: combine extensions from both subformulas
@@ -415,24 +424,22 @@ theorem tseytinP_repr {b : Nat} (f : formula)
             simp only [nf₂_piece] at hv
             split_ifs at hv with h
             · simp only [List.mem_singleton] at hv; subst hv
-              exact ⟨by linarith, Nat.lt_succ_self _⟩
+              exact ⟨by linarith [mono₁, mono₂], Nat.lt_succ_self _⟩
             · simp at hv
           · -- v ∈ a₂'
             obtain ⟨h1, h2⟩ := ha₂'_vars v hv
-            exact ⟨by linarith, by omega⟩
+            exact ⟨by linarith [mono₁, h1], by omega⟩
           · -- v ∈ a₁'
             obtain ⟨h1, h2⟩ := ha₁'_vars v hv
-            exact ⟨h1, by linarith⟩
-        · -- satisfiesCnf (ext ++ a) CNF
+            exact ⟨h1, by linarith [mono₂]⟩
+        · -- satisfiesCnf (ext ++ a) CNF: use satisfiesCnf_app to split
           rw [show (nf₂_piece ++ a₂' ++ a₁') ++ a =
                    nf₂_piece ++ (a₂' ++ (a₁' ++ a)) from by simp [List.append_assoc]]
-          rw [satisfiesCnf, evalCnf_app_iff, evalCnf_app_iff]
-          refine ⟨⟨?_, ?_⟩, ?_⟩
+          refine (satisfiesCnf_app _ _ _).mpr ⟨?_, (satisfiesCnf_app _ _ _).mpr ⟨?_, ?_⟩⟩
           · -- N₁ satisfied: nf₂_piece ++ a₂' is disjoint from N₁
             apply satisfiesCnf_prepend_notmem (nf₂_piece ++ a₂') (a₁' ++ a)
             · intro v hv
-              simp only [List.mem_append]
-              push_neg
+              simp only [List.mem_append, not_or]
               refine ⟨?_, ?_⟩
               · -- v ∉ nf₂_piece
                 simp only [nf₂_piece]; split_ifs with h
@@ -446,7 +453,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
                 · exact absurd (ha₂'_vars v hmem).1 (by omega)
                 · exact absurd (ha₂'_vars v hmem).1 (by omega)
             · exact ha₁'_sat
-          · -- N₂ satisfied: first insert a₁' (disjoint from N₂), then prepend nf₂_piece
+          · -- N₂ satisfied: insert a₁' (disjoint from N₂), then prepend nf₂_piece
             apply satisfiesCnf_prepend_notmem nf₂_piece
             · intro v hv
               simp only [nf₂_piece]; split_ifs with h
@@ -455,8 +462,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
                 rcases hcnf₂ v hv with h | ⟨h1, h2⟩ <;> omega
               · simp
             · apply satisfiesCnf_insert_notmem a₂' a₁' a
-              · intro v hv
-                intro hmem
+              · intro v hv hmem
                 rcases hcnf₂ v hv with h | ⟨h1, h2⟩
                 · exact absurd (ha₁'_vars v hmem).1 (by omega)
                 · exact absurd (ha₁'_vars v hmem).2 (by omega)
@@ -489,7 +495,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
                 rw [this, hboth]
                 simp [evalVar, List.mem_append, List.mem_singleton]
               · have : nf₂_piece = [] := if_neg hboth
-                rw [this, Bool.not_eq_true.mp hboth]
+                rw [this, Bool.of_not_eq_true hboth]
                 simp only [List.nil_append]
                 simp only [evalVar, decide_eq_false_iff_not, List.mem_append]
                 push_neg
@@ -500,14 +506,8 @@ theorem tseytinP_repr {b : Nat} (f : formula)
             simp [Bool.and_eq_true]
       · -- spec
         intro a ha
-        rw [satisfiesCnf, evalCnf_app_iff, evalCnf_app_iff] at ha
-        obtain ⟨⟨haN₁_raw, haN₂_raw⟩, haAnd_raw⟩ := ha
-        have haN₁ : satisfiesCnf a (tseytin' nf f₁).2.1 := haN₁_raw
-        have haN₂ : satisfiesCnf a (tseytin' (tseytin' nf f₁).2.2 f₂).2.1 := haN₂_raw
-        have haAnd : satisfiesCnf a (tseytinAnd
-            (tseytin' (tseytin' nf f₁).2.2 f₂).2.2
-            (tseytin' nf f₁).1
-            (tseytin' (tseytin' nf f₁).2.2 f₂).1) := haAnd_raw
+        rw [satisfiesCnf_app, satisfiesCnf_app] at ha
+        obtain ⟨haN₁, haN₂, haAnd⟩ := ha
         have hAnd := (tseytinAnd_sat a _ _ _).mp haAnd
         constructor
         · intro h
@@ -564,8 +564,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
         · -- rv is true, NOT-node is false: keep a', don't add nf'
           refine ⟨a', ?_, ?_⟩
           · exact fun v hv => ⟨(ha'_vars v hv).1, by linarith [(ha'_vars v hv).2]⟩
-          · rw [satisfiesCnf, evalCnf_app_iff]
-            refine ⟨ha'_sat, ?_⟩
+          · refine (satisfiesCnf_app _ _ _).mpr ⟨ha'_sat, ?_⟩
             rw [tseytinNot_sat]
             have h_nf' : evalVar (a' ++ a) nf' = false := by
               simp only [evalVar, decide_eq_false_iff_not, List.mem_append]
@@ -581,8 +580,7 @@ theorem tseytinP_repr {b : Nat} (f : formula)
             · exact ⟨mono, Nat.lt_succ_self _⟩
             · exact ⟨(ha'_vars v hv).1, by linarith [(ha'_vars v hv).2]⟩
           · rw [show ([nf'] ++ a') ++ a = [nf'] ++ (a' ++ a) from by simp [List.append_assoc]]
-            rw [satisfiesCnf, evalCnf_app_iff]
-            refine ⟨?_, ?_⟩
+            refine (satisfiesCnf_app _ _ _).mpr ⟨?_, ?_⟩
             · -- N satisfied: prepend [nf'] is disjoint from N
               apply satisfiesCnf_prepend_notmem [nf'] (a' ++ a)
               · intro v hv
@@ -597,14 +595,11 @@ theorem tseytinP_repr {b : Nat} (f : formula)
               have h_rv : evalVar ([nf'] ++ (a' ++ a)) (tseytin' nf f).1 = rv_val := by
                 rw [evalVar_prepend_notmem [nf'] (a' ++ a) _ (by
                   simp only [List.mem_singleton]; intro heq; omega)]
-              rw [h_nf', h_rv, Bool.not_eq_true.mp hrv]; simp
+              rw [h_nf', h_rv, Bool.of_not_eq_true hrv]; simp
       · -- spec
         intro a ha
-        rw [satisfiesCnf, evalCnf_app_iff] at ha
-        obtain ⟨haN_raw, haNot_raw⟩ := ha
-        have haN : satisfiesCnf a (tseytin' nf f).2.1 := haN_raw
-        have haNot : satisfiesCnf a (tseytinNot (tseytin' nf f).2.2 (tseytin' nf f).1) :=
-          haNot_raw
+        rw [satisfiesCnf_app] at ha
+        obtain ⟨haN, haNot⟩ := ha
         have hNot := (tseytinNot_sat a _ _).mp haNot
         constructor
         · intro h
@@ -616,7 +611,8 @@ theorem tseytinP_repr {b : Nat} (f : formula)
           simp only [evalFormula] at h
           apply hNot.mpr
           intro hrv
-          exact absurd h (by simp [(hspec a haN).mp hrv])
+          have hf_true : evalFormula a f = true := (hspec a haN).mp hrv
+          simp [evalFormula, hf_true] at h
 
 -- ─── Step 5: The FSAT → SAT Tseytin reduction ───────────────────────────────
 
@@ -647,7 +643,7 @@ theorem FSAT_to_SAT_tseytin_correct (f : formula) :
         (fun v hv => by have := ha'_vars v hv; omega) (formula_maxVar_varsIn f'),
         evalFormula_boundedAssignment]
     refine ⟨a' ++ a_old, ?_⟩
-    rw [satisfiesCnf, ← evalCnf_clause_iff]
+    rw [satisfiesCnf, evalCnf_clause_iff]
     intro C hC
     simp only [List.mem_cons] at hC
     rcases hC with rfl | hC
@@ -656,7 +652,7 @@ theorem FSAT_to_SAT_tseytin_correct (f : formula) :
     · exact (evalCnf_clause_iff _ _).mp ha'_sat C hC
   · intro ⟨a, ha⟩
     have hN_sat : satisfiesCnf a N₀ := by
-      rw [satisfiesCnf, ← evalCnf_clause_iff]
+      rw [satisfiesCnf, evalCnf_clause_iff]
       intro C hC
       exact (evalCnf_clause_iff a _).mp ha C (List.mem_cons_of_mem _ hC)
     have hrv : evalVar a rv₀ = true := by
@@ -672,13 +668,13 @@ theorem FSAT_to_3SAT_tseytin_correct (f : formula) :
   constructor
   · rintro ⟨a, ha⟩
     refine ⟨by omega, ?_, ⟨a, ha⟩⟩
-    rw [kCNF_clause_length]
+    rw [kCNF_clause_length 3]
     intro C hC
     simp only [FSAT_to_SAT_tseytin, tseytin] at hC
     simp only [List.mem_cons] at hC
     rcases hC with rfl | hC
     · rfl
-    · exact kCNF_clause_length.mp (tseytin'_kCNF3 _ (eliminateOR f) (orFree_eliminate f)) C hC
+    · exact (kCNF_clause_length 3 _).mp (tseytin'_kCNF3 _ (eliminateOR f) (orFree_eliminate f)) C hC
   · rintro ⟨_, _, hsat⟩; exact hsat
 
 -- ─── Size bound ─────────────────────────────────────────────────────────────
