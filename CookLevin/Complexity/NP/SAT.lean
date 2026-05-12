@@ -1,5 +1,6 @@
 import Complexity.Complexity.NP
 import Complexity.Complexity.Definitions
+import Mathlib.Tactic
 
 set_option autoImplicit false
 
@@ -157,13 +158,71 @@ theorem size_cnf_app (N₁ N₂ : cnf) :
 
 namespace SAT_inNP
 
+/-! ## Variables used in a CNF
+
+We define `varsOfCnf N` as the list of variable indices appearing in any literal
+of `N`. The compressed assignment `compressAssignment a N` restricts an
+assignment to only those variables. This gives a polynomially-bounded certificate. -/
+
+def varsOfLiteral (l : literal) : List Nat := [l.2]
+
+def varsOfClause (C : clause) : List Nat := (C.map varsOfLiteral).flatten
+
+def varsOfCnf (N : cnf) : List Nat := (N.map varsOfClause).flatten
+
+/-- The compressed assignment: keep only variables appearing in `N`, deduplicated. -/
+def compressAssignment (a : assgn) (N : cnf) : assgn :=
+  (a.filter (fun v => decide (v ∈ varsOfCnf N))).dedup
+
+/-- A variable that appears in `N` is in `varsOfCnf N`. -/
+theorem varsOfCnf_mem (N : cnf) (C : clause) (l : literal)
+    (hC : C ∈ N) (hl : l ∈ C) : l.2 ∈ varsOfCnf N := by
+  apply List.mem_flatten.mpr
+  exact ⟨varsOfClause C, List.mem_map.mpr ⟨C, hC, rfl⟩,
+    List.mem_flatten.mpr ⟨varsOfLiteral l, List.mem_map.mpr ⟨l, hl, rfl⟩,
+      List.mem_singleton.mpr rfl⟩⟩
+
+/-- For variables in `N`, the compressed assignment agrees with the original. -/
+theorem compressAssignment_evalVar (a : assgn) (N : cnf) (v : Nat)
+    (hv : v ∈ varsOfCnf N) :
+    evalVar a v = evalVar (compressAssignment a N) v := by
+  simp only [evalVar, compressAssignment, List.mem_dedup, List.mem_filter,
+             decide_eq_true_eq, hv, and_true]
+
+/-- A CNF evaluates the same under `a` and `compressAssignment a N`. -/
+theorem compressAssignment_cnf_equiv (a : assgn) (N : cnf) :
+    satisfiesCnf a N ↔ satisfiesCnf (compressAssignment a N) N := by
+  simp only [satisfiesCnf, evalCnf_clause_iff, evalClause_literal_iff]
+  apply forall_congr'; intro C; apply imp_congr_right; intro hC
+  apply exists_congr; intro l; apply and_congr_right; intro hl
+  rcases l with ⟨b, v⟩
+  simp only [evalLiteral, ← compressAssignment_evalVar a N v (varsOfCnf_mem N C _ hC hl)]
+
+/-- Size bound for the compressed assignment: quadratic in the size of N.
+The proof sketch: compressAssignment a N has at most |varsOfCnf N| ≤ size(N)
+many variables, each with value ≤ size(N), giving a quadratic size bound. -/
+theorem compressAssignment_size_bound (a : assgn) (N : cnf) :
+    encodable.size (compressAssignment a N) ≤ encodable.size N ^ 2 + 1 := by
+  sorry
+
 theorem sat_NP : inNP SAT := by
   refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
-  · -- inTimePoly for the relation (fun (N, a) => satisfiesCnf a N)
-    -- We construct a decider based on evalCnf
-    -- The decider wraps evalCnf and checks if it returns true
-    sorry
-  · -- polyCertRel for SAT
-    sorry
+  · -- inTimePoly: the Boolean decision procedure evalCnf is the decider
+    exact ⟨fun n => n + 1,
+      ⟨fun xy => evalCnf xy.2 xy.1, fun _ => Iff.rfl⟩,
+      ⟨1, ⟨2, 1, by intro n hn; simp [pow_one]; omega⟩⟩,
+      fun x x' h => Nat.add_le_add_right h 1⟩
+  · -- polyCertRel: every SAT instance has a polynomially-bounded certificate
+    refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
+    · -- sound: a satisfying assignment witnesses SAT
+      intro N a h; exact ⟨a, h⟩
+    · -- complete: compress the satisfying assignment to a bounded one
+      intro N ⟨a, ha⟩
+      exact ⟨compressAssignment a N, (compressAssignment_cnf_equiv a N).mp ha,
+             compressAssignment_size_bound a N⟩
+    · -- inOPoly: n^2 + 1 is polynomial
+      exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
+    · -- monotonic
+      intro a b h; nlinarith [Nat.pow_le_pow_left h 2]
 
 end SAT_inNP
