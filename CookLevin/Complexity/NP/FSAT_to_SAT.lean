@@ -917,9 +917,13 @@ theorem FSAT_to_SAT_size_le (f : formula) :
           exact_mod_cast this
         clear_value n rv N T3 b
         calc 3 * rv + 9 + 1 + encodable.size N
-            ≤ (15 * n + 7) + (180 * n ^ 2 + 84 * n) := by nlinarith [h_rv_bound, hN_size]
+            = (3 * rv + 3) + encodable.size N + 7 := by ring
+          _ ≤ 15 * n + (180 * n ^ 2 + 84 * n) + 7 :=
+                Nat.add_le_add_right (Nat.add_le_add h_rv_bound hN_size) 7
           _ = 180 * n ^ 2 + 99 * n + 7 := by ring
-          _ ≤ 200 * n ^ 2 + 300 := by nlinarith [h20]
+          _ ≤ 180 * n ^ 2 + (20 * n ^ 2 + 293) + 7 :=
+                Nat.add_le_add_right (Nat.add_le_add_left h20 _) 7
+          _ = 200 * n ^ 2 + 300 := by ring
 
 -- ─── Final polynomial reduction theorems ────────────────────────────────────
 
