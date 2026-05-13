@@ -699,59 +699,42 @@ theorem FSAT_to_3SAT_tseytin_correct (f : formula) :
     · exact (kCNF_clause_length 3 _).mp (tseytin'_kCNF3 _ (eliminateOR f) (orFree_eliminate f)) C hC
   · rintro ⟨_, _, hsat⟩; exact hsat
 
--- ─── Size bound ─────────────────────────────────────────────────────────────
-
-/-! ### Helpers for the size bound
-
-We bound the Tseytin output as follows.  Let `S = encodable.size f` and write
-`f' = eliminateOR f`.  Then:
-
-* `formula_size f ≤ S` and `formula_maxVar f ≤ S` (a constructor / variable
-  occurrence each contribute at least 1 to the encoding size).
-* `eliminateOR` leaves `formula_maxVar` unchanged and at most triples
-  `formula_size`.
-* `(tseytin' nf f').2.2 ≤ nf + formula_size f'` (the fresh-variable counter
-  increases by at most one per orFree constructor).
-* `(tseytin' nf f').1 < (tseytin' nf f').2.2` (the representative is a fresh
-  variable allocated during the recursive call).
-* Each Tseytin gadget produces a 3-CNF; its encoded size is therefore at most
-  `30 * (max var + 3)` per clause, and a 3-CNF has at most three new clauses
-  per formula constructor.
-
-Combining yields `encodable.size N ≤ 30 · formula_size f' · (nf + formula_size f')`,
-which after substituting the bounds above becomes
-`≤ 360 · S² + 102 · S + 13 ≤ 500 · S² + 100`.  We use `500 · n² + 100` as the
-target polynomial so the arithmetic has room. -/
+-- ─── Size bound helpers ──────────────────────────────────────────────────────
 
 private theorem formula_size_le_encodable (f : formula) :
     formula_size f ≤ encodable.size f := by
   induction f with
   | ftrue => simp [formula_size]
-  | fvar v => simp [formula_size]; omega
-  | fand _ _ ih₁ ih₂ => simp [formula_size]; omega
-  | forr _ _ ih₁ ih₂ => simp [formula_size]; omega
-  | fneg _ ih => simp [formula_size]; omega
+  | fvar v => simp [formula_size]
+  | fand _ _ ih₁ ih₂ => simp only [formula_size, encodable_size_formula_fand]; omega
+  | forr _ _ ih₁ ih₂ => simp only [formula_size, encodable_size_formula_forr]; omega
+  | fneg _ ih => simp only [formula_size, encodable_size_formula_fneg]; omega
 
-private theorem formula_maxVar_le_encodable (f : formula) :
-    formula_maxVar f ≤ encodable.size f := by
+private theorem formula_maxVar_lt_encodable (f : formula) :
+    formula_maxVar f < encodable.size f := by
   induction f with
   | ftrue => simp [formula_maxVar]
   | fvar v => simp [formula_maxVar]
-  | fand _ _ ih₁ ih₂ => simp [formula_maxVar]; omega
-  | forr _ _ ih₁ ih₂ => simp [formula_maxVar]; omega
-  | fneg _ ih => simp [formula_maxVar]; omega
+  | fand _ _ ih₁ ih₂ =>
+      simp only [formula_maxVar, encodable_size_formula_fand]
+      exact Nat.max_lt.mpr ⟨by linarith, by linarith⟩
+  | forr _ _ ih₁ ih₂ =>
+      simp only [formula_maxVar, encodable_size_formula_forr]
+      exact Nat.max_lt.mpr ⟨by linarith, by linarith⟩
+  | fneg _ ih =>
+      simp only [formula_maxVar, encodable_size_formula_fneg]; omega
 
-private theorem eliminateOR_maxVar (f : formula) :
+private theorem formula_maxVar_eliminateOR (f : formula) :
     formula_maxVar (eliminateOR f) = formula_maxVar f := by
   induction f with
-  | ftrue => rfl
-  | fvar _ => rfl
+  | ftrue => simp [eliminateOR, formula_maxVar]
+  | fvar v => simp [eliminateOR, formula_maxVar]
   | fand _ _ ih₁ ih₂ => simp [eliminateOR, formula_maxVar, ih₁, ih₂]
   | forr _ _ ih₁ ih₂ => simp [eliminateOR, formula_maxVar, ih₁, ih₂]
   | fneg _ ih => simp [eliminateOR, formula_maxVar, ih]
 
-private theorem eliminateOR_size_le (f : formula) :
-    formula_size (eliminateOR f) ≤ 3 * formula_size f := by
+private theorem formula_size_eliminateOR_le (f : formula) :
+    formula_size (eliminateOR f) ≤ 4 * formula_size f := by
   induction f with
   | ftrue => simp [eliminateOR, formula_size]
   | fvar _ => simp [eliminateOR, formula_size]
@@ -759,251 +742,201 @@ private theorem eliminateOR_size_le (f : formula) :
   | forr _ _ ih₁ ih₂ => simp [eliminateOR, formula_size]; omega
   | fneg _ ih => simp [eliminateOR, formula_size]; omega
 
-private theorem tseytin'_nf_bound (nf : Nat) (f : formula) :
+private theorem tseytin'_clauses_le (nf : Nat) (f : formula) :
+    (tseytin' nf f).2.1.length ≤ 3 * formula_size f := by
+  induction f generalizing nf with
+  | ftrue => simp [tseytin', tseytinTrue, formula_size]
+  | fvar _ => simp [tseytin', tseytinEquiv, formula_size]
+  | fand f₁ f₂ ih₁ ih₂ =>
+      have h₁ := ih₁ nf
+      have h₂ := ih₂ (tseytin' nf f₁).2.2
+      have hkey : (tseytin' nf (formula.fand f₁ f₂)).2.1.length =
+          (tseytin' nf f₁).2.1.length + (tseytin' (tseytin' nf f₁).2.2 f₂).2.1.length + 3 := by
+        have heq : (tseytin' nf (formula.fand f₁ f₂)).2.1 =
+            (tseytin' nf f₁).2.1 ++ (tseytin' (tseytin' nf f₁).2.2 f₂).2.1 ++
+            tseytinAnd (tseytin' (tseytin' nf f₁).2.2 f₂).2.2
+                       (tseytin' nf f₁).1 (tseytin' (tseytin' nf f₁).2.2 f₂).1 := rfl
+        simp only [heq, List.length_append, tseytinAnd, List.length_cons, List.length_nil]
+      simp only [formula_size]; linarith
+  | fneg f ih =>
+      have h := ih nf
+      have hkey : (tseytin' nf (formula.fneg f)).2.1.length = (tseytin' nf f).2.1.length + 2 := by
+        simp [tseytin', tseytinNot, List.length_append, List.length_cons, List.length_nil]
+      simp only [formula_size]; linarith
+  | forr _ _ _ _ => simp [tseytin', formula_size]
+
+private theorem tseytin'_nf_size_le (nf : Nat) (f : formula) :
     (tseytin' nf f).2.2 ≤ nf + formula_size f := by
   induction f generalizing nf with
   | ftrue => simp [tseytin', formula_size]
   | fvar _ => simp [tseytin', formula_size]
-  | forr _ _ _ _ => simp [tseytin', formula_size]
   | fand f₁ f₂ ih₁ ih₂ =>
-      simp only [tseytin', formula_size]
       have h₁ := ih₁ nf
       have h₂ := ih₂ (tseytin' nf f₁).2.2
-      omega
+      calc (tseytin' nf (formula.fand f₁ f₂)).2.2
+          = (tseytin' (tseytin' nf f₁).2.2 f₂).2.2 + 1 := rfl
+        _ ≤ (tseytin' nf f₁).2.2 + formula_size f₂ + 1 :=
+              Nat.add_le_add_right h₂ 1
+        _ ≤ nf + formula_size f₁ + formula_size f₂ + 1 :=
+              Nat.add_le_add_right (Nat.add_le_add_right h₁ (formula_size f₂)) 1
+        _ = nf + formula_size (formula.fand f₁ f₂) := by simp only [formula_size]; ring
   | fneg f ih =>
-      simp only [tseytin', formula_size]
       have h := ih nf
-      omega
+      calc (tseytin' nf (formula.fneg f)).2.2
+          = (tseytin' nf f).2.2 + 1 := rfl
+        _ ≤ nf + formula_size f + 1 := Nat.add_le_add_right h 1
+        _ = nf + formula_size (formula.fneg f) := by simp only [formula_size]; ring
+  | forr _ _ _ _ => simp [tseytin', formula_size]
 
-private theorem tseytin'_rv_lt_nf' (nf : Nat) (f : formula) (hor : orFree f) :
-    (tseytin' nf f).1 < (tseytin' nf f).2.2 := by
-  induction f generalizing nf with
-  | ftrue => simp [tseytin']
-  | fvar _ => simp [tseytin']
-  | fand f₁ f₂ ih₁ ih₂ =>
-      cases hor with | fand _ _ =>
-      simp [tseytin']
-  | fneg f ih =>
-      cases hor with | fneg hf =>
-      simp only [tseytin']
-      have := ih nf hf
-      omega
-  | forr _ _ _ _ => cases hor
+private theorem one_le_encodable_size_formula (f : formula) :
+    1 ≤ encodable.size f := by
+  cases f <;>
+    simp [encodable_size_formula_ftrue, encodable_size_formula_fvar,
+          encodable_size_formula_fand, encodable_size_formula_forr,
+          encodable_size_formula_fneg] <;>
+    omega
 
-/-- Helper: encodable.size of a literal `(b, v)` with `v ≤ V` is at most `V + 2`. -/
-private theorem encodable_size_lit_le (b : Bool) (v V : Nat) (hv : v ≤ V) :
-    encodable.size ((b, v) : literal) ≤ V + 2 := by
-  show encodable.size b + encodable.size v + 1 ≤ V + 2
-  have hsv : (encodable.size v : Nat) = v := rfl
-  have hsb : encodable.size b ≤ 1 := by
-    cases b
-    · show (0 : Nat) ≤ 1; omega
-    · show (1 : Nat) ≤ 1; omega
-  rw [hsv]; omega
+private theorem encodable_size_literal_le (l : literal) :
+    encodable.size l ≤ l.2 + 2 := by
+  obtain ⟨b, v⟩ := l
+  have hpair : encodable.size (b, v) = encodable.size b + v + 1 := rfl
+  have hbool : encodable.size b ≤ 1 := by cases b <;> decide
+  omega
 
-/-- For any list whose elements all have `encodable.size ≤ M`,
-`encodable.size xs ≤ xs.length * (M + 1)`. -/
-private theorem encodable_size_list_le_length_mul {α : Type _} [encodable α]
-    (M : Nat) : ∀ (xs : List α), (∀ x ∈ xs, encodable.size x ≤ M) →
-      encodable.size xs ≤ xs.length * (M + 1)
-  | [], _ => by simp [encodable.size]
-  | x :: xs, h => by
-      have hx : encodable.size x ≤ M := h x (by simp)
-      have hxs : ∀ y ∈ xs, encodable.size y ≤ M := fun y hy => h y (by simp [hy])
-      have ih := encodable_size_list_le_length_mul M xs hxs
-      rw [encodable_size_list_cons, List.length_cons]
-      calc encodable.size x + 1 + encodable.size xs
-          ≤ M + 1 + encodable.size xs := by omega
-        _ ≤ M + 1 + xs.length * (M + 1) := by omega
-        _ = (xs.length + 1) * (M + 1) := by ring
-
-/-- Bound on the encoded size of a single 3-CNF clause whose variables are all `≤ V`. -/
-private theorem clause_size_bound_of_vars_le (C : clause) (V : Nat)
-    (hk : C.length = 3) (h : ∀ l ∈ C, l.2 ≤ V) :
-    encodable.size C ≤ 3 * (V + 3) := by
-  have := encodable_size_list_le_length_mul (V + 2) C (by
-    intro l hl
-    rcases l with ⟨b, v⟩
-    exact encodable_size_lit_le b v V (h (b, v) hl))
-  rw [hk] at this
-  -- this : encodable.size C ≤ 3 * (V + 2 + 1) = 3 * (V + 3)
-  have : encodable.size C ≤ 3 * (V + 2 + 1) := by linarith
+private theorem encodable_size_clause3_le {C : clause} {M : Nat}
+    (hLen : C.length = 3) (hVars : ∀ l ∈ C, l.2 < M) :
+    encodable.size C ≤ 3 * (M + 1) + 3 := by
+  obtain ⟨l₁, l₂, l₃, rfl⟩ : ∃ l₁ l₂ l₃, C = [l₁, l₂, l₃] := by
+    match C, hLen with
+    | [a, b, c], _ => exact ⟨a, b, c, rfl⟩
+  have hv₁ := hVars l₁ (by simp)
+  have hv₂ := hVars l₂ (by simp)
+  have hv₃ := hVars l₃ (by simp)
+  have hs₁ := encodable_size_literal_le l₁
+  have hs₂ := encodable_size_literal_le l₂
+  have hs₃ := encodable_size_literal_le l₃
+  have hbound₁ : encodable.size l₁ ≤ M + 1 :=
+    Nat.le_trans hs₁ (Nat.add_le_add_right hv₁ 1)
+  have hbound₂ : encodable.size l₂ ≤ M + 1 :=
+    Nat.le_trans hs₂ (Nat.add_le_add_right hv₂ 1)
+  have hbound₃ : encodable.size l₃ ≤ M + 1 :=
+    Nat.le_trans hs₃ (Nat.add_le_add_right hv₃ 1)
+  simp only [encodable_size_list_cons, encodable_size_list_nil]
   linarith
 
-/-- A 3-CNF whose every variable is `≤ V` has encoded size `≤ |N| * (3V + 10)`. -/
-private theorem cnf_size_bound_of_3CNF_vars_le (N : cnf) (V : Nat)
-    (hk : kCNF 3 N) (hvars : ∀ v, varInCnf v N → v ≤ V) :
-    encodable.size N ≤ N.length * (3 * V + 10) := by
-  have hclen : ∀ C ∈ N, C.length = 3 := (kCNF_clause_length 3 N).mp hk
-  have := encodable_size_list_le_length_mul (3 * (V + 3)) N (by
-    intro C hC
-    apply clause_size_bound_of_vars_le C V (hclen C hC)
-    intro l hl
-    -- l ∈ C, C ∈ N, so l.2 is a var in N
-    rcases l with ⟨s, v⟩
-    exact hvars v ⟨C, hC, (s, v), hl, s, rfl⟩)
-  -- this : encodable.size N ≤ N.length * (3*(V+3) + 1)
-  have hbound : 3 * (V + 3) + 1 ≤ 3 * V + 10 := by linarith
-  calc encodable.size N
-      ≤ N.length * (3 * (V + 3) + 1) := this
-    _ ≤ N.length * (3 * V + 10) := Nat.mul_le_mul_left _ hbound
-
-/-- Length bound for the Tseytin CNF: at most `3 * formula_size f` clauses. -/
-private theorem tseytin'_length_le (nf : Nat) (f : formula) (hor : orFree f) :
-    (tseytin' nf f).2.1.length ≤ 3 * formula_size f := by
-  induction f generalizing nf with
-  | ftrue => simp [tseytin', tseytinTrue, formula_size]
-  | fvar v => simp [tseytin', tseytinEquiv, formula_size]
-  | forr _ _ _ _ => cases hor
-  | fand f₁ f₂ ih₁ ih₂ =>
-      cases hor with | fand h₁ h₂ =>
-      simp only [tseytin', List.length_append, List.length_append,
-                 tseytinAnd, List.length_cons, List.length_nil, formula_size]
-      have e₁ := ih₁ nf h₁
-      have e₂ := ih₂ (tseytin' nf f₁).2.2 h₂
-      omega
-  | fneg f ih =>
-      cases hor with | fneg h =>
-      simp only [tseytin', List.length_append, tseytinNot,
-                 List.length_cons, List.length_nil, formula_size]
-      have e := ih nf h
-      omega
-
-/-- Variable bound: every variable in the Tseytin CNF is `< nf + formula_size f`.
-This follows from `tseytin_formula_repr` combined with `tseytin'_nf_bound`. -/
-private theorem tseytin'_var_bound (b nf : Nat) (f : formula) (hor : orFree f)
-    (hvars : formula_varsIn (fun n => n < b) f) (hb : b ≤ nf)
-    (v : var) (hv : varInCnf v (tseytin' nf f).2.1) :
-    v < nf + formula_size f := by
-  obtain ⟨hcnf, _, _, _, _⟩ := tseytinP_repr f hor hvars nf hb
-  rcases hcnf v hv with h | ⟨_, h⟩
-  · -- v < b ≤ nf ≤ nf + formula_size f
-    have : nf ≤ nf + formula_size f := Nat.le_add_right _ _
-    omega
-  · -- nf ≤ v < (tseytin' nf f).2.2 ≤ nf + formula_size f
-    have := tseytin'_nf_bound nf f
-    omega
-
-/-- Main bound: the Tseytin CNF has size `≤ 3 * size f * (3 * (nf + size f) + 10)`. -/
-private theorem tseytin'_encSize_bound (b nf : Nat) (f : formula)
-    (hor : orFree f) (hvars : formula_varsIn (fun n => n < b) f) (hb : b ≤ nf) :
-    encodable.size (tseytin' nf f).2.1 ≤
-      3 * formula_size f * (3 * (nf + formula_size f) + 10) := by
-  set V := nf + formula_size f - 1 with hV_def
-  have hkCNF : kCNF 3 (tseytin' nf f).2.1 := tseytin'_kCNF3 nf f hor
-  -- Every variable in N is < nf + formula_size f, so ≤ nf + formula_size f - 1 = V.
-  -- But for `V` we need a value, not a strict bound. Use the simpler bound:
-  -- every var is ≤ nf + formula_size f (loose).
-  have hVarsLe : ∀ v, varInCnf v (tseytin' nf f).2.1 → v ≤ nf + formula_size f := by
-    intro v hv
-    have := tseytin'_var_bound b nf f hor hvars hb v hv
-    omega
-  have hSize := cnf_size_bound_of_3CNF_vars_le (tseytin' nf f).2.1 (nf + formula_size f)
-                  hkCNF hVarsLe
-  have hLen := tseytin'_length_le nf f hor
-  calc encodable.size (tseytin' nf f).2.1
-      ≤ (tseytin' nf f).2.1.length * (3 * (nf + formula_size f) + 10) := hSize
-    _ ≤ (3 * formula_size f) * (3 * (nf + formula_size f) + 10) :=
-        Nat.mul_le_mul_right _ hLen
+private theorem encodable_size_cnf3_le {N : cnf} {M : Nat}
+    (hClauses : ∀ C ∈ N, C.length = 3)
+    (hVars : ∀ v, varInCnf v N → v < M) :
+    encodable.size N ≤ N.length * (3 * (M + 1) + 4) := by
+  induction N with
+  | nil => simp [encodable_size_list_nil]
+  | cons C N' ih =>
+      rw [encodable_size_list_cons]
+      have hC_len : C.length = 3 := hClauses C List.mem_cons_self
+      have hC_vars : ∀ l ∈ C, l.2 < M := by
+        intro l hl
+        apply hVars l.2
+        exact ⟨C, List.mem_cons_self, l, hl, l.1, (Prod.eta l).symm⟩
+      have hN'_clauses : ∀ C' ∈ N', C'.length = 3 :=
+        fun C' hC' => hClauses C' (List.mem_cons_of_mem _ hC')
+      have hN'_vars : ∀ v, varInCnf v N' → v < M := by
+        intro v ⟨C', hC', hvar⟩
+        exact hVars v ⟨C', List.mem_cons_of_mem _ hC', hvar⟩
+      have ih' := ih hN'_clauses hN'_vars
+      have hC_size := encodable_size_clause3_le hC_len hC_vars
+      simp only [List.length_cons]
+      have h_expand : (N'.length + 1) * (3 * (M + 1) + 4) =
+          N'.length * (3 * (M + 1) + 4) + (3 * (M + 1) + 4) := by ring
+      linarith
 
 theorem FSAT_to_SAT_size_le (f : formula) :
-    encodable.size (FSAT_to_SAT_tseytin f) ≤ 500 * encodable.size f ^ 2 + 100 := by
-  set S := encodable.size f
-  -- Names and basic bounds
-  set f' := eliminateOR f with hf'_def
-  have hor : orFree f' := orFree_eliminate f
-  have hvars : formula_varsIn (fun n => n < formula_maxVar f' + 1) f' :=
-    formula_maxVar_varsIn f'
-  set b := formula_maxVar f' + 1 with hb_def
-  -- Numerical bounds linking `formula_size` / `formula_maxVar` of `f'` to `S`.
-  have hSize_f : formula_size f ≤ S := formula_size_le_encodable f
-  have hMaxVar_f : formula_maxVar f ≤ S := formula_maxVar_le_encodable f
-  have hSize_f' : formula_size f' ≤ 3 * formula_size f := eliminateOR_size_le f
-  have hMaxVar_f' : formula_maxVar f' = formula_maxVar f := eliminateOR_maxVar f
-  have hb_le : b ≤ S + 1 := by rw [hb_def, hMaxVar_f']; omega
-  have hsf'_le : formula_size f' ≤ 3 * S := by omega
-  -- Unfold the reduction.
-  show encodable.size (let f' := eliminateOR f
-                       let (rv, N, _) := tseytin' (formula_maxVar f' + 1) f'
-                       [(true, rv), (true, rv), (true, rv)] :: N) ≤
-    500 * S ^ 2 + 100
-  -- Tseytin output structure
-  set rv := (tseytin' b f').1 with hrv_def
-  set N := (tseytin' b f').2.1 with hN_def
-  set nf' := (tseytin' b f').2.2 with hnf'_def
-  have hrv_lt_nf' : rv < nf' := tseytin'_rv_lt_nf' b f' hor
-  have hnf'_le : nf' ≤ b + formula_size f' := tseytin'_nf_bound b f'
-  have hrv_le : rv ≤ b + formula_size f' - 1 := by omega
-  have hrv_le_4S : rv ≤ 4 * S + 1 := by omega
-  -- CNF size bound
-  have hN_size :
-      encodable.size N ≤ 3 * formula_size f' * (3 * (b + formula_size f') + 10) :=
-    tseytin'_encSize_bound b b f' hor hvars (le_refl b)
-  -- Combine to bound the CNF part
-  have hN_bound : encodable.size N ≤ 360 * S ^ 2 + 90 * S := by
-    have h₁ : 3 * formula_size f' ≤ 9 * S := by omega
-    have h₂ : 3 * (b + formula_size f') + 10 ≤ 3 * (S + 1 + 3 * S) + 10 := by omega
-    have h₃ : 3 * (S + 1 + 3 * S) + 10 = 12 * S + 13 := by ring
-    -- We need: 9 * S * (12 * S + 13) ≤ 360 * S^2 + 90 * S, but actually
-    -- 9 * S * (12 * S + 13) = 108 * S^2 + 117 * S
-    -- This is ≤ 360 * S^2 + 90 * S provided 27 * S ≤ 252 * S^2 + 90*S - ...
-    -- Let me just use a looser bound: 9*S*(12S+13) ≤ 9*S*(12S+13)
-    -- ≤ 360 S^2 + 90 S iff 108 S^2 + 117 S ≤ 360 S^2 + 90 S iff 252 S^2 ≥ 27 S
-    -- For S ≥ 1 this is true (252 ≥ 27); for S = 0 we get 0 ≤ 0.
-    nlinarith [Nat.zero_le S, hN_size, h₁, h₂, h₃, sq_nonneg S]
-  -- Header clause size
-  -- size [(true,rv),(true,rv),(true,rv)] = 3*(rv+2) + 3 = 3*rv + 9
-  have hHeader_size :
-      encodable.size [((true, rv) : literal), (true, rv), (true, rv)] ≤ 3 * rv + 9 := by
-    -- Each literal has size rv + 2; the list has length 3.
-    have hLits : ∀ l ∈ [((true, rv) : literal), (true, rv), (true, rv)],
-        encodable.size l ≤ rv + 2 := by
-      intro l hl
-      simp at hl
-      rcases hl with rfl | rfl | rfl <;>
-        exact encodable_size_lit_le true rv rv (le_refl rv)
-    have := encodable_size_list_le_length_mul (rv + 2)
-              ([((true, rv) : literal), (true, rv), (true, rv)]) hLits
-    simp [List.length] at this
-    -- this : encodable.size [...] ≤ 3 * (rv + 3)
-    linarith
-  -- The full output is `[(true,rv),(true,rv),(true,rv)] :: N`
-  -- size = (header_clause_size) + 1 + size N
-  have hOutput :
-      encodable.size ([((true, rv) : literal), (true, rv), (true, rv)] :: N) =
-        encodable.size ([((true, rv) : literal), (true, rv), (true, rv)]) + 1 +
-          encodable.size N := encodable_size_list_cons _ _
-  -- Header contributes ≤ 3*rv + 10 to the cons.
-  have hHeader_total : encodable.size ([((true, rv) : literal), (true, rv), (true, rv)]) + 1
-                        ≤ 12 * S + 13 := by
-    have hrv2 : rv ≤ 4 * S + 1 := hrv_le_4S
-    -- 3 * rv + 9 + 1 = 3*rv + 10 ≤ 3*(4S+1) + 10 = 12S + 13
-    linarith
-  -- Final assembly
-  show encodable.size ([((true, rv) : literal), (true, rv), (true, rv)] :: N) ≤
-    500 * S ^ 2 + 100
-  rw [hOutput]
-  -- Goal: header_size + 1 + size N ≤ 500*S² + 100
-  -- We have header + 1 ≤ 12S + 13 and size N ≤ 360 S^2 + 90 S
-  -- Total ≤ 360 S^2 + 90 S + 12 S + 13 = 360 S^2 + 102 S + 13
-  -- Need 360 S^2 + 102 S + 13 ≤ 500 S^2 + 100
-  -- 140 S^2 ≥ 102 S - 87, i.e., for S ≥ 1, 140 ≥ 102 - 87 = 15 ✓; for S = 0, 0 ≥ -87 ✓
-  nlinarith [hHeader_total, hN_bound, sq_nonneg S, Nat.zero_le S]
+    encodable.size (FSAT_to_SAT_tseytin f) ≤ 200 * encodable.size f ^ 2 + 300 := by
+  have hn_pos : 1 ≤ encodable.size f := one_le_encodable_size_formula f
+  simp only [FSAT_to_SAT_tseytin, tseytin]
+  have hf'_size_le : formula_size (eliminateOR f) ≤ 4 * encodable.size f :=
+    calc formula_size (eliminateOR f) ≤ 4 * formula_size f := formula_size_eliminateOR_le f
+      _ ≤ 4 * encodable.size f := Nat.mul_le_mul_left 4 (formula_size_le_encodable f)
+  have hb_le_n : formula_maxVar (eliminateOR f) + 1 ≤ encodable.size f := by
+    linarith [formula_maxVar_eliminateOR f ▸ formula_maxVar_lt_encodable f]
+  have hN_len : (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.1.length ≤
+      12 * encodable.size f := by
+    linarith [tseytin'_clauses_le (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)]
+  have hT3_le : (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.2 ≤
+      5 * encodable.size f :=
+    calc (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.2
+        ≤ (formula_maxVar (eliminateOR f) + 1) + formula_size (eliminateOR f) :=
+            tseytin'_nf_size_le _ _
+      _ ≤ encodable.size f + 4 * encodable.size f :=
+            Nat.add_le_add hb_le_n hf'_size_le
+      _ = 5 * encodable.size f := by ring
+  have hb_le_T3 := tseytin'_nf_mono (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)
+  have hrepr := tseytinP_repr (eliminateOR f) (orFree_eliminate f)
+    (formula_maxVar_varsIn (eliminateOR f)) (formula_maxVar (eliminateOR f) + 1) (le_refl _)
+  have hrv_lt := hrepr.2.2.1
+  have hN_vars : ∀ v, varInCnf v (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.1 →
+      v < (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.2 := by
+    intro v hv
+    rcases hrepr.1 v hv with h | ⟨_, h⟩
+    · exact lt_of_lt_of_le h hb_le_T3
+    · exact h
+  have hN_kCNF : ∀ C ∈ (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.1,
+      C.length = 3 :=
+    (kCNF_clause_length 3 _).mp (tseytin'_kCNF3 _ _ (orFree_eliminate f))
+  set n := encodable.size f
+  set b := formula_maxVar (eliminateOR f) + 1
+  set N := (tseytin' b (eliminateOR f)).2.1
+  set T3 := (tseytin' b (eliminateOR f)).2.2
+  set rv := (tseytin' b (eliminateOR f)).1
+  have hN_size : encodable.size N ≤ 180 * n ^ 2 + 84 * n :=
+    calc encodable.size N
+        ≤ N.length * (3 * (T3 + 1) + 4) :=
+            encodable_size_cnf3_le hN_kCNF (fun v hv => hN_vars v hv)
+      _ ≤ 12 * n * (3 * (5 * n + 1) + 4) :=
+            Nat.mul_le_mul hN_len
+              (Nat.add_le_add_right (Nat.mul_le_mul_left 3 (Nat.add_le_add_right hT3_le 1)) 4)
+      _ = 180 * n ^ 2 + 84 * n := by ring
+  have hrv_size : encodable.size ((true, rv) : literal) = rv + 2 := by
+    show (1 : Nat) + rv + 1 = rv + 2; omega
+  have hhead_size : encodable.size ([(true, rv), (true, rv), (true, rv)] : clause) = 3 * rv + 9 := by
+    simp only [encodable_size_list_cons, encodable_size_list_nil, hrv_size]; ring
+  have h_rv_bound : 3 * rv + 3 ≤ 15 * n :=
+    calc 3 * rv + 3 = 3 * (rv + 1) := by ring
+      _ ≤ 3 * T3 := Nat.mul_le_mul_left 3 hrv_lt
+      _ ≤ 3 * (5 * n) := Nat.mul_le_mul_left 3 hT3_le
+      _ = 15 * n := by ring
+  calc encodable.size ([(true, rv), (true, rv), (true, rv)] :: N)
+      = encodable.size [(true, rv), (true, rv), (true, rv)] + 1 + encodable.size N :=
+          encodable_size_list_cons _ _
+    _ = 3 * rv + 9 + 1 + encodable.size N := by rw [hhead_size]
+    _ ≤ 200 * n ^ 2 + 300 := by
+        have h20 : 99 * n ≤ 20 * n ^ 2 + 293 := by
+          have : (99 : ℤ) * n ≤ 20 * (n : ℤ) ^ 2 + 293 := by
+            nlinarith [sq_nonneg ((n : ℤ) - 3)]
+          exact_mod_cast this
+        clear_value n rv N T3 b
+        calc 3 * rv + 9 + 1 + encodable.size N
+            = (3 * rv + 3) + encodable.size N + 7 := by ring
+          _ ≤ 15 * n + (180 * n ^ 2 + 84 * n) + 7 :=
+                Nat.add_le_add_right (Nat.add_le_add h_rv_bound hN_size) 7
+          _ = 180 * n ^ 2 + 99 * n + 7 := by ring
+          _ ≤ 180 * n ^ 2 + (20 * n ^ 2 + 293) + 7 :=
+                Nat.add_le_add_right (Nat.add_le_add_left h20 _) 7
+          _ = 200 * n ^ 2 + 300 := by ring
 
 -- ─── Final polynomial reduction theorems ────────────────────────────────────
 
 theorem FSAT_to_SAT_poly : FSAT ⪯p SAT :=
   ⟨⟨FSAT_to_SAT_tseytin,
-    ⟨⟨fun n => 500 * n ^ 2 + 100,
-      ⟨2, ⟨501, 10, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
+    ⟨⟨fun n => 200 * n ^ 2 + 300,
+      ⟨2, ⟨201, 18, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
       fun a b h => by nlinarith [Nat.pow_le_pow_left h 2],
       FSAT_to_SAT_size_le⟩⟩,
     FSAT_to_SAT_tseytin_correct⟩⟩
 
 theorem FSAT_to_3SAT_poly : FSAT ⪯p kSAT 3 :=
   ⟨⟨FSAT_to_SAT_tseytin,
-    ⟨⟨fun n => 500 * n ^ 2 + 100,
-      ⟨2, ⟨501, 10, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
+    ⟨⟨fun n => 200 * n ^ 2 + 300,
+      ⟨2, ⟨201, 18, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
       fun a b h => by nlinarith [Nat.pow_le_pow_left h 2],
       FSAT_to_SAT_size_le⟩⟩,
     FSAT_to_3SAT_tseytin_correct⟩⟩
