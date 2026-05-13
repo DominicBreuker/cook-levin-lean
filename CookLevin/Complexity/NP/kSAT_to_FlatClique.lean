@@ -84,7 +84,7 @@ private def noCliqueInstance : fgraph × Nat := ((0, []), 1)
 
 /-- Guarded reduction: applies the Karp construction on valid k-CNF inputs,
     maps everything else to the no-instance. -/
-private def kSAT_to_FlatClique_f (k : Nat) (N : cnf) : fgraph × Nat :=
+noncomputable private def kSAT_to_FlatClique_f (k : Nat) (N : cnf) : fgraph × Nat :=
   if 0 < k ∧ kCNF k N then kSAT_to_FlatClique_instance N else noCliqueInstance
 
 ------------------------------------------------------------------------
@@ -137,8 +137,7 @@ private theorem nthLiteral_eq_getD {C : clause} {i : Nat} (h : i < C.length) :
 private theorem literalAt_eq_some (N : cnf) (ci li : Nat)
     (hci : ci < N.length) (hli : li < (N.getD ci []).length) :
     literalAt N ci li = some ((N.getD ci []).getD li (true, 0)) := by
-  simp only [literalAt, nthClause_eq_getD hci, Option.bind, Option.some_bind,
-             nthLiteral_eq_getD hli]
+  simp only [literalAt, nthClause_eq_getD hci, Option.bind_some, nthLiteral_eq_getD hli]
 
 ------------------------------------------------------------------------
 -- §6  getD utility lemmas
@@ -151,10 +150,10 @@ private theorem getD_mem {α : Type} (l : List α) (n : Nat) (d : α)
   | nil => simp at h
   | cons x xs ih =>
     cases n with
-    | zero => simp [List.getD]
+    | zero => exact List.mem_cons_self
     | succ n =>
-      simp only [List.getD]
-      exact List.mem_cons_of_mem x (ih (by simpa using h))
+      have hn : n < xs.length := Nat.lt_of_succ_lt_succ h
+      exact List.mem_cons_of_mem (ih n hn)
 
 /-- When n < l.length, l.getD n d = l.get ⟨n, h⟩. -/
 private theorem getD_eq_get {α : Type} (l : List α) (n : Nat) (d : α)
@@ -164,7 +163,7 @@ private theorem getD_eq_get {α : Type} (l : List α) (n : Nat) (d : α)
   | cons x xs ih =>
     cases n with
     | zero => rfl
-    | succ n => simpa [List.getD, List.get] using ih (by simpa using h)
+    | succ n => exact ih n (Nat.lt_of_succ_lt_succ h)
 
 /-- For any nonempty clause, there is a satisfied literal index when the
     clause evaluates to true. -/
@@ -178,7 +177,7 @@ private theorem any_to_exists_index (l : clause) (p : literal → Bool)
     rcases h with hx | hxs
     · exact ⟨0, Nat.zero_lt_succ _, by simp [List.getD, hx]⟩
     · obtain ⟨i, hi, hpi⟩ := ih hxs
-      exact ⟨i + 1, Nat.succ_lt_succ hi, by simp [List.getD, hpi]⟩
+      exact ⟨i + 1, Nat.succ_lt_succ hi, hpi⟩
 
 ------------------------------------------------------------------------
 -- §7  clausePositions membership
@@ -195,7 +194,7 @@ private theorem clausePositionsAux_mem (N : cnf) (base : Nat) (ci li : Nat) :
     constructor
     · rintro (⟨li', hli', hpair⟩ | hmem)
       · obtain ⟨hci, hli⟩ : ci = base ∧ li = li' := by
-          simp [Prod.mk.injEq] at hpair; exact ⟨hpair.1, hpair.2⟩
+          simp [Prod.mk.injEq] at hpair; exact ⟨hpair.1.symm, hpair.2.symm⟩
         subst hci hli
         exact ⟨le_refl _, by simp, by simp [List.getD]; exact hli'⟩
       · obtain ⟨hle, hlen, hliD⟩ := (ih (base + 1) ci li).mp hmem
@@ -219,7 +218,7 @@ private theorem clausePositionsAux_mem (N : cnf) (base : Nat) (ci li : Nat) :
 private theorem clausePositions_mem (N : cnf) (ci li : Nat) :
     (ci, li) ∈ clausePositions N ↔
     ci < N.length ∧ li < (N.getD ci []).length := by
-  simp only [clausePositions, clausePositionsAux_mem N 0 ci li]
+  simp only [clausePositions, clausePositionsAux_mem N 0 ci li, Nat.sub_zero]
   omega
 
 private theorem clausePositions_literalAt_some (N : cnf) (ci li : Nat)
@@ -266,18 +265,27 @@ private theorem encodePosition_lt (N : cnf) (ci li : Nat)
 private theorem encodePosition_div (N : cnf) (ci li : Nat)
     (hli : li < positionBase N) : encodePosition N (ci, li) / positionBase N = ci := by
   simp only [encodePosition]
-  omega
+  exact Nat.div_eq_of_lt_le (Nat.le_add_right _ _)
+    (by nlinarith [positionBase_pos N])
 
 private theorem encodePosition_mod (N : cnf) (ci li : Nat)
     (hli : li < positionBase N) : encodePosition N (ci, li) % positionBase N = li := by
   simp only [encodePosition]
-  omega
+  rw [Nat.add_mod,
+      show ci * positionBase N % positionBase N = 0 from
+        by rw [Nat.mul_comm]; exact Nat.mul_mod_right (positionBase N) ci,
+      Nat.zero_add,
+      Nat.mod_eq_of_lt (Nat.mod_lt li (positionBase_pos N)),
+      Nat.mod_eq_of_lt hli]
 
 private theorem encodePosition_inj (N : cnf) (ci₁ li₁ ci₂ li₂ : Nat)
     (hli₁ : li₁ < positionBase N) (hli₂ : li₂ < positionBase N)
     (heq : encodePosition N (ci₁, li₁) = encodePosition N (ci₂, li₂)) :
-    ci₁ = ci₂ ∧ li₁ = li₂ := by
-  simp only [encodePosition] at heq; constructor <;> omega
+    ci₁ = ci₂ ∧ li₁ = li₂ :=
+  ⟨(encodePosition_div N ci₁ li₁ hli₁).symm.trans
+      (heq ▸ encodePosition_div N ci₂ li₂ hli₂),
+   (encodePosition_mod N ci₁ li₁ hli₁).symm.trans
+      (heq ▸ encodePosition_mod N ci₂ li₂ hli₂)⟩
 
 ------------------------------------------------------------------------
 -- §10  positionCompatible: extracted properties
@@ -310,8 +318,9 @@ private theorem cliqueEdges_mem_iff (N : cnf) (u v : Nat) :
              List.mem_map, List.mem_filter]
   constructor
   · rintro ⟨p, hpPos, q, ⟨hqPos, hCompat⟩, hpair⟩
-    simp [Prod.mk.injEq] at hpair
-    exact ⟨p, q, hpPos, hqPos, hpair.1, hpair.2, hCompat⟩
+    have hp1 : u = encodePosition N p := (Prod.mk.inj hpair).1.symm
+    have hp2 : v = encodePosition N q := (Prod.mk.inj hpair).2.symm
+    exact ⟨p, q, hpPos, hqPos, hp1, hp2, hCompat⟩
   · rintro ⟨p, q, hpPos, hqPos, rfl, rfl, hCompat⟩
     exact ⟨p, hpPos, q, ⟨hqPos, hCompat⟩, rfl⟩
 
@@ -323,7 +332,8 @@ private theorem fgraph_wf_instance (N : cnf) :
     fgraph_wf (N.length * positionBase N, cliqueEdges N) := by
   intro e he
   rw [cliqueEdges_mem_iff] at he
-  obtain ⟨p, q, hp, hq, rfl, rfl, _⟩ := he
+  obtain ⟨p, q, hp, hq, hep, heq, _⟩ := he
+  rw [hep, heq]
   exact ⟨encodePosition_lt N p.1 p.2
             ((clausePositions_mem N p.1 p.2).mp hp).1
             (clausePos_li_lt_posBase N p.1 p.2 hp),
@@ -341,7 +351,7 @@ private theorem noCliqueInstance_not_FlatClique : ¬ FlatClique noCliqueInstance
   rcases l with _ | ⟨v, _ | _⟩
   · simp at hlen
   · simp at hlen
-    exact absurd (htype v (List.mem_cons_self v [])) (by omega)
+    exact absurd (htype List.mem_cons_self) (by omega)
   · simp at hlen
 
 ------------------------------------------------------------------------
@@ -374,13 +384,15 @@ private theorem sat_to_clique (N : cnf) (hSAT : SAT N) :
       (Nat.lt_trans (hfi_lt ci hci)
         (positionBase_gt_clauseLen N (N.getD ci []) (getD_mem N ci [] hci)))
   · -- Nodup
-    apply List.Nodup.map _ (List.nodup_finRange N.length)
-    intro ⟨ci₁, hci₁⟩ _ ⟨ci₂, hci₂⟩ _ henc
-    have hli₁ := Nat.lt_trans (hfi_lt ci₁ hci₁)
-      (positionBase_gt_clauseLen N (N.getD ci₁ []) (getD_mem N ci₁ [] hci₁))
-    have hli₂ := Nat.lt_trans (hfi_lt ci₂ hci₂)
-      (positionBase_gt_clauseLen N (N.getD ci₂ []) (getD_mem N ci₂ [] hci₂))
-    simp [Fin.ext_iff, (encodePosition_inj N ci₁ _ ci₂ _ hli₁ hli₂ henc).1]
+    apply List.Nodup.map (f := fun ⟨ci, hci⟩ => encodePosition N (ci, fi ci hci))
+    · intro ⟨ci₁, hci₁⟩ ⟨ci₂, hci₂⟩ henc
+      have hli₁ := Nat.lt_trans (hfi_lt ci₁ hci₁)
+        (positionBase_gt_clauseLen N (N.getD ci₁ []) (getD_mem N ci₁ [] hci₁))
+      have hli₂ := Nat.lt_trans (hfi_lt ci₂ hci₂)
+        (positionBase_gt_clauseLen N (N.getD ci₂ []) (getD_mem N ci₂ [] hci₂))
+      simp only [Fin.mk.injEq]
+      exact (encodePosition_inj N ci₁ _ ci₂ _ hli₁ hli₂ henc).1
+    · exact List.nodup_finRange N.length
   · -- All pairs connected
     intro v₁ v₂ hv₁ hv₂ hne
     simp only [clique, List.mem_map, List.mem_finRange] at hv₁ hv₂
@@ -422,14 +434,13 @@ private theorem sat_to_clique (N : cnf) (hSAT : SAT N) :
 
 /-- A nonempty clause is always satisfiable. -/
 private theorem nonempty_clause_sat (C : clause) (hC : 0 < C.length) : SAT [C] := by
-  let l := C.get ⟨0, hC⟩
-  let a : assgn := if l.1 then [l.2] else []
-  refine ⟨a, ?_⟩
-  simp only [satisfiesCnf, evalCnf, List.all_cons, List.all_nil, Bool.and_true]
-  simp only [evalClause, List.any_eq_true]
-  exact ⟨l, List.get_mem C 0 hC, by
-    simp only [evalLiteral, a]
-    rcases l with ⟨_ | _, _⟩ <;> simp [evalVar]⟩
+  rcases C with _ | ⟨⟨pol, v⟩, rest⟩
+  · exact absurd hC (by simp)
+  · let a : assgn := if pol then [v] else []
+    refine ⟨a, ?_⟩
+    simp only [satisfiesCnf, evalCnf, List.all_cons, List.all_nil, Bool.and_true,
+               evalClause, List.any_cons, evalLiteral, a]
+    cases pol <;> simp [evalVar]
 
 /-- Given clique size ≥ 2, extract a satisfying assignment. -/
 private theorem clique_to_sat_of_length_ge_two (N : cnf) (hN2 : 2 ≤ N.length)
@@ -443,19 +454,19 @@ private theorem clique_to_sat_of_length_ge_two (N : cnf) (hN2 : 2 ≤ N.length)
     -- Pick another distinct vertex (exists since |l| ≥ 2 and Nodup).
     have hother : ∃ w ∈ l, w ≠ v := by
       rcases l with _ | ⟨a, _ | ⟨b, _⟩⟩
-      · simp at hN2
-      · simp at hN2
+      · simp only [List.length_nil] at hlen; omega
+      · simp only [List.length_cons, List.length_nil] at hlen; omega
       · simp only [List.mem_cons] at hv
         rcases hv with rfl | hv
         · exact ⟨b, by simp, by
-            intro heq; subst heq
-            exact (List.nodup_cons.mp hnodup).1 (List.mem_cons_self _ _)⟩
+              intro heq; subst heq
+              exact (List.nodup_cons.mp hnodup).1 List.mem_cons_self⟩
         · exact ⟨a, by simp, by
-            intro heq; subst heq
-            rcases hv with rfl | hv
-            · exact (List.nodup_cons.mp hnodup).1 (List.mem_cons_self _ _)
-            · have hnd := (List.nodup_cons.mp hnodup).2
-              exact (List.nodup_cons.mp hnd).1 (List.mem_cons_of_mem _ hv)⟩
+              intro heq; subst heq
+              rcases hv with rfl | hv
+              · exact (List.nodup_cons.mp hnodup).1 List.mem_cons_self
+              · have hnd := (List.nodup_cons.mp hnodup).2
+                exact (List.nodup_cons.mp hnd).1 (List.mem_cons_of_mem hv)⟩
     obtain ⟨w, hw, hne⟩ := hother
     have hedge := hadj v w hv hw hne
     rw [cliqueEdges_mem_iff] at hedge
@@ -496,27 +507,30 @@ private theorem clique_to_sat_of_length_ge_two (N : cnf) (hN2 : 2 ≤ N.length)
     push_neg at h
     -- l.map (· / positionBase N) is Nodup of length N.length inside {0,..,N.length-1}
     -- but doesn't contain ci, contradicting length = N.length.
-    have hmapNodup : (l.map (· / positionBase N)).Nodup :=
-      hnodup.map _ (fun a ha b hb hab => by
-        by_contra hne; exact hciDistinct a b ha hb hne hab)
+    have hmapNodup : (l.map (· / positionBase N)).Nodup := by
+      rw [List.nodup_iff_pairwise_ne, ← List.pairwise_map]
+      apply (List.nodup_iff_pairwise_ne.mp hnodup).imp_of_mem
+      intros a b ha hb hab
+      exact hciDistinct a b ha hb hab
     have hmapLen : (l.map (· / positionBase N)).length = N.length := by
       simp [List.length_map, hlen]
     have hmapRange : ∀ x ∈ l.map (· / positionBase N), x < N.length := by
       intro x hx
       simp only [List.mem_map] at hx
       obtain ⟨v, hv, rfl⟩ := hx; exact hciRange v hv
-    -- (List.range N.length) \ {ci} has length N.length - 1 and contains all of l.map.
-    have hSub : l.map (· / positionBase N) ⊆ (List.range N.length).erase ci := by
+    -- Use Finset pigeonhole
+    have hcard : (l.map (· / positionBase N)).toFinset.card = N.length := by
+      rw [List.toFinset_card_of_nodup hmapNodup, hmapLen]
+    have hsub : (l.map (· / positionBase N)).toFinset ⊆ (Finset.range N.length).erase ci := by
       intro x hx
-      apply List.mem_erase_of_ne
-      · exact h x hx
-      · exact List.mem_range.mpr (hmapRange x hx)
-    have hlen_erase : ((List.range N.length).erase ci).length = N.length - 1 := by
-      rw [List.length_erase_of_mem (List.mem_range.mpr hci)]
-      simp [List.length_range]
-    have hle := (hmapNodup.length_le_of_nodup_sublist
-      ((List.nodup_range N.length).erase ci |>.nodup_sublist hSub))
-    omega
+      simp only [List.mem_toFinset, List.mem_map] at hx
+      obtain ⟨v, hv, rfl⟩ := hx
+      simp only [Finset.mem_erase, Finset.mem_range]
+      exact ⟨fun heq => h (v / positionBase N) (List.mem_map.mpr ⟨v, hv, rfl⟩) heq,
+             hciRange v hv⟩
+    have hcard2 : ((Finset.range N.length).erase ci).card = N.length - 1 := by
+      rw [Finset.card_erase_of_mem (Finset.mem_range.mpr hci), Finset.card_range]
+    linarith [Finset.card_le_card hsub, hcard ▸ hcard2 ▸ Nat.le_refl N.length]
   -- Build satisfying assignment.
   let a : assgn := l.filterMap fun v =>
     match literalAt N (v / positionBase N) (v % positionBase N) with
@@ -560,14 +574,9 @@ private theorem clique_to_sat_of_length_ge_two (N : cnf) (hN2 : 2 ≤ N.length)
       obtain ⟨p', hp', hv'eq⟩ := hDecode v' hv'
       have hp'base := clausePos_li_lt_posBase N p'.1 p'.2 hp'
       have hlitV' : literalAt N (v' / positionBase N) (v' % positionBase N) = some (true, var) := by
-        simp only [a] at hmatch
-        split at hmatch
-        · rename_i b w h'
-          exact h' ▸ (by
-            cases b with
-            | false => simp at hmatch
-            | true => exact Option.some.inj hmatch ▸ h')
-        · simp at hmatch
+        rcases h : literalAt N (v' / positionBase N) (v' % positionBase N) with _ | ⟨_ | _, w⟩
+          <;> simp [h] at hmatch ⊢
+        exact hmatch
       rw [hv'eq, encodePosition_div N p'.1 p'.2 hp'base,
           encodePosition_mod N p'.1 p'.2 hp'base] at hlitV'
       have hv'ne : v' ≠ v := by
@@ -602,6 +611,7 @@ private theorem clique_to_sat_of_length_ge_two (N : cnf) (hN2 : 2 ≤ N.length)
       refine ⟨v, hv, ?_⟩
       rw [hveq, encodePosition_div N p.1 p.2 hpbase,
           encodePosition_mod N p.1 p.2 hpbase, hpciEq, hlitEq]
+      rfl
 
 ------------------------------------------------------------------------
 -- §16  Correctness of the guarded reduction
@@ -619,19 +629,15 @@ private theorem kSAT_to_FlatClique_f_correct (k : Nat) (N : cnf) :
     · intro hClique
       refine ⟨hk, hkCNF, ?_⟩
       rcases Nat.lt_or_ge N.length 2 with hlt2 | hge2
-      · interval_cases (N.length)
+      · rcases N with _ | ⟨C, _ | ⟨D, rest⟩⟩
         · exact ⟨[], by simp [satisfiesCnf, evalCnf]⟩
-        · rcases N with _ | ⟨C, ⟨⟩⟩
-          have hCpos : 0 < C.length := by
-            have := ((kCNF_clause_length k [C]).mp hkCNF) C (List.mem_cons_self C [])
+        · have hCpos : 0 < C.length := by
+            have := ((kCNF_clause_length k [C]).mp hkCNF) C List.mem_cons_self
             omega
-          obtain ⟨a, ha⟩ := nonempty_clause_sat C hCpos
-          simp only [SAT, satisfiesCnf, evalCnf] at ha ⊢
-          exact ⟨a, by simpa [evalCnf] using ha⟩
-      · obtain ⟨l, _, hclique, hlen⟩ := hClique
-        exact clique_to_sat_of_length_ge_two N hge2 l hclique.2 (by
-          intro v₁ v₂ hv₁ hv₂ hne
-          exact (hclique.1.2.2 v₁ v₂ hv₁ hv₂ hne)) hlen
+          exact nonempty_clause_sat C hCpos
+        · simp only [List.length_cons] at hlt2; omega
+      · obtain ⟨l, _, ⟨⟨_, hnodup, hadj⟩, hlen⟩⟩ := hClique
+        exact clique_to_sat_of_length_ge_two N hge2 l hnodup hadj hlen
   · simp only [hcond, ↓reduceIte]
     exact ⟨fun ⟨hk, hkCNF, _⟩ => absurd ⟨hk, hkCNF⟩ hcond,
            fun h => absurd h noCliqueInstance_not_FlatClique⟩
@@ -662,6 +668,14 @@ private theorem positionBase_le_size_add_one (N : cnf) :
     exact ⟨Nat.le_trans (encodable_size_list_ge_length C) (by omega),
            Nat.le_trans ih (by omega)⟩
 
+private theorem clausePositionsAux_length_base_indep (N : cnf) (b₁ b₂ : Nat) :
+    (clausePositionsAux N b₁).length = (clausePositionsAux N b₂).length := by
+  induction N generalizing b₁ b₂ with
+  | nil => rfl
+  | cons C Cs ih =>
+    simp only [clausePositionsAux, List.length_append, List.length_map, List.length_range]
+    exact congrArg _ (ih _ _)
+
 private theorem clausePositions_length_le_size (N : cnf) :
     (clausePositions N).length ≤ encodable.size N := by
   simp only [clausePositions]
@@ -671,8 +685,10 @@ private theorem clausePositions_length_le_size (N : cnf) :
     simp only [clausePositionsAux, List.length_append, List.length_map, List.length_range,
                encodable_size_list_cons]
     calc C.length + (clausePositionsAux Cs 1).length
-        ≤ encodable.size C + encodable.size Cs := by
-          exact Nat.add_le_add (encodable_size_list_ge_length C) ih
+        = C.length + (clausePositionsAux Cs 0).length := by
+            rw [clausePositionsAux_length_base_indep Cs 1 0]
+      _ ≤ encodable.size C + encodable.size Cs := by
+            exact Nat.add_le_add (encodable_size_list_ge_length C) ih
       _ ≤ encodable.size C + 1 + encodable.size Cs := by omega
 
 private theorem encodable_size_fedge_list_bounded (B : Nat) (edges : List fedge)
