@@ -12,3 +12,4 @@
 - Use `import Mathlib` explicitly in proof files when you need Mathlib lemmas or tactics.
 - A good Lean workflow is: inspect diagnostics/goals → search for existing lemmas → try candidate tactics/proof terms → re-check diagnostics and soundness → finish with `lake build`.
 - Use `lake build` for whole-project checkpoints, but use Lean MCP diagnostics first for faster iteration.
+- For Lean4 proofs: prefer explicit term-mode proofs over tactics like linarith and omega!
