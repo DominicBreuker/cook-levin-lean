@@ -915,8 +915,11 @@ theorem FSAT_to_SAT_size_le (f : formula) :
           have : (99 : ℤ) * n ≤ 20 * (n : ℤ) ^ 2 + 293 := by
             nlinarith [sq_nonneg ((n : ℤ) - 3)]
           exact_mod_cast this
-        set n2 := n ^ 2
-        linarith [hN_size, h_rv_bound, h20]
+        clear_value n rv N T3 b
+        calc 3 * rv + 9 + 1 + encodable.size N
+            ≤ (15 * n + 7) + (180 * n ^ 2 + 84 * n) := by nlinarith [h_rv_bound, hN_size]
+          _ = 180 * n ^ 2 + 99 * n + 7 := by ring
+          _ ≤ 200 * n ^ 2 + 300 := by nlinarith [h20]
 
 -- ─── Final polynomial reduction theorems ────────────────────────────────────
 
