@@ -752,7 +752,7 @@ private theorem tseytin'_clauses_le (nf : Nat) (f : formula) :
       have h₂ := ih₂ (tseytin' nf f₁).2.2
       have hkey : (tseytin' nf (formula.fand f₁ f₂)).2.1.length =
           (tseytin' nf f₁).2.1.length + (tseytin' (tseytin' nf f₁).2.2 f₂).2.1.length + 3 := by
-        simp [tseytin', tseytinAnd, List.length_append, List.length_cons, List.length_nil]
+        simp [tseytin', tseytinAnd, List.length_append, List.length_cons, List.length_nil]; omega
       simp only [formula_size]; linarith
   | fneg f ih =>
       have h := ih nf
@@ -771,11 +771,11 @@ private theorem tseytin'_nf_size_le (nf : Nat) (f : formula) :
       have h₂ := ih₂ (tseytin' nf f₁).2.2
       have hkey : (tseytin' nf (formula.fand f₁ f₂)).2.2 =
           (tseytin' (tseytin' nf f₁).2.2 f₂).2.2 + 1 := by simp [tseytin']
-      simp only [formula_size]; linarith
+      simp only [formula_size]; omega
   | fneg f ih =>
       have h := ih nf
       have hkey : (tseytin' nf (formula.fneg f)).2.2 = (tseytin' nf f).2.2 + 1 := by simp [tseytin']
-      simp only [formula_size]; linarith
+      simp only [formula_size]; omega
   | forr _ _ _ _ => simp [tseytin', formula_size]
 
 private theorem one_le_encodable_size_formula (f : formula) :
@@ -806,7 +806,7 @@ private theorem encodable_size_clause3_le {C : clause} {M : Nat}
   have hs₂ := encodable_size_literal_le l₂
   have hs₃ := encodable_size_literal_le l₃
   simp only [encodable_size_list_cons, encodable_size_list_nil]
-  linarith
+  omega
 
 private theorem encodable_size_cnf3_le {N : cnf} {M : Nat}
     (hClauses : ∀ C ∈ N, C.length = 3)
@@ -849,7 +849,8 @@ theorem FSAT_to_SAT_size_le (f : formula) :
     linarith [tseytin'_clauses_le (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)]
   have hT3_le : (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.2 ≤
       5 * encodable.size f := by
-    linarith [tseytin'_nf_size_le (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)]
+    have h := tseytin'_nf_size_le (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)
+    linarith
   have hb_le_T3 := tseytin'_nf_mono (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)
   have hrepr := tseytinP_repr (eliminateOR f) (orFree_eliminate f)
     (formula_maxVar_varsIn (eliminateOR f)) (formula_maxVar (eliminateOR f) + 1) (le_refl _)
@@ -858,7 +859,7 @@ theorem FSAT_to_SAT_size_le (f : formula) :
       v < (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.2 := by
     intro v hv
     rcases hrepr.1 v hv with h | ⟨_, h⟩
-    · omega
+    · exact lt_of_lt_of_le h hb_le_T3
     · exact h
   have hN_kCNF : ∀ C ∈ (tseytin' (formula_maxVar (eliminateOR f) + 1) (eliminateOR f)).2.1,
       C.length = 3 :=
@@ -872,18 +873,23 @@ theorem FSAT_to_SAT_size_le (f : formula) :
     calc encodable.size N
         ≤ N.length * (3 * (T3 + 1) + 4) :=
             encodable_size_cnf3_le hN_kCNF (fun v hv => hN_vars v hv)
-      _ ≤ 12 * n * (3 * (5 * n + 1) + 4) := Nat.mul_le_mul hN_len (by linarith)
+      _ ≤ 12 * n * (3 * (5 * n + 1) + 4) := Nat.mul_le_mul hN_len (by omega)
       _ = 180 * n ^ 2 + 84 * n := by ring
   have hrv_size : encodable.size ((true, rv) : literal) = rv + 2 := by
     show (1 : Nat) + rv + 1 = rv + 2; omega
   have hhead_size : encodable.size ([(true, rv), (true, rv), (true, rv)] : clause) = 3 * rv + 9 := by
     simp only [encodable_size_list_cons, encodable_size_list_nil, hrv_size]; ring
-  have h_rv_bound : 3 * rv + 3 ≤ 15 * n := by linarith [hrv_lt, hT3_le]
+  have h_rv_bound : 3 * rv + 3 ≤ 15 * n := by omega
   calc encodable.size ([(true, rv), (true, rv), (true, rv)] :: N)
       = encodable.size [(true, rv), (true, rv), (true, rv)] + 1 + encodable.size N :=
           encodable_size_list_cons _ _
     _ = 3 * rv + 9 + 1 + encodable.size N := by rw [hhead_size]
-    _ ≤ 200 * n ^ 2 + 300 := by nlinarith [hN_size, h_rv_bound, hn_pos, sq_nonneg n]
+    _ ≤ 200 * n ^ 2 + 300 := by
+        have h20 : 99 * n ≤ 20 * n ^ 2 + 293 := by
+          have : (99 : ℤ) * n ≤ 20 * (n : ℤ) ^ 2 + 293 := by
+            nlinarith [sq_nonneg ((n : ℤ) - 3)]
+          exact_mod_cast this
+        linarith [hN_size, h_rv_bound, h20]
 
 -- ─── Final polynomial reduction theorems ────────────────────────────────────
 
