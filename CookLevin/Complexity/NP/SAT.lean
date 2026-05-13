@@ -198,12 +198,103 @@ theorem compressAssignment_cnf_equiv (a : assgn) (N : cnf) :
   rcases l with ⟨b, v⟩
   simp only [evalLiteral, ← compressAssignment_evalVar a N v (varsOfCnf_mem N C _ hC hl)]
 
+/-- For any encodable list, the size of any element plus 1 is bounded by the
+size of the whole list. -/
+private theorem encodable_size_mem_le {α : Type _} [encodable α] :
+    ∀ {x : α} {xs : List α}, x ∈ xs → encodable.size x + 1 ≤ encodable.size xs := by
+  intro x xs
+  induction xs with
+  | nil => intro h; simp at h
+  | cons y ys ih =>
+      intro hx
+      rw [encodable_size_list_cons]
+      rcases List.mem_cons.mp hx with rfl | hx'
+      · exact Nat.le_add_right _ _
+      · calc encodable.size x + 1
+            ≤ encodable.size ys := ih hx'
+          _ ≤ encodable.size y + 1 + encodable.size ys := Nat.le_add_left _ _
+
+/-- A list of `Nat`s whose every element satisfies `x + 1 ≤ S` has
+`encodable.size xs ≤ xs.length * S`. -/
+private theorem encodable_size_listNat_le_mul (S : Nat) :
+    ∀ (xs : List Nat), (∀ x ∈ xs, x + 1 ≤ S) →
+      encodable.size xs ≤ xs.length * S
+  | [], _ => by simp [encodable.size]
+  | x :: xs, h => by
+      have hx : x + 1 ≤ S := h x (by simp)
+      have hxs : ∀ y ∈ xs, y + 1 ≤ S := fun y hy => h y (by simp [hy])
+      have ih := encodable_size_listNat_le_mul S xs hxs
+      rw [encodable_size_list_cons]
+      show encodable.size x + 1 + encodable.size xs ≤ (x :: xs).length * S
+      have hsx : encodable.size x = x := rfl
+      rw [hsx, List.length_cons]
+      -- Goal: x + 1 + encodable.size xs ≤ (xs.length + 1) * S
+      calc x + 1 + encodable.size xs
+          ≤ S + encodable.size xs := Nat.add_le_add_right hx _
+        _ ≤ S + xs.length * S := Nat.add_le_add_left ih _
+        _ = (xs.length + 1) * S := by ring
+
+/-- A `Nodup` list of `Nat`s with every element `< S` has length `≤ S`. -/
+private theorem nodupListNat_length_le (S : Nat) (xs : List Nat)
+    (hNodup : xs.Nodup) (hBound : ∀ x ∈ xs, x < S) : xs.length ≤ S := by
+  have hSubset : xs ⊆ List.range S := fun x hx => List.mem_range.mpr (hBound x hx)
+  have hSubperm : List.Subperm xs (List.range S) := hNodup.subperm hSubset
+  have hLen := hSubperm.length_le
+  rwa [List.length_range] at hLen
+
 /-- Size bound for the compressed assignment: quadratic in the size of N.
-The proof sketch: compressAssignment a N has at most |varsOfCnf N| ≤ size(N)
-many variables, each with value ≤ size(N), giving a quadratic size bound. -/
+`compressAssignment a N` is a Nodup list with values drawn from
+`varsOfCnf N`. Each such variable satisfies `v + 1 ≤ size N` (it lives inside
+a literal of a clause of N), so the list has length `≤ size N` and
+`encodable.size ≤ size N * size N`. -/
 theorem compressAssignment_size_bound (a : assgn) (N : cnf) :
     encodable.size (compressAssignment a N) ≤ encodable.size N ^ 2 + 1 := by
-  sorry
+  set S := encodable.size N
+  -- Every variable appearing in `N` satisfies `v + 1 ≤ S`.
+  have hVarBound : ∀ v ∈ varsOfCnf N, v + 1 ≤ S := by
+    intro v hv
+    rw [varsOfCnf] at hv
+    rcases List.mem_flatten.mp hv with ⟨vsC, hvsC, hvInvsC⟩
+    rcases List.mem_map.mp hvsC with ⟨C, hCN, rfl⟩
+    rw [varsOfClause] at hvInvsC
+    rcases List.mem_flatten.mp hvInvsC with ⟨vsL, hvsL, hvInvsL⟩
+    rcases List.mem_map.mp hvsL with ⟨l, hlC, rfl⟩
+    rw [varsOfLiteral, List.mem_singleton] at hvInvsL
+    subst hvInvsL
+    -- l ∈ C ∈ N, and v = l.2.
+    have hlSize : l.2 + 1 ≤ encodable.size l := by
+      show l.2 + 1 ≤ encodable.size l.1 + l.2 + 1
+      exact Nat.add_le_add_right (Nat.le_add_left _ _) 1
+    have hCSize : encodable.size l + 1 ≤ encodable.size C := encodable_size_mem_le hlC
+    have hNSize : encodable.size C + 1 ≤ encodable.size N := encodable_size_mem_le hCN
+    show l.2 + 1 ≤ encodable.size N
+    calc l.2 + 1
+        ≤ encodable.size l := hlSize
+      _ ≤ encodable.size l + 1 := Nat.le_succ _
+      _ ≤ encodable.size C := hCSize
+      _ ≤ encodable.size C + 1 := Nat.le_succ _
+      _ ≤ encodable.size N := hNSize
+  -- Properties of the compressed assignment.
+  have hcNodup : (compressAssignment a N).Nodup := List.nodup_dedup _
+  have hcSubset : ∀ v ∈ compressAssignment a N, v ∈ varsOfCnf N := by
+    intro v hv
+    simp only [compressAssignment, List.mem_dedup, List.mem_filter,
+               decide_eq_true_eq] at hv
+    exact hv.2
+  have hcVarBound : ∀ v ∈ compressAssignment a N, v + 1 ≤ S :=
+    fun v hv => hVarBound v (hcSubset v hv)
+  have hcLt : ∀ v ∈ compressAssignment a N, v < S := fun v hv =>
+    Nat.lt_of_succ_le (hcVarBound v hv)
+  have hcLenBound : (compressAssignment a N).length ≤ S :=
+    nodupListNat_length_le S _ hcNodup hcLt
+  have hcSizeBound : encodable.size (compressAssignment a N) ≤
+      (compressAssignment a N).length * S :=
+    encodable_size_listNat_le_mul S _ hcVarBound
+  calc encodable.size (compressAssignment a N)
+      ≤ (compressAssignment a N).length * S := hcSizeBound
+    _ ≤ S * S := Nat.mul_le_mul_right S hcLenBound
+    _ = S ^ 2 := by ring
+    _ ≤ S ^ 2 + 1 := by linarith
 
 theorem sat_NP : inNP SAT := by
   refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
