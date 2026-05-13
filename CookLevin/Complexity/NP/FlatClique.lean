@@ -29,13 +29,57 @@ theorem cliqueRel_iff (Gk : fgraph × Nat) (l : List fvertex) :
     cliqueRel Gk l ↔ cliqueRelDec ⟨Gk, l⟩ = true := by
   simp [cliqueRel, cliqueRelDec, decide_eq_true_eq]
 
+/-- A list of `Nat`s whose elements are all strictly less than `B` has
+`encodable.size ≤ |xs| * B + |xs|`. Each entry contributes `x + 1 ≤ B + 1`
+to the size and there are `|xs|` entries. -/
+private theorem encodable_size_listNat_bounded (B : Nat) :
+    ∀ (xs : List Nat), list_ofFlatType B xs →
+      encodable.size xs ≤ xs.length * B + xs.length
+  | [], _ => by simp [encodable.size]
+  | x :: xs, h => by
+      obtain ⟨hx, hxs⟩ := list_ofFlatType_cons.mp h
+      have ih := encodable_size_listNat_bounded B xs hxs
+      rw [encodable_size_list_cons]
+      have hsx : (encodable.size x : Nat) = x := rfl
+      rw [hsx]
+      simp only [List.length_cons]
+      have hxB : x + 1 ≤ B := hx
+      nlinarith
+
 /-- Size bound for clique certificates: quadratic in the input size.
-Proof sketch: the clique list has at most k ≤ size(G,k) vertices,
-each with value < G.1 ≤ size(G,k), giving a quadratic size bound. -/
+The clique list has length `k ≤ size(G,k)` with each vertex `< G.1 ≤ size(G,k)`,
+so `encodable.size l ≤ k * (G.1 + 1) ≤ size(G,k) ^ 2`. -/
 theorem clique_size_bound (Gk : fgraph × Nat) (l : List fvertex)
     (hl : cliqueRel Gk l) :
     encodable.size l ≤ encodable.size Gk ^ 2 + 1 := by
-  sorry
+  obtain ⟨G, k⟩ := Gk
+  rcases hl with ⟨_hwf, ⟨⟨hOfType, _hNodup, _hAdj⟩, hlen⟩⟩
+  set S := encodable.size ((G, k) : fgraph × Nat)
+  -- Bound the size of the certificate list.
+  have hSizeL : encodable.size l ≤ k * G.1 + k := by
+    have h := encodable_size_listNat_bounded G.1 l hOfType
+    rw [hlen] at h
+    linarith
+  -- Bound the size of the (G, k) input from below.
+  have hSGk : G.1 + k + 1 ≤ S := by
+    have hPair : encodable.size ((G, k) : fgraph × Nat) =
+        encodable.size G + encodable.size k + 1 := rfl
+    have hG : encodable.size G = encodable.size G.1 + encodable.size G.2 + 1 := rfl
+    have hNat1 : (encodable.size G.1 : Nat) = G.1 := rfl
+    have hNat2 : (encodable.size k : Nat) = k := rfl
+    show G.1 + k + 1 ≤ encodable.size ((G, k) : fgraph × Nat)
+    rw [hPair, hG, hNat1, hNat2]
+    linarith [Nat.zero_le (encodable.size G.2)]
+  -- Combine: k * (G.1 + 1) ≤ S * S = S ^ 2.
+  have hKle : k ≤ S := by linarith
+  have hG1le : G.1 + 1 ≤ S := by linarith
+  have hProd : k * (G.1 + 1) ≤ S * S := Nat.mul_le_mul hKle hG1le
+  calc
+    encodable.size l ≤ k * G.1 + k := hSizeL
+    _ = k * (G.1 + 1) := by ring
+    _ ≤ S * S := hProd
+    _ = S ^ 2 := by ring
+    _ ≤ S ^ 2 + 1 := by linarith
 
 theorem FlatClique_in_NP : inNP FlatClique := by
   refine inNP_intro FlatClique cliqueRel ?_ ?_

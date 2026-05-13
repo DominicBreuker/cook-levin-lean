@@ -1,6 +1,5 @@
 import Complexity.Complexity.Definitions
 import Complexity.Complexity.NP
-import Complexity.Complexity.Subtypes
 import Complexity.NP.GenNP
 import Complexity.NP.TM.IntermediateProblems
 import Complexity.NP.SAT
