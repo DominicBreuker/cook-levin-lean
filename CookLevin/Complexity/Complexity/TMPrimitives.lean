@@ -1,6 +1,7 @@
 import Complexity.Complexity.Definitions
 import Complexity.Complexity.MachineSemantics
 import Complexity.Complexity.TMDecider
+import Mathlib.Tactic
 
 set_option autoImplicit false
 
@@ -47,14 +48,16 @@ we no longer want to stop in `M₁` — `exit` now leads into `M₂`.
 symbol (including `none`), move to state `dstState` without writing
 or moving. Used to hand off control between two composed TMs.
 
-`sig` here is the alphabet size: we enumerate `[0, sig)` plus `none`. -/
+`sig` here is the alphabet size: we enumerate `[0, sig)` plus `none`.
+The write field is `[none]` everywhere, meaning the tape is never
+modified by the bridge — only the state index changes. -/
 def bridgeEntries (sig : Nat) (srcState dstState : Nat) :
     List FlatTMTransEntry :=
   let mk (v : Option Nat) : FlatTMTransEntry :=
     { src_state := srcState
       src_tape_vals := [v]
       dst_state := dstState
-      dst_write_vals := [v]
+      dst_write_vals := [none]
       move_dirs := [TMMove.Nmove] }
   mk none :: (List.range sig).map (fun v => mk (some v))
 
@@ -154,7 +157,7 @@ theorem bridgeEntries_mem {sig srcState dstState : Nat} {e : FlatTMTransEntry}
     · intro x hx
       simp at hx
       subst hx
-      exact List.mem_range.mp hv
+      trivial
 
 /-- Validity bookkeeping for the composed machine.
 
@@ -427,13 +430,13 @@ def scanRightUntilTM_trans (sig target : Nat) : List FlatTMTransEntry :=
     { src_state := 0
       src_tape_vals := [some v]
       dst_state := 0
-      dst_write_vals := [some v]
+      dst_write_vals := [none]
       move_dirs := [TMMove.Rmove] }
   let mkHalt : FlatTMTransEntry :=
     { src_state := 0
       src_tape_vals := [some target]
       dst_state := 1
-      dst_write_vals := [some target]
+      dst_write_vals := [none]
       move_dirs := [TMMove.Nmove] }
   -- Halt entry first so `find?` matches `target` before the catch-all.
   mkHalt :: noneEntry ::
@@ -470,7 +473,7 @@ theorem scanRightUntilTM_valid (sig target : Nat) (h_target : target < sig) :
       · intro x hx
         simp at hx
         subst hx
-        exact h_target
+        trivial
     · rcases List.mem_cons.mp hRest with hNone | hCont
       · -- none entry
         subst hNone
@@ -500,6 +503,370 @@ theorem scanRightUntilTM_valid (sig target : Nat) (h_target : target < sig) :
         · intro x hx
           simp at hx
           subst hx
-          exact hvlt
+          trivial
+
+/-! ### Operational correctness for `scanRightUntilTM`
+
+We prove three single-step lemmas (target match, in-range non-match,
+out-of-range) and combine them into a full operational-correctness
+statement: the machine, started at head position `head` of a tape
+`right`, ends in state 1 at the first occurrence of `target` ≥ `head`,
+or in state 2 past the right end if no such occurrence exists. -/
+
+/-- The tape symbol at position `head` of a single-tape config is
+`some (right.get …)` whenever the head is in range. -/
+theorem currentTapeSymbol_in_range {left right : List Nat} {head : Nat}
+    (h : head < right.length) :
+    currentTapeSymbol (left, head, right) = some (right.get ⟨head, h⟩) := by
+  show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) =
+       some (right.get ⟨head, h⟩)
+  rw [dif_pos h]
+
+/-- The tape symbol at position `head` is `none` whenever the head is
+past the right end. -/
+theorem currentTapeSymbol_out_of_range {left right : List Nat} {head : Nat}
+    (h : ¬ head < right.length) :
+    currentTapeSymbol (left, head, right) = none := by
+  show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = none
+  rw [dif_neg h]
+
+/-- Computation of `applyTransitionEntry` for a single-tape entry with
+`dst_write_vals = [none]`: only the state index and head position
+change. -/
+private theorem applyEntry_singleTape
+    (cfg_state_idx new_state : Nat) (left right : List Nat) (head : Nat)
+    (sym : Option Nat) (move : TMMove) :
+    applyTransitionEntry
+        { state_idx := cfg_state_idx, tapes := [(left, head, right)] }
+        { src_state := cfg_state_idx
+          src_tape_vals := [sym]
+          dst_state := new_state
+          dst_write_vals := [none]
+          move_dirs := [move] } =
+      some { state_idx := new_state
+             tapes := [moveTapeHead (left, head, right) move] } := rfl
+
+/-- Symbol equality on a singleton list reduces to symbol equality. -/
+private theorem singleOptionList_eq_iff (a b : Option Nat) :
+    ([a] : List (Option Nat)) = [b] ↔ a = b := by
+  constructor
+  · intro h; exact List.head_eq_of_cons_eq h
+  · intro h; rw [h]
+
+/-- The three named transition entries of `scanRightUntilTM`. -/
+private def haltEntry (target : Nat) : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [some target]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Nmove] }
+
+private def noneEntry : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [none]
+    dst_state := 2
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Nmove] }
+
+private def continueEntry (v : Nat) : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [some v]
+    dst_state := 0
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Rmove] }
+
+theorem scanRightUntilTM_trans_eq (sig target : Nat) :
+    (scanRightUntilTM sig target).trans =
+      haltEntry target :: noneEntry ::
+      ((List.range sig).filter (fun v => decide (v ≠ target))).map continueEntry := rfl
+
+/-- Step lemma: on a target symbol, one step halts in state 1. -/
+theorem scanRightUntilTM_step_match
+    (sig target : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = target) :
+    stepFlatTM (scanRightUntilTM sig target)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] } with hcfg
+  have hSym : currentTapeSymbol (left, head, right) = some target := by
+    rw [currentTapeSymbol_in_range h_head_lt, h_get]
+  have hMatch : entryMatchesConfig (haltEntry target) cfg = true := by
+    show ((0 : Nat) == 0 &&
+            decide (([some target] : List (Option Nat)) =
+              [currentTapeSymbol (left, head, right)])) = true
+    rw [hSym, decide_eq_true ((singleOptionList_eq_iff _ _).mpr rfl)]
+    rfl
+  show Option.bind ((scanRightUntilTM sig target).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [scanRightUntilTM_trans_eq, List.find?_cons, hMatch]
+  show applyTransitionEntry cfg (haltEntry target) = _
+  exact applyEntry_singleTape 0 1 left right head (some target) TMMove.Nmove
+
+/-- Helper: among a list of `continueEntry` entries indexed by a
+`List Nat`, `find?` of the config-match predicate returns
+`continueEntry v` provided `v` is in the list and no earlier element
+matches. -/
+private theorem find_continueEntry_match
+    (cfg : FlatTMConfig) (v : Nat) (L : List Nat)
+    (h_cfg_state : cfg.state_idx = 0)
+    (h_cfg_tape : cfg.tapes.map currentTapeSymbol = [some v])
+    (h_mem : v ∈ L)
+    (h_first : ∀ {w : Nat}, w ∈ L → w ≠ v →
+      entryMatchesConfig (continueEntry w) cfg = false) :
+    (L.map continueEntry).find?
+        (fun entry => entryMatchesConfig entry cfg) =
+      some (continueEntry v) := by
+  induction L with
+  | nil => cases h_mem
+  | cons w ws ih =>
+      show List.find? _ (continueEntry w :: ws.map continueEntry) = _
+      rw [List.find?_cons]
+      by_cases hwv : w = v
+      · subst hwv
+        have hMatch : entryMatchesConfig (continueEntry w) cfg = true := by
+          show ((0 : Nat) == cfg.state_idx &&
+                  decide (([some w] : List (Option Nat)) =
+                    cfg.tapes.map currentTapeSymbol)) = true
+          rw [h_cfg_state, h_cfg_tape]
+          have h1 : ((0 : Nat) == 0) = true := rfl
+          have h2 : decide (([some w] : List (Option Nat)) = [some w]) = true :=
+            decide_eq_true rfl
+          rw [h1, h2]; rfl
+        rw [hMatch]
+      · have hNot := h_first (List.mem_cons.mpr (Or.inl rfl)) hwv
+        rw [hNot]
+        rcases List.mem_cons.mp h_mem with hvw | hvws
+        · exact absurd hvw.symm hwv
+        · exact ih hvws (fun hw hne => h_first (List.mem_cons.mpr (Or.inr hw)) hne)
+
+/-- One step on a non-target in-range symbol advances the head. -/
+theorem scanRightUntilTM_step_advance
+    (sig target : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_sym_lt : right.get ⟨head, h_head_lt⟩ < sig)
+    (h_ne : right.get ⟨head, h_head_lt⟩ ≠ target) :
+    stepFlatTM (scanRightUntilTM sig target)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 0, tapes := [(left, head + 1, right)] } := by
+  let v := right.get ⟨head, h_head_lt⟩
+  let cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] }
+  have hSym0 : currentTapeSymbol (left, head, right) = some v := by
+    rw [currentTapeSymbol_in_range h_head_lt]
+  have hSym : cfg.tapes.map currentTapeSymbol = [some v] := by
+    show [currentTapeSymbol (left, head, right)] = [some v]
+    rw [hSym0]
+  -- haltEntry does NOT match (target ≠ v).
+  have hNotMatchHalt : entryMatchesConfig (haltEntry target) cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([some target] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne' : ([some target] : List (Option Nat)) ≠ [some v] := by
+      intro h
+      injection h with h1 _
+      injection h1 with h2
+      exact h_ne h2.symm
+    simp [h_ne']
+  -- noneEntry does NOT match.
+  have hNotMatchNone : entryMatchesConfig noneEntry cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne' : ([none] : List (Option Nat)) ≠ [some v] := by
+      intro h
+      injection h with h1 _
+      cases h1
+    simp [h_ne']
+  -- v is in the filtered range list.
+  have hvInFilter :
+      v ∈ (List.range sig).filter (fun w => decide (w ≠ target)) := by
+    refine List.mem_filter.mpr ⟨List.mem_range.mpr h_sym_lt, ?_⟩
+    show decide (v ≠ target) = true
+    exact decide_eq_true h_ne
+  -- find? on the filtered.map list returns continueEntry v.
+  have hFindCont :
+      (((List.range sig).filter (fun w => decide (w ≠ target))).map continueEntry).find?
+          (fun entry => entryMatchesConfig entry cfg) =
+        some (continueEntry v) := by
+    refine find_continueEntry_match cfg v _ rfl hSym hvInFilter ?_
+    intro w _ hwv
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([some w] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne' : ([some w] : List (Option Nat)) ≠ [some v] := by
+      intro h
+      injection h with h1 _
+      injection h1 with h2
+      exact hwv h2
+    simp [h_ne']
+  -- Combine.
+  show Option.bind ((scanRightUntilTM sig target).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [scanRightUntilTM_trans_eq]
+  rw [List.find?_cons, hNotMatchHalt, List.find?_cons, hNotMatchNone, hFindCont]
+  show applyTransitionEntry cfg (continueEntry v) = _
+  exact applyEntry_singleTape 0 0 left right head (some v) TMMove.Rmove
+
+/-- One step past the right end of the tape halts the scanner in
+state 2. -/
+theorem scanRightUntilTM_step_reject
+    (sig target : Nat) (left right : List Nat) (head : Nat)
+    (h_head_ge : ¬ head < right.length) :
+    stepFlatTM (scanRightUntilTM sig target)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 2, tapes := [(left, head, right)] } := by
+  let cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] }
+  have hSym0 : currentTapeSymbol (left, head, right) = none :=
+    currentTapeSymbol_out_of_range h_head_ge
+  have hSym : cfg.tapes.map currentTapeSymbol = [none] := by
+    show [currentTapeSymbol (left, head, right)] = [none]
+    rw [hSym0]
+  -- haltEntry does NOT match (target vs none).
+  have hNotMatchHalt : entryMatchesConfig (haltEntry target) cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([some target] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne : ([some target] : List (Option Nat)) ≠ [none] := by
+      intro h
+      injection h with h1 _
+      cases h1
+    simp [h_ne]
+  -- noneEntry matches.
+  have hMatchNone : entryMatchesConfig noneEntry cfg = true := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = true
+    rw [hSym]
+    have h1 : ((0 : Nat) == 0) = true := rfl
+    have h2 : decide (([none] : List (Option Nat)) = [none]) = true :=
+      decide_eq_true rfl
+    rw [h1, h2]; rfl
+  -- Combine.
+  show Option.bind ((scanRightUntilTM sig target).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [scanRightUntilTM_trans_eq]
+  rw [List.find?_cons, hNotMatchHalt, List.find?_cons, hMatchNone]
+  show applyTransitionEntry cfg noneEntry = _
+  exact applyEntry_singleTape 0 2 left right head none TMMove.Nmove
+
+/-- Halting check on a state-0 configuration of `scanRightUntilTM`: it
+is NOT a halting state. -/
+private theorem scanRightUntilTM_state0_not_halting
+    (sig target : Nat) (cfg_tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (scanRightUntilTM sig target)
+        { state_idx := 0, tapes := cfg_tapes } = false := rfl
+
+/-- A state-1 configuration of `scanRightUntilTM` IS a halting state. -/
+private theorem scanRightUntilTM_state1_halting
+    (sig target : Nat) (cfg_tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (scanRightUntilTM sig target)
+        { state_idx := 1, tapes := cfg_tapes } = true := rfl
+
+/-- One unfolding step of `runFlatTM` from a state-0 config that
+takes one TM step to `cfg'`. -/
+private theorem runFlatTM_state0_unfold
+    (sig target : Nat) (n : Nat)
+    (tapes : List (List Nat × Nat × List Nat))
+    (cfg' : FlatTMConfig)
+    (h_step : stepFlatTM (scanRightUntilTM sig target)
+        { state_idx := 0, tapes := tapes } = some cfg') :
+    runFlatTM (n + 1) (scanRightUntilTM sig target)
+        { state_idx := 0, tapes := tapes } =
+      runFlatTM n (scanRightUntilTM sig target) cfg' := by
+  show (if haltingStateReached (scanRightUntilTM sig target)
+            { state_idx := 0, tapes := tapes } = true then
+          some { state_idx := 0, tapes := tapes }
+        else
+          match stepFlatTM (scanRightUntilTM sig target)
+              { state_idx := 0, tapes := tapes } with
+          | none => some { state_idx := 0, tapes := tapes }
+          | some cfg' => runFlatTM n (scanRightUntilTM sig target) cfg') =
+    runFlatTM n (scanRightUntilTM sig target) cfg'
+  rw [scanRightUntilTM_state0_not_halting, h_step]
+  rfl
+
+/-- Main operational correctness for the "target found" case.
+
+By induction on the gap `gap = target_pos - head`. -/
+theorem scanRightUntilTM_run_found
+    (sig target : Nat) (left right : List Nat) :
+    ∀ (gap head : Nat) (h_in_range : head + gap < right.length),
+      right.get ⟨head + gap, h_in_range⟩ = target →
+      (∀ k, k < gap → ∃ (h : head + k < right.length),
+        right.get ⟨head + k, h⟩ < sig ∧
+          right.get ⟨head + k, h⟩ ≠ target) →
+      runFlatTM (gap + 1) (scanRightUntilTM sig target)
+          { state_idx := 0, tapes := [(left, head, right)] } =
+        some { state_idx := 1, tapes := [(left, head + gap, right)] }
+  | 0, head, h_in_range, h_get_target, _ => by
+      have h_lt : head < right.length := by
+        have := h_in_range; rwa [Nat.add_zero] at this
+      have h_get : right.get ⟨head, h_lt⟩ = target := by
+        have := h_get_target
+        have heq : (⟨head + 0, h_in_range⟩ : Fin right.length) = ⟨head, h_lt⟩ :=
+          Fin.eq_of_val_eq (Nat.add_zero head)
+        rw [heq] at this
+        exact this
+      rw [runFlatTM_state0_unfold sig target 0 _ _
+        (scanRightUntilTM_step_match sig target left right head h_lt h_get)]
+      show (some { state_idx := 1, tapes := [(left, head, right)] } : Option FlatTMConfig) =
+        some { state_idx := 1, tapes := [(left, head + 0, right)] }
+      rw [Nat.add_zero]
+  | gap + 1, head, h_in_range, h_get_target, h_before => by
+      -- First-step: advance from head to head+1.
+      have h_head_lt : head < right.length :=
+        Nat.lt_of_le_of_lt (Nat.le_add_right head (gap + 1)) h_in_range
+      rcases h_before 0 (Nat.zero_lt_succ _) with ⟨h_kk, h_sym_lt, h_sym_ne⟩
+      have heq0 : (⟨head + 0, h_kk⟩ : Fin right.length) = ⟨head, h_head_lt⟩ :=
+        Fin.eq_of_val_eq (Nat.add_zero head)
+      have h_get_head : right.get ⟨head, h_head_lt⟩ < sig := by
+        rw [heq0] at h_sym_lt; exact h_sym_lt
+      have h_get_head_ne : right.get ⟨head, h_head_lt⟩ ≠ target := by
+        rw [heq0] at h_sym_ne; exact h_sym_ne
+      -- Set up IH at head+1, gap.
+      have h_succ : (head + 1) + gap = head + (gap + 1) := by
+        rw [Nat.add_assoc, Nat.add_comm 1 gap]
+      have h_in_range' : (head + 1) + gap < right.length := by
+        rw [h_succ]; exact h_in_range
+      have h_get_target' :
+          right.get ⟨(head + 1) + gap, h_in_range'⟩ = target := by
+        have heq : (⟨(head + 1) + gap, h_in_range'⟩ : Fin right.length) =
+            ⟨head + (gap + 1), h_in_range⟩ := Fin.eq_of_val_eq h_succ
+        rw [heq]; exact h_get_target
+      have h_before' :
+          ∀ k, k < gap → ∃ (h : (head + 1) + k < right.length),
+            right.get ⟨(head + 1) + k, h⟩ < sig ∧
+              right.get ⟨(head + 1) + k, h⟩ ≠ target := by
+        intro k hk
+        rcases h_before (k + 1) (Nat.succ_lt_succ hk) with ⟨h_kk, h1, h2⟩
+        have hShift : head + (k + 1) = (head + 1) + k := by
+          rw [Nat.add_assoc, Nat.add_comm 1 k]
+        have h_kk' : (head + 1) + k < right.length := hShift ▸ h_kk
+        refine ⟨h_kk', ?_, ?_⟩
+        · have heq : (⟨(head + 1) + k, h_kk'⟩ : Fin right.length) =
+              ⟨head + (k + 1), h_kk⟩ := Fin.eq_of_val_eq hShift.symm
+          rw [heq]; exact h1
+        · have heq : (⟨(head + 1) + k, h_kk'⟩ : Fin right.length) =
+              ⟨head + (k + 1), h_kk⟩ := Fin.eq_of_val_eq hShift.symm
+          rw [heq]; exact h2
+      have hih :=
+        scanRightUntilTM_run_found sig target left right gap (head + 1)
+          h_in_range' h_get_target' h_before'
+      -- Unfold first step, apply step_advance, then IH.
+      rw [runFlatTM_state0_unfold sig target (gap + 1) _ _
+        (scanRightUntilTM_step_advance sig target left right head h_head_lt
+          h_get_head h_get_head_ne)]
+      rw [hih]
+      show (some { state_idx := 1, tapes := [(left, (head + 1) + gap, right)] } : Option FlatTMConfig) =
+        some { state_idx := 1, tapes := [(left, head + (gap + 1), right)] }
+      rw [h_succ]
+  termination_by gap _ _ _ _ => gap
 
 end TMPrimitives

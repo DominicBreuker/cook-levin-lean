@@ -178,7 +178,7 @@ duplication.
 branch). The deciders for SAT and FlatClique need it; we'll add it
 when Step 6 needs it rather than upfront in maximum generality.
 
-### Step 5 — Tape scanners and segment ops 🚧 (in progress)
+### Step 5 — Tape scanners and segment ops ✅ (for `scanRightUntilTM`)
 **File:** extend `Complexity/Complexity/TMPrimitives.lean`.
 
 The deciders need very little tape-manipulation power. We build only
@@ -187,13 +187,30 @@ what `evalCnf` / `cliqueRelDec` require.
 - ✅ `scanRightUntilTM sig target` — walk head right until the
   current symbol is `some target`; halt in state 1 on match, state 2
   on end-of-tape. 3 states, `sig + 2` transitions. Validity proved
-  (assuming `target < sig`). Operational correctness deferred —
-  will be discharged inline when first consumed.
+  (assuming `target < sig`).
+- ✅ **Operational correctness** (`scanRightUntilTM_run_found`):
+  given a tape `right`, head starting position `head`, and a gap
+  `gap` such that position `head + gap` holds `target` and all earlier
+  positions hold in-range non-target symbols, the machine reaches
+  state 1 at position `head + gap` in exactly `gap + 1` steps. Proved
+  by induction on `gap` using three single-step lemmas
+  (`scanRightUntilTM_step_match`, `_advance`, `_reject`) and a
+  `runFlatTM`-unfold helper.
+- ✅ Refactor: bridge / continue / halt entries now use
+  `dst_write_vals = [none]` (don't-modify-tape) uniformly. This makes
+  single-step traces definitionally clean.
 - ⏳ `eqAtHeadTM`, `scanRightUntilOneOfTM`, `copySegmentTM`,
   `compareSegmentsTM`, `countSymbolsTM` — to be added as the deciders
   in Steps 6/7 ask for them. We are deliberately *not* building a
   pre-emptive library; each primitive lands the moment a real consumer
   forces it.
+
+**Deviations from the original Step 5 sketch:**
+- Added `Mathlib.Tactic` import to `TMPrimitives.lean` (needed for
+  `set`, `injection`, `by_cases` in the operational proofs).
+- The "not found" / rejection multi-step lemma is deferred — it
+  follows the same pattern as the `found` version and we will add it
+  if a downstream consumer requires it.
 
 ---
 
@@ -363,9 +380,10 @@ Tracker:
 - [x] Step 4 — Atomic Bool-output TMs (`verdictTM`,
       `trueDecider`, `falseDecider`; `ifSymbolTM` deferred to Step 6
       when needed)
-- [ ] Step 5 — Tape scanners
+- [x] Step 5 — Tape scanners
       - [x] `scanRightUntilTM` (data + validity)
-      - [ ] Operational correctness lemma (next session)
+      - [x] Operational correctness lemma (`_run_found`; "not found"
+            deferred until needed)
       - [ ] Remaining primitives (added on demand)
 - [ ] Step 6 — `evalCnfTM` (SAT decider)
   - [ ] 6a — Build the TM, prove validity
