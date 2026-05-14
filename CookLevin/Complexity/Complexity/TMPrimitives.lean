@@ -370,6 +370,7 @@ def trueDecider (X : Type) [encodable X] :
   encode_size := fun x => Nat.zero_le _
   M := verdictTM 1 true
   M_valid := verdictTM_valid 1 true
+  M_tapes_pos := by decide
   acceptState := 1
   rejectState := 2
   halting_acc := rfl
@@ -387,6 +388,7 @@ def falseDecider (X : Type) [encodable X] :
   encode_size := fun x => Nat.zero_le _
   M := verdictTM 1 false
   M_valid := verdictTM_valid 1 false
+  M_tapes_pos := by decide
   acceptState := 1
   rejectState := 2
   halting_acc := rfl
@@ -868,5 +870,525 @@ theorem scanRightUntilTM_run_found
         some { state_idx := 1, tapes := [(left, head + (gap + 1), right)] }
       rw [h_succ]
   termination_by gap _ _ _ _ => gap
+
+/-- Main operational correctness for the "target not found" case.
+
+The scanner, started at any position `head ≤ right.length` of a tape
+whose symbols at `head, head+1, …` are all in-range and not equal to
+`target`, runs off the right end after `right.length - head + 1`
+steps, halting in state 2 at position `right.length`. -/
+theorem scanRightUntilTM_run_not_found
+    (sig target : Nat) (left right : List Nat) :
+    ∀ (head : Nat),
+      head ≤ right.length →
+      (∀ k, head ≤ k → ∀ (h : k < right.length),
+        right.get ⟨k, h⟩ < sig ∧ right.get ⟨k, h⟩ ≠ target) →
+      runFlatTM (right.length - head + 1) (scanRightUntilTM sig target)
+          { state_idx := 0, tapes := [(left, head, right)] } =
+        some { state_idx := 2, tapes := [(left, right.length, right)] }
+  | head, h_le, h_all => by
+      by_cases h_lt : head < right.length
+      · -- Inductive step: advance one position.
+        rcases h_all head (Nat.le_refl head) h_lt with ⟨h_sym_lt, h_sym_ne⟩
+        have h_step :=
+          scanRightUntilTM_step_advance sig target left right head h_lt h_sym_lt h_sym_ne
+        have h_len_sub : right.length - head = (right.length - (head + 1)) + 1 := by
+          have h_pos : 1 ≤ right.length - head := Nat.sub_pos_of_lt h_lt
+          have hsub : right.length - (head + 1) = right.length - head - 1 := by
+            rw [Nat.sub_add_eq]
+          rw [hsub, Nat.sub_add_cancel h_pos]
+        have h_le' : head + 1 ≤ right.length := h_lt
+        have h_all' : ∀ k, head + 1 ≤ k → ∀ (h : k < right.length),
+            right.get ⟨k, h⟩ < sig ∧ right.get ⟨k, h⟩ ≠ target := by
+          intro k hk h_klt
+          exact h_all k (Nat.le_of_lt (Nat.lt_of_lt_of_le (Nat.lt_succ_self head) hk)) h_klt
+        have hih :=
+          scanRightUntilTM_run_not_found sig target left right (head + 1) h_le' h_all'
+        -- runFlatTM (right.length - head + 1) = runFlatTM (((right.length - (head + 1)) + 1) + 1)
+        rw [h_len_sub]
+        rw [runFlatTM_state0_unfold sig target (right.length - (head + 1) + 1) _ _ h_step]
+        exact hih
+      · -- Base case: head = right.length.
+        have h_eq : head = right.length :=
+          Nat.le_antisymm h_le (Nat.le_of_not_lt h_lt)
+        have h_step :=
+          scanRightUntilTM_step_reject sig target left right head h_lt
+        rw [h_eq] at h_step
+        rw [h_eq]
+        show runFlatTM (right.length - right.length + 1) _ _ = _
+        rw [Nat.sub_self]
+        -- runFlatTM 1
+        rw [runFlatTM_state0_unfold sig target 0 _ _ h_step]
+        rfl
+  termination_by head _ _ => right.length - head
+
+/-! ### Extending a halted run
+
+Once a TM has run for `n` steps and landed in a halting state, any
+additional steps leave the configuration unchanged. This is the
+standard "padding" lemma we need when a decider's time budget is
+generous: the actual run finishes faster, but we want a single
+uniform bound. -/
+
+theorem runFlatTM_extend {M : FlatTM} {cfg cfg' : FlatTMConfig} {n k : Nat}
+    (h_run : runFlatTM n M cfg = some cfg')
+    (h_halt : haltingStateReached M cfg' = true) :
+    runFlatTM (n + k) M cfg = some cfg' := by
+  induction n generalizing cfg with
+  | zero =>
+      -- runFlatTM 0 M cfg = some cfg, so cfg = cfg'.
+      have h_eq : cfg = cfg' := Option.some.inj h_run
+      subst h_eq
+      show runFlatTM (0 + k) M cfg = some cfg
+      rw [Nat.zero_add]
+      exact runFlatTM_of_halting M cfg k h_halt
+  | succ n ih =>
+      by_cases h_cfg : haltingStateReached M cfg = true
+      · -- cfg is halting. Then runFlatTM (n+1) M cfg = some cfg = some cfg'.
+        have h1 : runFlatTM (n + 1) M cfg = some cfg :=
+          runFlatTM_of_halting M cfg (n + 1) h_cfg
+        rw [h1] at h_run
+        have h_eq : cfg = cfg' := Option.some.inj h_run
+        subst h_eq
+        exact runFlatTM_of_halting M cfg (n + 1 + k) h_cfg
+      · -- cfg is non-halting. Look at the step.
+        have h_run_eq :
+            runFlatTM (n + 1) M cfg =
+              match stepFlatTM M cfg with
+              | none => some cfg
+              | some cfg'' => runFlatTM n M cfg'' := by
+          show (if haltingStateReached M cfg = true then some cfg
+                else match stepFlatTM M cfg with
+                  | none => some cfg
+                  | some cfg'' => runFlatTM n M cfg'') = _
+          rw [if_neg h_cfg]
+        rw [h_run_eq] at h_run
+        -- Reshape `n + 1 + k = (n + k) + 1` so `runFlatTM` unfolds.
+        have h_arith : n + 1 + k = (n + k) + 1 := by
+          rw [Nat.add_right_comm]
+        rw [h_arith]
+        have h_run_eq_k :
+            runFlatTM ((n + k) + 1) M cfg =
+              match stepFlatTM M cfg with
+              | none => some cfg
+              | some cfg'' => runFlatTM (n + k) M cfg'' := by
+          show (if haltingStateReached M cfg = true then some cfg
+                else match stepFlatTM M cfg with
+                  | none => some cfg
+                  | some cfg'' => runFlatTM (n + k) M cfg'') = _
+          rw [if_neg h_cfg]
+        rw [h_run_eq_k]
+        cases h_step : stepFlatTM M cfg with
+        | none =>
+            rw [h_step] at h_run
+            have h_eq : cfg = cfg' := Option.some.inj h_run
+            subst h_eq
+            exact absurd h_halt h_cfg
+        | some cfg'' =>
+            rw [h_step] at h_run
+            exact ih h_run
+
+/-! ### `AllFalse` namespace: pre-work for a real `DecidesBy` example
+
+We are building toward a complete `DecidesBy` witness for
+`(fun bs : List Bool => ∀ b ∈ bs, b = false)`. This session contributes
+the input encoding and the length/size lemmas; the membership-based
+range bound; and a "first true position" extractor (to be wired up in
+the next session).
+
+The plan is to use `scanRightUntilTM 2 1` with `acceptState = 2`
+(scanner ran off the end → no `true` found) and `rejectState = 1`
+(scanner found `1` → at least one `true`). -/
+
+namespace AllFalse
+
+/-- Encoding: `false ↦ 0`, `true ↦ 1`. -/
+def encode (bs : List Bool) : List Nat :=
+  bs.map (fun b => if b then 1 else 0)
+
+theorem encode_length (bs : List Bool) : (encode bs).length = bs.length := by
+  simp [encode]
+
+theorem encode_size_le (bs : List Bool) :
+    (encode bs).length ≤ encodable.size bs + 1 := by
+  rw [encode_length]
+  have h_le_size : bs.length ≤ encodable.size bs := by
+    induction bs with
+    | nil => exact Nat.le_refl 0
+    | cons b bs ih =>
+        rw [encodable_size_list_cons, List.length_cons]
+        have h1 : bs.length + 1 ≤ encodable.size bs + 1 := Nat.add_le_add_right ih 1
+        have h2 : encodable.size bs + 1 ≤ encodable.size b + 1 + encodable.size bs := by
+          rw [Nat.add_comm (encodable.size b + 1) (encodable.size bs)]
+          exact Nat.add_le_add_left (Nat.le_add_left _ _) _
+        exact Nat.le_trans h1 h2
+  exact Nat.le_trans h_le_size (Nat.le_succ _)
+
+/-- Every element of `encode bs` is `0` or `1`. -/
+theorem encode_mem_zero_or_one {bs : List Bool} {n : Nat} (h : n ∈ encode bs) :
+    n = 0 ∨ n = 1 := by
+  unfold encode at h
+  rcases List.mem_map.mp h with ⟨b, _, hb⟩
+  cases b
+  · left; rw [← hb]; rfl
+  · right; rw [← hb]; rfl
+
+/-- Every element of `encode bs` is `< 2`. -/
+theorem encode_mem_lt_two {bs : List Bool} {n : Nat} (h : n ∈ encode bs) :
+    n < 2 := by
+  rcases encode_mem_zero_or_one h with h0 | h1
+  · rw [h0]; decide
+  · rw [h1]; decide
+
+/-- Test that `.get` and `[]` agree definitionally on `List`. -/
+private example (l : List Nat) (k : Nat) (h : k < l.length) :
+    l.get ⟨k, h⟩ = l[k]'h := rfl
+
+/-- The encoded symbol at any position is `< 2`. -/
+theorem encode_get_lt_two (bs : List Bool) (k : Nat) (h : k < (encode bs).length) :
+    (encode bs).get ⟨k, h⟩ < 2 := by
+  have hk : k < bs.length := by rw [encode_length] at h; exact h
+  show (encode bs)[k]'h < 2
+  show (bs.map (fun b => if b then 1 else 0))[k]'h < 2
+  rw [List.getElem_map]
+  cases bs[k]'hk
+  · show 0 < 2; decide
+  · show 1 < 2; decide
+
+/-- If position `k` of `bs` is `false`, the encoded symbol there is `0`. -/
+theorem encode_get_of_false (bs : List Bool) (k : Nat) (h : k < (encode bs).length)
+    (hk : k < bs.length) (h_get : bs.get ⟨k, hk⟩ = false) :
+    (encode bs).get ⟨k, h⟩ = 0 := by
+  show (encode bs)[k]'h = 0
+  show (bs.map (fun b => if b then 1 else 0))[k]'h = 0
+  rw [List.getElem_map]
+  show (if bs[k]'hk then 1 else 0) = 0
+  have hf : bs[k]'hk = false := h_get
+  rw [hf]
+  decide
+
+/-- If position `k` of `bs` is `true`, the encoded symbol there is `1`. -/
+theorem encode_get_of_true (bs : List Bool) (k : Nat) (h : k < (encode bs).length)
+    (hk : k < bs.length) (h_get : bs.get ⟨k, hk⟩ = true) :
+    (encode bs).get ⟨k, h⟩ = 1 := by
+  show (encode bs)[k]'h = 1
+  show (bs.map (fun b => if b then 1 else 0))[k]'h = 1
+  rw [List.getElem_map]
+  show (if bs[k]'hk then 1 else 0) = 1
+  have ht : bs[k]'hk = true := h_get
+  rw [ht]
+  decide
+
+/-- If every element of `bs` is `false`, every encoded symbol is `0`
+(in particular `< 2` and `≠ 1`). -/
+theorem encode_all_zero_of_all_false (bs : List Bool)
+    (h_all : ∀ b ∈ bs, b = false) :
+    ∀ k (h : k < (encode bs).length),
+      (encode bs).get ⟨k, h⟩ < 2 ∧ (encode bs).get ⟨k, h⟩ ≠ 1 := by
+  intro k h
+  refine ⟨encode_get_lt_two bs k h, ?_⟩
+  have hk : k < bs.length := by rw [encode_length] at h; exact h
+  have h_get_false : bs.get ⟨k, hk⟩ = false :=
+    h_all _ (List.get_mem _ _)
+  rw [encode_get_of_false bs k h hk h_get_false]
+  decide
+
+/-- Extract the first index of `bs` where the value is `true`, given
+that some such index exists. -/
+theorem exists_first_true (bs : List Bool)
+    (h_exists : ∃ b ∈ bs, b ≠ false) :
+    ∃ k_first, ∃ h_lt : k_first < bs.length,
+      bs.get ⟨k_first, h_lt⟩ = true ∧
+        ∀ j, ∀ (h_j : j < bs.length), j < k_first → bs.get ⟨j, h_j⟩ = false := by
+  classical
+  let P : Nat → Prop := fun k => ∃ h : k < bs.length, bs.get ⟨k, h⟩ = true
+  have hP_dec : ∀ k, Decidable (P k) := by
+    intro k
+    by_cases hk : k < bs.length
+    · cases hb : bs.get ⟨k, hk⟩ with
+      | false =>
+          apply isFalse
+          rintro ⟨_, hb'⟩
+          rw [hb] at hb'
+          cases hb'
+      | true =>
+          exact isTrue ⟨hk, hb⟩
+    · apply isFalse
+      rintro ⟨h, _⟩
+      exact hk h
+  have hP_exists : ∃ k, P k := by
+    rcases h_exists with ⟨b, hb_mem, hb_ne⟩
+    have hb_true : b = true := by cases b <;> simp_all
+    rcases List.mem_iff_get.mp hb_mem with ⟨⟨k, hk⟩, hkb⟩
+    exact ⟨k, hk, by rw [hkb, hb_true]⟩
+  let k_first := @Nat.find P (fun k => hP_dec k) hP_exists
+  have h_first_P : P k_first := @Nat.find_spec P (fun k => hP_dec k) hP_exists
+  have h_first_min : ∀ j, j < k_first → ¬ P j :=
+    fun j hj => @Nat.find_min P (fun k => hP_dec k) hP_exists j hj
+  rcases h_first_P with ⟨h_first_lt, h_first_eq⟩
+  refine ⟨k_first, h_first_lt, h_first_eq, ?_⟩
+  intro j h_j hj
+  have h_not_P := h_first_min j hj
+  -- h_not_P : ¬ ∃ h, bs.get ⟨j, h⟩ = true
+  cases h_get_j : bs.get ⟨j, h_j⟩ with
+  | false => rfl
+  | true => exact absurd ⟨h_j, h_get_j⟩ h_not_P
+
+/-- Complete TM-backed decider for "every element of a `List Bool` is `false`". -/
+def decider : DecidesBy (fun bs : List Bool => ∀ b ∈ bs, b = false)
+    (fun n => n + 2) where
+  encode := encode
+  encode_size := encode_size_le
+  M := scanRightUntilTM 2 1
+  M_valid := scanRightUntilTM_valid 2 1 (by decide)
+  M_tapes_pos := by decide
+  acceptState := 2
+  rejectState := 1
+  halting_acc := rfl
+  halting_rej := rfl
+  accept_ne_reject := by decide
+  decides_pos := by
+    intro bs h_all_false
+    -- All symbols are 0 → scanner runs off the right end at state 2.
+    have h_zero := encode_all_zero_of_all_false bs h_all_false
+    have hrun := scanRightUntilTM_run_not_found 2 1 [] (encode bs) 0
+      (Nat.zero_le _)
+      (fun k _ h_klt => h_zero k h_klt)
+    rw [Nat.sub_zero] at hrun
+    -- Time bound: pad (encode bs).length + 1 up to encodable.size bs + 2.
+    have h_le : (encode bs).length + 1 ≤ encodable.size bs + 2 := by
+      have h_le1 : (encode bs).length ≤ encodable.size bs + 1 := encode_size_le bs
+      calc (encode bs).length + 1
+          ≤ (encodable.size bs + 1) + 1 := Nat.add_le_add_right h_le1 1
+        _ = encodable.size bs + 2 := by rw [Nat.add_assoc]
+    have h_padded :
+        runFlatTM ((encode bs).length + 1 +
+            (encodable.size bs + 2 - ((encode bs).length + 1)))
+          (scanRightUntilTM 2 1)
+          { state_idx := 0, tapes := [([], 0, encode bs)] } =
+        some { state_idx := 2, tapes := [([], (encode bs).length, encode bs)] } :=
+      runFlatTM_extend hrun rfl
+    have h_eq :
+        (encode bs).length + 1 + (encodable.size bs + 2 - ((encode bs).length + 1)) =
+          encodable.size bs + 2 :=
+      Nat.add_sub_cancel' h_le
+    rw [h_eq] at h_padded
+    exact ⟨_, h_padded, rfl, rfl⟩
+  decides_neg := by
+    intro bs h_not_all_false
+    -- Some bit is `true`. Extract the first such index.
+    have h_exists : ∃ b ∈ bs, b ≠ false := by
+      classical
+      by_contra h_none
+      apply h_not_all_false
+      intro b hb
+      by_contra hbne
+      exact h_none ⟨b, hb, hbne⟩
+    rcases exists_first_true bs h_exists with
+      ⟨k_first, h_first_lt, h_first_true, h_first_min⟩
+    -- Encoded tape: position k_first holds `1`, earlier positions hold `0`.
+    have h_first_lt' : k_first < (encode bs).length := by
+      rw [encode_length]; exact h_first_lt
+    have h_0k_lt : 0 + k_first < (encode bs).length := by
+      rw [Nat.zero_add]; exact h_first_lt'
+    have h_get_target :
+        (encode bs).get ⟨0 + k_first, h_0k_lt⟩ = 1 := by
+      have h_fin_eq : (⟨0 + k_first, h_0k_lt⟩ : Fin (encode bs).length) =
+          ⟨k_first, h_first_lt'⟩ :=
+        Fin.eq_of_val_eq (Nat.zero_add k_first)
+      rw [h_fin_eq]
+      exact encode_get_of_true bs k_first h_first_lt' h_first_lt h_first_true
+    have h_get_before :
+        ∀ k, k < k_first → ∃ (h : 0 + k < (encode bs).length),
+          (encode bs).get ⟨0 + k, h⟩ < 2 ∧
+            (encode bs).get ⟨0 + k, h⟩ ≠ 1 := by
+      intro k hk
+      have h_k_bs_lt : k < bs.length := Nat.lt_trans hk h_first_lt
+      have h_k_enc_lt : k < (encode bs).length := by rw [encode_length]; exact h_k_bs_lt
+      have h_0k_lt' : 0 + k < (encode bs).length := by rw [Nat.zero_add]; exact h_k_enc_lt
+      have h_fin_eq : (⟨0 + k, h_0k_lt'⟩ : Fin (encode bs).length) =
+          ⟨k, h_k_enc_lt⟩ :=
+        Fin.eq_of_val_eq (Nat.zero_add k)
+      refine ⟨h_0k_lt', ?_, ?_⟩
+      · rw [h_fin_eq]; exact encode_get_lt_two bs k h_k_enc_lt
+      · have h_get_k_false : bs.get ⟨k, h_k_bs_lt⟩ = false := h_first_min k h_k_bs_lt hk
+        rw [h_fin_eq, encode_get_of_false bs k h_k_enc_lt h_k_bs_lt h_get_k_false]
+        decide
+    have hrun := scanRightUntilTM_run_found 2 1 [] (encode bs) k_first 0
+      (by rw [Nat.zero_add]; exact h_first_lt') h_get_target h_get_before
+    rw [Nat.zero_add] at hrun
+    -- Time bound: pad k_first + 1 up to encodable.size bs + 2.
+    have h_le : k_first + 1 ≤ encodable.size bs + 2 := by
+      have h_le1 : k_first ≤ (encode bs).length := Nat.le_of_lt h_first_lt'
+      have h_le2 : (encode bs).length ≤ encodable.size bs + 1 := encode_size_le bs
+      calc k_first + 1
+          ≤ (encode bs).length + 1 := Nat.add_le_add_right h_le1 1
+        _ ≤ (encodable.size bs + 1) + 1 := Nat.add_le_add_right h_le2 1
+        _ = encodable.size bs + 2 := by rw [Nat.add_assoc]
+    have h_padded :
+        runFlatTM (k_first + 1 + (encodable.size bs + 2 - (k_first + 1)))
+          (scanRightUntilTM 2 1)
+          { state_idx := 0, tapes := [([], 0, encode bs)] } =
+        some { state_idx := 1, tapes := [([], k_first, encode bs)] } :=
+      runFlatTM_extend hrun rfl
+    have h_eq : k_first + 1 + (encodable.size bs + 2 - (k_first + 1)) =
+        encodable.size bs + 2 :=
+      Nat.add_sub_cancel' h_le
+    rw [h_eq] at h_padded
+    exact ⟨_, h_padded, rfl, rfl⟩
+
+/-- The time bound `n ↦ n + 2` is polynomial. -/
+theorem timeBound_inOPoly : inOPoly (fun n => n + 2) := by
+  -- n + 2 ≤ 3 * n^1 for n ≥ 1.
+  refine ⟨1, 3, 1, ?_⟩
+  intro n hn
+  show n + 2 ≤ 3 * n ^ 1
+  rw [pow_one]
+  -- n + 2 ≤ 3 * n iff 2 ≤ 2 * n iff 1 ≤ n.
+  have h2n : 2 ≤ 2 * n := by
+    have := Nat.mul_le_mul_left 2 hn
+    simpa using this
+  calc n + 2 ≤ n + 2 * n := Nat.add_le_add_left h2n n
+    _ = 3 * n := by ring
+
+/-- The time bound `n ↦ n + 2` is monotonic. -/
+theorem timeBound_monotonic : monotonic (fun n => n + 2) := by
+  intro a b h
+  exact Nat.add_le_add_right h 2
+
+/-- The predicate "every element of a `List Bool` is `false`" is in
+TM-backed polynomial time. -/
+theorem inTimePolyTM_allFalse :
+    inTimePolyTM (fun bs : List Bool => ∀ b ∈ bs, b = false) :=
+  ⟨fun n => n + 2, ⟨decider⟩, timeBound_inOPoly, timeBound_monotonic⟩
+
+end AllFalse
+
+/-! ### `ExistsTrue` namespace — the dual decider
+
+Decides `(fun bs : List Bool => ∃ b ∈ bs, b = true)`. Reuses the same
+`scanRightUntilTM 2 1` machine as `AllFalse`, but swaps the verdict
+mapping: now state 1 (scanner found `1`) is `acceptState`, and state 2
+(scanner ran off the right end) is `rejectState`.
+
+This is a tiny variation in terms of code, but it demonstrates that
+the framework supports BOTH polarities of a predicate using the same
+underlying TM with different verdict bindings. -/
+
+namespace ExistsTrue
+
+open AllFalse (encode encode_length encode_size_le encode_get_lt_two
+  encode_get_of_false encode_get_of_true encode_all_zero_of_all_false
+  exists_first_true)
+
+/-- TM-backed decider for "some element of a `List Bool` is `true`". -/
+def decider : DecidesBy (fun bs : List Bool => ∃ b ∈ bs, b = true)
+    (fun n => n + 2) where
+  encode := encode
+  encode_size := encode_size_le
+  M := scanRightUntilTM 2 1
+  M_valid := scanRightUntilTM_valid 2 1 (by decide)
+  M_tapes_pos := by decide
+  acceptState := 1
+  rejectState := 2
+  halting_acc := rfl
+  halting_rej := rfl
+  accept_ne_reject := by decide
+  decides_pos := by
+    intro bs h_exists
+    -- Some bit is `true` → scanner finds the first `1` → state 1 (= accept).
+    rcases h_exists with ⟨b, hb_mem, hb_true⟩
+    have h_some_true : ∃ b ∈ bs, b ≠ false :=
+      ⟨b, hb_mem, by rw [hb_true]; decide⟩
+    rcases exists_first_true bs h_some_true with
+      ⟨k_first, h_first_lt, h_first_true, h_first_min⟩
+    have h_first_lt' : k_first < (encode bs).length := by
+      rw [encode_length]; exact h_first_lt
+    have h_0k_lt : 0 + k_first < (encode bs).length := by
+      rw [Nat.zero_add]; exact h_first_lt'
+    have h_get_target :
+        (encode bs).get ⟨0 + k_first, h_0k_lt⟩ = 1 := by
+      have h_fin_eq : (⟨0 + k_first, h_0k_lt⟩ : Fin (encode bs).length) =
+          ⟨k_first, h_first_lt'⟩ :=
+        Fin.eq_of_val_eq (Nat.zero_add k_first)
+      rw [h_fin_eq]
+      exact encode_get_of_true bs k_first h_first_lt' h_first_lt h_first_true
+    have h_get_before :
+        ∀ k, k < k_first → ∃ (h : 0 + k < (encode bs).length),
+          (encode bs).get ⟨0 + k, h⟩ < 2 ∧
+            (encode bs).get ⟨0 + k, h⟩ ≠ 1 := by
+      intro k hk
+      have h_k_bs_lt : k < bs.length := Nat.lt_trans hk h_first_lt
+      have h_k_enc_lt : k < (encode bs).length := by rw [encode_length]; exact h_k_bs_lt
+      have h_0k_lt' : 0 + k < (encode bs).length := by rw [Nat.zero_add]; exact h_k_enc_lt
+      have h_fin_eq : (⟨0 + k, h_0k_lt'⟩ : Fin (encode bs).length) =
+          ⟨k, h_k_enc_lt⟩ :=
+        Fin.eq_of_val_eq (Nat.zero_add k)
+      refine ⟨h_0k_lt', ?_, ?_⟩
+      · rw [h_fin_eq]; exact encode_get_lt_two bs k h_k_enc_lt
+      · have h_get_k_false : bs.get ⟨k, h_k_bs_lt⟩ = false := h_first_min k h_k_bs_lt hk
+        rw [h_fin_eq, encode_get_of_false bs k h_k_enc_lt h_k_bs_lt h_get_k_false]
+        decide
+    have hrun := scanRightUntilTM_run_found 2 1 [] (encode bs) k_first 0
+      h_0k_lt h_get_target h_get_before
+    rw [Nat.zero_add] at hrun
+    have h_le : k_first + 1 ≤ encodable.size bs + 2 := by
+      have h_le1 : k_first ≤ (encode bs).length := Nat.le_of_lt h_first_lt'
+      have h_le2 : (encode bs).length ≤ encodable.size bs + 1 := encode_size_le bs
+      calc k_first + 1
+          ≤ (encode bs).length + 1 := Nat.add_le_add_right h_le1 1
+        _ ≤ (encodable.size bs + 1) + 1 := Nat.add_le_add_right h_le2 1
+        _ = encodable.size bs + 2 := by rw [Nat.add_assoc]
+    have h_padded :
+        runFlatTM (k_first + 1 + (encodable.size bs + 2 - (k_first + 1)))
+          (scanRightUntilTM 2 1)
+          { state_idx := 0, tapes := [([], 0, encode bs)] } =
+        some { state_idx := 1, tapes := [([], k_first, encode bs)] } :=
+      runFlatTM_extend hrun rfl
+    have h_eq : k_first + 1 + (encodable.size bs + 2 - (k_first + 1)) =
+        encodable.size bs + 2 :=
+      Nat.add_sub_cancel' h_le
+    rw [h_eq] at h_padded
+    exact ⟨_, h_padded, rfl, rfl⟩
+  decides_neg := by
+    intro bs h_no_true
+    -- No `true` → all entries are `false` → scanner runs off the end → state 2 (= reject).
+    have h_all_false : ∀ b ∈ bs, b = false := by
+      intro b hb
+      cases b
+      · rfl
+      · exact absurd ⟨true, hb, rfl⟩ h_no_true
+    have h_zero := encode_all_zero_of_all_false bs h_all_false
+    have hrun := scanRightUntilTM_run_not_found 2 1 [] (encode bs) 0
+      (Nat.zero_le _)
+      (fun k _ h_klt => h_zero k h_klt)
+    rw [Nat.sub_zero] at hrun
+    have h_le : (encode bs).length + 1 ≤ encodable.size bs + 2 := by
+      have h_le1 : (encode bs).length ≤ encodable.size bs + 1 := encode_size_le bs
+      calc (encode bs).length + 1
+          ≤ (encodable.size bs + 1) + 1 := Nat.add_le_add_right h_le1 1
+        _ = encodable.size bs + 2 := by rw [Nat.add_assoc]
+    have h_padded :
+        runFlatTM ((encode bs).length + 1 +
+            (encodable.size bs + 2 - ((encode bs).length + 1)))
+          (scanRightUntilTM 2 1)
+          { state_idx := 0, tapes := [([], 0, encode bs)] } =
+        some { state_idx := 2, tapes := [([], (encode bs).length, encode bs)] } :=
+      runFlatTM_extend hrun rfl
+    have h_eq :
+        (encode bs).length + 1 + (encodable.size bs + 2 - ((encode bs).length + 1)) =
+          encodable.size bs + 2 :=
+      Nat.add_sub_cancel' h_le
+    rw [h_eq] at h_padded
+    exact ⟨_, h_padded, rfl, rfl⟩
+
+/-- The predicate "some element of a `List Bool` is `true`" is in
+TM-backed polynomial time. -/
+theorem inTimePolyTM_existsTrue :
+    inTimePolyTM (fun bs : List Bool => ∃ b ∈ bs, b = true) :=
+  ⟨fun n => n + 2, ⟨decider⟩,
+    AllFalse.timeBound_inOPoly, AllFalse.timeBound_monotonic⟩
+
+end ExistsTrue
 
 end TMPrimitives

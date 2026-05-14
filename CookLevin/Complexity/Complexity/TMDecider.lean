@@ -18,13 +18,25 @@ all consumers have been migrated (Part 2 Step 8 of `PART2.md`).
 A `DecidesBy` witness designates two halting states, `acceptState`
 and `rejectState`, **required to be distinct**. The TM's answer on an
 input `x` is `true` iff, after running for `timeBound (encodable.size x)`
-steps from `initFlatConfig M [encode x]`, the machine has reached a
-halting configuration whose state is `acceptState` (resp. `rejectState`
-for `false`).
+steps from the *initial multi-tape configuration*, the machine has
+reached a halting configuration whose state is `acceptState` (resp.
+`rejectState` for `false`).
 
-Single-tape, single-input convention: the only initial tape is
-`encode x`. Multi-tape primitives, if needed, come later.
--/
+The initial multi-tape configuration places `encode x` on tape 0 and
+leaves all remaining `M.tapes - 1` work tapes empty. For single-tape
+TMs (`M.tapes = 1`), this collapses to `[encode x]` — definitionally
+the same as the original single-tape convention. -/
+
+/-- Helper: the standard initial tape list for a decider — the
+encoded input on tape 0, all other tapes blank. -/
+def initialTapes (M : FlatTM) (input : List Nat) : List (List Nat) :=
+  input :: List.replicate (M.tapes - 1) []
+
+theorem initialTapes_length (M : FlatTM) (input : List Nat) (h : 0 < M.tapes) :
+    (initialTapes M input).length = M.tapes := by
+  show (input :: List.replicate (M.tapes - 1) []).length = M.tapes
+  rw [List.length_cons, List.length_replicate]
+  exact Nat.sub_add_cancel h
 
 /-- Read the Boolean output of a halting configuration: `true` iff the
 final state is the designated `acceptState`. -/
@@ -38,10 +50,14 @@ Compared to the old `HasDecider X P f`, this structure forces the
 existence of an actual `FlatTM` that, on the encoded input, halts
 within `timeBound (encodable.size x)` steps with state index equal to
 either `acceptState` (when `P x` holds) or `rejectState` (otherwise).
-The time bound is no longer a phantom argument. -/
+The time bound is no longer a phantom argument.
+
+The TM may use multiple tapes: tape 0 holds the encoded input,
+remaining tapes start empty. For single-tape TMs (`M.tapes = 1`),
+`initialTapes` collapses to `[encode x]` definitionally. -/
 structure DecidesBy {X : Type} [encodable X]
     (P : X → Prop) (timeBound : Nat → Nat) where
-  /-- How to lay the input out on the (single) tape. -/
+  /-- How to lay the input out on tape 0. -/
   encode      : X → List Nat
   /-- The encoded input length is linearly bounded by `encodable.size x`. -/
   encode_size : ∀ x, (encode x).length ≤ encodable.size x + 1
@@ -49,6 +65,8 @@ structure DecidesBy {X : Type} [encodable X]
   M           : FlatTM
   /-- It is a well-formed TM. -/
   M_valid     : validFlatTM M
+  /-- The machine has at least one tape (the input tape). -/
+  M_tapes_pos : 0 < M.tapes
   /-- Halting state index that signals `true`. -/
   acceptState : Nat
   /-- Halting state index that signals `false`. -/
@@ -66,12 +84,12 @@ structure DecidesBy {X : Type} [encodable X]
   to avoid an `[Decidable (P x)]` constraint on the structure. -/
   decides_pos : ∀ x, P x → ∃ cfg,
     runFlatTM (timeBound (encodable.size x)) M
-        (initFlatConfig M [encode x]) = some cfg ∧
+        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
       haltingStateReached M cfg = true ∧
       cfg.state_idx = acceptState
   decides_neg : ∀ x, ¬ P x → ∃ cfg,
     runFlatTM (timeBound (encodable.size x)) M
-        (initFlatConfig M [encode x]) = some cfg ∧
+        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
       haltingStateReached M cfg = true ∧
       cfg.state_idx = rejectState
 
@@ -92,7 +110,7 @@ def DecidesBy.decideFn {X : Type} [encodable X]
     {P : X → Prop} {timeBound : Nat → Nat} (D : DecidesBy P timeBound)
     (x : X) : Bool :=
   match runFlatTM (timeBound (encodable.size x)) D.M
-      (initFlatConfig D.M [D.encode x]) with
+      (initFlatConfig D.M (initialTapes D.M (D.encode x))) with
   | none => false
   | some cfg => readOutput D.acceptState cfg
 
@@ -104,7 +122,7 @@ theorem DecidesBy.decideFn_correct {X : Type} [encodable X]
   · intro hPx
     rcases D.decides_pos x hPx with ⟨cfg, hRun, _hHalt, hState⟩
     show (match runFlatTM (timeBound (encodable.size x)) D.M
-        (initFlatConfig D.M [D.encode x]) with
+        (initFlatConfig D.M (initialTapes D.M (D.encode x))) with
       | none => false
       | some cfg => readOutput D.acceptState cfg) = true
     rw [hRun]
@@ -118,7 +136,7 @@ theorem DecidesBy.decideFn_correct {X : Type} [encodable X]
       rcases D.decides_neg x hPx with ⟨cfg, hRun, _hHalt, hState⟩
       have hFn : D.decideFn x = readOutput D.acceptState cfg := by
         show (match runFlatTM (timeBound (encodable.size x)) D.M
-            (initFlatConfig D.M [D.encode x]) with
+            (initFlatConfig D.M (initialTapes D.M (D.encode x))) with
           | none => false
           | some cfg => readOutput D.acceptState cfg) = readOutput D.acceptState cfg
         rw [hRun]

@@ -178,73 +178,113 @@ duplication.
 branch). The deciders for SAT and FlatClique need it; we'll add it
 when Step 6 needs it rather than upfront in maximum generality.
 
-### Step 5 — Tape scanners and segment ops ✅ (for `scanRightUntilTM`)
+### Step 5 — Tape scanners and segment ops ✅
 **File:** extend `Complexity/Complexity/TMPrimitives.lean`.
 
-The deciders need very little tape-manipulation power. We build only
-what `evalCnf` / `cliqueRelDec` require.
-
-- ✅ `scanRightUntilTM sig target` — walk head right until the
-  current symbol is `some target`; halt in state 1 on match, state 2
-  on end-of-tape. 3 states, `sig + 2` transitions. Validity proved
-  (assuming `target < sig`).
-- ✅ **Operational correctness** (`scanRightUntilTM_run_found`):
-  given a tape `right`, head starting position `head`, and a gap
-  `gap` such that position `head + gap` holds `target` and all earlier
-  positions hold in-range non-target symbols, the machine reaches
-  state 1 at position `head + gap` in exactly `gap + 1` steps. Proved
-  by induction on `gap` using three single-step lemmas
-  (`scanRightUntilTM_step_match`, `_advance`, `_reject`) and a
-  `runFlatTM`-unfold helper.
+- ✅ `scanRightUntilTM sig target` (data + validity).
+- ✅ `scanRightUntilTM_run_found` — full operational correctness for
+  the "target found" case.
+- ✅ `scanRightUntilTM_run_not_found` — full operational correctness
+  for the "ran off the right end" case. By induction on
+  `right.length - head` using `scanRightUntilTM_step_advance` and
+  `scanRightUntilTM_step_reject`.
+- ✅ `runFlatTM_extend` — padding lemma: a run that lands in a
+  halting state survives any number of extra steps. Used to fit
+  early-finishing runs into a uniform polynomial time budget.
 - ✅ Refactor: bridge / continue / halt entries now use
-  `dst_write_vals = [none]` (don't-modify-tape) uniformly. This makes
+  `dst_write_vals = [none]` uniformly (don't-modify-tape). Makes
   single-step traces definitionally clean.
 - ⏳ `eqAtHeadTM`, `scanRightUntilOneOfTM`, `copySegmentTM`,
   `compareSegmentsTM`, `countSymbolsTM` — to be added as the deciders
-  in Steps 6/7 ask for them. We are deliberately *not* building a
-  pre-emptive library; each primitive lands the moment a real consumer
-  forces it.
-
-**Deviations from the original Step 5 sketch:**
-- Added `Mathlib.Tactic` import to `TMPrimitives.lean` (needed for
-  `set`, `injection`, `by_cases` in the operational proofs).
-- The "not found" / rejection multi-step lemma is deferred — it
-  follows the same pattern as the `found` version and we will add it
-  if a downstream consumer requires it.
+  in Steps 6/7 ask for them.
 
 ---
 
 ## Phase C — Concrete deciders
 
-### Step 6 — `evalCnfTM`
-**File:** new — `Complexity/Complexity/Deciders/SAT_TM.lean`.
+### Step 6 — `evalCnfTM` 🚧 (warm-up COMPLETE; encoding landed; TM pending)
+**File:** warm-up lives in `TMPrimitives.lean` (namespaces
+`AllFalse` and `ExistsTrue`); SAT-specific work in
+`Complexity/Complexity/Deciders/SAT_TM.lean` (new).
 
-- Input encoding: a single tape holding `encodePair (encode N) (encode a)`,
-  where `encode N = encodeList (encode <$> N)` and similarly for `a`.
-- High-level algorithm, expressed as a composition of Step 3–5
-  primitives:
-  ```
-  init: result ← true (stored as a flag on tape 1, head at cell 0)
-  for each clause C in N:
-    clauseSat ← false
-    for each literal (s,v) in C:
-      look up v in assignment a (scan tape, compare segments)
-      if a[v] = s then clauseSat ← true
-    result ← result ∧ clauseSat
-  accept iff result = true
-  ```
-- Compose the primitives from Phase B into a `FlatTM` `evalCnfTM`.
-- Prove `validFlatTM evalCnfTM`.
-- Prove `acceptsFlatTM evalCnfTM [encodePair (encode N) (encode a)]
-  (timeBound (|N| + |a|)) = true ↔ evalCnf a N = true`
-  for some explicit polynomial `timeBound` (likely cubic or quartic).
-- Prove `inOPoly` and `monotonic` for `timeBound`.
-- Package as a `DecidesBy (fun xy => satisfiesCnf xy.2 xy.1) timeBound`.
+**Warm-up landed (session 3): the full `AllFalse` decider.**
 
-This is the largest single step. Estimate 300–500 LOC. Worth
-splitting into Step 6a (build the TM, prove validity), Step 6b (time
-bound), Step 6c (correctness ↔ evalCnf) if it stretches across
-sessions.
+The framework is now demonstrated *end-to-end* on a non-trivial
+predicate. `AllFalse` decides `(fun bs : List Bool => ∀ b ∈ bs, b = false)`
+using the same `scanRightUntilTM 2 1` machine and ties together
+**every part of the Part 2 framework** — encoding, run-found,
+run-not-found, padding, and a `DecidesBy` witness.
+
+- ✅ `AllFalse.encode`, `encode_length`, `encode_size_le`,
+  `encode_get_lt_two`, `encode_get_of_false`, `encode_get_of_true`.
+- ✅ `AllFalse.encode_all_zero_of_all_false` — symmetric "all zero"
+  lemma for `decides_pos`.
+- ✅ `AllFalse.exists_first_true` — `Nat.find`-based extractor for
+  the first `true` index, used by `decides_neg`.
+- ✅ **`AllFalse.decider : DecidesBy (fun bs => ∀ b ∈ bs, b = false) (fun n => n + 2)`**
+  — fully witnessed, no sorrys.
+- ✅ `AllFalse.timeBound_inOPoly`, `AllFalse.timeBound_monotonic`,
+  `AllFalse.inTimePolyTM_allFalse : inTimePolyTM (fun bs => ∀ b ∈ bs, b = false)`.
+
+This is the first complete `inTimePolyTM` proof in the project. It
+exercises every previously-built scanner lemma:
+
+- `decides_pos` uses `scanRightUntilTM_run_not_found` (scanner runs off
+  the right end → state 2 = `acceptState`).
+- `decides_neg` uses `scanRightUntilTM_run_found` (scanner finds the
+  first `1` → state 1 = `rejectState`).
+- Both branches use `runFlatTM_extend` to pad the early-halting run to
+  the uniform time budget `encodable.size bs + 2`.
+
+**Session 4 progress:**
+
+- ✅ `ExistsTrue.decider` — the dual of `AllFalse`, deciding "some
+  bool in the list is `true`". Same underlying TM, swapped accept/
+  reject states. Second complete `DecidesBy` in the library.
+- ✅ `ExistsTrue.inTimePolyTM_existsTrue`.
+- ✅ **SAT input encoding** in `Complexity/Complexity/Deciders/SAT_TM.lean`:
+  - `sigSAT := 7` alphabet (terminator, unary digit, pos/neg sign,
+    clause separator, CNF/assgn boundary, assgn separator).
+  - `encodeLiteral`, `encodeClause`, `encodeCnf`, `encodeAssgn`,
+    `encodeInput` with explicit `List Nat` shapes.
+  - Length identities for each.
+  - **Symbol bounds**: every symbol the encoder emits is `< sigSAT`
+    (`encodeInput_symbols_lt` and per-component variants).
+  - **Polynomial size bound** (actually *linear*):
+    `(encodeInput (N, a)).length ≤ encodable.size (N, a) + 1`
+    via per-component bounds `encodeLiteral_length_le`,
+    `encodeClause_length_le`, `encodeCnf_length_le`,
+    `encodeAssgn_length_le`, then combined for the pair.
+
+**Session 5 progress:**
+
+- ✅ **Multi-tape framework extension**: `DecidesBy` now requires
+  `M_tapes_pos : 0 < M.tapes` and uses a new `initialTapes` helper to
+  place the input on tape 0 and leave the remaining `M.tapes - 1`
+  work tapes blank. For `M.tapes = 1` this is definitionally the same
+  as the old single-tape form, so all existing deciders (`trueDecider`,
+  `falseDecider`, `AllFalse.decider`, `ExistsTrue.decider`) transport
+  with just the new field. This unlocks multi-tape deciders for the
+  upcoming SAT TM.
+- ✅ **First SAT-input-based decider**: `CnfEmpty.decider` in
+  `SAT_TM.lean` decides `(fun Na : cnf × assgn => Na.1 = [])` —
+  i.e., "the CNF is empty". Uses a 3-state hand-rolled FlatTM that
+  reads position 0 of the encoded input and branches on whether the
+  symbol is `5` (CNF terminator).
+- ✅ Step lemmas: `TM_step_match`, `TM_step_reject_none`,
+  `TM_step_reject_symbol`, with a `find_rejectSymbolEntry_match`
+  helper for the filtered-range transition lookup.
+- ✅ `encodeInput_empty_cnf_head` and
+  `encodeInput_nonempty_cnf_head` — the encoding facts the decider
+  needs.
+- ✅ `inTimePolyTM_cnfEmpty` packaged.
+
+**Then `evalCnfTM` proper (TODO next session):**
+- Build a FlatTM with explicit states for outer (clauses) / inner
+  (literals) loops, variable-lookup subroutine, and result accumulator.
+- Multi-tape now available — likely use 2 or 3 tapes (input + scratch).
+- Prove validity + polynomial time bound + correctness ↔ `evalCnf`.
+- Package as `DecidesBy (fun xy => satisfiesCnf xy.2 xy.1) timeBound`.
 
 ### Step 7 — `cliqueRelDecTM`
 **File:** new — `Complexity/Complexity/Deciders/Clique_TM.lean`.
@@ -382,11 +422,18 @@ Tracker:
       when needed)
 - [x] Step 5 — Tape scanners
       - [x] `scanRightUntilTM` (data + validity)
-      - [x] Operational correctness lemma (`_run_found`; "not found"
-            deferred until needed)
+      - [x] `_run_found`, `_run_not_found`, `runFlatTM_extend`
       - [ ] Remaining primitives (added on demand)
 - [ ] Step 6 — `evalCnfTM` (SAT decider)
-  - [ ] 6a — Build the TM, prove validity
+  - [x] 6.0 — `AllFalse.decider` end-to-end warm-up
+  - [x] 6.0b — `ExistsTrue.decider` (dual of `AllFalse`)
+  - [x] 6.0c — SAT input encoding + length / symbol / polynomial
+        size bounds
+  - [x] 6.0d — Multi-tape framework extension (`M_tapes_pos`,
+        `initialTapes`)
+  - [x] 6.0e — `CnfEmpty.decider` — first SAT-input-based decider
+        (decides `N = []`)
+  - [ ] 6a — Build `evalCnfTM`, prove validity
   - [ ] 6b — Polynomial time bound
   - [ ] 6c — Correctness ↔ `evalCnf`
 - [ ] Step 7 — `cliqueRelDecTM` (FlatClique decider)
@@ -412,6 +459,161 @@ Tracker:
   6/7), where the surrounding context narrows the cases.
 - `decide` is the natural finisher for the small numeric goals these
   proofs throw up (state-index bounds, halt-vector lengths).
+
+### Session 5 (May 2026)
+
+Two structural wins and the first SAT-input-based decider.
+
+- **Multi-tape framework**: extended `DecidesBy` to support TMs with
+  any number of tapes ≥ 1. Added `M_tapes_pos : 0 < M.tapes` field,
+  switched `decides_pos` / `decides_neg` / `decideFn` to use a new
+  `initialTapes M input := input :: List.replicate (M.tapes - 1) []`
+  helper. For `M.tapes = 1`, `initialTapes` reduces definitionally to
+  `[input]`, so existing deciders compile unchanged (just need the
+  `M_tapes_pos := by decide` field).
+- **`CnfEmpty.decider`** in `SAT_TM.lean` (761 LOC total). A real
+  3-state TM that reads the first symbol of the encoded
+  `(cnf × assgn)` input and accepts iff it's `5` (the CNF
+  terminator), which holds iff `N = []`. Includes step lemmas
+  (match / reject-none / reject-symbol), the inductive
+  `find_rejectSymbolEntry_match` for the filtered-range lookup, and
+  full `decides_pos` / `decides_neg`. `inTimePolyTM_cnfEmpty`
+  packaged.
+
+`lake build` clean, zero sorrys.
+
+### Session 4 (May 2026)
+
+Two new wins: a dual decider for the negation, and the structural
+groundwork for the SAT TM.
+
+- `ExistsTrue.decider` — adds a second working decider in
+  `TMPrimitives.lean`. Same `scanRightUntilTM 2 1` machine, swapped
+  accept/reject. Shares all encoding helpers with `AllFalse` via
+  `open AllFalse (encode encode_length …)`.
+- `ExistsTrue.inTimePolyTM_existsTrue`.
+- New file `Complexity/Complexity/Deciders/SAT_TM.lean` (324 LOC):
+  - Concrete 7-symbol alphabet (`sigSAT`).
+  - Encoders: `encodeLiteral`, `encodeClause`, `encodeCnf`,
+    `encodeAssgn`, `encodeInput`.
+  - Length identities (`*_length`).
+  - Symbol bounds (`*_symbols_lt`): every emitted symbol is `< 7`.
+  - **Linear** size bound `encodeInput_length_le :
+    (encodeInput (N, a)).length ≤ encodable.size (N, a) + 1`. This is
+    the exact shape `DecidesBy.encode_size` will ask for when we
+    package the SAT decider.
+- Registered in `Complexity.lean`.
+
+`lake build`: clean, 3339 jobs, zero sorrys.
+
+### Session 3 (May 2026)
+
+Completed the `AllFalse` end-to-end demonstrator. The framework now has
+a first **fully witnessed** `DecidesBy` and `inTimePolyTM` for a real
+non-trivial predicate, no sorrys. `TMPrimitives.lean` is at 1262 LOC.
+
+- `AllFalse.encode_get_lt_two`, `_of_false`, `_of_true` — encoding
+  accessor lemmas. Phrased in `[k]'h` style and converted to `.get`
+  at the seams, since `getElem_map` is the canonical name (no
+  `List.get_map` in this toolchain).
+- `AllFalse.encode_all_zero_of_all_false`, `exists_first_true` —
+  predicate-side lemmas, the second using `Nat.find` for constructive
+  extraction of the first `true` index.
+- **`AllFalse.decider : DecidesBy …`** — the first concrete decider
+  in the codebase. Uses `scanRightUntilTM_run_not_found` +
+  `runFlatTM_extend` for `decides_pos`, and
+  `scanRightUntilTM_run_found` + `runFlatTM_extend` for `decides_neg`.
+  `Fin.eq_of_val_eq` is the workhorse for the `0 + k` ↔ `k` index
+  conversion forced by the scanner lemmas' `head + gap` shape.
+- `AllFalse.timeBound_inOPoly`, `timeBound_monotonic`,
+  `inTimePolyTM_allFalse`.
+
+### Session 2 (May 2026)
+
+Closed Step 5 fully and laid encoding pre-work for the Step 6 warm-up.
+Net additions to `TMPrimitives.lean` (1006 LOC at session end):
+
+- `scanRightUntilTM_run_not_found` — operational correctness for the
+  "scan past the right end" path. Symmetric companion to `_run_found`,
+  proved by induction on `right.length - head`.
+- `runFlatTM_extend` — "padding" lemma. If a TM run lands in a halting
+  state after `n` steps, running for any `n + k` steps gives the same
+  configuration. Needed to fit early-finishing runs into the
+  decider's uniform polynomial time budget.
+- `AllFalse` namespace (warm-up scaffolding): `encode`,
+  `encode_length`, `encode_size_le`, `encode_mem_zero_or_one`,
+  `encode_mem_lt_two`. These are the input-encoding primitives for a
+  small `DecidesBy` demonstrator on the "all bits are false"
+  predicate — the next concrete deliverable before tackling the much
+  larger SAT decider.
+
+### Lessons learned (Session 2)
+
+- The `n + 1 + k` shape of `runFlatTM`'s recursion does NOT
+  definitionally unfold against `(if halt … then … else match step …)`
+  — it must be rewritten to `(n + k) + 1` form via
+  `Nat.add_right_comm` first.
+- `Nat.sub_pos_of_lt` gives `1 ≤ n - m` from `m < n`; pair with
+  `Nat.sub_add_cancel` and `Nat.sub_add_eq` for tape-length sub-one
+  manipulations.
+- `List.get_map` is NOT the canonical name in this toolchain; current
+  Mathlib uses `getElem_map` / `getElem_map_rev` over the
+  `getElem`-style indexing.
+- Top-level structure literals in `show` need an explicit type
+  annotation, e.g. `show (some {...} : Option FlatTMConfig) = ...`.
+
+### Lessons learned (Session 5)
+
+- Definitional equality is the key trick for backward-compatible
+  framework extensions. `List.replicate 0 [] = []` reduces by `rfl`,
+  so `input :: List.replicate (1 - 1) [] = input :: [] = [input]` —
+  existing proofs that constructed `runFlatTM ... [input]` simply
+  unify with the new shape without changes.
+- For an `exact ⟨_, h, rfl, rfl⟩` where the existential's witness is
+  inferred from `h`, put the *known* term first (`h`) and the unknown
+  (`_`) where Lean can solve it from later constraints. Mixing
+  `refine ⟨_, ?_, rfl, rfl⟩` with later `exact h` can fail when the
+  `rfl`s need the witness already known to typecheck.
+- `decide` fails on goals containing free variables even if the goal
+  is "morally" decidable (e.g. `0 < (x :: rest).length`). Use the
+  underlying constructor (`Nat.zero_lt_succ _`) instead.
+
+### Lessons learned (Session 4)
+
+- `ring` (from `Mathlib.Tactic`) is by far the shortest way to close
+  `Nat` arithmetic identities of more than a couple of terms. Worth
+  reaching for instead of stacking `Nat.add_assoc`/`add_comm` rewrites,
+  even under the "prefer term-mode" preference — the term it produces
+  is a single application of `ring_nf`'s normaliser.
+- Sharing helpers between two parallel deciders (`AllFalse` /
+  `ExistsTrue`) is cleanest via `open AllFalse (name1 name2 ...)`.
+  The `decider` definition can then re-state only what differs.
+- `List.foldr` on `cons` unfolds *definitionally* under `show` (no
+  `simp`/`rfl` needed if you point at the right form). For mixed
+  `foldl` / `foldr` proofs, `foldr` is the friendlier side.
+
+### Lessons learned (Session 3)
+
+- `List.get ⟨k, h⟩ = l[k]'h` is **definitional** (`rfl`) in this
+  toolchain. Mixing the two styles is then free: state the encoding
+  accessor lemmas in `[]` style (which `getElem_map` supports
+  directly), then `show l.get ⟨k, h⟩ = ...` and convert.
+- `0 + k` is **not** definitionally `k` in Lean 4 — `Nat.zero_add` is
+  a theorem, not a defeq. When a scanner lemma signature has
+  `head + gap` and we want `head := 0`, every position index in
+  derived hypotheses comes out as `0 + k` and must be reconciled with
+  the conclusion's `k` via `Fin.eq_of_val_eq (Nat.zero_add k)`.
+- `obtain ⟨k, rfl⟩ : ∃ k, m = n + k := …` does **not** typecheck if
+  neither side of the existential's witness is a free variable. Use a
+  named hypothesis instead and `rw [h]` to insert the
+  `(encode bs).length + 1 + k = encodable.size bs + 2` step.
+- `Nat.add_sub_cancel'` takes the inequality `n ≤ m` and gives
+  `n + (m - n) = m`. Combined with `runFlatTM_extend`, this is the
+  natural way to pad a `runFlatTM n` to a `runFlatTM m`.
+- `rw [Nat.zero_add]` inside a `Fin` index can fail with
+  "motive is not type correct" because the index participates in a
+  dependent type — `Fin.eq_of_val_eq` plus a rewrite of the whole
+  `⟨…, …⟩` is the workaround.
 
 ## Risks & open questions
 
