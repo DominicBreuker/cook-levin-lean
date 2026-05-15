@@ -155,3 +155,65 @@ theorem inTimePoly_of_inTimePolyTM {X : Type} [encodable X]
     {P : X → Prop} (h : inTimePolyTM P) : inTimePoly P := by
   rcases h with ⟨f, ⟨D⟩, hPoly, hMono⟩
   exact ⟨f, HasDecider.of_DecidesBy D, hPoly, hMono⟩
+
+/-! ## Negation combinator
+
+The same TM that decides `P` also decides `¬ P` — just swap the
+`acceptState` and `rejectState`. The only subtlety is that
+`decides_neg` for the negated predicate receives `¬ ¬ P x` and must
+produce `P x`, which is only constructive when `P x` is decidable.
+We require `[DecidablePred P]`. -/
+
+/-- Any TM-backed decider for `P` yields a TM-backed decider for `¬ P`
+by swapping accept and reject. -/
+def DecidesBy.negate {X : Type} [encodable X]
+    {P : X → Prop} [DecidablePred P]
+    {timeBound : Nat → Nat} (D : DecidesBy P timeBound) :
+    DecidesBy (fun x => ¬ P x) timeBound where
+  encode := D.encode
+  encode_size := D.encode_size
+  M := D.M
+  M_valid := D.M_valid
+  M_tapes_pos := D.M_tapes_pos
+  acceptState := D.rejectState
+  rejectState := D.acceptState
+  halting_acc := D.halting_rej
+  halting_rej := D.halting_acc
+  accept_ne_reject := fun h => D.accept_ne_reject h.symm
+  decides_pos := fun x hnPx => D.decides_neg x hnPx
+  decides_neg := fun x hnnPx =>
+    D.decides_pos x (Decidable.byContradiction hnnPx)
+
+/-- `inTimePolyTM P → inTimePolyTM (¬ P)` for decidable `P`. -/
+theorem inTimePolyTM_not {X : Type} [encodable X]
+    {P : X → Prop} [DecidablePred P] (h : inTimePolyTM P) :
+    inTimePolyTM (fun x => ¬ P x) := by
+  rcases h with ⟨f, ⟨D⟩, hPoly, hMono⟩
+  exact ⟨f, ⟨D.negate⟩, hPoly, hMono⟩
+
+/-- Transport a `DecidesBy P` across a logical equivalence `P ↔ Q`. The
+underlying TM and time bound are unchanged — only the predicate slot
+changes. -/
+def DecidesBy.iff {X : Type} [encodable X]
+    {P Q : X → Prop} {timeBound : Nat → Nat}
+    (hEq : ∀ x, P x ↔ Q x) (D : DecidesBy P timeBound) :
+    DecidesBy Q timeBound where
+  encode := D.encode
+  encode_size := D.encode_size
+  M := D.M
+  M_valid := D.M_valid
+  M_tapes_pos := D.M_tapes_pos
+  acceptState := D.acceptState
+  rejectState := D.rejectState
+  halting_acc := D.halting_acc
+  halting_rej := D.halting_rej
+  accept_ne_reject := D.accept_ne_reject
+  decides_pos := fun x hQx => D.decides_pos x ((hEq x).mpr hQx)
+  decides_neg := fun x hnQx => D.decides_neg x (fun hPx => hnQx ((hEq x).mp hPx))
+
+/-- Transport `inTimePolyTM` across a logical equivalence. -/
+theorem inTimePolyTM_iff {X : Type} [encodable X]
+    {P Q : X → Prop} (hEq : ∀ x, P x ↔ Q x) (h : inTimePolyTM P) :
+    inTimePolyTM Q := by
+  rcases h with ⟨f, ⟨D⟩, hPoly, hMono⟩
+  exact ⟨f, ⟨D.iff hEq⟩, hPoly, hMono⟩

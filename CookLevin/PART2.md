@@ -87,11 +87,19 @@ capability needed for the eventual `evalCnfTM`:
 | 6.0e| `CnfEmpty.decider`       | `N = []`                             | First SAT-input decider (1-step, read pos 0)   |
 | 6.0f| `CnfEmptyAssgnEmpty`     | `N = [] ∧ a = []`                    | Multi-step run with `Rmove`; state-1 lemmas    |
 | 6.0g| `AssgnEmpty.decider`     | `a = []`                             | Inductive scan-loop walking past `encodeCnf N` |
+| 6.0h| `CnfStartsEmpty.decider` | `Na.1.head? = some []`               | Symbol-`4` accept; `head?`-shaped predicate    |
+| 6.0i| `DecidesBy.negate/iff`   | (combinators, not deciders)          | Same TM decides `¬ P` / equivalent `Q`         |
+| 6.0j| `CnfNonempty.decider`    | `Na.1 ≠ []`                          | `.negate` example — no new TM needed           |
+| 6.0k| `AssgnNonempty.decider`  | `Na.2 ≠ []`                          | `.negate` example — same time bound `n + 2`    |
+| 6.0l| `.iff`-derived deciders  | cons-forms; `length = 0`             | `.iff` examples — 3 predicates, no new TM      |
+| 6.0m| `CnfOrAssgnNonempty`     | `Na.1 ≠ [] ∨ Na.2 ≠ []`              | `.negate` + `.iff` chain — disjunction for free |
+| 6.0n| `CnfHasEmptyClause`      | `∃ c ∈ Na.1, c = []`                 | First **multi-state walker** (alternating s0/s1, prototype for `evalCnfTM`'s outer loop) |
+| 6.0o| `AssgnContainsZero`      | `0 ∈ Na.2`                           | **3-state assignment walker** (state 0 CNF, state 1 ready/accept-6, state 2 in-variable) — prototype for variable lookup |
 | 6a  | `evalCnfTM` validity     | (skeleton)                           | —                                              |
 | 6b  | `evalCnfTM` time bound   | —                                    | —                                              |
 | 6c  | `evalCnfTM` correctness  | `satisfiesCnf a N`                   | —                                              |
 
-All of 6.0a–6.0g are landed (zero sorrys). 6a–6c are the next session's
+All of 6.0a–6.0o are landed (zero sorrys). 6a–6c are the next session's
 target.
 
 **Step 7 — `cliqueRelDecTM`** decides `cliqueRel ((G, k), l)` for
@@ -125,13 +133,14 @@ New under `Complexity/Complexity/`:
   `scanRightUntilTM`, `runFlatTM_extend`; `AllFalse`, `ExistsTrue`
   warm-up deciders.
 - `Deciders/SAT_TM.lean` — SAT input encoding + step-6 deciders
-  (`CnfEmpty`, `CnfEmptyAssgnEmpty`, `AssgnEmpty`, and eventually
+  (`CnfEmpty`, `CnfEmptyAssgnEmpty`, `AssgnEmpty`, `CnfStartsEmpty`,
+  `CnfNonempty`, `AssgnNonempty`, `CnfHasEmptyClause`, and eventually
   `evalCnfTM`).
 
 Registered in `Complexity.lean`.
 
-Current line counts: `TMDecider.lean` ~158, `TMEncoding.lean` ~134,
-`TMPrimitives.lean` ~1394, `SAT_TM.lean` ~2997.
+Current line counts: `TMDecider.lean` ~219, `TMEncoding.lean` ~134,
+`TMPrimitives.lean` ~1394, `SAT_TM.lean` ~6415.
 
 ## Lessons learned (consolidated)
 
@@ -187,6 +196,58 @@ Current line counts: `TMDecider.lean` ~158, `TMEncoding.lean` ~134,
   `s0_reject_symbol`, etc. as `(List.range sigSAT).filter (...).map`
   keeps the transition table size manageable; the `find?` proof
   then walks the filter inductively via a per-block helper.
+- **`DecidesBy.negate` for negated predicates.** One decider for `P`
+  doubles as a decider for `¬ P` (swap accept/reject states). Needs
+  `[DecidablePred P]` to turn `¬ ¬ P x` back into `P x`. Same TM, same
+  time bound, ~30 LOC per derived decider.
+- **`DecidesBy.iff` for predicate-equivalence transport.** If
+  `∀ x, P x ↔ Q x`, any `DecidesBy P f` becomes a `DecidesBy Q f`
+  without touching the TM. Useful when the natural Lean spelling
+  (`Na.1.head? = some []`) differs from the more convenient one
+  (`∃ rest, Na.1 = [] :: rest`).
+- **`.negate ∘ .iff` chains** turn a single TM into a family of
+  related deciders. Example: `CnfEmptyAssgnEmpty.decider`
+  (predicate `Na.1 = [] ∧ Na.2 = []`) → via `.negate` → decider for
+  `¬ (Na.1 = [] ∧ Na.2 = [])` → via `.iff` with De Morgan → decider
+  for `Na.1 ≠ [] ∨ Na.2 ≠ []`. One TM, one time bound, four predicates.
+- **`runFlatTM_compose` for general run composition.** Chains two
+  `runFlatTM` runs of arbitrary lengths via induction on the first
+  length. Handles stuck (`step = none`) configs uniformly via
+  `runFlatTM_stuck`. Lets `TM_run_walk_clauses` recurse on the tail
+  of a CNF without manually shimming the per-clause walker into the
+  per-list walker.
+- **`generalize + subst` for nested-`Fin`-index `rw`s.** When
+  rewriting a list equation `L = L'` fails inside `(L)[i]'h` because
+  `h : i < L.length`'s motive isn't type-correct, the workaround is:
+  `generalize h_gen : L = enc at h_eq ⊢; subst h_eq`. After this,
+  the goal is `enc[i]'(now in terms of L')` — no motive, free to
+  `rw` further.
+- **`List.getElem_concat_length` for the trailing singleton.**
+  `(l ++ [a])[l.length] = a` — but Lean wants you to pin down `l`
+  and `a` by passing the inequality `w : i < (l ++ [a]).length` as a
+  second explicit argument. Avoids the `Nat.sub_self` motive trap
+  that `getElem_append_right` + `rw` falls into.
+- **`simp only [Nat.add_sub_cancel_left]` collapses `a + b - a`.**
+  After `rw [List.getElem_append_right (Nat.le_add_right _ _)]`, the
+  index becomes `L_cnf + k - L_cnf` in a dependent position. Plain
+  `rw [show ... = k from h_sub]` fails (motive). `simp only` handles
+  the dependent rewrite via its motive analysis. Use this when the
+  arithmetic is `a + b - a = b` after an append-right rewrite.
+- **`show ... = false from rfl` for state-mismatched entries.**
+  When walking `find?` through transition entries whose `src_state`
+  differs from the configuration's `state_idx`, the match check
+  reduces to `(s == s') && _` where `(s == s')` is literal `false`.
+  So `entryMatchesConfig entry cfg = false` is `rfl`. Skip via
+  `rw [List.find?_cons, show ... = false from rfl]`. No need for a
+  generic helper; inline `rfl` is enough.
+- **Helper-lemma extraction for dependent-position `rw [h_enc_eq]`.**
+  When `rw [encodeAssgn_split = ...]` fails motive inside
+  `(encodeCnf N ++ encodeAssgn (...))[L_cnf + L_walk]'h`, factor the
+  positional fact into a separate helper proved with
+  `generalize h_gen : encodeAssgn (...) = enc at h_eq; subst h_eq`.
+  The helper has no dependent context, so the substitution succeeds;
+  the consumer just invokes `rcases helper ... with ⟨_, h_get⟩` and
+  uses `h_get` after `getElem_append_right + simp [Nat.add_sub_cancel_left]`.
 
 ### Operational-correctness shape for hand-rolled deciders
 
