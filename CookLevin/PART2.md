@@ -95,12 +95,19 @@ capability needed for the eventual `evalCnfTM`:
 | 6.0m| `CnfOrAssgnNonempty`     | `Na.1 ≠ [] ∨ Na.2 ≠ []`              | `.negate` + `.iff` chain — disjunction for free |
 | 6.0n| `CnfHasEmptyClause`      | `∃ c ∈ Na.1, c = []`                 | First **multi-state walker** (alternating s0/s1, prototype for `evalCnfTM`'s outer loop) |
 | 6.0o| `AssgnContainsZero`      | `0 ∈ Na.2`                           | **3-state assignment walker** (state 0 CNF, state 1 ready/accept-6, state 2 in-variable) — prototype for variable lookup |
+| 6.0p| `AssgnContainsVar v`     | (TM family + validity + 8 step lemmas) | **Parametric TM family** (`TM (v : Nat)` with state count `v+5`; per-k transitions over `List.range v`). 8 positive-path step lemmas landed (s0_advance_5, s0_continue, sready_accept_6, sready_overflow_1, sov_continue_1, sov_next_6, sk_enter_1, sk_next_6). Reject-path step lemmas, run lemmas, and full `DecidesBy` pending. |
 | 6a  | `evalCnfTM` validity     | (skeleton)                           | —                                              |
 | 6b  | `evalCnfTM` time bound   | —                                    | —                                              |
 | 6c  | `evalCnfTM` correctness  | `satisfiesCnf a N`                   | —                                              |
 
-All of 6.0a–6.0o are landed (zero sorrys). 6a–6c are the next session's
-target.
+All of 6.0a–6.0o are landed (zero sorrys). 6.0p is in progress:
+parametric TM family + validity + **8 positive-path step lemmas** are
+landed (TM_step_s0_advance_5/continue, TM_step_sready_accept_6/overflow_1,
+TM_step_sov_continue_1/next_6, TM_step_sk_enter_1/next_6 — the last
+two parametric in `k < v`). Reject-path step lemmas
+(TM_step_sready_reject_0, TM_step_sk_reject_0), run lemmas, encoding
+helpers, and the full `DecidesBy` decider are the next session's target.
+6a–6c follow.
 
 **Step 7 — `cliqueRelDecTM`** decides `cliqueRel ((G, k), l)` for
 FlatClique. Three sub-checks (`fgraph_wf`, `isfClique`, `l.length = k`);
@@ -140,7 +147,7 @@ New under `Complexity/Complexity/`:
 Registered in `Complexity.lean`.
 
 Current line counts: `TMDecider.lean` ~219, `TMEncoding.lean` ~134,
-`TMPrimitives.lean` ~1394, `SAT_TM.lean` ~6415.
+`TMPrimitives.lean` ~1394, `SAT_TM.lean` ~7467.
 
 ## Lessons learned (consolidated)
 
@@ -248,6 +255,49 @@ Current line counts: `TMDecider.lean` ~219, `TMEncoding.lean` ~134,
   The helper has no dependent context, so the substitution succeeds;
   the consumer just invokes `rcases helper ... with ⟨_, h_get⟩` and
   uses `h_get` after `getElem_append_right + simp [Nat.add_sub_cancel_left]`.
+- **`++` is left-associative for `List`.** A trans list of the shape
+  `A1 ++ A2 ++ … ++ A7 ++ FlatMap` parses as
+  `((((((A1 ++ A2) ++ A3) ++ A4) ++ A5) ++ A6) ++ A7) ++ FlatMap`, so
+  `rcases List.mem_append.mp` peels the **rightmost** segment first.
+  Walk from the tail back to the head, using `rotate_left` after each
+  split to handle the small right side before recursing into the larger
+  left side. Got this wrong on the first attempt for `AssgnContainsVar`'s
+  TM_valid proof (assumed right-associative); the error message
+  ("hLeft has type entry ∈ List.flatMap …") gave it away — the split
+  had landed at the FlatMap block first because that's the rightmost
+  segment under left-associativity.
+- **Parametric TM families via `def TM (v : Nat) : FlatTM`.** When a TM
+  needs a parameter-dependent state count, just make `TM` a function
+  of that parameter. State count `states := v + 5` is fine. The validity
+  proof becomes parametric: arithmetic bounds use `omega` instead of
+  closed `decide`; `subst` over `k ∈ List.range v` extracts `k < v`
+  cleanly; the `v = 0` edge case (empty `List.range v`) is handled
+  vacuously by `List.mem_map.mp`'s impossibility witness without extra
+  branching.
+- **`(a == b)` is not `Nat.beq a b` at default reducibility.** Despite
+  being defeq under instance unfolding, Lean's `show` / `change` /
+  direct `rw` won't bridge between them. Workaround for "entry doesn't
+  match" lemmas: `cases hbeq : (entry.src_state == cfg.state_idx)` —
+  the `false` branch closes by `rfl` (because `false && _ = false` is
+  definitional Bool), and the `true` branch contradicts via
+  `by simpa using hbeq` (which unfolds the instance to bridge to
+  `LawfulBEq.eq_of_beq`).
+- **`beq_self_eq_true` for `(a == a) = true`.** For `[BEq α] [ReflBEq α]`
+  (Nat qualifies), `beq_self_eq_true a : (a == a) = true`. Useful in
+  match-helpers for entries where the source state equals the cfg state.
+- **`++` is left-associative — peel rightmost segments first.** Confirmed
+  again when writing the `sk_*` step lemmas: the trans-list-tail
+  `(A1 ++ A2 ++ ... ++ A7 ++ FlatMap)` after `rw [List.find?_append]`
+  splits at the **last** `++`, so peel with 7 calls and substitute the
+  block-level find? results from left to right (s0_cont, s0_rej,
+  sready_rej, sov_rej first; sk_one with `find_range_map_entry_at`;
+  remaining blocks reduce by `Option.or` definitional rules).
+- **Find?-helper for parametric per-k blocks: `find_range_map_entry_at`.**
+  `((List.range n).map f).find? p = some (f k₀)` when `k₀ < n`,
+  `p (f k₀) = true`, and `∀ k' < k₀, p (f k') = false`. Proved by
+  induction on `n`, using `List.range_succ`'s right-extension and
+  `List.find?_eq_none` for the prefix-no-match case. Reusable across
+  any future parametric TM with `List.range`-based transitions.
 
 ### Operational-correctness shape for hand-rolled deciders
 

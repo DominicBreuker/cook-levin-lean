@@ -6412,4 +6412,1056 @@ theorem inTimePolyTM_assgnContainsZero :
 
 end AssgnContainsZero
 
+/-! ### 6.0p — `AssgnContainsVar v`: parameterized variable lookup
+
+A *family* of TMs `TM (v : Nat)`, each deciding `v ∈ Na.2`. This
+generalizes `AssgnContainsZero` (which hardcoded `v = 0`) and is the
+prototype for **per-literal variable lookup** in `evalCnfTM`.
+
+State design (state count is `v + 5`, depends on the parameter):
+- State `0`           — scanning CNF; on `5` advance to chunk start
+- State `k+1`,
+  `0 ≤ k < v`         — inside a chunk; have seen `k` 1's; need `v-k`
+                        more 1's plus a `6` to accept
+- State `v+1`         — *ready*: count = v; accept on next `6`
+- State `v+2`         — *overflow*: count > v in current chunk; skip to
+                        next chunk on `6`
+- State `v+3`         — accept (halting)
+- State `v+4`         — reject (halting)
+
+Note the natural decomposition: per-k entries split into the *normal*
+case (`k < v`, count strictly below threshold) and the special *ready*
+case (`k = v`). This avoids `if k = v` branches in the entry list and
+keeps the validity proof straight. -/
+
+namespace AssgnContainsVar
+
+def TM (v : Nat) : FlatTM where
+  sig := sigSAT
+  tapes := 1
+  states := v + 5
+  trans :=
+    let s0_advance_5 : FlatTMTransEntry :=
+      { src_state := 0, src_tape_vals := [some 5], dst_state := 1,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let s0_reject_none : FlatTMTransEntry :=
+      { src_state := 0, src_tape_vals := [none], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sready_accept_6 : FlatTMTransEntry :=
+      { src_state := v + 1, src_tape_vals := [some 6], dst_state := v + 3,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sready_overflow_1 : FlatTMTransEntry :=
+      { src_state := v + 1, src_tape_vals := [some 1], dst_state := v + 2,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let sready_reject_none : FlatTMTransEntry :=
+      { src_state := v + 1, src_tape_vals := [none], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sov_one : FlatTMTransEntry :=
+      { src_state := v + 2, src_tape_vals := [some 1], dst_state := v + 2,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let sov_six : FlatTMTransEntry :=
+      { src_state := v + 2, src_tape_vals := [some 6], dst_state := 1,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let sov_reject_none : FlatTMTransEntry :=
+      { src_state := v + 2, src_tape_vals := [none], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let s0_continue (x : Nat) : FlatTMTransEntry :=
+      { src_state := 0, src_tape_vals := [some x], dst_state := 0,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let s0_reject_symbol (x : Nat) : FlatTMTransEntry :=
+      { src_state := 0, src_tape_vals := [some x], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sready_reject_symbol (x : Nat) : FlatTMTransEntry :=
+      { src_state := v + 1, src_tape_vals := [some x], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sov_reject_symbol (x : Nat) : FlatTMTransEntry :=
+      { src_state := v + 2, src_tape_vals := [some x], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sk_one (k : Nat) : FlatTMTransEntry :=
+      { src_state := k + 1, src_tape_vals := [some 1], dst_state := k + 2,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let sk_six (k : Nat) : FlatTMTransEntry :=
+      { src_state := k + 1, src_tape_vals := [some 6], dst_state := 1,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+    let sk_reject_none (k : Nat) : FlatTMTransEntry :=
+      { src_state := k + 1, src_tape_vals := [none], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    let sk_reject_symbol (k : Nat) (x : Nat) : FlatTMTransEntry :=
+      { src_state := k + 1, src_tape_vals := [some x], dst_state := v + 4,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+    s0_advance_5 :: s0_reject_none ::
+    sready_accept_6 :: sready_overflow_1 :: sready_reject_none ::
+    sov_one :: sov_six :: sov_reject_none ::
+      (((List.range sigSAT).filter
+            (fun x => decide (x = 1 ∨ x = 2 ∨ x = 3 ∨ x = 4))).map s0_continue ++
+        ((List.range sigSAT).filter
+            (fun x => decide (x = 0 ∨ x = 6))).map s0_reject_symbol ++
+        ((List.range sigSAT).filter
+            (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map sready_reject_symbol ++
+        ((List.range sigSAT).filter
+            (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map sov_reject_symbol ++
+        (List.range v).map sk_one ++
+        (List.range v).map sk_six ++
+        (List.range v).map sk_reject_none ++
+        ((List.range v).flatMap (fun k =>
+          ((List.range sigSAT).filter
+              (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map (sk_reject_symbol k))))
+  start := 0
+  halt := List.replicate (v + 3) false ++ [true, true]
+
+theorem TM_states (v : Nat) : (TM v).states = v + 5 := rfl
+
+theorem TM_halt_length (v : Nat) : (TM v).halt.length = v + 5 := by
+  show (List.replicate (v + 3) false ++ [true, true]).length = v + 5
+  rw [List.length_append, List.length_replicate, List.length_cons, List.length_singleton]
+
+theorem TM_valid (v : Nat) : validFlatTM (TM v) := by
+  refine ⟨?_, ?_, ?_⟩
+  · show 0 < v + 5; omega
+  · exact TM_halt_length v
+  · intro entry hentry
+    show flatTMTransEntryValid (TM v) entry
+    -- Eight explicit prefix entries.
+    rcases List.mem_cons.mp hentry with h | h1
+    · subst h  -- s0_advance_5
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show 0 < v + 5; omega
+      · show 1 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([some 5] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; show 5 < sigSAT; decide
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h1 with h | h2
+    · subst h  -- s0_reject_none
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show 0 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h2 with h | h3
+    · subst h  -- sready_accept_6
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 1 < v + 5; omega
+      · show v + 3 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([some 6] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; show 6 < sigSAT; decide
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h3 with h | h4
+    · subst h  -- sready_overflow_1
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 1 < v + 5; omega
+      · show v + 2 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([some 1] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; show 1 < sigSAT; decide
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h4 with h | h5
+    · subst h  -- sready_reject_none
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 1 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h5 with h | h6
+    · subst h  -- sov_one
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 2 < v + 5; omega
+      · show v + 2 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([some 1] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; show 1 < sigSAT; decide
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h6 with h | h7
+    · subst h  -- sov_six
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 2 < v + 5; omega
+      · show 1 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([some 6] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; show 6 < sigSAT; decide
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    rcases List.mem_cons.mp h7 with h | hAppend
+    · subst h  -- sov_reject_none
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 2 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+      · intro x hx; have hx' : x ∈ ([none] : List (Option Nat)) := hx
+        rw [List.mem_singleton] at hx'; subst hx'; trivial
+    -- `++` is left-associative, so the appended tail parses as
+    --   (((((((A1 ++ A2) ++ A3) ++ A4) ++ A5) ++ A6) ++ A7) ++ FlatMap)
+    -- and we peel from the right.
+    rcases List.mem_append.mp hAppend with hLeft7 | hFlatMap
+    rotate_left
+    · -- FlatMap block (rightmost): per-k reject-symbol entries.
+      rcases List.mem_flatMap.mp hFlatMap with ⟨k, hk_mem, hxmap⟩
+      have hklt : k < v := List.mem_range.mp hk_mem
+      rcases List.mem_map.mp hxmap with ⟨x, hx_mem, hmk⟩
+      subst hmk
+      have hxlt : x < sigSAT := List.mem_range.mp (List.mem_filter.mp hx_mem).1
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show k + 1 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some x] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; exact hxlt
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    rcases List.mem_append.mp hLeft7 with hLeft6 | hSkRejNone
+    rotate_left
+    · -- A7 = sk_reject_none block.
+      rcases List.mem_map.mp hSkRejNone with ⟨k, hk_mem, hmk⟩
+      subst hmk
+      have hklt : k < v := List.mem_range.mp hk_mem
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show k + 1 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    rcases List.mem_append.mp hLeft6 with hLeft5 | hSkSix
+    rotate_left
+    · -- A6 = sk_six block.
+      rcases List.mem_map.mp hSkSix with ⟨k, hk_mem, hmk⟩
+      subst hmk
+      have hklt : k < v := List.mem_range.mp hk_mem
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show k + 1 < v + 5; omega
+      · show 1 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some 6] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; show 6 < sigSAT; decide
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    rcases List.mem_append.mp hLeft5 with hLeft4 | hSkOne
+    rotate_left
+    · -- A5 = sk_one block.
+      rcases List.mem_map.mp hSkOne with ⟨k, hk_mem, hmk⟩
+      subst hmk
+      have hklt : k < v := List.mem_range.mp hk_mem
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show k + 1 < v + 5; omega
+      · show k + 2 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some 1] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; show 1 < sigSAT; decide
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    rcases List.mem_append.mp hLeft4 with hLeft3 | hOvRej
+    rotate_left
+    · -- A4 = sov_reject_symbol block.
+      rcases List.mem_map.mp hOvRej with ⟨x, hx_mem, hmk⟩
+      subst hmk
+      have hxlt : x < sigSAT := List.mem_range.mp (List.mem_filter.mp hx_mem).1
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 2 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some x] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; exact hxlt
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    rcases List.mem_append.mp hLeft3 with hLeft2 | hReadyRej
+    rotate_left
+    · -- A3 = sready_reject_symbol block.
+      rcases List.mem_map.mp hReadyRej with ⟨x, hx_mem, hmk⟩
+      subst hmk
+      have hxlt : x < sigSAT := List.mem_range.mp (List.mem_filter.mp hx_mem).1
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show v + 1 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some x] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; exact hxlt
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    rcases List.mem_append.mp hLeft2 with hS0Cont | hS0Rej
+    · -- A1 = s0_continue block.
+      rcases List.mem_map.mp hS0Cont with ⟨x, hx_mem, hmk⟩
+      subst hmk
+      have hxlt : x < sigSAT := List.mem_range.mp (List.mem_filter.mp hx_mem).1
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show 0 < v + 5; omega
+      · show 0 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some x] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; exact hxlt
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+    · -- A2 = s0_reject_symbol block.
+      rcases List.mem_map.mp hS0Rej with ⟨x, hx_mem, hmk⟩
+      subst hmk
+      have hxlt : x < sigSAT := List.mem_range.mp (List.mem_filter.mp hx_mem).1
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show 0 < v + 5; omega
+      · show v + 4 < v + 5; omega
+      · intro y hy; have hy' : y ∈ ([some x] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; exact hxlt
+      · intro y hy; have hy' : y ∈ ([none] : List (Option Nat)) := hy
+        rw [List.mem_singleton] at hy'; subst hy'; trivial
+
+/-! ### Private entry defs (parametric in `v`, `k`, `x`) -/
+
+private def s0_advance_5_entry : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some 5], dst_state := 1,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def s0_reject_none_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [none], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sready_accept_6_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := v + 1, src_tape_vals := [some 6], dst_state := v + 3,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sready_overflow_1_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := v + 1, src_tape_vals := [some 1], dst_state := v + 2,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def sready_reject_none_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := v + 1, src_tape_vals := [none], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sov_one_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := v + 2, src_tape_vals := [some 1], dst_state := v + 2,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def sov_six_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := v + 2, src_tape_vals := [some 6], dst_state := 1,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def sov_reject_none_entry (v : Nat) : FlatTMTransEntry :=
+  { src_state := v + 2, src_tape_vals := [none], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def s0_continue_entry (x : Nat) : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some x], dst_state := 0,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def s0_reject_symbol_entry (v : Nat) (x : Nat) : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some x], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sready_reject_symbol_entry (v : Nat) (x : Nat) : FlatTMTransEntry :=
+  { src_state := v + 1, src_tape_vals := [some x], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sov_reject_symbol_entry (v : Nat) (x : Nat) : FlatTMTransEntry :=
+  { src_state := v + 2, src_tape_vals := [some x], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sk_one_entry (k : Nat) : FlatTMTransEntry :=
+  { src_state := k + 1, src_tape_vals := [some 1], dst_state := k + 2,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def sk_six_entry (k : Nat) : FlatTMTransEntry :=
+  { src_state := k + 1, src_tape_vals := [some 6], dst_state := 1,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+private def sk_reject_none_entry (v : Nat) (k : Nat) : FlatTMTransEntry :=
+  { src_state := k + 1, src_tape_vals := [none], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+private def sk_reject_symbol_entry (v : Nat) (k : Nat) (x : Nat) : FlatTMTransEntry :=
+  { src_state := k + 1, src_tape_vals := [some x], dst_state := v + 4,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+theorem TM_trans_eq (v : Nat) :
+    (TM v).trans =
+      s0_advance_5_entry :: s0_reject_none_entry v ::
+      sready_accept_6_entry v :: sready_overflow_1_entry v :: sready_reject_none_entry v ::
+      sov_one_entry v :: sov_six_entry v :: sov_reject_none_entry v ::
+        (((List.range sigSAT).filter
+              (fun x => decide (x = 1 ∨ x = 2 ∨ x = 3 ∨ x = 4))).map s0_continue_entry ++
+          ((List.range sigSAT).filter
+              (fun x => decide (x = 0 ∨ x = 6))).map (s0_reject_symbol_entry v) ++
+          ((List.range sigSAT).filter
+              (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map
+                (sready_reject_symbol_entry v) ++
+          ((List.range sigSAT).filter
+              (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map
+                (sov_reject_symbol_entry v) ++
+          (List.range v).map sk_one_entry ++
+          (List.range v).map sk_six_entry ++
+          (List.range v).map (sk_reject_none_entry v) ++
+          ((List.range v).flatMap (fun k =>
+            ((List.range sigSAT).filter
+                (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map
+                  (sk_reject_symbol_entry v k)))) := rfl
+
+/-! ### `applyTransitionEntry` helpers (Nmove / Rmove on a single tape).
+
+These are the same shape as the helpers in earlier deciders, with the
+state and the symbol left abstract. -/
+
+private theorem applyEntry_Nmove
+    (cfg_state new_state : Nat) (left right : List Nat) (head : Nat)
+    (sym : Option Nat) :
+    applyTransitionEntry
+        { state_idx := cfg_state, tapes := [(left, head, right)] }
+        { src_state := cfg_state
+          src_tape_vals := [sym]
+          dst_state := new_state
+          dst_write_vals := [none]
+          move_dirs := [TMMove.Nmove] } =
+      some { state_idx := new_state, tapes := [(left, head, right)] } := rfl
+
+private theorem applyEntry_Rmove
+    (cfg_state new_state : Nat) (left right : List Nat) (head : Nat)
+    (sym : Option Nat) :
+    applyTransitionEntry
+        { state_idx := cfg_state, tapes := [(left, head, right)] }
+        { src_state := cfg_state
+          src_tape_vals := [sym]
+          dst_state := new_state
+          dst_write_vals := [none]
+          move_dirs := [TMMove.Rmove] } =
+      some { state_idx := new_state, tapes := [(left, head + 1, right)] } := rfl
+
+/-! ### Step lemmas
+
+For each (state, symbol-class) pair the TM enters during a successful
+run, we prove `stepFlatTM TM { … }` reduces to the right successor
+configuration. The pattern mirrors `AssgnContainsZero`'s step lemmas. -/
+
+/-- Generic find? helper for parametric per-k blocks: when an entry of
+`(List.range n).map f` matches at exactly index `k₀ < n` (with all
+strictly earlier indices not matching), find? returns `some (f k₀)`. -/
+private theorem find_range_map_entry_at (n k₀ : Nat) (f : Nat → FlatTMTransEntry)
+    (cfg : FlatTMConfig) (h_k₀ : k₀ < n)
+    (h_match : entryMatchesConfig (f k₀) cfg = true)
+    (h_no_earlier : ∀ k', k' < k₀ → entryMatchesConfig (f k') cfg = false) :
+    ((List.range n).map f).find?
+      (fun e => entryMatchesConfig e cfg) = some (f k₀) := by
+  induction n with
+  | zero => exact absurd h_k₀ (Nat.not_lt_zero _)
+  | succ n ih =>
+      rw [List.range_succ, List.map_append, List.map_cons, List.map_nil,
+          List.find?_append]
+      by_cases h_k_eq : k₀ = n
+      · -- k₀ = n: prefix returns none, the [f n] returns some (f n).
+        have h_pre_none : ((List.range n).map f).find?
+            (fun e => entryMatchesConfig e cfg) = none := by
+          rw [List.find?_eq_none]
+          intro x hx hgood
+          rcases List.mem_map.mp hx with ⟨k', hk', rfl⟩
+          have hk'_lt_n : k' < n := List.mem_range.mp hk'
+          have hk'_lt_k₀ : k' < k₀ := h_k_eq ▸ hk'_lt_n
+          have hbad : entryMatchesConfig (f k') cfg = false := h_no_earlier k' hk'_lt_k₀
+          rw [hbad] at hgood; exact Bool.false_ne_true hgood
+        rw [h_pre_none, Option.none_or]
+        have h_n_match : entryMatchesConfig (f n) cfg = true := h_k_eq ▸ h_match
+        rw [List.find?_cons, h_n_match, h_k_eq]
+      · -- k₀ ≠ n; with k₀ < n+1, get k₀ < n; use IH.
+        have h_k₀_lt_n : k₀ < n := by omega
+        have h_pre : ((List.range n).map f).find?
+            (fun e => entryMatchesConfig e cfg) = some (f k₀) :=
+          ih h_k₀_lt_n
+        rw [h_pre]; rfl
+
+/-- Convenience: `Nat.beq a b = false` from `a ≠ b`. -/
+private theorem nat_beq_false {a b : Nat} (h : a ≠ b) : Nat.beq a b = false := by
+  cases hbeq : Nat.beq a b
+  · rfl
+  · exact absurd (Nat.eq_of_beq_eq_true hbeq) h
+
+/-- If the entry's source state differs from the configuration's state,
+the entry doesn't match. -/
+private theorem entry_state_ne_no_match {entry : FlatTMTransEntry} {cfg : FlatTMConfig}
+    (h : entry.src_state ≠ cfg.state_idx) :
+    entryMatchesConfig entry cfg = false := by
+  unfold entryMatchesConfig
+  cases hbeq : entry.src_state == cfg.state_idx
+  · rfl
+  · exact absurd (by simpa using hbeq) h
+
+/-- State 0, sym = `some 5`: advance to state 1, head + 1. -/
+theorem TM_step_s0_advance_5 (v : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 5) :
+    stepFlatTM (TM v) { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 5 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 5
+    rw [dif_pos h_head_lt, h_get]
+  have hMatch : entryMatchesConfig s0_advance_5_entry
+      { state_idx := 0, tapes := [(left, head, right)] } = true := by
+    show ((0 : Nat) == 0 &&
+            decide (([some 5] : List (Option Nat)) =
+              [currentTapeSymbol (left, head, right)])) = true
+    rw [hSym]; rfl
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := 0, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq, List.find?_cons, hMatch]
+  show applyTransitionEntry _ s0_advance_5_entry = _
+  exact applyEntry_Rmove 0 1 left right head (some 5)
+
+/-- Find the `s0_continue_entry v` in the filter block when `v ∈ {1,2,3,4}`. -/
+private theorem find_s0_continue_match (v_param : Nat)
+    (left right : List Nat) (head : Nat) (v : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = v)
+    (h_v_in : v = 1 ∨ v = 2 ∨ v = 3 ∨ v = 4) :
+    (((List.range sigSAT).filter
+          (fun w => decide (w = 1 ∨ w = 2 ∨ w = 3 ∨ w = 4))).map s0_continue_entry).find?
+      (fun entry => entryMatchesConfig entry
+        { state_idx := 0, tapes := [(left, head, right)] }) =
+      some (s0_continue_entry v) := by
+  let _ := v_param  -- parameter unused; reserved for caller readability
+  have hSym : currentTapeSymbol (left, head, right) = some v := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some v
+    rw [dif_pos h_head_lt, h_get]
+  have h_v_lt : v < sigSAT := by rcases h_v_in with h | h | h | h <;> (rw [h]; decide)
+  have hvInFilter :
+      v ∈ (List.range sigSAT).filter (fun w => decide (w = 1 ∨ w = 2 ∨ w = 3 ∨ w = 4)) := by
+    refine List.mem_filter.mpr ⟨List.mem_range.mpr h_v_lt, ?_⟩
+    exact decide_eq_true h_v_in
+  generalize hList : (List.range sigSAT).filter
+      (fun w => decide (w = 1 ∨ w = 2 ∨ w = 3 ∨ w = 4)) = L
+  rw [hList] at hvInFilter
+  clear hList
+  induction L with
+  | nil => cases hvInFilter
+  | cons w ws ih =>
+      show List.find? _ (s0_continue_entry w :: ws.map s0_continue_entry) = _
+      rw [List.find?_cons]
+      by_cases hwv : w = v
+      · subst hwv
+        have hMatch : entryMatchesConfig (s0_continue_entry w)
+            { state_idx := 0, tapes := [(left, head, right)] } = true := by
+          show ((0 : Nat) == 0 &&
+                  decide (([some w] : List (Option Nat)) =
+                    [currentTapeSymbol (left, head, right)])) = true
+          rw [hSym]
+          have h1 : ((0 : Nat) == 0) = true := rfl
+          have h2 : decide (([some w] : List (Option Nat)) = [some w]) = true :=
+            decide_eq_true rfl
+          rw [h1, h2]; rfl
+        rw [hMatch]
+      · have hNotMatch : entryMatchesConfig (s0_continue_entry w)
+            { state_idx := 0, tapes := [(left, head, right)] } = false := by
+          show ((0 : Nat) == 0 &&
+                  decide (([some w] : List (Option Nat)) =
+                    [currentTapeSymbol (left, head, right)])) = false
+          rw [hSym]
+          have h_ne_some : ([some w] : List (Option Nat)) ≠ [some v] := by
+            intro h; injection h with h1; injection h1 with h2; exact hwv h2
+          simp [h_ne_some]
+        rw [hNotMatch]
+        rcases List.mem_cons.mp hvInFilter with hvw | hvws
+        · exact absurd hvw.symm hwv
+        · exact ih hvws
+
+/-- Symbol-`x` match helper: when the tape head reads `some x`, the
+single-tape entry with `src_state = s`, `src_tape_vals = [some x]`
+matches a configuration at state `s` with that tape. -/
+private theorem entry_self_state_some_match
+    (s x : Nat) (left right : List Nat) (head : Nat)
+    (entry : FlatTMTransEntry)
+    (h_src_state : entry.src_state = s)
+    (h_src_vals : entry.src_tape_vals = [some x])
+    (h_sym : currentTapeSymbol (left, head, right) = some x) :
+    entryMatchesConfig entry { state_idx := s, tapes := [(left, head, right)] } = true := by
+  simp [entryMatchesConfig, h_src_state, h_src_vals, h_sym]
+
+/-- Same as above but for `[none]`. -/
+private theorem entry_self_state_none_match
+    (s : Nat) (left right : List Nat) (head : Nat)
+    (entry : FlatTMTransEntry)
+    (h_src_state : entry.src_state = s)
+    (h_src_vals : entry.src_tape_vals = [none])
+    (h_sym : currentTapeSymbol (left, head, right) = none) :
+    entryMatchesConfig entry { state_idx := s, tapes := [(left, head, right)] } = true := by
+  simp [entryMatchesConfig, h_src_state, h_src_vals, h_sym]
+
+/-- Helper: at state `s`, tape symbol `some x'`, an entry with the same
+`src_state = s` but `src_tape_vals = [some x]` for `x ≠ x'` doesn't match. -/
+private theorem entry_self_state_sym_ne_no_match
+    (s x x' : Nat) (left right : List Nat) (head : Nat)
+    (entry : FlatTMTransEntry)
+    (h_src_state : entry.src_state = s)
+    (h_src_vals : entry.src_tape_vals = [some x])
+    (h_x_ne : x ≠ x')
+    (h_sym : currentTapeSymbol (left, head, right) = some x') :
+    entryMatchesConfig entry { state_idx := s, tapes := [(left, head, right)] } = false := by
+  have h_ne : ([some x] : List (Option Nat)) ≠ [some x'] := by
+    intro h; injection h with h1; injection h1 with h2; exact h_x_ne h2
+  simp [entryMatchesConfig, h_src_state, h_src_vals, h_sym, h_ne]
+
+/-- Helper: at state `s`, tape symbol `some _`, an entry with the same
+`src_state = s` but `src_tape_vals = [none]` doesn't match. -/
+private theorem entry_self_state_none_ne_some_no_match
+    (s x' : Nat) (left right : List Nat) (head : Nat)
+    (entry : FlatTMTransEntry)
+    (h_src_state : entry.src_state = s)
+    (h_src_vals : entry.src_tape_vals = [none])
+    (h_sym : currentTapeSymbol (left, head, right) = some x') :
+    entryMatchesConfig entry { state_idx := s, tapes := [(left, head, right)] } = false := by
+  have h_ne : ([none] : List (Option Nat)) ≠ [some x'] := by
+    intro h; injection h with h1; cases h1
+  simp [entryMatchesConfig, h_src_state, h_src_vals, h_sym, h_ne]
+
+/-- State 0, sym ∈ `some {1,2,3,4}`: stay in state 0, head + 1. -/
+theorem TM_step_s0_continue (v : Nat)
+    (left right : List Nat) (head : Nat) (w : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = w)
+    (h_w_in : w = 1 ∨ w = 2 ∨ w = 3 ∨ w = 4) :
+    stepFlatTM (TM v) { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 0, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some w := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some w
+    rw [dif_pos h_head_lt, h_get]
+  have h_ne5 : w ≠ 5 := by rcases h_w_in with h | h | h | h <;> (rw [h]; decide)
+  have hNot_advance5 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := 0, tapes := [(left, head, right)] } = false := by
+    show ((0 : Nat) == 0 &&
+            decide (([some 5] : List (Option Nat)) =
+              [currentTapeSymbol (left, head, right)])) = false
+    rw [hSym]
+    have h_ne : ([some 5] : List (Option Nat)) ≠ [some w] := by
+      intro h; injection h with h1; injection h1 with h2; exact h_ne5 h2.symm
+    simp [h_ne]
+  have hNot_state0_none : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := 0, tapes := [(left, head, right)] } = false := by
+    show ((0 : Nat) == 0 &&
+            decide (([none] : List (Option Nat)) =
+              [currentTapeSymbol (left, head, right)])) = false
+    rw [hSym]
+    have h_ne : ([none] : List (Option Nat)) ≠ [some w] := by
+      intro h; injection h with h1; cases h1
+    simp [h_ne]
+  -- State-mismatched skips: src_state ∈ {v+1, v+2}, cfg.state_idx = 0.
+  have h_sready_accept_6_skip := entry_state_ne_no_match (entry := sready_accept_6_entry v)
+    (cfg := { state_idx := 0, tapes := [(left, head, right)] })
+    (show (v + 1) ≠ 0 by omega)
+  have h_sready_overflow_1_skip := entry_state_ne_no_match (entry := sready_overflow_1_entry v)
+    (cfg := { state_idx := 0, tapes := [(left, head, right)] })
+    (show (v + 1) ≠ 0 by omega)
+  have h_sready_reject_none_skip := entry_state_ne_no_match (entry := sready_reject_none_entry v)
+    (cfg := { state_idx := 0, tapes := [(left, head, right)] })
+    (show (v + 1) ≠ 0 by omega)
+  have h_sov_one_skip := entry_state_ne_no_match (entry := sov_one_entry v)
+    (cfg := { state_idx := 0, tapes := [(left, head, right)] })
+    (show (v + 2) ≠ 0 by omega)
+  have h_sov_six_skip := entry_state_ne_no_match (entry := sov_six_entry v)
+    (cfg := { state_idx := 0, tapes := [(left, head, right)] })
+    (show (v + 2) ≠ 0 by omega)
+  have h_sov_reject_none_skip := entry_state_ne_no_match (entry := sov_reject_none_entry v)
+    (cfg := { state_idx := 0, tapes := [(left, head, right)] })
+    (show (v + 2) ≠ 0 by omega)
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := 0, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, hNot_advance5]
+  rw [List.find?_cons, hNot_state0_none]
+  rw [List.find?_cons, h_sready_accept_6_skip]
+  rw [List.find?_cons, h_sready_overflow_1_skip]
+  rw [List.find?_cons, h_sready_reject_none_skip]
+  rw [List.find?_cons, h_sov_one_skip]
+  rw [List.find?_cons, h_sov_six_skip]
+  rw [List.find?_cons, h_sov_reject_none_skip]
+  -- Now we hit the appended blocks. The s0_continue block is at the front
+  -- of the left-deep ((((((((A1 ++ A2) ++ A3) ++ A4) ++ A5) ++ A6) ++ A7) ++ FlatMap).
+  -- Peel down to A1 with seven find?_append rewrites.
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append,
+      List.find?_append, List.find?_append, List.find?_append]
+  rw [find_s0_continue_match v left right head w h_head_lt h_get h_w_in]
+  show applyTransitionEntry _ (s0_continue_entry w) = _
+  exact applyEntry_Rmove 0 0 left right head (some w)
+
+/-- State v+1, sym = `some 6`: accept (state v+3). -/
+theorem TM_step_sready_accept_6 (v : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 6) :
+    stepFlatTM (TM v) { state_idx := v + 1, tapes := [(left, head, right)] } =
+      some { state_idx := v + 3, tapes := [(left, head, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 6 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 6
+    rw [dif_pos h_head_lt, h_get]
+  have h_skip1 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := v + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 1 by omega)
+  have h_skip2 : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := v + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 1 by omega)
+  have hMatch : entryMatchesConfig (sready_accept_6_entry v)
+      { state_idx := v + 1, tapes := [(left, head, right)] } = true :=
+    entry_self_state_some_match (v + 1) 6 left right head (sready_accept_6_entry v)
+      rfl rfl hSym
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := v + 1, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, h_skip1]
+  rw [List.find?_cons, h_skip2]
+  rw [List.find?_cons, hMatch]
+  show applyTransitionEntry _ (sready_accept_6_entry v) = _
+  exact applyEntry_Nmove (v + 1) (v + 3) left right head (some 6)
+
+/-- State v+1, sym = `some 1`: enter overflow (state v+2). -/
+theorem TM_step_sready_overflow_1 (v : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 1) :
+    stepFlatTM (TM v) { state_idx := v + 1, tapes := [(left, head, right)] } =
+      some { state_idx := v + 2, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 1 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 1
+    rw [dif_pos h_head_lt, h_get]
+  have h_skip1 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := v + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 1 by omega)
+  have h_skip2 : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := v + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 1 by omega)
+  have h_skip3 : entryMatchesConfig (sready_accept_6_entry v)
+      { state_idx := v + 1, tapes := [(left, head, right)] } = false :=
+    entry_self_state_sym_ne_no_match (v + 1) 6 1 left right head
+      (sready_accept_6_entry v) rfl rfl (by decide) hSym
+  have hMatch : entryMatchesConfig (sready_overflow_1_entry v)
+      { state_idx := v + 1, tapes := [(left, head, right)] } = true :=
+    entry_self_state_some_match (v + 1) 1 left right head (sready_overflow_1_entry v)
+      rfl rfl hSym
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := v + 1, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, h_skip1]
+  rw [List.find?_cons, h_skip2]
+  rw [List.find?_cons, h_skip3]
+  rw [List.find?_cons, hMatch]
+  show applyTransitionEntry _ (sready_overflow_1_entry v) = _
+  exact applyEntry_Rmove (v + 1) (v + 2) left right head (some 1)
+
+/-- State v+2, sym = `some 1`: stay in overflow (state v+2). -/
+theorem TM_step_sov_continue_1 (v : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 1) :
+    stepFlatTM (TM v) { state_idx := v + 2, tapes := [(left, head, right)] } =
+      some { state_idx := v + 2, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 1 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 1
+    rw [dif_pos h_head_lt, h_get]
+  have h_skip1 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 2 by omega)
+  have h_skip2 : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 2 by omega)
+  have h_skip3 : entryMatchesConfig (sready_accept_6_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ v + 2 by omega)
+  have h_skip4 : entryMatchesConfig (sready_overflow_1_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ v + 2 by omega)
+  have h_skip5 : entryMatchesConfig (sready_reject_none_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ v + 2 by omega)
+  have hMatch : entryMatchesConfig (sov_one_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = true :=
+    entry_self_state_some_match (v + 2) 1 left right head (sov_one_entry v)
+      rfl rfl hSym
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := v + 2, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, h_skip1]
+  rw [List.find?_cons, h_skip2]
+  rw [List.find?_cons, h_skip3]
+  rw [List.find?_cons, h_skip4]
+  rw [List.find?_cons, h_skip5]
+  rw [List.find?_cons, hMatch]
+  show applyTransitionEntry _ (sov_one_entry v) = _
+  exact applyEntry_Rmove (v + 2) (v + 2) left right head (some 1)
+
+/-- Generic helper: if no element of `l` produces a matching entry,
+`find?` returns `none`. -/
+private theorem find_map_no_match {β : Type _} (l : List β) (f : β → FlatTMTransEntry)
+    (cfg : FlatTMConfig)
+    (h_no_match : ∀ x ∈ l, entryMatchesConfig (f x) cfg = false) :
+    (l.map f).find? (fun e => entryMatchesConfig e cfg) = none := by
+  rw [List.find?_eq_none]
+  intro y hy hgood
+  rcases List.mem_map.mp hy with ⟨x, hx, rfl⟩
+  rw [h_no_match x hx] at hgood
+  exact Bool.false_ne_true hgood
+
+/-- The `s0_continue` filter block has no matching entry when
+`cfg.state_idx ≠ 0`. -/
+private theorem find_s0_cont_block_no_match (state_idx : Nat) (h : 0 ≠ state_idx)
+    (left right : List Nat) (head : Nat) :
+    (((List.range sigSAT).filter
+          (fun x => decide (x = 1 ∨ x = 2 ∨ x = 3 ∨ x = 4))).map s0_continue_entry).find?
+      (fun e => entryMatchesConfig e
+        { state_idx := state_idx, tapes := [(left, head, right)] }) = none := by
+  refine find_map_no_match _ _ _ (fun x _ => ?_)
+  exact entry_state_ne_no_match h
+
+/-- The `s0_reject_symbol` filter block has no matching entry when
+`cfg.state_idx ≠ 0`. -/
+private theorem find_s0_rej_block_no_match (v : Nat) (state_idx : Nat) (h : 0 ≠ state_idx)
+    (left right : List Nat) (head : Nat) :
+    (((List.range sigSAT).filter
+          (fun x => decide (x = 0 ∨ x = 6))).map (s0_reject_symbol_entry v)).find?
+      (fun e => entryMatchesConfig e
+        { state_idx := state_idx, tapes := [(left, head, right)] }) = none := by
+  refine find_map_no_match _ _ _ (fun x _ => ?_)
+  exact entry_state_ne_no_match h
+
+/-- The `sready_reject_symbol` filter block has no matching entry when
+`cfg.state_idx ≠ v + 1`. -/
+private theorem find_sready_rej_block_no_match (v : Nat) (state_idx : Nat)
+    (h : (v + 1) ≠ state_idx)
+    (left right : List Nat) (head : Nat) :
+    (((List.range sigSAT).filter
+          (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map
+            (sready_reject_symbol_entry v)).find?
+      (fun e => entryMatchesConfig e
+        { state_idx := state_idx, tapes := [(left, head, right)] }) = none := by
+  refine find_map_no_match _ _ _ (fun x _ => ?_)
+  exact entry_state_ne_no_match h
+
+/-- The `sov_reject_symbol` filter block has no matching entry when
+`cfg.state_idx ≠ v + 2`. -/
+private theorem find_sov_rej_block_no_match (v : Nat) (state_idx : Nat)
+    (h : (v + 2) ≠ state_idx)
+    (left right : List Nat) (head : Nat) :
+    (((List.range sigSAT).filter
+          (fun x => decide (x = 0 ∨ x = 2 ∨ x = 3 ∨ x = 4 ∨ x = 5))).map
+            (sov_reject_symbol_entry v)).find?
+      (fun e => entryMatchesConfig e
+        { state_idx := state_idx, tapes := [(left, head, right)] }) = none := by
+  refine find_map_no_match _ _ _ (fun x _ => ?_)
+  exact entry_state_ne_no_match h
+
+/-- State v+2, sym = `some 6`: end overflow, move to next chunk (state 1). -/
+theorem TM_step_sov_next_6 (v : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 6) :
+    stepFlatTM (TM v) { state_idx := v + 2, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 6 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 6
+    rw [dif_pos h_head_lt, h_get]
+  have h_skip1 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 2 by omega)
+  have h_skip2 : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ v + 2 by omega)
+  have h_skip3 : entryMatchesConfig (sready_accept_6_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ v + 2 by omega)
+  have h_skip4 : entryMatchesConfig (sready_overflow_1_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ v + 2 by omega)
+  have h_skip5 : entryMatchesConfig (sready_reject_none_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ v + 2 by omega)
+  have h_skip6 : entryMatchesConfig (sov_one_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = false :=
+    entry_self_state_sym_ne_no_match (v + 2) 1 6 left right head
+      (sov_one_entry v) rfl rfl (by decide) hSym
+  have hMatch : entryMatchesConfig (sov_six_entry v)
+      { state_idx := v + 2, tapes := [(left, head, right)] } = true :=
+    entry_self_state_some_match (v + 2) 6 left right head (sov_six_entry v)
+      rfl rfl hSym
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := v + 2, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, h_skip1]
+  rw [List.find?_cons, h_skip2]
+  rw [List.find?_cons, h_skip3]
+  rw [List.find?_cons, h_skip4]
+  rw [List.find?_cons, h_skip5]
+  rw [List.find?_cons, h_skip6]
+  rw [List.find?_cons, hMatch]
+  show applyTransitionEntry _ (sov_six_entry v) = _
+  exact applyEntry_Rmove (v + 2) 1 left right head (some 6)
+
+/-- `find?` on the `sk_one` block: when the current symbol is not `1`,
+no entry matches (state-matched index has symbol mismatch, state-mismatched
+indices skip via `entry_state_ne_no_match`). -/
+private theorem find_sk_one_block_no_match_sym_ne
+    (v k x' : Nat) (h_x_ne : 1 ≠ x') (left right : List Nat) (head : Nat)
+    (h_sym : currentTapeSymbol (left, head, right) = some x') :
+    ((List.range v).map sk_one_entry).find?
+      (fun e => entryMatchesConfig e
+        { state_idx := k + 1, tapes := [(left, head, right)] }) = none := by
+  refine find_map_no_match _ _ _ (fun k' _ => ?_)
+  by_cases h_k_eq : k' = k
+  · subst h_k_eq
+    exact entry_self_state_sym_ne_no_match (k' + 1) 1 x' left right head
+      (sk_one_entry k') rfl rfl h_x_ne h_sym
+  · exact entry_state_ne_no_match (show (k' + 1) ≠ k + 1 by intro h; exact h_k_eq (Nat.succ_inj.mp h))
+
+/-- State k+1 with `k < v`, sym = `some 1`: increment counter to state k+2. -/
+theorem TM_step_sk_enter_1 (v k : Nat) (h_k_lt : k < v)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 1) :
+    stepFlatTM (TM v) { state_idx := k + 1, tapes := [(left, head, right)] } =
+      some { state_idx := k + 2, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 1 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 1
+    rw [dif_pos h_head_lt, h_get]
+  have h_skip1 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ k + 1 by omega)
+  have h_skip2 : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ k + 1 by omega)
+  have h_skip3 : entryMatchesConfig (sready_accept_6_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ k + 1 by omega)
+  have h_skip4 : entryMatchesConfig (sready_overflow_1_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ k + 1 by omega)
+  have h_skip5 : entryMatchesConfig (sready_reject_none_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ k + 1 by omega)
+  have h_skip6 : entryMatchesConfig (sov_one_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 2) ≠ k + 1 by omega)
+  have h_skip7 : entryMatchesConfig (sov_six_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 2) ≠ k + 1 by omega)
+  have h_skip8 : entryMatchesConfig (sov_reject_none_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 2) ≠ k + 1 by omega)
+  have h_block_s0_cont :=
+    find_s0_cont_block_no_match (k + 1) (show 0 ≠ k + 1 by omega) left right head
+  have h_block_s0_rej :=
+    find_s0_rej_block_no_match v (k + 1) (show 0 ≠ k + 1 by omega) left right head
+  have h_block_sready_rej :=
+    find_sready_rej_block_no_match v (k + 1) (show (v + 1) ≠ k + 1 by omega) left right head
+  have h_block_sov_rej :=
+    find_sov_rej_block_no_match v (k + 1) (show (v + 2) ≠ k + 1 by omega) left right head
+  have h_sk_one_match :
+      ((List.range v).map sk_one_entry).find?
+        (fun e => entryMatchesConfig e
+          { state_idx := k + 1, tapes := [(left, head, right)] }) =
+        some (sk_one_entry k) := by
+    refine find_range_map_entry_at v k sk_one_entry _ h_k_lt ?_ ?_
+    · exact entry_self_state_some_match (k + 1) 1 left right head (sk_one_entry k)
+        rfl rfl hSym
+    · intro k' h_k'_lt_k
+      exact entry_state_ne_no_match (show (k' + 1) ≠ k + 1 by omega)
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := k + 1, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, h_skip1]
+  rw [List.find?_cons, h_skip2]
+  rw [List.find?_cons, h_skip3]
+  rw [List.find?_cons, h_skip4]
+  rw [List.find?_cons, h_skip5]
+  rw [List.find?_cons, h_skip6]
+  rw [List.find?_cons, h_skip7]
+  rw [List.find?_cons, h_skip8]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append,
+      List.find?_append, List.find?_append, List.find?_append]
+  rw [h_block_s0_cont, h_block_s0_rej, h_block_sready_rej, h_block_sov_rej]
+  rw [h_sk_one_match]
+  -- Or chain: (((((none.or none .or none) .or none) .or some (sk_one_entry k)) .or _) .or _) .or _
+  -- collapses to some (sk_one_entry k). Then Option.bind reduces.
+  show applyTransitionEntry _ (sk_one_entry k) = _
+  exact applyEntry_Rmove (k + 1) (k + 2) left right head (some 1)
+
+/-- State k+1 with `k < v`, sym = `some 6`: end chunk, move to next (state 1). -/
+theorem TM_step_sk_next_6 (v k : Nat) (h_k_lt : k < v)
+    (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_get : right.get ⟨head, h_head_lt⟩ = 6) :
+    stepFlatTM (TM v) { state_idx := k + 1, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  have hSym : currentTapeSymbol (left, head, right) = some 6 := by
+    show (if h' : head < right.length then some (right.get ⟨head, h'⟩) else none) = some 6
+    rw [dif_pos h_head_lt, h_get]
+  have h_skip1 : entryMatchesConfig s0_advance_5_entry
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ k + 1 by omega)
+  have h_skip2 : entryMatchesConfig (s0_reject_none_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (0 : Nat) ≠ k + 1 by omega)
+  have h_skip3 : entryMatchesConfig (sready_accept_6_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ k + 1 by omega)
+  have h_skip4 : entryMatchesConfig (sready_overflow_1_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ k + 1 by omega)
+  have h_skip5 : entryMatchesConfig (sready_reject_none_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 1) ≠ k + 1 by omega)
+  have h_skip6 : entryMatchesConfig (sov_one_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 2) ≠ k + 1 by omega)
+  have h_skip7 : entryMatchesConfig (sov_six_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 2) ≠ k + 1 by omega)
+  have h_skip8 : entryMatchesConfig (sov_reject_none_entry v)
+      { state_idx := k + 1, tapes := [(left, head, right)] } = false :=
+    entry_state_ne_no_match (show (v + 2) ≠ k + 1 by omega)
+  have h_block_s0_cont :=
+    find_s0_cont_block_no_match (k + 1) (show 0 ≠ k + 1 by omega) left right head
+  have h_block_s0_rej :=
+    find_s0_rej_block_no_match v (k + 1) (show 0 ≠ k + 1 by omega) left right head
+  have h_block_sready_rej :=
+    find_sready_rej_block_no_match v (k + 1) (show (v + 1) ≠ k + 1 by omega) left right head
+  have h_block_sov_rej :=
+    find_sov_rej_block_no_match v (k + 1) (show (v + 2) ≠ k + 1 by omega) left right head
+  -- sk_one block: every entry has src_tape_vals = [some 1], but we read 6. No match.
+  have h_block_sk_one : ((List.range v).map sk_one_entry).find?
+      (fun e => entryMatchesConfig e
+        { state_idx := k + 1, tapes := [(left, head, right)] }) = none :=
+    find_sk_one_block_no_match_sym_ne v k 6 (by decide) left right head hSym
+  -- sk_six block: match at index k.
+  have h_sk_six_match :
+      ((List.range v).map sk_six_entry).find?
+        (fun e => entryMatchesConfig e
+          { state_idx := k + 1, tapes := [(left, head, right)] }) =
+        some (sk_six_entry k) := by
+    refine find_range_map_entry_at v k sk_six_entry _ h_k_lt ?_ ?_
+    · exact entry_self_state_some_match (k + 1) 6 left right head (sk_six_entry k)
+        rfl rfl hSym
+    · intro k' h_k'_lt_k
+      exact entry_state_ne_no_match (show (k' + 1) ≠ k + 1 by omega)
+  show Option.bind ((TM v).trans.find?
+        (fun entry => entryMatchesConfig entry
+          { state_idx := k + 1, tapes := [(left, head, right)] }))
+      (applyTransitionEntry _) = _
+  rw [TM_trans_eq]
+  rw [List.find?_cons, h_skip1]
+  rw [List.find?_cons, h_skip2]
+  rw [List.find?_cons, h_skip3]
+  rw [List.find?_cons, h_skip4]
+  rw [List.find?_cons, h_skip5]
+  rw [List.find?_cons, h_skip6]
+  rw [List.find?_cons, h_skip7]
+  rw [List.find?_cons, h_skip8]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append,
+      List.find?_append, List.find?_append, List.find?_append]
+  rw [h_block_s0_cont, h_block_s0_rej, h_block_sready_rej, h_block_sov_rej]
+  rw [h_block_sk_one, h_sk_six_match]
+  show applyTransitionEntry _ (sk_six_entry k) = _
+  exact applyEntry_Rmove (k + 1) 1 left right head (some 6)
+
+end AssgnContainsVar
+
 end SAT_TM
