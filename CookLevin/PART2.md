@@ -176,7 +176,8 @@ The pivot:
 | E     | 8     | Re-prove `P_NP_incl` via inline `DecidesBy.proj_left`     | ✅ done     |
 | E     | 9     | Retype `hasDeciderClassical` to TM-backed (body → Part-6 sorry); delete legacy `HasDecider` | ✅ done |
 | F     | 10    | Validation: rebuild `CookLevin`, sorry-audit, README      | ✅ done     |
-| G     | 11    | Close `EvalCnfTM.decider` stub (build the real TM)        | ⏳ pending  |
+| G     | 11.0  | Land `composeFlatTM_run` (operational correctness)        | ✅ done     |
+| G     | 11.1–7| Close `EvalCnfTM.decider` stub (build the real TM)        | ⏳ pending  |
 | H     | 12    | Close `CliqueRelTM.decider` stub (build the real TM)      | ⏳ pending  |
 | —     | 13    | Final Part-2 sweep (verify only Part-3 / Part-6 sorrys)   | ⏳ pending  |
 
@@ -408,7 +409,15 @@ At this point Part 2 is *framework-complete*. The chain
 `theorem CookLevin : NPcomplete SAT` rebuilds. The remaining
 deliverables are the two TM constructions.
 
-**Step 10 milestone reached (this session).** Sorry inventory:
+**Step 11.0 milestone reached.** `composeFlatTM_run` (and its supporting
+seven helper lemmas) is proved in `Complexity/Complexity/TMPrimitives.lean`,
+~400 LOC added on top of the existing `composeFlatTM_valid` infrastructure.
+Sorries unchanged from the Step 10 inventory below; no regressions.
+
+**Triage:** `composeFlatTM_run` landed clean (no monolithic-fallback needed).
+Step 11 proceeds to substeps 11.1–11.7 in subsequent sessions.
+
+**Step 10 milestone reached (prior session).** Sorry inventory:
 
 ```
 Complexity/Complexity/NP.lean:270                  red_inNP (TM-composition slot)
@@ -460,12 +469,22 @@ multi-tape FlatTM and operational correctness.
   limit, split into `Primitives.lean` + `Compose.lean`.
 
 **Step 11 substeps (each its own session, each ends with `lake build`):**
-- **11.0** Land `composeFlatTM_run`: if M₁ halts at config c₁ in t₁
+- **11.0** ✅ Land `composeFlatTM_run`: if M₁ halts at config c₁ in t₁
   steps with `c₁.state_idx = exit`, and M₂ halts at c₂ in t₂ steps
   starting from `{ state_idx := M₂.start, tapes := c₁.tapes }`, then
   `composeFlatTM M₁ M₂ exit` halts at the shifted c₂ in
-  `t₁ + 1 + t₂` steps. This is the lemma `composeFlatTM_valid`
-  promised but never delivered in v1. ~250 LOC.
+  `t₁ + 1 + t₂` steps. **Done in this session, ~400 LOC** (slightly
+  over the 250 LOC estimate). Includes a *prelude* lifting
+  `runFlatTM_stuck`, `runFlatTM_compose`, `runFlatTM_extend_by_step`
+  from `SAT_TM.lean` to `MachineSemantics.lean`. The seven helper
+  lemmas chained for the composite are:
+  - `composeFlatTM_haltingStateReached_M1` — composed halt is false on M₁ states.
+  - `composeFlatTM_haltingStateReached_M2_phase` — composed halt at shifted state = M₂ halt.
+  - `stepFlatTM_composeFlatTM_M1` — composed step = M₁ step on non-exit M₁ states.
+  - `stepFlatTM_composeFlatTM_bridge` — at state `exit`, one step jumps to `M₁.states + M₂.start`.
+  - `stepFlatTM_composeFlatTM_M2` — composed step = shifted M₂ step on shifted states.
+  - `runFlatTM_composeFlatTM_M1_phase` — lift of M₁'s n-step run (under trajectory invariant).
+  - `runFlatTM_composeFlatTM_M2_phase` — lift of M₂'s n-step run.
 - **11.1** Land `resetTapeTM` / `writeAtHeadTM` / `gotoStartTM`
   (per-tape helpers). Multi-tape; each ~150 LOC.
 - **11.2** Land `copySegmentTM`: copy current segment of tape 0

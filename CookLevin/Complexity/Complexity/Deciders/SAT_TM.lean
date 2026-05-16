@@ -2681,65 +2681,10 @@ theorem encodeAssgn_first_symbol_nonempty (v : Nat) (vs : assgn) :
       show (1 :: List.replicate w 1 ++ 6 :: encodeAssgn vs)[0]'_ = 1
       rfl
 
-/-- Chaining lemma: an `n`-step run landing in a non-halting config can be
-extended by a single explicit step. Generalisation of `runFlatTM_extend`. -/
-theorem runFlatTM_extend_by_step
-    (M : FlatTM) :
-    ∀ (n : Nat) (cfg cfg_mid cfg_final : FlatTMConfig),
-      runFlatTM n M cfg = some cfg_mid →
-      haltingStateReached M cfg_mid = false →
-      stepFlatTM M cfg_mid = some cfg_final →
-      runFlatTM (n + 1) M cfg = some cfg_final
-  | 0, cfg, cfg_mid, cfg_final, h_run, h_mid_not_halt, h_step => by
-      -- runFlatTM 0 cfg = some cfg, so cfg = cfg_mid.
-      have h_eq : cfg = cfg_mid := Option.some.inj h_run
-      rw [h_eq]
-      show (if haltingStateReached M cfg_mid = true then some cfg_mid
-            else match stepFlatTM M cfg_mid with
-              | none => some cfg_mid
-              | some cfg' => runFlatTM 0 M cfg') = some cfg_final
-      rw [if_neg (by rw [h_mid_not_halt]; decide), h_step]
-      rfl
-  | n + 1, cfg, cfg_mid, cfg_final, h_run, h_mid_not_halt, h_step => by
-      have h_run_eq :
-          runFlatTM (n + 1) M cfg =
-            if haltingStateReached M cfg = true then some cfg
-            else match stepFlatTM M cfg with
-              | none => some cfg
-              | some cfg' => runFlatTM n M cfg' := rfl
-      by_cases h_cfg_halt : haltingStateReached M cfg = true
-      · -- cfg halting → runFlatTM (n+1) cfg = some cfg = some cfg_mid, so cfg = cfg_mid.
-        -- But cfg_mid is non-halting; contradiction.
-        rw [h_run_eq, if_pos h_cfg_halt] at h_run
-        have h_eq : cfg = cfg_mid := Option.some.inj h_run
-        rw [h_eq] at h_cfg_halt
-        rw [h_mid_not_halt] at h_cfg_halt
-        exact absurd h_cfg_halt (by decide)
-      · rw [h_run_eq, if_neg h_cfg_halt] at h_run
-        cases h_step_cfg : stepFlatTM M cfg with
-        | none =>
-            rw [h_step_cfg] at h_run
-            -- runFlatTM (n+1) cfg = some cfg = some cfg_mid → cfg = cfg_mid.
-            -- Then stepFlatTM cfg_mid = none, but h_step says it's some cfg_final.
-            have h_eq : cfg = cfg_mid := Option.some.inj h_run
-            rw [h_eq] at h_step_cfg
-            rw [h_step_cfg] at h_step
-            cases h_step
-        | some cfg' =>
-            rw [h_step_cfg] at h_run
-            -- runFlatTM n cfg' = some cfg_mid. Apply IH.
-            have ih := runFlatTM_extend_by_step M n cfg' cfg_mid cfg_final
-              h_run h_mid_not_halt h_step
-            -- We want runFlatTM (n+2) cfg = some cfg_final.
-            have h_run2_eq :
-                runFlatTM (n + 1 + 1) M cfg =
-                  if haltingStateReached M cfg = true then some cfg
-                  else match stepFlatTM M cfg with
-                    | none => some cfg
-                    | some cfg' => runFlatTM (n + 1) M cfg' := rfl
-            rw [h_run2_eq, if_neg h_cfg_halt, h_step_cfg]
-            exact ih
-  termination_by n _ _ _ _ _ _ => n
+/- `runFlatTM_extend_by_step` was lifted to
+`Complexity/Complexity/MachineSemantics.lean` in Part 2 Step 11.0 so
+`composeFlatTM_run` (in `TMPrimitives.lean`) can use it. Existing
+references downstream resolve to the new location transparently. -/
 
 /-! ### The `AssgnEmpty` decider
 
@@ -4383,82 +4328,12 @@ theorem encodeClause_get_interior (c : clause) (k : Nat)
   · right; left; exact h
   · right; right; exact h
 
-/-! ### General composition lemma for `runFlatTM`
+/-! ### General composition lemmas for `runFlatTM`
 
-If `runFlatTM n M cfg = some cfg_mid`, then running for `n + m` steps
-gives the same result as running for `m` more steps from `cfg_mid`. -/
-
-theorem runFlatTM_stuck (M : FlatTM) (cfg : FlatTMConfig)
-    (h_not_halt : haltingStateReached M cfg = false)
-    (h_step : stepFlatTM M cfg = none) :
-    ∀ (m : Nat), runFlatTM m M cfg = some cfg
-  | 0 => rfl
-  | m + 1 => by
-      show (if haltingStateReached M cfg = true then some cfg
-            else match stepFlatTM M cfg with
-              | none => some cfg
-              | some cfg' => runFlatTM m M cfg') = some cfg
-      rw [if_neg (by rw [h_not_halt]; decide), h_step]
-
-theorem runFlatTM_compose (M : FlatTM) :
-    ∀ (n m : Nat) (cfg cfg_mid : FlatTMConfig),
-      runFlatTM n M cfg = some cfg_mid →
-      runFlatTM (n + m) M cfg = runFlatTM m M cfg_mid
-  | 0, m, cfg, cfg_mid, h => by
-      have h_eq : cfg = cfg_mid := by
-        have : runFlatTM 0 M cfg = some cfg := rfl
-        rw [this] at h; exact Option.some.inj h
-      rw [h_eq, Nat.zero_add]
-  | n + 1, m, cfg, cfg_mid, h => by
-      by_cases h_halt : haltingStateReached M cfg = true
-      · -- cfg halting: runFlatTM (n+1) cfg = some cfg, so cfg_mid = cfg.
-        have h_run_eq : runFlatTM (n + 1) M cfg = some cfg := by
-          show (if haltingStateReached M cfg = true then some cfg else _) = some cfg
-          rw [if_pos h_halt]
-        rw [h_run_eq] at h
-        have h_eq : cfg = cfg_mid := Option.some.inj h
-        rw [← h_eq]
-        rw [runFlatTM_of_halting M cfg (n + 1 + m) h_halt,
-            runFlatTM_of_halting M cfg m h_halt]
-      · have h_halt' : haltingStateReached M cfg = false := by
-          cases h_v : haltingStateReached M cfg with
-          | true => exact absurd h_v h_halt
-          | false => rfl
-        cases h_step : stepFlatTM M cfg with
-        | none =>
-            -- step = none: runFlatTM (n+1) cfg = some cfg.
-            have h_run_eq : runFlatTM (n + 1) M cfg = some cfg := by
-              show (if haltingStateReached M cfg = true then some cfg
-                    else match stepFlatTM M cfg with
-                      | none => some cfg
-                      | some cfg' => runFlatTM n M cfg') = some cfg
-              rw [if_neg h_halt, h_step]
-            rw [h_run_eq] at h
-            have h_eq : cfg = cfg_mid := Option.some.inj h
-            rw [← h_eq]
-            rw [runFlatTM_stuck M cfg h_halt' h_step (n + 1 + m),
-                runFlatTM_stuck M cfg h_halt' h_step m]
-        | some cfg' =>
-            -- runFlatTM (n+1) cfg = runFlatTM n cfg'.
-            have h_run_eq : runFlatTM (n + 1) M cfg = runFlatTM n M cfg' := by
-              show (if haltingStateReached M cfg = true then some cfg
-                    else match stepFlatTM M cfg with
-                      | none => some cfg
-                      | some cfg' => runFlatTM n M cfg') = _
-              rw [if_neg h_halt, h_step]
-            rw [h_run_eq] at h
-            -- By IH on n: runFlatTM (n + m) cfg' = runFlatTM m cfg_mid.
-            have ih := runFlatTM_compose M n m cfg' cfg_mid h
-            have h_run_full : runFlatTM (n + 1 + m) M cfg = runFlatTM (n + m) M cfg' := by
-              have h_swap : n + 1 + m = n + m + 1 := by ring
-              rw [h_swap]
-              show (if haltingStateReached M cfg = true then some cfg
-                    else match stepFlatTM M cfg with
-                      | none => some cfg
-                      | some cfg' => runFlatTM (n + m) M cfg') = _
-              rw [if_neg h_halt, h_step]
-            rw [h_run_full, ih]
-  termination_by n _ _ _ _ => n
+`runFlatTM_stuck` and `runFlatTM_compose` were lifted to
+`Complexity/Complexity/MachineSemantics.lean` in Part 2 Step 11.0 so
+`composeFlatTM_run` (in `TMPrimitives.lean`) can use them. Existing
+references downstream resolve to the new location transparently. -/
 
 /-! ### Walking past one non-empty clause -/
 
@@ -4860,7 +4735,7 @@ noncomputable def decider : DecidesBy
           { state_idx := 0,
             tapes := [([], (N₁.map encodeClause).flatten.length,
                        encodeInput (N₁ ++ ([] : clause) :: N₂, a))] } = false := rfl
-    have h_chain := AssgnEmpty.runFlatTM_extend_by_step TM
+    have h_chain := runFlatTM_extend_by_step TM
       (N₁.map encodeClause).flatten.length _ _ _
       h_walk h_mid_not_halt h_step_accept
     have h_final_halt :
@@ -4923,7 +4798,7 @@ noncomputable def decider : DecidesBy
           { state_idx := 0,
             tapes := [([], (N.map encodeClause).flatten.length,
                        encodeInput (N, a))] } = false := rfl
-    have h_chain := AssgnEmpty.runFlatTM_extend_by_step TM
+    have h_chain := runFlatTM_extend_by_step TM
       (N.map encodeClause).flatten.length _ _ _
       h_walk h_mid_not_halt h_step_reject
     have h_final_halt :
@@ -6012,7 +5887,7 @@ private theorem TM_run_walk_nonzero_assgn :
         (p + (oneVarChunk v).length) h_match_rest
       -- Compose.
       rw [h_len_split]
-      have h_compose := CnfHasEmptyClause.runFlatTM_compose TM
+      have h_compose := runFlatTM_compose TM
         (oneVarChunk v).length (rest.map oneVarChunk).flatten.length _ _ h_walk_one'
       rw [h_compose, ih]
       have h_assoc : p + (oneVarChunk v).length +
@@ -6276,13 +6151,13 @@ noncomputable def decider : DecidesBy
     have h_step_accept := TM_step_s1_accept_6 [] (encodeInput (N, a₁ ++ 0 :: a₂))
       (L_cnf + L_walk) h_6_pos h_get_6
     -- Compose: h_scan ∘ h_walk via runFlatTM_compose, then extend with h_step_accept.
-    have h_scan_walk := CnfHasEmptyClause.runFlatTM_compose TM
+    have h_scan_walk := runFlatTM_compose TM
       L_cnf L_walk _ _ h_scan
     rw [h_walk] at h_scan_walk
     have h_mid_not_halt : haltingStateReached TM
         { state_idx := 1,
           tapes := [([], L_cnf + L_walk, encodeInput (N, a₁ ++ 0 :: a₂))] } = false := rfl
-    have h_chain := AssgnEmpty.runFlatTM_extend_by_step TM (L_cnf + L_walk) _ _ _
+    have h_chain := runFlatTM_extend_by_step TM (L_cnf + L_walk) _ _ _
       h_scan_walk h_mid_not_halt h_step_accept
     have h_final_halt : haltingStateReached TM
         { state_idx := 3,
@@ -6364,12 +6239,12 @@ noncomputable def decider : DecidesBy
       exact h_get_walk
     have h_step_reject := TM_step_s1_reject_0 [] (encodeInput (N, a))
       (L_cnf + L_walk) h_0_pos h_get_0
-    have h_scan_walk := CnfHasEmptyClause.runFlatTM_compose TM L_cnf L_walk _ _ h_scan
+    have h_scan_walk := runFlatTM_compose TM L_cnf L_walk _ _ h_scan
     rw [h_walk] at h_scan_walk
     have h_mid_not_halt : haltingStateReached TM
         { state_idx := 1,
           tapes := [([], L_cnf + L_walk, encodeInput (N, a))] } = false := rfl
-    have h_chain := AssgnEmpty.runFlatTM_extend_by_step TM (L_cnf + L_walk) _ _ _
+    have h_chain := runFlatTM_extend_by_step TM (L_cnf + L_walk) _ _ _
       h_scan_walk h_mid_not_halt h_step_reject
     have h_final_halt : haltingStateReached TM
         { state_idx := 4,

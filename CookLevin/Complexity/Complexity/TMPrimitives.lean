@@ -1,6 +1,7 @@
 import Complexity.Complexity.Definitions
 import Complexity.Complexity.MachineSemantics
 import Complexity.Complexity.TMDecider
+import Mathlib.Data.List.GetD
 import Mathlib.Tactic
 
 set_option autoImplicit false
@@ -263,6 +264,810 @@ theorem composeFlatTM_valid (M₁ M₂ : FlatTM) (exit : Nat)
         | none => trivial
         | some v =>
             exact hbound v (hsymDst (some v) hx)
+
+/-! ## Step 11.0 — Operational correctness of `composeFlatTM`
+
+`composeFlatTM_valid` (above) shows the composed machine is structurally
+well-formed. This section adds the operational correctness lemma
+`composeFlatTM_run`: if `M₁` halts at state `exit` in `t₁` steps
+(without halting prematurely), and `M₂` then halts at some `c₂` in
+`t₂` steps starting from `c₁.tapes`, then `composeFlatTM M₁ M₂ exit`
+halts at the shifted `c₂` in `t₁ + 1 + t₂` steps.
+
+The proof factors into seven small lemmas. -/
+
+/-! ### Halt-bit lemmas -/
+
+/-- On any M₁-state, the composed machine's halt-bit is `false`. -/
+private theorem composeFlatTM_haltingStateReached_M1
+    (M₁ M₂ : FlatTM) (exit : Nat) (cfg : FlatTMConfig)
+    (h : cfg.state_idx < M₁.states) :
+    haltingStateReached (composeFlatTM M₁ M₂ exit) cfg = false := by
+  show (composeFlatTM M₁ M₂ exit).halt.getD cfg.state_idx false = false
+  show (composedHalt M₁ M₂).getD cfg.state_idx false = false
+  show ((List.replicate M₁.states false ++ M₂.halt).getD cfg.state_idx false) = false
+  rw [List.getD_append _ _ _ _ (by rw [List.length_replicate]; exact h)]
+  exact List.getD_replicate false h
+
+/-- On a shifted M₂-state `s + M₁.states`, the composed machine's
+halt-bit equals `M₂`'s halt-bit at `s`. -/
+private theorem composeFlatTM_haltingStateReached_M2
+    (M₁ M₂ : FlatTM) (exit : Nat) (s : Nat) (tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (composeFlatTM M₁ M₂ exit)
+        { state_idx := s + M₁.states, tapes := tapes } =
+      haltingStateReached M₂ { state_idx := s, tapes := tapes } := by
+  show (composeFlatTM M₁ M₂ exit).halt.getD (s + M₁.states) false =
+       M₂.halt.getD s false
+  show (composedHalt M₁ M₂).getD (s + M₁.states) false = _
+  show ((List.replicate M₁.states false ++ M₂.halt).getD (s + M₁.states) false) = _
+  rw [List.getD_append_right _ _ _ _ (by rw [List.length_replicate]; exact Nat.le_add_left _ _)]
+  rw [List.length_replicate]
+  show M₂.halt.getD (s + M₁.states - M₁.states) false = _
+  rw [Nat.add_sub_cancel]
+
+/-! ### M₁-phase step lemma -/
+
+/-- Every bridge entry has `src_state = exit`. -/
+private theorem bridgeEntries_src_state
+    {sig srcState dstState : Nat} {e : FlatTMTransEntry}
+    (h : e ∈ bridgeEntries sig srcState dstState) :
+    e.src_state = srcState :=
+  (bridgeEntries_mem h).1
+
+/-- Every shifted M₂ entry has `src_state ≥ off`. -/
+private theorem shiftEntry_src_state_ge
+    (off : Nat) (e : FlatTMTransEntry) :
+    (shiftEntry off e).src_state = e.src_state + off := rfl
+
+/-- An entry whose `src_state` differs from `cfg.state_idx` does NOT
+match `cfg`. (Note: uses the `_iff` characterisation defined below
+under "Bridge step lemma".) -/
+private theorem entryMatchesConfig_ne_true_of_state_ne
+    {entry : FlatTMTransEntry} {cfg : FlatTMConfig}
+    (h : entry.src_state ≠ cfg.state_idx) :
+    ¬ entryMatchesConfig entry cfg = true := by
+  intro heq
+  apply h
+  unfold entryMatchesConfig at heq
+  rw [Bool.and_eq_true] at heq
+  exact LawfulBEq.eq_of_beq heq.1
+
+/-- On any cfg with state_idx ≠ exit, the bridge entries do not match. -/
+private theorem bridgeEntries_find_eq_none
+    {sig srcState dstState : Nat} {cfg : FlatTMConfig}
+    (h : cfg.state_idx ≠ srcState) :
+    (bridgeEntries sig srcState dstState).find?
+        (fun e => entryMatchesConfig e cfg) = none := by
+  rw [List.find?_eq_none]
+  intro e he
+  refine entryMatchesConfig_ne_true_of_state_ne ?_
+  rw [bridgeEntries_src_state he]
+  exact fun h' => h h'.symm
+
+/-- On any cfg with state_idx < threshold, the shifted M₂ entries do
+not match (because each has src_state ≥ threshold). -/
+private theorem shiftEntries_find_eq_none
+    (M₂ : FlatTM) (off : Nat) (cfg : FlatTMConfig)
+    (h : cfg.state_idx < off) :
+    (M₂.trans.map (shiftEntry off)).find?
+        (fun e => entryMatchesConfig e cfg) = none := by
+  rw [List.find?_eq_none]
+  intro e' he'
+  rcases List.mem_map.mp he' with ⟨e, _, hshift⟩
+  subst hshift
+  refine entryMatchesConfig_ne_true_of_state_ne ?_
+  rw [shiftEntry_src_state_ge]
+  intro h_eq
+  have h_lt : cfg.state_idx < e.src_state + off :=
+    Nat.lt_of_lt_of_le h (Nat.le_add_left _ _)
+  exact absurd h_eq (Nat.ne_of_lt h_lt).symm
+
+/-- M₁-phase step: on a cfg in `M₁`'s state range and not equal to
+`exit`, one composed step coincides with `M₁`'s one step. -/
+private theorem stepFlatTM_composeFlatTM_M1
+    (M₁ M₂ : FlatTM) (exit : Nat) (cfg : FlatTMConfig)
+    (h_state_lt : cfg.state_idx < M₁.states)
+    (h_state_ne : cfg.state_idx ≠ exit) :
+    stepFlatTM (composeFlatTM M₁ M₂ exit) cfg = stepFlatTM M₁ cfg := by
+  show ((composeFlatTM M₁ M₂ exit).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind
+        (applyTransitionEntry cfg) =
+       (M₁.trans.find? (fun e => entryMatchesConfig e cfg)).bind
+        (applyTransitionEntry cfg)
+  have h_trans :
+      (composeFlatTM M₁ M₂ exit).trans =
+        bridgeEntries (max M₁.sig M₂.sig) exit (M₁.states + M₂.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) := rfl
+  rw [h_trans]
+  rw [List.find?_append, List.find?_append]
+  have h_bridge :
+      (bridgeEntries (max M₁.sig M₂.sig) exit (M₁.states + M₂.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none :=
+    bridgeEntries_find_eq_none h_state_ne
+  have h_shifted :
+      (M₂.trans.map (shiftEntry M₁.states)).find?
+          (fun e => entryMatchesConfig e cfg) = none :=
+    shiftEntries_find_eq_none M₂ M₁.states cfg h_state_lt
+  rw [h_bridge, h_shifted, Option.none_or]
+  -- Goal: ((M₁.trans.find? pred).or none).bind ... = (M₁.trans.find? pred).bind ...
+  cases hF : M₁.trans.find? (fun e => entryMatchesConfig e cfg) with
+  | none => rfl
+  | some e => rfl
+
+/-! ### Bridge step lemma -/
+
+/-- Characterisation of `entryMatchesConfig`. -/
+private theorem entryMatchesConfig_iff
+    (entry : FlatTMTransEntry) (cfg : FlatTMConfig) :
+    entryMatchesConfig entry cfg = true ↔
+      entry.src_state = cfg.state_idx ∧
+      entry.src_tape_vals = cfg.tapes.map currentTapeSymbol := by
+  unfold entryMatchesConfig
+  rw [Bool.and_eq_true]
+  constructor
+  · rintro ⟨h1, h2⟩
+    refine ⟨?_, ?_⟩
+    · exact LawfulBEq.eq_of_beq h1
+    · exact of_decide_eq_true h2
+  · rintro ⟨h1, h2⟩
+    refine ⟨?_, ?_⟩
+    · rw [h1]; exact beq_self_eq_true _
+    · exact decide_eq_true h2
+
+/-- A positive matching helper: if the entry's source state and tape
+values literally equal those of the config, the entry matches. -/
+private theorem entryMatchesConfig_true_of
+    {entry : FlatTMTransEntry} {cfg : FlatTMConfig}
+    (h_state : entry.src_state = cfg.state_idx)
+    (h_tape : entry.src_tape_vals = cfg.tapes.map currentTapeSymbol) :
+    entryMatchesConfig entry cfg = true :=
+  (entryMatchesConfig_iff entry cfg).mpr ⟨h_state, h_tape⟩
+
+/-- Negative matching helper for tape mismatch. -/
+private theorem entryMatchesConfig_ne_true_of_tape_ne
+    {entry : FlatTMTransEntry} {cfg : FlatTMConfig}
+    (h_tape : entry.src_tape_vals ≠ cfg.tapes.map currentTapeSymbol) :
+    ¬ entryMatchesConfig entry cfg = true :=
+  fun h => h_tape ((entryMatchesConfig_iff _ _).mp h).2
+
+/-- The bridge entry whose `src_tape_vals = [sym]`. -/
+private def bridgeMkEntry (srcState dstState : Nat) (sym : Option Nat) :
+    FlatTMTransEntry :=
+  { src_state := srcState, src_tape_vals := [sym],
+    dst_state := dstState, dst_write_vals := [none],
+    move_dirs := [TMMove.Nmove] }
+
+/-- `bridgeEntries` factored through `bridgeMkEntry`. -/
+private theorem bridgeEntries_eq_bridgeMkEntry (sig srcState dstState : Nat) :
+    bridgeEntries sig srcState dstState =
+      bridgeMkEntry srcState dstState none ::
+        (List.range sig).map (fun v => bridgeMkEntry srcState dstState (some v)) := rfl
+
+/-- Walk a `(range max_sig).map (fun w => bridgeMkEntry ... (some w))` list
+to find the matching entry for `sym = some v` with `v < max_sig`. -/
+private theorem find_bridgeRange_some
+    (max_sig srcState dstState v : Nat) (h_v : v < max_sig)
+    (cfg : FlatTMConfig)
+    (h_state : cfg.state_idx = srcState)
+    (h_tape : cfg.tapes.map currentTapeSymbol = [some v]) :
+    ((List.range max_sig).map
+        (fun w => bridgeMkEntry srcState dstState (some w))).find?
+        (fun e => entryMatchesConfig e cfg) =
+      some (bridgeMkEntry srcState dstState (some v)) := by
+  have h_mem : v ∈ List.range max_sig := List.mem_range.mpr h_v
+  -- For each candidate w, matching iff w = v.
+  have h_match_iff : ∀ w,
+      entryMatchesConfig (bridgeMkEntry srcState dstState (some w)) cfg = true ↔ w = v := by
+    intro w
+    rw [entryMatchesConfig_iff]
+    refine ⟨?_, ?_⟩
+    · rintro ⟨_, h_tape_eq⟩
+      have h_eq : ([some w] : List (Option Nat)) = [some v] :=
+        Eq.trans h_tape_eq h_tape
+      injection h_eq with h_head _
+      exact Option.some.inj h_head
+    · intro h_eq
+      rw [h_eq]
+      refine ⟨h_state.symm, ?_⟩
+      show ([some v] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol
+      exact h_tape.symm
+  -- Now walk: by induction on the list.
+  suffices h_walk : ∀ (L : List Nat), v ∈ L →
+      (L.map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+          (fun e => entryMatchesConfig e cfg) =
+        some (bridgeMkEntry srcState dstState (some v)) from
+    h_walk _ h_mem
+  intro L hL
+  induction L with
+  | nil => cases hL
+  | cons w ws ih =>
+      have h_target_eq :
+          (((w :: ws).map (fun w => bridgeMkEntry srcState dstState (some w)))).find?
+            (fun e => entryMatchesConfig e cfg) =
+          ((bridgeMkEntry srcState dstState (some w)) ::
+            (ws.map (fun w => bridgeMkEntry srcState dstState (some w)))).find?
+              (fun e => entryMatchesConfig e cfg) := rfl
+      rw [h_target_eq]
+      by_cases hwv : w = v
+      · subst hwv
+        have h_match : entryMatchesConfig
+            (bridgeMkEntry srcState dstState (some w)) cfg = true :=
+          (h_match_iff w).mpr rfl
+        exact List.find?_cons_of_pos h_match
+      · have h_no_match : ¬ entryMatchesConfig
+            (bridgeMkEntry srcState dstState (some w)) cfg = true := by
+          intro h; exact hwv ((h_match_iff w).mp h)
+        have h_step :
+            ((bridgeMkEntry srcState dstState (some w)) ::
+              (ws.map (fun w => bridgeMkEntry srcState dstState (some w)))).find?
+                (fun e => entryMatchesConfig e cfg) =
+            (ws.map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+                (fun e => entryMatchesConfig e cfg) :=
+          List.find?_cons_of_neg h_no_match
+        rw [h_step]
+        rcases List.mem_cons.mp hL with hvw | hvws
+        · exact absurd hvw.symm hwv
+        · exact ih hvws
+
+/-- Applying any bridge entry to a single-tape configuration with
+matching state index returns the bridge's destination state and an
+unchanged tape (since the bridge writes `none` and moves `Nmove`). -/
+private theorem applyBridgeMkEntry_singleTape
+    (srcState dstState : Nat) (sym : Option Nat)
+    (left right : List Nat) (head : Nat) :
+    applyTransitionEntry
+        { state_idx := srcState, tapes := [(left, head, right)] }
+        (bridgeMkEntry srcState dstState sym) =
+      some { state_idx := dstState, tapes := [(left, head, right)] } := rfl
+
+/-- Bridge step: at state `exit` with a single-tape cfg, one composed
+step jumps to `M₁.states + M₂.start` without modifying the tape. -/
+private theorem stepFlatTM_composeFlatTM_bridge
+    (M₁ M₂ : FlatTM) (exit : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v →
+                          v < max M₁.sig M₂.sig) :
+    stepFlatTM (composeFlatTM M₁ M₂ exit)
+        { state_idx := exit, tapes := [(left, head, right)] } =
+      some { state_idx := M₁.states + M₂.start,
+             tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := exit, tapes := [(left, head, right)] } with hcfg
+  show ((composeFlatTM M₁ M₂ exit).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) = _
+  have h_trans :
+      (composeFlatTM M₁ M₂ exit).trans =
+        bridgeEntries (max M₁.sig M₂.sig) exit (M₁.states + M₂.start) ++
+        M₁.trans ++ M₂.trans.map (shiftEntry M₁.states) := rfl
+  rw [h_trans, List.find?_append, List.find?_append]
+  have h_tape_map :
+      cfg.tapes.map currentTapeSymbol = [currentTapeSymbol (left, head, right)] := rfl
+  have h_cfg_state : cfg.state_idx = exit := rfl
+  rw [bridgeEntries_eq_bridgeMkEntry]
+  -- The bridge find? returns either `mk none` (when sym = none) or `mk (some v)`
+  -- (when sym = some v with v < max_sig). In both cases applying the entry gives
+  -- the desired result. We extract the find? result and then apply.
+  suffices h_bridge_find :
+      ((bridgeMkEntry exit (M₁.states + M₂.start) none ::
+          (List.range (max M₁.sig M₂.sig)).map
+            (fun w => bridgeMkEntry exit (M₁.states + M₂.start) (some w))).find?
+          (fun e => entryMatchesConfig e cfg)) =
+        some (bridgeMkEntry exit (M₁.states + M₂.start)
+          (currentTapeSymbol (left, head, right))) by
+    rw [h_bridge_find]
+    show ((some _).or _ |>.or _).bind _ = _
+    simp only [Option.some_or]
+    exact applyBridgeMkEntry_singleTape exit (M₁.states + M₂.start)
+      (currentTapeSymbol (left, head, right)) left right head
+  cases h_sym : currentTapeSymbol (left, head, right) with
+  | none =>
+      have h_match :
+          entryMatchesConfig
+            (bridgeMkEntry exit (M₁.states + M₂.start) none) cfg = true := by
+        refine entryMatchesConfig_true_of rfl ?_
+        show ([none] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol
+        rw [h_tape_map, h_sym]
+      exact List.find?_cons_of_pos h_match
+  | some v =>
+      have h_no_match : ¬ entryMatchesConfig
+          (bridgeMkEntry exit (M₁.states + M₂.start) none) cfg = true := by
+        intro h
+        have h_tape_eq := ((entryMatchesConfig_iff _ _).mp h).2
+        have h_eq : ([none] : List (Option Nat)) = [some v] := by
+          calc ([none] : List (Option Nat))
+              = (bridgeMkEntry exit (M₁.states + M₂.start) none).src_tape_vals := rfl
+            _ = cfg.tapes.map currentTapeSymbol := h_tape_eq
+            _ = [currentTapeSymbol (left, head, right)] := h_tape_map
+            _ = [some v] := by rw [h_sym]
+        injection h_eq with h1 _
+        cases h1
+      have h_step :
+          ((bridgeMkEntry exit (M₁.states + M₂.start) none) ::
+            (List.range (max M₁.sig M₂.sig)).map
+              (fun w => bridgeMkEntry exit (M₁.states + M₂.start) (some w))).find?
+              (fun e => entryMatchesConfig e cfg) =
+          ((List.range (max M₁.sig M₂.sig)).map
+              (fun w => bridgeMkEntry exit (M₁.states + M₂.start) (some w))).find?
+              (fun e => entryMatchesConfig e cfg) :=
+        List.find?_cons_of_neg h_no_match
+      rw [h_step]
+      have h_v_lt : v < max M₁.sig M₂.sig := h_sym_bound v h_sym
+      exact find_bridgeRange_some (max M₁.sig M₂.sig) exit (M₁.states + M₂.start) v
+        h_v_lt cfg h_cfg_state (by rw [h_tape_map, h_sym])
+
+/-! ### M₂-phase step lemma -/
+
+/-- Shifted M₂ entry's apply on a config equals the unshifted entry's
+apply on the unshifted config, with the destination state shifted by
+`M₁.states`. -/
+private theorem applyTransitionEntry_shiftEntry
+    (M₁_states : Nat) (entry : FlatTMTransEntry) (cfg : FlatTMConfig) :
+    applyTransitionEntry cfg (shiftEntry M₁_states entry) =
+      (applyTransitionEntry { state_idx := cfg.state_idx - M₁_states,
+                              tapes := cfg.tapes } entry).map
+        (fun c => { state_idx := c.state_idx + M₁_states, tapes := c.tapes }) := by
+  show applyTransitionEntry cfg
+        { entry with src_state := entry.src_state + M₁_states,
+                     dst_state := entry.dst_state + M₁_states } =
+      _
+  by_cases h : cfg.tapes.length = entry.dst_write_vals.length ∧
+               cfg.tapes.length = entry.move_dirs.length
+  · -- Length check passes for both versions (lengths only depend on entry).
+    show (if _ : cfg.tapes.length = entry.dst_write_vals.length ∧
+                 cfg.tapes.length = entry.move_dirs.length then _ else none) = _
+    rw [dif_pos h]
+    show (some _ : Option FlatTMConfig) = _
+    have h_inner :
+        applyTransitionEntry { state_idx := cfg.state_idx - M₁_states,
+                               tapes := cfg.tapes } entry =
+          some { state_idx := entry.dst_state,
+                 tapes := List.zipWith (fun tape payload =>
+                   tapeStep tape payload.1 payload.2) cfg.tapes
+                   (List.zip entry.dst_write_vals entry.move_dirs) } := by
+      show (if _ : cfg.tapes.length = entry.dst_write_vals.length ∧
+                   cfg.tapes.length = entry.move_dirs.length then _ else none) = _
+      rw [dif_pos h]
+    rw [h_inner]
+    rfl
+  · -- Length check fails on both sides.
+    show (if _ : cfg.tapes.length = entry.dst_write_vals.length ∧
+                 cfg.tapes.length = entry.move_dirs.length then _ else none) = _
+    rw [dif_neg h]
+    have h_inner :
+        applyTransitionEntry { state_idx := cfg.state_idx - M₁_states,
+                               tapes := cfg.tapes } entry = none := by
+      show (if _ : cfg.tapes.length = entry.dst_write_vals.length ∧
+                   cfg.tapes.length = entry.move_dirs.length then _ else none) = _
+      rw [dif_neg h]
+    rw [h_inner]
+    rfl
+
+/-- M₂-phase step: on a shifted M₂-state `s + M₁.states`, one composed
+step coincides with `M₂`'s one step at the unshifted state `s`, with
+the result state shifted by `M₁.states`. -/
+private theorem stepFlatTM_composeFlatTM_M2
+    (M₁ M₂ : FlatTM) (exit : Nat) (s : Nat)
+    (tapes : List (List Nat × Nat × List Nat))
+    (h_validM1 : validFlatTM M₁)
+    (h_exit_lt : exit < M₁.states) :
+    stepFlatTM (composeFlatTM M₁ M₂ exit)
+        { state_idx := s + M₁.states, tapes := tapes } =
+      (stepFlatTM M₂ { state_idx := s, tapes := tapes }).map
+        (fun c => { state_idx := c.state_idx + M₁.states, tapes := c.tapes }) := by
+  set cfg : FlatTMConfig := { state_idx := s + M₁.states, tapes := tapes } with hcfg
+  set cfg2 : FlatTMConfig := { state_idx := s, tapes := tapes } with hcfg2
+  show ((composeFlatTM M₁ M₂ exit).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) =
+       ((M₂.trans.find?
+          (fun e => entryMatchesConfig e cfg2)).bind (applyTransitionEntry cfg2)).map _
+  have h_trans :
+      (composeFlatTM M₁ M₂ exit).trans =
+        bridgeEntries (max M₁.sig M₂.sig) exit (M₁.states + M₂.start) ++
+        M₁.trans ++ M₂.trans.map (shiftEntry M₁.states) := rfl
+  rw [h_trans, List.find?_append, List.find?_append]
+  -- Bridge: src = exit < M₁.states ≤ s + M₁.states = cfg.state_idx, so doesn't match.
+  have h_bridge_none :
+      (bridgeEntries (max M₁.sig M₂.sig) exit (M₁.states + M₂.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine bridgeEntries_find_eq_none ?_
+    show cfg.state_idx ≠ exit
+    show s + M₁.states ≠ exit
+    intro h_eq
+    have h_lt : exit < s + M₁.states :=
+      Nat.lt_of_lt_of_le h_exit_lt (Nat.le_add_left _ _)
+    exact absurd h_eq.symm (Nat.ne_of_lt h_lt)
+  -- M₁.trans: src < M₁.states ≤ cfg.state_idx, so doesn't match.
+  have h_M1_none :
+      M₁.trans.find? (fun e => entryMatchesConfig e cfg) = none := by
+    rw [List.find?_eq_none]
+    intro e he
+    refine entryMatchesConfig_ne_true_of_state_ne ?_
+    have h_src_lt : e.src_state < M₁.states := (h_validM1.2.2 e he).1
+    show e.src_state ≠ cfg.state_idx
+    show e.src_state ≠ s + M₁.states
+    intro h_eq
+    have h_lt' : e.src_state < s + M₁.states :=
+      Nat.lt_of_lt_of_le h_src_lt (Nat.le_add_left _ _)
+    exact absurd h_eq (Nat.ne_of_lt h_lt')
+  rw [h_bridge_none, h_M1_none, Option.none_or, Option.none_or]
+  -- Shifted M₂: rewrite via List.find?_map.
+  rw [List.find?_map]
+  -- Beta-reduce the composition `(fun e => entryMatchesConfig e cfg) ∘ shiftEntry M₁.states`
+  -- into `fun e => entryMatchesConfig (shiftEntry M₁.states e) cfg`.
+  show (Option.map (shiftEntry M₁.states)
+          (M₂.trans.find?
+            (fun e => entryMatchesConfig (shiftEntry M₁.states e) cfg))).bind
+      (applyTransitionEntry cfg) =
+       ((M₂.trans.find? (fun e => entryMatchesConfig e cfg2)).bind
+          (applyTransitionEntry cfg2)).map _
+  -- Predicate equivalence: matching the shifted entry against cfg = matching against cfg2.
+  have h_pred_eq :
+      (fun e => entryMatchesConfig (shiftEntry M₁.states e) cfg) =
+      (fun e => entryMatchesConfig e cfg2) := by
+    funext e
+    by_cases h_match : entryMatchesConfig e cfg2 = true
+    · have ⟨h_state2, h_tape2⟩ := (entryMatchesConfig_iff _ _).mp h_match
+      have h_match_shifted : entryMatchesConfig (shiftEntry M₁.states e) cfg = true := by
+        refine entryMatchesConfig_true_of ?_ h_tape2
+        show e.src_state + M₁.states = s + M₁.states
+        rw [h_state2]
+      rw [h_match_shifted, h_match]
+    · have h_match_neg : entryMatchesConfig e cfg2 = false := by
+        cases h : entryMatchesConfig e cfg2 with
+        | true => exact absurd h h_match
+        | false => rfl
+      have h_match_shifted_neg :
+          entryMatchesConfig (shiftEntry M₁.states e) cfg = false := by
+        cases h : entryMatchesConfig (shiftEntry M₁.states e) cfg with
+        | true =>
+            have ⟨h_state, h_tape⟩ := (entryMatchesConfig_iff _ _).mp h
+            have h_state_eq : e.src_state + M₁.states = s + M₁.states := h_state
+            have h_src_eq : e.src_state = s := Nat.add_right_cancel h_state_eq
+            have h_match_pos : entryMatchesConfig e cfg2 = true :=
+              entryMatchesConfig_true_of h_src_eq h_tape
+            rw [h_match_pos] at h_match_neg
+            cases h_match_neg
+        | false => rfl
+      rw [h_match_shifted_neg, h_match_neg]
+  rw [h_pred_eq]
+  cases hF : M₂.trans.find? (fun e => entryMatchesConfig e cfg2) with
+  | none => rfl
+  | some e =>
+      show (some (shiftEntry M₁.states e)).bind (applyTransitionEntry cfg) =
+        Option.map _ ((some e).bind (applyTransitionEntry cfg2))
+      show applyTransitionEntry cfg (shiftEntry M₁.states e) =
+        Option.map _ (applyTransitionEntry cfg2 e)
+      have h_sub : cfg.state_idx - M₁.states = cfg2.state_idx := by
+        show s + M₁.states - M₁.states = s
+        exact Nat.add_sub_cancel _ _
+      have h_cfg_eq : { state_idx := cfg.state_idx - M₁.states, tapes := cfg.tapes } = cfg2 := by
+        rw [h_sub]
+      rw [applyTransitionEntry_shiftEntry, h_cfg_eq]
+
+/-- Halt bit on a shifted M₂-state: equals M₂'s halt bit. (Re-export with
+the more usable form.) -/
+private theorem composeFlatTM_haltingStateReached_M2_phase
+    (M₁ M₂ : FlatTM) (exit : Nat) (cfg2 : FlatTMConfig) :
+    haltingStateReached (composeFlatTM M₁ M₂ exit)
+        { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+      haltingStateReached M₂ cfg2 :=
+  composeFlatTM_haltingStateReached_M2 M₁ M₂ exit cfg2.state_idx cfg2.tapes
+
+/-! ### State-index preservation under runFlatTM -/
+
+/-- A single step of a valid FlatTM preserves the in-range state index. -/
+private theorem state_idx_lt_states_of_step
+    (M : FlatTM) (h_valid : validFlatTM M) (cfg cfg' : FlatTMConfig)
+    (h_step : stepFlatTM M cfg = some cfg') :
+    cfg'.state_idx < M.states := by
+  unfold stepFlatTM at h_step
+  cases h_find : M.trans.find? (fun e => entryMatchesConfig e cfg) with
+  | none =>
+      rw [h_find] at h_step
+      cases h_step
+  | some entry =>
+      rw [h_find] at h_step
+      have h_entry_mem : entry ∈ M.trans := List.mem_of_find?_eq_some h_find
+      have h_entry_valid := h_valid.2.2 entry h_entry_mem
+      have h_apply : applyTransitionEntry cfg entry = some cfg' := h_step
+      unfold applyTransitionEntry at h_apply
+      by_cases h_lc : cfg.tapes.length = entry.dst_write_vals.length ∧
+                       cfg.tapes.length = entry.move_dirs.length
+      · rw [dif_pos h_lc] at h_apply
+        have h_eq : ({ state_idx := entry.dst_state,
+                       tapes := List.zipWith
+                         (fun tape payload => tapeStep tape payload.1 payload.2) cfg.tapes
+                         (List.zip entry.dst_write_vals entry.move_dirs) }
+                     : FlatTMConfig) = cfg' :=
+          Option.some.inj h_apply
+        rw [← h_eq]
+        exact h_entry_valid.2.1
+      · rw [dif_neg h_lc] at h_apply
+        cases h_apply
+
+/-- A run of any length of a valid FlatTM preserves the in-range state
+index. -/
+private theorem state_idx_lt_states_of_run
+    (M : FlatTM) (h_valid : validFlatTM M) :
+    ∀ (n : Nat) (cfg cfg' : FlatTMConfig),
+      cfg.state_idx < M.states →
+      runFlatTM n M cfg = some cfg' →
+      cfg'.state_idx < M.states
+  | 0, cfg, cfg', h_lt, h_run => by
+      have h_eq : cfg = cfg' := Option.some.inj h_run
+      rw [← h_eq]; exact h_lt
+  | n + 1, cfg, cfg', h_lt, h_run => by
+      by_cases h_halt : haltingStateReached M cfg = true
+      · have h_run' : runFlatTM (n + 1) M cfg = some cfg :=
+          runFlatTM_of_halting M cfg (n + 1) h_halt
+        rw [h_run'] at h_run
+        have h_eq : cfg = cfg' := Option.some.inj h_run
+        rw [← h_eq]; exact h_lt
+      · cases h_step : stepFlatTM M cfg with
+        | none =>
+            have h_stuck : runFlatTM (n + 1) M cfg = some cfg :=
+              runFlatTM_stuck M cfg
+              (by cases hh : haltingStateReached M cfg with
+                  | true => exact absurd hh h_halt
+                  | false => rfl) h_step (n + 1)
+            rw [h_stuck] at h_run
+            have h_eq : cfg = cfg' := Option.some.inj h_run
+            rw [← h_eq]; exact h_lt
+        | some cfg'' =>
+            have h_step_unfold : runFlatTM (n + 1) M cfg = runFlatTM n M cfg'' := by
+              show (if haltingStateReached M cfg = true then some cfg
+                    else match stepFlatTM M cfg with
+                      | none => some cfg
+                      | some cfg' => runFlatTM n M cfg') = _
+              rw [if_neg h_halt, h_step]
+            rw [h_step_unfold] at h_run
+            have h_cfg''_lt : cfg''.state_idx < M.states :=
+              state_idx_lt_states_of_step M h_valid cfg cfg'' h_step
+            exact state_idx_lt_states_of_run M h_valid n cfg'' cfg' h_cfg''_lt h_run
+  termination_by n _ _ _ _ => n
+
+/-! ### M₁-phase run lift -/
+
+/-- Lift M₁'s `n`-step run to the composed machine, under the
+"trajectory invariant" that M₁ doesn't halt and stays out of `exit`
+through the first `n - 1` steps. Both the initial cfg and the
+trajectory invariant are needed to apply `stepFlatTM_composeFlatTM_M1`. -/
+private theorem runFlatTM_composeFlatTM_M1_phase
+    (M₁ M₂ : FlatTM) (exit : Nat) (h_validM1 : validFlatTM M₁) :
+    ∀ (n : Nat) (cfg : FlatTMConfig),
+      cfg.state_idx < M₁.states →
+      (∀ k, k < n → ∀ ck, runFlatTM k M₁ cfg = some ck →
+         ck.state_idx ≠ exit ∧
+         haltingStateReached M₁ ck = false) →
+      runFlatTM n (composeFlatTM M₁ M₂ exit) cfg = runFlatTM n M₁ cfg
+  | 0, _, _, _ => rfl
+  | n + 1, cfg, h_state_lt, h_traj => by
+      -- Trajectory at k=0 gives invariants on cfg.
+      have h_k0 := h_traj 0 (Nat.zero_lt_succ _) cfg rfl
+      have h_state_ne_cfg : cfg.state_idx ≠ exit := h_k0.1
+      have h_halt_false_cfg : haltingStateReached M₁ cfg = false := h_k0.2
+      have h_halt_composed_false : haltingStateReached (composeFlatTM M₁ M₂ exit) cfg = false :=
+        composeFlatTM_haltingStateReached_M1 M₁ M₂ exit cfg h_state_lt
+      -- Both runs at n+1 unfold via stepFlatTM (since neither halts).
+      have h_step_eq :
+          stepFlatTM (composeFlatTM M₁ M₂ exit) cfg = stepFlatTM M₁ cfg :=
+        stepFlatTM_composeFlatTM_M1 M₁ M₂ exit cfg h_state_lt h_state_ne_cfg
+      -- Unfold runFlatTM for both sides.
+      have h_unfold_M1 :
+          runFlatTM (n + 1) M₁ cfg =
+            match stepFlatTM M₁ cfg with
+            | none => some cfg
+            | some cfg' => runFlatTM n M₁ cfg' := by
+        show (if haltingStateReached M₁ cfg = true then some cfg
+              else match stepFlatTM M₁ cfg with
+                | none => some cfg
+                | some cfg' => runFlatTM n M₁ cfg') = _
+        rw [if_neg (by rw [h_halt_false_cfg]; decide)]
+      have h_unfold_composed :
+          runFlatTM (n + 1) (composeFlatTM M₁ M₂ exit) cfg =
+            match stepFlatTM (composeFlatTM M₁ M₂ exit) cfg with
+            | none => some cfg
+            | some cfg' => runFlatTM n (composeFlatTM M₁ M₂ exit) cfg' := by
+        show (if haltingStateReached (composeFlatTM M₁ M₂ exit) cfg = true then some cfg
+              else match stepFlatTM (composeFlatTM M₁ M₂ exit) cfg with
+                | none => some cfg
+                | some cfg' => runFlatTM n (composeFlatTM M₁ M₂ exit) cfg') = _
+        rw [if_neg (by rw [h_halt_composed_false]; decide)]
+      rw [h_unfold_M1, h_unfold_composed, h_step_eq]
+      cases h_step : stepFlatTM M₁ cfg with
+      | none => rfl
+      | some cfg' =>
+          -- Apply IH to cfg' with shifted trajectory.
+          have h_cfg'_lt : cfg'.state_idx < M₁.states :=
+            state_idx_lt_states_of_step M₁ h_validM1 cfg cfg' h_step
+          have h_traj_shift : ∀ k, k < n → ∀ ck,
+              runFlatTM k M₁ cfg' = some ck →
+              ck.state_idx ≠ exit ∧
+              haltingStateReached M₁ ck = false := by
+            intro k hk ck h_run
+            -- runFlatTM (k+1) M₁ cfg = runFlatTM k M₁ cfg'
+            have h_chain : runFlatTM (k + 1) M₁ cfg = some ck := by
+              have h_unfold :
+                  runFlatTM (k + 1) M₁ cfg =
+                    match stepFlatTM M₁ cfg with
+                    | none => some cfg
+                    | some cfg'' => runFlatTM k M₁ cfg'' := by
+                show (if haltingStateReached M₁ cfg = true then some cfg
+                      else match stepFlatTM M₁ cfg with
+                        | none => some cfg
+                        | some cfg'' => runFlatTM k M₁ cfg'') = _
+                rw [if_neg (by rw [h_halt_false_cfg]; decide)]
+              rw [h_unfold, h_step]; exact h_run
+            exact h_traj (k + 1) (Nat.succ_lt_succ hk) ck h_chain
+          exact runFlatTM_composeFlatTM_M1_phase M₁ M₂ exit h_validM1 n cfg' h_cfg'_lt
+            h_traj_shift
+  termination_by n _ _ _ => n
+
+/-! ### M₂-phase run lift -/
+
+/-- Lift M₂'s `n`-step run from `cfg2` to the composed machine running
+from the shifted config `{ state_idx := cfg2.state_idx + M₁.states,
+tapes := cfg2.tapes }`. The result is the same config, with state
+shifted by `M₁.states`. -/
+private theorem runFlatTM_composeFlatTM_M2_phase
+    (M₁ M₂ : FlatTM) (exit : Nat) (h_validM1 : validFlatTM M₁)
+    (h_validM2 : validFlatTM M₂) (h_exit_lt : exit < M₁.states) :
+    ∀ (n : Nat) (cfg2 : FlatTMConfig),
+      cfg2.state_idx < M₂.states →
+      runFlatTM n (composeFlatTM M₁ M₂ exit)
+          { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+        (runFlatTM n M₂ cfg2).map
+          (fun c => { state_idx := c.state_idx + M₁.states, tapes := c.tapes })
+  | 0, cfg2, _ => rfl
+  | n + 1, cfg2, h_state_lt => by
+      have h_halt_eq :
+          haltingStateReached (composeFlatTM M₁ M₂ exit)
+              { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+            haltingStateReached M₂ cfg2 :=
+        composeFlatTM_haltingStateReached_M2_phase M₁ M₂ exit cfg2
+      by_cases h_halt : haltingStateReached M₂ cfg2 = true
+      · -- M₂ halts immediately; both sides return the same config.
+        have h_halt_c : haltingStateReached (composeFlatTM M₁ M₂ exit)
+            { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } = true := by
+          rw [h_halt_eq]; exact h_halt
+        rw [runFlatTM_of_halting _ _ (n + 1) h_halt_c,
+            runFlatTM_of_halting _ _ (n + 1) h_halt]
+        rfl
+      · have h_halt_false : haltingStateReached M₂ cfg2 = false := by
+          cases h : haltingStateReached M₂ cfg2 with
+          | true => exact absurd h h_halt
+          | false => rfl
+        have h_halt_c_false : haltingStateReached (composeFlatTM M₁ M₂ exit)
+            { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } = false := by
+          rw [h_halt_eq]; exact h_halt_false
+        have h_step_eq :
+            stepFlatTM (composeFlatTM M₁ M₂ exit)
+                { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+              (stepFlatTM M₂ cfg2).map
+                (fun c => { state_idx := c.state_idx + M₁.states, tapes := c.tapes }) := by
+          have := stepFlatTM_composeFlatTM_M2 M₁ M₂ exit cfg2.state_idx cfg2.tapes
+            h_validM1 h_exit_lt
+          convert this using 2
+        -- Unfold both runFlatTMs.
+        have h_unfold_M2 :
+            runFlatTM (n + 1) M₂ cfg2 =
+              match stepFlatTM M₂ cfg2 with
+              | none => some cfg2
+              | some cfg2' => runFlatTM n M₂ cfg2' := by
+          show (if haltingStateReached M₂ cfg2 = true then some cfg2
+                else match stepFlatTM M₂ cfg2 with
+                  | none => some cfg2
+                  | some cfg2' => runFlatTM n M₂ cfg2') = _
+          rw [if_neg (by rw [h_halt_false]; decide)]
+        have h_unfold_C :
+            runFlatTM (n + 1) (composeFlatTM M₁ M₂ exit)
+                { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+              match stepFlatTM (composeFlatTM M₁ M₂ exit)
+                  { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } with
+              | none => some { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes }
+              | some cfg' => runFlatTM n (composeFlatTM M₁ M₂ exit) cfg' := by
+          show (if haltingStateReached (composeFlatTM M₁ M₂ exit)
+                  { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } = true then
+                  some { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes }
+                else match stepFlatTM (composeFlatTM M₁ M₂ exit)
+                    { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } with
+                  | none => some { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes }
+                  | some cfg' => runFlatTM n (composeFlatTM M₁ M₂ exit) cfg') = _
+          rw [if_neg (by rw [h_halt_c_false]; decide)]
+        rw [h_unfold_M2, h_unfold_C, h_step_eq]
+        cases h_step : stepFlatTM M₂ cfg2 with
+        | none => rfl
+        | some cfg2' =>
+            -- Apply IH at cfg2' (with shifted state still < M₂.states).
+            have h_cfg2'_lt : cfg2'.state_idx < M₂.states :=
+              state_idx_lt_states_of_step M₂ h_validM2 cfg2 cfg2' h_step
+            show runFlatTM n (composeFlatTM M₁ M₂ exit)
+                  { state_idx := cfg2'.state_idx + M₁.states, tapes := cfg2'.tapes } = _
+            exact runFlatTM_composeFlatTM_M2_phase M₁ M₂ exit h_validM1 h_validM2 h_exit_lt
+              n cfg2' h_cfg2'_lt
+  termination_by n _ _ => n
+
+/-! ### Final composition lemma -/
+
+/-- **Operational correctness of `composeFlatTM`**.
+
+If `M₁` (single-tape, valid) starts at `cfg0` and after `t₁` steps
+reaches `c₁ = { state_idx := exit, tapes := [(left, head, right)] }`
+without halting prematurely in any of the first `t₁` steps, and `M₂`
+(single-tape, valid) starts at `{ state_idx := M₂.start, tapes := c₁.tapes }`
+and after `t₂` steps halts at `c₂`, then the composed machine starting
+at `cfg0` reaches the shifted `c₂` in exactly `t₁ + 1 + t₂` steps,
+and that shifted config is a halting state of the composed machine.
+
+This is the **load-bearing operational lemma** for Step 11. It lets us
+build `evalCnfTM` (and `cliqueRelDecTM`) by composing small sub-TMs,
+each with its own clean run lemma. -/
+theorem composeFlatTM_run
+    {M₁ M₂ : FlatTM} {exit : Nat}
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂)
+    (h_exit_lt : exit < M₁.states)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (left₁ : List Nat) (head₁ : Nat) (right₁ : List Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left₁, head₁, right₁) = some v →
+                          v < max M₁.sig M₂.sig)
+    {t₁ t₂ : Nat} {c₂ : FlatTMConfig}
+    (h_run1 : runFlatTM t₁ M₁ cfg0 =
+              some { state_idx := exit, tapes := [(left₁, head₁, right₁)] })
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit ∧
+       haltingStateReached M₁ ck = false)
+    (h_run2 : runFlatTM t₂ M₂
+                { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] } = some c₂)
+    (h_halt2 : haltingStateReached M₂ c₂ = true) :
+    runFlatTM (t₁ + 1 + t₂) (composeFlatTM M₁ M₂ exit) cfg0 =
+      some { state_idx := c₂.state_idx + M₁.states, tapes := c₂.tapes } ∧
+    haltingStateReached (composeFlatTM M₁ M₂ exit)
+      { state_idx := c₂.state_idx + M₁.states, tapes := c₂.tapes } = true := by
+  refine ⟨?_, by rw [composeFlatTM_haltingStateReached_M2_phase]; exact h_halt2⟩
+  -- Phase 1: lift M₁'s run.
+  have h_phase1 :=
+    runFlatTM_composeFlatTM_M1_phase M₁ M₂ exit h_validM1 t₁ cfg0 h_cfg0_state_lt h_traj1
+  rw [← h_phase1] at h_run1
+  -- Phase 2: bridge step.
+  have h_bridge :=
+    stepFlatTM_composeFlatTM_bridge M₁ M₂ exit left₁ right₁ head₁ h_sym_bound
+  -- The bridge takes the composed run from c₁ in 1 step to
+  -- { state_idx := M₁.states + M₂.start, tapes := same }.
+  have h_phase12 :
+      runFlatTM (t₁ + 1) (composeFlatTM M₁ M₂ exit) cfg0 =
+        some { state_idx := M₁.states + M₂.start, tapes := [(left₁, head₁, right₁)] } := by
+    -- t₁ steps takes cfg0 to c₁; then one more step is the bridge.
+    apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1 ?_ h_bridge
+    -- Show that c₁ is non-halting in the composed machine.
+    -- (state_idx = exit, exit < M₁.states, so composed.halt[exit] = false.)
+    exact composeFlatTM_haltingStateReached_M1 M₁ M₂ exit _ h_exit_lt
+  -- Phase 3: lift M₂'s run from cfg2_start = { state_idx := M₂.start, tapes := [..] }.
+  set cfg2_start : FlatTMConfig := { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
+  have h_M2_start_lt : M₂.start < M₂.states := h_validM2.1
+  have h_phase3 :=
+    runFlatTM_composeFlatTM_M2_phase M₁ M₂ exit h_validM1 h_validM2 h_exit_lt t₂ cfg2_start
+      h_M2_start_lt
+  rw [h_run2] at h_phase3
+  -- The composed shifted start is { state_idx := M₂.start + M₁.states, tapes := [..] }
+  -- = { state_idx := M₁.states + M₂.start, tapes := [..] } since add is commutative.
+  have h_state_swap : M₂.start + M₁.states = M₁.states + M₂.start := Nat.add_comm _ _
+  -- Combine via runFlatTM_compose.
+  rw [show t₁ + 1 + t₂ = (t₁ + 1) + t₂ from rfl,
+      runFlatTM_compose _ (t₁ + 1) t₂ _ _ h_phase12]
+  -- Now we need: runFlatTM t₂ ... { state_idx := M₁.states + M₂.start, ... } = some shifted_c₂.
+  -- The Option.map result from h_phase3 simplifies.
+  have h_target :
+      runFlatTM t₂ (composeFlatTM M₁ M₂ exit)
+          { state_idx := M₁.states + M₂.start, tapes := [(left₁, head₁, right₁)] } =
+        some { state_idx := c₂.state_idx + M₁.states, tapes := c₂.tapes } := by
+    have h_eq : { state_idx := M₂.start + M₁.states, tapes := [(left₁, head₁, right₁)] } =
+        ({ state_idx := M₁.states + M₂.start,
+           tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) := by
+      rw [h_state_swap]
+    rw [← h_eq]
+    rw [h_phase3]
+    rfl
+  exact h_target
 
 /-! ## Step 4 — atomic Bool-output TMs
 

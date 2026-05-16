@@ -226,6 +226,136 @@ theorem runFlatTM_extend {M : FlatTM} {cfg cfg' : FlatTMConfig} {n k : Nat}
             rw [h_step] at h_run
             exact ih h_run
 
+/-- Once a configuration is non-halting *and* its step is `none` (no
+matching transition entry), the run is "stuck" at that config: any
+number of further steps leaves the config unchanged. Symmetric counterpart
+of `runFlatTM_of_halting`. Lifted to `MachineSemantics.lean` in Part 2
+Step 11.0 so `composeFlatTM_run` (in `TMPrimitives.lean`) can use it. -/
+theorem runFlatTM_stuck (M : FlatTM) (cfg : FlatTMConfig)
+    (h_not_halt : haltingStateReached M cfg = false)
+    (h_step : stepFlatTM M cfg = none) :
+    ∀ (m : Nat), runFlatTM m M cfg = some cfg
+  | 0 => rfl
+  | m + 1 => by
+      show (if haltingStateReached M cfg = true then some cfg
+            else match stepFlatTM M cfg with
+              | none => some cfg
+              | some cfg' => runFlatTM m M cfg') = some cfg
+      rw [if_neg (by rw [h_not_halt]; decide), h_step]
+
+/-- General composition: if `runFlatTM n M cfg = some cfg_mid`, then
+running for `n + m` steps from `cfg` is the same as running for `m`
+steps from `cfg_mid`. Handles halting and stuck cases uniformly via
+`runFlatTM_of_halting` / `runFlatTM_stuck`. Lifted in Part 2 Step 11.0. -/
+theorem runFlatTM_compose (M : FlatTM) :
+    ∀ (n m : Nat) (cfg cfg_mid : FlatTMConfig),
+      runFlatTM n M cfg = some cfg_mid →
+      runFlatTM (n + m) M cfg = runFlatTM m M cfg_mid
+  | 0, m, cfg, cfg_mid, h => by
+      have h_eq : cfg = cfg_mid := by
+        have : runFlatTM 0 M cfg = some cfg := rfl
+        rw [this] at h; exact Option.some.inj h
+      rw [h_eq, Nat.zero_add]
+  | n + 1, m, cfg, cfg_mid, h => by
+      by_cases h_halt : haltingStateReached M cfg = true
+      · have h_run_eq : runFlatTM (n + 1) M cfg = some cfg := by
+          show (if haltingStateReached M cfg = true then some cfg else _) = some cfg
+          rw [if_pos h_halt]
+        rw [h_run_eq] at h
+        have h_eq : cfg = cfg_mid := Option.some.inj h
+        rw [← h_eq]
+        rw [runFlatTM_of_halting M cfg (n + 1 + m) h_halt,
+            runFlatTM_of_halting M cfg m h_halt]
+      · have h_halt' : haltingStateReached M cfg = false := by
+          cases h_v : haltingStateReached M cfg with
+          | true => exact absurd h_v h_halt
+          | false => rfl
+        cases h_step : stepFlatTM M cfg with
+        | none =>
+            have h_run_eq : runFlatTM (n + 1) M cfg = some cfg := by
+              show (if haltingStateReached M cfg = true then some cfg
+                    else match stepFlatTM M cfg with
+                      | none => some cfg
+                      | some cfg' => runFlatTM n M cfg') = some cfg
+              rw [if_neg h_halt, h_step]
+            rw [h_run_eq] at h
+            have h_eq : cfg = cfg_mid := Option.some.inj h
+            rw [← h_eq]
+            rw [runFlatTM_stuck M cfg h_halt' h_step (n + 1 + m),
+                runFlatTM_stuck M cfg h_halt' h_step m]
+        | some cfg' =>
+            have h_run_eq : runFlatTM (n + 1) M cfg = runFlatTM n M cfg' := by
+              show (if haltingStateReached M cfg = true then some cfg
+                    else match stepFlatTM M cfg with
+                      | none => some cfg
+                      | some cfg' => runFlatTM n M cfg') = _
+              rw [if_neg h_halt, h_step]
+            rw [h_run_eq] at h
+            have ih := runFlatTM_compose M n m cfg' cfg_mid h
+            have h_run_full : runFlatTM (n + 1 + m) M cfg = runFlatTM (n + m) M cfg' := by
+              have h_swap : n + 1 + m = n + m + 1 := by
+                rw [Nat.add_right_comm]
+              rw [h_swap]
+              show (if haltingStateReached M cfg = true then some cfg
+                    else match stepFlatTM M cfg with
+                      | none => some cfg
+                      | some cfg' => runFlatTM (n + m) M cfg') = _
+              rw [if_neg h_halt, h_step]
+            rw [h_run_full, ih]
+  termination_by n _ _ _ _ => n
+
+/-- Extending an `n`-step run by one explicit non-halting step. -/
+theorem runFlatTM_extend_by_step
+    (M : FlatTM) :
+    ∀ (n : Nat) (cfg cfg_mid cfg_final : FlatTMConfig),
+      runFlatTM n M cfg = some cfg_mid →
+      haltingStateReached M cfg_mid = false →
+      stepFlatTM M cfg_mid = some cfg_final →
+      runFlatTM (n + 1) M cfg = some cfg_final
+  | 0, cfg, cfg_mid, cfg_final, h_run, h_mid_not_halt, h_step => by
+      have h_eq : cfg = cfg_mid := Option.some.inj h_run
+      rw [h_eq]
+      show (if haltingStateReached M cfg_mid = true then some cfg_mid
+            else match stepFlatTM M cfg_mid with
+              | none => some cfg_mid
+              | some cfg' => runFlatTM 0 M cfg') = some cfg_final
+      rw [if_neg (by rw [h_mid_not_halt]; decide), h_step]
+      rfl
+  | n + 1, cfg, cfg_mid, cfg_final, h_run, h_mid_not_halt, h_step => by
+      have h_run_eq :
+          runFlatTM (n + 1) M cfg =
+            if haltingStateReached M cfg = true then some cfg
+            else match stepFlatTM M cfg with
+              | none => some cfg
+              | some cfg' => runFlatTM n M cfg' := rfl
+      by_cases h_cfg_halt : haltingStateReached M cfg = true
+      · rw [h_run_eq, if_pos h_cfg_halt] at h_run
+        have h_eq : cfg = cfg_mid := Option.some.inj h_run
+        rw [h_eq] at h_cfg_halt
+        rw [h_mid_not_halt] at h_cfg_halt
+        exact absurd h_cfg_halt (by decide)
+      · rw [h_run_eq, if_neg h_cfg_halt] at h_run
+        cases h_step_cfg : stepFlatTM M cfg with
+        | none =>
+            rw [h_step_cfg] at h_run
+            have h_eq : cfg = cfg_mid := Option.some.inj h_run
+            rw [h_eq] at h_step_cfg
+            rw [h_step_cfg] at h_step
+            cases h_step
+        | some cfg' =>
+            rw [h_step_cfg] at h_run
+            have ih := runFlatTM_extend_by_step M n cfg' cfg_mid cfg_final
+              h_run h_mid_not_halt h_step
+            have h_run2_eq :
+                runFlatTM (n + 1 + 1) M cfg =
+                  if haltingStateReached M cfg = true then some cfg
+                  else match stepFlatTM M cfg with
+                    | none => some cfg
+                    | some cfg' => runFlatTM (n + 1) M cfg' := rfl
+            rw [h_run2_eq, if_neg h_cfg_halt, h_step_cfg]
+            exact ih
+  termination_by n _ _ _ _ _ _ => n
+
 theorem execFlatTM_eq_some_runFlatTM {M : FlatTM} {initTapes : List (List Nat)} {steps : Nat}
     (h : isValidFlatTapes M initTapes = true) :
     execFlatTM M initTapes steps = runFlatTM steps M (initFlatConfig M initTapes) := by
