@@ -1,6 +1,7 @@
 import Complexity.Complexity.NP
 import Complexity.NP.SAT
 import Complexity.NP.kSAT
+import Complexity.Complexity.Deciders.EvalCnfTM
 import Mathlib.Tactic
 
 set_option autoImplicit false

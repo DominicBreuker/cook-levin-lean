@@ -924,69 +924,11 @@ theorem scanRightUntilTM_run_not_found
 
 /-! ### Extending a halted run
 
-Once a TM has run for `n` steps and landed in a halting state, any
-additional steps leave the configuration unchanged. This is the
-standard "padding" lemma we need when a decider's time budget is
-generous: the actual run finishes faster, but we want a single
-uniform bound. -/
-
-theorem runFlatTM_extend {M : FlatTM} {cfg cfg' : FlatTMConfig} {n k : Nat}
-    (h_run : runFlatTM n M cfg = some cfg')
-    (h_halt : haltingStateReached M cfg' = true) :
-    runFlatTM (n + k) M cfg = some cfg' := by
-  induction n generalizing cfg with
-  | zero =>
-      -- runFlatTM 0 M cfg = some cfg, so cfg = cfg'.
-      have h_eq : cfg = cfg' := Option.some.inj h_run
-      subst h_eq
-      show runFlatTM (0 + k) M cfg = some cfg
-      rw [Nat.zero_add]
-      exact runFlatTM_of_halting M cfg k h_halt
-  | succ n ih =>
-      by_cases h_cfg : haltingStateReached M cfg = true
-      · -- cfg is halting. Then runFlatTM (n+1) M cfg = some cfg = some cfg'.
-        have h1 : runFlatTM (n + 1) M cfg = some cfg :=
-          runFlatTM_of_halting M cfg (n + 1) h_cfg
-        rw [h1] at h_run
-        have h_eq : cfg = cfg' := Option.some.inj h_run
-        subst h_eq
-        exact runFlatTM_of_halting M cfg (n + 1 + k) h_cfg
-      · -- cfg is non-halting. Look at the step.
-        have h_run_eq :
-            runFlatTM (n + 1) M cfg =
-              match stepFlatTM M cfg with
-              | none => some cfg
-              | some cfg'' => runFlatTM n M cfg'' := by
-          show (if haltingStateReached M cfg = true then some cfg
-                else match stepFlatTM M cfg with
-                  | none => some cfg
-                  | some cfg'' => runFlatTM n M cfg'') = _
-          rw [if_neg h_cfg]
-        rw [h_run_eq] at h_run
-        -- Reshape `n + 1 + k = (n + k) + 1` so `runFlatTM` unfolds.
-        have h_arith : n + 1 + k = (n + k) + 1 := by
-          rw [Nat.add_right_comm]
-        rw [h_arith]
-        have h_run_eq_k :
-            runFlatTM ((n + k) + 1) M cfg =
-              match stepFlatTM M cfg with
-              | none => some cfg
-              | some cfg'' => runFlatTM (n + k) M cfg'' := by
-          show (if haltingStateReached M cfg = true then some cfg
-                else match stepFlatTM M cfg with
-                  | none => some cfg
-                  | some cfg'' => runFlatTM (n + k) M cfg'') = _
-          rw [if_neg h_cfg]
-        rw [h_run_eq_k]
-        cases h_step : stepFlatTM M cfg with
-        | none =>
-            rw [h_step] at h_run
-            have h_eq : cfg = cfg' := Option.some.inj h_run
-            subst h_eq
-            exact absurd h_halt h_cfg
-        | some cfg'' =>
-            rw [h_step] at h_run
-            exact ih h_run
+`runFlatTM_extend` (padding lemma) moved to
+`Complexity/Complexity/MachineSemantics.lean` in Part 2 Step 8
+(so `Complexity/Complexity/NP.lean` can use it for
+`DecidesBy.proj_left`). Existing references downstream resolve to the
+new location transparently. -/
 
 /-! ### `AllFalse` namespace: pre-work for a real `DecidesBy` example
 

@@ -6,14 +6,25 @@ set_option autoImplicit false
 
 universe u
 
-/-! # TM-backed decision predicates (Part 2 scaffolding)
+/-! # `DecidesBy` helpers (Part 2)
 
-This file introduces a *Turing-machine-backed* notion of polynomial-time
-decision, alongside the existing propositional `inTimePoly`. The new
-predicate `inTimePolyTM` will become the canonical `inTimePoly` once
-all consumers have been migrated (Part 2 Step 8 of `PART2.md`).
+This file used to host both the `DecidesBy` structure and various
+helpers. After Step 4 of `PART2.md` v2 the structure itself lives in
+`Complexity/Complexity/NP.lean` (so it can appear in the body of
+`inTimePoly`); only the *helpers* live here:
 
-### Output convention
+- `DecidesBy.decideFn` + `decideFn_correct` — extract a `Bool`
+  decision function from a `DecidesBy` witness, with soundness.
+- `DecidesBy.negate` / `inTimePolyTM_not` — same TM decides `¬ P` by
+  swapping `acceptState` and `rejectState`.
+- `DecidesBy.iff` / `inTimePolyTM_iff` — transport a `DecidesBy P`
+  across a logical equivalence `P ↔ Q` without touching the TM.
+
+We also expose `inTimePolyTM` as a back-compat alias for `inTimePoly`,
+so existing theorem names like `inTimePolyTM_evalCnf` and
+`inTimePolyTM_cliqueRel` keep their spelling.
+
+### Output convention (reminder)
 
 A `DecidesBy` witness designates two halting states, `acceptState`
 and `rejectState`, **required to be distinct**. The TM's answer on an
@@ -27,81 +38,12 @@ leaves all remaining `M.tapes - 1` work tapes empty. For single-tape
 TMs (`M.tapes = 1`), this collapses to `[encode x]` — definitionally
 the same as the original single-tape convention. -/
 
-/-- Helper: the standard initial tape list for a decider — the
-encoded input on tape 0, all other tapes blank. -/
-def initialTapes (M : FlatTM) (input : List Nat) : List (List Nat) :=
-  input :: List.replicate (M.tapes - 1) []
+/-- Back-compat alias for `inTimePoly`. Kept so existing theorem
+names like `inTimePolyTM_evalCnf` and `inTimePolyTM_cliqueRel` need
+no rename. -/
+abbrev inTimePolyTM {X : Type} [encodable X] (P : X → Prop) : Prop := inTimePoly P
 
-theorem initialTapes_length (M : FlatTM) (input : List Nat) (h : 0 < M.tapes) :
-    (initialTapes M input).length = M.tapes := by
-  show (input :: List.replicate (M.tapes - 1) []).length = M.tapes
-  rw [List.length_cons, List.length_replicate]
-  exact Nat.sub_add_cancel h
-
-/-- Read the Boolean output of a halting configuration: `true` iff the
-final state is the designated `acceptState`. -/
-def readOutput (acceptState : Nat) (cfg : FlatTMConfig) : Bool :=
-  decide (cfg.state_idx = acceptState)
-
-/-- A TM-backed decision witness for a predicate `P : X → Prop` with
-time budget `timeBound : Nat → Nat`.
-
-Compared to the old `HasDecider X P f`, this structure forces the
-existence of an actual `FlatTM` that, on the encoded input, halts
-within `timeBound (encodable.size x)` steps with state index equal to
-either `acceptState` (when `P x` holds) or `rejectState` (otherwise).
-The time bound is no longer a phantom argument.
-
-The TM may use multiple tapes: tape 0 holds the encoded input,
-remaining tapes start empty. For single-tape TMs (`M.tapes = 1`),
-`initialTapes` collapses to `[encode x]` definitionally. -/
-structure DecidesBy {X : Type} [encodable X]
-    (P : X → Prop) (timeBound : Nat → Nat) where
-  /-- How to lay the input out on tape 0. -/
-  encode      : X → List Nat
-  /-- The encoded input length is linearly bounded by `encodable.size x`. -/
-  encode_size : ∀ x, (encode x).length ≤ encodable.size x + 1
-  /-- The underlying flat Turing machine. -/
-  M           : FlatTM
-  /-- It is a well-formed TM. -/
-  M_valid     : validFlatTM M
-  /-- The machine has at least one tape (the input tape). -/
-  M_tapes_pos : 0 < M.tapes
-  /-- Halting state index that signals `true`. -/
-  acceptState : Nat
-  /-- Halting state index that signals `false`. -/
-  rejectState : Nat
-  /-- `acceptState` is in fact a halting state. -/
-  halting_acc : M.halt.getD acceptState false = true
-  /-- `rejectState` is in fact a halting state. -/
-  halting_rej : M.halt.getD rejectState false = true
-  /-- The two output codes are different — without this the output
-  carries no information. -/
-  accept_ne_reject : acceptState ≠ rejectState
-  /-- Running for `timeBound (size x)` steps from the encoded input
-  reaches a halting configuration whose state index is `acceptState`
-  (if `P x`) or `rejectState` (otherwise). We split the two branches
-  to avoid an `[Decidable (P x)]` constraint on the structure. -/
-  decides_pos : ∀ x, P x → ∃ cfg,
-    runFlatTM (timeBound (encodable.size x)) M
-        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
-      haltingStateReached M cfg = true ∧
-      cfg.state_idx = acceptState
-  decides_neg : ∀ x, ¬ P x → ∃ cfg,
-    runFlatTM (timeBound (encodable.size x)) M
-        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
-      haltingStateReached M cfg = true ∧
-      cfg.state_idx = rejectState
-
-/-- `P` is decided by a polynomial-time Turing machine. -/
-def inTimePolyTM {X : Type} [encodable X] (P : X → Prop) : Prop :=
-  ∃ f : Nat → Nat, Nonempty (DecidesBy P f) ∧ inOPoly f ∧ monotonic f
-
-/-! ## Downgrade: a TM-backed decider yields a propositional decider
-
-For now we keep the old `inTimePoly` definition. The new `inTimePolyTM`
-implies it: extract a `Bool` decider by running the machine for the
-prescribed number of steps and reading the resulting state index. -/
+/-! ## Bool decision function extraction -/
 
 /-- The `Bool` decision function extracted from a `DecidesBy` witness:
 encode the input, run the machine for `timeBound (size x)` steps, and
@@ -143,18 +85,6 @@ theorem DecidesBy.decideFn_correct {X : Type} [encodable X]
       rw [hFn] at hDec
       have hcfg : cfg.state_idx = D.acceptState := of_decide_eq_true hDec
       exact D.accept_ne_reject (hcfg.symm.trans hState)
-
-/-- A TM-backed decider yields an old-style `HasDecider`. -/
-theorem HasDecider.of_DecidesBy {X : Type} [encodable X]
-    {P : X → Prop} {timeBound : Nat → Nat} (D : DecidesBy P timeBound) :
-    HasDecider X P timeBound :=
-  ⟨D.decideFn, fun x => D.decideFn_correct x⟩
-
-/-- The TM-backed predicate implies the old propositional one. -/
-theorem inTimePoly_of_inTimePolyTM {X : Type} [encodable X]
-    {P : X → Prop} (h : inTimePolyTM P) : inTimePoly P := by
-  rcases h with ⟨f, ⟨D⟩, hPoly, hMono⟩
-  exact ⟨f, HasDecider.of_DecidesBy D, hPoly, hMono⟩
 
 /-! ## Negation combinator
 
