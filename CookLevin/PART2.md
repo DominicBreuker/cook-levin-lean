@@ -177,7 +177,9 @@ The pivot:
 | E     | 9     | Retype `hasDeciderClassical` to TM-backed (body → Part-6 sorry); delete legacy `HasDecider` | ✅ done |
 | F     | 10    | Validation: rebuild `CookLevin`, sorry-audit, README      | ✅ done     |
 | G     | 11.0  | Land `composeFlatTM_run` (operational correctness)        | ✅ done     |
-| G     | 11.1–7| Close `EvalCnfTM.decider` stub (build the real TM)        | ⏳ pending  |
+| G     | 11.1  | Land `Primitives.lean` (sigEval, encoding, writeAtHead, scanLeft) | ✅ done |
+| G     | 11.2  | Land `clearRegionTM` (scan-right-erase + fillPrefix charac.) | ✅ done |
+| G     | 11.3–8| Close `EvalCnfTM.decider` stub (build the real TM)        | ⏳ pending  |
 | H     | 12    | Close `CliqueRelTM.decider` stub (build the real TM)      | ⏳ pending  |
 | —     | 13    | Final Part-2 sweep (verify only Part-3 / Part-6 sorrys)   | ⏳ pending  |
 
@@ -433,40 +435,72 @@ Complexity/GenNP_is_hard.lean:23                   hasDeciderClassical
 ### Step 11 — Construct `evalCnfTM`
 
 **Goal:** Close the `EvalCnfTM.decider` sorry from Step 2 with a real
-multi-tape FlatTM and operational correctness.
+single-tape FlatTM (delimiter-encoded scratch region) and operational
+correctness.
 
-**Design (sketched; details emerge during construction):**
-- **4 tapes**:
-  - Tape 0: the input `encodeInput (N, a)`.
-  - Tape 1: working buffer holding the current variable id being
-    looked up.
-  - Tape 2: per-clause OR accumulator (`0` = false so far, `1` = true).
-  - Tape 3: per-CNF AND accumulator (`0` = false, `1` = true so far).
-- **Outer loop (state group A):** walk tape 0 past `0` delimiters.
-  At each clause start, reset tape 2 to `0`, then enter the
-  per-clause loop. After the clause, AND tape 2 into tape 3.
-  Halt on symbol `5` (CNF-end marker).
-- **Per-clause loop (state group B):** for each literal `(b, v)` on
-  tape 0, copy `v` to tape 1 (scanning right past variable bits),
-  read the polarity bit `b`, then enter the variable-lookup loop.
-- **Variable-lookup loop (state group C):** scan the assignment
-  segment of tape 0 (after the `5` marker), comparing each variable
-  encoded there to tape 1's contents. Outcome:
-  - if equal: literal value = `b` (positive polarity wins);
-  - if scan exhausts assignment without match: literal value = `¬ b`.
-  Write `literal_value OR tape_2` to tape 2.
-- **Final:** halt; output is read from tape 3.
+**Architecture pivot (Step 11.1, after Step 11.0 landed).** The
+original sketch (4 tapes: input, var-buffer, OR-acc, AND-acc) is
+abandoned. Why: `entryMatchesConfig` (`MachineSemantics.lean:111`)
+requires `entry.src_tape_vals` to *exactly* equal
+`cfg.tapes.map currentTapeSymbol`. There is no wildcard. So a `k`-tape
+bridge transition (or any "act on one tape, ignore the others"
+primitive) must enumerate **(sig+1)^k** entries — one per Cartesian
+product of (none ∪ symbol) across all tapes. For the planned
+`sig=7, k=4` that's 4096 bridge entries per composition and every
+primitive (`writeAtHeadTM`, `gotoStartTM`, …) explodes the same way.
+The "Multi-tape composeFlatTM is mechanical, ~100 LOC" risk noted in
+the original plan was understated.
+
+**Design (single-tape):**
+- **Alphabet bumped** from `sigSAT = 7` to `sigEval = 11`:
+  - 0-6: existing SAT alphabet (`SAT_TM.lean` line 60).
+  - 7: scratch-region start marker.
+  - 8: var-buffer end marker.
+  - 9: OR-accumulator slot marker.
+  - 10: AND-accumulator slot marker.
+- **Tape layout** (single tape, `DecidesBy.encode` extended):
+
+  ```
+  [encodeCnf N] [encodeAssgn a] 7 [varBuffer ...] 8 [orAcc:0|1] 9 [andAcc:0|1] 10
+  ```
+
+  The scratch suffix has length bounded by `max_v ∈ a, v + 5`, which
+  is linear in `encodable.size (N, a)`. So the new `encodeInputWithScratch`
+  is still polynomial-bounded.
+- **Outer loop:** scan right from position 0 past `4` (clause
+  separator) entries; at each clause boundary, run the per-clause
+  evaluator on tape positions `[clause_start, clause_end)`, AND the
+  OR-acc into the AND-acc (writing at position of marker `10`'s
+  predecessor), reset OR-acc, then continue. Halt on symbol `5`
+  (CNF-end marker).
+- **Per-clause / per-literal evaluator:** for each literal `(b, v)`
+  in the clause, copy `v` (unary) into the var-buffer region (between
+  markers `7` and `8`), then scan the assignment region (between `5`
+  and the start of scratch) comparing each `6`-delimited value to
+  the var-buffer. On match: write `b` OR existing OR-acc into the
+  OR-acc slot. On miss: write `¬b` OR existing OR-acc. After all
+  literals processed, advance to next clause.
+- **Final:** halt; decode answer by reading the symbol at the AND-acc
+  slot.
 
 **Implementation discipline:**
-- Build sub-TMs as small flat machines (`resetAccumTM`, `copyVarTM`,
-  `compareVarTM`, `orIntoTapeTM`, `andIntoTapeTM`). Each in its own
-  `private namespace` inside `Deciders/EvalCnfTM.lean` or a sibling
-  file `Deciders/EvalCnfTM/Primitives.lean` if size demands.
-- Compose them via a *proven* `composeFlatTM_run` lemma (see Step
-  11.0 below). Hand-rolled monolithic state machines are forbidden
-  for this step.
-- File size target: ≤ 3000 LOC for EvalCnfTM.lean. If approaching that
-  limit, split into `Primitives.lean` + `Compose.lean`.
+- Build sub-TMs as small single-tape flat machines. Each one is a
+  3-5 state, ≤ `sigEval+1` transitions-per-state FlatTM with its
+  own `_valid` + `_run` operational-correctness lemma. Pattern: the
+  same shape as `scanRightUntilTM` (`TMPrimitives.lean:1207-1729`).
+- Compose them via `composeFlatTM_run` (Step 11.0, single-tape).
+  Hand-rolled monolithic state machines are forbidden for this step.
+- All primitives live in `Deciders/EvalCnfTM/Primitives.lean`. The
+  composition / loop wiring lives in `Deciders/EvalCnfTM.lean`. File
+  size target: ≤ 2000 LOC each.
+
+**Lessons carried from Step 11.0.** The composition lemma is the
+load-bearing piece; primitives just need clean `_run` lemmas that
+plug into its hypotheses. In particular: each primitive should give
+back `runFlatTM k _ cfg = some cfg'` together with a *trajectory
+invariant* `∀ j < k, ∀ cj, runFlatTM j _ cfg = some cj →
+cj.state_idx ≠ exit ∧ haltingStateReached cj = false` — otherwise the
+caller has to re-prove that invariant when composing.
 
 **Step 11 substeps (each its own session, each ends with `lake build`):**
 - **11.0** ✅ Land `composeFlatTM_run`: if M₁ halts at config c₁ in t₁
@@ -485,24 +519,57 @@ multi-tape FlatTM and operational correctness.
   - `stepFlatTM_composeFlatTM_M2` — composed step = shifted M₂ step on shifted states.
   - `runFlatTM_composeFlatTM_M1_phase` — lift of M₁'s n-step run (under trajectory invariant).
   - `runFlatTM_composeFlatTM_M2_phase` — lift of M₂'s n-step run.
-- **11.1** Land `resetTapeTM` / `writeAtHeadTM` / `gotoStartTM`
-  (per-tape helpers). Multi-tape; each ~150 LOC.
-- **11.2** Land `copySegmentTM`: copy current segment of tape 0
-  (between delimiters `0`) onto tape 1. ~400 LOC.
-- **11.3** Land `compareSegmentsTM`: compare tape 0 vs tape 1, halt
-  in match/non-match state. ~400 LOC.
-- **11.4** Wire up the per-literal evaluator using the primitives
-  + `composeFlatTM_run`. ~400 LOC.
-- **11.5** Wire up the per-clause and per-CNF loops. ~400 LOC.
-- **11.6** Time-bound proof: each variable lookup is O(|a|), each
+- **11.1** ✅ Done (820 LOC, slightly over 700-LOC estimate). New file
+  `Deciders/EvalCnfTM/Primitives.lean`. Lands:
+  (a) `sigEval = 11`, `scratchSuffix`, `encodeInputWithScratch` plus
+  length / symbol-bound lemmas (`encodeInputWithScratch_length_le`:
+  ≤ `2 * encodable.size Na + 8`);
+  (b) generic `find_singleSomeEntry_match` helper (reusable across
+  primitives);
+  (c) `writeAtHeadTM` — 2-state TM overwriting current head symbol;
+  `_valid`, `_step_inRange`, `_step_outOfRange`, unified `_run` lemma
+  using `writeCurrentTapeSymbol`;
+  (d) `scanLeftUntilTM` — mirror of `scanRightUntilTM` but 2-state
+  (skip reject path; caller obligation that target exists to the
+  left); `_valid`, `_step_match`, `_step_advance`, `_run_found`
+  parametrised by `gap = head - pos` with Nat-subtraction arithmetic.
+  Build clean; 4 labelled sorrys unchanged.
+- **11.2** ✅ Done (~510 LOC, slightly over 400-LOC estimate due to
+  `fillPrefix` characterization and the `set`-form translation
+  scaffolding). Adds: (a) `clearRegionTM` 2-state TM (scan right,
+  write fill, until end marker); (b) `_valid`, `_step_match`,
+  `_step_advance` lemmas; (c) `fillPrefix` definition with
+  `_zero_of_le`, `_length`, `_succ`, `_set_succ` lemmas;
+  (d) `clearRegionTM_run_found` with `fillPrefix`-characterised
+  result tape, using `List.set_eq_take_append_cons_drop` +
+  `List.getElem_set_ne` to bridge between the take/cons/drop form
+  (returned by the step lemma) and the `right.set head fillSym` form
+  (cleaner for positional facts in the IH).
+- **11.3** Land `copyUnaryTM` (copy a unary-encoded number between
+  two delimited regions). Multi-phase TM that shuttles head between
+  source and destination on the single tape. ~700-800 LOC.
+- **11.4** Land `compareUnaryAtMarkerTM` (compare two unary numbers
+  in delimited regions; halt accept/reject). Multi-phase TM,
+  similar shuttle architecture to copyUnaryTM. ~700 LOC.
+- **11.5** Per-literal evaluator: copy literal's variable index
+  into var-buffer (via `copyUnaryTM`), scan assignment, run
+  `compareUnaryAtMarkerTM`, write polarity result into OR-acc.
+  ~500 LOC.
+- **11.6** Per-clause + per-CNF loops: outer scan over `4`
+  (clause sep) / `5` (CNF end); inner OR-acc → AND-acc fold. ~500 LOC.
+- **11.7** Time-bound proof: each variable lookup is O(|a|), each
   literal is O(|c|), each clause is O(|c|·|a|), the whole CNF is
-  O(|N|·|c|·|a|) ≤ O((n+1)³). Close `EvalCnfTM.timeBound_inOPoly` +
-  the `decides_pos`/`decides_neg` obligations. ~300 LOC.
-- **11.7** Replace the Step 2 `sorry` with the real `decider`.
+  O(|N|·|c|·|a|) ≤ O((n+1)³). Close `EvalCnfTM.timeBound_inOPoly`
+  + the `decides_pos`/`decides_neg` obligations. ~300 LOC.
+- **11.8** Replace the Step 2 `sorry` with the real `decider`.
   `lake build` clean. Remove the `TODO(Part2-followup:EvalCnfTM)` tag.
+  ~100 LOC.
 
-**Estimated total:** 2300–2800 LOC across ≥6 sessions. This is the
-single largest remaining piece of Part 2.
+**Estimated total:** ~3200 LOC across ≥8 sessions. This is the
+single largest remaining piece of Part 2. (Revised: v2 said 2300-2800
+LOC across 7 sessions; pivoted to single-tape and re-scoped Step 11.2
+into separate 11.2/11.3 after discovering copyUnaryTM's multi-phase
+complexity.)
 
 ### Step 12 — Construct `cliqueRelDecTM`
 
@@ -604,12 +671,19 @@ New under `Complexity/Complexity/Deciders/`:
   transitions), we fall back to a *monolithic* evalCnfTM design. In
   that case Step 11 reverts to "the v1 plan" and runs to many
   thousand LOC. The triage decision happens at the end of 11.0.
-- **Multi-tape `composeFlatTM`.** The current `composeFlatTM` is
-  proven valid only for `M₁.tapes = M₂.tapes = 1`. Step 11 needs to
-  generalise to `k ≥ 1`. This is mechanical (the bridge transitions
-  need `[none]` of length `k`; the validity proof gains `M₁.tapes =
-  M₂.tapes` as a hypothesis). Plan ~100 LOC of generalisation as
-  part of Step 11.0.
+- **~~Multi-tape `composeFlatTM`~~** (retired Step 11.1, 2026-05-17).
+  Initially planned as a "~100 LOC mechanical generalisation". The
+  underlying issue: `entryMatchesConfig` has no wildcard, so a
+  `k`-tape bridge transition needs `(sig+1)^k` entries. For `sig=7,
+  k=4` that's 4096 entries per composition, and every primitive that
+  acts on one tape would also enumerate the same Cartesian product.
+  Resolution: pivot EvalCnfTM to single-tape with delimiter-encoded
+  scratch regions. See Step 11 design (updated 2026-05-17).
+- **Alphabet bump.** Step 11.1 introduces `sigEval = 11` (extends
+  `sigSAT = 7` with 4 scratch markers). `SAT_TM.lean`'s demo deciders
+  stay on `sigSAT = 7` — they aren't reused; only the input encoding
+  is, and `encodeInputWithScratch` re-uses `encodeInput` verbatim and
+  appends the scratch suffix.
 - **`encodable.size` of the input.** `EvalCnfTM.timeBound (n + 1)^3`
   is generous; the actual O is more like `n^2 log n` if we use a
   smarter lookup. We pick `(n + 1)^3` because it's easy to prove
