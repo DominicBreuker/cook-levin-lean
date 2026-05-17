@@ -9,6 +9,8 @@ import Complexity.NP.FlatClique
 import Complexity.NP.FSAT_to_SAT
 import Complexity.NP.kSAT_to_SAT
 import Complexity.NP.kSAT_to_FlatClique
+import Complexity.Complexity.Deciders.EvalCnfTM
+import Complexity.Complexity.Deciders.CliqueRelTM
 import Complexity.NP.SAT.CookLevin.Subproblems.FlatCC
 import Complexity.NP.SAT.CookLevin.Subproblems.SingleTMGenNP
 import Complexity.NP.SAT.CookLevin.Subproblems.BinaryCC

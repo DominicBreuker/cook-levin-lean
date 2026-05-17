@@ -296,24 +296,9 @@ theorem compressAssignment_size_bound (a : assgn) (N : cnf) :
     _ = S ^ 2 := by ring
     _ ≤ S ^ 2 + 1 := by linarith
 
-theorem sat_NP : inNP SAT := by
-  refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
-  · -- inTimePoly: the Boolean decision procedure evalCnf is the decider
-    exact ⟨fun n => n + 1,
-      ⟨fun xy => evalCnf xy.2 xy.1, fun _ => Iff.rfl⟩,
-      ⟨1, ⟨2, 1, by intro n hn; simp [pow_one]; omega⟩⟩,
-      fun x x' h => Nat.add_le_add_right h 1⟩
-  · -- polyCertRel: every SAT instance has a polynomially-bounded certificate
-    refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
-    · -- sound: a satisfying assignment witnesses SAT
-      intro N a h; exact ⟨a, h⟩
-    · -- complete: compress the satisfying assignment to a bounded one
-      intro N ⟨a, ha⟩
-      exact ⟨compressAssignment a N, (compressAssignment_cnf_equiv a N).mp ha,
-             compressAssignment_size_bound a N⟩
-    · -- inOPoly: n^2 + 1 is polynomial
-      exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
-    · -- monotonic
-      intro a b h; nlinarith [Nat.pow_le_pow_left h 2]
+-- `sat_NP : inNP SAT` is proved in `Complexity/Complexity/Deciders/EvalCnfTM.lean`
+-- after Step 5 of PART2.md v2. We moved it there because the `inTimePoly`
+-- slot now requires the TM-backed witness `EvalCnfTM.inTimePolyTM_evalCnf`,
+-- whose construction lives downstream of this file.
 
 end SAT_inNP

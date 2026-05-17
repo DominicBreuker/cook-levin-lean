@@ -15,16 +15,83 @@ structure PolyTimeComputableWitness {X Y : Type} [encodable X] [encodable Y]
 abbrev polyTimeComputable {X Y : Type} [encodable X] [encodable Y] (f : X → Y) : Prop :=
   Nonempty (PolyTimeComputableWitness f)
 
-/-- A decider for predicate `P` with time bound `f` (exists as a Prop-friendly existential). -/
-def HasDecider (X : Type) (P : X → Prop) (f : Nat → Nat) : Prop :=
-  ∃ dec : X → Bool, (∀ x, P x ↔ dec x = true)
+/-! ## TM-backed decision interface (Part 2, Step 4 onwards)
 
-/-- Phase-2 polynomial-time bookkeeping. Requires a decider with polynomial time bound. -/
-def inTimePoly {X : Type} (P : X → Prop) : Prop :=
-  ∃ f : Nat → Nat, HasDecider X P f ∧ inOPoly f ∧ monotonic f
+A `DecidesBy P timeBound` witness is a multi-tape `FlatTM` that, on
+the encoded input `encode x`, halts within
+`timeBound (encodable.size x)` steps in a designated `acceptState`
+(when `P x` holds) or `rejectState` (otherwise). The two output
+codes must be distinct so the answer carries information.
 
--- inTimePoly_linear removed in Step 2: inTimePoly now requires actual deciders
--- This theorem can no longer be proved for arbitrary P
+The new `inTimePoly` (below) is a strict upgrade of the old
+propositional `HasDecider` predicate — a `DecidesBy` witness pins
+down a real Turing machine. -/
+
+/-- The standard initial tape list for a decider: the encoded input on
+tape 0, all other tapes blank. -/
+def initialTapes (M : FlatTM) (input : List Nat) : List (List Nat) :=
+  input :: List.replicate (M.tapes - 1) []
+
+theorem initialTapes_length (M : FlatTM) (input : List Nat) (h : 0 < M.tapes) :
+    (initialTapes M input).length = M.tapes := by
+  show (input :: List.replicate (M.tapes - 1) []).length = M.tapes
+  rw [List.length_cons, List.length_replicate]
+  exact Nat.sub_add_cancel h
+
+/-- Read the Boolean output of a halting configuration: `true` iff the
+final state is the designated `acceptState`. -/
+def readOutput (acceptState : Nat) (cfg : FlatTMConfig) : Bool :=
+  decide (cfg.state_idx = acceptState)
+
+/-- A TM-backed decision witness for a predicate `P : X → Prop` with
+time budget `timeBound : Nat → Nat`. The TM may use multiple tapes:
+tape 0 holds the encoded input, remaining tapes start empty. For
+single-tape TMs (`M.tapes = 1`), `initialTapes` collapses to
+`[encode x]` definitionally. -/
+structure DecidesBy {X : Type} [encodable X]
+    (P : X → Prop) (timeBound : Nat → Nat) where
+  /-- How to lay the input out on tape 0. -/
+  encode      : X → List Nat
+  /-- The encoded input length is linearly bounded by `encodable.size x`. -/
+  encode_size : ∀ x, (encode x).length ≤ encodable.size x + 1
+  /-- The underlying flat Turing machine. -/
+  M           : FlatTM
+  /-- It is a well-formed TM. -/
+  M_valid     : validFlatTM M
+  /-- The machine has at least one tape (the input tape). -/
+  M_tapes_pos : 0 < M.tapes
+  /-- Halting state index that signals `true`. -/
+  acceptState : Nat
+  /-- Halting state index that signals `false`. -/
+  rejectState : Nat
+  /-- `acceptState` is in fact a halting state. -/
+  halting_acc : M.halt.getD acceptState false = true
+  /-- `rejectState` is in fact a halting state. -/
+  halting_rej : M.halt.getD rejectState false = true
+  /-- The two output codes are different — without this the output
+  carries no information. -/
+  accept_ne_reject : acceptState ≠ rejectState
+  /-- If `P x` holds, the machine reaches `acceptState` in budget. -/
+  decides_pos : ∀ x, P x → ∃ cfg,
+    runFlatTM (timeBound (encodable.size x)) M
+        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
+      haltingStateReached M cfg = true ∧
+      cfg.state_idx = acceptState
+  /-- If `¬ P x` holds, the machine reaches `rejectState` in budget. -/
+  decides_neg : ∀ x, ¬ P x → ∃ cfg,
+    runFlatTM (timeBound (encodable.size x)) M
+        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
+      haltingStateReached M cfg = true ∧
+      cfg.state_idx = rejectState
+
+/-- Phase-2 polynomial-time bookkeeping. Requires an actual
+TM-backed decider with a polynomial time bound.
+
+(The legacy propositional `HasDecider` predicate was deleted in
+Step 9 of `PART2.md` v2 once its last consumer — `hasDeciderClassical`
+— was retyped to produce `Nonempty (DecidesBy ...)` directly.) -/
+def inTimePoly {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∃ f : Nat → Nat, Nonempty (DecidesBy P f) ∧ inOPoly f ∧ monotonic f
 
 /-- A witness that `R` behaves like a certificate relation for `P`: witnesses
 are sound for `P`, and every positive instance of `P` has some witness with
@@ -58,36 +125,70 @@ theorem inNP_intro {X Y : Type} [encodable X] [encodable Y]
 
 def inP (X : Type) [encodable X] (P : X → Prop) : Prop := inTimePoly P
 
+/-- Lift a `DecidesBy P f` (on `X`) to a decider for the predicate
+`fun (xy : X × Unit) => P xy.1`. The underlying TM and time bound
+are unchanged; only the encoder threads through the projection. -/
+private def DecidesBy.proj_left {X : Type} [encodable X]
+    {P : X → Prop} {f : Nat → Nat}
+    (D : DecidesBy P f) (hMono : monotonic f) :
+    DecidesBy (fun xy : X × Unit => P xy.1) f where
+  encode xy := D.encode xy.1
+  encode_size xy := by
+    -- (D.encode xy.1).length ≤ encodable.size xy.1 + 1
+    -- and encodable.size xy = encodable.size xy.1 + 0 + 1 = encodable.size xy.1 + 1
+    -- so the bound `≤ encodable.size xy + 1` is trivially loosened by +1.
+    have h1 : (D.encode xy.1).length ≤ encodable.size xy.1 + 1 := D.encode_size xy.1
+    have hsize : encodable.size xy.1 ≤ encodable.size xy := by
+      show encodable.size xy.1 ≤ encodable.size xy.1 + encodable.size xy.2 + 1
+      exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_succ _)
+    exact Nat.le_trans h1 (Nat.add_le_add_right hsize 1)
+  M := D.M
+  M_valid := D.M_valid
+  M_tapes_pos := D.M_tapes_pos
+  acceptState := D.acceptState
+  rejectState := D.rejectState
+  halting_acc := D.halting_acc
+  halting_rej := D.halting_rej
+  accept_ne_reject := D.accept_ne_reject
+  decides_pos xy hPxy := by
+    -- xy : X × Unit, hPxy : P xy.1
+    rcases D.decides_pos xy.1 hPxy with ⟨cfg, hRun, hHalt, hState⟩
+    refine ⟨cfg, ?_, hHalt, hState⟩
+    -- runFlatTM (f (size xy.1)) M init = some cfg; pad to f (size xy).
+    have hsize : encodable.size xy.1 ≤ encodable.size xy := by
+      show encodable.size xy.1 ≤ encodable.size xy.1 + encodable.size xy.2 + 1
+      exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_succ _)
+    have hmono : f (encodable.size xy.1) ≤ f (encodable.size xy) := hMono _ _ hsize
+    rcases Nat.le.dest hmono with ⟨k, hk⟩
+    -- hk : f (encodable.size xy.1) + k = f (encodable.size xy)
+    have := runFlatTM_extend (k := k) hRun
+        (h_halt := hHalt)
+    rw [hk] at this
+    exact this
+  decides_neg xy hnPxy := by
+    rcases D.decides_neg xy.1 hnPxy with ⟨cfg, hRun, hHalt, hState⟩
+    refine ⟨cfg, ?_, hHalt, hState⟩
+    have hsize : encodable.size xy.1 ≤ encodable.size xy := by
+      show encodable.size xy.1 ≤ encodable.size xy.1 + encodable.size xy.2 + 1
+      exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_succ _)
+    have hmono : f (encodable.size xy.1) ≤ f (encodable.size xy) := hMono _ _ hsize
+    rcases Nat.le.dest hmono with ⟨k, hk⟩
+    have := runFlatTM_extend (k := k) hRun (h_halt := hHalt)
+    rw [hk] at this
+    exact this
+
 theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P := by
   intro hP
   refine inNP_intro (X := X) (Y := Unit) P (fun (x : X) (_ : Unit) => P x) ?_ ?_
-  · -- hP : inP X P = inTimePoly P
-    -- We need inTimePoly (fun xy : X × Unit => P xy.fst)
-    -- This is the same as inTimePoly P, just reindexing
-    rcases hP with ⟨f_bound, ⟨dec, hdec⟩, hf_poly, hf_mono⟩
-    -- The decider for (fun xy : X × Unit => P xy.fst) exists because dec exists
-    -- we use the same f_bound and just compose the decider with fst
-    have dec'_witness : HasDecider (X × Unit) (fun xy => P xy.fst) f_bound :=
-      ⟨fun xy => dec xy.fst, fun xy => hdec xy.fst⟩
-    exact ⟨f_bound, dec'_witness, hf_poly, hf_mono⟩
-  · -- hCorrect: polyCertRel for the relation (fun x (_ : Unit) => P x)
-    -- Use constant bound function: bound n = 0 for all n
+  · -- inTimePoly slot: lift the X-decider to an (X × Unit)-decider.
+    rcases hP with ⟨f, ⟨D⟩, hf_poly, hf_mono⟩
+    exact ⟨f, ⟨D.proj_left hf_mono⟩, hf_poly, hf_mono⟩
+  · -- polyCertRel slot: certificate is `()`, bound is 0.
     refine ⟨⟨fun _ => 0, ?_, ?_, ?_, ?_⟩⟩
-    · -- sound: ∀ ⦃x y⦄, R x y → P x
-      intros x _ h
-      exact h
-    · -- complete: ∀ ⦃x⦄, P x → ∃ y, R x y ∧ encodable.size y ≤ bound (encodable.size x)
-      intros x hx
-      exact ⟨(), hx, Nat.zero_le _⟩
-    · -- bound_poly: inOPoly bound (constant function is inOPoly)
-      refine' ⟨0, ?_⟩
-      refine' ⟨0, ?_⟩
-      refine' ⟨0, ?_⟩
-      intros
-      apply Nat.zero_le
-    · -- bound_mono: monotonic bound (constant function is monotonic)
-      intros x x' h
-      apply Nat.zero_le
+    · intros _ _ h; exact h
+    · intros x hx; exact ⟨(), hx, Nat.zero_le _⟩
+    · exact ⟨0, ⟨0, 0, fun _ _ => Nat.zero_le _⟩⟩
+    · intros _ _ _; exact Nat.zero_le _
 
 /-- The current scaffold's universal NP source problem on `X`. Later phases can
 refine this placeholder into the full generic NP source used by the Coq proof. -/
@@ -155,17 +256,22 @@ theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
   intros hPQ hQinNP
   rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
   rcases hf_poly with ⟨⟨bound_f, hbound_poly_f, hbound_mono_f, hbound_valid_f⟩⟩
-  rcases hQinNP with ⟨Y_cert, _, ⟨⟨R, hR_poly, hR_cert⟩⟩⟩
-  rcases hR_poly with ⟨time_R, hdec_R, htime_poly_R, htime_mono_R⟩
+  rcases hQinNP with ⟨Y_cert, _, ⟨⟨R, _hR_poly, hR_cert⟩⟩⟩
   rcases hR_cert with ⟨⟨cert_bound, hsound_R, hcomplete_R, hcert_poly_R, hcert_mono_R⟩⟩
   refine ⟨Y_cert, inferInstance, ?_⟩
   refine ⟨⟨fun x cert => R (f x) cert, ?_, ?_⟩⟩
-  · refine ⟨time_R, ?_, htime_poly_R, htime_mono_R⟩
-    rcases hdec_R with ⟨dec_R, hdec_R⟩
-    refine ⟨fun xc => dec_R (f xc.1, xc.2), ?_⟩
-    intro xc
-    simpa using hdec_R (f xc.1, xc.2)
-  · refine ⟨⟨cert_bound ∘ bound_f, ?_, ?_, inOPoly_comp hbound_poly_f hcert_poly_R,
+  · -- inTimePoly (fun (x, cert) => R (f x) cert)
+    -- TODO(Part3:red_inNP_TMcompose): construct a TM that runs the
+    -- reduction's TM on x, then the verifier's TM on (f x, cert).
+    -- The reduction's TM is delivered by Part 3's TM-backed
+    -- `polyTimeComputable`, which is the structural upgrade `red_inNP`
+    -- is waiting on. The predicate-level argument (lines below) is
+    -- already done, so once Part 3 lands this is the only gap.
+    sorry
+  · -- polyCertRel: certificate-bound composition is purely predicate-level
+    -- and does not need any TM machinery — it carries over verbatim
+    -- from the pre-Step-4 proof.
+    refine ⟨⟨cert_bound ∘ bound_f, ?_, ?_, inOPoly_comp hbound_poly_f hcert_poly_R,
         monotonic_comp hbound_mono_f hcert_mono_R⟩⟩
     · intro x cert hrel
       exact hf_correct.mpr (hsound_R hrel)
