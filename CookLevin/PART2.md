@@ -593,9 +593,8 @@ caller has to re-prove that invariant when composing.
     (`2`,`3`,`4`): N → halt 7.
   - 7: halt (success).
 
-- **11.3b** ✅ **Partial** (~680 LOC added; iteration + main lemma
-  bodies deferred to 11.3c via labelled `TODO(Part2-followup:...)`
-  sorrys). Lands:
+- **11.3b** ✅ Done (~680 LOC). Lands the operational scaffolding for
+  `copyUnaryTM`:
   (a) Six per-state `runFlatTM_copyUnary_stateN_unfold` helpers (one
   per non-halting state 0–5) following the template of
   `runFlatTM_scanLeft_state0_unfold`. ~150 LOC;
@@ -610,38 +609,113 @@ caller has to re-prove that invariant when composing.
   using `List.set_comm` + `List.set_set`), `writeCur_eleven_eq`,
   `writeCur_zero_eq`. ~50 LOC;
   (d) `copyUnaryTape` — recursive tape-state function, plus `_zero`
-  and `_succ` unfold lemmas. ~15 LOC;
-  (e) `copyUnaryTM_iteration_run` — single-iteration lemma STATED
-  with full hypothesis profile (h < M, marker/buffer in-range,
-  source-`1` at h, marker `7` at M, mid-cells `< sig ∧ ≠ 7 ∧ ≠ 11`,
-  buffer-1s for `j < buf_count`, buffer-0 at `M+1+buf_count`); proof
-  body deferred. `TODO(Part2-followup:copyUnaryTM_iteration_run)`;
-  (f) `copyUnaryTM_run_found` — main inductive lemma STATED with
-  full hypothesis profile (source 1s at `[h, h+v)`, terminator at
-  `h+v`, marker 7 at `M`, mid gap `(h+v, M)`, pre-filled buffer 1s,
-  buffer 0s at `[M+1+buf_count, M+1+buf_count+v)`); result tape
-  characterised by `copyUnaryTape right h M buf_count v`. Proof
-  body deferred. `TODO(Part2-followup:copyUnaryTM_run_found)`.
-  **Build:** 3343 jobs clean; 2 *new* labelled TODO sorrys
-  (`copyUnaryTM_iteration_run`, `copyUnaryTM_run_found`) on top of
-  the original 4. **File size:** 2975 LOC. Splitting copyUnaryTM
-  into `Deciders/EvalCnfTM/CopyUnary.lean` is now strongly recommended
-  before 11.3c.
-- **11.3c** Discharge the two `TODO(Part2-followup:...)` sorrys from
-  11.3b. The iteration lemma chains the six phases through
-  `runFlatTM_compose`; the bulk of the work is hypothesis translation
+  and `_succ` unfold lemmas. ~15 LOC.
+- **11.3c** ✅ Done. Discharged both labelled TODO sorrys:
+  (e) `copyUnaryTM_iteration_run` — single-iteration lemma fully
+  proved (~600 LOC). Chains the six phases through `runFlatTM_compose`:
+  step0_consume → state1_phase_run → state2_phase_run (with
+  take/cons/drop → set form conversion) → state3_phase_run →
+  state4_phase_run → step5_step_cursor. Hypothesis translations
   between original `right`, cursor-tape `rC = right.set h 11`, and
-  post-write tape `rB = rC.set (M+1+buf_count) 1` (`List.getElem_set_ne`
-  with correct symmetry direction, `Fin.eq_of_val_eq` for position
-  arithmetic, careful `show` to coerce indexing-proof types past
-  motive-not-type-correct issues). The main lemma is then induction on
-  `v` shifting both `h` and `buf_count`. ~600-800 LOC.
-  **File split:** create `Deciders/EvalCnfTM/CopyUnary.lean` first;
-  promote `nat_beq_self`, `find_singleSomeEntry_match_state` from
-  `private` to public to remain visible.
+  post-write tape `rB = rC.set (M+1+buf_count) 1` done via
+  `List.getElem_set_ne` (with `.symm` on Ne hypotheses when the set
+  index is on the wrong side), `Fin.eq_of_val_eq` for position
+  arithmetic, and `show` to coerce indexing-proof types. Final tape
+  collapses via `cursor_buf_set_simp`.
+  (f) `copyUnaryTM_run_found` — main inductive lemma fully proved
+  (~400 LOC). Restructured signature: outer params `(sig, h_sig, left,
+  M)`, then `∀ v right h buf_count <hypotheses>` to enable recursive
+  call with shifted args. Base case `v = 0`: one step via
+  `state0_step_halt`. Inductive step `v = w+1`: apply
+  `copyUnaryTM_iteration_run` for one iteration, then recurse on `w`
+  with shifted tape `(right.set h 0).set (M+1+buf_count) 1`, head
+  `h+1`, and buf_count `buf_count+1`. Per-iteration cost is INVARIANT
+  under the shift (verified via `omega`). Helper `h_translate`
+  centralizes the `getElem_set_ne ∘ getElem_set_ne` pattern for
+  positions untouched by both `set`s, reducing each IH-hypothesis
+  proof to a position-equation + `Fin.eq_of_val_eq` step. The `j =
+  buf_count` boundary case in `h_buf_ones'` uses `simp only [h_j_eq]`
+  to safely navigate motive issues that `rw` couldn't handle.
+  **File split:** Completed after 11.3c. Moved the entire copyUnaryTM
+  section (definitions, validity, step lemmas, halting lemmas, unfold
+  helpers, phase scan lemmas, tape helpers, `copyUnaryTape`, iteration
+  and main-run lemmas) from `Primitives.lean` to a new file
+  `Deciders/EvalCnfTM/CopyUnary.lean`. Promoted `nat_beq_self`,
+  `find_singleSomeEntry_match`, `find_singleSomeEntry_match_state`
+  from `private` to public in `Primitives.lean` so the new file can
+  reuse them. Re-added `open TMPrimitives (currentTapeSymbol_in_range
+  currentTapeSymbol_out_of_range)` in the new file. Added
+  `import Complexity.Complexity.Deciders.EvalCnfTM.CopyUnary` to
+  `Complexity.lean`.
+  **Build:** 3344 jobs clean (one more than before, for the new file);
+  sorry count restored to original 4 (`Complexity/NP.lean`,
+  `Complexity/Deciders/EvalCnfTM.lean`,
+  `Complexity/Deciders/CliqueRelTM.lean`,
+  `Complexity/GenNP_is_hard.lean`).
+  **File sizes:** Primitives.lean 1385 LOC; CopyUnary.lean 2426 LOC.
 - **11.4** Land `compareUnaryAtMarkerTM` (compare two unary numbers
   in delimited regions; halt accept/reject). Multi-phase TM,
-  similar shuttle architecture to copyUnaryTM. ~700 LOC.
+  similar shuttle architecture to copyUnaryTM. Estimated 4500–5500 LOC
+  across four sessions (11.4a, b, c, d) — see Step 11.4 plan in
+  conversation memory; the original ~700 LOC estimate underestimated
+  the per-iteration hypothesis-bookkeeping cost.
+- **11.4a** ✅ Done. Landed TM definition, validity, step lemmas, and
+  halting lemmas for `compareUnaryAtMarkerTM` in a new file
+  `Deciders/EvalCnfTM/CompareUnary.lean`. 9-state TM (0..6 non-halting,
+  7 reject, 8 accept), 16 transition entries types totalling `4·sig + 8`
+  entries (= 56 for `sig = 12`). Validity proof case-splits on the
+  seven-block transition table. Step lemmas: 2 for state 0, 2 for
+  state 1, 3 for state 2, 2 for state 3, 2 for state 4, 3 for state 5,
+  2 for state 6 (16 total). Halting lemmas for states 7/8.
+  **Build:** 3345 jobs clean (one more than before, for the new file).
+  **File size:** CompareUnary.lean 1286 LOC.
+- **11.4b** ✅ Done. Added 7 `runFlatTM_compareUnary_state*_unfold`
+  helpers (states 0..6) and 8 phase lemmas covering all advance-until-
+  match loops: `state1_phase_run` (right-scan to 7),
+  `state2_phase_run_one` (right-scan past 0s, erase first 1, L → state 3),
+  `state2_phase_run_eight` (right-scan past 0s to 8, → state 6),
+  `state3_phase_run` (left-scan to 11, write 0, R → state 0),
+  `state4_phase_run` (right-scan to 7, → state 5),
+  `state5_phase_run_match` (right-scan past 0s to 8, → state 8 accept),
+  `state5_phase_run_mismatch` (right-scan past 0s to 1, → state 7 reject),
+  `state6_phase_run` (left-scan to 11, write 0, N → state 7 reject).
+  Each phase lemma is structurally identical to the corresponding
+  `copyUnaryTM_state*_phase_run` lemma, parameterised by direction
+  (right/left) and target symbol. **Build:** 3345 jobs clean.
+  **File size:** CompareUnary.lean 2092 LOC.
+- **11.4c** Partially done. Landed:
+  - `compareUnaryTape_iter` recursive tape predicate + `_zero` and
+    `_succ` unfold lemmas.
+  - `compareUnaryTape_iter_length`, `compareUnaryTape_iter_get_outside`
+    (cells outside erased zones equal original), `_get_slot_zero` and
+    `_get_varbuf_zero` (erased cells are `0`) — proved via structural
+    recursion with `simp only [compareUnaryTape_iter_succ]` to handle
+    motive issues.
+  - `cursor_buf_set_simp_zero`, `cursorWrite_eq_set'`,
+    `writeCur_eleven_eq'`, `writeCur_zero_eq'` helpers (analogs of
+    CopyUnary's).
+  - `compareUnaryAtMarkerTM_iteration_run` — fully proved (~400 LOC).
+    Chains step 0 + phase 1 + phase 2-one + phase 3 via
+    `runFlatTM_compose`. Per-iteration cost `3 + 2(M-h) + 2i = 2D + 1`.
+  - `compareUnaryAtMarkerTM_run_match` — signature complete, proof
+    body sketched (induction on `u`, base case = post-loop, inductive
+    case = `iteration_run` + IH) but currently stubbed with
+    `TODO(Part2-followup:compareUnaryAtMarkerTM_run_match)`. Build
+    fails because `set rIter := compareUnaryTape_iter … with
+    h_rIter_def` clashes with subsequent `rw [h_rIter_def]` (motive
+    issues from dependent length hypotheses). **Resolution**: extract
+    a generic `compareUnaryAtMarkerTM_post_loop_run` private helper
+    parameterised by an arbitrary `rIter` (no `compareUnaryTape_iter`
+    reference) — this isolates the post-loop reasoning. The main
+    `run_match` then translates `right` invariants to `rIter`
+    invariants and dispatches. The inductive case avoids `set` by
+    using `compareUnaryTape_iter right p_LBM M i_start` inline.
+  **Build:** 3345 jobs clean; sorry count 5 (4 pre-existing + 1 new
+  labelled `TODO(Part2-followup:compareUnaryAtMarkerTM_run_match)`).
+  **File size:** CompareUnary.lean 3035 LOC.
+- **11.4d** Pending. `compareUnaryAtMarkerTM_run_short` and
+  `compareUnaryAtMarkerTM_run_long` mismatch lemmas. Estimated
+  ~1000–1500 LOC.
 - **11.5** Per-literal evaluator: copy literal's variable index
   into var-buffer (via `copyUnaryTM`), scan assignment, run
   `compareUnaryAtMarkerTM`, write polarity result into OR-acc.
@@ -719,10 +793,10 @@ Updated at the end of each step.
 |------------------------------------------------------------------|--------------------|--------------------|--------|
 | `EvalCnfTM.decider` — `TODO(Part2-followup:EvalCnfTM)`           | Step 2 ✅           | Step 11.7          | open   |
 | `CliqueRelTM.decider` — `TODO(Part2-followup:CliqueRelTM)`       | Step 3 ✅           | Step 12.5          | open   |
-| `copyUnaryTM_iteration_run` body —                               | Step 11.3b ✅       | Step 11.3c         | open   |
-|   `TODO(Part2-followup:copyUnaryTM_iteration_run)`               |                    |                    |        |
-| `copyUnaryTM_run_found` body —                                   | Step 11.3b ✅       | Step 11.3c         | open   |
-|   `TODO(Part2-followup:copyUnaryTM_run_found)`                   |                    |                    |        |
+| `copyUnaryTM_iteration_run` body — closed in Step 11.3c          | Step 11.3b ✅       | Step 11.3c ✅       | closed |
+| `copyUnaryTM_run_found` body — closed in Step 11.3c              | Step 11.3b ✅       | Step 11.3c ✅       | closed |
+| `compareUnaryAtMarkerTM_run_match` body                          | Step 11.4c          | Step 11.4c (cont.) | open   |
+|  — `TODO(Part2-followup:compareUnaryAtMarkerTM_run_match)`       |                    |                    |        |
 | `sat_NP` body — closed in Step 5                                 | Step 4 ✅           | Step 5 ✅           | closed |
 | `FlatClique_in_NP` body — closed in Step 6                       | Step 4 ✅           | Step 6 ✅           | closed |
 | `red_inNP` predicate-level body — closed in Step 7               | Step 4 ✅           | Step 7 ✅           | closed |
