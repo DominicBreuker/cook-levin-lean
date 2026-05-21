@@ -2618,6 +2618,123 @@ theorem compareUnaryAtMarkerTM_iteration_run
       _ _ h_run2]
   exact h_run3'
 
+/-! ### Post-loop helper
+
+The "post-loop" phase of `compareUnaryAtMarkerTM` — step 0 reading the
+slot's right boundary marker `6` and phasing through states 4 and 5
+to accept-halt at state 8 — is *abstract in the tape*. Lifting it to
+a generic `rIter` (with no reference to `compareUnaryTape_iter`)
+lets the main inductive `run_match` lemma below apply it cleanly in
+the base case without `set rIter := … with h_rIter_def`, whose
+dependent length hypotheses defeat subsequent `rw [h_rIter_def]`
+("motive not type correct"). -/
+
+/-- Abstract post-loop run of `compareUnaryAtMarkerTM`: from state 0
+at slot RBM, reach accept-halt state 8 in `(M-p_LBM) - s + c + 2`
+steps, leaving the tape untouched. -/
+private theorem compareUnaryAtMarkerTM_post_loop_run
+    (sig : Nat) (h_sig : 12 ≤ sig)
+    (left rIter : List Nat) (p_LBM M s c : Nat)
+    (h_pos1 : p_LBM + 1 + s < M)
+    (h_pos2 : M + 1 + c < rIter.length)
+    (h_RBM : ∃ (h : p_LBM + 1 + s < rIter.length),
+        rIter.get ⟨p_LBM + 1 + s, h⟩ = 6)
+    (h_M : ∃ (h : M < rIter.length), rIter.get ⟨M, h⟩ = 7)
+    (h_8 : rIter.get ⟨M + 1 + c, h_pos2⟩ = 8)
+    (h_varbuf_zeros : ∀ k, k < c → ∃ (h_lt : M + 1 + k < rIter.length),
+        rIter.get ⟨M + 1 + k, h_lt⟩ = 0)
+    (h_mid_between : ∀ k, p_LBM + 1 + s < k → k < M →
+        ∃ (h_lt : k < rIter.length),
+          rIter.get ⟨k, h_lt⟩ < sig ∧
+            rIter.get ⟨k, h_lt⟩ ≠ 7) :
+    runFlatTM ((M - p_LBM) - s + c + 2) (compareUnaryAtMarkerTM sig)
+        { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+      some { state_idx := 8, tapes := [(left, M + 1 + c, rIter)] } := by
+  rcases h_RBM with ⟨h_RBM_lt, h_get_RBM⟩
+  rcases h_M with ⟨h_M_lt, h_get_M⟩
+  have h_6_lt_sig : (6 : Nat) < sig :=
+    Nat.lt_of_lt_of_le (by decide : (6 : Nat) < 12) h_sig
+  -- Step 0: read 6 at p_LBM+1+s, transit to state 4 (no write, no move).
+  have h_step0 :
+      stepFlatTM (compareUnaryAtMarkerTM sig)
+          { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } :=
+    compareUnaryAtMarkerTM_state0_step_six sig left rIter (p_LBM + 1 + s)
+      h_RBM_lt h_get_RBM
+  have h_run0 :
+      runFlatTM 1 (compareUnaryAtMarkerTM sig)
+          { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } := by
+    rw [runFlatTM_compareUnary_state0_unfold sig 0 _ _ h_step0]; rfl
+  -- Phase 4: state 4, scan right from p_LBM+1+s to 7 at M.
+  -- gap = M - (p_LBM+1+s); steps = gap + 1 = (M-p_LBM) - s.
+  have h_in_range4 :
+      (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) < rIter.length := by
+    have h_eq : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) = M := by omega
+    rw [h_eq]; exact h_M_lt
+  have h_marker4 :
+      rIter.get ⟨(p_LBM + 1 + s) + (M - (p_LBM + 1 + s)), h_in_range4⟩ = 7 := by
+    have h_eq : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) = M := by omega
+    have heq : (⟨(p_LBM + 1 + s) + (M - (p_LBM + 1 + s)), h_in_range4⟩
+            : Fin rIter.length) = ⟨M, h_M_lt⟩ :=
+      Fin.eq_of_val_eq h_eq
+    rw [heq]; exact h_get_M
+  have h_mid4 :
+      ∀ k, k < M - (p_LBM + 1 + s) →
+          ∃ (h_lt : (p_LBM + 1 + s) + k < rIter.length),
+            rIter.get ⟨(p_LBM + 1 + s) + k, h_lt⟩ < sig ∧
+              rIter.get ⟨(p_LBM + 1 + s) + k, h_lt⟩ ≠ 7 := by
+    intro k hk
+    by_cases h_k_zero : k = 0
+    · subst h_k_zero
+      have h_pos_lt_rIter : (p_LBM + 1 + s) + 0 < rIter.length := by
+        rw [Nat.add_zero]; exact h_RBM_lt
+      have heq : (⟨(p_LBM + 1 + s) + 0, h_pos_lt_rIter⟩ : Fin rIter.length) =
+          ⟨p_LBM + 1 + s, h_RBM_lt⟩ := Fin.eq_of_val_eq (Nat.add_zero _)
+      refine ⟨h_pos_lt_rIter, ?_, ?_⟩
+      · rw [heq, h_get_RBM]; exact h_6_lt_sig
+      · rw [heq, h_get_RBM]; decide
+    · have h_k_pos : 0 < k := Nat.pos_of_ne_zero h_k_zero
+      have h_pos_gt_RBM : p_LBM + 1 + s < (p_LBM + 1 + s) + k := by omega
+      have h_pos_lt_M : (p_LBM + 1 + s) + k < M := by omega
+      exact h_mid_between ((p_LBM + 1 + s) + k) h_pos_gt_RBM h_pos_lt_M
+  have h_run4_raw :
+      runFlatTM ((M - (p_LBM + 1 + s)) + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 5,
+               tapes := [(left, (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) + 1,
+                 rIter)] } :=
+    compareUnaryAtMarkerTM_state4_phase_run sig left rIter
+      (M - (p_LBM + 1 + s)) (p_LBM + 1 + s) h_in_range4 h_marker4 h_mid4
+  have h_gap4_succ : (M - (p_LBM + 1 + s)) + 1 = (M - p_LBM) - s := by omega
+  have h_head4_eq :
+      (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) + 1 = M + 1 := by omega
+  have h_run4 :
+      runFlatTM ((M - p_LBM) - s) (compareUnaryAtMarkerTM sig)
+          { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 5, tapes := [(left, M + 1, rIter)] } := by
+    rw [← h_gap4_succ, h_run4_raw, h_head4_eq]
+  -- Phase 5-match: state 5, scan right past zeros to 8 at M+1+c.
+  -- p = M+1, c remains the same; (M+1) + c = M+1+c by left-assoc.
+  have h_mid5 :
+      ∀ k, k < c → ∃ (h_lt : (M + 1) + k < rIter.length),
+        rIter.get ⟨(M + 1) + k, h_lt⟩ = 0 := h_varbuf_zeros
+  have h_run5 :
+      runFlatTM (c + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 5, tapes := [(left, M + 1, rIter)] } =
+        some { state_idx := 8, tapes := [(left, M + 1 + c, rIter)] } :=
+    compareUnaryAtMarkerTM_state5_phase_run_match sig left rIter c (M + 1)
+      h_pos2 h_8 h_mid5
+  -- Chain: total = 1 + ((M-p_LBM) - s) + (c + 1) = (M-p_LBM) - s + c + 2.
+  have h_total_eq :
+      (M - p_LBM) - s + c + 2 = 1 + (((M - p_LBM) - s) + (c + 1)) := by ring
+  rw [h_total_eq]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) 1
+      (((M - p_LBM) - s) + (c + 1)) _ _ h_run0]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) ((M - p_LBM) - s)
+      (c + 1) _ _ h_run4]
+  exact h_run5
+
 /-! ### Main run lemma — match case
 
 When `slot_size = varbuf_size = s`, the TM halts in accept state 8
@@ -2657,378 +2774,262 @@ theorem compareUnaryAtMarkerTM_run_match
         some { state_idx := 8,
                tapes := [(left, M + 1 + c,
                  compareUnaryTape_iter right p_LBM M s)] } := by
-  -- TODO(Part2-followup:compareUnaryAtMarkerTM_run_match): Step 11.4c-3.
-  -- The structural induction on `u` with iteration_run + post-loop is
-  -- laid out and partially proved. The `set rIter := compareUnaryTape_iter
-  -- right p_LBM M i_start with h_rIter_def` pattern conflicts with
-  -- subsequent `rw [h_rIter_def]` calls (motive issues from dependent
-  -- length hypotheses). Resolution: extract `post_loop_run` as a
-  -- separate helper that abstracts over an arbitrary `rIter`, then
-  -- inline the iter expression in `run_match` without `set`.
-  sorry
-  -- Reusable facts.
-  /-
   rcases h_M_marker with ⟨h_M_lt, h_get_M⟩
   rcases h_RBM with ⟨h_RBM_lt, h_get_RBM⟩
   have h_p_lt_M : p_LBM < M := by omega
   have h_p_le_M : p_LBM + s ≤ M := by omega
-  have h_M_lt_buf : M + 1 + c < right.length := h_pos2
-  have h_11_lt_sig : (11 : Nat) < sig :=
-    Nat.lt_of_lt_of_le (by decide : (11 : Nat) < 12) h_sig
-  have h_8_lt_sig : (8 : Nat) < sig :=
-    Nat.lt_of_lt_of_le (by decide : (8 : Nat) < 12) h_sig
-  have h_7_lt_sig : (7 : Nat) < sig :=
-    Nat.lt_of_lt_of_le (by decide : (7 : Nat) < 12) h_sig
-  have h_6_lt_sig : (6 : Nat) < sig :=
-    Nat.lt_of_lt_of_le (by decide : (6 : Nat) < 12) h_sig
-  have h_1_lt_sig : (1 : Nat) < sig :=
-    Nat.lt_of_lt_of_le (by decide : (1 : Nat) < 12) h_sig
-  have h_0_lt_sig : (0 : Nat) < sig :=
-    Nat.lt_of_lt_of_le (by decide : (0 : Nat) < 12) h_sig
   intro u
   induction u with
   | zero =>
       intro i_start h_sum
       have h_i_eq_s : i_start = s := by omega
       rw [h_i_eq_s]
-      -- u = 0, i_start = s. Post-loop only.
-      -- Tape: compareUnaryTape_iter right p_LBM M s.
-      set rIter := compareUnaryTape_iter right p_LBM M s with h_rIter_def
-      have h_rIter_len : rIter.length = right.length := compareUnaryTape_iter_length _ _ _ _
-      -- Step 0 (read 6 at RBM, → state 4): 1 step.
-      have h_RBM_lt_rIter : p_LBM + 1 + s < rIter.length := by
-        rw [h_rIter_len]; exact h_RBM_lt
-      have h_get_RBM_rIter : rIter.get ⟨p_LBM + 1 + s, h_RBM_lt_rIter⟩ = 6 := by
-        -- Position p_LBM + 1 + s is not in [p_LBM+1, p_LBM+s] (since p_LBM+1+s > p_LBM+s).
-        -- Not in [M+1, M+s] (since p_LBM+1+s < M < M+1).
-        simp only [h_rIter_def]
-        apply compareUnaryTape_iter_get_outside right p_LBM M s (p_LBM + 1 + s) h_RBM_lt
-        · intro j hj; omega
-        · intro j hj; omega
-        all_goals exact h_get_RBM
-      have h_step0' :
-          stepFlatTM (compareUnaryAtMarkerTM sig)
-              { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
-            some { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } :=
-        compareUnaryAtMarkerTM_state0_step_six sig left rIter (p_LBM + 1 + s)
-          h_RBM_lt_rIter h_get_RBM_rIter
-      have h_run0 :
-          runFlatTM 1 (compareUnaryAtMarkerTM sig)
-              { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
-            some { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } := by
-        rw [runFlatTM_compareUnary_state0_unfold sig 0 _ _ h_step0']; rfl
-      -- Phase 4 (state 4 → state 5): scan right from p_LBM+1+s to 7 at M.
-      -- gap = M - (p_LBM+1+s) = M - p_LBM - 1 - s. Steps = gap + 1 = M - p_LBM - s.
-      have h_gap4_eq : M - (p_LBM + 1 + s) = (M - p_LBM) - 1 - s := by omega
-      have h_gap4_succ : (M - (p_LBM + 1 + s)) + 1 = (M - p_LBM) - s := by omega
-      have h_in_range4 : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) < rIter.length := by
-        rw [h_rIter_len]
-        have : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) = M := by omega
-        rw [this]; exact h_M_lt
-      have h_marker4 :
-          rIter.get ⟨(p_LBM + 1 + s) + (M - (p_LBM + 1 + s)), h_in_range4⟩ = 7 := by
-        have h_eq : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) = M := by omega
-        have heq : (⟨(p_LBM + 1 + s) + (M - (p_LBM + 1 + s)), h_in_range4⟩
-                : Fin rIter.length) = ⟨M, by rw [h_rIter_len]; exact h_M_lt⟩ :=
-          Fin.eq_of_val_eq h_eq
-        rw [heq, h_rIter_def]
-        apply compareUnaryTape_iter_get_outside right p_LBM M s M h_M_lt
-        · intro j hj; omega
-        · intro j hj; omega
-        all_goals exact h_get_M
-      have h_mid4 :
-          ∀ k, k < M - (p_LBM + 1 + s) → ∃ (h_lt : (p_LBM + 1 + s) + k < rIter.length),
-            rIter.get ⟨(p_LBM + 1 + s) + k, h_lt⟩ < sig ∧
-              rIter.get ⟨(p_LBM + 1 + s) + k, h_lt⟩ ≠ 7 := by
-        intro k hk
-        have h_pos_lt_M : (p_LBM + 1 + s) + k < M := by omega
-        have h_pos_lt_orig : (p_LBM + 1 + s) + k < right.length :=
-          Nat.lt_trans h_pos_lt_M h_M_lt
-        have h_pos_lt_rIter : (p_LBM + 1 + s) + k < rIter.length := by
-          rw [h_rIter_len]; exact h_pos_lt_orig
-        refine ⟨h_pos_lt_rIter, ?_, ?_⟩
-        · -- value < sig
-          by_cases h_k_zero : k = 0
-          · subst h_k_zero
-            have heq : (⟨(p_LBM + 1 + s) + 0, h_pos_lt_rIter⟩ : Fin rIter.length) =
-                ⟨p_LBM + 1 + s, h_RBM_lt_rIter⟩ := Fin.eq_of_val_eq (Nat.add_zero _)
-            rw [heq, h_get_RBM_rIter]; exact h_6_lt_sig
-          · have h_pos_gt_RBM : p_LBM + 1 + s < (p_LBM + 1 + s) + k := by omega
-            rcases h_mid_between ((p_LBM + 1 + s) + k) h_pos_gt_RBM h_pos_lt_M with
-              ⟨h_orig_lt, h_lt_sig, _, _⟩
-            simp only [h_rIter_def]
-            have hget :
-                (compareUnaryTape_iter right p_LBM M s).get
-                    ⟨(p_LBM + 1 + s) + k, h_pos_lt_rIter⟩ =
-                  right.get ⟨(p_LBM + 1 + s) + k, h_orig_lt⟩ := by
-              apply compareUnaryTape_iter_get_outside right p_LBM M s
-                ((p_LBM + 1 + s) + k) h_orig_lt
-              · intro j hj; omega
-              · intro j hj; omega
-            rw [hget]; exact h_lt_sig
-        · -- value ≠ 7
-          by_cases h_k_zero : k = 0
-          · subst h_k_zero
-            have heq : (⟨(p_LBM + 1 + s) + 0, h_pos_lt_rIter⟩ : Fin rIter.length) =
-                ⟨p_LBM + 1 + s, h_RBM_lt_rIter⟩ := Fin.eq_of_val_eq (Nat.add_zero _)
-            rw [heq, h_get_RBM_rIter]; decide
-          · have h_pos_gt_RBM : p_LBM + 1 + s < (p_LBM + 1 + s) + k := by omega
-            rcases h_mid_between ((p_LBM + 1 + s) + k) h_pos_gt_RBM h_pos_lt_M with
-              ⟨h_orig_lt, _, h_ne7, _⟩
-            simp only [h_rIter_def]
-            have hget :
-                (compareUnaryTape_iter right p_LBM M s).get
-                    ⟨(p_LBM + 1 + s) + k, h_pos_lt_rIter⟩ =
-                  right.get ⟨(p_LBM + 1 + s) + k, h_orig_lt⟩ := by
-              apply compareUnaryTape_iter_get_outside right p_LBM M s
-                ((p_LBM + 1 + s) + k) h_orig_lt
-              · intro j hj; omega
-              · intro j hj; omega
-            rw [hget]; exact h_ne7
-      have h_run4_raw :
-          runFlatTM ((M - (p_LBM + 1 + s)) + 1) (compareUnaryAtMarkerTM sig)
-              { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } =
-            some { state_idx := 5,
-                   tapes := [(left, (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) + 1,
-                     rIter)] } :=
-        compareUnaryAtMarkerTM_state4_phase_run sig left rIter
-          (M - (p_LBM + 1 + s)) (p_LBM + 1 + s) h_in_range4 h_marker4 h_mid4
-      have h_head4_eq : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) + 1 = M + 1 := by omega
-      have h_run4 :
-          runFlatTM ((M - p_LBM) - s) (compareUnaryAtMarkerTM sig)
-              { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } =
-            some { state_idx := 5, tapes := [(left, M + 1, rIter)] } := by
-        rw [← h_gap4_succ, h_run4_raw, h_head4_eq]
-      -- Phase 5-match (state 5 → state 8): scan right past zeros to 8 at M+1+c.
-      have h_in_range5 : (M + 1) + c < rIter.length := by
-        rw [h_rIter_len]; exact h_pos2
-      have h_8_rIter : rIter.get ⟨(M + 1) + c, h_in_range5⟩ = 8 := by
-        simp only [h_rIter_def]
-        apply compareUnaryTape_iter_get_outside right p_LBM M s ((M + 1) + c) h_pos2
-        · intro j hj; omega
-        · intro j hj; omega
-        all_goals exact h_8_marker
-      have h_mid5 :
-          ∀ k, k < c → ∃ (h_lt : (M + 1) + k < rIter.length),
-            rIter.get ⟨(M + 1) + k, h_lt⟩ = 0 := by
-        intro k hk
-        have h_pos_lt_orig : (M + 1) + k < right.length := by
-          have : (M + 1) + k < (M + 1) + c := by omega
-          exact Nat.lt_trans this h_pos2
-        have h_pos_lt_rIter : (M + 1) + k < rIter.length := by
-          rw [h_rIter_len]; exact h_pos_lt_orig
-        refine ⟨h_pos_lt_rIter, ?_⟩
-        simp only [h_rIter_def]
-        by_cases h_k_lt_s : k < s
-        · -- Erased varbuf cell (compareUnaryTape_iter_get_varbuf_zero).
-          have h_eq : (M + 1) + k = M + 1 + k := by ring
-          have h_lt_iter :
-              M + 1 + k < (compareUnaryTape_iter right p_LBM M s).length := by
-            rw [compareUnaryTape_iter_length]; rw [← h_eq]; exact h_pos_lt_orig
-          have hget := compareUnaryTape_iter_get_varbuf_zero right p_LBM M s k h_k_lt_s
-            h_p_le_M h_lt_iter
-          have heq : (⟨(M + 1) + k, h_pos_lt_rIter⟩
-                  : Fin (compareUnaryTape_iter right p_LBM M s).length) =
-              ⟨M + 1 + k, h_lt_iter⟩ := Fin.eq_of_val_eq h_eq
-          rw [heq]; exact hget
-        · -- Original varbuf zero (from h_varbuf_zeros).
-          push_neg at h_k_lt_s
-          rcases h_varbuf_zeros k h_k_lt_s hk with ⟨h_orig_lt, h_orig_zero⟩
-          have hget :
-              (compareUnaryTape_iter right p_LBM M s).get
-                  ⟨(M + 1) + k, h_pos_lt_rIter⟩ =
-                right.get ⟨(M + 1) + k, h_orig_lt⟩ := by
-            apply compareUnaryTape_iter_get_outside right p_LBM M s
-              ((M + 1) + k) h_orig_lt
-            · intro j hj; omega
-            · intro j hj; omega
-          rw [hget]
-          have heq : (⟨(M + 1) + k, h_orig_lt⟩ : Fin right.length) =
-              ⟨M + 1 + k, by have : (M + 1) + k = M + 1 + k := by ring
-                              rw [← this]; exact h_orig_lt⟩ :=
-            Fin.eq_of_val_eq (by ring)
-          rw [heq]; exact h_orig_zero
-      have h_run5_raw :
-          runFlatTM (c + 1) (compareUnaryAtMarkerTM sig)
-              { state_idx := 5, tapes := [(left, M + 1, rIter)] } =
-            some { state_idx := 8, tapes := [(left, (M + 1) + c, rIter)] } :=
-        compareUnaryAtMarkerTM_state5_phase_run_match sig left rIter c (M + 1)
-          h_in_range5 h_8_rIter h_mid5
-      have h_head5_eq : (M + 1) + c = M + 1 + c := by ring
-      have h_run5 :
-          runFlatTM (c + 1) (compareUnaryAtMarkerTM sig)
-              { state_idx := 5, tapes := [(left, M + 1, rIter)] } =
-            some { state_idx := 8, tapes := [(left, M + 1 + c, rIter)] } := by
-        rw [h_run5_raw, h_head5_eq]
-      -- Chain via runFlatTM_compose.
-      -- Total: 0 * (2D + 1) + (D - s + c + 2) = D - s + c + 2 = 1 + ((D - s) + (c + 1)).
+      -- u = 0, i_start = s. Reduce to compareUnaryAtMarkerTM_post_loop_run on
+      -- rIter := compareUnaryTape_iter right p_LBM M s.
       have h_total_eq :
           0 * (2 * (M - p_LBM) + 1) + ((M - p_LBM) - s + c + 2) =
-            1 + (((M - p_LBM) - s) + (c + 1)) := by ring
+            (M - p_LBM) - s + c + 2 := by ring
       rw [h_total_eq]
-      rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) 1
-          (((M - p_LBM) - s) + (c + 1)) _ _ h_run0]
-      rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) ((M - p_LBM) - s)
-          (c + 1) _ _ h_run4]
-      exact h_run5
+      have h_rIter_len :
+          (compareUnaryTape_iter right p_LBM M s).length = right.length :=
+        compareUnaryTape_iter_length _ _ _ _
+      have h_pos2_rIter :
+          M + 1 + c < (compareUnaryTape_iter right p_LBM M s).length := by
+        rw [h_rIter_len]; exact h_pos2
+      have h_RBM_lt_rIter :
+          p_LBM + 1 + s < (compareUnaryTape_iter right p_LBM M s).length := by
+        rw [h_rIter_len]; exact h_RBM_lt
+      have h_M_lt_rIter :
+          M < (compareUnaryTape_iter right p_LBM M s).length := by
+        rw [h_rIter_len]; exact h_M_lt
+      have h_get_RBM_rIter :
+          (compareUnaryTape_iter right p_LBM M s).get
+              ⟨p_LBM + 1 + s, h_RBM_lt_rIter⟩ = 6 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          (p_LBM + 1 + s) h_RBM_lt h_RBM_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_RBM
+      have h_get_M_rIter :
+          (compareUnaryTape_iter right p_LBM M s).get ⟨M, h_M_lt_rIter⟩ = 7 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          M h_M_lt h_M_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_M
+      have h_8_rIter :
+          (compareUnaryTape_iter right p_LBM M s).get
+              ⟨M + 1 + c, h_pos2_rIter⟩ = 8 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          (M + 1 + c) h_pos2 h_pos2_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_8_marker
+      have h_varbuf_zeros_rIter :
+          ∀ k, k < c →
+              ∃ (h_lt : M + 1 + k <
+                  (compareUnaryTape_iter right p_LBM M s).length),
+                (compareUnaryTape_iter right p_LBM M s).get
+                    ⟨M + 1 + k, h_lt⟩ = 0 := by
+        intro k hk
+        have h_pos_lt_orig : M + 1 + k < right.length := by
+          rcases Nat.lt_or_ge (M + 1 + k) (M + 1 + c) with hlt | hge
+          · exact Nat.lt_trans hlt h_pos2
+          · have h_le : M + 1 + k ≤ M + 1 + c := by omega
+            have h_eq : M + 1 + k = M + 1 + c := Nat.le_antisymm h_le hge
+            rw [h_eq]; exact h_pos2
+        have h_pos_lt_rIter :
+            M + 1 + k < (compareUnaryTape_iter right p_LBM M s).length := by
+          rw [h_rIter_len]; exact h_pos_lt_orig
+        refine ⟨h_pos_lt_rIter, ?_⟩
+        by_cases h_k_lt_s : k < s
+        · exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M s k h_k_lt_s
+            h_p_le_M h_pos_lt_rIter
+        · push_neg at h_k_lt_s
+          rcases h_varbuf_zeros k h_k_lt_s hk with ⟨h_orig_lt, h_orig_zero⟩
+          have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+            (M + 1 + k) h_orig_lt h_pos_lt_rIter
+            (fun j hj => by omega) (fun j hj => by omega)
+          rw [hget]; exact h_orig_zero
+      have h_mid_between_rIter :
+          ∀ k, p_LBM + 1 + s < k → k < M →
+              ∃ (h_lt : k < (compareUnaryTape_iter right p_LBM M s).length),
+                (compareUnaryTape_iter right p_LBM M s).get ⟨k, h_lt⟩ < sig ∧
+                  (compareUnaryTape_iter right p_LBM M s).get ⟨k, h_lt⟩ ≠ 7 := by
+        intro k hk_gt hk_lt
+        rcases h_mid_between k hk_gt hk_lt with ⟨h_orig_lt, h_lt_sig, h_ne7, _⟩
+        have h_pos_lt_rIter :
+            k < (compareUnaryTape_iter right p_LBM M s).length := by
+          rw [h_rIter_len]; exact h_orig_lt
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          k h_orig_lt h_pos_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        refine ⟨h_pos_lt_rIter, ?_, ?_⟩
+        · rw [hget]; exact h_lt_sig
+        · rw [hget]; exact h_ne7
+      exact compareUnaryAtMarkerTM_post_loop_run sig h_sig left
+        (compareUnaryTape_iter right p_LBM M s) p_LBM M s c h_pos1 h_pos2_rIter
+        ⟨h_RBM_lt_rIter, h_get_RBM_rIter⟩
+        ⟨h_M_lt_rIter, h_get_M_rIter⟩
+        h_8_rIter h_varbuf_zeros_rIter h_mid_between_rIter
   | succ u ih =>
       intro i_start h_sum
-      -- i_start + (u+1) = s, so i_start = s - u - 1 and i_start + 1 + u = s.
       have h_i_lt_s : i_start < s := by omega
       have h_sum' : (i_start + 1) + u = s := by omega
-      -- Apply iteration_run at index i_start.
-      set rIter := compareUnaryTape_iter right p_LBM M i_start with h_rIter_def
-      have h_rIter_len : rIter.length = right.length := compareUnaryTape_iter_length _ _ _ _
       have h_h_lt_M_iter : p_LBM + 1 + i_start < M := by omega
-      have h_M_lt_iter : M < rIter.length := by rw [h_rIter_len]; exact h_M_lt
-      have h_buf_in_range_iter : M + 1 + i_start < rIter.length := by
+      -- Build hypotheses for compareUnaryAtMarkerTM_iteration_run on
+      -- (compareUnaryTape_iter right p_LBM M i_start).
+      have h_rIter_len :
+          (compareUnaryTape_iter right p_LBM M i_start).length = right.length :=
+        compareUnaryTape_iter_length _ _ _ _
+      have h_M_lt_iter :
+          M < (compareUnaryTape_iter right p_LBM M i_start).length := by
+        rw [h_rIter_len]; exact h_M_lt
+      have h_buf_in_range_iter :
+          M + 1 + i_start <
+              (compareUnaryTape_iter right p_LBM M i_start).length := by
         rw [h_rIter_len]
-        have : M + 1 + i_start < M + 1 + c := by omega
-        exact Nat.lt_trans this h_pos2
-      -- right'[p_LBM+1+i_start] = 1.
+        have h1 : M + 1 + i_start < M + 1 + c := by omega
+        exact Nat.lt_trans h1 h_pos2
       have h_get_h_iter :
-          rIter.get
-              ⟨p_LBM + 1 + i_start, Nat.lt_trans h_h_lt_M_iter h_M_lt_iter⟩ = 1 := by
-        simp only [h_rIter_def]
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨p_LBM + 1 + i_start,
+                Nat.lt_trans h_h_lt_M_iter h_M_lt_iter⟩ = 1 := by
         rcases h_slot_ones i_start h_i_lt_s with ⟨h_orig_lt, h_orig_one⟩
         have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
           (p_LBM + 1 + i_start) h_orig_lt
-          (by rw [compareUnaryTape_iter_length]; exact h_orig_lt)
-          (fun j hj => by omega) (fun j hj => by omega)
-        have h_get_eq :
-            (compareUnaryTape_iter right p_LBM M i_start).get
-                ⟨p_LBM + 1 + i_start,
-                  Nat.lt_trans h_h_lt_M_iter
-                    (by rw [compareUnaryTape_iter_length]; exact h_M_lt)⟩ =
-              right.get ⟨p_LBM + 1 + i_start, h_orig_lt⟩ := hget
-        rw [h_get_eq]; exact h_orig_one
-      -- right'[M] = 7.
-      have h_get_M_iter : rIter.get ⟨M, h_M_lt_iter⟩ = 7 := by
-        simp only [h_rIter_def]
-        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start M h_M_lt
-          (by rw [compareUnaryTape_iter_length]; exact h_M_lt)
-          (fun j hj => by omega) (fun j hj => by omega)
-        rw [hget]; exact h_get_M
-      -- right'[M+1+i_start] = 1.
-      have h_get_buf_one_iter :
-          rIter.get ⟨M + 1 + i_start, h_buf_in_range_iter⟩ = 1 := by
-        simp only [h_rIter_def]
-        rcases h_varbuf_ones i_start h_i_lt_s with ⟨h_orig_lt, h_orig_one⟩
-        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
-          (M + 1 + i_start) h_orig_lt
-          (by rw [compareUnaryTape_iter_length]; exact h_orig_lt)
+          (Nat.lt_trans h_h_lt_M_iter h_M_lt_iter)
           (fun j hj => by omega) (fun j hj => by omega)
         rw [hget]; exact h_orig_one
-      -- ∀ j < i_start, right'[M+1+j] = 0.
+      have h_get_M_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨M, h_M_lt_iter⟩ = 7 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          M h_M_lt h_M_lt_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_M
+      have h_get_buf_one_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨M + 1 + i_start, h_buf_in_range_iter⟩ = 1 := by
+        rcases h_varbuf_ones i_start h_i_lt_s with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          (M + 1 + i_start) h_orig_lt h_buf_in_range_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_orig_one
       have h_buf_zeros_iter :
-          ∀ j, j < i_start → ∃ (h_lt : M + 1 + j < rIter.length),
-            rIter.get ⟨M + 1 + j, h_lt⟩ = 0 := by
+          ∀ j, j < i_start → ∃ (h_lt : M + 1 + j <
+              (compareUnaryTape_iter right p_LBM M i_start).length),
+            (compareUnaryTape_iter right p_LBM M i_start).get
+                ⟨M + 1 + j, h_lt⟩ = 0 := by
         intro j hj
-        have h_lt_orig : M + 1 + j < right.length := by
-          have : M + 1 + j < M + 1 + c := by omega
-          exact Nat.lt_trans this h_pos2
-        have h_lt_iter : M + 1 + j < rIter.length := by
-          rw [h_rIter_len]; exact h_lt_orig
+        have h_lt_iter :
+            M + 1 + j < (compareUnaryTape_iter right p_LBM M i_start).length := by
+          rw [h_rIter_len]
+          have h1 : M + 1 + j < M + 1 + c := by omega
+          exact Nat.lt_trans h1 h_pos2
         refine ⟨h_lt_iter, ?_⟩
-        simp only [h_rIter_def]
         have h_dist : p_LBM + i_start ≤ M := by omega
-        have h_lt_iter' : M + 1 + j <
-            (compareUnaryTape_iter right p_LBM M i_start).length := h_lt_iter
-        exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M i_start j hj h_dist
-          h_lt_iter'
-      -- h_mid: ∀ k ∈ [1, M-h), right'[h+k] < sig ∧ ≠ 7 ∧ ≠ 11.
+        exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M i_start j hj
+          h_dist h_lt_iter
       have h_mid_iter :
           ∀ k, 1 ≤ k → k < M - (p_LBM + 1 + i_start) →
-              ∃ (h_lt : (p_LBM + 1 + i_start) + k < rIter.length),
-                rIter.get ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ < sig ∧
-                  rIter.get ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 7 ∧
-                  rIter.get ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 11 := by
+              ∃ (h_lt : (p_LBM + 1 + i_start) + k <
+                  (compareUnaryTape_iter right p_LBM M i_start).length),
+                (compareUnaryTape_iter right p_LBM M i_start).get
+                    ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ < sig ∧
+                  (compareUnaryTape_iter right p_LBM M i_start).get
+                      ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 7 ∧
+                  (compareUnaryTape_iter right p_LBM M i_start).get
+                      ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 11 := by
         intro k hk_pos hk_lt
         have h_pos_lt_M : (p_LBM + 1 + i_start) + k < M := by omega
         have h_pos_lt_orig : (p_LBM + 1 + i_start) + k < right.length :=
           Nat.lt_trans h_pos_lt_M h_M_lt
-        have h_pos_lt_iter : (p_LBM + 1 + i_start) + k < rIter.length := by
+        have h_pos_lt_iter : (p_LBM + 1 + i_start) + k <
+            (compareUnaryTape_iter right p_LBM M i_start).length := by
           rw [h_rIter_len]; exact h_pos_lt_orig
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          ((p_LBM + 1 + i_start) + k) h_pos_lt_orig h_pos_lt_iter
+          (fun j hj => by omega) (fun j hj => by omega)
         refine ⟨h_pos_lt_iter, ?_, ?_, ?_⟩
-        all_goals rw [h_rIter_def]
-        all_goals
+        all_goals {
+          rw [hget]
           by_cases h_in_slot : i_start + k < s
-          · -- Slot 1 still present.
-            have h_pos_eq : p_LBM + 1 + (i_start + k) = (p_LBM + 1 + i_start) + k := by
-              ring
+          · -- Slot 1 cell.
             rcases h_slot_ones (i_start + k) h_in_slot with ⟨h_orig_lt', h_one⟩
-            have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
-              ((p_LBM + 1 + i_start) + k) h_pos_lt_orig
-              (by rw [compareUnaryTape_iter_length]; exact h_pos_lt_orig)
-              (fun j hj => by omega) (fun j hj => by omega)
-            rw [hget]
-            have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩ : Fin right.length) =
+            have h_pos_eq : p_LBM + 1 + (i_start + k) =
+                (p_LBM + 1 + i_start) + k := by ring
+            have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                    : Fin right.length) =
                 ⟨p_LBM + 1 + (i_start + k), h_orig_lt'⟩ :=
               Fin.eq_of_val_eq h_pos_eq.symm
             rw [heq, h_one]
-            first | exact h_1_lt_sig | decide
+            first
+              | exact Nat.lt_of_lt_of_le (by decide : (1 : Nat) < 12) h_sig
+              | decide
           · push_neg at h_in_slot
             by_cases h_at_RBM : i_start + k = s
             · -- RBM (value 6).
               have h_pos_eq : (p_LBM + 1 + i_start) + k = p_LBM + 1 + s := by omega
-              have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
-                ((p_LBM + 1 + i_start) + k) h_pos_lt_orig
-                (by rw [compareUnaryTape_iter_length]; exact h_pos_lt_orig)
-                (fun j hj => by omega) (fun j hj => by omega)
-              rw [hget]
-              have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩ : Fin right.length) =
+              have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                      : Fin right.length) =
                   ⟨p_LBM + 1 + s, h_RBM_lt⟩ := Fin.eq_of_val_eq h_pos_eq
               rw [heq, h_get_RBM]
-              first | exact h_6_lt_sig | decide
-            · -- Between zone (h_mid_between).
-              have h_in_s : s < i_start + k := by omega
-              have h_pos_gt_RBM : p_LBM + 1 + s < (p_LBM + 1 + i_start) + k := by omega
-              rcases h_mid_between ((p_LBM + 1 + i_start) + k) h_pos_gt_RBM h_pos_lt_M
+              first
+                | exact Nat.lt_of_lt_of_le (by decide : (6 : Nat) < 12) h_sig
+                | decide
+            · -- Between RBM and M.
+              have h_pos_gt_RBM :
+                  p_LBM + 1 + s < (p_LBM + 1 + i_start) + k := by omega
+              rcases h_mid_between ((p_LBM + 1 + i_start) + k) h_pos_gt_RBM
+                  h_pos_lt_M
                 with ⟨h_orig_lt', h_lt_sig, h_ne7, h_ne11⟩
-              have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
-                ((p_LBM + 1 + i_start) + k) h_pos_lt_orig
-                (by rw [compareUnaryTape_iter_length]; exact h_pos_lt_orig)
-                (fun j hj => by omega) (fun j hj => by omega)
-              rw [hget]
+              have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                      : Fin right.length) =
+                  ⟨(p_LBM + 1 + i_start) + k, h_orig_lt'⟩ := rfl
+              rw [heq]
               first | exact h_lt_sig | exact h_ne7 | exact h_ne11
+        }
       -- Apply iteration_run.
       have h_iter_run :=
-        compareUnaryAtMarkerTM_iteration_run sig h_sig left rIter
+        compareUnaryAtMarkerTM_iteration_run sig h_sig left
+          (compareUnaryTape_iter right p_LBM M i_start)
           (p_LBM + 1 + i_start) M i_start h_h_lt_M_iter h_M_lt_iter
           h_buf_in_range_iter h_get_h_iter h_get_M_iter h_get_buf_one_iter
           h_buf_zeros_iter h_mid_iter
-      -- The result tape `(rIter.set (p_LBM+1+i_start) 0).set (M+1+i_start) 0`
-      -- equals compareUnaryTape_iter right p_LBM M (i_start + 1).
+      -- The result tape equals compareUnaryTape_iter right p_LBM M (i_start+1).
       have h_tape_succ :
-          (rIter.set (p_LBM + 1 + i_start) 0).set (M + 1 + i_start) 0 =
+          ((compareUnaryTape_iter right p_LBM M i_start).set
+              (p_LBM + 1 + i_start) 0).set (M + 1 + i_start) 0 =
             compareUnaryTape_iter right p_LBM M (i_start + 1) := by
-        rw [h_rIter_def, compareUnaryTape_iter_succ]
+        rw [compareUnaryTape_iter_succ]
       have h_iter_run' :
           runFlatTM (3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start)
               (compareUnaryAtMarkerTM sig)
-              { state_idx := 0, tapes := [(left, p_LBM + 1 + i_start, rIter)] } =
+              { state_idx := 0,
+                tapes := [(left, p_LBM + 1 + i_start,
+                  compareUnaryTape_iter right p_LBM M i_start)] } =
             some { state_idx := 0,
                    tapes := [(left, (p_LBM + 1 + i_start) + 1,
                      compareUnaryTape_iter right p_LBM M (i_start + 1))] } := by
         rw [h_iter_run, h_tape_succ]
-      -- Step count equality: 3 + 2*(M - (p+1+i)) + 2*i = 2*(M-p) + 1.
-      have h_iter_steps : 3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start =
-          2 * (M - p_LBM) + 1 := by
-        have h_M_ge : M ≥ p_LBM + 1 + i_start := by omega
-        omega
+      -- Step count translation: 3 + 2*(M - (p+1+i)) + 2*i = 2*(M-p) + 1.
+      have h_iter_steps :
+          3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start =
+            2 * (M - p_LBM) + 1 := by omega
+      -- Head translation: (p_LBM + 1 + i_start) + 1 = p_LBM + 1 + (i_start + 1).
+      have h_head_eq :
+          (p_LBM + 1 + i_start) + 1 = p_LBM + 1 + (i_start + 1) := by ring
       have h_iter_run'' :
           runFlatTM (2 * (M - p_LBM) + 1) (compareUnaryAtMarkerTM sig)
-              { state_idx := 0, tapes := [(left, p_LBM + 1 + i_start, rIter)] } =
+              { state_idx := 0,
+                tapes := [(left, p_LBM + 1 + i_start,
+                  compareUnaryTape_iter right p_LBM M i_start)] } =
             some { state_idx := 0,
                    tapes := [(left, p_LBM + 1 + (i_start + 1),
                      compareUnaryTape_iter right p_LBM M (i_start + 1))] } := by
-        rw [← h_iter_steps]
-        have h_head_eq : (p_LBM + 1 + i_start) + 1 = p_LBM + 1 + (i_start + 1) := by ring
-        rw [← h_head_eq]; exact h_iter_run'
-      -- Apply IH at u, i_start' = i_start + 1.
+        rw [← h_iter_steps, ← h_head_eq]; exact h_iter_run'
+      -- Apply IH at (i_start + 1).
       have h_ih := ih (i_start + 1) h_sum'
-      -- Chain: total = (2(M-p)+1) + (u*(2(M-p)+1) + ((M-p)-s+c+2))
-      --              = (u+1)*(2(M-p)+1) + ((M-p)-s+c+2)
+      -- Chain: (u+1) * (2*(M-p)+1) + ((M-p) - s + c + 2)
+      --      = (2*(M-p)+1) + (u * (2*(M-p)+1) + ((M-p) - s + c + 2)).
       have h_total_eq :
           (u + 1) * (2 * (M - p_LBM) + 1) + ((M - p_LBM) - s + c + 2) =
             (2 * (M - p_LBM) + 1) +
@@ -3039,7 +3040,1022 @@ theorem compareUnaryAtMarkerTM_run_match
           (u * (2 * (M - p_LBM) + 1) + ((M - p_LBM) - s + c + 2))
           _ _ h_iter_run'']
       exact h_ih
-  -/
+
+/-! ### Post-loop helper — short case
+
+The "short" case: slot is shorter than varbuf. After `s` iterations
+the slot is at `p_LBM+1+s` showing the RBM `6`, but varbuf still has
+`c - s` un-erased ones starting at position `M+1+s`. The post-loop:
+step 0 transits to state 4 on `6`, phase 4 scans right to `7` at `M`,
+phase 5-mismatch scans right past the `s` erased zeros and hits the
+first un-erased `1` at `M+1+s`, halt-reject in state 7. -/
+
+/-- Abstract post-loop run for the **short** case: from state 0 at
+slot RBM (with un-erased varbuf `1` at `M+1+s`), reach reject-halt
+state 7 at `M+1+s` in `(M-p_LBM) + 2` steps, leaving the tape
+untouched. -/
+private theorem compareUnaryAtMarkerTM_short_post_loop_run
+    (sig : Nat) (h_sig : 12 ≤ sig)
+    (left rIter : List Nat) (p_LBM M s : Nat)
+    (h_pos1 : p_LBM + 1 + s < M)
+    (h_buf_one_pos : M + 1 + s < rIter.length)
+    (h_RBM : ∃ (h : p_LBM + 1 + s < rIter.length),
+        rIter.get ⟨p_LBM + 1 + s, h⟩ = 6)
+    (h_M : ∃ (h : M < rIter.length), rIter.get ⟨M, h⟩ = 7)
+    (h_buf_one : rIter.get ⟨M + 1 + s, h_buf_one_pos⟩ = 1)
+    (h_varbuf_zeros : ∀ k, k < s → ∃ (h_lt : M + 1 + k < rIter.length),
+        rIter.get ⟨M + 1 + k, h_lt⟩ = 0)
+    (h_mid_between : ∀ k, p_LBM + 1 + s < k → k < M →
+        ∃ (h_lt : k < rIter.length),
+          rIter.get ⟨k, h_lt⟩ < sig ∧
+            rIter.get ⟨k, h_lt⟩ ≠ 7) :
+    runFlatTM ((M - p_LBM) + 2) (compareUnaryAtMarkerTM sig)
+        { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+      some { state_idx := 7, tapes := [(left, M + 1 + s, rIter)] } := by
+  rcases h_RBM with ⟨h_RBM_lt, h_get_RBM⟩
+  rcases h_M with ⟨h_M_lt, h_get_M⟩
+  have h_6_lt_sig : (6 : Nat) < sig :=
+    Nat.lt_of_lt_of_le (by decide : (6 : Nat) < 12) h_sig
+  -- Step 0: read 6 → state 4.
+  have h_step0 :
+      stepFlatTM (compareUnaryAtMarkerTM sig)
+          { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } :=
+    compareUnaryAtMarkerTM_state0_step_six sig left rIter (p_LBM + 1 + s)
+      h_RBM_lt h_get_RBM
+  have h_run0 :
+      runFlatTM 1 (compareUnaryAtMarkerTM sig)
+          { state_idx := 0, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } := by
+    rw [runFlatTM_compareUnary_state0_unfold sig 0 _ _ h_step0]; rfl
+  -- Phase 4: scan right p_LBM+1+s to 7 at M (steps = (M-p_LBM) - s).
+  have h_in_range4 :
+      (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) < rIter.length := by
+    have h_eq : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) = M := by omega
+    rw [h_eq]; exact h_M_lt
+  have h_marker4 :
+      rIter.get ⟨(p_LBM + 1 + s) + (M - (p_LBM + 1 + s)), h_in_range4⟩ = 7 := by
+    have h_eq : (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) = M := by omega
+    have heq : (⟨(p_LBM + 1 + s) + (M - (p_LBM + 1 + s)), h_in_range4⟩
+            : Fin rIter.length) = ⟨M, h_M_lt⟩ :=
+      Fin.eq_of_val_eq h_eq
+    rw [heq]; exact h_get_M
+  have h_mid4 :
+      ∀ k, k < M - (p_LBM + 1 + s) →
+          ∃ (h_lt : (p_LBM + 1 + s) + k < rIter.length),
+            rIter.get ⟨(p_LBM + 1 + s) + k, h_lt⟩ < sig ∧
+              rIter.get ⟨(p_LBM + 1 + s) + k, h_lt⟩ ≠ 7 := by
+    intro k hk
+    by_cases h_k_zero : k = 0
+    · subst h_k_zero
+      have h_pos_lt_rIter : (p_LBM + 1 + s) + 0 < rIter.length := by
+        rw [Nat.add_zero]; exact h_RBM_lt
+      have heq : (⟨(p_LBM + 1 + s) + 0, h_pos_lt_rIter⟩ : Fin rIter.length) =
+          ⟨p_LBM + 1 + s, h_RBM_lt⟩ := Fin.eq_of_val_eq (Nat.add_zero _)
+      refine ⟨h_pos_lt_rIter, ?_, ?_⟩
+      · rw [heq, h_get_RBM]; exact h_6_lt_sig
+      · rw [heq, h_get_RBM]; decide
+    · have h_k_pos : 0 < k := Nat.pos_of_ne_zero h_k_zero
+      have h_pos_gt_RBM : p_LBM + 1 + s < (p_LBM + 1 + s) + k := by omega
+      have h_pos_lt_M : (p_LBM + 1 + s) + k < M := by omega
+      exact h_mid_between ((p_LBM + 1 + s) + k) h_pos_gt_RBM h_pos_lt_M
+  have h_run4_raw :
+      runFlatTM ((M - (p_LBM + 1 + s)) + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 5,
+               tapes := [(left, (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) + 1,
+                 rIter)] } :=
+    compareUnaryAtMarkerTM_state4_phase_run sig left rIter
+      (M - (p_LBM + 1 + s)) (p_LBM + 1 + s) h_in_range4 h_marker4 h_mid4
+  have h_gap4_succ : (M - (p_LBM + 1 + s)) + 1 = (M - p_LBM) - s := by omega
+  have h_head4_eq :
+      (p_LBM + 1 + s) + (M - (p_LBM + 1 + s)) + 1 = M + 1 := by omega
+  have h_run4 :
+      runFlatTM ((M - p_LBM) - s) (compareUnaryAtMarkerTM sig)
+          { state_idx := 4, tapes := [(left, p_LBM + 1 + s, rIter)] } =
+        some { state_idx := 5, tapes := [(left, M + 1, rIter)] } := by
+    rw [← h_gap4_succ, h_run4_raw, h_head4_eq]
+  -- Phase 5-mismatch: gap = s, scan right from M+1 to `1` at M+1+s.
+  have h_mid5 :
+      ∀ k, k < s → ∃ (h_lt : (M + 1) + k < rIter.length),
+        rIter.get ⟨(M + 1) + k, h_lt⟩ = 0 := h_varbuf_zeros
+  have h_run5 :
+      runFlatTM (s + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 5, tapes := [(left, M + 1, rIter)] } =
+        some { state_idx := 7, tapes := [(left, M + 1 + s, rIter)] } :=
+    compareUnaryAtMarkerTM_state5_phase_run_mismatch sig left rIter s (M + 1)
+      h_buf_one_pos h_buf_one h_mid5
+  -- Chain: total = 1 + ((M-p_LBM) - s) + (s + 1) = (M-p_LBM) + 2.
+  -- (Holds because s ≤ M - p_LBM, from h_pos1.)
+  have h_total_eq :
+      (M - p_LBM) + 2 = 1 + (((M - p_LBM) - s) + (s + 1)) := by omega
+  rw [h_total_eq]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) 1
+      (((M - p_LBM) - s) + (s + 1)) _ _ h_run0]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) ((M - p_LBM) - s)
+      (s + 1) _ _ h_run4]
+  exact h_run5
+
+/-! ### Main run lemma — short case
+
+When `slot_size = s < varbuf_size = c`, the TM halts in reject state
+7 at varbuf head `M+1+s` after exactly `s*(2D+1) + (D + 2)` steps,
+where `D = M - p_LBM`. The structure mirrors `_run_match`:
+shared iteration loop in the inductive step (each iteration via
+`iteration_run`), short post-loop in the base case. -/
+
+/-- **Short run lemma**: `compareUnaryAtMarkerTM` halts reject (state
+7) in `s * (2D + 1) + (D + 2)` steps when the slot has `s` ones and
+varbuf has `c > s` ones. Stated by induction on the remaining
+iterations `u`. -/
+theorem compareUnaryAtMarkerTM_run_short
+    (sig : Nat) (h_sig : 12 ≤ sig)
+    (left right : List Nat) (p_LBM M s c : Nat)
+    (h_pos1 : p_LBM + 1 + s < M)
+    (h_s_lt_c : s < c)
+    (h_pos2 : M + 1 + c < right.length)
+    (h_M_marker : ∃ (h : M < right.length), right.get ⟨M, h⟩ = 7)
+    (h_RBM : ∃ (h : p_LBM + 1 + s < right.length),
+        right.get ⟨p_LBM + 1 + s, h⟩ = 6)
+    (h_slot_ones : ∀ j, j < s → ∃ (h : p_LBM + 1 + j < right.length),
+        right.get ⟨p_LBM + 1 + j, h⟩ = 1)
+    (h_varbuf_ones : ∀ j, j < c → ∃ (h : M + 1 + j < right.length),
+        right.get ⟨M + 1 + j, h⟩ = 1)
+    (h_mid_between : ∀ k, p_LBM + 1 + s < k → k < M →
+        ∃ (h : k < right.length),
+          right.get ⟨k, h⟩ < sig ∧
+            right.get ⟨k, h⟩ ≠ 7 ∧
+            right.get ⟨k, h⟩ ≠ 11) :
+    ∀ (u i_start : Nat), i_start + u = s →
+      runFlatTM (u * (2 * (M - p_LBM) + 1) + ((M - p_LBM) + 2))
+          (compareUnaryAtMarkerTM sig)
+          { state_idx := 0,
+            tapes := [(left, p_LBM + 1 + i_start,
+              compareUnaryTape_iter right p_LBM M i_start)] } =
+        some { state_idx := 7,
+               tapes := [(left, M + 1 + s,
+                 compareUnaryTape_iter right p_LBM M s)] } := by
+  rcases h_M_marker with ⟨h_M_lt, h_get_M⟩
+  rcases h_RBM with ⟨h_RBM_lt, h_get_RBM⟩
+  have h_p_lt_M : p_LBM < M := by omega
+  have h_p_le_M : p_LBM + s ≤ M := by omega
+  intro u
+  induction u with
+  | zero =>
+      intro i_start h_sum
+      have h_i_eq_s : i_start = s := by omega
+      rw [h_i_eq_s]
+      -- u = 0, i_start = s. Reduce to _short_post_loop_run.
+      have h_total_eq :
+          0 * (2 * (M - p_LBM) + 1) + ((M - p_LBM) + 2) =
+            (M - p_LBM) + 2 := by ring
+      rw [h_total_eq]
+      have h_rIter_len :
+          (compareUnaryTape_iter right p_LBM M s).length = right.length :=
+        compareUnaryTape_iter_length _ _ _ _
+      -- Position bounds.
+      have h_buf_one_pos_orig : M + 1 + s < right.length := by
+        have h1 : M + 1 + s < M + 1 + c := by omega
+        exact Nat.lt_trans h1 h_pos2
+      have h_buf_one_pos_rIter :
+          M + 1 + s < (compareUnaryTape_iter right p_LBM M s).length := by
+        rw [h_rIter_len]; exact h_buf_one_pos_orig
+      have h_RBM_lt_rIter :
+          p_LBM + 1 + s < (compareUnaryTape_iter right p_LBM M s).length := by
+        rw [h_rIter_len]; exact h_RBM_lt
+      have h_M_lt_rIter :
+          M < (compareUnaryTape_iter right p_LBM M s).length := by
+        rw [h_rIter_len]; exact h_M_lt
+      -- rIter values.
+      have h_get_RBM_rIter :
+          (compareUnaryTape_iter right p_LBM M s).get
+              ⟨p_LBM + 1 + s, h_RBM_lt_rIter⟩ = 6 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          (p_LBM + 1 + s) h_RBM_lt h_RBM_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_RBM
+      have h_get_M_rIter :
+          (compareUnaryTape_iter right p_LBM M s).get ⟨M, h_M_lt_rIter⟩ = 7 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          M h_M_lt h_M_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_M
+      -- The un-erased varbuf `1` at M+1+s: from h_varbuf_ones s.
+      have h_buf_one_rIter :
+          (compareUnaryTape_iter right p_LBM M s).get
+              ⟨M + 1 + s, h_buf_one_pos_rIter⟩ = 1 := by
+        rcases h_varbuf_ones s h_s_lt_c with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          (M + 1 + s) h_orig_lt h_buf_one_pos_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]
+        have heq : (⟨M + 1 + s, h_orig_lt⟩ : Fin right.length) =
+            ⟨M + 1 + s, h_buf_one_pos_orig⟩ := rfl
+        exact h_orig_one
+      -- Erased varbuf zeros for k < s.
+      have h_varbuf_zeros_rIter :
+          ∀ k, k < s →
+              ∃ (h_lt : M + 1 + k <
+                  (compareUnaryTape_iter right p_LBM M s).length),
+                (compareUnaryTape_iter right p_LBM M s).get
+                    ⟨M + 1 + k, h_lt⟩ = 0 := by
+        intro k hk
+        have h_pos_lt_orig : M + 1 + k < right.length := by
+          have h1 : M + 1 + k < M + 1 + c := by omega
+          exact Nat.lt_trans h1 h_pos2
+        have h_pos_lt_rIter :
+            M + 1 + k < (compareUnaryTape_iter right p_LBM M s).length := by
+          rw [h_rIter_len]; exact h_pos_lt_orig
+        refine ⟨h_pos_lt_rIter, ?_⟩
+        exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M s k hk
+          h_p_le_M h_pos_lt_rIter
+      -- Mid-between zone (drop ≠ 11).
+      have h_mid_between_rIter :
+          ∀ k, p_LBM + 1 + s < k → k < M →
+              ∃ (h_lt : k < (compareUnaryTape_iter right p_LBM M s).length),
+                (compareUnaryTape_iter right p_LBM M s).get ⟨k, h_lt⟩ < sig ∧
+                  (compareUnaryTape_iter right p_LBM M s).get ⟨k, h_lt⟩ ≠ 7 := by
+        intro k hk_gt hk_lt
+        rcases h_mid_between k hk_gt hk_lt with ⟨h_orig_lt, h_lt_sig, h_ne7, _⟩
+        have h_pos_lt_rIter :
+            k < (compareUnaryTape_iter right p_LBM M s).length := by
+          rw [h_rIter_len]; exact h_orig_lt
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M s
+          k h_orig_lt h_pos_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        refine ⟨h_pos_lt_rIter, ?_, ?_⟩
+        · rw [hget]; exact h_lt_sig
+        · rw [hget]; exact h_ne7
+      exact compareUnaryAtMarkerTM_short_post_loop_run sig h_sig left
+        (compareUnaryTape_iter right p_LBM M s) p_LBM M s h_pos1
+        h_buf_one_pos_rIter
+        ⟨h_RBM_lt_rIter, h_get_RBM_rIter⟩
+        ⟨h_M_lt_rIter, h_get_M_rIter⟩
+        h_buf_one_rIter h_varbuf_zeros_rIter h_mid_between_rIter
+  | succ u ih =>
+      intro i_start h_sum
+      have h_i_lt_s : i_start < s := by omega
+      have h_sum' : (i_start + 1) + u = s := by omega
+      have h_h_lt_M_iter : p_LBM + 1 + i_start < M := by omega
+      have h_rIter_len :
+          (compareUnaryTape_iter right p_LBM M i_start).length = right.length :=
+        compareUnaryTape_iter_length _ _ _ _
+      have h_M_lt_iter :
+          M < (compareUnaryTape_iter right p_LBM M i_start).length := by
+        rw [h_rIter_len]; exact h_M_lt
+      have h_buf_in_range_iter :
+          M + 1 + i_start <
+              (compareUnaryTape_iter right p_LBM M i_start).length := by
+        rw [h_rIter_len]
+        have h1 : M + 1 + i_start < M + 1 + c := by omega
+        exact Nat.lt_trans h1 h_pos2
+      have h_get_h_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨p_LBM + 1 + i_start,
+                Nat.lt_trans h_h_lt_M_iter h_M_lt_iter⟩ = 1 := by
+        rcases h_slot_ones i_start h_i_lt_s with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          (p_LBM + 1 + i_start) h_orig_lt
+          (Nat.lt_trans h_h_lt_M_iter h_M_lt_iter)
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_orig_one
+      have h_get_M_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨M, h_M_lt_iter⟩ = 7 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          M h_M_lt h_M_lt_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_M
+      have h_get_buf_one_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨M + 1 + i_start, h_buf_in_range_iter⟩ = 1 := by
+        have h_i_lt_c : i_start < c := by omega
+        rcases h_varbuf_ones i_start h_i_lt_c with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          (M + 1 + i_start) h_orig_lt h_buf_in_range_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_orig_one
+      have h_buf_zeros_iter :
+          ∀ j, j < i_start → ∃ (h_lt : M + 1 + j <
+              (compareUnaryTape_iter right p_LBM M i_start).length),
+            (compareUnaryTape_iter right p_LBM M i_start).get
+                ⟨M + 1 + j, h_lt⟩ = 0 := by
+        intro j hj
+        have h_lt_iter :
+            M + 1 + j < (compareUnaryTape_iter right p_LBM M i_start).length := by
+          rw [h_rIter_len]
+          have h1 : M + 1 + j < M + 1 + c := by omega
+          exact Nat.lt_trans h1 h_pos2
+        refine ⟨h_lt_iter, ?_⟩
+        have h_dist : p_LBM + i_start ≤ M := by omega
+        exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M i_start j hj
+          h_dist h_lt_iter
+      have h_mid_iter :
+          ∀ k, 1 ≤ k → k < M - (p_LBM + 1 + i_start) →
+              ∃ (h_lt : (p_LBM + 1 + i_start) + k <
+                  (compareUnaryTape_iter right p_LBM M i_start).length),
+                (compareUnaryTape_iter right p_LBM M i_start).get
+                    ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ < sig ∧
+                  (compareUnaryTape_iter right p_LBM M i_start).get
+                      ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 7 ∧
+                  (compareUnaryTape_iter right p_LBM M i_start).get
+                      ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 11 := by
+        intro k hk_pos hk_lt
+        have h_pos_lt_M : (p_LBM + 1 + i_start) + k < M := by omega
+        have h_pos_lt_orig : (p_LBM + 1 + i_start) + k < right.length :=
+          Nat.lt_trans h_pos_lt_M h_M_lt
+        have h_pos_lt_iter : (p_LBM + 1 + i_start) + k <
+            (compareUnaryTape_iter right p_LBM M i_start).length := by
+          rw [h_rIter_len]; exact h_pos_lt_orig
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          ((p_LBM + 1 + i_start) + k) h_pos_lt_orig h_pos_lt_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        refine ⟨h_pos_lt_iter, ?_, ?_, ?_⟩
+        all_goals {
+          rw [hget]
+          by_cases h_in_slot : i_start + k < s
+          · rcases h_slot_ones (i_start + k) h_in_slot with ⟨h_orig_lt', h_one⟩
+            have h_pos_eq : p_LBM + 1 + (i_start + k) =
+                (p_LBM + 1 + i_start) + k := by ring
+            have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                    : Fin right.length) =
+                ⟨p_LBM + 1 + (i_start + k), h_orig_lt'⟩ :=
+              Fin.eq_of_val_eq h_pos_eq.symm
+            rw [heq, h_one]
+            first
+              | exact Nat.lt_of_lt_of_le (by decide : (1 : Nat) < 12) h_sig
+              | decide
+          · push_neg at h_in_slot
+            by_cases h_at_RBM : i_start + k = s
+            · have h_pos_eq : (p_LBM + 1 + i_start) + k = p_LBM + 1 + s := by omega
+              have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                      : Fin right.length) =
+                  ⟨p_LBM + 1 + s, h_RBM_lt⟩ := Fin.eq_of_val_eq h_pos_eq
+              rw [heq, h_get_RBM]
+              first
+                | exact Nat.lt_of_lt_of_le (by decide : (6 : Nat) < 12) h_sig
+                | decide
+            · have h_pos_gt_RBM :
+                  p_LBM + 1 + s < (p_LBM + 1 + i_start) + k := by omega
+              rcases h_mid_between ((p_LBM + 1 + i_start) + k) h_pos_gt_RBM
+                  h_pos_lt_M
+                with ⟨h_orig_lt', h_lt_sig, h_ne7, h_ne11⟩
+              have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                      : Fin right.length) =
+                  ⟨(p_LBM + 1 + i_start) + k, h_orig_lt'⟩ := rfl
+              rw [heq]
+              first | exact h_lt_sig | exact h_ne7 | exact h_ne11
+        }
+      have h_iter_run :=
+        compareUnaryAtMarkerTM_iteration_run sig h_sig left
+          (compareUnaryTape_iter right p_LBM M i_start)
+          (p_LBM + 1 + i_start) M i_start h_h_lt_M_iter h_M_lt_iter
+          h_buf_in_range_iter h_get_h_iter h_get_M_iter h_get_buf_one_iter
+          h_buf_zeros_iter h_mid_iter
+      have h_tape_succ :
+          ((compareUnaryTape_iter right p_LBM M i_start).set
+              (p_LBM + 1 + i_start) 0).set (M + 1 + i_start) 0 =
+            compareUnaryTape_iter right p_LBM M (i_start + 1) := by
+        rw [compareUnaryTape_iter_succ]
+      have h_iter_run' :
+          runFlatTM (3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start)
+              (compareUnaryAtMarkerTM sig)
+              { state_idx := 0,
+                tapes := [(left, p_LBM + 1 + i_start,
+                  compareUnaryTape_iter right p_LBM M i_start)] } =
+            some { state_idx := 0,
+                   tapes := [(left, (p_LBM + 1 + i_start) + 1,
+                     compareUnaryTape_iter right p_LBM M (i_start + 1))] } := by
+        rw [h_iter_run, h_tape_succ]
+      have h_iter_steps :
+          3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start =
+            2 * (M - p_LBM) + 1 := by omega
+      have h_head_eq :
+          (p_LBM + 1 + i_start) + 1 = p_LBM + 1 + (i_start + 1) := by ring
+      have h_iter_run'' :
+          runFlatTM (2 * (M - p_LBM) + 1) (compareUnaryAtMarkerTM sig)
+              { state_idx := 0,
+                tapes := [(left, p_LBM + 1 + i_start,
+                  compareUnaryTape_iter right p_LBM M i_start)] } =
+            some { state_idx := 0,
+                   tapes := [(left, p_LBM + 1 + (i_start + 1),
+                     compareUnaryTape_iter right p_LBM M (i_start + 1))] } := by
+        rw [← h_iter_steps, ← h_head_eq]; exact h_iter_run'
+      have h_ih := ih (i_start + 1) h_sum'
+      have h_total_eq :
+          (u + 1) * (2 * (M - p_LBM) + 1) + ((M - p_LBM) + 2) =
+            (2 * (M - p_LBM) + 1) +
+              (u * (2 * (M - p_LBM) + 1) + ((M - p_LBM) + 2)) := by ring
+      rw [h_total_eq]
+      rw [runFlatTM_compose (compareUnaryAtMarkerTM sig)
+          (2 * (M - p_LBM) + 1)
+          (u * (2 * (M - p_LBM) + 1) + ((M - p_LBM) + 2))
+          _ _ h_iter_run'']
+      exact h_ih
+
+/-! ### Post-loop helper — long case
+
+The "long" case: slot is longer than varbuf. After `c` iterations,
+the varbuf is exhausted (all zeros) but the slot still has un-erased
+`1`s starting at position `p_LBM+1+c`. The post-loop:
+step 0 reads the slot `1`, writes cursor `11`, transits to state 1;
+phase 1 scans right to the marker `7` at `M`; phase 2-eight scans
+the (now-all-zero) varbuf to the end-marker `8` at `M+1+c`,
+transiting to state 6 cleanup; phase 6 scans left back to the
+cursor at `p_LBM+1+c`, writes `0` (clearing the cursor), halt-reject
+in state 7.
+
+Final tape: `rIter.set (p_LBM+1+c) 0` (cursor written then cleared,
+net effect is the slot `1` erased). -/
+
+/-- Abstract post-loop run for the **long** case: from state 0 at
+slot's next `1` (varbuf already all zero), reach reject-halt state 7
+at `p_LBM+1+c` in `2*(M-p_LBM) + 2` steps, leaving the tape with
+the slot `1` at `p_LBM+1+c` erased to `0`. -/
+private theorem compareUnaryAtMarkerTM_long_post_loop_run
+    (sig : Nat) (h_sig : 12 ≤ sig)
+    (left rIter : List Nat) (p_LBM M c : Nat)
+    (h_pos1 : p_LBM + 1 + c < M)
+    (h_pos2 : M + 1 + c < rIter.length)
+    (h_slot_one : ∃ (h : p_LBM + 1 + c < rIter.length),
+        rIter.get ⟨p_LBM + 1 + c, h⟩ = 1)
+    (h_M : ∃ (h : M < rIter.length), rIter.get ⟨M, h⟩ = 7)
+    (h_8 : rIter.get ⟨M + 1 + c, h_pos2⟩ = 8)
+    (h_varbuf_zeros : ∀ k, k < c → ∃ (h_lt : M + 1 + k < rIter.length),
+        rIter.get ⟨M + 1 + k, h_lt⟩ = 0)
+    (h_mid_between : ∀ k, p_LBM + 1 + c < k → k < M →
+        ∃ (h_lt : k < rIter.length),
+          rIter.get ⟨k, h_lt⟩ < sig ∧
+            rIter.get ⟨k, h_lt⟩ ≠ 7 ∧
+            rIter.get ⟨k, h_lt⟩ ≠ 11) :
+    runFlatTM (2 * (M - p_LBM) + 2) (compareUnaryAtMarkerTM sig)
+        { state_idx := 0, tapes := [(left, p_LBM + 1 + c, rIter)] } =
+      some { state_idx := 7,
+             tapes := [(left, p_LBM + 1 + c,
+               rIter.set (p_LBM + 1 + c) 0)] } := by
+  rcases h_slot_one with ⟨h_slot_lt, h_get_slot⟩
+  rcases h_M with ⟨h_M_lt, h_get_M⟩
+  have h_11_lt_sig : (11 : Nat) < sig :=
+    Nat.lt_of_lt_of_le (by decide : (11 : Nat) < 12) h_sig
+  have h_8_lt_sig : (8 : Nat) < sig :=
+    Nat.lt_of_lt_of_le (by decide : (8 : Nat) < 12) h_sig
+  have h_7_lt_sig : (7 : Nat) < sig :=
+    Nat.lt_of_lt_of_le (by decide : (7 : Nat) < 12) h_sig
+  have h_0_lt_sig : (0 : Nat) < sig :=
+    Nat.lt_of_lt_of_le (by decide : (0 : Nat) < 12) h_sig
+  -- Step 0: read 1 at p_LBM+1+c, write 11, Rmove, → state 1.
+  have h_step0_raw :=
+    compareUnaryAtMarkerTM_state0_step_one sig left rIter (p_LBM + 1 + c)
+      h_slot_lt h_get_slot
+  have h_step0 :
+      stepFlatTM (compareUnaryAtMarkerTM sig)
+          { state_idx := 0, tapes := [(left, p_LBM + 1 + c, rIter)] } =
+        some { state_idx := 1
+               tapes := [(left, (p_LBM + 1 + c) + 1,
+                 rIter.set (p_LBM + 1 + c) 11)] } := by
+    rw [h_step0_raw, writeCur_eleven_eq' left (p_LBM + 1 + c) rIter h_slot_lt]
+    rfl
+  have h_run0 :
+      runFlatTM 1 (compareUnaryAtMarkerTM sig)
+          { state_idx := 0, tapes := [(left, p_LBM + 1 + c, rIter)] } =
+        some { state_idx := 1
+               tapes := [(left, (p_LBM + 1 + c) + 1,
+                 rIter.set (p_LBM + 1 + c) 11)] } := by
+    rw [runFlatTM_compareUnary_state0_unfold sig 0 _ _ h_step0]; rfl
+  have hrC_len : (rIter.set (p_LBM + 1 + c) 11).length = rIter.length :=
+    List.length_set
+  have h_M_lt_rC : M < (rIter.set (p_LBM + 1 + c) 11).length := by
+    rw [hrC_len]; exact h_M_lt
+  have h_slot_lt_rC :
+      p_LBM + 1 + c < (rIter.set (p_LBM + 1 + c) 11).length := by
+    rw [hrC_len]; exact h_slot_lt
+  -- Phase 1: scan right from (p_LBM+1+c)+1 to 7 at M.
+  -- gap = M - ((p_LBM+1+c)+1); steps = gap+1 = M - (p_LBM+1+c).
+  have h_in_range1 :
+      ((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)) <
+        (rIter.set (p_LBM + 1 + c) 11).length := by
+    rw [hrC_len]
+    have h_eq : ((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)) = M := by omega
+    rw [h_eq]; exact h_M_lt
+  have h_marker1 :
+      (rIter.set (p_LBM + 1 + c) 11).get
+          ⟨((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)), h_in_range1⟩ = 7 := by
+    have h_eq : ((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)) = M := by omega
+    have heq : (⟨((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)), h_in_range1⟩
+            : Fin (rIter.set (p_LBM + 1 + c) 11).length) =
+        ⟨M, h_M_lt_rC⟩ := Fin.eq_of_val_eq h_eq
+    rw [heq]
+    show (rIter.set (p_LBM + 1 + c) 11)[M]'h_M_lt_rC = 7
+    have h_ne : p_LBM + 1 + c ≠ M := by omega
+    rw [List.getElem_set_ne h_ne]
+    exact h_get_M
+  have h_mid1 :
+      ∀ k, k < M - ((p_LBM + 1 + c) + 1) →
+          ∃ (h_lt : ((p_LBM + 1 + c) + 1) + k <
+              (rIter.set (p_LBM + 1 + c) 11).length),
+            (rIter.set (p_LBM + 1 + c) 11).get
+                ⟨((p_LBM + 1 + c) + 1) + k, h_lt⟩ < sig ∧
+              (rIter.set (p_LBM + 1 + c) 11).get
+                  ⟨((p_LBM + 1 + c) + 1) + k, h_lt⟩ ≠ 7 := by
+    intro k hk
+    have h_pos_lt_M : ((p_LBM + 1 + c) + 1) + k < M := by omega
+    have h_pos_gt : p_LBM + 1 + c < ((p_LBM + 1 + c) + 1) + k := by omega
+    rcases h_mid_between (((p_LBM + 1 + c) + 1) + k) h_pos_gt h_pos_lt_M with
+      ⟨h_orig_lt, h_lt_sig, h_ne7, _⟩
+    have h_pos_lt_rC : ((p_LBM + 1 + c) + 1) + k <
+        (rIter.set (p_LBM + 1 + c) 11).length := by
+      rw [hrC_len]; exact h_orig_lt
+    have h_ne : p_LBM + 1 + c ≠ ((p_LBM + 1 + c) + 1) + k := by omega
+    refine ⟨h_pos_lt_rC, ?_, ?_⟩
+    · show (rIter.set (p_LBM + 1 + c) 11)[((p_LBM + 1 + c) + 1) + k]'h_pos_lt_rC < sig
+      rw [List.getElem_set_ne h_ne]
+      exact h_lt_sig
+    · show (rIter.set (p_LBM + 1 + c) 11)[((p_LBM + 1 + c) + 1) + k]'h_pos_lt_rC ≠ 7
+      rw [List.getElem_set_ne h_ne]
+      exact h_ne7
+  have h_run1_raw :
+      runFlatTM ((M - ((p_LBM + 1 + c) + 1)) + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 1,
+            tapes := [(left, (p_LBM + 1 + c) + 1,
+              rIter.set (p_LBM + 1 + c) 11)] } =
+        some { state_idx := 2,
+               tapes := [(left,
+                 ((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)) + 1,
+                 rIter.set (p_LBM + 1 + c) 11)] } :=
+    compareUnaryAtMarkerTM_state1_phase_run sig left
+      (rIter.set (p_LBM + 1 + c) 11)
+      (M - ((p_LBM + 1 + c) + 1)) ((p_LBM + 1 + c) + 1)
+      h_in_range1 h_marker1 h_mid1
+  have h_gap1_succ :
+      (M - ((p_LBM + 1 + c) + 1)) + 1 = M - (p_LBM + 1 + c) := by omega
+  have h_head1_eq :
+      ((p_LBM + 1 + c) + 1) + (M - ((p_LBM + 1 + c) + 1)) + 1 = M + 1 := by omega
+  have h_run1 :
+      runFlatTM (M - (p_LBM + 1 + c)) (compareUnaryAtMarkerTM sig)
+          { state_idx := 1,
+            tapes := [(left, (p_LBM + 1 + c) + 1,
+              rIter.set (p_LBM + 1 + c) 11)] } =
+        some { state_idx := 2,
+               tapes := [(left, M + 1, rIter.set (p_LBM + 1 + c) 11)] } := by
+    rw [← h_gap1_succ, h_run1_raw, h_head1_eq]
+  -- Phase 2-eight: scan right from M+1 past zeros to 8 at M+1+c.
+  -- p = M+1, gap = c, steps = c+1.
+  have h_pos2_rC : M + 1 + c < (rIter.set (p_LBM + 1 + c) 11).length := by
+    rw [hrC_len]; exact h_pos2
+  have h_8_rC :
+      (rIter.set (p_LBM + 1 + c) 11).get ⟨M + 1 + c, h_pos2_rC⟩ = 8 := by
+    show (rIter.set (p_LBM + 1 + c) 11)[M + 1 + c]'h_pos2_rC = 8
+    have h_ne : p_LBM + 1 + c ≠ M + 1 + c := by omega
+    rw [List.getElem_set_ne h_ne]
+    exact h_8
+  have h_mid2 :
+      ∀ k, k < c → ∃ (h_lt : (M + 1) + k <
+          (rIter.set (p_LBM + 1 + c) 11).length),
+        (rIter.set (p_LBM + 1 + c) 11).get ⟨(M + 1) + k, h_lt⟩ = 0 := by
+    intro k hk
+    rcases h_varbuf_zeros k hk with ⟨h_orig_lt, h_zero⟩
+    have h_pos_lt_rC : (M + 1) + k < (rIter.set (p_LBM + 1 + c) 11).length := by
+      rw [hrC_len]; exact h_orig_lt
+    refine ⟨h_pos_lt_rC, ?_⟩
+    show (rIter.set (p_LBM + 1 + c) 11)[(M + 1) + k]'h_pos_lt_rC = 0
+    have h_ne : p_LBM + 1 + c ≠ (M + 1) + k := by omega
+    rw [List.getElem_set_ne h_ne]
+    exact h_zero
+  have h_run2 :
+      runFlatTM (c + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 2,
+            tapes := [(left, M + 1, rIter.set (p_LBM + 1 + c) 11)] } =
+        some { state_idx := 6,
+               tapes := [(left, M + 1 + c, rIter.set (p_LBM + 1 + c) 11)] } :=
+    compareUnaryAtMarkerTM_state2_phase_run_eight sig left
+      (rIter.set (p_LBM + 1 + c) 11) c (M + 1) h_pos2_rC h_8_rC h_mid2
+  -- Phase 6: scan left from M+1+c to cursor 11 at p_LBM+1+c.
+  -- head = M+1+c, gap = M - p_LBM, steps = gap+1 = (M - p_LBM) + 1.
+  have h_gap6_le : M - p_LBM ≤ M + 1 + c := by omega
+  have h_target_pos_eq : (M + 1 + c) - (M - p_LBM) = p_LBM + 1 + c := by omega
+  have h_target_lt :
+      (M + 1 + c) - (M - p_LBM) < (rIter.set (p_LBM + 1 + c) 11).length := by
+    rw [h_target_pos_eq]; exact h_slot_lt_rC
+  have h_get_target :
+      (rIter.set (p_LBM + 1 + c) 11).get
+          ⟨(M + 1 + c) - (M - p_LBM), h_target_lt⟩ = 11 := by
+    have heq : (⟨(M + 1 + c) - (M - p_LBM), h_target_lt⟩
+            : Fin (rIter.set (p_LBM + 1 + c) 11).length) =
+        ⟨p_LBM + 1 + c, h_slot_lt_rC⟩ := Fin.eq_of_val_eq h_target_pos_eq
+    rw [heq]
+    show (rIter.set (p_LBM + 1 + c) 11)[p_LBM + 1 + c]'h_slot_lt_rC = 11
+    rw [List.getElem_set_self]
+  have h_before6 :
+      ∀ k, k < M - p_LBM →
+          ∃ (h : (M + 1 + c) - k < (rIter.set (p_LBM + 1 + c) 11).length),
+            (rIter.set (p_LBM + 1 + c) 11).get ⟨(M + 1 + c) - k, h⟩ < sig ∧
+              (rIter.set (p_LBM + 1 + c) 11).get ⟨(M + 1 + c) - k, h⟩ ≠ 11 := by
+    intro k hk
+    have h_pos_lt_orig : (M + 1 + c) - k < rIter.length :=
+      Nat.lt_of_le_of_lt (Nat.sub_le _ _) h_pos2
+    have h_pos_lt_rC : (M + 1 + c) - k <
+        (rIter.set (p_LBM + 1 + c) 11).length := by
+      rw [hrC_len]; exact h_pos_lt_orig
+    have h_pos_ne_cursor : p_LBM + 1 + c ≠ (M + 1 + c) - k := by omega
+    -- Reduce rC[pos] to rIter[pos] via set_ne.
+    have h_get_eq :
+        (rIter.set (p_LBM + 1 + c) 11)[(M + 1 + c) - k]'h_pos_lt_rC =
+          rIter[(M + 1 + c) - k]'h_pos_lt_orig := by
+      rw [List.getElem_set_ne h_pos_ne_cursor]
+    refine ⟨h_pos_lt_rC, ?_, ?_⟩
+    · show (rIter.set (p_LBM + 1 + c) 11)[(M + 1 + c) - k]'h_pos_lt_rC < sig
+      rw [h_get_eq]
+      -- Now show: rIter[(M+1+c)-k] < sig. Case split on k.
+      by_cases h_k0 : k = 0
+      · subst h_k0
+        have heq : (⟨(M + 1 + c) - 0, h_pos_lt_orig⟩ : Fin rIter.length) =
+            ⟨M + 1 + c, h_pos2⟩ := Fin.eq_of_val_eq (Nat.sub_zero _)
+        show rIter.get ⟨(M + 1 + c) - 0, h_pos_lt_orig⟩ < sig
+        rw [heq, h_8]; exact h_8_lt_sig
+      · have h_k_pos : 1 ≤ k := Nat.one_le_iff_ne_zero.mpr h_k0
+        by_cases h_k_le_c : k ≤ c
+        · have h_c_pos : 1 ≤ c := Nat.le_trans h_k_pos h_k_le_c
+          have h_ck_lt : c - k < c := by omega
+          rcases h_varbuf_zeros (c - k) h_ck_lt with ⟨h_orig_lt, h_zero⟩
+          have h_pos_eq : (M + 1 + c) - k = M + 1 + (c - k) := by omega
+          have heq : (⟨(M + 1 + c) - k, h_pos_lt_orig⟩ : Fin rIter.length) =
+              ⟨M + 1 + (c - k), h_orig_lt⟩ := Fin.eq_of_val_eq h_pos_eq
+          show rIter.get ⟨(M + 1 + c) - k, h_pos_lt_orig⟩ < sig
+          rw [heq, h_zero]; exact h_0_lt_sig
+        · push_neg at h_k_le_c
+          by_cases h_k_eq : k = c + 1
+          · subst h_k_eq
+            have h_pos_eq : (M + 1 + c) - (c + 1) = M := by omega
+            have heq : (⟨(M + 1 + c) - (c + 1), h_pos_lt_orig⟩ : Fin rIter.length) =
+                ⟨M, h_M_lt⟩ := Fin.eq_of_val_eq h_pos_eq
+            show rIter.get ⟨(M + 1 + c) - (c + 1), h_pos_lt_orig⟩ < sig
+            rw [heq, h_get_M]; exact h_7_lt_sig
+          · have h_k_gt_c1 : k ≥ c + 2 := by omega
+            have h_pos_gt : p_LBM + 1 + c < (M + 1 + c) - k := by omega
+            have h_pos_lt_M : (M + 1 + c) - k < M := by omega
+            rcases h_mid_between ((M + 1 + c) - k) h_pos_gt h_pos_lt_M with
+              ⟨h_orig_lt', h_lt_sig, _, _⟩
+            have heq : (⟨(M + 1 + c) - k, h_pos_lt_orig⟩ : Fin rIter.length) =
+                ⟨(M + 1 + c) - k, h_orig_lt'⟩ := rfl
+            show rIter.get ⟨(M + 1 + c) - k, h_pos_lt_orig⟩ < sig
+            rw [heq]; exact h_lt_sig
+    · show (rIter.set (p_LBM + 1 + c) 11)[(M + 1 + c) - k]'h_pos_lt_rC ≠ 11
+      rw [h_get_eq]
+      by_cases h_k0 : k = 0
+      · subst h_k0
+        have heq : (⟨(M + 1 + c) - 0, h_pos_lt_orig⟩ : Fin rIter.length) =
+            ⟨M + 1 + c, h_pos2⟩ := Fin.eq_of_val_eq (Nat.sub_zero _)
+        show rIter.get ⟨(M + 1 + c) - 0, h_pos_lt_orig⟩ ≠ 11
+        rw [heq, h_8]; decide
+      · have h_k_pos : 1 ≤ k := Nat.one_le_iff_ne_zero.mpr h_k0
+        by_cases h_k_le_c : k ≤ c
+        · have h_c_pos : 1 ≤ c := Nat.le_trans h_k_pos h_k_le_c
+          have h_ck_lt : c - k < c := by omega
+          rcases h_varbuf_zeros (c - k) h_ck_lt with ⟨h_orig_lt, h_zero⟩
+          have h_pos_eq : (M + 1 + c) - k = M + 1 + (c - k) := by omega
+          have heq : (⟨(M + 1 + c) - k, h_pos_lt_orig⟩ : Fin rIter.length) =
+              ⟨M + 1 + (c - k), h_orig_lt⟩ := Fin.eq_of_val_eq h_pos_eq
+          show rIter.get ⟨(M + 1 + c) - k, h_pos_lt_orig⟩ ≠ 11
+          rw [heq, h_zero]; decide
+        · push_neg at h_k_le_c
+          by_cases h_k_eq : k = c + 1
+          · subst h_k_eq
+            have h_pos_eq : (M + 1 + c) - (c + 1) = M := by omega
+            have heq : (⟨(M + 1 + c) - (c + 1), h_pos_lt_orig⟩ : Fin rIter.length) =
+                ⟨M, h_M_lt⟩ := Fin.eq_of_val_eq h_pos_eq
+            show rIter.get ⟨(M + 1 + c) - (c + 1), h_pos_lt_orig⟩ ≠ 11
+            rw [heq, h_get_M]; decide
+          · have h_k_gt_c1 : k ≥ c + 2 := by omega
+            have h_pos_gt : p_LBM + 1 + c < (M + 1 + c) - k := by omega
+            have h_pos_lt_M : (M + 1 + c) - k < M := by omega
+            rcases h_mid_between ((M + 1 + c) - k) h_pos_gt h_pos_lt_M with
+              ⟨h_orig_lt', _, _, h_ne11⟩
+            have heq : (⟨(M + 1 + c) - k, h_pos_lt_orig⟩ : Fin rIter.length) =
+                ⟨(M + 1 + c) - k, h_orig_lt'⟩ := rfl
+            show rIter.get ⟨(M + 1 + c) - k, h_pos_lt_orig⟩ ≠ 11
+            rw [heq]; exact h_ne11
+  have h_run6 :
+      runFlatTM ((M - p_LBM) + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 6,
+            tapes := [(left, M + 1 + c, rIter.set (p_LBM + 1 + c) 11)] } =
+        some { state_idx := 7,
+               tapes := [(left, (M + 1 + c) - (M - p_LBM),
+                 (rIter.set (p_LBM + 1 + c) 11).set
+                   ((M + 1 + c) - (M - p_LBM)) 0)] } :=
+    compareUnaryAtMarkerTM_state6_phase_run sig left
+      (rIter.set (p_LBM + 1 + c) 11) (M - p_LBM) (M + 1 + c) h_gap6_le
+      h_pos2_rC h_target_lt h_get_target h_before6
+  -- Simplify final tape: (rIter.set ... 11).set (p_LBM+1+c) 0 = rIter.set (p_LBM+1+c) 0.
+  have h_final_tape :
+      (rIter.set (p_LBM + 1 + c) 11).set ((M + 1 + c) - (M - p_LBM)) 0 =
+        rIter.set (p_LBM + 1 + c) 0 := by
+    rw [h_target_pos_eq, List.set_set]
+  have h_run6' :
+      runFlatTM ((M - p_LBM) + 1) (compareUnaryAtMarkerTM sig)
+          { state_idx := 6,
+            tapes := [(left, M + 1 + c, rIter.set (p_LBM + 1 + c) 11)] } =
+        some { state_idx := 7,
+               tapes := [(left, p_LBM + 1 + c,
+                 rIter.set (p_LBM + 1 + c) 0)] } := by
+    rw [h_run6, h_final_tape, h_target_pos_eq]
+  -- Chain: total = 1 + (M - (p_LBM+1+c)) + (c+1) + ((M-p_LBM)+1)
+  --             = 2*(M-p_LBM) + 2.
+  have h_total_eq :
+      2 * (M - p_LBM) + 2 =
+        1 + ((M - (p_LBM + 1 + c)) + ((c + 1) + ((M - p_LBM) + 1))) := by omega
+  rw [h_total_eq]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) 1
+      ((M - (p_LBM + 1 + c)) + ((c + 1) + ((M - p_LBM) + 1))) _ _ h_run0]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) (M - (p_LBM + 1 + c))
+      ((c + 1) + ((M - p_LBM) + 1)) _ _ h_run1]
+  rw [runFlatTM_compose (compareUnaryAtMarkerTM sig) (c + 1)
+      ((M - p_LBM) + 1) _ _ h_run2]
+  exact h_run6'
+
+/-! ### Main run lemma — long case
+
+When `slot_size = s > varbuf_size = c`, the TM halts in reject state
+7 at `p_LBM+1+c` after exactly `c*(2D+1) + (2D+2)` steps, where
+`D = M - p_LBM`. The inductive structure mirrors `_run_match` and
+`_run_short`: shared iteration loop in the inductive step, long
+post-loop in the base case. The final tape has one additional slot
+`1` erased (at `p_LBM+1+c`). -/
+
+/-- **Long run lemma**: `compareUnaryAtMarkerTM` halts reject (state
+7) in `c * (2D + 1) + (2D + 2)` steps when the slot has `s > c` ones
+and varbuf has `c` ones. Stated by induction on the remaining
+iterations `u` (count from `i_start` to `c`). -/
+theorem compareUnaryAtMarkerTM_run_long
+    (sig : Nat) (h_sig : 12 ≤ sig)
+    (left right : List Nat) (p_LBM M s c : Nat)
+    (h_pos1 : p_LBM + 1 + c < M)
+    (h_c_lt_s : c < s)
+    (h_pos2 : M + 1 + c < right.length)
+    (h_slot_long : p_LBM + 1 + s ≤ right.length)
+    (h_M_marker : ∃ (h : M < right.length), right.get ⟨M, h⟩ = 7)
+    (h_8_marker : right.get ⟨M + 1 + c, h_pos2⟩ = 8)
+    (h_slot_ones : ∀ j, j < s → ∃ (h : p_LBM + 1 + j < right.length),
+        right.get ⟨p_LBM + 1 + j, h⟩ = 1)
+    (h_varbuf_ones : ∀ j, j < c → ∃ (h : M + 1 + j < right.length),
+        right.get ⟨M + 1 + j, h⟩ = 1)
+    (h_mid_between : ∀ k, p_LBM + 1 + c < k → k < M →
+        ∃ (h : k < right.length),
+          right.get ⟨k, h⟩ < sig ∧
+            right.get ⟨k, h⟩ ≠ 7 ∧
+            right.get ⟨k, h⟩ ≠ 11) :
+    ∀ (u i_start : Nat), i_start + u = c →
+      runFlatTM (u * (2 * (M - p_LBM) + 1) + (2 * (M - p_LBM) + 2))
+          (compareUnaryAtMarkerTM sig)
+          { state_idx := 0,
+            tapes := [(left, p_LBM + 1 + i_start,
+              compareUnaryTape_iter right p_LBM M i_start)] } =
+        some { state_idx := 7,
+               tapes := [(left, p_LBM + 1 + c,
+                 (compareUnaryTape_iter right p_LBM M c).set
+                   (p_LBM + 1 + c) 0)] } := by
+  rcases h_M_marker with ⟨h_M_lt, h_get_M⟩
+  have h_p_lt_M : p_LBM < M := by omega
+  have h_p_le_M : p_LBM + c ≤ M := by omega
+  intro u
+  induction u with
+  | zero =>
+      intro i_start h_sum
+      have h_i_eq_c : i_start = c := by omega
+      rw [h_i_eq_c]
+      have h_total_eq :
+          0 * (2 * (M - p_LBM) + 1) + (2 * (M - p_LBM) + 2) =
+            2 * (M - p_LBM) + 2 := by ring
+      rw [h_total_eq]
+      have h_rIter_len :
+          (compareUnaryTape_iter right p_LBM M c).length = right.length :=
+        compareUnaryTape_iter_length _ _ _ _
+      have h_pos2_rIter :
+          M + 1 + c < (compareUnaryTape_iter right p_LBM M c).length := by
+        rw [h_rIter_len]; exact h_pos2
+      have h_M_lt_rIter :
+          M < (compareUnaryTape_iter right p_LBM M c).length := by
+        rw [h_rIter_len]; exact h_M_lt
+      have h_slot_lt_rIter :
+          p_LBM + 1 + c < (compareUnaryTape_iter right p_LBM M c).length := by
+        rw [h_rIter_len]
+        rcases h_slot_ones c h_c_lt_s with ⟨h_orig_lt, _⟩
+        exact h_orig_lt
+      -- The un-erased slot `1` at p_LBM+1+c: from h_slot_ones c.
+      have h_get_slot_rIter :
+          (compareUnaryTape_iter right p_LBM M c).get
+              ⟨p_LBM + 1 + c, h_slot_lt_rIter⟩ = 1 := by
+        rcases h_slot_ones c h_c_lt_s with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M c
+          (p_LBM + 1 + c) h_orig_lt h_slot_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_orig_one
+      have h_get_M_rIter :
+          (compareUnaryTape_iter right p_LBM M c).get ⟨M, h_M_lt_rIter⟩ = 7 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M c
+          M h_M_lt h_M_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_M
+      have h_8_rIter :
+          (compareUnaryTape_iter right p_LBM M c).get
+              ⟨M + 1 + c, h_pos2_rIter⟩ = 8 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M c
+          (M + 1 + c) h_pos2 h_pos2_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_8_marker
+      -- All varbuf cells (∀ k < c) are zero in the post-c-iteration tape.
+      have h_varbuf_zeros_rIter :
+          ∀ k, k < c →
+              ∃ (h_lt : M + 1 + k <
+                  (compareUnaryTape_iter right p_LBM M c).length),
+                (compareUnaryTape_iter right p_LBM M c).get
+                    ⟨M + 1 + k, h_lt⟩ = 0 := by
+        intro k hk
+        have h_pos_lt_orig : M + 1 + k < right.length := by
+          have h1 : M + 1 + k < M + 1 + c := by omega
+          exact Nat.lt_trans h1 h_pos2
+        have h_pos_lt_rIter :
+            M + 1 + k < (compareUnaryTape_iter right p_LBM M c).length := by
+          rw [h_rIter_len]; exact h_pos_lt_orig
+        refine ⟨h_pos_lt_rIter, ?_⟩
+        exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M c k hk
+          h_p_le_M h_pos_lt_rIter
+      have h_mid_between_rIter :
+          ∀ k, p_LBM + 1 + c < k → k < M →
+              ∃ (h_lt : k < (compareUnaryTape_iter right p_LBM M c).length),
+                (compareUnaryTape_iter right p_LBM M c).get ⟨k, h_lt⟩ < sig ∧
+                  (compareUnaryTape_iter right p_LBM M c).get ⟨k, h_lt⟩ ≠ 7 ∧
+                  (compareUnaryTape_iter right p_LBM M c).get ⟨k, h_lt⟩ ≠ 11 := by
+        intro k hk_gt hk_lt
+        rcases h_mid_between k hk_gt hk_lt with
+          ⟨h_orig_lt, h_lt_sig, h_ne7, h_ne11⟩
+        have h_pos_lt_rIter :
+            k < (compareUnaryTape_iter right p_LBM M c).length := by
+          rw [h_rIter_len]; exact h_orig_lt
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M c
+          k h_orig_lt h_pos_lt_rIter
+          (fun j hj => by omega) (fun j hj => by omega)
+        refine ⟨h_pos_lt_rIter, ?_, ?_, ?_⟩
+        · rw [hget]; exact h_lt_sig
+        · rw [hget]; exact h_ne7
+        · rw [hget]; exact h_ne11
+      exact compareUnaryAtMarkerTM_long_post_loop_run sig h_sig left
+        (compareUnaryTape_iter right p_LBM M c) p_LBM M c h_pos1 h_pos2_rIter
+        ⟨h_slot_lt_rIter, h_get_slot_rIter⟩
+        ⟨h_M_lt_rIter, h_get_M_rIter⟩
+        h_8_rIter h_varbuf_zeros_rIter h_mid_between_rIter
+  | succ u ih =>
+      intro i_start h_sum
+      have h_i_lt_c : i_start < c := by omega
+      have h_i_lt_s : i_start < s := Nat.lt_trans h_i_lt_c h_c_lt_s
+      have h_sum' : (i_start + 1) + u = c := by omega
+      have h_h_lt_M_iter : p_LBM + 1 + i_start < M := by omega
+      have h_rIter_len :
+          (compareUnaryTape_iter right p_LBM M i_start).length = right.length :=
+        compareUnaryTape_iter_length _ _ _ _
+      have h_M_lt_iter :
+          M < (compareUnaryTape_iter right p_LBM M i_start).length := by
+        rw [h_rIter_len]; exact h_M_lt
+      have h_buf_in_range_iter :
+          M + 1 + i_start <
+              (compareUnaryTape_iter right p_LBM M i_start).length := by
+        rw [h_rIter_len]
+        have h1 : M + 1 + i_start < M + 1 + c := by omega
+        exact Nat.lt_trans h1 h_pos2
+      have h_get_h_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨p_LBM + 1 + i_start,
+                Nat.lt_trans h_h_lt_M_iter h_M_lt_iter⟩ = 1 := by
+        rcases h_slot_ones i_start h_i_lt_s with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          (p_LBM + 1 + i_start) h_orig_lt
+          (Nat.lt_trans h_h_lt_M_iter h_M_lt_iter)
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_orig_one
+      have h_get_M_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨M, h_M_lt_iter⟩ = 7 := by
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          M h_M_lt h_M_lt_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_get_M
+      have h_get_buf_one_iter :
+          (compareUnaryTape_iter right p_LBM M i_start).get
+              ⟨M + 1 + i_start, h_buf_in_range_iter⟩ = 1 := by
+        rcases h_varbuf_ones i_start h_i_lt_c with ⟨h_orig_lt, h_orig_one⟩
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          (M + 1 + i_start) h_orig_lt h_buf_in_range_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        rw [hget]; exact h_orig_one
+      have h_buf_zeros_iter :
+          ∀ j, j < i_start → ∃ (h_lt : M + 1 + j <
+              (compareUnaryTape_iter right p_LBM M i_start).length),
+            (compareUnaryTape_iter right p_LBM M i_start).get
+                ⟨M + 1 + j, h_lt⟩ = 0 := by
+        intro j hj
+        have h_lt_iter :
+            M + 1 + j < (compareUnaryTape_iter right p_LBM M i_start).length := by
+          rw [h_rIter_len]
+          have h1 : M + 1 + j < M + 1 + c := by omega
+          exact Nat.lt_trans h1 h_pos2
+        refine ⟨h_lt_iter, ?_⟩
+        have h_dist : p_LBM + i_start ≤ M := by omega
+        exact compareUnaryTape_iter_get_varbuf_zero right p_LBM M i_start j hj
+          h_dist h_lt_iter
+      have h_mid_iter :
+          ∀ k, 1 ≤ k → k < M - (p_LBM + 1 + i_start) →
+              ∃ (h_lt : (p_LBM + 1 + i_start) + k <
+                  (compareUnaryTape_iter right p_LBM M i_start).length),
+                (compareUnaryTape_iter right p_LBM M i_start).get
+                    ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ < sig ∧
+                  (compareUnaryTape_iter right p_LBM M i_start).get
+                      ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 7 ∧
+                  (compareUnaryTape_iter right p_LBM M i_start).get
+                      ⟨(p_LBM + 1 + i_start) + k, h_lt⟩ ≠ 11 := by
+        intro k hk_pos hk_lt
+        have h_pos_lt_M : (p_LBM + 1 + i_start) + k < M := by omega
+        have h_pos_lt_orig : (p_LBM + 1 + i_start) + k < right.length :=
+          Nat.lt_trans h_pos_lt_M h_M_lt
+        have h_pos_lt_iter : (p_LBM + 1 + i_start) + k <
+            (compareUnaryTape_iter right p_LBM M i_start).length := by
+          rw [h_rIter_len]; exact h_pos_lt_orig
+        have hget := compareUnaryTape_iter_get_outside right p_LBM M i_start
+          ((p_LBM + 1 + i_start) + k) h_pos_lt_orig h_pos_lt_iter
+          (fun j hj => by omega) (fun j hj => by omega)
+        refine ⟨h_pos_lt_iter, ?_, ?_, ?_⟩
+        all_goals {
+          rw [hget]
+          by_cases h_in_slot : i_start + k < s
+          · rcases h_slot_ones (i_start + k) h_in_slot with ⟨h_orig_lt', h_one⟩
+            have h_pos_eq : p_LBM + 1 + (i_start + k) =
+                (p_LBM + 1 + i_start) + k := by ring
+            have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                    : Fin right.length) =
+                ⟨p_LBM + 1 + (i_start + k), h_orig_lt'⟩ :=
+              Fin.eq_of_val_eq h_pos_eq.symm
+            rw [heq, h_one]
+            first
+              | exact Nat.lt_of_lt_of_le (by decide : (1 : Nat) < 12) h_sig
+              | decide
+          · push_neg at h_in_slot
+            -- i_start + k ≥ s > c, so i_start + k > c. position (p+1+i) + k > p+1+c.
+            -- Use h_mid_between (long-case threshold is c, not s).
+            have h_pos_gt_long :
+                p_LBM + 1 + c < (p_LBM + 1 + i_start) + k := by omega
+            rcases h_mid_between ((p_LBM + 1 + i_start) + k) h_pos_gt_long
+                h_pos_lt_M
+              with ⟨h_orig_lt', h_lt_sig, h_ne7, h_ne11⟩
+            have heq : (⟨(p_LBM + 1 + i_start) + k, h_pos_lt_orig⟩
+                    : Fin right.length) =
+                ⟨(p_LBM + 1 + i_start) + k, h_orig_lt'⟩ := rfl
+            rw [heq]
+            first | exact h_lt_sig | exact h_ne7 | exact h_ne11
+        }
+      have h_iter_run :=
+        compareUnaryAtMarkerTM_iteration_run sig h_sig left
+          (compareUnaryTape_iter right p_LBM M i_start)
+          (p_LBM + 1 + i_start) M i_start h_h_lt_M_iter h_M_lt_iter
+          h_buf_in_range_iter h_get_h_iter h_get_M_iter h_get_buf_one_iter
+          h_buf_zeros_iter h_mid_iter
+      have h_tape_succ :
+          ((compareUnaryTape_iter right p_LBM M i_start).set
+              (p_LBM + 1 + i_start) 0).set (M + 1 + i_start) 0 =
+            compareUnaryTape_iter right p_LBM M (i_start + 1) := by
+        rw [compareUnaryTape_iter_succ]
+      have h_iter_run' :
+          runFlatTM (3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start)
+              (compareUnaryAtMarkerTM sig)
+              { state_idx := 0,
+                tapes := [(left, p_LBM + 1 + i_start,
+                  compareUnaryTape_iter right p_LBM M i_start)] } =
+            some { state_idx := 0,
+                   tapes := [(left, (p_LBM + 1 + i_start) + 1,
+                     compareUnaryTape_iter right p_LBM M (i_start + 1))] } := by
+        rw [h_iter_run, h_tape_succ]
+      have h_iter_steps :
+          3 + 2 * (M - (p_LBM + 1 + i_start)) + 2 * i_start =
+            2 * (M - p_LBM) + 1 := by omega
+      have h_head_eq :
+          (p_LBM + 1 + i_start) + 1 = p_LBM + 1 + (i_start + 1) := by ring
+      have h_iter_run'' :
+          runFlatTM (2 * (M - p_LBM) + 1) (compareUnaryAtMarkerTM sig)
+              { state_idx := 0,
+                tapes := [(left, p_LBM + 1 + i_start,
+                  compareUnaryTape_iter right p_LBM M i_start)] } =
+            some { state_idx := 0,
+                   tapes := [(left, p_LBM + 1 + (i_start + 1),
+                     compareUnaryTape_iter right p_LBM M (i_start + 1))] } := by
+        rw [← h_iter_steps, ← h_head_eq]; exact h_iter_run'
+      have h_ih := ih (i_start + 1) h_sum'
+      have h_total_eq :
+          (u + 1) * (2 * (M - p_LBM) + 1) + (2 * (M - p_LBM) + 2) =
+            (2 * (M - p_LBM) + 1) +
+              (u * (2 * (M - p_LBM) + 1) + (2 * (M - p_LBM) + 2)) := by ring
+      rw [h_total_eq]
+      rw [runFlatTM_compose (compareUnaryAtMarkerTM sig)
+          (2 * (M - p_LBM) + 1)
+          (u * (2 * (M - p_LBM) + 1) + (2 * (M - p_LBM) + 2))
+          _ _ h_iter_run'']
+      exact h_ih
 
 end Primitives
 end EvalCnfTM
