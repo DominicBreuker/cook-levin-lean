@@ -156,7 +156,7 @@ iteration.**
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3350 jobs) | unchanged |
 | Axiom count (Lang layer)              | **0**             | unchanged |
-| Tactical sorrys                       | ~28               | ↑ +5 (decomposition of risk #1) |
+| Tactical sorrys                       | ~26               | ↑ +3 net from pre-decomposition; `halt_unique` added without new sorrys |
 | `theorem CookLevin : NPcomplete SAT` | typechecks        | unchanged since pre-pivot |
 
 Sorry distribution at the current snapshot (May 2026):
@@ -240,6 +240,24 @@ but the surrounding types are stable. Items 6–8 are *engineering*
   operational invariant. Documented inline in `compileSeq`'s
   docstring. Sorry count unchanged at 7 in `Compile.lean`; build
   remains green; Lang layer still axiom-free.
+
+- **May 2026 — `halt_unique` invariant added to `CompiledCmd`.**
+  Closes the gap surfaced in the previous iteration. The new
+  field
+  ```
+  halt_unique : ∀ i, M.halt[i]? = some true → i = exit
+  ```
+  guarantees the compiled fragment has a single halt state, which
+  feeds directly into the `h_traj1` precondition of
+  `composeFlatTM_run`. Discharged for both `compiledCmd_default`
+  (trivial: single-element halt vector) and `compileSeq`
+  (non-trivial: case split on `i < r1.M.states`, using
+  `getElem?_append_left/right`, `getElem?_replicate`, and
+  `r2.halt_unique`). **No new sorrys added** — the proof
+  obligation lands fully within reachable Lean library lemmas.
+  Sorry count unchanged at 7 in `Compile.lean`; total tactical
+  sorrys = 26; Lang layer still axiom-free; build green on first
+  pass.
 
 ---
 

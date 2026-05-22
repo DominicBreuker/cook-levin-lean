@@ -94,10 +94,17 @@ structure CompiledCmd where
   exit : Nat
   /-- The exit state is a valid state index. -/
   exit_lt : exit < M.states
-  /-- The exit state is the unique halt state of `M`. (This
-  invariant is convenient because it lets `composeFlatTM` use the
-  same `exit` field for `exit`.) -/
+  /-- The exit state IS a halt state of `M`. (This invariant is
+  convenient because it lets `composeFlatTM` use the same `exit`
+  field for `exit`.) -/
   exit_is_halt : M.halt[exit]? = some true
+  /-- The exit state is the **unique** halt state of `M`. Required
+  for compositional soundness: `composeFlatTM_run`'s `h_traj1`
+  precondition needs M₁ to avoid halting before reaching `exit`,
+  which is guaranteed exactly when `exit` is the only halt state.
+  Combined with `exit_is_halt`, the halt vector is morally
+  `replicate exit false ++ [true] ++ replicate _ false`. -/
+  halt_unique : ∀ i, M.halt[i]? = some true → i = exit
   /-- The machine is valid (well-typed states, well-formed
   transitions). -/
   M_valid : validFlatTM M
@@ -121,6 +128,12 @@ def compiledCmd_default : CompiledCmd where
   exit := 0
   exit_lt := by decide
   exit_is_halt := by decide
+  halt_unique := by
+    intro i hi
+    -- M.halt = [true]; hi : [true][i]? = some true
+    rcases i with _ | n
+    · rfl
+    · simp at hi
   M_valid := by
     refine ⟨?_, ?_, ?_⟩
     · decide
@@ -204,6 +217,35 @@ def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
       rw [List.length_replicate]; omega
     rw [h_idx]
     exact r2.exit_is_halt
+  halt_unique := by
+    -- composedHalt = replicate r1.M.states false ++ r2.M.halt.
+    -- For i < r1.M.states, the value is `some false`; for
+    -- i ≥ r1.M.states, the value is `r2.M.halt[i - r1.M.states]?`
+    -- and equality with `some true` forces (by r2.halt_unique)
+    -- i - r1.M.states = r2.exit, hence i = r1.M.states + r2.exit.
+    intro i hi
+    change (composedHalt r1.M r2.M)[i]? = some true at hi
+    unfold composedHalt at hi
+    -- hi : (List.replicate r1.M.states false ++ r2.M.halt)[i]? = some true
+    by_cases hlt : i < r1.M.states
+    · -- left segment: value is `some false`, contradiction
+      exfalso
+      have h_lt' : i < (List.replicate r1.M.states false).length := by
+        rw [List.length_replicate]; exact hlt
+      rw [List.getElem?_append_left h_lt'] at hi
+      -- hi : (List.replicate r1.M.states false)[i]? = some true
+      rw [List.getElem?_replicate] at hi
+      -- hi : (if i < r1.M.states then some false else none) = some true
+      simp [hlt] at hi
+    · -- right segment: i ≥ r1.M.states
+      push_neg at hlt
+      have h_ge : (List.replicate r1.M.states false).length ≤ i := by
+        rw [List.length_replicate]; exact hlt
+      rw [List.getElem?_append_right h_ge, List.length_replicate] at hi
+      -- hi : r2.M.halt[i - r1.M.states]? = some true
+      have h_idx : i - r1.M.states = r2.exit := r2.halt_unique _ hi
+      show i = r1.M.states + r2.exit
+      omega
   M_valid :=
     composeFlatTM_valid r1.M r2.M r1.exit r1.M_valid r2.M_valid
       r1.exit_lt r1.M_tapes r2.M_tapes
