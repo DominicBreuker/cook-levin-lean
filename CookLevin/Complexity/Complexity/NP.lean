@@ -261,12 +261,18 @@ theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
   refine ⟨Y_cert, inferInstance, ?_⟩
   refine ⟨⟨fun x cert => R (f x) cert, ?_, ?_⟩⟩
   · -- inTimePoly (fun (x, cert) => R (f x) cert)
-    -- TODO(Part3:red_inNP_TMcompose): construct a TM that runs the
-    -- reduction's TM on x, then the verifier's TM on (f x, cert).
-    -- The reduction's TM is delivered by Part 3's TM-backed
-    -- `polyTimeComputable`, which is the structural upgrade `red_inNP`
-    -- is waiting on. The predicate-level argument (lines below) is
-    -- already done, so once Part 3 lands this is the only gap.
+    -- TODO(Part4:red_inNP_TMcompose): after the May 2026 pivot, the
+    -- proof routes through the Lang layer. The shape is:
+    --   1. The framework's `PolyTimeComputableWitness` gains a
+    --      `lang : Lang.PolyTimeComputableLang f` field (Part 4.1),
+    --      providing a real Lang program for the reduction `f`.
+    --   2. Destructure `_hR_poly` into a `Lang.DecidesLang` for R.
+    --   3. Compose them via `Lang.Cmd.seq`: a Lang program that runs
+    --      `f` on `x` (placing `f x` in a designated output slot)
+    --      then runs R on `(f x, cert)`.
+    --   4. The composed cost is `cost(f) + cost(R)` ≤ polynomial.
+    --   5. Bridge to `inTimePoly` via `Lang.inTimePolyLang_to_inTimePoly`.
+    -- Until Part 4.1 upgrades the framework, this remains a gap.
     sorry
   · -- polyCertRel: certificate-bound composition is purely predicate-level
     -- and does not need any TM machinery — it carries over verbatim

@@ -1,0 +1,103 @@
+import Complexity.Complexity.MachineSemantics
+
+set_option autoImplicit false
+
+/-! # The DSL skeleton (Part 3 of `ROADMAP.md`)
+
+A small structured while-language with explicit cost semantics. The
+language is the Lean analogue of the Coq port's L calculus: programs
+are written here, a single one-time compiler emits `FlatTM`s, and
+every downstream verifier / reduction is a short program in the
+layer rather than a hand-rolled TM.
+
+Skeleton status: types are concrete; `eval`, `cost`, and `Compile`
+have committed signatures but are deferred to Part 3.2 / 3.3 of the
+roadmap (declared as `axiom`s in `Semantics.lean` and `Compile.lean`).
+The point of the skeleton is to nail down the *interfaces* so any
+gaps in the high-level architecture surface immediately. -/
+
+namespace Complexity.Lang
+
+/-- Register index. Programs read and write a finite list of
+"registers", each of which holds a `List Nat`. -/
+abbrev Var := Nat
+
+/-- The state of a Lang program: a list of registers, each a `List Nat`.
+
+By convention, **register 0 holds the program's output**: the program
+"accepts" iff register 0 contains `[1]` after evaluation and "rejects"
+iff it contains `[0]`. Inputs are placed in registers 1, 2, …. -/
+abbrev State := List (List Nat)
+
+namespace State
+
+/-- Read register `v`, returning `[]` if unset. -/
+def get (s : State) (v : Var) : List Nat := (s[v]?).getD []
+
+/-- Write `val` to register `v`, extending the state with `[]`-padding
+if `v` is past the current length. -/
+def set (s : State) (v : Var) (val : List Nat) : State :=
+  if v < s.length then List.set s v val
+  else
+    let padded := s ++ List.replicate (v + 1 - s.length) []
+    List.set padded v val
+
+/-- The aggregate size of a state — used to express polynomial cost
+bounds. -/
+def size (s : State) : Nat := (s.map List.length).foldr (· + ·) 0
+
+end State
+
+/-- Primitive operations on the state. Each `Op` evaluates in unit
+cost. Programs compose `Op`s via `Cmd.op`. -/
+inductive Op : Type where
+  /-- `clear dst` : `s[dst] := []` -/
+  | clear  (dst : Var)
+  /-- `appendOne dst` : `s[dst] := s[dst] ++ [1]` (used to extend a
+  unary counter by one). -/
+  | appendOne (dst : Var)
+  /-- `appendZero dst` : `s[dst] := s[dst] ++ [0]` -/
+  | appendZero (dst : Var)
+  /-- `copy dst src` : `s[dst] := s[src]` -/
+  | copy   (dst src : Var)
+  /-- `tail dst src` : `s[dst] := (s[src]).tail` -/
+  | tail   (dst src : Var)
+  /-- `head dst src` : `s[dst] := if s[src] is empty then [] else [s[src].head]` -/
+  | head   (dst src : Var)
+  /-- `eqBit dst src1 src2` : `s[dst] := [1]` if `s[src1] = s[src2]`,
+  else `[0]`. -/
+  | eqBit  (dst src1 src2 : Var)
+  /-- `nonEmpty dst src` : `s[dst] := [1]` if `s[src]` is non-empty,
+  else `[0]`. -/
+  | nonEmpty (dst src : Var)
+  deriving Repr, BEq
+
+/-- Commands. The layer is a structured while-language with:
+- primitive operations (`op`),
+- sequencing (`seq`),
+- conditional on a one-bit register (`ifBit`),
+- counted iteration (`forBnd`) — iterates `body` once per element of
+  register `bound`, placing the iteration index (in unary, i.e.
+  `List.replicate i 1`) into register `counter`.
+
+`forBnd`'s bound is read from a register, not computed: the layer is
+**total** by construction, and cost is closed-form in the input size. -/
+inductive Cmd : Type where
+  | op       (o : Op)
+  | seq      (c1 c2 : Cmd)
+  | ifBit    (test : Var) (cThen cElse : Cmd)
+  | forBnd   (counter bound : Var) (body : Cmd)
+  deriving Repr
+
+/-- Sequencing notation. -/
+infixr:30 " ;; " => Cmd.seq
+
+/-- Output convention: a state `s` is `accept` iff register 0
+contains exactly `[1]`. -/
+def State.isAccept (s : State) : Bool := s.get 0 == [1]
+
+/-- Output convention: a state `s` is `reject` iff register 0
+contains exactly `[0]`. -/
+def State.isReject (s : State) : Bool := s.get 0 == [0]
+
+end Complexity.Lang
