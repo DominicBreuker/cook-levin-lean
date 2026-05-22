@@ -1,11 +1,11 @@
-# Part 2 — Implementation Plan & Progress Tracker (v3)
+# Part 2 — Implementation Plan & Progress Tracker (v3.2)
 
 Tracks Part 2 of `ROADMAP.md` (lines 166–218): replace the
 propositional `inTimePoly` / `HasDecider` with a Turing-machine-backed
 witness, then re-prove `sat_NP`, `FlatClique_in_NP`, `red_inNP`, and
 `P_NP_incl` against the new definition.
 
-> **v3 (this revision).** Status sweep + compaction. The v2 pivot —
+> **v3 (prior revision).** Status sweep + compaction. The v2 pivot —
 > "migrate the framework first, carry `EvalCnfTM.decider` and
 > `CliqueRelTM.decider` as labelled `sorry`s, then close them
 > iteratively" — was correct and is paying off. Steps 1–10 are done,
@@ -21,6 +21,31 @@ witness, then re-prove `sat_NP`, `FlatClique_in_NP`, `red_inNP`, and
 > architecture, tightens the work plan around two compounding savings
 > (unified run lemmas, a `loopTM` outer combinator), and is honest
 > about the remaining scope.
+>
+> **v3.1 (prior revision).** Step 11.5a (architectural pass) revealed
+> that the original 11.5 plan — "compose five primitives linearly via
+> `composeFlatTM_run`" — was structurally wrong on two counts: the
+> slot-iteration loop is a real loop (needs `loopTM`, prior 11.6) and
+> the polarity-gated result bit needs a multi-exit composition
+> primitive (a new `branchComposeFlatTM`). Step 11.5 is rescoped into
+> five substeps 11.5a–e (see §4 and §5). `advanceRightTM` and the
+> `PerLiteral.lean` skeleton with architecture doc landed this
+> session. The combinators land in 11.5b/c, the per-literal
+> components in 11.5d, the final assembly in 11.5e. Phase G's
+> remaining estimate adjusts from ~5100 LOC to ~4800 LOC across 6–8
+> sessions (more substeps, fewer LOC per session, fewer hand-rolled
+> loops downstream because `loopTM` lands earlier).
+>
+> **v3.2 (this revision).** Step 11.5b landed cleanly:
+> `branchComposeFlatTM` (definition + validity + bridge step lemmas
+> for both exits + M₁/M₂/M₃ phase-run lemmas + `_run_pos` and
+> `_run_neg`) came in at ~1300 LOC — larger than the v3.1 estimate
+> of ~600 LOC but with no novel obstacles; the LOC inflation is
+> two-bridge / two-phase duplication that mirrors `composeFlatTM`'s
+> existing template. Phase G's remaining estimate refines to ~4400
+> LOC across 5–7 sessions. Next session targets `loopTM` (Step
+> 11.5c), the last foundation combinator before the per-literal
+> evaluator can be composed.
 
 ---
 
@@ -36,7 +61,9 @@ witness, then re-prove `sat_NP`, `FlatClique_in_NP`, `red_inNP`, and
 | E     | 4–9     | Swap `inTimePoly`; re-prove `sat_NP`, `FlatClique_in_NP`, `red_inNP`, `P_NP_incl`; retype `hasDeciderClassical` | ✅ done |
 | F     | 10      | Validation: full rebuild, sorry audit                   | ✅ done    |
 | G     | 11.0–4d | Step 11 partial: `composeFlatTM_run`, primitives, `copyUnaryTM`, all three `compareUnaryAtMarkerTM` run lemmas | ✅ done    |
-| G     | 11.5–8  | Step 11 finish: per-literal, per-clause, per-CNF loops; time bound; `decider` | ⏳ pending |
+| G     | 11.5a   | `advanceRightTM` + `PerLiteral.lean` arch skeleton + substep re-scope | ✅ done    |
+| G     | 11.5b   | `branchComposeFlatTM` + `_run_pos` + `_run_neg` (`TMPrimitives.lean`) | ✅ done    |
+| G     | 11.5c–8 | Step 11 finish: `loopTM`, per-literal eval, per-clause + per-CNF loops, time bound, `decider` | ⏳ pending |
 | H     | 12      | Step 12: `CliqueRelTM.decider`                          | ⏳ pending |
 | I     | 13      | Final Part-2 sweep (verify only Part 3 / Part 6 sorrys remain) | ⏳ pending |
 
@@ -72,8 +99,11 @@ Part 2.
   ~135 LOC.
 - `Complexity/Complexity/TMPrimitives.lean` — `composeFlatTM` +
   `composeFlatTM_valid` + **`composeFlatTM_run`** (Step 11.0) and its
-  7 helper lemmas; `verdictTM`, `scanRightUntilTM`,
-  `runFlatTM_extend`. ~2100 LOC.
+  7 helper lemmas; **`branchComposeFlatTM`** + `_valid` +
+  `_run_pos` + `_run_neg` (Step 11.5b) — two-exit generalisation
+  of `composeFlatTM` for polarity dispatch in the per-literal
+  evaluator; `verdictTM`, `scanRightUntilTM`,
+  `runFlatTM_extend`. ~3200 LOC.
 - `Complexity/Complexity/Deciders/SAT_TM.lean` — SAT input encoding
   (`sigSAT`, `encodeInput`, length / symbol-bound lemmas) plus the
   Phase-C demonstration deciders kept as a worked pattern library.
@@ -111,6 +141,18 @@ Part 2.
   `compareUnaryAtMarkerTM_run_short` (Step 11.4d);
   `compareUnaryAtMarkerTM_long_post_loop_run` +
   `compareUnaryAtMarkerTM_run_long` (Step 11.4d).
+- `Complexity/Complexity/Deciders/EvalCnfTM/PerLiteral.lean` (~150
+  LOC, mostly architectural docstring): top-of-file design
+  document for Step 11.5 — the per-literal evaluator pipeline,
+  the polarity-as-state dispatch decision, the discovered need
+  for `branchComposeFlatTM` and `loopTM`, and the substep
+  breakdown 11.5a–e. No concrete definitions yet (Substep 11.5a).
+- `Complexity/Complexity/Deciders/EvalCnfTM/Primitives.lean`
+  gained `advanceRightTM` (2-state, mirrors `writeAtHeadTM`):
+  one-cell rightward head movement primitive, with `_valid`,
+  step lemmas (in-range / out-of-range), halting lemmas, and a
+  unified one-step `_run` lemma. Added in Step 11.5a as the
+  first composition link of the per-literal evaluator.
 
 The full architecture and design rationale (alphabet, tape layout,
 state machines, cursor marker) live in the docstrings of those files;
@@ -118,44 +160,75 @@ this plan does not duplicate them.
 
 ---
 
-## 4. Active step: 11.5 (next session)
+## 4. Active step: 11.5c (next session)
 
-**Goal.** Build the **per-literal evaluator TM**: given the head at
-the start of a literal `(b, v)` in a clause, copy the variable
-index `v` into the var-buffer, scan the assignment region for a
-matching unary slot, and write the polarity-vs-match result into the
-OR-accumulator.
+**Goal.** Land **`loopTM`** — the outer-loop combinator (Optimisation
+O2 in §5). Given a body TM `B` with a designated re-entry exit
+state and a "check current symbol" state that either continues
+(re-runs `B`) or terminates, build a composed TM that iterates `B`
+until termination, and prove `loopTM_run` by induction on the
+iteration count. This is the third and final foundation
+combinator the per-literal evaluator depends on.
 
-**Background.** With Step 11.4 complete, `compareUnaryAtMarkerTM` has
-three operational-correctness lemmas covering all three exit
-states (match → 8, short → 7 at varbuf, long → 7 at slot). Together
-with `copyUnaryTM`, `scanRightUntilTM`, `scanLeftUntilTM`,
-`writeAtHeadTM`, and `clearRegionTM`, the per-literal evaluator can
-be composed via `composeFlatTM_run`.
+**Why this matters.** Without `loopTM`, the per-literal evaluator's
+slot-iteration loop (Step 11.5d's `findVarInAssgnTM`) and the
+per-clause / per-CNF loops (Step 11.6) all need hand-coded state
+machines. Each one duplicates the ~600 LOC iteration bookkeeping
+we already paid in `copyUnaryTM_iteration_run` and
+`compareUnaryAtMarkerTM_iteration_run`. `loopTM_run` pays this cost
+once and amortises it across all three loop sites.
 
-**11.5 sketch.** Per-literal evaluator pipeline (each step a
-`composeFlatTM_run` link):
-1. `scanRightUntilTM` to position the head at the literal's value
-   marker (sign byte `2`/`3` followed by unary `v`).
-2. Read the sign byte; case-split into two parallel sub-pipelines
-   (positive literal vs negative literal).
-3. `copyUnaryTM` to copy `v` into the var-buffer.
-4. `scanLeftUntilTM` + assignment-region scan to find the first
-   slot `(LBM, 1^k, RBM)` whose `k`-value matches `v`.
-5. `compareUnaryAtMarkerTM` against that slot.
-6. Based on the exit state (8 = match, 7 = mismatch) and the
-   polarity sign, write `0` or `1` into the OR-accumulator slot
-   (via `writeAtHeadTM`).
-7. `clearRegionTM` to wipe the var-buffer for the next literal.
+**11.5c sketch.** State layout:
 
-**Estimated diff.** ~1500 LOC, dominated by step 4 (an outer scan
-over slots, where each slot needs an inner length-determination step
-to set up `compareUnaryAtMarkerTM`'s parameters). May spill into
-two sessions.
+```
+[0]                                  — check state (read current
+                                       symbol; if terminator, halt;
+                                       else jump to body start)
+[1, 1 + B.states)                    — body's states (offset by 1)
+[1 + B.states]                       — halt-accept state
+```
 
-**Checkpoint.** `lake build` clean; no new sorrys. The
-`evalCnfTM_decider` and `cliqueRelDecTM_decider` sorrys remain (they
-close in Steps 11.8 and 12.5 respectively).
+The body's exit state `exitBody` collapses back to `0` via bridge
+entries (analogous to the `bridge_pos`/`bridge_neg` entries in
+`branchComposeFlatTM`). After the body re-enters state 0, the
+classifier may either terminate (halt-accept) or run the body
+again.
+
+`loopTM_run` is: given a body `B` whose `_run` lemma says
+"starting from state 1 with the head at cfg, B halts in `cost cfg`
+steps at the next cfg' with the head advanced past a slot
+separator", and an iteration count `n` plus a final-cfg with
+terminator at head — total run length is
+`Σ cost(cfg_i) + n + 1`, ending at the halt-accept state.
+
+**Est diff.** ~800 LOC. Roughly comparable to
+`branchComposeFlatTM` (which came in at ~1300 LOC). The proof
+shape is the same template (basic accessors → validity →
+halting-state lemmas → step lemmas → phase-run lemmas → main run
+lemma).
+
+**Triage point.** If `loopTM_run` exceeds 1000 LOC or doesn't
+close in one session, fall back to hand-rolling each loop site in
+11.5d and 11.6 and document the decision in §10. The cost
+inflation if we fall back: ~2000 LOC × 3 loop sites = +6000 LOC.
+
+**Checkpoint.** `lake build` clean; no new sorrys. The four
+acknowledged sorrys from §2 remain.
+
+### Substep status — Phase G remaining
+
+The detailed per-substep plan is in §5 below. Quick table:
+
+| Substep | What | Est LOC | Status |
+|---------|------|---------|--------|
+| 11.5a   | `advanceRightTM` + arch doc | ~300 | ✅ done |
+| 11.5b   | `branchComposeFlatTM` + `_run_pos` + `_run_neg` | ~1300 | ✅ done (this session) |
+| 11.5c   | `loopTM` + `_run` (Opt O2) | ~800 | ⏳ next |
+| 11.5d   | `polarityClassifyTM`, `findVarInAssgnTM`, `writeOrBitTM` | ~600 | ⏳ |
+| 11.5e   | `perLiteralEvalTM` + `_run` correctness | ~600 | ⏳ |
+| 11.6    | Per-clause + per-CNF loops (uses 11.5c) | ~1200 | ⏳ |
+| 11.7    | Time-bound proof | ~600 | ⏳ |
+| 11.8    | Wire up `EvalCnfTM.decider` (closes sorry #1) | ~400 | ⏳ |
 
 ---
 
@@ -214,42 +287,91 @@ once (~800 LOC).
 - **11.4c-cont** — `compareUnaryAtMarkerTM_post_loop_run` +
   `_run_match`. ✅ done (~430 LOC).
 - **11.4d** — `compareUnaryAtMarkerTM_short_post_loop_run` +
-  `_run_short` + `_long_post_loop_run` + `_run_long`. ✅ done this
-  session (~1020 LOC). Three separate run lemmas rather than a
-  single unified lemma — the optimisation O1 ("share the iteration
-  loop") was *not* applied because each lemma's inductive step is
-  ~100 LOC of mostly-the-same proof and factoring would require
-  rewriting the already-proved `_run_match`. Decision: leave as-is;
-  the long-tail savings are not worth the refactor risk. The
-  per-literal evaluator (Step 11.5) will dispatch to one of the
-  three based on comparing slot length vs varbuf length.
-- **11.5** — Per-literal evaluator TM. Composes `copyUnaryTM` (copy
-  literal's variable index into var-buffer) → `scanRightUntilTM`
-  (advance to assignment slot) → `compareUnaryAtMarkerTM` (compare
-  var-buffer to slot) → `writeAtHeadTM` (OR polarity into OR-acc) →
-  `clearRegionTM` (reset var-buffer). All compositions via
-  `composeFlatTM_run`. ~1500 LOC.
-- **11.6** — Land `loopTM` + `loopTM_run` (per O2) under
-  `TMPrimitives.lean`. Then build (a) outer-clause loop using
-  `loopTM` with body = per-literal evaluator, terminator = `4`
-  (clause sep); (b) outer-CNF loop wrapping (a) with terminator = `5`
-  (CNF end), folding OR-acc into AND-acc each iteration. ~2000 LOC
-  (800 for `loopTM_run`, 1200 for the two instantiations).
+  `_run_short` + `_long_post_loop_run` + `_run_long`. ✅ done
+  (~1020 LOC). Three separate run lemmas rather than a single
+  unified lemma — the optimisation O1 ("share the iteration loop")
+  was *not* applied because each lemma's inductive step is ~100
+  LOC of mostly-the-same proof and factoring would require
+  rewriting the already-proved `_run_match`. Decision: leave
+  as-is; the long-tail savings are not worth the refactor risk.
+  The per-literal evaluator (Step 11.5d) will avoid dispatching
+  to a specific `_run_*` lemma — instead it runs the full
+  `compareUnaryAtMarkerTM` and reads the exit state (`7` =
+  mismatch, `8` = match), which uniformly covers all three
+  length cases.
+- **11.5a** — `advanceRightTM` (one-cell rightward head movement,
+  mirrors `writeAtHeadTM`) + `PerLiteral.lean` skeleton with
+  comprehensive architecture docstring. The skeleton captures the
+  three structural discoveries that forced a Step 11.5 rescope:
+  (i) slot iteration needs `loopTM`; (ii) polarity-gated result
+  bit needs `branchComposeFlatTM`; (iii) head restoration after
+  the literal needs a deterministic terminator marker (likely
+  cursor `11`, à la `copyUnaryTM`). ✅ done this session (~300
+  LOC: ~150 in `Primitives.lean` for `advanceRightTM`, ~150 in
+  `PerLiteral.lean` for the architecture doc).
+- **11.5b** — `branchComposeFlatTM` + `_run_pos` + `_run_neg` in
+  `TMPrimitives.lean`. Two-exit-state generalisation of
+  `composeFlatTM`; chose two separate run lemmas (one per branch)
+  rather than a unified theorem with a `which : Bool` parameter,
+  since the `if which then` clutter in the conclusion would have
+  been noisier than duplication. ✅ done this session
+  (~1300 LOC). Came in higher than the ~600 LOC v3.1 estimate
+  because (a) two bridge step lemmas (one per exit) instead of one,
+  (b) two complete M₂/M₃ phase-run lemmas (each ~150 LOC), (c) a
+  new `shiftEntries_find_eq_none_above` helper for dismissing
+  shifted M₂ entries during the M₃ phase. The proof shape mirrors
+  `composeFlatTM_run` exactly; no novel obstacles. The pattern
+  generalises naturally to a k-exit version if a future per-clause
+  / per-CNF dispatch needs three or more branches (none do today).
+- **11.5c** — `loopTM` + `loopTM_run` in `TMPrimitives.lean` (Opt
+  O2). State layout: `[check; body's states... offset by 1]`.
+  Check-state transitions: on terminator → halt; on non-terminator →
+  enter body (state 1). Body exits collapse back to check-state 0
+  via re-mapped transitions. Run lemma is induction on the
+  iteration count; each iteration calls the body's `_run`. ~800
+  LOC. **Triage point**: if `loopTM_run`'s proof exceeds 1000 LOC
+  or doesn't close in one session, fall back to hand-rolling each
+  loop site in 11.5d and 11.6 (cost: ~2000 LOC × 2 per site, doubles
+  Phase G's remaining estimate). Document the decision here.
+- **11.5d** — Per-literal *components* (live in `PerLiteral.lean`):
+  - `polarityClassifyTM` (3-state, reads sign byte `2`/`3` and
+    advances right; halts in `posExit` or `negExit`).
+  - `findVarInAssgnTM` (composes `loopTM` with body =
+    `scanRightUntilTM(6)` + `compareUnaryAtMarkerTM` + a small
+    "branch on exit" dispatch; exits in `MATCH` or `EXHAUST`).
+  - `writeOrBitOneTM` (composes `scanRightUntilTM(9)` for OR-acc
+    position + `writeAtHeadTM(1)` to write the OR-bit `1`).
+  - `writeOrBitNoOpTM` (a 1-state TM that just halts; preserves
+    OR-acc unchanged).
+  - `restoreHeadAfterLiteralTM` (uses a cursor marker `11` planted
+    on entry, scans left to it, erases it, halts).
+  ~600 LOC.
+- **11.5e** — `perLiteralEvalTM` final assembly + `_run`
+  correctness. Composes the components from 11.5d into one TM via
+  `branchComposeFlatTM` (polarity dispatch) and `composeFlatTM`
+  links (everything else). Proves that on a well-formed input,
+  the TM halts in `O((n+1)²)` steps with the head at the literal's
+  end and the OR-acc updated correctly. ~600 LOC.
+- **11.6** — Per-clause + per-CNF loops. Uses `loopTM` from 11.5c:
+  (a) per-clause loop wraps `perLiteralEvalTM` with terminator =
+  `4` (clause end), folds OR-acc into a single bit, writes that
+  bit AND-style into AND-acc; (b) per-CNF loop wraps that with
+  terminator = `5` (CNF end). Both loops also reset their
+  respective accumulators on entry. ~1200 LOC.
 - **11.7** — Time-bound proof: each variable lookup is O(|a|), each
   literal is O(|c|), each clause is O(|c|·|a|), the whole CNF is
   O(|N|·|c|·|a|) ≤ O((n+1)³). Close `decides_pos` / `decides_neg`
   against the existing `timeBound (n+1)^3`. ~600 LOC.
 - **11.8** — Wire up `EvalCnfTM.decider`: instantiate the composed
-  TM, prove validity by `composeFlatTM_valid` chain, prove the two
-  `decides_*` obligations using the run lemmas from 11.6 + the time
-  bound from 11.7. Closes sorry #1. ~400 LOC.
+  TM, prove validity by `composeFlatTM_valid` / `branchComposeFlatTM_valid`
+  / `loopTM_valid` chain, prove the two `decides_*` obligations
+  using the run lemmas from 11.6 + the time bound from 11.7.
+  Closes sorry #1. ~400 LOC.
 
-**Estimated total for Phase G** (after 11.4c-cont): ~5100 LOC across
-4–6 sessions. v2's original estimate was ~3500 LOC across 3–5
-sessions (excluding 11.4c); the difference is realism after the
-copyUnary/compareUnary experience plus the cost of building
-`loopTM_run`. Even with O1/O2, this remains the largest piece of
-Part 2.
+**Estimated total for Phase G** (after 11.5b): ~4400 LOC remaining
+across 5–7 sessions. The rescope grew the substep count from 4 to 8
+but shrank each individual session's load. Even with O1/O2 banked
+in, this remains the largest piece of Part 2.
 
 ---
 
@@ -365,23 +487,49 @@ trade is that 12.1–12.5 are short and uniform.
    distraction (e.g., resolving `Nat`-subtraction inside a position
    calculation). `ring` from Mathlib is fine and often the cleanest
    step in long arithmetic chains.
+9. **Polarity is in the TM state, not in the scratch.** The
+   per-literal evaluator's polarity bit (positive `2` vs negative
+   `3`) is carried via the *exit state* of `polarityClassifyTM` and
+   dispatched through `branchComposeFlatTM`. The alternative —
+   adding a 1-cell `polarity` register to `scratchSuffix` — was
+   rejected because it would cascade through every length /
+   symbol-bound lemma and force `copyUnaryTM` and
+   `compareUnaryAtMarkerTM`'s position arithmetic to be re-indexed.
+   The state-encoded choice keeps the encoding stable and confines
+   the polarity machinery to one new combinator (`branchComposeFlatTM`,
+   Step 11.5b) plus a 3-state classifier. See `PerLiteral.lean`
+   top-of-file docstring "Design choice 2" for the full trade-off.
+10. **Composition combinators are landed in `TMPrimitives.lean`,
+    instantiations in `PerLiteral.lean`.** Both `branchComposeFlatTM`
+    (Step 11.5b) and `loopTM` (Step 11.5c) are generic over the
+    sub-TMs and live alongside `composeFlatTM`. The per-literal
+    components and final `perLiteralEvalTM` (Steps 11.5d/e) live in
+    `PerLiteral.lean` and use the combinators as black boxes. This
+    mirrors the rhythm we already use for `composeFlatTM` /
+    `composeFlatTM_run` (in `TMPrimitives.lean`).
 
 ---
 
 ## 10. Risk register
 
-- **Total remaining LOC for Phases G + H** is ~7700 across ~7–10
-  sessions, assuming O1 and O2 work as designed. If `loopTM_run`
-  turns out to be intractable (e.g. needs a 5-tape state encoding to
-  thread sub-state across iterations), Phase G reverts to per-loop
-  hand-rolling and the estimate inflates to ~10000 LOC. **Triage at
-  the start of Step 11.6**: spend at most 1 session attempting
-  `loopTM_run`; if it isn't tractable, fall back to hand-rolling and
-  document the decision here.
-- **Step 11.4c-cont** is the unblocking step. If the `post_loop_run`
-  refactor doesn't resolve the motive issue, the fallback is to
-  inline the post-loop phase inside `_run_match` (no `set`, longer
-  proof). Either way the work caps at ~1500 LOC.
+- **Total remaining LOC for Phases G + H** is ~7400 across ~9–12
+  sessions (revised after Step 11.5a's rescope). Two structural
+  bets: (a) `branchComposeFlatTM` (Step 11.5b) follows the
+  `composeFlatTM` template cleanly; (b) `loopTM_run` (Step 11.5c)
+  closes in ~800 LOC. If (a) reveals state-mapping issues, the
+  per-literal pipeline reverts to a polarity-as-scratch-cell encoding
+  (cascades through length lemmas, adds ~400 LOC of bookkeeping but
+  no new combinator). **Triage at the start of Step 11.5c**: spend at
+  most 1 session attempting `loopTM_run`; if it isn't tractable, fall
+  back to hand-rolling each loop site and document the decision here
+  — Phase G then inflates to ~9500 LOC.
+- **Step 11.5c (`loopTM_run`)** is the next major risk gate. The
+  body's per-iteration `_run` lemma must thread tape-state changes
+  through each iteration; if the changes don't admit a closed-form
+  recurrence, the lemma blows up. Mitigation: design the body's
+  `_run` lemma to be parametric in the iteration count (like
+  `copyUnaryTM_iteration_run` was), so `loopTM_run` is plain
+  induction on the count.
 - **`encodable.size` of CNF / FlatClique inputs.** The
   `(n + 1)^3` time budget is generous; concrete cost of the SAT
   verifier is closer to `n²` and the FlatClique verifier is closer to

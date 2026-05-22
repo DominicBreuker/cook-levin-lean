@@ -1069,6 +1069,1328 @@ theorem composeFlatTM_run
     rfl
   exact h_target
 
+/-! ## Step 11.5b — branching composition `branchComposeFlatTM`
+
+A two-exit generalisation of `composeFlatTM`. Given three single-tape
+machines `M₁`, `M₂`, `M₃` and two distinguished exit states `exit_pos`,
+`exit_neg` of `M₁`, the composed machine runs `M₁` until it reaches
+*one* of the two exits and then continues with the corresponding
+branch:
+
+- on `exit_pos`, hand off to `M₂` (starting at `M₂.start`);
+- on `exit_neg`, hand off to `M₃` (starting at `M₃.start`).
+
+This is the key primitive that lets the per-literal evaluator
+(Step 11.5d) dispatch on the polarity bit (the sign byte `2` vs `3`
+of a literal). It is needed because `composeFlatTM_run` only supports
+a single exit state.
+
+### State layout
+
+`[0, M₁.states)`                       — M₁'s states
+`[M₁.states, M₁.states + M₂.states)`   — M₂'s states (shifted by `+M₁.states`)
+`[M₁.states + M₂.states, …)`           — M₃'s states (shifted by `+M₁.states + M₂.states`)
+
+The composed machine has `M₁.states + M₂.states + M₃.states` states
+in total.
+
+### Halt vector
+
+M₁'s halt bits are zeroed out (we don't stop in M₁ — both exits lead
+elsewhere); M₂'s and M₃'s halt vectors are appended unchanged.
+
+### Transition table (in `find?` order)
+
+1. `bridgeEntries _ exit_pos (M₁.states + M₂.start)` — fires on
+   `exit_pos`.
+2. `bridgeEntries _ exit_neg (M₁.states + M₂.states + M₃.start)` —
+   fires on `exit_neg`.
+3. `M₁.trans` — unmodified.
+4. `M₂.trans.map (shiftEntry M₁.states)` — shifted by `+M₁.states`.
+5. `M₃.trans.map (shiftEntry (M₁.states + M₂.states))` — shifted by
+   `+M₁.states + M₂.states`.
+
+Bridges precede `M₁.trans` because `M₁` may itself have transitions
+out of `exit_pos` / `exit_neg` (we do not require either exit to be
+a halting state of `M₁` — only that the *trajectory* avoids halting
+prematurely). Putting bridges first ensures the bridge fires before
+any spurious M₁-transition would.
+
+### Precondition: `exit_pos ≠ exit_neg`
+
+If the two exits were equal, the find?-search would always return
+the `exit_pos` bridge (it's first in the list), making the M₃ branch
+unreachable. The run lemmas explicitly require `exit_pos ≠ exit_neg`. -/
+
+/-- The halt-state vector of the branched-composed machine: M₁'s halt
+bits are all turned off; M₂'s halt vector is appended; M₃'s halt
+vector is appended. -/
+def composedBranchHalt (M₁ M₂ M₃ : FlatTM) : List Bool :=
+  List.replicate M₁.states false ++ M₂.halt ++ M₃.halt
+
+/-- Branching composition of single-tape FlatTMs `M₁`, `M₂`, `M₃` with
+two exit states. See the docstring above for the layout. -/
+def branchComposeFlatTM (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) : FlatTM where
+  sig := max M₁.sig (max M₂.sig M₃.sig)
+  tapes := M₁.tapes
+  states := M₁.states + M₂.states + M₃.states
+  trans :=
+    bridgeEntries (max M₁.sig (max M₂.sig M₃.sig)) exit_pos (M₁.states + M₂.start) ++
+    bridgeEntries (max M₁.sig (max M₂.sig M₃.sig)) exit_neg
+        (M₁.states + M₂.states + M₃.start) ++
+    M₁.trans ++
+    M₂.trans.map (shiftEntry M₁.states) ++
+    M₃.trans.map (shiftEntry (M₁.states + M₂.states))
+  start := M₁.start
+  halt := composedBranchHalt M₁ M₂ M₃
+
+/-! ### Basic accessors -/
+
+theorem branchComposeFlatTM_states (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) :
+    (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).states =
+      M₁.states + M₂.states + M₃.states := rfl
+
+theorem branchComposeFlatTM_start (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) :
+    (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).start = M₁.start := rfl
+
+theorem branchComposeFlatTM_tapes (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) :
+    (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).tapes = M₁.tapes := rfl
+
+theorem branchComposeFlatTM_sig (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) :
+    (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).sig =
+      max M₁.sig (max M₂.sig M₃.sig) := rfl
+
+theorem composedBranchHalt_length (M₁ M₂ M₃ : FlatTM) :
+    (composedBranchHalt M₁ M₂ M₃).length =
+      M₁.states + M₂.halt.length + M₃.halt.length := by
+  show (List.replicate M₁.states false ++ M₂.halt ++ M₃.halt).length =
+    M₁.states + M₂.halt.length + M₃.halt.length
+  rw [List.length_append, List.length_append, List.length_replicate]
+
+theorem branchComposeFlatTM_halt_length (M₁ M₂ M₃ : FlatTM)
+    (exit_pos exit_neg : Nat)
+    (h₂ : validFlatTM M₂) (h₃ : validFlatTM M₃) :
+    (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).halt.length =
+      (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).states := by
+  rw [branchComposeFlatTM_states]
+  show (composedBranchHalt M₁ M₂ M₃).length = M₁.states + M₂.states + M₃.states
+  rw [composedBranchHalt_length, h₂.2.1, h₃.2.1]
+
+/-! ### Validity of `branchComposeFlatTM` -/
+
+theorem branchComposeFlatTM_valid (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h₁ : validFlatTM M₁) (h₂ : validFlatTM M₂) (h₃ : validFlatTM M₃)
+    (h_exit_pos : exit_pos < M₁.states)
+    (h_exit_neg : exit_neg < M₁.states)
+    (h_t1 : M₁.tapes = 1) (h_t2 : M₂.tapes = 1) (h_t3 : M₃.tapes = 1) :
+    validFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) := by
+  obtain ⟨h₁_start, h₁_halt, h₁_trans⟩ := h₁
+  obtain ⟨h₂_start, h₂_halt, h₂_trans⟩ := h₂
+  obtain ⟨h₃_start, h₃_halt, h₃_trans⟩ := h₃
+  refine ⟨?_, ?_, ?_⟩
+  · -- start < states
+    show M₁.start < M₁.states + M₂.states + M₃.states
+    have h1 : M₁.start < M₁.states + M₂.states :=
+      Nat.lt_of_lt_of_le h₁_start (Nat.le_add_right _ _)
+    exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+  · -- halt.length = states
+    show (composedBranchHalt M₁ M₂ M₃).length =
+      M₁.states + M₂.states + M₃.states
+    rw [composedBranchHalt_length, h₂_halt, h₃_halt]
+  · -- every transition is valid
+    intro entry hentry
+    show flatTMTransEntryValid (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) entry
+    set sigC : Nat := max M₁.sig (max M₂.sig M₃.sig) with hsigC
+    have hsig_eq : (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).sig = sigC := rfl
+    have hstates_eq :
+        (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).states =
+          M₁.states + M₂.states + M₃.states := rfl
+    have htapes_eq :
+        (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).tapes = M₁.tapes := rfl
+    have hentry' : entry ∈
+        bridgeEntries sigC exit_pos (M₁.states + M₂.start) ++
+        bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) ++
+        M₃.trans.map (shiftEntry (M₁.states + M₂.states)) := hentry
+    -- Bound helpers.
+    have h_sig1_le : M₁.sig ≤ sigC := Nat.le_max_left _ _
+    have h_sig2_le : M₂.sig ≤ sigC := by
+      apply le_trans (Nat.le_max_left _ _) (Nat.le_max_right _ _)
+    have h_sig3_le : M₃.sig ≤ sigC := by
+      apply le_trans (Nat.le_max_right _ _) (Nat.le_max_right _ _)
+    -- Decompose membership through the four appends.
+    rcases List.mem_append.mp hentry' with hLeft | h_m3
+    rcases List.mem_append.mp hLeft with hLeft2 | h_m2
+    rcases List.mem_append.mp hLeft2 with hLeft3 | h_m1
+    rcases List.mem_append.mp hLeft3 with h_bridgePos | h_bridgeNeg
+    · -- Bridge_pos
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ :=
+        bridgeEntries_mem h_bridgePos
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hsrc, hstates_eq]
+        have h1 : exit_pos < M₁.states + M₂.states :=
+          Nat.lt_of_lt_of_le h_exit_pos (Nat.le_add_right _ _)
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · rw [hdst, hstates_eq]
+        -- M₁.states + M₂.start < M₁.states + M₂.states + M₃.states
+        have h1 : M₁.states + M₂.start < M₁.states + M₂.states :=
+          Nat.add_lt_add_left h₂_start M₁.states
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · rw [hsrcLen, htapes_eq, h_t1]
+      · rw [hdstLen, htapes_eq, h_t1]
+      · rw [hmovLen, htapes_eq, h_t1]
+      · rw [hsig_eq]; exact hsymSrc
+      · rw [hsig_eq]; exact hsymDst
+    · -- Bridge_neg
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ :=
+        bridgeEntries_mem h_bridgeNeg
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hsrc, hstates_eq]
+        have h1 : exit_neg < M₁.states + M₂.states :=
+          Nat.lt_of_lt_of_le h_exit_neg (Nat.le_add_right _ _)
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · rw [hdst, hstates_eq]
+        -- M₁.states + M₂.states + M₃.start < M₁.states + M₂.states + M₃.states
+        exact Nat.add_lt_add_left h₃_start (M₁.states + M₂.states)
+      · rw [hsrcLen, htapes_eq, h_t1]
+      · rw [hdstLen, htapes_eq, h_t1]
+      · rw [hmovLen, htapes_eq, h_t1]
+      · rw [hsig_eq]; exact hsymSrc
+      · rw [hsig_eq]; exact hsymDst
+    · -- M₁'s original transition
+      have hVal := h₁_trans entry h_m1
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ := hVal
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hstates_eq]
+        have h1 : entry.src_state < M₁.states + M₂.states :=
+          Nat.lt_of_lt_of_le hsrc (Nat.le_add_right _ _)
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · rw [hstates_eq]
+        have h1 : entry.dst_state < M₁.states + M₂.states :=
+          Nat.lt_of_lt_of_le hdst (Nat.le_add_right _ _)
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · rw [htapes_eq]; exact hsrcLen
+      · rw [htapes_eq]; exact hdstLen
+      · rw [htapes_eq]; exact hmovLen
+      · rw [hsig_eq]
+        intro x hx
+        cases x with
+        | none => trivial
+        | some v => exact Nat.lt_of_lt_of_le (hsymSrc (some v) hx) h_sig1_le
+      · rw [hsig_eq]
+        intro x hx
+        cases x with
+        | none => trivial
+        | some v => exact Nat.lt_of_lt_of_le (hsymDst (some v) hx) h_sig1_le
+    · -- shifted M₂ transition
+      rcases List.mem_map.mp h_m2 with ⟨entry₀, hentry₀, hshift⟩
+      subst hshift
+      have hVal := h₂_trans entry₀ hentry₀
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ := hVal
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · show entry₀.src_state + M₁.states < M₁.states + M₂.states + M₃.states
+        have h1 : entry₀.src_state + M₁.states < M₁.states + M₂.states := by
+          rw [Nat.add_comm entry₀.src_state M₁.states]
+          exact Nat.add_lt_add_left hsrc M₁.states
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · show entry₀.dst_state + M₁.states < M₁.states + M₂.states + M₃.states
+        have h1 : entry₀.dst_state + M₁.states < M₁.states + M₂.states := by
+          rw [Nat.add_comm entry₀.dst_state M₁.states]
+          exact Nat.add_lt_add_left hdst M₁.states
+        exact Nat.lt_of_lt_of_le h1 (Nat.le_add_right _ _)
+      · rw [htapes_eq, h_t1, ← h_t2]; exact hsrcLen
+      · rw [htapes_eq, h_t1, ← h_t2]; exact hdstLen
+      · rw [htapes_eq, h_t1, ← h_t2]; exact hmovLen
+      · rw [hsig_eq]
+        intro x hx
+        cases x with
+        | none => trivial
+        | some v => exact Nat.lt_of_lt_of_le (hsymSrc (some v) hx) h_sig2_le
+      · rw [hsig_eq]
+        intro x hx
+        cases x with
+        | none => trivial
+        | some v => exact Nat.lt_of_lt_of_le (hsymDst (some v) hx) h_sig2_le
+    · -- shifted M₃ transition
+      rcases List.mem_map.mp h_m3 with ⟨entry₀, hentry₀, hshift⟩
+      subst hshift
+      have hVal := h₃_trans entry₀ hentry₀
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ := hVal
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · show entry₀.src_state + (M₁.states + M₂.states) <
+          M₁.states + M₂.states + M₃.states
+        rw [Nat.add_comm entry₀.src_state (M₁.states + M₂.states)]
+        exact Nat.add_lt_add_left hsrc (M₁.states + M₂.states)
+      · show entry₀.dst_state + (M₁.states + M₂.states) <
+          M₁.states + M₂.states + M₃.states
+        rw [Nat.add_comm entry₀.dst_state (M₁.states + M₂.states)]
+        exact Nat.add_lt_add_left hdst (M₁.states + M₂.states)
+      · rw [htapes_eq, h_t1, ← h_t3]; exact hsrcLen
+      · rw [htapes_eq, h_t1, ← h_t3]; exact hdstLen
+      · rw [htapes_eq, h_t1, ← h_t3]; exact hmovLen
+      · rw [hsig_eq]
+        intro x hx
+        cases x with
+        | none => trivial
+        | some v => exact Nat.lt_of_lt_of_le (hsymSrc (some v) hx) h_sig3_le
+      · rw [hsig_eq]
+        intro x hx
+        cases x with
+        | none => trivial
+        | some v => exact Nat.lt_of_lt_of_le (hsymDst (some v) hx) h_sig3_le
+
+/-! ### Halting state lemmas for `branchComposeFlatTM` -/
+
+/-- At an M₁-state, the branched composed machine's halt bit is `false`. -/
+private theorem branchComposeFlatTM_haltingStateReached_M1
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) (cfg : FlatTMConfig)
+    (h : cfg.state_idx < M₁.states) :
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg = false := by
+  show (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).halt.getD cfg.state_idx false = false
+  show (composedBranchHalt M₁ M₂ M₃).getD cfg.state_idx false = false
+  show ((List.replicate M₁.states false ++ M₂.halt ++ M₃.halt).getD cfg.state_idx false) = false
+  have h_left_lt :
+      cfg.state_idx < (List.replicate M₁.states false ++ M₂.halt).length := by
+    rw [List.length_append, List.length_replicate]
+    exact Nat.lt_of_lt_of_le h (Nat.le_add_right _ _)
+  rw [List.getD_append _ _ _ _ h_left_lt]
+  have h_inner_lt : cfg.state_idx < (List.replicate M₁.states false).length := by
+    rw [List.length_replicate]; exact h
+  rw [List.getD_append _ _ _ _ h_inner_lt]
+  exact List.getD_replicate false h
+
+/-- On a shifted M₂-state `s + M₁.states` (with `s < M₂.states`), the
+branched composed machine's halt bit equals `M₂`'s halt bit at `s`. -/
+private theorem branchComposeFlatTM_haltingStateReached_M2
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h₂ : validFlatTM M₂)
+    (s : Nat) (h_s : s < M₂.states)
+    (tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := s + M₁.states, tapes := tapes } =
+      haltingStateReached M₂ { state_idx := s, tapes := tapes } := by
+  show (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).halt.getD
+        (s + M₁.states) false = M₂.halt.getD s false
+  show (composedBranchHalt M₁ M₂ M₃).getD (s + M₁.states) false = _
+  show ((List.replicate M₁.states false ++ M₂.halt ++ M₃.halt).getD
+        (s + M₁.states) false) = _
+  have h_left_lt :
+      s + M₁.states < (List.replicate M₁.states false ++ M₂.halt).length := by
+    rw [List.length_append, List.length_replicate]
+    -- s + M₁.states < M₁.states + M₂.halt.length
+    rw [h₂.2.1]
+    -- s + M₁.states < M₁.states + M₂.states
+    rw [Nat.add_comm M₁.states M₂.states]
+    exact Nat.add_lt_add_right h_s M₁.states
+  rw [List.getD_append _ _ _ _ h_left_lt]
+  have h_replicate_le :
+      (List.replicate M₁.states false).length ≤ s + M₁.states := by
+    rw [List.length_replicate]; exact Nat.le_add_left _ _
+  rw [List.getD_append_right _ _ _ _ h_replicate_le]
+  rw [List.length_replicate]
+  show M₂.halt.getD (s + M₁.states - M₁.states) false = _
+  rw [Nat.add_sub_cancel]
+
+/-- On a shifted M₃-state `s + (M₁.states + M₂.states)`, the branched
+composed machine's halt bit equals `M₃`'s halt bit at `s`. -/
+private theorem branchComposeFlatTM_haltingStateReached_M3
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h₂ : validFlatTM M₂)
+    (s : Nat)
+    (tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := s + (M₁.states + M₂.states), tapes := tapes } =
+      haltingStateReached M₃ { state_idx := s, tapes := tapes } := by
+  show (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).halt.getD
+        (s + (M₁.states + M₂.states)) false = M₃.halt.getD s false
+  show (composedBranchHalt M₁ M₂ M₃).getD (s + (M₁.states + M₂.states)) false = _
+  show ((List.replicate M₁.states false ++ M₂.halt ++ M₃.halt).getD
+        (s + (M₁.states + M₂.states)) false) = _
+  have h_left_le :
+      (List.replicate M₁.states false ++ M₂.halt).length ≤ s + (M₁.states + M₂.states) := by
+    rw [List.length_append, List.length_replicate, h₂.2.1]
+    -- M₁.states + M₂.states ≤ s + (M₁.states + M₂.states)
+    exact Nat.le_add_left _ _
+  rw [List.getD_append_right _ _ _ _ h_left_le]
+  rw [List.length_append, List.length_replicate, h₂.2.1]
+  -- M₃.halt.getD (s + (M₁.states + M₂.states) - (M₁.states + M₂.states)) false
+  rw [Nat.add_sub_cancel]
+
+/-! ### M₁-phase step lemma for `branchComposeFlatTM` -/
+
+/-- M₁-phase step: on a cfg in M₁'s state range and not equal to either
+exit, one branched-composed step coincides with M₁'s one step. -/
+private theorem stepFlatTM_branchComposeFlatTM_M1
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) (cfg : FlatTMConfig)
+    (h_state_lt : cfg.state_idx < M₁.states)
+    (h_state_ne_pos : cfg.state_idx ≠ exit_pos)
+    (h_state_ne_neg : cfg.state_idx ≠ exit_neg) :
+    stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg = stepFlatTM M₁ cfg := by
+  show ((branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) =
+       (M₁.trans.find? (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg)
+  have h_trans :
+      (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans =
+        bridgeEntries (max M₁.sig (max M₂.sig M₃.sig)) exit_pos (M₁.states + M₂.start) ++
+        bridgeEntries (max M₁.sig (max M₂.sig M₃.sig)) exit_neg
+            (M₁.states + M₂.states + M₃.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) ++
+        M₃.trans.map (shiftEntry (M₁.states + M₂.states)) := rfl
+  rw [h_trans]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append]
+  have h_bridge_pos :
+      (bridgeEntries (max M₁.sig (max M₂.sig M₃.sig)) exit_pos
+          (M₁.states + M₂.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none :=
+    bridgeEntries_find_eq_none h_state_ne_pos
+  have h_bridge_neg :
+      (bridgeEntries (max M₁.sig (max M₂.sig M₃.sig)) exit_neg
+          (M₁.states + M₂.states + M₃.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none :=
+    bridgeEntries_find_eq_none h_state_ne_neg
+  have h_shift2 :
+      (M₂.trans.map (shiftEntry M₁.states)).find?
+          (fun e => entryMatchesConfig e cfg) = none :=
+    shiftEntries_find_eq_none M₂ M₁.states cfg h_state_lt
+  have h_shift3 :
+      (M₃.trans.map (shiftEntry (M₁.states + M₂.states))).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine shiftEntries_find_eq_none M₃ (M₁.states + M₂.states) cfg ?_
+    exact Nat.lt_of_lt_of_le h_state_lt (Nat.le_add_right _ _)
+  rw [h_bridge_pos, h_bridge_neg, h_shift2, h_shift3]
+  simp only [Option.none_or, Option.or_none]
+
+/-! ### Bridge step lemmas for `branchComposeFlatTM` -/
+
+/-- Bridge_pos step: at state `exit_pos` with a single-tape cfg, one
+branched-composed step jumps to `M₁.states + M₂.start`. -/
+private theorem stepFlatTM_branchComposeFlatTM_bridge_pos
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v →
+                          v < max M₁.sig (max M₂.sig M₃.sig)) :
+    stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := exit_pos, tapes := [(left, head, right)] } =
+      some { state_idx := M₁.states + M₂.start,
+             tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := exit_pos, tapes := [(left, head, right)] }
+    with hcfg
+  show ((branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) = _
+  set sigC : Nat := max M₁.sig (max M₂.sig M₃.sig)
+  have h_trans :
+      (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans =
+        bridgeEntries sigC exit_pos (M₁.states + M₂.start) ++
+        bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) ++
+        M₃.trans.map (shiftEntry (M₁.states + M₂.states)) := rfl
+  rw [h_trans]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append]
+  -- Bridge_pos's find? returns some bridge_mk_entry for the current symbol.
+  have h_tape_map :
+      cfg.tapes.map currentTapeSymbol = [currentTapeSymbol (left, head, right)] := rfl
+  have h_cfg_state : cfg.state_idx = exit_pos := rfl
+  rw [bridgeEntries_eq_bridgeMkEntry]
+  -- We need: the bridge_pos's find? = some (bridgeMkEntry exit_pos _ (current symbol)).
+  suffices h_bridge_find :
+      ((bridgeMkEntry exit_pos (M₁.states + M₂.start) none ::
+          (List.range sigC).map
+            (fun w => bridgeMkEntry exit_pos (M₁.states + M₂.start) (some w))).find?
+          (fun e => entryMatchesConfig e cfg)) =
+        some (bridgeMkEntry exit_pos (M₁.states + M₂.start)
+          (currentTapeSymbol (left, head, right))) by
+    rw [h_bridge_find]
+    -- Goal: (((some _ ).or _).or _).or _).or _).bind apply = some {...}
+    simp only [Option.some_or]
+    exact applyBridgeMkEntry_singleTape exit_pos (M₁.states + M₂.start)
+      (currentTapeSymbol (left, head, right)) left right head
+  cases h_sym : currentTapeSymbol (left, head, right) with
+  | none =>
+      have h_match :
+          entryMatchesConfig
+            (bridgeMkEntry exit_pos (M₁.states + M₂.start) none) cfg = true := by
+        refine entryMatchesConfig_true_of rfl ?_
+        show ([none] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol
+        rw [h_tape_map, h_sym]
+      exact List.find?_cons_of_pos h_match
+  | some v =>
+      have h_no_match : ¬ entryMatchesConfig
+          (bridgeMkEntry exit_pos (M₁.states + M₂.start) none) cfg = true := by
+        intro h
+        have h_tape_eq := ((entryMatchesConfig_iff _ _).mp h).2
+        have h_eq : ([none] : List (Option Nat)) = [some v] := by
+          calc ([none] : List (Option Nat))
+              = (bridgeMkEntry exit_pos (M₁.states + M₂.start) none).src_tape_vals := rfl
+            _ = cfg.tapes.map currentTapeSymbol := h_tape_eq
+            _ = [currentTapeSymbol (left, head, right)] := h_tape_map
+            _ = [some v] := by rw [h_sym]
+        injection h_eq with h1 _
+        cases h1
+      have h_step :
+          ((bridgeMkEntry exit_pos (M₁.states + M₂.start) none) ::
+            (List.range sigC).map
+              (fun w => bridgeMkEntry exit_pos (M₁.states + M₂.start) (some w))).find?
+              (fun e => entryMatchesConfig e cfg) =
+          ((List.range sigC).map
+              (fun w => bridgeMkEntry exit_pos (M₁.states + M₂.start) (some w))).find?
+              (fun e => entryMatchesConfig e cfg) :=
+        List.find?_cons_of_neg h_no_match
+      rw [h_step]
+      have h_v_lt : v < sigC := h_sym_bound v h_sym
+      exact find_bridgeRange_some sigC exit_pos (M₁.states + M₂.start) v
+        h_v_lt cfg h_cfg_state (by rw [h_tape_map, h_sym])
+
+/-- Bridge_neg step: at state `exit_neg` (with `exit_pos ≠ exit_neg`)
+with a single-tape cfg, one branched-composed step jumps to
+`M₁.states + M₂.states + M₃.start`. -/
+private theorem stepFlatTM_branchComposeFlatTM_bridge_neg
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h_exit_ne : exit_pos ≠ exit_neg)
+    (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v →
+                          v < max M₁.sig (max M₂.sig M₃.sig)) :
+    stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := exit_neg, tapes := [(left, head, right)] } =
+      some { state_idx := M₁.states + M₂.states + M₃.start,
+             tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := exit_neg, tapes := [(left, head, right)] }
+    with hcfg
+  show ((branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) = _
+  set sigC : Nat := max M₁.sig (max M₂.sig M₃.sig)
+  have h_trans :
+      (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans =
+        bridgeEntries sigC exit_pos (M₁.states + M₂.start) ++
+        bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) ++
+        M₃.trans.map (shiftEntry (M₁.states + M₂.states)) := rfl
+  rw [h_trans]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append]
+  -- Bridge_pos doesn't match (cfg.state_idx = exit_neg ≠ exit_pos).
+  have h_state_ne : cfg.state_idx ≠ exit_pos := by
+    show exit_neg ≠ exit_pos
+    intro h_eq; exact h_exit_ne h_eq.symm
+  have h_bridge_pos_none :
+      (bridgeEntries sigC exit_pos (M₁.states + M₂.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none :=
+    bridgeEntries_find_eq_none h_state_ne
+  rw [h_bridge_pos_none]
+  have h_tape_map :
+      cfg.tapes.map currentTapeSymbol = [currentTapeSymbol (left, head, right)] := rfl
+  have h_cfg_state : cfg.state_idx = exit_neg := rfl
+  rw [bridgeEntries_eq_bridgeMkEntry]
+  -- The bridge_neg's find? returns some bridge_mk_entry for the current symbol.
+  suffices h_bridge_find :
+      ((bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start) none ::
+          (List.range sigC).map
+            (fun w => bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start) (some w))).find?
+          (fun e => entryMatchesConfig e cfg)) =
+        some (bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start)
+          (currentTapeSymbol (left, head, right))) by
+    rw [h_bridge_find]
+    simp only [Option.none_or, Option.some_or]
+    exact applyBridgeMkEntry_singleTape exit_neg (M₁.states + M₂.states + M₃.start)
+      (currentTapeSymbol (left, head, right)) left right head
+  cases h_sym : currentTapeSymbol (left, head, right) with
+  | none =>
+      have h_match :
+          entryMatchesConfig
+            (bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start) none) cfg = true := by
+        refine entryMatchesConfig_true_of rfl ?_
+        show ([none] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol
+        rw [h_tape_map, h_sym]
+      exact List.find?_cons_of_pos h_match
+  | some v =>
+      have h_no_match : ¬ entryMatchesConfig
+          (bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start) none) cfg = true := by
+        intro h
+        have h_tape_eq := ((entryMatchesConfig_iff _ _).mp h).2
+        have h_eq : ([none] : List (Option Nat)) = [some v] := by
+          calc ([none] : List (Option Nat))
+              = (bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start)
+                  none).src_tape_vals := rfl
+            _ = cfg.tapes.map currentTapeSymbol := h_tape_eq
+            _ = [currentTapeSymbol (left, head, right)] := h_tape_map
+            _ = [some v] := by rw [h_sym]
+        injection h_eq with h1 _
+        cases h1
+      have h_step :
+          ((bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start) none) ::
+            (List.range sigC).map
+              (fun w => bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start)
+                (some w))).find?
+              (fun e => entryMatchesConfig e cfg) =
+          ((List.range sigC).map
+              (fun w => bridgeMkEntry exit_neg (M₁.states + M₂.states + M₃.start)
+                (some w))).find?
+              (fun e => entryMatchesConfig e cfg) :=
+        List.find?_cons_of_neg h_no_match
+      rw [h_step]
+      have h_v_lt : v < sigC := h_sym_bound v h_sym
+      exact find_bridgeRange_some sigC exit_neg (M₁.states + M₂.states + M₃.start) v
+        h_v_lt cfg h_cfg_state (by rw [h_tape_map, h_sym])
+
+/-! ### M₂-phase and M₃-phase step lemmas for `branchComposeFlatTM`
+
+These follow the template of `stepFlatTM_composeFlatTM_M2`. The M₂
+step is at offset `M₁.states`; the M₃ step is at offset
+`M₁.states + M₂.states`. Each requires that the *other* shifted block
+does not match (a small upper-bound argument on the unshifted state). -/
+
+/-- Shifted-block entries don't match cfg.state_idx if their unshifted
+src values stay strictly below `cfg.state_idx - off`. We use this in
+the M₃-phase lemma to dismiss shifted M₂ entries (whose unshifted src
+< M₂.states ≤ cfg.state_idx - M₁.states). -/
+private theorem shiftEntries_find_eq_none_above
+    (M : FlatTM) (h_valid : validFlatTM M) (off : Nat) (cfg : FlatTMConfig)
+    (h : off + M.states ≤ cfg.state_idx) :
+    (M.trans.map (shiftEntry off)).find?
+        (fun e => entryMatchesConfig e cfg) = none := by
+  rw [List.find?_eq_none]
+  intro e' he'
+  rcases List.mem_map.mp he' with ⟨e, he, hshift⟩
+  subst hshift
+  refine entryMatchesConfig_ne_true_of_state_ne ?_
+  rw [shiftEntry_src_state_ge]
+  have h_e_src_lt : e.src_state < M.states := (h_valid.2.2 e he).1
+  have h_lt : e.src_state + off < cfg.state_idx := by
+    have h1 : e.src_state + off < M.states + off := Nat.add_lt_add_right h_e_src_lt off
+    have h2 : M.states + off = off + M.states := Nat.add_comm _ _
+    exact Nat.lt_of_lt_of_le (h2 ▸ h1) h
+  exact Nat.ne_of_lt h_lt
+
+/-- M₂-phase step: on a shifted M₂-state `s + M₁.states` (with
+`s < M₂.states`), one branched-composed step coincides with M₂'s one
+step at the unshifted state `s`, with the result shifted by `+M₁.states`. -/
+private theorem stepFlatTM_branchComposeFlatTM_M2
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) (s : Nat)
+    (tapes : List (List Nat × Nat × List Nat))
+    (h_validM1 : validFlatTM M₁)
+    (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states)
+    (h_exit_neg_lt : exit_neg < M₁.states)
+    (h_s_lt : s < M₂.states) :
+    stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := s + M₁.states, tapes := tapes } =
+      (stepFlatTM M₂ { state_idx := s, tapes := tapes }).map
+        (fun c => { state_idx := c.state_idx + M₁.states, tapes := c.tapes }) := by
+  set cfg : FlatTMConfig := { state_idx := s + M₁.states, tapes := tapes } with hcfg
+  set cfg2 : FlatTMConfig := { state_idx := s, tapes := tapes } with hcfg2
+  show ((branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) =
+       ((M₂.trans.find?
+          (fun e => entryMatchesConfig e cfg2)).bind (applyTransitionEntry cfg2)).map _
+  set sigC : Nat := max M₁.sig (max M₂.sig M₃.sig)
+  have h_trans :
+      (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans =
+        bridgeEntries sigC exit_pos (M₁.states + M₂.start) ++
+        bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) ++
+        M₃.trans.map (shiftEntry (M₁.states + M₂.states)) := rfl
+  rw [h_trans]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append]
+  -- Both bridges: src = exit_* < M₁.states ≤ s + M₁.states = cfg.state_idx → none.
+  have h_bridge_pos_none :
+      (bridgeEntries sigC exit_pos (M₁.states + M₂.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine bridgeEntries_find_eq_none ?_
+    show cfg.state_idx ≠ exit_pos
+    show s + M₁.states ≠ exit_pos
+    intro h_eq
+    have h_lt : exit_pos < s + M₁.states :=
+      Nat.lt_of_lt_of_le h_exit_pos_lt (Nat.le_add_left _ _)
+    exact absurd h_eq.symm (Nat.ne_of_lt h_lt)
+  have h_bridge_neg_none :
+      (bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine bridgeEntries_find_eq_none ?_
+    show cfg.state_idx ≠ exit_neg
+    show s + M₁.states ≠ exit_neg
+    intro h_eq
+    have h_lt : exit_neg < s + M₁.states :=
+      Nat.lt_of_lt_of_le h_exit_neg_lt (Nat.le_add_left _ _)
+    exact absurd h_eq.symm (Nat.ne_of_lt h_lt)
+  -- M₁'s trans: src < M₁.states ≤ cfg.state_idx → none.
+  have h_M1_none :
+      M₁.trans.find? (fun e => entryMatchesConfig e cfg) = none := by
+    rw [List.find?_eq_none]
+    intro e he
+    refine entryMatchesConfig_ne_true_of_state_ne ?_
+    have h_src_lt : e.src_state < M₁.states := (h_validM1.2.2 e he).1
+    show e.src_state ≠ cfg.state_idx
+    show e.src_state ≠ s + M₁.states
+    intro h_eq
+    have h_lt' : e.src_state < s + M₁.states :=
+      Nat.lt_of_lt_of_le h_src_lt (Nat.le_add_left _ _)
+    exact absurd h_eq (Nat.ne_of_lt h_lt')
+  -- Shifted M₃: src = e.src + (M₁.states + M₂.states) ≥ M₁.states + M₂.states > cfg.
+  have h_M3_none :
+      (M₃.trans.map (shiftEntry (M₁.states + M₂.states))).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine shiftEntries_find_eq_none M₃ (M₁.states + M₂.states) cfg ?_
+    -- cfg.state_idx = s + M₁.states < M₁.states + M₂.states
+    show s + M₁.states < M₁.states + M₂.states
+    rw [Nat.add_comm s M₁.states]
+    exact Nat.add_lt_add_left h_s_lt M₁.states
+  rw [h_bridge_pos_none, h_bridge_neg_none, h_M1_none, h_M3_none]
+  simp only [Option.none_or, Option.or_none]
+  -- Now we have: ((M₂.trans.map (shiftEntry M₁.states)).find? pred).bind apply on cfg.
+  rw [List.find?_map]
+  show (Option.map (shiftEntry M₁.states)
+          (M₂.trans.find?
+            (fun e => entryMatchesConfig (shiftEntry M₁.states e) cfg))).bind
+        (applyTransitionEntry cfg) =
+       ((M₂.trans.find? (fun e => entryMatchesConfig e cfg2)).bind
+          (applyTransitionEntry cfg2)).map _
+  have h_pred_eq :
+      (fun e => entryMatchesConfig (shiftEntry M₁.states e) cfg) =
+      (fun e => entryMatchesConfig e cfg2) := by
+    funext e
+    by_cases h_match : entryMatchesConfig e cfg2 = true
+    · have ⟨h_state2, h_tape2⟩ := (entryMatchesConfig_iff _ _).mp h_match
+      have h_match_shifted : entryMatchesConfig (shiftEntry M₁.states e) cfg = true := by
+        refine entryMatchesConfig_true_of ?_ h_tape2
+        show e.src_state + M₁.states = s + M₁.states
+        rw [h_state2]
+      rw [h_match_shifted, h_match]
+    · have h_match_neg : entryMatchesConfig e cfg2 = false := by
+        cases h : entryMatchesConfig e cfg2 with
+        | true => exact absurd h h_match
+        | false => rfl
+      have h_match_shifted_neg :
+          entryMatchesConfig (shiftEntry M₁.states e) cfg = false := by
+        cases h : entryMatchesConfig (shiftEntry M₁.states e) cfg with
+        | true =>
+            have ⟨h_state, h_tape⟩ := (entryMatchesConfig_iff _ _).mp h
+            have h_state_eq : e.src_state + M₁.states = s + M₁.states := h_state
+            have h_src_eq : e.src_state = s := Nat.add_right_cancel h_state_eq
+            have h_match_pos : entryMatchesConfig e cfg2 = true :=
+              entryMatchesConfig_true_of h_src_eq h_tape
+            rw [h_match_pos] at h_match_neg
+            cases h_match_neg
+        | false => rfl
+      rw [h_match_shifted_neg, h_match_neg]
+  rw [h_pred_eq]
+  cases hF : M₂.trans.find? (fun e => entryMatchesConfig e cfg2) with
+  | none => rfl
+  | some e =>
+      show (some (shiftEntry M₁.states e)).bind (applyTransitionEntry cfg) =
+        Option.map _ ((some e).bind (applyTransitionEntry cfg2))
+      show applyTransitionEntry cfg (shiftEntry M₁.states e) =
+        Option.map _ (applyTransitionEntry cfg2 e)
+      have h_sub : cfg.state_idx - M₁.states = cfg2.state_idx := by
+        show s + M₁.states - M₁.states = s
+        exact Nat.add_sub_cancel _ _
+      have h_cfg_eq : { state_idx := cfg.state_idx - M₁.states, tapes := cfg.tapes } = cfg2 := by
+        rw [h_sub]
+      rw [applyTransitionEntry_shiftEntry, h_cfg_eq]
+
+/-- M₃-phase step: on a shifted M₃-state `s + (M₁.states + M₂.states)`
+(with `s < M₃.states`), one branched-composed step coincides with
+M₃'s one step at the unshifted state `s`, with the result shifted by
+`+(M₁.states + M₂.states)`. -/
+private theorem stepFlatTM_branchComposeFlatTM_M3
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) (s : Nat)
+    (tapes : List (List Nat × Nat × List Nat))
+    (h_validM1 : validFlatTM M₁)
+    (h_validM2 : validFlatTM M₂)
+    (h_exit_pos_lt : exit_pos < M₁.states)
+    (h_exit_neg_lt : exit_neg < M₁.states) :
+    stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := s + (M₁.states + M₂.states), tapes := tapes } =
+      (stepFlatTM M₃ { state_idx := s, tapes := tapes }).map
+        (fun c => { state_idx := c.state_idx + (M₁.states + M₂.states),
+                    tapes := c.tapes }) := by
+  set cfg : FlatTMConfig := { state_idx := s + (M₁.states + M₂.states), tapes := tapes }
+    with hcfg
+  set cfg3 : FlatTMConfig := { state_idx := s, tapes := tapes } with hcfg3
+  show ((branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) =
+       ((M₃.trans.find?
+          (fun e => entryMatchesConfig e cfg3)).bind (applyTransitionEntry cfg3)).map _
+  set sigC : Nat := max M₁.sig (max M₂.sig M₃.sig)
+  have h_trans :
+      (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg).trans =
+        bridgeEntries sigC exit_pos (M₁.states + M₂.start) ++
+        bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start) ++
+        M₁.trans ++
+        M₂.trans.map (shiftEntry M₁.states) ++
+        M₃.trans.map (shiftEntry (M₁.states + M₂.states)) := rfl
+  rw [h_trans]
+  rw [List.find?_append, List.find?_append, List.find?_append, List.find?_append]
+  -- All non-M₃ entries don't match cfg.state_idx = s + (M₁.states + M₂.states):
+  -- Bridge_pos: src = exit_pos < M₁.states ≤ M₁.states + M₂.states ≤ cfg → none.
+  have h_M1M2_le : M₁.states ≤ s + (M₁.states + M₂.states) := by
+    have h1 : M₁.states ≤ M₁.states + M₂.states := Nat.le_add_right _ _
+    exact Nat.le_trans h1 (Nat.le_add_left _ _)
+  have h_bridge_pos_none :
+      (bridgeEntries sigC exit_pos (M₁.states + M₂.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine bridgeEntries_find_eq_none ?_
+    show cfg.state_idx ≠ exit_pos
+    show s + (M₁.states + M₂.states) ≠ exit_pos
+    intro h_eq
+    have h_lt : exit_pos < s + (M₁.states + M₂.states) :=
+      Nat.lt_of_lt_of_le h_exit_pos_lt h_M1M2_le
+    exact absurd h_eq.symm (Nat.ne_of_lt h_lt)
+  have h_bridge_neg_none :
+      (bridgeEntries sigC exit_neg (M₁.states + M₂.states + M₃.start)).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine bridgeEntries_find_eq_none ?_
+    show cfg.state_idx ≠ exit_neg
+    show s + (M₁.states + M₂.states) ≠ exit_neg
+    intro h_eq
+    have h_lt : exit_neg < s + (M₁.states + M₂.states) :=
+      Nat.lt_of_lt_of_le h_exit_neg_lt h_M1M2_le
+    exact absurd h_eq.symm (Nat.ne_of_lt h_lt)
+  -- M₁'s trans: src < M₁.states ≤ cfg → none.
+  have h_M1_none :
+      M₁.trans.find? (fun e => entryMatchesConfig e cfg) = none := by
+    rw [List.find?_eq_none]
+    intro e he
+    refine entryMatchesConfig_ne_true_of_state_ne ?_
+    have h_src_lt : e.src_state < M₁.states := (h_validM1.2.2 e he).1
+    show e.src_state ≠ cfg.state_idx
+    show e.src_state ≠ s + (M₁.states + M₂.states)
+    intro h_eq
+    have h_lt' : e.src_state < s + (M₁.states + M₂.states) :=
+      Nat.lt_of_lt_of_le h_src_lt h_M1M2_le
+    exact absurd h_eq (Nat.ne_of_lt h_lt')
+  -- Shifted M₂: src = e.src + M₁.states < M₁.states + M₂.states ≤ cfg → none.
+  have h_M2_none :
+      (M₂.trans.map (shiftEntry M₁.states)).find?
+          (fun e => entryMatchesConfig e cfg) = none := by
+    refine shiftEntries_find_eq_none_above M₂ h_validM2 M₁.states cfg ?_
+    show M₁.states + M₂.states ≤ s + (M₁.states + M₂.states)
+    exact Nat.le_add_left _ _
+  rw [h_bridge_pos_none, h_bridge_neg_none, h_M1_none, h_M2_none]
+  simp only [Option.none_or, Option.or_none]
+  -- Now we have: ((M₃.trans.map (shiftEntry (M₁.states + M₂.states))).find? pred).bind ...
+  rw [List.find?_map]
+  show (Option.map (shiftEntry (M₁.states + M₂.states))
+          (M₃.trans.find?
+            (fun e => entryMatchesConfig (shiftEntry (M₁.states + M₂.states) e) cfg))).bind
+        (applyTransitionEntry cfg) =
+       ((M₃.trans.find? (fun e => entryMatchesConfig e cfg3)).bind
+          (applyTransitionEntry cfg3)).map _
+  have h_pred_eq :
+      (fun e => entryMatchesConfig (shiftEntry (M₁.states + M₂.states) e) cfg) =
+      (fun e => entryMatchesConfig e cfg3) := by
+    funext e
+    by_cases h_match : entryMatchesConfig e cfg3 = true
+    · have ⟨h_state3, h_tape3⟩ := (entryMatchesConfig_iff _ _).mp h_match
+      have h_match_shifted :
+          entryMatchesConfig (shiftEntry (M₁.states + M₂.states) e) cfg = true := by
+        refine entryMatchesConfig_true_of ?_ h_tape3
+        show e.src_state + (M₁.states + M₂.states) = s + (M₁.states + M₂.states)
+        rw [h_state3]
+      rw [h_match_shifted, h_match]
+    · have h_match_neg : entryMatchesConfig e cfg3 = false := by
+        cases h : entryMatchesConfig e cfg3 with
+        | true => exact absurd h h_match
+        | false => rfl
+      have h_match_shifted_neg :
+          entryMatchesConfig (shiftEntry (M₁.states + M₂.states) e) cfg = false := by
+        cases h : entryMatchesConfig (shiftEntry (M₁.states + M₂.states) e) cfg with
+        | true =>
+            have ⟨h_state, h_tape⟩ := (entryMatchesConfig_iff _ _).mp h
+            have h_state_eq :
+                e.src_state + (M₁.states + M₂.states) =
+                  s + (M₁.states + M₂.states) := h_state
+            have h_src_eq : e.src_state = s := Nat.add_right_cancel h_state_eq
+            have h_match_pos : entryMatchesConfig e cfg3 = true :=
+              entryMatchesConfig_true_of h_src_eq h_tape
+            rw [h_match_pos] at h_match_neg
+            cases h_match_neg
+        | false => rfl
+      rw [h_match_shifted_neg, h_match_neg]
+  rw [h_pred_eq]
+  cases hF : M₃.trans.find? (fun e => entryMatchesConfig e cfg3) with
+  | none => rfl
+  | some e =>
+      show (some (shiftEntry (M₁.states + M₂.states) e)).bind (applyTransitionEntry cfg) =
+        Option.map _ ((some e).bind (applyTransitionEntry cfg3))
+      show applyTransitionEntry cfg (shiftEntry (M₁.states + M₂.states) e) =
+        Option.map _ (applyTransitionEntry cfg3 e)
+      have h_sub : cfg.state_idx - (M₁.states + M₂.states) = cfg3.state_idx := by
+        show s + (M₁.states + M₂.states) - (M₁.states + M₂.states) = s
+        exact Nat.add_sub_cancel _ _
+      have h_cfg_eq :
+          { state_idx := cfg.state_idx - (M₁.states + M₂.states),
+            tapes := cfg.tapes } = cfg3 := by
+        rw [h_sub]
+      rw [applyTransitionEntry_shiftEntry, h_cfg_eq]
+
+/-- Halt bit on a shifted M₂-state, lifted to use a `cfg2 : FlatTMConfig`
+form. (Re-export of `branchComposeFlatTM_haltingStateReached_M2` with
+the more usable form.) -/
+private theorem branchComposeFlatTM_haltingStateReached_M2_phase
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h₂ : validFlatTM M₂) (cfg2 : FlatTMConfig)
+    (h_s : cfg2.state_idx < M₂.states) :
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+      haltingStateReached M₂ cfg2 :=
+  branchComposeFlatTM_haltingStateReached_M2 M₁ M₂ M₃ exit_pos exit_neg h₂
+    cfg2.state_idx h_s cfg2.tapes
+
+/-- Halt bit on a shifted M₃-state, lifted to use a `cfg3 : FlatTMConfig`
+form. -/
+private theorem branchComposeFlatTM_haltingStateReached_M3_phase
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h₂ : validFlatTM M₂) (cfg3 : FlatTMConfig) :
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+        { state_idx := cfg3.state_idx + (M₁.states + M₂.states), tapes := cfg3.tapes } =
+      haltingStateReached M₃ cfg3 :=
+  branchComposeFlatTM_haltingStateReached_M3 M₁ M₂ M₃ exit_pos exit_neg h₂
+    cfg3.state_idx cfg3.tapes
+
+/-! ### M₁/M₂/M₃ phase run lemmas for `branchComposeFlatTM`
+
+These lift the respective sub-TM's `n`-step run into the composed
+machine's run. The M₁ phase requires a trajectory invariant: M₁
+doesn't halt and doesn't pass through either exit during the first
+`n - 1` steps. -/
+
+/-- Lift M₁'s `n`-step run to the branched-composed machine. -/
+private theorem runFlatTM_branchComposeFlatTM_M1_phase
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat) (h_validM1 : validFlatTM M₁) :
+    ∀ (n : Nat) (cfg : FlatTMConfig),
+      cfg.state_idx < M₁.states →
+      (∀ k, k < n → ∀ ck, runFlatTM k M₁ cfg = some ck →
+         ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧
+         haltingStateReached M₁ ck = false) →
+      runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg =
+        runFlatTM n M₁ cfg
+  | 0, _, _, _ => rfl
+  | n + 1, cfg, h_state_lt, h_traj => by
+      have h_k0 := h_traj 0 (Nat.zero_lt_succ _) cfg rfl
+      have h_state_ne_pos_cfg : cfg.state_idx ≠ exit_pos := h_k0.1
+      have h_state_ne_neg_cfg : cfg.state_idx ≠ exit_neg := h_k0.2.1
+      have h_halt_false_cfg : haltingStateReached M₁ cfg = false := h_k0.2.2
+      have h_halt_composed_false :
+          haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg = false :=
+        branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg cfg h_state_lt
+      have h_step_eq :
+          stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg =
+            stepFlatTM M₁ cfg :=
+        stepFlatTM_branchComposeFlatTM_M1 M₁ M₂ M₃ exit_pos exit_neg cfg h_state_lt
+          h_state_ne_pos_cfg h_state_ne_neg_cfg
+      have h_unfold_M1 :
+          runFlatTM (n + 1) M₁ cfg =
+            match stepFlatTM M₁ cfg with
+            | none => some cfg
+            | some cfg' => runFlatTM n M₁ cfg' := by
+        show (if haltingStateReached M₁ cfg = true then some cfg
+              else match stepFlatTM M₁ cfg with
+                | none => some cfg
+                | some cfg' => runFlatTM n M₁ cfg') = _
+        rw [if_neg (by rw [h_halt_false_cfg]; decide)]
+      have h_unfold_composed :
+          runFlatTM (n + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg =
+            match stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg with
+            | none => some cfg
+            | some cfg' =>
+                runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg' := by
+        show (if haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg
+                = true then some cfg
+              else match stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg with
+                | none => some cfg
+                | some cfg' =>
+                    runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg') = _
+        rw [if_neg (by rw [h_halt_composed_false]; decide)]
+      rw [h_unfold_M1, h_unfold_composed, h_step_eq]
+      cases h_step : stepFlatTM M₁ cfg with
+      | none => rfl
+      | some cfg' =>
+          have h_cfg'_lt : cfg'.state_idx < M₁.states :=
+            state_idx_lt_states_of_step M₁ h_validM1 cfg cfg' h_step
+          have h_traj_shift : ∀ k, k < n → ∀ ck,
+              runFlatTM k M₁ cfg' = some ck →
+              ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧
+              haltingStateReached M₁ ck = false := by
+            intro k hk ck h_run
+            have h_chain : runFlatTM (k + 1) M₁ cfg = some ck := by
+              have h_unfold :
+                  runFlatTM (k + 1) M₁ cfg =
+                    match stepFlatTM M₁ cfg with
+                    | none => some cfg
+                    | some cfg'' => runFlatTM k M₁ cfg'' := by
+                show (if haltingStateReached M₁ cfg = true then some cfg
+                      else match stepFlatTM M₁ cfg with
+                        | none => some cfg
+                        | some cfg'' => runFlatTM k M₁ cfg'') = _
+                rw [if_neg (by rw [h_halt_false_cfg]; decide)]
+              rw [h_unfold, h_step]; exact h_run
+            exact h_traj (k + 1) (Nat.succ_lt_succ hk) ck h_chain
+          exact runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1
+            n cfg' h_cfg'_lt h_traj_shift
+  termination_by n _ _ _ => n
+
+/-- Lift M₂'s `n`-step run from `cfg2` to the branched-composed machine
+running from the shifted config `{ state_idx := cfg2.state_idx + M₁.states,
+tapes := cfg2.tapes }`. -/
+private theorem runFlatTM_branchComposeFlatTM_M2_phase
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂)
+    (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states) (h_exit_neg_lt : exit_neg < M₁.states) :
+    ∀ (n : Nat) (cfg2 : FlatTMConfig),
+      cfg2.state_idx < M₂.states →
+      runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+          { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+        (runFlatTM n M₂ cfg2).map
+          (fun c => { state_idx := c.state_idx + M₁.states, tapes := c.tapes })
+  | 0, cfg2, _ => rfl
+  | n + 1, cfg2, h_state_lt => by
+      have h_halt_eq :
+          haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+              { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+            haltingStateReached M₂ cfg2 :=
+        branchComposeFlatTM_haltingStateReached_M2_phase M₁ M₂ M₃ exit_pos exit_neg
+          h_validM2 cfg2 h_state_lt
+      by_cases h_halt : haltingStateReached M₂ cfg2 = true
+      · have h_halt_c : haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+            { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } = true := by
+          rw [h_halt_eq]; exact h_halt
+        rw [runFlatTM_of_halting _ _ (n + 1) h_halt_c,
+            runFlatTM_of_halting _ _ (n + 1) h_halt]
+        rfl
+      · have h_halt_false : haltingStateReached M₂ cfg2 = false := by
+          cases h : haltingStateReached M₂ cfg2 with
+          | true => exact absurd h h_halt
+          | false => rfl
+        have h_halt_c_false :
+            haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+              { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } = false := by
+          rw [h_halt_eq]; exact h_halt_false
+        have h_step_eq :
+            stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+              (stepFlatTM M₂ cfg2).map
+                (fun c => { state_idx := c.state_idx + M₁.states, tapes := c.tapes }) := by
+          have := stepFlatTM_branchComposeFlatTM_M2 M₁ M₂ M₃ exit_pos exit_neg cfg2.state_idx
+            cfg2.tapes h_validM1 h_validM3 h_exit_pos_lt h_exit_neg_lt h_state_lt
+          convert this using 2
+        have h_unfold_M2 :
+            runFlatTM (n + 1) M₂ cfg2 =
+              match stepFlatTM M₂ cfg2 with
+              | none => some cfg2
+              | some cfg2' => runFlatTM n M₂ cfg2' := by
+          show (if haltingStateReached M₂ cfg2 = true then some cfg2
+                else match stepFlatTM M₂ cfg2 with
+                  | none => some cfg2
+                  | some cfg2' => runFlatTM n M₂ cfg2') = _
+          rw [if_neg (by rw [h_halt_false]; decide)]
+        have h_unfold_C :
+            runFlatTM (n + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } =
+              match stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                  { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } with
+              | none => some { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes }
+              | some cfg' =>
+                  runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg' := by
+          show (if haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                    { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } = true
+                then some { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes }
+                else match stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                    { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes } with
+                  | none =>
+                      some { state_idx := cfg2.state_idx + M₁.states, tapes := cfg2.tapes }
+                  | some cfg' =>
+                      runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg') = _
+          rw [if_neg (by rw [h_halt_c_false]; decide)]
+        rw [h_unfold_M2, h_unfold_C, h_step_eq]
+        cases h_step : stepFlatTM M₂ cfg2 with
+        | none => rfl
+        | some cfg2' =>
+            have h_cfg2'_lt : cfg2'.state_idx < M₂.states :=
+              state_idx_lt_states_of_step M₂ h_validM2 cfg2 cfg2' h_step
+            show runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                  { state_idx := cfg2'.state_idx + M₁.states, tapes := cfg2'.tapes } = _
+            exact runFlatTM_branchComposeFlatTM_M2_phase M₁ M₂ M₃ exit_pos exit_neg
+              h_validM1 h_validM2 h_validM3 h_exit_pos_lt h_exit_neg_lt
+              n cfg2' h_cfg2'_lt
+  termination_by n _ _ => n
+
+/-- Lift M₃'s `n`-step run from `cfg3` to the branched-composed machine
+running from the shifted config `{ state_idx := cfg3.state_idx +
+(M₁.states + M₂.states), tapes := cfg3.tapes }`. -/
+private theorem runFlatTM_branchComposeFlatTM_M3_phase
+    (M₁ M₂ M₃ : FlatTM) (exit_pos exit_neg : Nat)
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂)
+    (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states) (h_exit_neg_lt : exit_neg < M₁.states) :
+    ∀ (n : Nat) (cfg3 : FlatTMConfig),
+      runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+          { state_idx := cfg3.state_idx + (M₁.states + M₂.states), tapes := cfg3.tapes } =
+        (runFlatTM n M₃ cfg3).map
+          (fun c => { state_idx := c.state_idx + (M₁.states + M₂.states),
+                      tapes := c.tapes })
+  | 0, cfg3 => rfl
+  | n + 1, cfg3 => by
+      have h_halt_eq :
+          haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+              { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                tapes := cfg3.tapes } =
+            haltingStateReached M₃ cfg3 :=
+        branchComposeFlatTM_haltingStateReached_M3_phase M₁ M₂ M₃ exit_pos exit_neg
+          h_validM2 cfg3
+      by_cases h_halt : haltingStateReached M₃ cfg3 = true
+      · have h_halt_c : haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+            { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+              tapes := cfg3.tapes } = true := by
+          rw [h_halt_eq]; exact h_halt
+        rw [runFlatTM_of_halting _ _ (n + 1) h_halt_c,
+            runFlatTM_of_halting _ _ (n + 1) h_halt]
+        rfl
+      · have h_halt_false : haltingStateReached M₃ cfg3 = false := by
+          cases h : haltingStateReached M₃ cfg3 with
+          | true => exact absurd h h_halt
+          | false => rfl
+        have h_halt_c_false :
+            haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+              { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                tapes := cfg3.tapes } = false := by
+          rw [h_halt_eq]; exact h_halt_false
+        have h_step_eq :
+            stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                  tapes := cfg3.tapes } =
+              (stepFlatTM M₃ cfg3).map
+                (fun c => { state_idx := c.state_idx + (M₁.states + M₂.states),
+                            tapes := c.tapes }) := by
+          have := stepFlatTM_branchComposeFlatTM_M3 M₁ M₂ M₃ exit_pos exit_neg cfg3.state_idx
+            cfg3.tapes h_validM1 h_validM2 h_exit_pos_lt h_exit_neg_lt
+          convert this using 2
+        have h_unfold_M3 :
+            runFlatTM (n + 1) M₃ cfg3 =
+              match stepFlatTM M₃ cfg3 with
+              | none => some cfg3
+              | some cfg3' => runFlatTM n M₃ cfg3' := by
+          show (if haltingStateReached M₃ cfg3 = true then some cfg3
+                else match stepFlatTM M₃ cfg3 with
+                  | none => some cfg3
+                  | some cfg3' => runFlatTM n M₃ cfg3') = _
+          rw [if_neg (by rw [h_halt_false]; decide)]
+        have h_unfold_C :
+            runFlatTM (n + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                  tapes := cfg3.tapes } =
+              match stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                  { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                    tapes := cfg3.tapes } with
+              | none =>
+                  some { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                         tapes := cfg3.tapes }
+              | some cfg' =>
+                  runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg' := by
+          show (if haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                    { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                      tapes := cfg3.tapes } = true
+                then some { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                            tapes := cfg3.tapes }
+                else match stepFlatTM (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                    { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                      tapes := cfg3.tapes } with
+                  | none =>
+                      some { state_idx := cfg3.state_idx + (M₁.states + M₂.states),
+                             tapes := cfg3.tapes }
+                  | some cfg' =>
+                      runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg') = _
+          rw [if_neg (by rw [h_halt_c_false]; decide)]
+        rw [h_unfold_M3, h_unfold_C, h_step_eq]
+        cases h_step : stepFlatTM M₃ cfg3 with
+        | none => rfl
+        | some cfg3' =>
+            show runFlatTM n (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+                  { state_idx := cfg3'.state_idx + (M₁.states + M₂.states),
+                    tapes := cfg3'.tapes } = _
+            exact runFlatTM_branchComposeFlatTM_M3_phase M₁ M₂ M₃ exit_pos exit_neg
+              h_validM1 h_validM2 h_validM3 h_exit_pos_lt h_exit_neg_lt n cfg3'
+  termination_by n _ => n
+
+/-! ### Final composition lemmas for `branchComposeFlatTM` -/
+
+/-- **Operational correctness of `branchComposeFlatTM` — positive
+branch.**
+
+If `M₁` (single-tape, valid) starts at `cfg0` and after `t₁` steps
+reaches `c₁ = { state_idx := exit_pos, tapes := [(left, head, right)] }`
+without halting prematurely *and without passing through `exit_neg`*
+in any of the first `t₁` steps, and `M₂` (single-tape, valid) starts
+at `{ state_idx := M₂.start, tapes := c₁.tapes }` and after `t₂` steps
+halts at `c₂`, then `branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg`
+starting at `cfg0` reaches the M₂-shifted `c₂` in exactly
+`t₁ + 1 + t₂` steps and that shifted config is a halting state of the
+composed machine. -/
+theorem branchComposeFlatTM_run_pos
+    {M₁ M₂ M₃ : FlatTM} {exit_pos exit_neg : Nat}
+    (h_exit_neq : exit_pos ≠ exit_neg)
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂)
+    (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states)
+    (h_exit_neg_lt : exit_neg < M₁.states)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (left₁ : List Nat) (head₁ : Nat) (right₁ : List Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left₁, head₁, right₁) = some v →
+                          v < max M₁.sig (max M₂.sig M₃.sig))
+    {t₁ t₂ : Nat} {c₂ : FlatTMConfig}
+    (h_run1 : runFlatTM t₁ M₁ cfg0 =
+              some { state_idx := exit_pos, tapes := [(left₁, head₁, right₁)] })
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧
+       haltingStateReached M₁ ck = false)
+    (h_run2 : runFlatTM t₂ M₂
+                { state_idx := M₂.start,
+                  tapes := [(left₁, head₁, right₁)] } = some c₂)
+    (h_halt2 : haltingStateReached M₂ c₂ = true) :
+    runFlatTM (t₁ + 1 + t₂) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+      some { state_idx := c₂.state_idx + M₁.states, tapes := c₂.tapes } ∧
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+      { state_idx := c₂.state_idx + M₁.states, tapes := c₂.tapes } = true := by
+  have h_c2_state_lt : c₂.state_idx < M₂.states :=
+    state_idx_lt_states_of_run M₂ h_validM2 t₂ _ c₂ h_validM2.1 h_run2
+  refine ⟨?_, ?_⟩
+  · -- The shifted halt check.
+    -- Phase 1: M₁ phase.
+    have h_traj1' : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+        ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧
+        haltingStateReached M₁ ck = false := h_traj1
+    have h_phase1 :=
+      runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1
+        t₁ cfg0 h_cfg0_state_lt h_traj1'
+    rw [← h_phase1] at h_run1
+    -- Phase 2: bridge step.
+    have h_bridge :=
+      stepFlatTM_branchComposeFlatTM_bridge_pos M₁ M₂ M₃ exit_pos exit_neg
+        left₁ right₁ head₁ h_sym_bound
+    have h_phase12 :
+        runFlatTM (t₁ + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+          some { state_idx := M₁.states + M₂.start,
+                 tapes := [(left₁, head₁, right₁)] } := by
+      apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1 ?_ h_bridge
+      -- The exit_pos config is non-halting in the composed machine.
+      exact branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg _
+        h_exit_pos_lt
+    -- Phase 3: M₂ phase.
+    set cfg2_start : FlatTMConfig :=
+      { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
+    have h_phase3 :=
+      runFlatTM_branchComposeFlatTM_M2_phase M₁ M₂ M₃ exit_pos exit_neg
+        h_validM1 h_validM2 h_validM3 h_exit_pos_lt h_exit_neg_lt t₂ cfg2_start
+        h_validM2.1
+    rw [h_run2] at h_phase3
+    have h_state_swap : M₂.start + M₁.states = M₁.states + M₂.start := Nat.add_comm _ _
+    rw [show t₁ + 1 + t₂ = (t₁ + 1) + t₂ from rfl,
+        runFlatTM_compose _ (t₁ + 1) t₂ _ _ h_phase12]
+    have h_target :
+        runFlatTM t₂ (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+            { state_idx := M₁.states + M₂.start,
+              tapes := [(left₁, head₁, right₁)] } =
+          some { state_idx := c₂.state_idx + M₁.states, tapes := c₂.tapes } := by
+      have h_eq : { state_idx := M₂.start + M₁.states,
+                    tapes := [(left₁, head₁, right₁)] } =
+          ({ state_idx := M₁.states + M₂.start,
+             tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) := by
+        rw [h_state_swap]
+      rw [← h_eq]
+      rw [h_phase3]
+      rfl
+    exact h_target
+  · -- Halt of the result.
+    have := branchComposeFlatTM_haltingStateReached_M2_phase M₁ M₂ M₃ exit_pos exit_neg
+      h_validM2 c₂ h_c2_state_lt
+    rw [this]; exact h_halt2
+
+/-- **Operational correctness of `branchComposeFlatTM` — negative
+branch.**
+
+Symmetric to `branchComposeFlatTM_run_pos`, but the M₁ trajectory
+ends at `exit_neg` and the post-bridge phase runs `M₃` instead of
+`M₂`. The result state is shifted by `M₁.states + M₂.states`. -/
+theorem branchComposeFlatTM_run_neg
+    {M₁ M₂ M₃ : FlatTM} {exit_pos exit_neg : Nat}
+    (h_exit_neq : exit_pos ≠ exit_neg)
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂)
+    (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states)
+    (h_exit_neg_lt : exit_neg < M₁.states)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (left₁ : List Nat) (head₁ : Nat) (right₁ : List Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left₁, head₁, right₁) = some v →
+                          v < max M₁.sig (max M₂.sig M₃.sig))
+    {t₁ t₂ : Nat} {c₃ : FlatTMConfig}
+    (h_run1 : runFlatTM t₁ M₁ cfg0 =
+              some { state_idx := exit_neg, tapes := [(left₁, head₁, right₁)] })
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧
+       haltingStateReached M₁ ck = false)
+    (h_run3 : runFlatTM t₂ M₃
+                { state_idx := M₃.start,
+                  tapes := [(left₁, head₁, right₁)] } = some c₃)
+    (h_halt3 : haltingStateReached M₃ c₃ = true) :
+    runFlatTM (t₁ + 1 + t₂) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+      some { state_idx := c₃.state_idx + (M₁.states + M₂.states),
+             tapes := c₃.tapes } ∧
+    haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+      { state_idx := c₃.state_idx + (M₁.states + M₂.states),
+        tapes := c₃.tapes } = true := by
+  refine ⟨?_, ?_⟩
+  · -- Phase 1: M₁ phase.
+    have h_phase1 :=
+      runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1
+        t₁ cfg0 h_cfg0_state_lt h_traj1
+    rw [← h_phase1] at h_run1
+    -- Phase 2: bridge step (neg).
+    have h_bridge :=
+      stepFlatTM_branchComposeFlatTM_bridge_neg M₁ M₂ M₃ exit_pos exit_neg h_exit_neq
+        left₁ right₁ head₁ h_sym_bound
+    have h_phase12 :
+        runFlatTM (t₁ + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+          some { state_idx := M₁.states + M₂.states + M₃.start,
+                 tapes := [(left₁, head₁, right₁)] } := by
+      apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1 ?_ h_bridge
+      exact branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg _
+        h_exit_neg_lt
+    -- Phase 3: M₃ phase.
+    set cfg3_start : FlatTMConfig :=
+      { state_idx := M₃.start, tapes := [(left₁, head₁, right₁)] }
+    have h_phase3 :=
+      runFlatTM_branchComposeFlatTM_M3_phase M₁ M₂ M₃ exit_pos exit_neg
+        h_validM1 h_validM2 h_validM3 h_exit_pos_lt h_exit_neg_lt t₂ cfg3_start
+    rw [h_run3] at h_phase3
+    -- Note: M₃.start + (M₁.states + M₂.states) = M₁.states + M₂.states + M₃.start.
+    have h_state_swap :
+        M₃.start + (M₁.states + M₂.states) = M₁.states + M₂.states + M₃.start :=
+      Nat.add_comm _ _
+    rw [show t₁ + 1 + t₂ = (t₁ + 1) + t₂ from rfl,
+        runFlatTM_compose _ (t₁ + 1) t₂ _ _ h_phase12]
+    have h_target :
+        runFlatTM t₂ (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg)
+            { state_idx := M₁.states + M₂.states + M₃.start,
+              tapes := [(left₁, head₁, right₁)] } =
+          some { state_idx := c₃.state_idx + (M₁.states + M₂.states),
+                 tapes := c₃.tapes } := by
+      have h_eq : { state_idx := M₃.start + (M₁.states + M₂.states),
+                    tapes := [(left₁, head₁, right₁)] } =
+          ({ state_idx := M₁.states + M₂.states + M₃.start,
+             tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) := by
+        rw [h_state_swap]
+      rw [← h_eq]
+      rw [h_phase3]
+      rfl
+    exact h_target
+  · -- Halt of the result.
+    have := branchComposeFlatTM_haltingStateReached_M3_phase M₁ M₂ M₃ exit_pos exit_neg
+      h_validM2 c₃
+    rw [this]; exact h_halt3
+
 /-! ## Step 4 — atomic Bool-output TMs
 
 The simplest non-vacuous deciders: a TM that always halts in the

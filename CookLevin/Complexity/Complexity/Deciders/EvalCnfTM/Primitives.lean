@@ -496,6 +496,239 @@ theorem writeAtHeadTM_run
   · rw [writeAtHeadTM_step_outOfRange sig writeSym left right head h_lt]
     rfl
 
+/-! ## `advanceRightTM` — move the tape head right by one cell
+
+A 2-state TM that performs a single rightward `Rmove` and halts. No
+write, no read-dependence except the entry-match requirement that the
+current symbol class (`none` or `some v` with `v < sig`) is covered
+by some transition.
+
+Used by the per-literal evaluator (Step 11.5) to step past the literal
+sign byte after the polarity classifier has read it, and similarly
+elsewhere when a single positional shift is needed between composed
+phases. -/
+
+/-- Transition table for `advanceRightTM`. Symmetric to
+`writeAtHeadTM_trans` except `dst_write_vals = [none]` and
+`move_dirs = [Rmove]`. -/
+def advanceRightTM_trans (sig : Nat) : List FlatTMTransEntry :=
+  let mkSome (v : Nat) : FlatTMTransEntry :=
+    { src_state := 0
+      src_tape_vals := [some v]
+      dst_state := 1
+      dst_write_vals := [none]
+      move_dirs := [TMMove.Rmove] }
+  let noneEntry : FlatTMTransEntry :=
+    { src_state := 0
+      src_tape_vals := [none]
+      dst_state := 1
+      dst_write_vals := [none]
+      move_dirs := [TMMove.Rmove] }
+  noneEntry :: (List.range sig).map mkSome
+
+/-- The "advance head right one cell, then halt" TM. -/
+def advanceRightTM (sig : Nat) : FlatTM where
+  sig := sig
+  tapes := 1
+  states := 2
+  trans := advanceRightTM_trans sig
+  start := 0
+  halt := [false, true]
+
+theorem advanceRightTM_valid (sig : Nat) :
+    validFlatTM (advanceRightTM sig) := by
+  refine ⟨?_, ?_, ?_⟩
+  · show 0 < 2; decide
+  · show [false, true].length = 2; rfl
+  · intro entry hentry
+    have hentry' : entry ∈ advanceRightTM_trans sig := hentry
+    unfold advanceRightTM_trans at hentry'
+    rcases List.mem_cons.mp hentry' with hNone | hSome
+    · subst hNone
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show 0 < 2; decide
+      · show 1 < 2; decide
+      · intro x hx
+        simp at hx
+        subst hx
+        trivial
+      · intro x hx
+        simp at hx
+        subst hx
+        trivial
+    · rcases List.mem_map.mp hSome with ⟨v, hv, hmk⟩
+      subst hmk
+      have hvlt : v < sig := List.mem_range.mp hv
+      refine ⟨?_, ?_, rfl, rfl, rfl, ?_, ?_⟩
+      · show 0 < 2; decide
+      · show 1 < 2; decide
+      · intro x hx
+        simp at hx
+        subst hx
+        exact hvlt
+      · intro x hx
+        simp at hx
+        subst hx
+        trivial
+
+/-! ### Step / run lemmas for `advanceRightTM` -/
+
+private def advanceRight_noneEntry : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [none]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Rmove] }
+
+private def advanceRight_mkSome (v : Nat) : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [some v]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Rmove] }
+
+theorem advanceRightTM_trans_eq (sig : Nat) :
+    (advanceRightTM sig).trans =
+      advanceRight_noneEntry ::
+      (List.range sig).map advanceRight_mkSome := rfl
+
+/-- Application of `advanceRight_noneEntry`: moves head right (the tape
+contents are unchanged because `writeCurrentTapeSymbol _ none = id`). -/
+private theorem applyEntry_advanceRight_none
+    (left right : List Nat) (head : Nat) :
+    applyTransitionEntry
+        { state_idx := 0, tapes := [(left, head, right)] }
+        advanceRight_noneEntry =
+      some { state_idx := 1
+             tapes := [(left, head + 1, right)] } := rfl
+
+private theorem applyEntry_advanceRight_some
+    (v : Nat) (left right : List Nat) (head : Nat) :
+    applyTransitionEntry
+        { state_idx := 0, tapes := [(left, head, right)] }
+        (advanceRight_mkSome v) =
+      some { state_idx := 1
+             tapes := [(left, head + 1, right)] } := rfl
+
+/-- One-step step lemma: when the head is in range with current symbol
+`some v`, `v < sig`, one step advances the head and halts. -/
+theorem advanceRightTM_step_inRange
+    (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length)
+    (h_sym_lt : right.get ⟨head, h_head_lt⟩ < sig) :
+    stepFlatTM (advanceRightTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] } with hcfg
+  set v := right.get ⟨head, h_head_lt⟩ with hv
+  have hSym0 : currentTapeSymbol (left, head, right) = some v :=
+    currentTapeSymbol_in_range h_head_lt
+  have hSym : cfg.tapes.map currentTapeSymbol = [some v] := by
+    show [currentTapeSymbol (left, head, right)] = [some v]
+    rw [hSym0]
+  have hNotMatchNone :
+      entryMatchesConfig advanceRight_noneEntry cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne : ([none] : List (Option Nat)) ≠ [some v] := by
+      intro h
+      injection h with h1 _
+      cases h1
+    simp [h_ne]
+  have hvInRange : v ∈ List.range sig := List.mem_range.mpr h_sym_lt
+  have hFindCont :
+      ((List.range sig).map advanceRight_mkSome).find?
+          (fun entry => entryMatchesConfig entry cfg) =
+        some (advanceRight_mkSome v) := by
+    refine find_singleSomeEntry_match cfg v _ advanceRight_mkSome
+      rfl hSym (fun _ => rfl) (fun _ => rfl) hvInRange ?_
+    intro w _ hwv
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([some w] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne : ([some w] : List (Option Nat)) ≠ [some v] := by
+      intro h
+      injection h with h1 _
+      injection h1 with h2
+      exact hwv h2
+    simp [h_ne]
+  show Option.bind ((advanceRightTM sig).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [advanceRightTM_trans_eq]
+  rw [List.find?_cons, hNotMatchNone, hFindCont]
+  exact applyEntry_advanceRight_some v left right head
+
+/-- Companion step lemma: when the head is out of range (current symbol
+`none`), one step advances the head and halts. -/
+theorem advanceRightTM_step_outOfRange
+    (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head_ge : ¬ head < right.length) :
+    stepFlatTM (advanceRightTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] } with hcfg
+  have hSym0 : currentTapeSymbol (left, head, right) = none :=
+    currentTapeSymbol_out_of_range h_head_ge
+  have hSym : cfg.tapes.map currentTapeSymbol = [none] := by
+    show [currentTapeSymbol (left, head, right)] = [none]
+    rw [hSym0]
+  have hMatchNone :
+      entryMatchesConfig advanceRight_noneEntry cfg = true := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = true
+    rw [hSym]
+    have h1 : ((0 : Nat) == 0) = true := rfl
+    have h2 : decide (([none] : List (Option Nat)) = [none]) = true :=
+      decide_eq_true rfl
+    rw [h1, h2]; rfl
+  show Option.bind ((advanceRightTM sig).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [advanceRightTM_trans_eq]
+  rw [List.find?_cons, hMatchNone]
+  exact applyEntry_advanceRight_none left right head
+
+private theorem advanceRightTM_state0_not_halting
+    (sig : Nat) (cfg_tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (advanceRightTM sig)
+        { state_idx := 0, tapes := cfg_tapes } = false := rfl
+
+theorem advanceRightTM_state1_halting
+    (sig : Nat) (cfg_tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (advanceRightTM sig)
+        { state_idx := 1, tapes := cfg_tapes } = true := rfl
+
+/-- Unified one-step run lemma for `advanceRightTM` (head either in
+range with bounded symbol, or out of range). -/
+theorem advanceRightTM_run
+    (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_curr : ∀ v, currentTapeSymbol (left, head, right) = some v → v < sig) :
+    runFlatTM 1 (advanceRightTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  show (if haltingStateReached (advanceRightTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } = true then
+          some { state_idx := 0, tapes := [(left, head, right)] }
+        else
+          match stepFlatTM (advanceRightTM sig)
+              { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => some { state_idx := 0, tapes := [(left, head, right)] }
+          | some cfg' => runFlatTM 0 (advanceRightTM sig) cfg') = _
+  rw [advanceRightTM_state0_not_halting]
+  by_cases h_lt : head < right.length
+  · have h_sym_lt : right.get ⟨head, h_lt⟩ < sig := by
+      apply h_curr
+      exact currentTapeSymbol_in_range h_lt
+    rw [advanceRightTM_step_inRange sig left right head h_lt h_sym_lt]
+    rfl
+  · rw [advanceRightTM_step_outOfRange sig left right head h_lt]
+    rfl
+
 /-! ## `scanLeftUntilTM` — scan the tape head left until a target symbol
 
 Mirror of `TMPrimitives.scanRightUntilTM`. Two states:
