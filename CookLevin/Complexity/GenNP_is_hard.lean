@@ -6,13 +6,21 @@ set_option autoImplicit false
 
 open Classical
 
-theorem hasDeciderClassical {X : Type} (P : X → Prop) (timeBound : Nat → Nat) : HasDecider X P timeBound := by
-  classical
-  refine ⟨fun x => if P x then true else false, ?_⟩
-  intro x
-  by_cases h : P x
-  · simp [h]
-  · simp [h]
+/-- Pre-Step-4 this was an unconditional classical construction
+producing a vacuous `HasDecider` witness for any predicate (the
+vacuity documented in `ROADMAP.md` §0.2). After Step 4's framework
+swap the slot it fills (`genNPInstance.rel_poly`) demands a real
+TM-backed `Nonempty (DecidesBy P timeBound)`, which cannot be built
+without a real verifier TM. Step 9 of `PART2.md` v2 retypes the
+symbol to the new shape and leaves the proof as a labelled `sorry`
+to be discharged in Part 6, where `NPhard_GenNP` is rebuilt to draw
+the verifier TM from the source `inNP` hypothesis instead of
+inventing one out of `Classical.choice`. -/
+theorem hasDeciderClassical {X : Type} [encodable X]
+    (P : X → Prop) (timeBound : Nat → Nat) :
+    Nonempty (DecidesBy P timeBound) := by
+  -- TODO(Part6:hasDeciderClassical)
+  sorry
 
 def genNPRel {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]

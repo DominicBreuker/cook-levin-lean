@@ -7,14 +7,35 @@ existing Coq development by Forster, Kunze, Roth et al.
 > **Honest status, May 2026.** A file named
 > `Complexity/NP/SAT/CookLevin.lean` declares
 > `theorem CookLevin : NPcomplete SAT` and Lean accepts it. **This term
-> is *not* a faithful proof of Cook–Levin.** The current complexity
-> framework — `inTimePoly`, `polyTimeComputable`, `HasDecider`, and
-> friends — does not constrain Turing-machine running time, and several
-> "reductions" in the chain are classical case-splits on the answer
-> rather than computable maps. Five `sorry`s remain in auxiliary lemmas.
+> is still *not* a fully faithful proof of Cook–Levin** — but Part 1
+> and the framework portion of Part 2 of [`ROADMAP.md`](ROADMAP.md)
+> are now landed (see [`PART2.md`](PART2.md) for details). After Part
+> 2's framework migration the codebase has **exactly four labelled
+> `sorry`s**:
+>
+> 1. `EvalCnfTM.decider` (`Complexity/Complexity/Deciders/EvalCnfTM.lean`)
+>    — `TODO(Part2-followup:EvalCnfTM)`: the SAT verifier TM
+>    construction, deferred to Step 11 of PART2.md v2.
+> 2. `CliqueRelTM.decider` (`Complexity/Complexity/Deciders/CliqueRelTM.lean`)
+>    — `TODO(Part2-followup:CliqueRelTM)`: the FlatClique verifier TM
+>    construction, deferred to Step 12 of PART2.md v2.
+> 3. `red_inNP` TM composition (`Complexity/Complexity/NP.lean`)
+>    — `TODO(Part3:red_inNP_TMcompose)`: needs Part 3's TM-backed
+>    `polyTimeComputable` to run the reduction TM and then the
+>    verifier TM.
+> 4. `hasDeciderClassical` (`Complexity/GenNP_is_hard.lean`)
+>    — `TODO(Part6:hasDeciderClassical)`: the placeholder that made
+>    `NPhard_GenNP` vacuous; Part 6 rebuilds `NPhard_GenNP` to draw a
+>    real verifier TM from the source `inNP` hypothesis.
+>
+> `inTimePoly` is now TM-backed: it requires a `Nonempty (DecidesBy P f)`
+> witness, where `DecidesBy` carries a concrete `FlatTM`, validity
+> proof, accept/reject halting states, and step-bound run lemmas. The
+> previous propositional `HasDecider` predicate has been removed.
+> `sat_NP` and `FlatClique_in_NP` build against this new framework.
 > A precise list of what is sound and what is not is at the bottom of
 > this README, and a step-by-step path to a faithful proof is in
-> [`ROADMAP.md`](ROADMAP.md).
+> [`ROADMAP.md`](ROADMAP.md) and [`PART2.md`](PART2.md).
 
 ---
 
@@ -109,9 +130,9 @@ in `CookLevin.lean`.
 | `inOPoly`, `monotonic`, `inO`              | asymptotic-growth predicates             | sound  |
 | `FlatTM` + `stepFlatTM` + `runFlatTM`      | concrete TM semantics                    | sound  |
 | `validFlatTM_default`                      | 1-state, 0-transition halting machine    | placeholder |
-| `polyTimeComputable f`                     | exists size-bound on `f`                 | **not** runtime-bounded |
-| `HasDecider X P f`                         | exists `Bool` decider, `f` unused        | **not** runtime-bounded |
-| `inTimePoly P`                             | propositional decider + polynomial `f`   | **not** runtime-bounded |
+| `polyTimeComputable f`                     | exists size-bound on `f`                 | **not** runtime-bounded (Part 3) |
+| `DecidesBy P f` + `inTimePoly P` (Part 2)  | actual `FlatTM` + halting / time-budget proofs | TM-backed; stubs for `EvalCnfTM.decider` / `CliqueRelTM.decider` |
+| `HasDecider X P f`                         | *removed in Part 2 Step 9*               | n/a |
 | `bridgeMachine` (LM→mTM, mTM→1-tape)       | empty TM that halts at step 0            | placeholder |
 | `TMGenNP_fixed M`, `mTMGenNP_fixed M`      | predicates that ignore `M`               | placeholder |
 | `TMGenNP_fixed → FlatFunSingleTMGenNP`     | `if source then yes_inst else no_inst`   | classical, not computable |
@@ -122,8 +143,8 @@ in `CookLevin.lean`.
 | `FSAT → SAT / 3SAT` (Tseytin)              | correct map, size bound has `sorry`      | sound modulo 1 sorry |
 | `kSAT → SAT`                               | inclusion reduction                      | sound  |
 | `kSAT → FlatClique`                        | classical Karp construction, no proofs   | two sorrys |
-| `SAT inNP`, `FlatClique inNP`              | correct except cert-size bound (sorry)   | sound modulo 1 sorry each |
-| `NPhard_GenNP` (`hasDeciderClassical`)     | uses classical choice over `P x`         | vacuous |
+| `SAT inNP`, `FlatClique inNP`              | TM-backed via `EvalCnfTM` / `CliqueRelTM` | sound modulo TM-construction stubs |
+| `NPhard_GenNP` (`hasDeciderClassical`)     | retyped to `Nonempty (DecidesBy …)`, body is the Part-6 sorry | placeholder waiting on Part 6 |
 
 ### Where the project is mathematically sound
 
@@ -215,14 +236,22 @@ formalisation:
    TM-acceptance conjuncts are dead weight. No TM is actually being
    simulated anywhere on the path to `FlatTCC`.
 
-### Outstanding `sorry`s (verbatim list)
+### Outstanding `sorry`s (verbatim list, post-Part-2 framework migration)
+
+After Part 2 Step 10 the codebase has exactly four labelled `sorry`s,
+each pointing at the roadmap step that will close it. The five
+auxiliary `sorry`s listed in earlier revisions of this README were
+discharged in Part 1.
 
 ```
-Complexity/NP/SAT.lean:206              compressAssignment_size_bound
-Complexity/NP/FSAT_to_SAT.lean:706      FSAT_to_SAT_size_le
-Complexity/NP/FlatClique.lean:38        clique_size_bound
-Complexity/NP/kSAT_to_FlatClique.lean:63  reduction polynomial bound
-Complexity/NP/kSAT_to_FlatClique.lean:64  reduction correctness
+Complexity/Complexity/NP.lean:270                  red_inNP (TM-composition slot)
+                                                   -- TODO(Part3:red_inNP_TMcompose)
+Complexity/Complexity/Deciders/EvalCnfTM.lean:58   EvalCnfTM.decider
+                                                   -- TODO(Part2-followup:EvalCnfTM)
+Complexity/Complexity/Deciders/CliqueRelTM.lean:66 CliqueRelTM.decider
+                                                   -- TODO(Part2-followup:CliqueRelTM)
+Complexity/GenNP_is_hard.lean:23                   hasDeciderClassical
+                                                   -- TODO(Part6:hasDeciderClassical)
 ```
 
 ### Other smells

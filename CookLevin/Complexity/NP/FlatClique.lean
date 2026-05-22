@@ -20,15 +20,6 @@ def FlatClique : (fgraph × Nat) → Prop
 def cliqueRel : (fgraph × Nat) → List fvertex → Prop
   | (G, k), l => fgraph_wf G ∧ isfKClique k G l
 
-/-- Classical Boolean decider for cliqueRel.
-TODO(step14): replace with an explicit computable Bool function. -/
-noncomputable def cliqueRelDec : (fgraph × Nat) × List fvertex → Bool :=
-  fun ⟨⟨G, k⟩, l⟩ => decide (fgraph_wf G ∧ isfKClique k G l)
-
-theorem cliqueRel_iff (Gk : fgraph × Nat) (l : List fvertex) :
-    cliqueRel Gk l ↔ cliqueRelDec ⟨Gk, l⟩ = true := by
-  simp [cliqueRel, cliqueRelDec, decide_eq_true_eq]
-
 /-- A list of `Nat`s whose elements are all strictly less than `B` has
 `encodable.size ≤ |xs| * B + |xs|`. Each entry contributes `x + 1 ≤ B + 1`
 to the size and there are `|xs|` entries. -/
@@ -81,22 +72,8 @@ theorem clique_size_bound (Gk : fgraph × Nat) (l : List fvertex)
     _ = S ^ 2 := by ring
     _ ≤ S ^ 2 + 1 := by linarith
 
-theorem FlatClique_in_NP : inNP FlatClique := by
-  refine inNP_intro FlatClique cliqueRel ?_ ?_
-  · -- inTimePoly: classical decider cliqueRelDec
-    exact ⟨fun n => n + 1,
-      ⟨cliqueRelDec, fun xy => (cliqueRel_iff xy.1 xy.2)⟩,
-      ⟨1, ⟨2, 1, by intro n hn; simp [pow_one]; omega⟩⟩,
-      fun x x' h => Nat.add_le_add_right h 1⟩
-  · -- polyCertRel: every FlatClique instance has a polynomially-bounded certificate
-    refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
-    · -- sound: a valid clique list witnesses FlatClique
-      rintro ⟨G, k⟩ l ⟨hwf, hclq⟩
-      exact ⟨l, hwf, hclq⟩
-    · -- complete: the witnessing list is a valid certificate
-      rintro ⟨G, k⟩ ⟨l, hwf, hclq⟩
-      exact ⟨l, ⟨hwf, hclq⟩, clique_size_bound _ l ⟨hwf, hclq⟩⟩
-    · -- inOPoly
-      exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
-    · -- monotonic
-      intro a b h; nlinarith [Nat.pow_le_pow_left h 2]
+-- `FlatClique_in_NP : inNP FlatClique` is proved in
+-- `Complexity/Complexity/Deciders/CliqueRelTM.lean` after Step 6 of
+-- PART2.md v2 (moved there for the same reason as `sat_NP`: the
+-- `inTimePoly` slot needs CliqueRelTM.inTimePolyTM_cliqueRel, whose
+-- construction lives downstream of this file).
