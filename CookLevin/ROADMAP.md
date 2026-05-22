@@ -155,15 +155,15 @@ iteration.**
 | Metric                                | Value             | Trend |
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3350 jobs) | unchanged |
-| Axiom count (Lang layer)              | **0**             | ↓ from 6 |
-| Tactical sorrys                       | ~23               | small decreases |
+| Axiom count (Lang layer)              | **0**             | unchanged |
+| Tactical sorrys                       | ~26               | ↓ −1: risk #1d resolved via `Compile.joinTwoHalts` + proved validity |
 | `theorem CookLevin : NPcomplete SAT` | typechecks        | unchanged since pre-pivot |
 
 Sorry distribution at the current snapshot (May 2026):
 
 | File                                       | Sorrys | What they are |
 |--------------------------------------------|--------|---------------|
-| `Lang/Compile.lean`                        | 3      | `Compile_sound`, `Compile_polyBound`, `decodeTape_encodeTape` |
+| `Lang/Compile.lean`                        | 7      | `decodeTape_encodeTape`, `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` |
 | `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
 | `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition (sorry #3 of the original four) |
 | `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` (sorry #4) |
@@ -185,20 +185,135 @@ split.
 
 | # | Gap                                   | Location                              | Why this is high-risk |
 |---|---------------------------------------|---------------------------------------|-----------------------|
-| 1 | The actual compiler body              | `Lang/Compile.lean`                   | `Compile := fun _ => validFlatTM_default`. The per-`Op` TM design and the `seq` / `forBnd` / `ifBit` composition gadgets have not been validated against the `FlatTM` model. Filling in even one constructor will surface whether the alphabet/delimiter convention works and whether `Compile.overhead`'s degree is right. |
+| 1a | Per-constructor compiler helpers (compileOp / compileIfBit / compileForBnd; **compileSeq concretized**) | `Lang/Compile.lean` | The single `Compile := fun _ => …` stub has been **decomposed** (May 2026 iteration) and `compileSeq` has been **concretized** via `composeFlatTM`. Three helpers remain stubbed to `compiledCmd_default`: `compileOp`, `compileIfBit`, `compileForBnd`. The remaining structural risk is the per-`Op` TM design — most opaque is the per-`Op` head-movement / insert-symbol bookkeeping under the 3-symbol alphabet convention (`{0=delim, 1=shifted 0, 2=shifted 1}`). |
+| 1b | `loopTM` combinator missing from `TMPrimitives.lean` | `Complexity/TMPrimitives.lean` | `compileForBnd` cannot be filled in without a `loopTM (body : FlatTM) → FlatTM` combinator analogous to `composeFlatTM` / `branchComposeFlatTM`. Design: counter on the same tape (in unary) or on a dedicated tape (then the layer needs multi-tape support and Part 5's simulator). The single-tape design is preferred but the bookkeeping has not been validated. |
+| 1c | `compileIfBit` two-exit tester       | `Lang/Compile.lean`                   | `branchComposeFlatTM` requires `exit_pos ≠ exit_neg`. The tester TM (reads register `t`, dispatches to one of two exit states) is now in place as a 2-state stub `branchTester_default` and the multi-halt resolution (risk 1d) is fully closed via `Compile.joinTwoHalts`. The substantive remaining work is per-bit testing logic — the real tester reads register `t`'s first symbol and dispatches; the stub always dispatches to `exitPos`. |
+| ~~1d~~ | ~~Multi-halt-state output from `branchComposeFlatTM`~~ | ~~`Lang/Compile.lean`~~ | ✅ **Resolved (May 2026).** Local combinator `Compile.joinTwoHalts M h1 h2` added: demotes `h2` to non-halt and bridges it to `h1`, yielding a single-halt TM. All four key lemmas proven (`_states`/`_start`/`_sig`/`_tapes` accessors, `_h1_is_halt`, `_halt_unique`, `_valid`). The `compileIfBit` helper now closes all seven `CompiledCmd` invariants with no sorrys. |
 | 2 | DSL expressiveness — missing primitives | `Lang/Syntax.lean`                    | Writing `evalCnfCmd` already surfaced two needs: no conditional/guarded loop (`Cmd.while`); no constant-comparison primitive (`Op.headEqVal`). Their type/cost shapes must be decided before downstream Cmd bookkeeping starts, or that work will be redone. |
 | 3 | `PolyTimeComputableLang` ↔ framework integration | `Lang/PolyTime.lean`, `Complexity/NP.lean` | The framework's `polyTimeComputable` doesn't carry a Lang witness, so `red_inNP` can't compose at the layer level. Sorry #3 in `NP.lean` is blocked on this structural change — either upgrade `PolyTimeComputableWitness` or introduce a parallel `PolyTimeComputableTM` and migrate. |
 | 4 | Cook tableau encoding                 | `Simulators/CookTableau.lean`         | `cookTableau M s steps` returns a `FlatTCC` with all fields `[]`. The encoding's `init`/`cards`/`final` triple has not been validated against `FlatTCC_wellformed` or `FlatTCCLang`. The size-bound polynomial's degree is also unjustified. |
-| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1). |
+| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1a). |
 | 6 | `evalCnfCmd` inner bodies             | `Deciders/EvalCnfCmd.lean`            | Per-clause / per-literal / member-check are sorried Cmds. *Engineering* work, mostly dull, but each may surface another DSL gap. **Wait until (2) lands** so we don't write these twice. |
 | 7 | `cliqueRelCmd`                        | `Deciders/CliqueRelTM.lean`           | Same shape as (6). Strictly downstream of (2) and ideally (6). |
 | 8 | `hasDeciderClassical`                 | `GenNP_is_hard.lean`                  | Tractable once (3) lands. Last sorry to close. |
 
-**Risk grading convention:** items 1–3 are *structural* — they
+**Risk grading convention:** items 1a–3 are *structural* — they
 either validate or surface gaps that change downstream type
 signatures. Items 4–5 are *medium* — they need design decisions
 but the surrounding types are stable. Items 6–8 are *engineering*
 — mostly mechanical once their dependencies are validated.
+
+### Iteration log
+
+- **May 2026 — Risk #1 decomposed.** `Lang/Compile.lean` was
+  refactored from the single `Compile := fun _ => validFlatTM_default`
+  stub into a structural recursion `compileCmd : Cmd → CompiledCmd`
+  with four per-constructor helpers (`compileOp`, `compileSeq`,
+  `compileIfBit`, `compileForBnd`), all still stubbed but with
+  focused sorrys. **Structural commitments made** (any future
+  implementation must respect these):
+  1. `CompiledCmd` records an explicit `exit` state — bare
+     `FlatTM` is not enough for `composeFlatTM`-style composition.
+  2. Alphabet is fixed at `sig = 3` (delim, shifted 0, shifted 1).
+     This restricts the layer's inputs to bit-strings.
+  3. `Compile.overhead`'s argument is now `State.size s + cost c s`
+     rather than `State.size s` — honestly accounting for tape
+     growth during execution.
+  4. Each compiled fragment is single-tape (`tapes = 1`).
+  **New sub-gaps surfaced**: 1a (per-Op TM design), 1b (`loopTM`
+  combinator missing from `TMPrimitives.lean`), 1c (two-exit
+  tester for `compileIfBit`). The `Compile_sound` sorry was split
+  into four per-constructor sorrys plus the assembly. Net sorry
+  count: +5 (3 → 7 in `Compile.lean`). Build remains green.
+
+- **May 2026 — `compileSeq` concretized.** The `compileSeq` helper
+  in `Lang/Compile.lean` was changed from the `compiledCmd_default`
+  stub to a real `composeFlatTM`-based construction. All
+  `CompiledCmd` invariants (`exit_lt`, `exit_is_halt`, `M_valid`,
+  `M_tapes`, `M_sig`) discharge cleanly using the existing
+  `composeFlatTM_*` lemmas. **Gap surfaced**: `composeFlatTM_run`'s
+  trajectory precondition (`h_traj1`) requires M₁ to avoid halting
+  prematurely, but `CompiledCmd` only guarantees the exit state
+  *is* a halt state — not that it is the *unique* halt state.
+  Compositional soundness (the still-`sorry`-bodied
+  `compileSeq_sound`) will need either a strengthened
+  `halt_unique` invariant on `CompiledCmd` or a per-helper
+  operational invariant. Documented inline in `compileSeq`'s
+  docstring. Sorry count unchanged at 7 in `Compile.lean`; build
+  remains green; Lang layer still axiom-free.
+
+- **May 2026 — Risk #1d resolved: `Compile.joinTwoHalts`
+  combinator landed.** Added a local TM combinator that takes
+  `(M, h1, h2)` and produces a TM with `h2` demoted from halt to
+  non-halt plus bridge entries from `h2` to `h1`. The combinator
+  is intentionally minimal — no fresh state is added, just a halt-
+  bit flip and `bridgeEntries M.sig h2 h1` prepended to `M.trans`.
+  All four key lemmas proved: structural accessors
+  (`_states`/`_start`/`_sig`/`_tapes`, all `rfl`), `_h1_is_halt`
+  (preserves `h1`'s halt bit), `_halt_unique` (every halt in the
+  joined TM is `h1`, given the precondition that M's halts were
+  only at `{h1, h2}`), and `_valid` (full validity proof, ~25 LOC,
+  using `bridgeEntries_mem` and lifting M's transition validity).
+  Plus a helper `branchCompose_halt_only_at_exits` that proves the
+  precondition for `branchComposeFlatTM` outputs whose branches
+  are `CompiledCmd`s. Rewrote `compileIfBit` to compose
+  `branchComposeFlatTM` with `joinTwoHalts`: all seven
+  `CompiledCmd` invariants now discharge without sorrys. Net sorry
+  count in `Compile.lean`: 8 → 7. Build green on second pass
+  (first failed on `show ... at hi` syntax; corrected to
+  `change ... at hi`). Lang layer still axiom-free.
+
+- **May 2026 — `compileIfBit` concretized; multi-halt gap (risk
+  1d) surfaced and isolated.** Introduced a `BranchTester`
+  structure plus a stub 2-state `branchTester_default` and
+  `compileTestBit`. Defined `compileIfBit` via
+  `branchComposeFlatTM`. **Six of seven `CompiledCmd` structure
+  fields discharge cleanly** (`exit_lt`, `exit_is_halt`, `M_valid`,
+  `M_tapes`, `M_sig`, plus structural defs); the seventh,
+  `halt_unique`, is a focused sorry. The gap is real and
+  structural: `branchComposeFlatTM` produces a TM whose halt
+  vector has two `true` entries (one per branch's exit), so no
+  choice of `exit` field can satisfy `halt_unique`. The earliest
+  prediction in iteration 2 ("non-unique halt could be an issue")
+  is now a concrete, isolated proof obligation that documents
+  exactly what construction is missing. Resolution path
+  (recommended option (a)): add a *join combinator* that bridges
+  two halt states to a new shared final state. Deferred to a
+  future iteration. Net sorry count: 7 → 8 in `Compile.lean`;
+  build green; Lang layer still axiom-free.
+
+- **May 2026 — `compileOp` decomposed into 8 per-`Op` stubs.**
+  Replaced the single uniform `compileOp (_o : Op) := compiledCmd_default`
+  with a dispatch on the `Op` constructor and one named stub per
+  case: `Compile.opClear`, `Compile.opAppendOne`,
+  `Compile.opAppendZero`, `Compile.opCopy`, `Compile.opTail`,
+  `Compile.opHead`, `Compile.opEqBit`, `Compile.opNonEmpty`. Each
+  carries an inline contract describing the head movement / tape
+  mutation it must perform under the `sig = 3` alphabet
+  convention. **No new sorrys** — each stub still returns
+  `compiledCmd_default`, so `compileOp_sound` stays as one sorry
+  (decomposing it per-`Op` is deferred until at least one helper
+  is concretized). Future per-`Op` iterations can now proceed
+  independently without touching the rest of the compiler. Build
+  green on first pass.
+
+- **May 2026 — `halt_unique` invariant added to `CompiledCmd`.**
+  Closes the gap surfaced in the previous iteration. The new
+  field
+  ```
+  halt_unique : ∀ i, M.halt[i]? = some true → i = exit
+  ```
+  guarantees the compiled fragment has a single halt state, which
+  feeds directly into the `h_traj1` precondition of
+  `composeFlatTM_run`. Discharged for both `compiledCmd_default`
+  (trivial: single-element halt vector) and `compileSeq`
+  (non-trivial: case split on `i < r1.M.states`, using
+  `getElem?_append_left/right`, `getElem?_replicate`, and
+  `r2.halt_unique`). **No new sorrys added** — the proof
+  obligation lands fully within reachable Lean library lemmas.
+  Sorry count unchanged at 7 in `Compile.lean`; total tactical
+  sorrys = 26; Lang layer still axiom-free; build green on first
+  pass.
 
 ---
 
