@@ -6,20 +6,29 @@ set_option autoImplicit false
 
 open Classical
 
-/-- Pre-Step-4 this was an unconditional classical construction
-producing a vacuous `HasDecider` witness for any predicate (the
-vacuity documented in `ROADMAP.md` §0.2). After Step 4's framework
-swap the slot it fills (`genNPInstance.rel_poly`) demands a real
-TM-backed `Nonempty (DecidesBy P timeBound)`, which cannot be built
-without a real verifier TM. Step 9 of `PART2.md` v2 retypes the
-symbol to the new shape and leaves the proof as a labelled `sorry`
-to be discharged in Part 6, where `NPhard_GenNP` is rebuilt to draw
-the verifier TM from the source `inNP` hypothesis instead of
-inventing one out of `Classical.choice`. -/
+/-- Placeholder that produces a `Nonempty (DecidesBy P timeBound)`
+witness for *any* predicate `P` and *any* `timeBound`. Vacuously
+true at the framework's pre-pivot definitions; documented as a
+deferred gap in `ROADMAP.md` Part 7.
+
+After the May 2026 pivot, the Part 7 replacement strategy is:
+1. Take `genNPRel` and the underlying `R : X → Y → Prop` with
+   `hPoly : inTimePoly (fun xy => R xy.1 xy.2)`.
+2. Destructure `hPoly` to obtain a `Lang.DecidesLang` for R.
+3. Compose with the certificate decoder
+   `enumTerm.decode : X__cert → Option Y` (lifted to a `Lang.Cmd`)
+   to obtain a `Lang.DecidesLang` for `genNPRel`.
+4. Bridge to `Nonempty (DecidesBy ...)` via
+   `Lang.DecidesLang.toDecidesBy`.
+
+The current `hasDeciderClassical`'s signature is too strong — it
+claims a decider for *any* predicate, not just `genNPRel`. The
+Part 7 rewrite tightens the signature to the specific shape
+`genNPInstance` needs, at which point the body is constructive. -/
 theorem hasDeciderClassical {X : Type} [encodable X]
     (P : X → Prop) (timeBound : Nat → Nat) :
     Nonempty (DecidesBy P timeBound) := by
-  -- TODO(Part6:hasDeciderClassical)
+  -- TODO(Part7:hasDeciderClassical) — see file docstring above.
   sorry
 
 def genNPRel {X__cert : Type} [encodable X__cert]

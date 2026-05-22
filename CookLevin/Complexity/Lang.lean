@@ -1,0 +1,18 @@
+import Complexity.Lang.Syntax
+import Complexity.Lang.Semantics
+import Complexity.Lang.Compile
+import Complexity.Lang.PolyTime
+
+set_option autoImplicit false
+
+/-! # The Lang layer — aggregator
+
+A single import that brings in the entire layer skeleton:
+
+- `Lang.Syntax`     : `Op`, `Cmd`, `State`, output convention.
+- `Lang.Semantics`  : `Cmd.eval`, `Cmd.cost` (axiomatic), algebraic laws.
+- `Lang.Compile`    : `Compile : Cmd → FlatTM`, soundness theorem.
+- `Lang.PolyTime`   : `inTimePolyLang`, `PolyTimeComputableLang`, bridges
+                      to `inTimePoly`, `polyTimeComputable`, and `inNP`.
+
+See `ROADMAP.md` (Part 3) for the strategic rationale. -/
