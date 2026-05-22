@@ -185,7 +185,7 @@ split.
 
 | # | Gap                                   | Location                              | Why this is high-risk |
 |---|---------------------------------------|---------------------------------------|-----------------------|
-| 1a | Per-constructor compiler helpers (compileOp / compileSeq / compileIfBit / compileForBnd) | `Lang/Compile.lean` | The single `Compile := fun _ => …` stub has been **decomposed** (May 2026 iteration): `compileCmd` is now a structural recursion delegating to four per-constructor helpers, all still stubbed to `compiledCmd_default`. Each helper carries its own focused soundness sorry. The remaining structural risk is the per-`Op` TM design — most opaque is the per-`Op` head-movement / insert-symbol bookkeeping under the 3-symbol alphabet convention (`{0=delim, 1=shifted 0, 2=shifted 1}`). Filling in even one helper will validate the `CompiledCmd` shape (exit-state + 1-tape + sig=3 invariants) and the `Compile.overhead` magnitude. |
+| 1a | Per-constructor compiler helpers (compileOp / compileIfBit / compileForBnd; **compileSeq concretized**) | `Lang/Compile.lean` | The single `Compile := fun _ => …` stub has been **decomposed** (May 2026 iteration) and `compileSeq` has been **concretized** via `composeFlatTM`. Three helpers remain stubbed to `compiledCmd_default`: `compileOp`, `compileIfBit`, `compileForBnd`. The remaining structural risk is the per-`Op` TM design — most opaque is the per-`Op` head-movement / insert-symbol bookkeeping under the 3-symbol alphabet convention (`{0=delim, 1=shifted 0, 2=shifted 1}`). |
 | 1b | `loopTM` combinator missing from `TMPrimitives.lean` | `Complexity/TMPrimitives.lean` | `compileForBnd` cannot be filled in without a `loopTM (body : FlatTM) → FlatTM` combinator analogous to `composeFlatTM` / `branchComposeFlatTM`. Design: counter on the same tape (in unary) or on a dedicated tape (then the layer needs multi-tape support and Part 5's simulator). The single-tape design is preferred but the bookkeeping has not been validated. |
 | 1c | `compileIfBit` two-exit tester       | `Lang/Compile.lean`                   | `branchComposeFlatTM` requires `exit_pos ≠ exit_neg`. The tester TM (reads register `t`, dispatches to one of two exit states) is not yet designed. Trivial-looking but exposes the head-position invariant after the tester runs — does the head return to a canonical position before the bridge fires? |
 | 2 | DSL expressiveness — missing primitives | `Lang/Syntax.lean`                    | Writing `evalCnfCmd` already surfaced two needs: no conditional/guarded loop (`Cmd.while`); no constant-comparison primitive (`Op.headEqVal`). Their type/cost shapes must be decided before downstream Cmd bookkeeping starts, or that work will be redone. |
@@ -224,6 +224,22 @@ but the surrounding types are stable. Items 6–8 are *engineering*
   tester for `compileIfBit`). The `Compile_sound` sorry was split
   into four per-constructor sorrys plus the assembly. Net sorry
   count: +5 (3 → 7 in `Compile.lean`). Build remains green.
+
+- **May 2026 — `compileSeq` concretized.** The `compileSeq` helper
+  in `Lang/Compile.lean` was changed from the `compiledCmd_default`
+  stub to a real `composeFlatTM`-based construction. All
+  `CompiledCmd` invariants (`exit_lt`, `exit_is_halt`, `M_valid`,
+  `M_tapes`, `M_sig`) discharge cleanly using the existing
+  `composeFlatTM_*` lemmas. **Gap surfaced**: `composeFlatTM_run`'s
+  trajectory precondition (`h_traj1`) requires M₁ to avoid halting
+  prematurely, but `CompiledCmd` only guarantees the exit state
+  *is* a halt state — not that it is the *unique* halt state.
+  Compositional soundness (the still-`sorry`-bodied
+  `compileSeq_sound`) will need either a strengthened
+  `halt_unique` invariant on `CompiledCmd` or a per-helper
+  operational invariant. Documented inline in `compileSeq`'s
+  docstring. Sorry count unchanged at 7 in `Compile.lean`; build
+  remains green; Lang layer still axiom-free.
 
 ---
 

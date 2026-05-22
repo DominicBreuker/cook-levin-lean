@@ -70,6 +70,8 @@ The intended compilation, once the helpers are real:
 
 namespace Complexity.Lang
 
+open TMPrimitives
+
 /-! ## The `CompiledCmd` record
 
 The output of compiling a single `Cmd` is a `FlatTM` together with
@@ -154,12 +156,64 @@ def compileOp (_o : Op) : CompiledCmd := compiledCmd_default
 
 /-- Compile `seq c1 c2` from already-compiled sub-machines.
 
-The intended body is
-`composeFlatTM r1.M r2.M r1.exit` paired with the exit state
-`r1.M.states + r2.exit` (the exit of `r2`, shifted into the
-composed state space). The validity of the result follows from
-`composeFlatTM_valid` once we plumb the side-conditions through. -/
-def compileSeq (_r1 _r2 : CompiledCmd) : CompiledCmd := compiledCmd_default
+Concrete implementation via `composeFlatTM`:
+- The composed TM is `composeFlatTM r1.M r2.M r1.exit` (M₁'s exit
+  state triggers the bridge into M₂).
+- The composed exit state is `r1.M.states + r2.exit` (r2's exit,
+  shifted into the composed state space).
+- All `CompiledCmd` invariants discharge via the existing
+  `composeFlatTM_*` lemmas, given that both sub-machines satisfy
+  the invariants.
+
+**Gap surfaced.** `composeFlatTM_run`'s `h_traj1` precondition
+requires M₁ not to reach a halt state before `exit`. The current
+`CompiledCmd` invariants guarantee `exit` IS a halt state of M₁
+(via `exit_is_halt`) but do NOT guarantee it is the *unique* halt
+state. With a non-unique halt vector, a sub-machine could halt at
+some other state, violating `h_traj1`. The eventual
+`compileSeq_sound` proof will therefore need either:
+- a strengthened `CompiledCmd.halt_unique : ∀ i, M.halt[i]? =
+  some true → i = exit` invariant (forces every helper to produce
+  a single-halt-state machine), or
+- a separate operational invariant proved per-helper.
+
+For now we keep the structural invariants minimal; the gap is
+recorded in the ROADMAP risk register as part of risk #1a. -/
+def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
+  M := composeFlatTM r1.M r2.M r1.exit
+  exit := r1.M.states + r2.exit
+  exit_lt := by
+    show r1.M.states + r2.exit < (composeFlatTM r1.M r2.M r1.exit).states
+    rw [composeFlatTM_states]
+    exact Nat.add_lt_add_left r2.exit_lt r1.M.states
+  exit_is_halt := by
+    -- composeFlatTM's halt vector is `composedHalt r1.M r2.M`
+    -- = `replicate r1.M.states false ++ r2.M.halt`. Index
+    -- `r1.M.states + r2.exit` falls into the r2.M.halt segment.
+    show (composeFlatTM r1.M r2.M r1.exit).halt[r1.M.states + r2.exit]?
+        = some true
+    show (composedHalt r1.M r2.M)[r1.M.states + r2.exit]? = some true
+    unfold composedHalt
+    have h_len : (List.replicate r1.M.states false).length ≤
+        r1.M.states + r2.exit := by
+      rw [List.length_replicate]; exact Nat.le_add_right _ _
+    rw [List.getElem?_append_right h_len]
+    -- Goal: r2.M.halt[r1.M.states + r2.exit - (replicate _ _).length]? = some true
+    have h_idx : r1.M.states + r2.exit - (List.replicate r1.M.states false).length
+        = r2.exit := by
+      rw [List.length_replicate]; omega
+    rw [h_idx]
+    exact r2.exit_is_halt
+  M_valid :=
+    composeFlatTM_valid r1.M r2.M r1.exit r1.M_valid r2.M_valid
+      r1.exit_lt r1.M_tapes r2.M_tapes
+  M_tapes := by
+    show (composeFlatTM r1.M r2.M r1.exit).tapes = 1
+    rw [composeFlatTM_tapes]; exact r1.M_tapes
+  M_sig := by
+    show (composeFlatTM r1.M r2.M r1.exit).sig = 3
+    rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
+    rfl
 
 /-- Compile `ifBit t cT cE` from already-compiled sub-branches.
 
