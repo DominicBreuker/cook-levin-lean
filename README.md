@@ -71,6 +71,101 @@ overruns (state Cook–Levin **conditionally** on an axiomatic
 `inTimePoly` interface), is in
 [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
 
+## Development strategy: skeleton-first, risk-driven refinement
+
+This is the working methodology for the remaining Parts of the
+ROADMAP. **Do not deviate from it without an explicit reason** —
+it is the lesson the May 2026 pivot taught us, and it directly
+addresses the failure mode that produced the scope overrun.
+
+The core idea: **write the compiling skeleton of the entire proof
+path first**, with `sorry` and lightweight scaffolding wherever
+proofs are hard, **then iteratively refine the highest-risk
+parts**. Each refinement either validates the shape we committed
+to or surfaces a real structural gap. Either outcome is information
+we want *early*, not after thousands of LOC of follow-on
+engineering.
+
+### Principles
+
+1. **Skeleton first, then refine.** Get the whole proof path to
+   typecheck — with `sorry`s — before any individual proof is
+   closed. A compiling skeleton exposes the shape of every
+   downstream obligation; a partial proof of one isolated piece
+   exposes nothing.
+2. **Prefer concrete `def` + `sorry` over `axiom`.** Axioms hide
+   work behind an opaque declaration and tend to accumulate.
+   Concrete `def`s with `sorry`-bodied lemmas expose dependencies
+   and force design questions early. **Axiom count is a metric to
+   minimise.**
+3. **Decompose sorrys, don't elaborate them.** When a sorry stands
+   in front of real work, prefer splitting it into smaller, more
+   focused sorrys rather than starting the proof. Each split is a
+   structural decision: it either typechecks (the structure is
+   right) or fails (a gap is surfaced).
+4. **Refine the highest-risk parts first.** Iterate: look at the
+   current axioms and largest sorrys, pick the most uncertain one,
+   try to concretize it. Concretizing is what surfaces gaps —
+   abstract declarations cannot.
+5. **Build after every change.** The build is the source of truth
+   for "the skeleton is still coherent". Let failures be
+   deliberate; keep the build green between commits.
+6. **Document gaps as they're found, not after the fact.** When
+   writing concrete code surfaces a missing primitive, an
+   unrealistic bound, or a wrong type signature, record it
+   immediately in a comment or commit message. These notes are the
+   highest-leverage TODO list we have.
+
+### Why this works for us
+
+The original ROADMAP described Parts 1–7 as sequential
+implementation phases with LOC estimates. Part 2 blew up ~10×
+*because* the proof obligations had structural issues that weren't
+visible until they were tried. Skeleton-first surfaces those
+issues before we commit the engineering hours.
+
+Empirical wins from the first few iterations of this methodology
+(May 2026):
+
+- **6 axioms eliminated in one pass** the moment we tried to use
+  them concretely: `Op.eval`, `Op.cost`, `Cmd.eval`, `Cmd.cost`,
+  `Compile.overhead`, `Compile.decodeTape`. Lean accepted the
+  structural recursion through `List.foldl` with no termination
+  hints, and **6 compositional-law `sorry`s closed by `rfl` /
+  `simp`** as a side benefit.
+- **`DecidesLang.encodeIn_size`'s `≤ size + 1` bound was caught as
+  unprovable** the moment we tried to write a real encoder for the
+  SAT verifier. Relaxed to `≤ costBound size` in the same pass.
+- **Two DSL expressiveness gaps surfaced** (no conditional loop,
+  no constant-comparison primitive) by trying to write
+  `evalCnfCmd` — found *before* paying ~10K LOC of follow-on
+  Cmd-engineering work.
+
+### What to do when stuck
+
+If a piece of the skeleton resists refinement:
+
+1. **State the obstacle precisely.** What specifically doesn't
+   typecheck? What proof can't you construct?
+2. **Classify it.** Is it a *structural gap* (wrong type
+   signature, missing primitive, contradictory hypothesis) or a
+   *dull engineering bottleneck* (a 200-line case analysis)?
+3. **For structural gaps: fix the structure first.** Editing the
+   types and rebuilding is far cheaper than working around a bad
+   structure with a long proof.
+4. **For engineering bottlenecks: leave the `sorry`, move on.**
+   The skeleton is more valuable than any single completed proof.
+5. **Always commit + push the skeleton state**, with the obstacle
+   noted in a comment or commit message. The next iteration starts
+   from a documented gap, not from memory.
+
+### Metrics we track per iteration
+
+- `lake build` status (must be green).
+- Axiom count (minimise — see Principle 2).
+- Sorry count by file (decompose, don't elaborate — see Principle 3).
+- Gaps surfaced this iteration (record in commit message).
+
 ## High-level architecture
 
 The intended proof follows the standard Cook–Levin recipe and mirrors
