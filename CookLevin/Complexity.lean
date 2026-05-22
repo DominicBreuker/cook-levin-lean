@@ -4,6 +4,7 @@ import Complexity.Complexity.TMEncoding
 import Complexity.Complexity.TMPrimitives
 import Complexity.Lang
 import Complexity.Simulators
+import Complexity.Complexity.Deciders.EvalCnfCmd
 import Complexity.Complexity.Deciders.EvalCnfTM
 import Complexity.Complexity.Deciders.CliqueRelTM
 import Complexity.NP.SAT.CookLevin

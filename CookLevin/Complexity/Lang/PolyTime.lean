@@ -25,16 +25,21 @@ when run on the encoded input `encodeIn`.
 
 This is the layer-level analogue of `DecidesBy`. The TM-level
 `DecidesBy` is then obtained from `inTimePolyLang_to_DecidesBy`
-below. -/
+below.
+
+The encoded state's size is bounded by the same `costBound` as the
+running cost — this is the loosest reasonable bound (a real
+encoding cannot be more expensive to lay out than to process) and
+absorbs constants without forcing the encoder to fight an
+artificial `+1` ceiling. -/
 structure DecidesLang {X : Type} [encodable X]
     (P : X → Prop) (costBound : Nat → Nat) where
   /-- The DSL program. -/
   c : Cmd
   /-- How inputs are laid out in the program's initial state. -/
   encodeIn : X → State
-  /-- The encoded state's size is linearly bounded by the input
-  size, modulo a constant. -/
-  encodeIn_size : ∀ x, State.size (encodeIn x) ≤ encodable.size x + 1
+  /-- The encoded state's size is bounded by the cost bound. -/
+  encodeIn_size : ∀ x, State.size (encodeIn x) ≤ costBound (encodable.size x)
   /-- The program decides `P` from the encoded input. -/
   decides : Cmd.decides c encodeIn P
   /-- Cost bound: running `c` on `encodeIn x` costs at most

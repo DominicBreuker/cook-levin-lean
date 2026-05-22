@@ -1,6 +1,7 @@
 import Complexity.Complexity.TMDecider
 import Complexity.NP.SAT
 import Complexity.Lang
+import Complexity.Complexity.Deciders.EvalCnfCmd
 
 set_option autoImplicit false
 
@@ -47,31 +48,31 @@ theorem timeBound_inOPoly : inOPoly timeBound := by
 theorem timeBound_monotonic : monotonic timeBound :=
   fun _ _ h => Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 3
 
-/-! ## The verifier program in the layer -/
+/-! ## The verifier program in the layer
 
-/-- The SAT verifier as a `Lang.Cmd`.
+The concrete program and encoding live in
+`Deciders/EvalCnfCmd.lean`. This file ties them into the
+framework. -/
 
-**Skeleton stub.** Will be a concrete `Cmd` (~50 LOC of DSL) in
-Part 3.5. The intended algorithm: for each clause of `N`, scan the
-literals and check that at least one is satisfied by `a`; AND the
-clause results into register 0. -/
-noncomputable def evalCnfCmd : Cmd := sorry  -- TODO(Part3.5-Cmd)
-
-/-- How to lay out a `(cnf, assgn)` input as a `Lang.State`. The
-intended layout: register 1 holds the encoded CNF, register 2 holds
-the encoded assignment, registers 3+ are scratch. -/
-noncomputable def evalCnfEncode : cnf × assgn → State := sorry
-  -- TODO(Part3.5-encode)
-
-/-- The Lang-level decider witness. Five sorrys, one per
-correctness obligation. -/
+/-- The Lang-level decider witness. The program and encoding are
+concrete (from `EvalCnfCmd`); the proofs are deferred to Part 3.5
+sub-steps. The `encodeIn_size` obligation currently uses the
+strict `≤ size + 1` bound from `DecidesLang`; relaxing that to
+`≤ costBound size` is one of the gaps recorded in
+`EvalCnfCmd.lean`. -/
 noncomputable def evalCnfDecidesLang :
     DecidesLang (fun Na : cnf × assgn => satisfiesCnf Na.2 Na.1) timeBound where
-  c := evalCnfCmd
-  encodeIn := evalCnfEncode
-  encodeIn_size := by intro x; sorry  -- TODO(Part3.5-encode-size)
-  decides := by sorry                  -- TODO(Part3.5-correctness)
-  cost_bound := by intro x; sorry      -- TODO(Part3.5-cost-bound)
+  c := EvalCnfCmd.evalCnfCmd
+  encodeIn := EvalCnfCmd.encodeState
+  encodeIn_size := by intro x; sorry
+    -- TODO(Part3.5-encode-size): obligation is
+    -- `State.size (encodeState x) ≤ timeBound (encodable.size x)
+    --  = (encodable.size x + 1)^3`.
+    -- Closing: combine `EvalCnfCmd.encodeState_size_bound`
+    -- (`≤ 5 · size + 20`) with `5 · n + 20 ≤ (n + 1)^3` for
+    -- `n ≥ 3`, plus a base-case check for `n < 3`.
+  decides := EvalCnfCmd.evalCnfCmd_decides
+  cost_bound := EvalCnfCmd.evalCnfCmd_cost_bound
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_evalCnf :
