@@ -245,7 +245,7 @@ path).
 
 ## Part 2 — TM-backed `inTimePoly` framework ✅ done; content ⏸ paused
 
-The Part 2 *framework* (Steps 1–10 of [`PART2.md`](PART2.md))
+The Part 2 *framework* (Steps 1–10 of [`PART2.md`](../parked/PART2.md))
 landed in good shape:
 
 - `Complexity/Complexity/NP.lean` gained the `DecidesBy` structure
@@ -268,7 +268,7 @@ landed in good shape:
 The Part 2 *content* — closing sorrys #1 and #2 by constructing
 actual SAT-verifier and FlatClique-verifier `FlatTM`s by hand —
 is **paused** mid-stream. The detailed history of what was built
-is in [`PART2.md`](PART2.md) (now treated as archival once the
+is in [`PART2.md`](../parked/PART2.md) (now treated as archival once the
 pivot lands). Two primitives (`copyUnaryTM`, `compareUnaryAtMarkerTM`)
 were fully closed; the per-literal / per-clause / per-CNF loops were
 not, and the `CliqueRelTM` analogue was never started.

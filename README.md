@@ -19,102 +19,28 @@ and current state.
 ## Status at a glance (May 2026)
 
 - `lake build` succeeds.
-- Repository size: **~25.7K LOC** of Lean across `CookLevin/`.
+- Repository size: **~11K LOC** of Lean on the proof path under
+  `CookLevin/` (a further ~14K LOC of paused / superseded work
+  lives under [`parked/`](parked/), not built).
 - **Four labelled `sorry`s remain**, all flagged with `TODO(...)`
   tags pointing at the roadmap phase that closes them:
 
-  | # | Location                                          | Closes at |
-  |---|---------------------------------------------------|-----------|
-  | 1 | `CookLevin/Complexity/Complexity/Deciders/EvalCnfTM.lean`   | New Part 3 of ROADMAP |
-  | 2 | `CookLevin/Complexity/Complexity/Deciders/CliqueRelTM.lean` | New Part 3 of ROADMAP |
-  | 3 | `CookLevin/Complexity/Complexity/NP.lean`                   | New Part 4 of ROADMAP |
-  | 4 | `CookLevin/Complexity/GenNP_is_hard.lean`                   | New Part 7 of ROADMAP |
+  | # | Location                                                              | Tag                                  | Closes at |
+  |---|-----------------------------------------------------------------------|--------------------------------------|-----------|
+  | 1 | `CookLevin/Complexity/Complexity/Deciders/EvalCnfTM.lean:58`          | `TODO(Part2-followup:EvalCnfTM)`     | New Part 3 of ROADMAP |
+  | 2 | `CookLevin/Complexity/Complexity/Deciders/CliqueRelTM.lean:66`        | `TODO(Part2-followup:CliqueRelTM)`   | New Part 3 of ROADMAP |
+  | 3 | `CookLevin/Complexity/Complexity/NP.lean:270`                         | `TODO(Part3:red_inNP_TMcompose)`     | New Part 4 of ROADMAP |
+  | 4 | `CookLevin/Complexity/GenNP_is_hard.lean:23`                          | `TODO(Part6:hasDeciderClassical)`    | New Part 7 of ROADMAP |
 
 - The build is **conditionally complete**: `theorem CookLevin :
   NPcomplete SAT` typechecks, but it depends on the four sorrys above
   and on a handful of placeholder TM-bridge constructions (see "Where
   the project is not yet sound" below).
 
-## What's actually proved
-
-The codebase divides cleanly into a **sound mathematical core**
-(~half the repo, ~13K LOC) and an **infrastructure layer** that is
-still under construction.
-
-### Sound mathematical core (no sorrys, no placeholders)
-
-- **`FlatTM` semantics.** Tapes, transitions, single-step semantics,
-  bounded execution with step-budget, halting-state acceptance.
-  (`CookLevin/Complexity/Complexity/MachineSemantics.lean`)
-- **Asymptotic infrastructure.** `inOPoly`, `inOPoly_add`,
-  `inOPoly_comp`, `monotonic`, polynomial composition.
-  (`CookLevin/Complexity/Complexity/Definitions.lean`)
-- **Reduction calculus.** `⪯p`, `reducesPolyMO_reflexive`,
-  `reducesPolyMO_transitive`, `red_inNP`, `red_NPhard`.
-  (`CookLevin/Complexity/Complexity/NP.lean`)
-- **The combinatorial chain.** The full reduction
-  `FlatTCC → FlatCC → BinaryCC → FSAT → SAT / 3-SAT`, with real
-  size bounds (`5n+5`, `50n² + 50n + 1`, `500n⁶ + 500`), proved
-  both directions. This is the substantial mathematical content
-  ported from Coq.
-  (`CookLevin/Complexity/NP/SAT/CookLevin/Reductions/`)
-- **The Tseytin transform** `FSAT → SAT`, ~700 LOC, fully proved.
-  (`CookLevin/Complexity/NP/FSAT_to_SAT.lean`)
-- **k-SAT → SAT and k-SAT → FlatClique** reductions.
-  (`CookLevin/Complexity/NP/kSAT_to_SAT.lean`,
-   `CookLevin/Complexity/NP/kSAT_to_FlatClique.lean`)
-- **`SAT_inNP`, `FlatClique_in_NP`** modulo their `DecidesBy`
-  witnesses (sorrys #1 and #2): the polynomial-certificate side is
-  fully proved.
-- **TM combinator library.** `composeFlatTM`, `branchComposeFlatTM`,
-  `runFlatTM_compose`, `runFlatTM_extend`, scan / verdict / write
-  primitives. ~3.5K LOC of fully proved Lean. Will be the target
-  language of the in-progress higher-level layer.
-  (`CookLevin/Complexity/Complexity/TMPrimitives.lean`)
-
-### Infrastructure layer — strengthened in Part 2 of the roadmap
-
-- **`DecidesBy` and TM-backed `inTimePoly`.** `inTimePoly P` now
-  requires a concrete `FlatTM` plus halting-state and step-bound
-  run lemmas — strictly stronger than the original propositional
-  `HasDecider`.
-- **`sat_NP`, `FlatClique_in_NP`** rebuilt against the new
-  framework. Their concrete `DecidesBy` witnesses (sorrys #1, #2)
-  are the next milestone.
-- **`red_inNP`, `P_NP_incl`** rebuilt against the new framework.
-  The composition obligation that requires a TM-backed
-  `polyTimeComputable` is sorry #3.
-- **`hasDeciderClassical`** retyped to produce
-  `Nonempty (DecidesBy …)`. Body is sorry #4, closed in new Part 7.
-
-### Where the project is not yet sound
-
-Two distinct gaps remain between "Lean accepts the theorem" and "the
-theorem is a real proof of Cook–Levin":
-
-1. **The four `sorry`s above.** Each one corresponds to a piece of
-   infrastructure not yet built. Detailed status in
-   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
-
-2. **`polyTimeComputable f` only bounds output size.** The current
-   `PolyTimeComputableWitness` requires
-   `encodable.size (f x) ≤ bound (encodable.size x)` and says
-   nothing about the TM that computes `f`. So every reduction in
-   the chain is *witnessed* by a size bound, not by a real
-   polynomial-time TM. The TM bridge layers
-   (`LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`,
-   `…/FlatSingleTMGenNP_to_FlatTCC.lean`, …) are
-   placeholders (1-state TMs, classical case-splits on the source
-   language). Fixing this is Parts 4–6 of the roadmap.
-
-A line-by-line audit of these issues lives at the top of
-[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) ("Part 0 — Honest
-assessment").
-
 ## Strategic situation — May 2026
 
-The project just hit a scope wall midway through Part 2 of the
-roadmap and pivoted. The honest summary:
+The project hit a scope wall midway through Part 2 of the roadmap
+and pivoted. The honest summary:
 
 - **Part 1** (foundational hygiene, small-`sorry` cleanup): ✅ done.
 - **Part 2 framework** (TM-backed `inTimePoly`): ✅ done.
@@ -122,6 +48,8 @@ roadmap and pivoted. The honest summary:
   Original estimate ~1,500 LOC; actual ~14,500 LOC and ~30% done on
   the SAT verifier alone. Continuing in this style projected Parts
   2–6 at ~100–150K LOC, which is multi-year work for a side project.
+  The hand-rolled primitives (~8K LOC) and the demo decider library
+  (~6K LOC) are now under [`parked/`](parked/).
 - **Parts 3–7** rescoped around a new **higher-level computable
   layer** (a small while-language with cost semantics, compiled
   once to `FlatTM`). This is the Lean analogue of the L calculus
@@ -146,7 +74,7 @@ overruns (state Cook–Levin **conditionally** on an axiomatic
 ## High-level architecture
 
 The intended proof follows the standard Cook–Levin recipe and mirrors
-the Coq port:
+the Coq port. The reduction chain used by the final theorem:
 
 ```
 GenNP (List Bool)                  -- universal NP-source language
@@ -167,39 +95,189 @@ NP-hardness is transported from `GenNP` along this chain via
 `CookLevin : NPcomplete SAT`, and `Clique_complete : NPcomplete
 FlatClique` in `CookLevin/Complexity/NP/SAT/CookLevin.lean`.
 
-The chain from the second half (`FlatTCC → ... → SAT`) is real
+The chain from the second half (`FlatTCC → … → SAT`) is real
 mathematics. The chain from `GenNP` down to `FlatTCC` is the part
 that depends on placeholder TM bridges and on sorrys #3 and #4.
+
+### What backs each layer
+
+| Layer                                      | Type of object                              | Status |
+|--------------------------------------------|---------------------------------------------|--------|
+| `encodable`                                | unary size measure                          | sound  |
+| `inOPoly`, `monotonic`, `inO`              | asymptotic-growth predicates                | sound  |
+| `FlatTM` + `stepFlatTM` + `runFlatTM`      | concrete TM semantics                       | sound  |
+| `composeFlatTM`, `branchComposeFlatTM`, …  | TM combinator library (~3.5K LOC)           | sound  |
+| `validFlatTM_default`                      | 1-state, 0-transition halting machine       | placeholder |
+| `polyTimeComputable f`                     | exists size-bound on `f`                    | **not** runtime-bounded (new Part 4) |
+| `DecidesBy P f` + `inTimePoly P`           | actual `FlatTM` + halting / time-budget     | TM-backed; stubs for `EvalCnfTM`, `CliqueRelTM` (sorrys #1, #2) |
+| `bridgeMachine` (LM→mTM, mTM→1-tape)       | empty TM that halts at step 0               | placeholder (new Part 5) |
+| `TMGenNP_fixed M`, `mTMGenNP_fixed M`      | predicates that ignore `M`                  | placeholder |
+| `TMGenNP_fixed → FlatFunSingleTMGenNP`     | `if source then yes_inst else no_inst`      | classical, not computable |
+| `FlatSingleTMGenNP → FlatTCC`              | `if source then trivial-yes else no-inst`   | classical, not computable (new Part 6) |
+| `FlatTCC → FlatCC`                         | structural encoding, equivalence proved     | **sound** |
+| `FlatCC → BinaryCC`                        | unary block encoding, equivalence proved    | **sound** |
+| `BinaryCC → FSAT`                          | tableau formula, equivalence proved         | **sound** |
+| `FSAT → SAT / 3SAT` (Tseytin)              | correct map, fully proved                   | **sound** |
+| `kSAT → SAT`                               | inclusion reduction                         | **sound** |
+| `kSAT → FlatClique`                        | classical Karp construction, fully proved   | **sound** |
+| `SAT inNP`, `FlatClique inNP`              | TM-backed via `EvalCnfTM` / `CliqueRelTM`   | sound modulo TM-construction stubs |
+| `NPhard_GenNP` (`hasDeciderClassical`)     | retyped to `Nonempty (DecidesBy …)`         | placeholder waiting on new Part 7 |
+
+## Where the project is mathematically sound
+
+About half the repository on the proof path is real, computable,
+fully-proved Lean and contains the substantial mathematical content
+ported from Coq:
+
+- **`Complexity/Complexity/MachineSemantics.lean`** — the `FlatTM`
+  model itself (tapes, transitions, single-step semantics, run with
+  step-budget).
+- **`Complexity/Complexity/Definitions.lean`** — `encodable`,
+  `monotonic`, `inO`, `inOPoly`, and the polynomial-composition
+  lemmas `inOPoly_add`, `inOPoly_comp` with their honest analytic
+  proofs.
+- **`Complexity/Complexity/NP.lean`** — the `DecidesBy` structure,
+  TM-backed `inTimePoly`, and the reduction calculus
+  (`reducesPolyMO_reflexive`, `reducesPolyMO_transitive`,
+  `red_inNP`, `red_NPhard`). The single sorry here is a labelled
+  TM-composition placeholder for new Part 4.
+- **`Complexity/Complexity/TMPrimitives.lean`** (~3.5K LOC) — the
+  `composeFlatTM` / `branchComposeFlatTM` combinator family, the
+  `runFlatTM_compose` and `runFlatTM_extend` machinery, scan /
+  verdict / write primitives. This is the natural target language
+  of the new layer's compiler.
+- **`Complexity/NP/SAT.lean`** — the SAT language, its evaluator,
+  and all supporting lemmas.
+- **`Complexity/NP/kSAT.lean`**, **`kSAT_to_SAT.lean`**,
+  **`FSAT.lean`** — clean.
+- **`Complexity/NP/FSAT_to_SAT.lean`** — a genuine Tseytin
+  transformation (~700 LOC), correctness and size bound fully
+  proved.
+- **`Complexity/NP/kSAT_to_FlatClique.lean`** — the classical Karp
+  construction, fully proved.
+- **The combinatorial core (~3K LOC):**
+  - `FlatTCC_to_FlatCC` (window/cover equivalence both directions,
+    real size bound `5n+5`)
+  - `FlatCC_to_BinaryCC` (unary block encoding, real size bound
+    `50n² + 50n + 1`)
+  - `BinaryCC_to_FSAT` (tableau CNF, equivalence proved both
+    directions, size bound `500n⁶ + 500`)
+- The `validFlattening` / `flattenString` / `unflattenList` machinery
+  connecting `Fin k`-typed and `Nat`-flattened representations.
+
+This is the actually meaningful mathematics that has been ported.
+The proof of Cook–Levin *after* a TM run has been encoded as a
+`FlatTCC` instance is essentially in place.
+
+## Where the project is not yet sound
+
+Two distinct gaps remain between "Lean accepts the theorem" and "the
+theorem is a real proof of Cook–Levin":
+
+1. **The four `sorry`s above.** Each corresponds to a piece of
+   infrastructure not yet built. They are detailed in the table at
+   the top of this README and discussed in
+   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+
+2. **`polyTimeComputable f` only bounds output size.** The current
+   `PolyTimeComputableWitness` requires
+   `encodable.size (f x) ≤ bound (encodable.size x)` and says
+   nothing about the TM that computes `f`. So every reduction in
+   the chain is *witnessed* by a size bound, not by a real
+   polynomial-time TM. The TM bridge layers
+   (`LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`,
+   `…/FlatSingleTMGenNP_to_FlatTCC.lean`, …) are
+   placeholders (1-state TMs, classical case-splits on the source
+   language). Fixing this is Parts 4–6 of the new roadmap.
+
+### Other smells (low priority)
+
+- `instEncodableDefault` (`Definitions.lean:14`) silently gives
+  `size = 0` to any type that lacks an explicit `encodable`
+  instance, so a bound of `fun _ => 0` is "satisfiable" for a few
+  bridge-stage types. The loophole is shadowed by the placeholder
+  TM bridges and will close naturally as those bridges become real.
+- `abbrev TM (_σ : Type) (_ : Nat) := FlatTM` (`Definitions.lean:61`):
+  alphabet type and tape count are phantom parameters.
+- `Complexity/Complexity/Subtypes.lean` is empty.
+- `Basic.lean` / `Main.lean` are scaffolding from the Lake template.
+- `computableTime'` (`MachineSemantics.lean:186-194`) is a leftover
+  Coq port hook whose definition no longer matches its name. The
+  new layer (Part 3) supersedes it.
+- `CanEnumTerm` for `List Bool` (`CanEnumTerm.lean`) encodes `y` as
+  `[true] ++ replicate (size y) false` — a size-only encoding, not
+  an injection. Acceptable only because the surrounding framework
+  never consults the certificate content. Replaced in new Part 7.
 
 ## Repository layout
 
 ```
 .
-├── README.md             -- this file
+├── README.md             -- this file: the single source of truth on status
 ├── lakefile.lean         -- Lake build configuration (depends on mathlib4)
-├── lean-toolchain
-├── CookLevin/
-│   ├── README.md         -- detailed project status, per-file map
+├── lean-toolchain        -- pinned to leanprover/lean4:v4.30.0-rc2
+├── CookLevin/            -- everything on the proof path (~11K LOC)
 │   ├── ROADMAP.md        -- the multi-phase plan (read this for the strategy)
-│   ├── PART2.md          -- Part 2 implementation tracker (paused, archival)
 │   ├── Basic.lean        -- placeholder
 │   ├── Main.lean         -- "Hello, World!" executable entry point
 │   ├── Complexity.lean   -- top-level import aggregator
-│   └── Complexity/       -- the project proper (~25K LOC)
-│       ├── Complexity/   -- complexity-theoretic framework
-│       │   ├── Definitions.lean
-│       │   ├── MachineSemantics.lean
-│       │   ├── NP.lean
-│       │   ├── TMPrimitives.lean
-│       │   ├── TMEncoding.lean
-│       │   ├── TMDecider.lean
-│       │   └── Deciders/  -- in-progress TM verifier constructions
-│       └── NP/           -- the language reductions
-│           ├── SAT.lean, FSAT.lean, kSAT.lean, FlatClique.lean, ...
-│           ├── FSAT_to_SAT.lean, kSAT_to_SAT.lean, kSAT_to_FlatClique.lean
-│           └── SAT/CookLevin/    -- the combinatorial chain
-│               ├── Subproblems/
-│               └── Reductions/
+│   └── Complexity/
+│       ├── Complexity/
+│       │   ├── Definitions.lean       -- encodable, inOPoly, …
+│       │   ├── MachineSemantics.lean  -- FlatTM, stepFlatTM, runFlatTM, …
+│       │   ├── NP.lean                -- DecidesBy, inTimePoly, ⪯p, NPhard, …
+│       │   ├── TMPrimitives.lean      -- composeFlatTM family (~3.5K LOC)
+│       │   ├── TMEncoding.lean        -- list-level encoding helpers
+│       │   ├── TMDecider.lean         -- inTimePolyTM, DecidesBy combinators
+│       │   ├── Subtypes.lean          -- empty stub
+│       │   └── Deciders/
+│       │       ├── EvalCnfTM.lean     -- SAT verifier interface (sorry #1)
+│       │       └── CliqueRelTM.lean   -- FlatClique verifier interface (sorry #2)
+│       ├── CanEnumTerm.lean
+│       ├── GenNP_is_hard.lean         -- sorry #4 (hasDeciderClassical)
+│       ├── L_to_LM.lean               -- placeholder bridge
+│       ├── LM_to_mTM.lean             -- placeholder bridge
+│       ├── mTM_to_singleTapeTM.lean   -- placeholder bridge
+│       ├── TMGenNP_fixed_mTM.lean
+│       └── NP/
+│           ├── GenNP.lean
+│           ├── SAT.lean               -- CNF SAT
+│           ├── kSAT.lean              -- k-CNF SAT
+│           ├── FSAT.lean              -- Boolean-formula SAT
+│           ├── FlatClique.lean        -- k-clique on flat graphs
+│           ├── FSAT_to_SAT.lean       -- Tseytin transform (~700 LOC, sound)
+│           ├── kSAT_to_SAT.lean
+│           ├── kSAT_to_FlatClique.lean
+│           ├── TM/
+│           │   └── IntermediateProblems.lean
+│           └── SAT/
+│               ├── CookLevin.lean              -- final theorem statements
+│               └── CookLevin/
+│                   ├── FlatSingleTMGenNP_to_FlatTCC.lean
+│                   ├── FlatTCC_to_FlatCC.lean
+│                   ├── FlatCC_to_BinaryCC.lean
+│                   ├── BinaryCC_to_FSAT.lean
+│                   ├── Reductions/
+│                   │   ├── FlatSingleTMGenNP_to_FlatTCC.lean
+│                   │   ├── FlatTCC_to_FlatCC.lean
+│                   │   ├── FlatCC_to_BinaryCC.lean
+│                   │   ├── BinaryCC_to_FSAT.lean
+│                   │   └── TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean
+│                   └── Subproblems/
+│                       ├── SingleTMGenNP.lean
+│                       ├── FlatTCC.lean
+│                       ├── FlatCC.lean
+│                       └── BinaryCC.lean
+├── parked/               -- work no longer on the proof path (~14K LOC, not built)
+│   ├── README.md
+│   ├── PART2.md          -- the paused Part 2 implementation tracker
+│   └── CookLevin/Complexity/Complexity/Deciders/
+│       ├── SAT_TM.lean             -- Phase-C demonstration deciders (~6.3K LOC)
+│       └── EvalCnfTM/
+│           ├── Primitives.lean     -- hand-rolled SAT verifier primitives
+│           ├── CopyUnary.lean
+│           ├── CompareUnary.lean
+│           └── PerLiteral.lean
 ├── coqdoc/               -- local mirror of the Coq port's documentation
 ├── .github/
 │   ├── workflows/        -- CI: lake-build + researcher driver
@@ -217,7 +295,8 @@ lake build
 ```
 
 The first build from a clean checkout takes a long time because
-`mathlib` must be cached.
+`mathlib` must be cached. Lake's `lean_lib` root is `CookLevin/`,
+so the contents of `parked/` are not built.
 
 ## Where to look first
 
@@ -232,7 +311,7 @@ If you want to see the **real, working mathematics**, read in order:
 5. `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/BinaryCC_to_FSAT.lean`
 6. `CookLevin/Complexity/NP/FSAT_to_SAT.lean` — Tseytin transformation.
 
-If you want to see **the strengthened framework**, read:
+If you want to see the **strengthened framework**, read:
 
 1. `CookLevin/Complexity/Complexity/NP.lean` — `DecidesBy`,
    TM-backed `inTimePoly`, the reduction calculus.
@@ -249,17 +328,21 @@ If you want to see **what still needs to be replaced**, read:
    `CookLevin/Complexity/NP/SAT/CookLevin/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`
    — classical case-split reductions.
 
+If you want to see **what we tried and parked**, read:
+
+1. [`parked/README.md`](parked/README.md) — an overview of what's
+   parked and why.
+2. [`parked/PART2.md`](parked/PART2.md) — the detailed substep
+   tracker for the now-paused hand-rolled SAT verifier.
+
 The strategic path forward (the new "Part 3: higher-level computable
 layer" and Parts 4–7) is in
-[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md). The history of the
-paused Part 2 content effort is in
-[`CookLevin/PART2.md`](CookLevin/PART2.md).
+[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
 
 ## References
 
 - Coq source: <https://github.com/uds-psl/cook-levin>
 - Local Coq documentation mirror: `coqdoc/`
 - Project status / roadmap: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md)
-- Detailed per-file status: [`CookLevin/README.md`](CookLevin/README.md)
-- Paused Part 2 tracker (archival): [`CookLevin/PART2.md`](CookLevin/PART2.md)
+- Parked work overview: [`parked/README.md`](parked/README.md)
 - CI: `.github/workflows/lake-build.yml`
