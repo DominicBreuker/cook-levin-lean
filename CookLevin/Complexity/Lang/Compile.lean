@@ -155,17 +155,78 @@ correctness is captured by the per-constructor soundness lemmas
 below (each sorry-bodied).
 -/
 
-/-- Compile a single primitive operation `Op` into a `CompiledCmd`.
-**Stub.** The real implementation must:
-- emit a TM that navigates to the operand registers using `0`-
-  delimiters,
-- mutate the tape according to `Op.eval`,
-- halt in a designated exit state.
+/-! ### Per-`Op` helpers (one stub per `Op` constructor)
 
-The state count depends linearly on the operand indices (each
-register skipped costs ~1 state). The alphabet is `sig = 3` by the
-layer's convention. -/
-def compileOp (_o : Op) : CompiledCmd := compiledCmd_default
+Each `Op` constructor compiles to a small TM whose state count
+depends linearly on the operand register indices (one extra state
+per register-delimiter skipped). All per-`Op` helpers are stubs
+returning `compiledCmd_default`; they are listed separately so
+that future iterations can concretize them one at a time without
+re-touching the rest of the compiler.
+
+Per-`Op` TM contracts (informal):
+
+- `opClear dst` — find the `dst`-th register's start, then shift
+  the tail of the tape left to remove the register's contents,
+  leaving the trailing delimiter in place. State count: `O(dst)`.
+- `opAppendOne dst` — navigate to the end of register `dst`
+  (the delimiter just after it), then *insert* symbol `2` (shifted
+  `1`) by shifting everything right by one cell and writing.
+- `opAppendZero dst` — analogous, but inserts symbol `1`
+  (shifted `0`).
+- `opCopy dst src` — read register `src`'s contents (between
+  delimiters), then overwrite register `dst` with them; this
+  involves shifting if the lengths differ. State count: `O(dst + src)`.
+- `opTail dst src` — read `src`, drop its first symbol (if any),
+  then write to `dst`.
+- `opHead dst src` — read `src`'s first symbol, then write to
+  `dst` (single-symbol register).
+- `opEqBit dst src1 src2` — read `src1` and `src2` cell-by-cell,
+  comparing; write `[1]` or `[0]` (shifted) to `dst`.
+- `opNonEmpty dst src` — examine the first symbol after the
+  `src`-th delimiter: if it is `0`, the register is empty.
+
+All eight stubs share the same shape: they take operand register
+indices and return a `CompiledCmd`. Soundness obligations are
+collected by `compileOp_sound` (currently one sorry; can be
+decomposed per-`Op` when those helpers are concretized). -/
+
+/-- Compile `Op.clear dst`. **Stub.** -/
+def Compile.opClear (_dst : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.appendOne dst`. **Stub.** -/
+def Compile.opAppendOne (_dst : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.appendZero dst`. **Stub.** -/
+def Compile.opAppendZero (_dst : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.copy dst src`. **Stub.** -/
+def Compile.opCopy (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.tail dst src`. **Stub.** -/
+def Compile.opTail (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.head dst src`. **Stub.** -/
+def Compile.opHead (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
+def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.nonEmpty dst src`. **Stub.** -/
+def Compile.opNonEmpty (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile a single primitive operation `Op` to a `CompiledCmd`
+by dispatching on the constructor. The actual TM construction
+lives in the per-`Op` helpers above. -/
+def compileOp : Op → CompiledCmd
+  | .clear dst                 => Compile.opClear dst
+  | .appendOne dst             => Compile.opAppendOne dst
+  | .appendZero dst            => Compile.opAppendZero dst
+  | .copy dst src              => Compile.opCopy dst src
+  | .tail dst src              => Compile.opTail dst src
+  | .head dst src              => Compile.opHead dst src
+  | .eqBit dst src1 src2       => Compile.opEqBit dst src1 src2
+  | .nonEmpty dst src          => Compile.opNonEmpty dst src
 
 /-- Compile `seq c1 c2` from already-compiled sub-machines.
 

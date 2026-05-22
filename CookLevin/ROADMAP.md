@@ -241,6 +241,21 @@ but the surrounding types are stable. Items 6–8 are *engineering*
   docstring. Sorry count unchanged at 7 in `Compile.lean`; build
   remains green; Lang layer still axiom-free.
 
+- **May 2026 — `compileOp` decomposed into 8 per-`Op` stubs.**
+  Replaced the single uniform `compileOp (_o : Op) := compiledCmd_default`
+  with a dispatch on the `Op` constructor and one named stub per
+  case: `Compile.opClear`, `Compile.opAppendOne`,
+  `Compile.opAppendZero`, `Compile.opCopy`, `Compile.opTail`,
+  `Compile.opHead`, `Compile.opEqBit`, `Compile.opNonEmpty`. Each
+  carries an inline contract describing the head movement / tape
+  mutation it must perform under the `sig = 3` alphabet
+  convention. **No new sorrys** — each stub still returns
+  `compiledCmd_default`, so `compileOp_sound` stays as one sorry
+  (decomposing it per-`Op` is deferred until at least one helper
+  is concretized). Future per-`Op` iterations can now proceed
+  independently without touching the rest of the compiler. Build
+  green on first pass.
+
 - **May 2026 — `halt_unique` invariant added to `CompiledCmd`.**
   Closes the gap surfaced in the previous iteration. The new
   field
