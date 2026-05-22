@@ -155,15 +155,15 @@ iteration.**
 | Metric                                | Value             | Trend |
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3350 jobs) | unchanged |
-| Axiom count (Lang layer)              | **0**             | ↓ from 6 |
-| Tactical sorrys                       | ~23               | small decreases |
+| Axiom count (Lang layer)              | **0**             | unchanged |
+| Tactical sorrys                       | ~28               | ↑ +5 (decomposition of risk #1) |
 | `theorem CookLevin : NPcomplete SAT` | typechecks        | unchanged since pre-pivot |
 
 Sorry distribution at the current snapshot (May 2026):
 
 | File                                       | Sorrys | What they are |
 |--------------------------------------------|--------|---------------|
-| `Lang/Compile.lean`                        | 3      | `Compile_sound`, `Compile_polyBound`, `decodeTape_encodeTape` |
+| `Lang/Compile.lean`                        | 7      | `decodeTape_encodeTape`, `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` |
 | `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
 | `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition (sorry #3 of the original four) |
 | `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` (sorry #4) |
@@ -185,20 +185,45 @@ split.
 
 | # | Gap                                   | Location                              | Why this is high-risk |
 |---|---------------------------------------|---------------------------------------|-----------------------|
-| 1 | The actual compiler body              | `Lang/Compile.lean`                   | `Compile := fun _ => validFlatTM_default`. The per-`Op` TM design and the `seq` / `forBnd` / `ifBit` composition gadgets have not been validated against the `FlatTM` model. Filling in even one constructor will surface whether the alphabet/delimiter convention works and whether `Compile.overhead`'s degree is right. |
+| 1a | Per-constructor compiler helpers (compileOp / compileSeq / compileIfBit / compileForBnd) | `Lang/Compile.lean` | The single `Compile := fun _ => …` stub has been **decomposed** (May 2026 iteration): `compileCmd` is now a structural recursion delegating to four per-constructor helpers, all still stubbed to `compiledCmd_default`. Each helper carries its own focused soundness sorry. The remaining structural risk is the per-`Op` TM design — most opaque is the per-`Op` head-movement / insert-symbol bookkeeping under the 3-symbol alphabet convention (`{0=delim, 1=shifted 0, 2=shifted 1}`). Filling in even one helper will validate the `CompiledCmd` shape (exit-state + 1-tape + sig=3 invariants) and the `Compile.overhead` magnitude. |
+| 1b | `loopTM` combinator missing from `TMPrimitives.lean` | `Complexity/TMPrimitives.lean` | `compileForBnd` cannot be filled in without a `loopTM (body : FlatTM) → FlatTM` combinator analogous to `composeFlatTM` / `branchComposeFlatTM`. Design: counter on the same tape (in unary) or on a dedicated tape (then the layer needs multi-tape support and Part 5's simulator). The single-tape design is preferred but the bookkeeping has not been validated. |
+| 1c | `compileIfBit` two-exit tester       | `Lang/Compile.lean`                   | `branchComposeFlatTM` requires `exit_pos ≠ exit_neg`. The tester TM (reads register `t`, dispatches to one of two exit states) is not yet designed. Trivial-looking but exposes the head-position invariant after the tester runs — does the head return to a canonical position before the bridge fires? |
 | 2 | DSL expressiveness — missing primitives | `Lang/Syntax.lean`                    | Writing `evalCnfCmd` already surfaced two needs: no conditional/guarded loop (`Cmd.while`); no constant-comparison primitive (`Op.headEqVal`). Their type/cost shapes must be decided before downstream Cmd bookkeeping starts, or that work will be redone. |
 | 3 | `PolyTimeComputableLang` ↔ framework integration | `Lang/PolyTime.lean`, `Complexity/NP.lean` | The framework's `polyTimeComputable` doesn't carry a Lang witness, so `red_inNP` can't compose at the layer level. Sorry #3 in `NP.lean` is blocked on this structural change — either upgrade `PolyTimeComputableWitness` or introduce a parallel `PolyTimeComputableTM` and migrate. |
 | 4 | Cook tableau encoding                 | `Simulators/CookTableau.lean`         | `cookTableau M s steps` returns a `FlatTCC` with all fields `[]`. The encoding's `init`/`cards`/`final` triple has not been validated against `FlatTCC_wellformed` or `FlatTCCLang`. The size-bound polynomial's degree is also unjustified. |
-| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1). |
+| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1a). |
 | 6 | `evalCnfCmd` inner bodies             | `Deciders/EvalCnfCmd.lean`            | Per-clause / per-literal / member-check are sorried Cmds. *Engineering* work, mostly dull, but each may surface another DSL gap. **Wait until (2) lands** so we don't write these twice. |
 | 7 | `cliqueRelCmd`                        | `Deciders/CliqueRelTM.lean`           | Same shape as (6). Strictly downstream of (2) and ideally (6). |
 | 8 | `hasDeciderClassical`                 | `GenNP_is_hard.lean`                  | Tractable once (3) lands. Last sorry to close. |
 
-**Risk grading convention:** items 1–3 are *structural* — they
+**Risk grading convention:** items 1a–3 are *structural* — they
 either validate or surface gaps that change downstream type
 signatures. Items 4–5 are *medium* — they need design decisions
 but the surrounding types are stable. Items 6–8 are *engineering*
 — mostly mechanical once their dependencies are validated.
+
+### Iteration log
+
+- **May 2026 — Risk #1 decomposed.** `Lang/Compile.lean` was
+  refactored from the single `Compile := fun _ => validFlatTM_default`
+  stub into a structural recursion `compileCmd : Cmd → CompiledCmd`
+  with four per-constructor helpers (`compileOp`, `compileSeq`,
+  `compileIfBit`, `compileForBnd`), all still stubbed but with
+  focused sorrys. **Structural commitments made** (any future
+  implementation must respect these):
+  1. `CompiledCmd` records an explicit `exit` state — bare
+     `FlatTM` is not enough for `composeFlatTM`-style composition.
+  2. Alphabet is fixed at `sig = 3` (delim, shifted 0, shifted 1).
+     This restricts the layer's inputs to bit-strings.
+  3. `Compile.overhead`'s argument is now `State.size s + cost c s`
+     rather than `State.size s` — honestly accounting for tape
+     growth during execution.
+  4. Each compiled fragment is single-tape (`tapes = 1`).
+  **New sub-gaps surfaced**: 1a (per-Op TM design), 1b (`loopTM`
+  combinator missing from `TMPrimitives.lean`), 1c (two-exit
+  tester for `compileIfBit`). The `Compile_sound` sorry was split
+  into four per-constructor sorrys plus the assembly. Net sorry
+  count: +5 (3 → 7 in `Compile.lean`). Build remains green.
 
 ---
 

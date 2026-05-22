@@ -84,7 +84,13 @@ theorem DecidesLang.toDecidesBy {X : Type} [encodable X]
     {P : X → Prop} {costBound : Nat → Nat}
     (D : DecidesLang P costBound)
     (h_mono : monotonic costBound) :
-    Nonempty (DecidesBy P (fun n => Compile.overhead n * (costBound n + 1))) := by
+    Nonempty (DecidesBy P (fun n => Compile.overhead (2 * costBound n))) := by
+  -- The new bound matches the shape of `Compile_sound`:
+  -- `Compile.overhead (sizeIn + cost)` upper-bounds the TM steps,
+  -- and `cost c (encodeIn x) ≤ costBound (encodable.size x)` while
+  -- `State.size (encodeIn x) ≤ costBound (encodable.size x)`, so
+  -- `sizeIn + cost ≤ 2 * costBound n`. Then `Compile.overhead` is
+  -- monotonic.
   sorry  -- TODO(Part3.5)
 
 /-- **Bridge 2 (Part 3.4):** `inTimePolyLang P` implies
