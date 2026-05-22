@@ -113,6 +113,113 @@ code is already ~80% there for that scope.
 
 ---
 
+## How we work — skeleton-first, risk-driven refinement
+
+See the [`Development strategy`](../README.md#development-strategy-skeleton-first-risk-driven-refinement)
+section of the root README for the full principles. The short
+version:
+
+- **The skeleton comes first.** The whole proof path compiles —
+  with `sorry`s — before any Part is "done". This is already in
+  place: see [Current skeleton state](#current-skeleton-state).
+- **Refinement is risk-driven, not phase-sequential.** The Parts
+  below describe the *target shape* of each area at completion;
+  they do **not** prescribe an execution order. The order is
+  determined by the [Risk register](#risk-register) — refine the
+  highest-risk gap next, regardless of which Part it sits in.
+- **Each iteration either validates a piece of the skeleton or
+  surfaces a new gap.** Both outcomes are progress. Record gaps in
+  the risk register and in commit messages, not in private notes.
+- **Prefer concrete `def` + `sorry` over `axiom`.** Axiom count is
+  a metric to minimise (see Current skeleton state).
+- **Decompose sorrys, don't elaborate them.** Splitting a single
+  large sorry into several focused ones is structural progress;
+  starting to prove a single sorry without that decomposition risks
+  hours of work on the wrong shape.
+
+This methodology emerged from the May 2026 pivot (see
+[Why the pivot](#why-the-pivot)). The original ROADMAP described
+Parts 1–7 as sequential implementation phases with LOC estimates;
+Part 2 blew up ~10× because its proof obligations had structural
+issues that weren't visible until they were attempted. Skeleton-
+first surfaces those issues before we commit the engineering
+hours.
+
+---
+
+## Current skeleton state
+
+Snapshot of where the compiling skeleton stands. **Update on every
+iteration.**
+
+| Metric                                | Value             | Trend |
+|---------------------------------------|-------------------|-------|
+| `lake build`                          | ✅ green (~3350 jobs) | unchanged |
+| Axiom count (Lang layer)              | **0**             | ↓ from 6 |
+| Tactical sorrys                       | ~23               | small decreases |
+| `theorem CookLevin : NPcomplete SAT` | typechecks        | unchanged since pre-pivot |
+
+Sorry distribution at the current snapshot (May 2026):
+
+| File                                       | Sorrys | What they are |
+|--------------------------------------------|--------|---------------|
+| `Lang/Compile.lean`                        | 3      | `Compile_sound`, `Compile_polyBound`, `decodeTape_encodeTape` |
+| `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
+| `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition (sorry #3 of the original four) |
+| `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` (sorry #4) |
+| `Simulators/MultiToSingle.lean`            | 3      | step-bound poly/mono + acceptance |
+| `Simulators/CookTableau.lean`              | 5      | wellformedness + bijection + size bound |
+| `Deciders/EvalCnfTM.lean`                  | 1      | `encodeIn_size` (`5·n + 20 ≤ (n+1)^3`) |
+| `Deciders/CliqueRelTM.lean`                | 3      | still-fully-stubbed `cliqueRelCmd` + encoding + lemmas |
+| `Deciders/EvalCnfCmd.lean`                 | 7      | `processOneClause`/`processOneLiteral`/`memberCheck` + size lemmas + correctness + cost |
+
+---
+
+## Risk register
+
+The next iteration's priority list, ranked by **structural risk**
+(impact × likelihood-of-surfacing-a-gap). **Refine the highest-
+ranked item first.** Update after every iteration: items that get
+validated drop off, items that surface new gaps may climb or
+split.
+
+| # | Gap                                   | Location                              | Why this is high-risk |
+|---|---------------------------------------|---------------------------------------|-----------------------|
+| 1 | The actual compiler body              | `Lang/Compile.lean`                   | `Compile := fun _ => validFlatTM_default`. The per-`Op` TM design and the `seq` / `forBnd` / `ifBit` composition gadgets have not been validated against the `FlatTM` model. Filling in even one constructor will surface whether the alphabet/delimiter convention works and whether `Compile.overhead`'s degree is right. |
+| 2 | DSL expressiveness — missing primitives | `Lang/Syntax.lean`                    | Writing `evalCnfCmd` already surfaced two needs: no conditional/guarded loop (`Cmd.while`); no constant-comparison primitive (`Op.headEqVal`). Their type/cost shapes must be decided before downstream Cmd bookkeeping starts, or that work will be redone. |
+| 3 | `PolyTimeComputableLang` ↔ framework integration | `Lang/PolyTime.lean`, `Complexity/NP.lean` | The framework's `polyTimeComputable` doesn't carry a Lang witness, so `red_inNP` can't compose at the layer level. Sorry #3 in `NP.lean` is blocked on this structural change — either upgrade `PolyTimeComputableWitness` or introduce a parallel `PolyTimeComputableTM` and migrate. |
+| 4 | Cook tableau encoding                 | `Simulators/CookTableau.lean`         | `cookTableau M s steps` returns a `FlatTCC` with all fields `[]`. The encoding's `init`/`cards`/`final` triple has not been validated against `FlatTCC_wellformed` or `FlatTCCLang`. The size-bound polynomial's degree is also unjustified. |
+| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1). |
+| 6 | `evalCnfCmd` inner bodies             | `Deciders/EvalCnfCmd.lean`            | Per-clause / per-literal / member-check are sorried Cmds. *Engineering* work, mostly dull, but each may surface another DSL gap. **Wait until (2) lands** so we don't write these twice. |
+| 7 | `cliqueRelCmd`                        | `Deciders/CliqueRelTM.lean`           | Same shape as (6). Strictly downstream of (2) and ideally (6). |
+| 8 | `hasDeciderClassical`                 | `GenNP_is_hard.lean`                  | Tractable once (3) lands. Last sorry to close. |
+
+**Risk grading convention:** items 1–3 are *structural* — they
+either validate or surface gaps that change downstream type
+signatures. Items 4–5 are *medium* — they need design decisions
+but the surrounding types are stable. Items 6–8 are *engineering*
+— mostly mechanical once their dependencies are validated.
+
+---
+
+## How to read the Parts below
+
+The Parts describe the **target shape** of each area at the end of
+the project. They do **not** prescribe an execution order. Read
+them as "what success looks like for this area" plus a
+decomposition into sub-steps that may be useful.
+
+The execution order is determined by the [Risk register](#risk-register).
+Parts can be partially advanced in any order; the dependencies
+that matter are noted in each Part's text and in the risk
+register's "Why this is high-risk" column.
+
+The notation `Part 3.1`, `Part 4.2`, etc. is used in `TODO(...)`
+tags throughout the source as a pointer to the area / sub-step,
+not as a time marker.
+
+---
+
 ## Part 0 — Honest assessment of the original state
 
 This part is preserved from the original ROADMAP as the diagnosis
@@ -530,38 +637,59 @@ Update READMEs and the "axioms used" appendix.
 
 ---
 
-## Revised effort estimate
+## Rough effort estimate (lower-confidence)
 
-| Phase | Description                                          | New estimate | Original estimate | Status |
+⚠ **Under the skeleton-first methodology, these are upper-bound
+estimates we re-evaluate per iteration, not commitments.** The
+original ROADMAP gave LOC estimates that turned out to be ~10× too
+low because the proof obligations had unsurfaced structural
+issues. The numbers below are best-effort upper bounds *given the
+skeleton we have today*; they will change as the risk register
+shrinks.
+
+| Part  | Area                                                 | Estimate     | Original estimate | Status |
 |-------|------------------------------------------------------|--------------|-------------------|--------|
 | 1     | Cleanup & `sorry` discharge                          |  ~500 LOC    |  ~500 LOC         | ✅ done |
 | 2     | TM-backed `inTimePoly` *framework*                   | ~1,500 LOC   | (subset of 1,500) | ✅ done |
-| 2c    | Hand-rolled deciders *(retired)*                     | n/a (retired)| n/a               | ⏸ paused, retired in favour of Part 3 |
-| 3     | **Higher-level computable layer (NEW)**              | ~7,000 LOC   | n/a               | ⏳ next |
-| 4     | `polyTimeComputable` via the layer                   | ~1,500 LOC   | ~4,000 LOC        | ⏳ |
-| 5     | Multi-tape → 1-tape simulator via the layer          | ~1,000 LOC   | ~3,000 LOC        | ⏳ |
-| 6     | Cook tableau (TM → FlatTCC) via the layer            | ~2,700 LOC   | ~3,000 LOC        | ⏳ |
-| 7     | Real `NPhard_GenNP`, axiom check, CI, docs           |  ~600 LOC    |  ~600 LOC         | ⏳ |
+| 2c    | Hand-rolled deciders *(retired)*                     | n/a          | n/a               | ⏸ retired in favour of Part 3 |
+| 3     | Higher-level computable layer (skeleton landed)      | ~7,000 LOC   | n/a               | 🟡 skeleton; refining |
+| 4     | `polyTimeComputable` via the layer                   | ~1,500 LOC   | ~4,000 LOC        | 🟡 skeleton; refining |
+| 5     | Multi-tape → 1-tape simulator via the layer          | ~1,000 LOC   | ~3,000 LOC        | 🟡 skeleton; refining |
+| 6     | Cook tableau (TM → FlatTCC) via the layer            | ~2,700 LOC   | ~3,000 LOC        | 🟡 skeleton; refining |
+| 7     | Real `NPhard_GenNP`, axiom check, CI, docs           |  ~600 LOC    |  ~600 LOC         | 🟡 skeleton; refining |
 
-**Revised total remaining: ~13,000 LOC** (Parts 3–7), down from
-the ~10,500 LOC of the original ROADMAP plan but on a much firmer
-footing: each LOC in the new layer-based world is amortised across
-many downstream uses, whereas each LOC in the original ROADMAP's
-hand-rolled world was bespoke.
+**Rough remaining LOC:** ~13,000 across Parts 3–7. The skeleton
+already in place means the *types and theorem statements* are
+done; the LOC estimates above are for filling in the proof
+bodies, with the higher-risk items more likely to overrun (see
+[Risk register](#risk-register)).
 
-A reasonable cadence:
+### Iteration cadence
 
-1. Land Part 3.1–3.4 (the layer itself) as one focused effort.
-2. Validate by closing sorrys #1, #2 (Part 3.5).
-3. Run Parts 4–7 in roughly parallel — they're small and largely
-   independent once the layer exists.
+Not a fixed sequence — the risk register is the source of truth.
+The shape of each iteration:
+
+1. Pick the top item in the [Risk register](#risk-register).
+2. Try to concretize it: replace the axiom with a `def`, or the
+   single sorry with several smaller sorrys, or fill in a proof.
+3. If it typechecks: validation. The risk register entry drops
+   off or moves down.
+4. If a structural gap surfaces: stop, document the gap, possibly
+   add a new risk register entry, decide whether to fix the
+   structure now or work around it.
+5. Always commit + push with `lake build` green. The build state
+   is the source of truth for "the skeleton is still coherent".
+6. Update the [Current skeleton state](#current-skeleton-state)
+   snapshot (axiom count, sorry count, build status).
+
+Items 1–5 are typically one session. Item 6 is one paragraph.
 
 ---
 
 ## Things NOT to break
 
-Each phase should preserve the build and keep the existing real
-mathematics compiling:
+Every iteration must preserve the build and keep the existing
+real mathematics compiling:
 
 - `FlatTM` semantics in `MachineSemantics.lean`.
 - `inOPoly`, `inOPoly_add`, `inOPoly_comp` in `Definitions.lean`.
