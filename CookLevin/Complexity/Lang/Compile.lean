@@ -318,59 +318,143 @@ def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
     rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
     rfl
 
-/-! ### `compileIfBit`: two-exit tester + branch composition
+/-! ### `compileIfBit`: two-exit tester + branch composition + join
 
-The intended construction is `branchComposeFlatTM tester rT rE
-exit_pos exit_neg`, where `tester` is a small TM that reads
-register `t`'s first symbol and reaches one of two designated
-states (`exitPos`, `exitNeg`) before the bridge fires into the
-appropriate branch.
+The construction is `branchComposeFlatTM tester rT rE exit_pos
+exit_neg` composed with `Compile.joinTwoHalts` to merge the two
+branches' halt states into a single surviving halt. `tester` is a
+small TM that reads register `t`'s first symbol and reaches one
+of two designated states (`exitPos`, `exitNeg`) before the bridge
+fires into the appropriate branch.
 
-**Structural gap surfaced this iteration (risk #1c).** Attempting
-to discharge `CompiledCmd.halt_unique` for the
-`branchComposeFlatTM`-based result reveals a real architectural
-mismatch:
+**Risk #1d resolution (May 2026).** The previous iteration
+documented a structural gap: `branchComposeFlatTM`'s halt vector
+is `replicate _ false ++ M₂.halt ++ M₃.halt`, so with two
+`CompiledCmd` branches (each with a unique halt) the composed TM
+has TWO halt states, violating `CompiledCmd.halt_unique`. The
+resolution implemented here is the recommended option (a): a
+local `Compile.joinTwoHalts M h1 h2` combinator that demotes `h2`
+from halt to non-halt and adds bridge entries from `h2` to `h1`.
+The combinator's correctness is proved in the `Compile`
+namespace; all seven `CompiledCmd` invariants discharge for
+`compileIfBit` without any sorrys.
 
-`branchComposeFlatTM`'s halt vector is
-```
-composedBranchHalt M₁ M₂ M₃ :=
-  replicate M₁.states false ++ M₂.halt ++ M₃.halt
-```
+The choice of `h1` (surviving halt) vs `h2` (absorbed halt) is
+symmetric; this implementation picks `haltE = tester.states +
+rT.states + rE.exit` as the surviving exit. -/
 
-If `M₂ = rT.M` and `M₃ = rE.M` each have a unique halt state at
-their respective `exit` (as guaranteed by `CompiledCmd`), then the
-composed halt vector has **two** `true` entries — one in each
-branch's segment. The composed TM therefore has *two* halt
-states, which violates `halt_unique` no matter which one we pick
-as the composed `exit` field.
+/-! ### Local TM combinator: merge two halt states (risk #1d resolution)
 
-This is not a proof-engineering issue; it is a real structural
-gap in the design: `CompiledCmd.halt_unique` (added in the
-previous iteration to support `composeFlatTM_run`'s `h_traj1`
-precondition) is incompatible with a direct branch composition.
-Resolution requires *one* of:
+`branchComposeFlatTM`'s halt vector has up to two `true` entries
+(one per branch's exit), incompatible with `CompiledCmd.halt_unique`.
+The `Compile.joinTwoHalts M h1 h2` combinator turns `h2` into a
+non-halt state and bridges it to `h1`, leaving exactly one halt
+state (`h1`). The construction is intentionally minimal — no fresh
+state is added; the bridge entries from `h2` are placed first in
+`trans` so they take precedence over any (typically non-existent)
+outgoing M.trans entry from `h2`. -/
 
-1. **Join combinator**: add a "merge two halt states" combinator
-   that post-processes `branchComposeFlatTM`'s output, replacing
-   the two halt bits with `false` and bridging both halt states
-   to a new shared final state. Local to `Compile.lean` or
-   promoted to `TMPrimitives.lean`.
-2. **Relax `halt_unique`**: drop the structural invariant and
-   replace it with a weaker operational claim "during a
-   successful run, the only halt state visited is `exit`". This
-   loses compositional ease but unblocks `compileIfBit` without a
-   new combinator.
-3. **Two-flavor `CompiledCmd`**: split into `SingleExitCmd` and
-   `BranchCmd`; introduce coercions / a join helper at points
-   where a single exit is needed. More refactor.
+namespace Compile
 
-For this iteration we keep `compileIfBit` as a `branchComposeFlatTM`-
-based construction, with `halt_unique` left as a focused sorry
-that points to the resolution. All other `CompiledCmd` invariants
-(`exit_lt`, `exit_is_halt`, `M_valid`, `M_tapes`, `M_sig`)
-discharge cleanly. The arbitrary choice of exit-field is the
-`else`-branch's exit (`tester.M.states + rT.M.states + rE.exit`);
-swapping to the `then`-branch's exit would be symmetric. -/
+/-- Merge designated halt state `h2` into `h1` by replacing `h2`'s
+halt bit with `false` and bridging it to `h1`. -/
+def joinTwoHalts (M : FlatTM) (h1 h2 : Nat) : FlatTM where
+  sig := M.sig
+  tapes := M.tapes
+  states := M.states
+  trans := bridgeEntries M.sig h2 h1 ++ M.trans
+  start := M.start
+  halt := M.halt.set h2 false
+
+theorem joinTwoHalts_states (M : FlatTM) (h1 h2 : Nat) :
+    (joinTwoHalts M h1 h2).states = M.states := rfl
+
+theorem joinTwoHalts_start (M : FlatTM) (h1 h2 : Nat) :
+    (joinTwoHalts M h1 h2).start = M.start := rfl
+
+theorem joinTwoHalts_sig (M : FlatTM) (h1 h2 : Nat) :
+    (joinTwoHalts M h1 h2).sig = M.sig := rfl
+
+theorem joinTwoHalts_tapes (M : FlatTM) (h1 h2 : Nat) :
+    (joinTwoHalts M h1 h2).tapes = M.tapes := rfl
+
+/-- `h1` remains a halt state in the joined TM. -/
+theorem joinTwoHalts_h1_is_halt (M : FlatTM) (h1 h2 : Nat)
+    (h_distinct : h1 ≠ h2) (h_h1_halt : M.halt[h1]? = some true) :
+    (joinTwoHalts M h1 h2).halt[h1]? = some true := by
+  show (M.halt.set h2 false)[h1]? = some true
+  rw [List.getElem?_set_ne (fun h => h_distinct h.symm)]
+  exact h_h1_halt
+
+/-- The joined TM has a unique halt state at `h1`, provided that
+M's only `some true` entries in its halt vector were at `h1` and
+`h2`. -/
+theorem joinTwoHalts_halt_unique (M : FlatTM) (h1 h2 : Nat)
+    (h_only_h1_h2 : ∀ i, M.halt[i]? = some true → i = h1 ∨ i = h2) :
+    ∀ i, (joinTwoHalts M h1 h2).halt[i]? = some true → i = h1 := by
+  intro i hi
+  change (M.halt.set h2 false)[i]? = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : h2 = i
+  · -- i = h2: value is `some false` or `none`, both ≠ some true
+    exfalso
+    rw [if_pos h_eq] at hi
+    split at hi
+    · -- h2 < M.halt.length: value = some false
+      simp at hi
+    · -- h2 ≥ M.halt.length: value = none
+      simp at hi
+  · rw [if_neg h_eq] at hi
+    -- hi : M.halt[i]? = some true
+    rcases h_only_h1_h2 i hi with h | h
+    · exact h
+    · exfalso; exact h_eq h.symm
+
+/-- Validity of `joinTwoHalts`. Mirrors `composeFlatTM_valid`'s
+structure: case-split on transition bucket (bridge from h2 vs.
+original M.trans), use `bridgeEntries_mem` for bridge entries. -/
+theorem joinTwoHalts_valid (M : FlatTM) (h1 h2 : Nat)
+    (h_valid : validFlatTM M)
+    (h_h1 : h1 < M.states) (h_h2 : h2 < M.states)
+    (h_tapes : M.tapes = 1) :
+    validFlatTM (joinTwoHalts M h1 h2) := by
+  obtain ⟨h_start, h_halt_len, h_trans⟩ := h_valid
+  refine ⟨?_, ?_, ?_⟩
+  · -- start < states
+    exact h_start
+  · -- halt.length = states
+    show (M.halt.set h2 false).length = M.states
+    rw [List.length_set]; exact h_halt_len
+  · intro entry hentry
+    show flatTMTransEntryValid (joinTwoHalts M h1 h2) entry
+    have h_sig_eq : (joinTwoHalts M h1 h2).sig = M.sig := rfl
+    have h_states_eq : (joinTwoHalts M h1 h2).states = M.states := rfl
+    have h_tapes_eq : (joinTwoHalts M h1 h2).tapes = M.tapes := rfl
+    rcases List.mem_append.mp hentry with h_bridge | h_orig
+    · -- bridge entry from h2
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ :=
+        bridgeEntries_mem h_bridge
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hsrc, h_states_eq]; exact h_h2
+      · rw [hdst, h_states_eq]; exact h_h1
+      · rw [hsrcLen, h_tapes_eq, h_tapes]
+      · rw [hdstLen, h_tapes_eq, h_tapes]
+      · rw [hmovLen, h_tapes_eq, h_tapes]
+      · rw [h_sig_eq]; exact hsymSrc
+      · rw [h_sig_eq]; exact hsymDst
+    · -- original M.trans entry — just lift the validity bound
+      have hval := h_trans entry h_orig
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ := hval
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [h_states_eq]; exact hsrc
+      · rw [h_states_eq]; exact hdst
+      · rw [h_tapes_eq]; exact hsrcLen
+      · rw [h_tapes_eq]; exact hdstLen
+      · rw [h_tapes_eq]; exact hmovLen
+      · rw [h_sig_eq]; exact hsymSrc
+      · rw [h_sig_eq]; exact hsymDst
+
+end Compile
 
 /-- A two-exit "tester" TM bundling a `FlatTM` with two distinct
 designated exit states. The contract: after running on the input
@@ -416,70 +500,142 @@ def branchTester_default : BranchTester where
 with a real tester once register-navigation primitives land. -/
 def compileTestBit (_t : Var) : BranchTester := branchTester_default
 
+/-- Helper: the halt states of `branchComposeFlatTM`, when both
+branches are `CompiledCmd`s with unique halts, are exactly the
+two branch exits shifted into the composed state space. Used to
+satisfy the precondition of `Compile.joinTwoHalts_halt_unique` in
+`compileIfBit`. -/
+theorem branchCompose_halt_only_at_exits
+    (tester : BranchTester) (rT rE : CompiledCmd) (i : Nat)
+    (hi : (branchComposeFlatTM tester.M rT.M rE.M
+              tester.exitPos tester.exitNeg).halt[i]? = some true) :
+    i = tester.M.states + rT.M.states + rE.exit ∨
+    i = tester.M.states + rT.exit := by
+  change (composedBranchHalt tester.M rT.M rE.M)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  have h_rT_len : rT.M.halt.length = rT.M.states := rT.M_valid.2.1
+  -- hi : ((replicate tester.M.states false ++ rT.M.halt) ++ rE.M.halt)[i]? = some true
+  by_cases h_outer : i <
+      (List.replicate tester.M.states false ++ rT.M.halt).length
+  · -- Falls into (replicate ++ rT.M.halt) segment
+    rw [List.getElem?_append_left h_outer] at hi
+    by_cases h_inner : i < tester.M.states
+    · -- Falls into replicate segment: value = some false, contradiction
+      exfalso
+      have h_rep_len : i < (List.replicate tester.M.states false).length := by
+        rw [List.length_replicate]; exact h_inner
+      rw [List.getElem?_append_left h_rep_len] at hi
+      rw [List.getElem?_replicate] at hi
+      simp [h_inner] at hi
+    · -- Falls into rT.M.halt segment
+      push_neg at h_inner
+      have h_rep_le : (List.replicate tester.M.states false).length ≤ i := by
+        rw [List.length_replicate]; exact h_inner
+      rw [List.getElem?_append_right h_rep_le, List.length_replicate] at hi
+      have h_idx : i - tester.M.states = rT.exit := rT.halt_unique _ hi
+      right; omega
+  · -- Falls into rE.M.halt segment
+    push_neg at h_outer
+    rw [List.getElem?_append_right h_outer] at hi
+    have h_outer_len :
+        (List.replicate tester.M.states false ++ rT.M.halt).length
+          = tester.M.states + rT.M.states := by
+      rw [List.length_append, List.length_replicate, h_rT_len]
+    rw [h_outer_len] at hi
+    have h_idx : i - (tester.M.states + rT.M.states) = rE.exit :=
+      rE.halt_unique _ hi
+    left; omega
+
 /-- Compile `ifBit t cT cE` using `branchComposeFlatTM` over the
-two-exit tester. The composed `exit` is taken to be the `else`-
-branch's exit shifted into the composed state space. See the
+two-exit tester, followed by `Compile.joinTwoHalts` to merge the
+two branches' halt states into one. The composed `exit` is the
+`else`-branch's exit shifted into the composed state space. See the
 `compileIfBit` namespace docstring above for the `halt_unique`
 gap. -/
-def compileIfBit (t : Var) (rT rE : CompiledCmd) : CompiledCmd where
-  M := branchComposeFlatTM (compileTestBit t).M rT.M rE.M
-            (compileTestBit t).exitPos (compileTestBit t).exitNeg
-  exit := (compileTestBit t).M.states + rT.M.states + rE.exit
-  exit_lt := by
-    show (compileTestBit t).M.states + rT.M.states + rE.exit <
-      (branchComposeFlatTM (compileTestBit t).M rT.M rE.M
-        (compileTestBit t).exitPos (compileTestBit t).exitNeg).states
+def compileIfBit (t : Var) (rT rE : CompiledCmd) : CompiledCmd :=
+  let tester := compileTestBit t
+  let branched := branchComposeFlatTM tester.M rT.M rE.M
+                    tester.exitPos tester.exitNeg
+  let haltE := tester.M.states + rT.M.states + rE.exit
+  let haltT := tester.M.states + rT.exit
+  -- haltE ≠ haltT (rT.exit < rT.M.states, so haltE > haltT)
+  have h_distinct : haltE ≠ haltT := by
+    have h1 : rT.exit < rT.M.states := rT.exit_lt
+    intro h
+    -- tester.M.states + rT.M.states + rE.exit = tester.M.states + rT.exit
+    -- ⟹ rT.M.states + rE.exit = rT.exit, but rT.exit < rT.M.states
+    omega
+  -- haltE < branched.states
+  have h_haltE_lt : haltE < branched.states := by
+    show haltE < (branchComposeFlatTM tester.M rT.M rE.M
+                    tester.exitPos tester.exitNeg).states
     rw [branchComposeFlatTM_states]
-    -- Goal: tester + rT + rE.exit < tester + rT + rE.states
     exact Nat.add_lt_add_left rE.exit_lt _
-  exit_is_halt := by
-    -- composedBranchHalt = replicate tester.M.states false ++ rT.M.halt ++ rE.M.halt
-    -- Index (tester.M.states + rT.M.states + rE.exit) falls into
-    -- the rE.M.halt segment.
-    set tester := compileTestBit t
-    set idx := tester.M.states + rT.M.states + rE.exit
+  -- haltT < branched.states
+  have h_haltT_lt : haltT < branched.states := by
+    show haltT < (branchComposeFlatTM tester.M rT.M rE.M
+                    tester.exitPos tester.exitNeg).states
+    rw [branchComposeFlatTM_states]
+    have h_rT : rT.exit < rT.M.states := rT.exit_lt
+    -- tester + rT.exit < tester + rT.M.states + rE.M.states
+    omega
+  -- branched is valid
+  have h_branched_valid : validFlatTM branched :=
+    branchComposeFlatTM_valid tester.M rT.M rE.M
+      tester.exitPos tester.exitNeg
+      tester.M_valid rT.M_valid rE.M_valid
+      tester.exitPos_lt tester.exitNeg_lt
+      tester.M_tapes rT.M_tapes rE.M_tapes
+  -- branched is single-tape
+  have h_branched_tapes : branched.tapes = 1 := by
     show (branchComposeFlatTM tester.M rT.M rE.M
-            tester.exitPos tester.exitNeg).halt[idx]? = some true
-    show (composedBranchHalt tester.M rT.M rE.M)[idx]? = some true
+            tester.exitPos tester.exitNeg).tapes = 1
+    rw [branchComposeFlatTM_tapes]
+    exact tester.M_tapes
+  -- branched.halt[haltE]? = some true (rE.exit's halt bit, shifted)
+  have h_branched_haltE : branched.halt[haltE]? = some true := by
+    show (composedBranchHalt tester.M rT.M rE.M)[haltE]? = some true
     unfold composedBranchHalt
-    -- (replicate tester.M.states false ++ rT.M.halt) ++ rE.M.halt
     have h_outer_len :
-        (List.replicate tester.M.states false ++ rT.M.halt).length ≤
-        tester.M.states + rT.M.states + rE.exit := by
+        (List.replicate tester.M.states false ++ rT.M.halt).length ≤ haltE := by
       rw [List.length_append, List.length_replicate, rT.M_valid.2.1]
-      omega
+      show tester.M.states + rT.M.states ≤ tester.M.states + rT.M.states + rE.exit
+      exact Nat.le_add_right _ _
     rw [List.getElem?_append_right h_outer_len]
     have h_idx :
-        tester.M.states + rT.M.states + rE.exit
-          - (List.replicate tester.M.states false ++ rT.M.halt).length = rE.exit := by
+        haltE - (List.replicate tester.M.states false ++ rT.M.halt).length
+          = rE.exit := by
       rw [List.length_append, List.length_replicate, rT.M_valid.2.1]
+      show tester.M.states + rT.M.states + rE.exit - (tester.M.states + rT.M.states)
+          = rE.exit
       omega
     rw [h_idx]
     exact rE.exit_is_halt
-  halt_unique := by
-    -- **Structural gap (risk #1c).** Both `tester.M.states + rT.exit`
-    -- AND `tester.M.states + rT.M.states + rE.exit` are halt states.
-    -- The proof obligation requires every halting index to equal the
-    -- single chosen `exit`; it CANNOT be discharged without a join
-    -- step that funnels both branches' halt states into one. See the
-    -- `compileIfBit` namespace docstring for the resolution options.
-    sorry
-  M_valid :=
-    branchComposeFlatTM_valid (compileTestBit t).M rT.M rE.M
-      (compileTestBit t).exitPos (compileTestBit t).exitNeg
-      (compileTestBit t).M_valid rT.M_valid rE.M_valid
-      (compileTestBit t).exitPos_lt (compileTestBit t).exitNeg_lt
-      (compileTestBit t).M_tapes rT.M_tapes rE.M_tapes
-  M_tapes := by
-    show (branchComposeFlatTM (compileTestBit t).M rT.M rE.M
-            (compileTestBit t).exitPos (compileTestBit t).exitNeg).tapes = 1
-    rw [branchComposeFlatTM_tapes]
-    exact (compileTestBit t).M_tapes
-  M_sig := by
-    show (branchComposeFlatTM (compileTestBit t).M rT.M rE.M
-            (compileTestBit t).exitPos (compileTestBit t).exitNeg).sig = 3
-    rw [branchComposeFlatTM_sig, (compileTestBit t).M_sig, rT.M_sig, rE.M_sig]
-    rfl
+  { M := Compile.joinTwoHalts branched haltE haltT
+    exit := haltE
+    exit_lt := by
+      rw [Compile.joinTwoHalts_states]
+      exact h_haltE_lt
+    exit_is_halt :=
+      Compile.joinTwoHalts_h1_is_halt branched haltE haltT
+        h_distinct h_branched_haltE
+    halt_unique :=
+      Compile.joinTwoHalts_halt_unique branched haltE haltT
+        (fun i hi => branchCompose_halt_only_at_exits tester rT rE i hi)
+    M_valid :=
+      Compile.joinTwoHalts_valid branched haltE haltT
+        h_branched_valid h_haltE_lt h_haltT_lt h_branched_tapes
+    M_tapes := by
+      rw [Compile.joinTwoHalts_tapes]
+      exact h_branched_tapes
+    M_sig := by
+      rw [Compile.joinTwoHalts_sig]
+      show branched.sig = 3
+      rw [show branched =
+            branchComposeFlatTM tester.M rT.M rE.M
+              tester.exitPos tester.exitNeg from rfl,
+          branchComposeFlatTM_sig, tester.M_sig, rT.M_sig, rE.M_sig]
+      rfl }
 
 /-- Compile `forBnd counter bound body` from the already-compiled
 body. The intended body is a `loopTM`-style combinator that:
