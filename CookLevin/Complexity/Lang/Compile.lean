@@ -318,15 +318,168 @@ def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
     rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
     rfl
 
-/-- Compile `ifBit t cT cE` from already-compiled sub-branches.
+/-! ### `compileIfBit`: two-exit tester + branch composition
 
-The intended body is
-`branchComposeFlatTM tester.M rT.M rE.M tester.exitPos tester.exitNeg`
-where `tester` is a small TM that reads register `t`'s first symbol
-and dispatches to one of two exit states. The exit of the
-composed machine is whichever branch ran. -/
-def compileIfBit (_t : Var) (_rT _rE : CompiledCmd) : CompiledCmd :=
-  compiledCmd_default
+The intended construction is `branchComposeFlatTM tester rT rE
+exit_pos exit_neg`, where `tester` is a small TM that reads
+register `t`'s first symbol and reaches one of two designated
+states (`exitPos`, `exitNeg`) before the bridge fires into the
+appropriate branch.
+
+**Structural gap surfaced this iteration (risk #1c).** Attempting
+to discharge `CompiledCmd.halt_unique` for the
+`branchComposeFlatTM`-based result reveals a real architectural
+mismatch:
+
+`branchComposeFlatTM`'s halt vector is
+```
+composedBranchHalt M₁ M₂ M₃ :=
+  replicate M₁.states false ++ M₂.halt ++ M₃.halt
+```
+
+If `M₂ = rT.M` and `M₃ = rE.M` each have a unique halt state at
+their respective `exit` (as guaranteed by `CompiledCmd`), then the
+composed halt vector has **two** `true` entries — one in each
+branch's segment. The composed TM therefore has *two* halt
+states, which violates `halt_unique` no matter which one we pick
+as the composed `exit` field.
+
+This is not a proof-engineering issue; it is a real structural
+gap in the design: `CompiledCmd.halt_unique` (added in the
+previous iteration to support `composeFlatTM_run`'s `h_traj1`
+precondition) is incompatible with a direct branch composition.
+Resolution requires *one* of:
+
+1. **Join combinator**: add a "merge two halt states" combinator
+   that post-processes `branchComposeFlatTM`'s output, replacing
+   the two halt bits with `false` and bridging both halt states
+   to a new shared final state. Local to `Compile.lean` or
+   promoted to `TMPrimitives.lean`.
+2. **Relax `halt_unique`**: drop the structural invariant and
+   replace it with a weaker operational claim "during a
+   successful run, the only halt state visited is `exit`". This
+   loses compositional ease but unblocks `compileIfBit` without a
+   new combinator.
+3. **Two-flavor `CompiledCmd`**: split into `SingleExitCmd` and
+   `BranchCmd`; introduce coercions / a join helper at points
+   where a single exit is needed. More refactor.
+
+For this iteration we keep `compileIfBit` as a `branchComposeFlatTM`-
+based construction, with `halt_unique` left as a focused sorry
+that points to the resolution. All other `CompiledCmd` invariants
+(`exit_lt`, `exit_is_halt`, `M_valid`, `M_tapes`, `M_sig`)
+discharge cleanly. The arbitrary choice of exit-field is the
+`else`-branch's exit (`tester.M.states + rT.M.states + rE.exit`);
+swapping to the `then`-branch's exit would be symmetric. -/
+
+/-- A two-exit "tester" TM bundling a `FlatTM` with two distinct
+designated exit states. The contract: after running on the input
+tape, the machine reaches *one* of `exitPos` / `exitNeg`
+depending on whether the tested bit is true or false. -/
+structure BranchTester where
+  M : FlatTM
+  exitPos : Nat
+  exitNeg : Nat
+  exitPos_lt : exitPos < M.states
+  exitNeg_lt : exitNeg < M.states
+  exit_distinct : exitPos ≠ exitNeg
+  M_valid : validFlatTM M
+  M_tapes : M.tapes = 1
+  M_sig : M.sig = 3
+
+/-- A placeholder 2-state tester. `exitPos = 0`, `exitNeg = 1`,
+no transitions, neither state halts (the bridge in
+`branchComposeFlatTM` is what makes progress). Replace with a
+real bit-test once the per-register navigation primitives land. -/
+def branchTester_default : BranchTester where
+  M :=
+    { sig := 3
+      tapes := 1
+      states := 2
+      trans := []
+      start := 0
+      halt := [false, false] }
+  exitPos := 0
+  exitNeg := 1
+  exitPos_lt := by decide
+  exitNeg_lt := by decide
+  exit_distinct := by decide
+  M_valid := by
+    refine ⟨?_, ?_, ?_⟩
+    · decide
+    · decide
+    · intro entry hEntry; cases hEntry
+  M_tapes := rfl
+  M_sig := rfl
+
+/-- Compile a "test bit in register `t`" gadget. **Stub.** Replace
+with a real tester once register-navigation primitives land. -/
+def compileTestBit (_t : Var) : BranchTester := branchTester_default
+
+/-- Compile `ifBit t cT cE` using `branchComposeFlatTM` over the
+two-exit tester. The composed `exit` is taken to be the `else`-
+branch's exit shifted into the composed state space. See the
+`compileIfBit` namespace docstring above for the `halt_unique`
+gap. -/
+def compileIfBit (t : Var) (rT rE : CompiledCmd) : CompiledCmd where
+  M := branchComposeFlatTM (compileTestBit t).M rT.M rE.M
+            (compileTestBit t).exitPos (compileTestBit t).exitNeg
+  exit := (compileTestBit t).M.states + rT.M.states + rE.exit
+  exit_lt := by
+    show (compileTestBit t).M.states + rT.M.states + rE.exit <
+      (branchComposeFlatTM (compileTestBit t).M rT.M rE.M
+        (compileTestBit t).exitPos (compileTestBit t).exitNeg).states
+    rw [branchComposeFlatTM_states]
+    -- Goal: tester + rT + rE.exit < tester + rT + rE.states
+    exact Nat.add_lt_add_left rE.exit_lt _
+  exit_is_halt := by
+    -- composedBranchHalt = replicate tester.M.states false ++ rT.M.halt ++ rE.M.halt
+    -- Index (tester.M.states + rT.M.states + rE.exit) falls into
+    -- the rE.M.halt segment.
+    set tester := compileTestBit t
+    set idx := tester.M.states + rT.M.states + rE.exit
+    show (branchComposeFlatTM tester.M rT.M rE.M
+            tester.exitPos tester.exitNeg).halt[idx]? = some true
+    show (composedBranchHalt tester.M rT.M rE.M)[idx]? = some true
+    unfold composedBranchHalt
+    -- (replicate tester.M.states false ++ rT.M.halt) ++ rE.M.halt
+    have h_outer_len :
+        (List.replicate tester.M.states false ++ rT.M.halt).length ≤
+        tester.M.states + rT.M.states + rE.exit := by
+      rw [List.length_append, List.length_replicate, rT.M_valid.2.1]
+      omega
+    rw [List.getElem?_append_right h_outer_len]
+    have h_idx :
+        tester.M.states + rT.M.states + rE.exit
+          - (List.replicate tester.M.states false ++ rT.M.halt).length = rE.exit := by
+      rw [List.length_append, List.length_replicate, rT.M_valid.2.1]
+      omega
+    rw [h_idx]
+    exact rE.exit_is_halt
+  halt_unique := by
+    -- **Structural gap (risk #1c).** Both `tester.M.states + rT.exit`
+    -- AND `tester.M.states + rT.M.states + rE.exit` are halt states.
+    -- The proof obligation requires every halting index to equal the
+    -- single chosen `exit`; it CANNOT be discharged without a join
+    -- step that funnels both branches' halt states into one. See the
+    -- `compileIfBit` namespace docstring for the resolution options.
+    sorry
+  M_valid :=
+    branchComposeFlatTM_valid (compileTestBit t).M rT.M rE.M
+      (compileTestBit t).exitPos (compileTestBit t).exitNeg
+      (compileTestBit t).M_valid rT.M_valid rE.M_valid
+      (compileTestBit t).exitPos_lt (compileTestBit t).exitNeg_lt
+      (compileTestBit t).M_tapes rT.M_tapes rE.M_tapes
+  M_tapes := by
+    show (branchComposeFlatTM (compileTestBit t).M rT.M rE.M
+            (compileTestBit t).exitPos (compileTestBit t).exitNeg).tapes = 1
+    rw [branchComposeFlatTM_tapes]
+    exact (compileTestBit t).M_tapes
+  M_sig := by
+    show (branchComposeFlatTM (compileTestBit t).M rT.M rE.M
+            (compileTestBit t).exitPos (compileTestBit t).exitNeg).sig = 3
+    rw [branchComposeFlatTM_sig, (compileTestBit t).M_sig, rT.M_sig, rE.M_sig]
+    rfl
 
 /-- Compile `forBnd counter bound body` from the already-compiled
 body. The intended body is a `loopTM`-style combinator that:
