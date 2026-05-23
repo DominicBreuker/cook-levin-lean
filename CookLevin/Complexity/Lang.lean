@@ -1,5 +1,6 @@
 import Complexity.Lang.Syntax
 import Complexity.Lang.Semantics
+import Complexity.Lang.ShiftTape
 import Complexity.Lang.Compile
 import Complexity.Lang.PolyTime
 
@@ -11,6 +12,9 @@ A single import that brings in the entire layer skeleton:
 
 - `Lang.Syntax`     : `Op`, `Cmd`, `State`, output convention.
 - `Lang.Semantics`  : `Cmd.eval`, `Cmd.cost` (axiomatic), algebraic laws.
+- `Lang.ShiftTape`  : `insertCarryTM` + `insertCarryTM_run`, the shared
+                      single-tape "insert one symbol" gadget every
+                      length-changing `Op` builds on (Risk C1).
 - `Lang.Compile`    : `Compile : Cmd → FlatTM`, soundness theorem.
 - `Lang.PolyTime`   : `inTimePolyLang`, `PolyTimeComputableLang`, bridges
                       to `inTimePoly`, `polyTimeComputable`, and `inNP`.

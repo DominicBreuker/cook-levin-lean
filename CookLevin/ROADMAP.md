@@ -309,7 +309,64 @@ Recommended: build the **shared `shiftTape` run lemma first** (option
 1's reusable core); its size is the real go/no-go signal — if *that*
 one lemma balloons past ~500 LOC, prefer option 3.
 
+##### Go/no-go result: **GREEN** (May 2026)
+
+Built `Lang/ShiftTape.lean`: `insertCarryTM` (the single-tape
+"insert one symbol, carry the rest right" gadget, alphabet fixed at
+`sig = 3`) with full validity and the headline run lemma
+`insertCarryTM_run` — *sorry-free*, **~200 LOC** total (well under the
+500-LOC threshold). The reusable core is `insertCarryTM_run`:
+
+```
+runFlatTM (suf.length + 1) (insertCarryTM ins)
+    { state_idx := 0, tapes := [([], pre.length, pre ++ suf)] }
+  = some { state_idx := 4,
+           tapes := [([], pre.length + suf.length, pre ++ ins :: suf)] }
+```
+
+i.e. from the head at `pre.length`, insert `ins` and shift `suf` right
+in `|suf| + 1` steps. **Decision: proceed with option 1.**
+
+Key techniques that kept it small (reusable for every other `Op`):
+- **`simp` computes `find?` over the concrete transition table.** With
+  the alphabet fixed at 3 and the current symbol case-split to a
+  literal, each per-state step lemma
+  (`insertCarryTM_step_nonblank` / `_blank`) is ~15 LOC via
+  `interval_cases <;> simp_all [stepFlatTM, …]` — *no* hand-rolled
+  `find?`-peeling à la `scanRightUntilTM` (which was ~40 LOC/step).
+- **One `run_succ_of_step` unfolder** + a clean induction on the tape
+  suffix (carrying value lives in the state; `interval_cases` the
+  symbol where a literal is needed) gives the run lemma in ~50 LOC.
+
+What this unblocks / what remains for `compileOp`:
+- `appendOne` / `appendZero` (insert at the end of register `dst`):
+  navigate to `dst`'s delimiter (reuse `scanRightUntilTM`), then
+  `insertCarryTM_run`. Should now be assembly + a navigation lemma.
+- Overwrite ops (`copy/tail/head/eqBit/nonEmpty`) and `clear` need the
+  **companion delete/shift-left gadget** — same shape and size as
+  `insertCarryTM`, expected ~200 LOC. Build it next.
+- Revised `compileOp` estimate drops from ~2–4K LOC toward **~1.5–2K
+  LOC** (two ~200-LOC shift gadgets + ~8 short per-`Op` assemblies +
+  the `scanRightUntilTM`-based navigation lemma).
+
 ### Iteration log
+
+- **May 2026 — C1 go/no-go: shared shift gadget built (GREEN).** Added
+  `Lang/ShiftTape.lean`: `insertCarryTM` + validity + step lemmas +
+  the run lemma `insertCarryTM_run`, **sorry-free, ~200 LOC**, well
+  under the 500-LOC threshold. This is the reusable single-tape
+  "insert one symbol, shift right" core that `appendOne`/`appendZero`
+  use directly and the overwrite ops use after a delete. **Decision:
+  proceed with option 1** (build out `compileOp`). Technique that kept
+  it small: `simp` computes `find?` over the fixed 3-symbol transition
+  table, so each per-state step lemma is ~15 LOC (vs ~40 for hand-
+  rolled `find?`-peeling). Revised `compileOp` estimate: **~1.5–2K
+  LOC** (two ~200-LOC shift gadgets + per-`Op` assembly +
+  `scanRightUntilTM`-based navigation). Wired into the build via
+  `Complexity.Lang`; full build green (3351 jobs), Lang layer still
+  axiom-free. Next: the delete/shift-left companion, then `appendOne`
+  end-to-end (def + `compileOp_sound` slice). See
+  [C1 progress](#c1-progress--interim-measurement-may-2026).
 
 - **May 2026 — C1 step 1: decoder round-trip proved, `flattenTape`
   bug fixed.** Started the top risk (C1). Proved
