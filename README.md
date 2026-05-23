@@ -12,7 +12,7 @@ existing Coq development by Forster, Kunze, Roth et al.
 term is not yet a faithful proof of Cook–Levin. The codebase
 captures the combinatorial heart of the proof rigorously, plus a
 strengthened complexity framework, but the rest is a **compiling
-skeleton**: ~34 labelled `sorry`s across the Parts 3–7 scaffolding,
+skeleton**: ~33 labelled `sorry`s across the Parts 3–7 scaffolding,
 **plus** a handful of `sorry`-free but *vacuous* reductions on the
 proof path (the deepest gaps — they do not show up as `sorry`s or
 under `#print axioms`). See
@@ -26,7 +26,7 @@ completion gaps (Group C) tracked separately.
 - Repository size: **~11K LOC** of Lean on the proof path under
   `CookLevin/` (a further ~14K LOC of paused / superseded work
   lives under [`parked/`](parked/), not built).
-- **~34 labelled `sorry`s** across the Parts 3–7 skeleton, all
+- **~33 labelled `sorry`s** across the Parts 3–7 skeleton, all
   flagged with `TODO(...)` tags. The current per-file distribution
   and the next-step ranking live in the **Risk register** of
   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) (Group C). The
@@ -46,7 +46,7 @@ completion gaps (Group C) tracked separately.
 
   These are Risks **S1–S3** in the ROADMAP Risk register.
 - The build is **conditionally complete**: `theorem CookLevin :
-  NPcomplete SAT` typechecks, but it depends on the ~34 `sorry`s
+  NPcomplete SAT` typechecks, but it depends on the ~33 `sorry`s
   **and** on the `sorry`-free vacuous reductions/bridges above (see
   "Where the project is not yet sound" below).
 
@@ -284,7 +284,7 @@ theorem" and "the theorem is a real proof of Cook–Levin". The first
 is visible as `sorry`s; the other two are **not**, which is why the
 `sorry` count alone overstates how close the proof is.
 
-1. **The ~34 skeleton `sorry`s** (ROADMAP Risk register, Group C).
+1. **The ~33 skeleton `sorry`s** (ROADMAP Risk register, Group C).
    Each is a not-yet-built piece of the higher-level computable layer
    (the compiler, its soundness, the verifier/reduction programs) or
    of the final assembly. The highest-leverage one is **C1**: prove a

@@ -26,12 +26,12 @@ turning it into an honest, mathematically rigorous proof.
 
 - Repository size: **~25.7K LOC** of Lean.
 - Build state: **`lake build` is green** (3350 jobs), **0 axioms**,
-  with **~34 labelled `sorry`s** across the Parts 3–7 skeleton
+  with **~33 labelled `sorry`s** across the Parts 3–7 skeleton
   ([distribution and ranking](#current-skeleton-state)). The four
   framework-migration `sorry`s ([listed below](#the-four-open-sorrys))
   were decomposed into these when the skeleton was scaffolded.
 - `theorem CookLevin : NPcomplete SAT` typechecks against the strengthened
-  framework but is **conditional**: it inherits the ~34 `sorry`s, the
+  framework but is **conditional**: it inherits the ~33 `sorry`s, the
   `sorry`-free vacuous reductions/bridges (Risks **S1**/**S2**), the
   `polyTimeComputable` weakness (Risk **S3**), and Part 0.
 
@@ -160,13 +160,14 @@ iteration.**
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3350 jobs) | unchanged |
 | Axiom count (repo-wide)               | **0**             | unchanged |
-| `sorry`s on the proof path            | **~34**           | corrected: the prior snapshot's "~26" undercounted (see review note) |
+| `sorry`s on the proof path            | **~33**           | ↓ −1: `decodeTape_encodeTape` proved (C1 step 1); prior "~26" had undercounted |
 | Sorry-**free** vacuous defs on the proof path | **≥ 4**   | newly tracked — see Risk **S1**/**S2** |
 | `theorem CookLevin : NPcomplete SAT` | typechecks, **conditional** on all of the above | unchanged since pre-pivot |
 
 > **Sorry count is not the soundness metric (review note, May 2026).**
 > The headline number on this row was stale (`~26`) and even its own
-> per-file table summed to 32. The accurate count is ~34. More
+> per-file table summed to 32. The accurate count was ~34 at the
+> audit (now ~33: C1 step 1 closed `decodeTape_encodeTape`). More
 > importantly, the count is a *misleading* progress signal: the
 > deepest unsoundness in the development is **sorry-free** (the
 > `if-on-the-answer` reductions and dummy bridges of Risks S1/S2),
@@ -179,7 +180,7 @@ Sorry distribution at the current snapshot (May 2026, recounted):
 
 | File                                       | Sorrys | What they are |
 |--------------------------------------------|--------|---------------|
-| `Lang/Compile.lean`                        | 7      | `decodeTape_encodeTape`, `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` |
+| `Lang/Compile.lean`                        | 6      | `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` (`decodeTape_encodeTape` ✅ proved, C1 step 1) |
 | `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
 | `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition |
 | `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` |
@@ -251,7 +252,83 @@ experiment that can falsify the pivot's central assumption, and the
 methodology (surface structural gaps *early*) demands running it
 before investing further in the skeleton.
 
+#### C1 progress + interim measurement (May 2026)
+
+Step 1 of C1 is **done**: the decoder round-trip
+(`decodeTape_encodeTape`) is proved and a real bug was fixed along the
+way (`flattenTape` spliced the head *index* into the tape contents).
+This measures the **infrastructure** cost of a primitive's soundness:
+~120 LOC of short structural inductions. Cheap. ✅
+
+Working out the rest of one primitive's TM surfaced a sharper model of
+the per-`Op` cost than "1,000–2,500 LOC each":
+
+- **Navigation amortises.** Reaching register `dst` is "scan right to
+  the next `0` delimiter, step past it" repeated `dst` times (`dst` is
+  a compile-time constant). This **reuses the existing
+  `scanRightUntilTM` + its run lemmas** (`scanRightUntilTM_run_found`)
+  composed via `composeFlatTM_run` — *not* fresh work per op. This is
+  a genuine win over hand-rolled Part 2, where nothing amortised.
+- **The data-movement loop does not.** Every `Op` writes a register
+  whose length changes (`clear` deletes, `appendOne/Zero` insert one
+  cell, `copy/tail/head/eqBit/nonEmpty` overwrite with a different
+  length), so each needs a bespoke single-tape **shift/carry loop**
+  (carry a symbol in the finite state, march down the tape) with its
+  own run-lemma induction over the tape suffix length. **No `Op` is
+  shift-free for general `dst`.** (Special case: appending to the
+  *last* register is shift-free — scan to end, overwrite the final
+  delimiter, re-emit it — but that does not generalise.)
+
+**Revised estimate.** Per `Op`: navigation ≈ free (reused) + a bespoke
+data loop ≈ 200–500 LOC (def + per-state step lemmas + the shift
+induction + assembly). Across the 8 `Op`s, `compileOp` alone is
+plausibly **~2–4K LOC** — i.e. it consumes most of Part 3.3's ~5K-LOC
+budget, and Part 3.3 was the cheapest of the layer parts. So the pivot
+premise ("primitives are ~50 LOC each") is **partly falsified**: the
+layer amortises *navigation and composition*, but the per-primitive
+data-movement proof is real and is where the cost now sits.
+
+**Decision point (for the next iteration / project owner).** Three
+options, in increasing radicalism:
+1. **Push through the 8 primitive proofs.** ~2–4K LOC, mechanical once
+   the first shift-loop run lemma is built (it is reusable across the
+   insert/delete/overwrite ops). Build one shared `shiftTape` /
+   `carryRight` combinator + run lemma, then each `Op` is assembly.
+2. **Change the encoding to one tape per register** (multi-tape
+   layer). Then every `Op` is O(1) head moves — primitives become
+   genuinely ~50 LOC — but composition needs the multi-tape simulator
+   (Part 5 / Risk S4-area) and `branchComposeFlatTM`'s `(sig+1)^k`
+   bridge-entry blow-up (Appendix A point 4). Trades per-op cost for
+   composition cost.
+3. **Trigger the [Fallback plan](#fallback-plan-if-the-layer-also-overruns).**
+   If neither the ~2–4K-LOC `compileOp` nor the encoding change is
+   worth it, state `inTimePoly` axiomatically and keep the
+   combinatorial chain.
+
+Recommended: build the **shared `shiftTape` run lemma first** (option
+1's reusable core); its size is the real go/no-go signal — if *that*
+one lemma balloons past ~500 LOC, prefer option 3.
+
 ### Iteration log
+
+- **May 2026 — C1 step 1: decoder round-trip proved, `flattenTape`
+  bug fixed.** Started the top risk (C1). Proved
+  `Compile.decodeTape_encodeTape` (was a `sorry`), via four short
+  structural-induction helpers (`splitOnZero_append_zero`,
+  `splitOnZero_encodeTape`, `dropTrailingEmpty_append_nil`,
+  `unshiftReg_shiftReg`). **Bug surfaced and fixed**: `flattenTape`
+  reconstructed `left.reverse ++ [head] ++ right`, splicing the head
+  *index* into the tape contents as if it were a symbol; in this
+  model `left` is never written and `head` is a cursor index, so the
+  contents are exactly `right`. The old definition made the round-trip
+  unprovable. `Compile.lean` sorrys 7 → 6; build green (3350 jobs);
+  Lang layer still axiom-free. **Measurement:** the decode
+  *infrastructure* for a primitive's soundness is cheap (~120 LOC); the
+  remaining per-`Op` cost is the TM build + run lemma. See
+  [C1 progress](#c1-progress--interim-measurement-may-2026) for the
+  revised per-`Op` cost model (navigation amortises via
+  `scanRightUntilTM`; the data-movement shift loop does not) and the
+  resulting decision point.
 
 - **May 2026 — Risk register audit (no code change).** Reviewed the
   whole proof path against the documented risks; `lake build` green,
