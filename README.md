@@ -289,15 +289,20 @@ is visible as `sorry`s; the other two are **not**, which is why the
    (the compiler, its soundness, the verifier/reduction programs) or
    of the final assembly. The highest-leverage one is **C1**: prove a
    single primitive `Op` sound end-to-end, which tests the pivot's
-   premise that primitives are cheap. **In progress:** the two shared,
-   reusable gadgets are now built `sorry`-free — `insertCarryTM`
-   (single-tape insert/shift-right, `Lang/ShiftTape.lean`) and
-   `scan_to_delim` (register navigation, `Lang/Navigate.lean`). C1 also
-   surfaced a real architectural gap: the tape model's content never
-   shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…) need a
-   tape-model decision (sentinel alphabet vs. soundness-up-to-trailing-
-   empties) before their delete gadget can be sound. The insert/append
-   ops are unaffected. See ROADMAP Risk C1 for the resolution fork.
+   premise that primitives are cheap. **In progress:** the shared,
+   reusable gadgets are built `sorry`-free — `insertCarryTM` (single-tape
+   insert/shift-right, `Lang/ShiftTape.lean`) and `scan_to_mark`/
+   `scan_to_delim`/`scan_to_end` (register navigation +
+   trajectory lemmas, `Lang/Navigate.lean`) — and they now compose:
+   `scan_then_insert_run` (`Lang/AppendGadget.lean`) glues a scan ahead of
+   an insert via `composeFlatTM_run`, realizing `appendOne`/`appendZero`
+   on register 0 (the first composition-spine exercise in the layer). C1
+   also surfaced a real architectural gap — the tape model's content never
+   shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…) cannot
+   produce the exact encoding — resolved by the **sentinel** alphabet
+   (a reserved end-of-tape terminator `endMark = 3`, `sig = 4`); decode
+   reads up to the first terminator and the delete gadget rewrites it
+   leftward. See ROADMAP Risk C1 for the execution order.
 
 2. **`sorry`-free vacuous reductions on the proof path** (Risks
    S1/S2). Two reduction maps —

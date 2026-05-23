@@ -477,12 +477,53 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
    target); `scan_to_delim` (marker `0`) and `scan_to_end` (marker `3`,
    for the padding branch) fall out as corollaries. All *sorry-free*.
 4. `appendOne`/`appendZero` end-to-end (unconditional, exact) — also
-   validates the `composeFlatTM_run` gluing (needs the scan-trajectory
-   lemma: intermediate scan configs stay in state 0).
+   validates the `composeFlatTM_run` gluing. **In progress:**
+   - ✅ Scan-trajectory lemmas (`Navigate.scan_traj`,
+     `scan_no_early_halt`, `scan_to_mark_traj`): intermediate scan configs
+     stay in the non-halting state `0`, the exact `h_traj1` shape
+     `composeFlatTM_run` needs. Refactored out `scan_block_before` (shared
+     in-range/≠-target obligation). All *sorry-free*.
+   - ✅ `AppendGadget.scan_then_insert_run`: the scan-to-delimiter ⨾
+     insert composition for **register 0** (`composeFlatTM (scanRightUntilTM
+     4 0) (insertCarryTM ins) 1`), via `composeFlatTM_run` — the first
+     composition-spine exercise in the layer. *Sorry-free.*
+   - ⏳ **Remaining:** (a) general `dst > 0` needs a delimiter-*counting*
+     navigator (scan to the `dst`-th `0`), a new gadget — `scan_to_mark`
+     only reaches the first delimiter; (b) the decode round-trip
+     `decodeTape (final cfg) = Op.eval (appendOne dst) s` relating
+     `body = shiftReg rₔₛₜ` / `0 :: post` to `encodeTape (s.set …)` under
+     `BitState`; (c) packaging the composition as a `CompiledCmd` (7
+     invariants discharge from `composeFlatTM_*` since the inserter has a
+     unique halt at state 5); (d) the cost bound (steps ≤
+     `overhead (size s + 1)`); (e) **threading `BitState s` as a hypothesis
+     of `compileOp_sound`** (the round-trip needs it) — a signature change
+     that ripples to `compileSeq_sound` / `Compile_sound`.
 5. Delete gadget (`sig = 4` mirror of `insertCarryTM`) + the
    length-decreasing ops.
 
 ### Iteration log
+
+- **May 2026 — C1 option A, step 4 (partial): scan-trajectory lemmas +
+  first composition-spine exercise.** Added the scan-trajectory
+  infrastructure to `Lang/Navigate.lean`: `scan_traj` (every intermediate
+  right-scan config is in the non-halting state `0` with the head advanced
+  by exactly the step count, proved by induction via the public
+  `runFlatTM_extend_by_step` + `scanRightUntilTM_step_advance`),
+  `scan_no_early_halt` (the same fact packaged in `composeFlatTM_run`'s
+  `h_traj1` shape: never reaches the accept state `1`, never halts), and
+  `scan_to_mark_traj` (the `h_traj1` for the standard `pre ++ body ++
+  target :: post` layout). Refactored the shared in-range/≠-target
+  obligation out of `scan_to_mark` into `scan_block_before`. Then added
+  `Lang/AppendGadget.lean` with `scan_then_insert_run`: the
+  scan-to-delimiter ⨾ insert composition for register 0
+  (`composeFlatTM (scanRightUntilTM 4 0) (insertCarryTM ins) 1`), the
+  **first `composeFlatTM_run` gluing in the layer**, inserting `ins`
+  (`2 = appendOne`, `1 = appendZero`) before register 0's delimiter:
+  `body ++ 0 :: post ↦ body ++ ins :: 0 :: post`. All *sorry-free*; full
+  build green; layer axiom-free. Remaining for the `compileOp_sound` slice:
+  delimiter-counting navigator for `dst > 0`, the decode round-trip,
+  `CompiledCmd` packaging, the cost bound, and threading `BitState` as a
+  `compileOp_sound` hypothesis (see the execution order, step 4).
 
 - **May 2026 — C1 option A, steps 1–2: end-of-tape terminator +
   `sig = 4` gadget.** Owner chose the **sentinel** resolution. Step 1:
