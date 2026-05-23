@@ -155,55 +155,125 @@ iteration.**
 | Metric                                | Value             | Trend |
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3350 jobs) | unchanged |
-| Axiom count (Lang layer)              | **0**             | unchanged |
-| Tactical sorrys                       | ~26               | ↓ −1: risk #1d resolved via `Compile.joinTwoHalts` + proved validity |
-| `theorem CookLevin : NPcomplete SAT` | typechecks        | unchanged since pre-pivot |
+| Axiom count (repo-wide)               | **0**             | unchanged |
+| `sorry`s on the proof path            | **~34**           | corrected: the prior snapshot's "~26" undercounted (see review note) |
+| Sorry-**free** vacuous defs on the proof path | **≥ 4**   | newly tracked — see Risk **S1**/**S2** |
+| `theorem CookLevin : NPcomplete SAT` | typechecks, **conditional** on all of the above | unchanged since pre-pivot |
 
-Sorry distribution at the current snapshot (May 2026):
+> **Sorry count is not the soundness metric (review note, May 2026).**
+> The headline number on this row was stale (`~26`) and even its own
+> per-file table summed to 32. The accurate count is ~34. More
+> importantly, the count is a *misleading* progress signal: the
+> deepest unsoundness in the development is **sorry-free** (the
+> `if-on-the-answer` reductions and dummy bridges of Risks S1/S2),
+> so it does not appear here and does not show up under
+> `#print axioms`. Track the soundness risks (Group S) separately
+> from the completion risks (Group C); closing every `sorry` does
+> **not** by itself make `CookLevin` unconditional.
+
+Sorry distribution at the current snapshot (May 2026, recounted):
 
 | File                                       | Sorrys | What they are |
 |--------------------------------------------|--------|---------------|
 | `Lang/Compile.lean`                        | 7      | `decodeTape_encodeTape`, `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` |
 | `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
-| `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition (sorry #3 of the original four) |
-| `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` (sorry #4) |
-| `Simulators/MultiToSingle.lean`            | 3      | step-bound poly/mono + acceptance |
-| `Simulators/CookTableau.lean`              | 5      | wellformedness + bijection + size bound |
+| `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition |
+| `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` |
+| `Deciders/EvalCnfCmd.lean`                 | 7      | `processOneClause`/`processOneLiteral`/`memberCheck` (sorry-typed `def`s) + `encodeCnf_length` + `encodeState_size_bound` + `evalCnfCmd_decides` + `evalCnfCmd_cost_bound` |
+| `Deciders/CliqueRelTM.lean`                | **5**  | sorry-typed `cliqueRelCmd` + `cliqueRelEncode` **defs**, plus `encodeIn_size` + `decides` + `cost_bound` (prior snapshot said 3) |
 | `Deciders/EvalCnfTM.lean`                  | 1      | `encodeIn_size` (`5·n + 20 ≤ (n+1)^3`) |
-| `Deciders/CliqueRelTM.lean`                | 3      | still-fully-stubbed `cliqueRelCmd` + encoding + lemmas |
-| `Deciders/EvalCnfCmd.lean`                 | 7      | `processOneClause`/`processOneLiteral`/`memberCheck` + size lemmas + correctness + cost |
+| `Simulators/CookTableau.lean`              | 5      | wellformedness + bijection + size bound — **but this file is an orphan (Risk S4)** |
+| `Simulators/MultiToSingle.lean`            | 3      | step-bound poly/mono + acceptance — **orphan (Risk S4)** |
 
 ---
 
 ## Risk register
 
-The next iteration's priority list, ranked by **structural risk**
-(impact × likelihood-of-surfacing-a-gap). **Refine the highest-
-ranked item first.** Update after every iteration: items that get
-validated drop off, items that surface new gaps may climb or
-split.
+**Rewritten May 2026 after a structural review** (see the iteration
+log entry "Risk register audit"). The previous register tracked only
+the compiler-skeleton sorrys and mis-located two items at orphan
+files. It is split into two groups:
 
-| # | Gap                                   | Location                              | Why this is high-risk |
-|---|---------------------------------------|---------------------------------------|-----------------------|
-| 1a | Per-constructor compiler helpers (compileOp / compileIfBit / compileForBnd; **compileSeq concretized**) | `Lang/Compile.lean` | The single `Compile := fun _ => …` stub has been **decomposed** (May 2026 iteration) and `compileSeq` has been **concretized** via `composeFlatTM`. Three helpers remain stubbed to `compiledCmd_default`: `compileOp`, `compileIfBit`, `compileForBnd`. The remaining structural risk is the per-`Op` TM design — most opaque is the per-`Op` head-movement / insert-symbol bookkeeping under the 3-symbol alphabet convention (`{0=delim, 1=shifted 0, 2=shifted 1}`). |
-| 1b | `loopTM` combinator missing from `TMPrimitives.lean` | `Complexity/TMPrimitives.lean` | `compileForBnd` cannot be filled in without a `loopTM (body : FlatTM) → FlatTM` combinator analogous to `composeFlatTM` / `branchComposeFlatTM`. Design: counter on the same tape (in unary) or on a dedicated tape (then the layer needs multi-tape support and Part 5's simulator). The single-tape design is preferred but the bookkeeping has not been validated. |
-| 1c | `compileIfBit` two-exit tester       | `Lang/Compile.lean`                   | `branchComposeFlatTM` requires `exit_pos ≠ exit_neg`. The tester TM (reads register `t`, dispatches to one of two exit states) is now in place as a 2-state stub `branchTester_default` and the multi-halt resolution (risk 1d) is fully closed via `Compile.joinTwoHalts`. The substantive remaining work is per-bit testing logic — the real tester reads register `t`'s first symbol and dispatches; the stub always dispatches to `exitPos`. |
-| ~~1d~~ | ~~Multi-halt-state output from `branchComposeFlatTM`~~ | ~~`Lang/Compile.lean`~~ | ✅ **Resolved (May 2026).** Local combinator `Compile.joinTwoHalts M h1 h2` added: demotes `h2` to non-halt and bridges it to `h1`, yielding a single-halt TM. All four key lemmas proven (`_states`/`_start`/`_sig`/`_tapes` accessors, `_h1_is_halt`, `_halt_unique`, `_valid`). The `compileIfBit` helper now closes all seven `CompiledCmd` invariants with no sorrys. |
-| 2 | DSL expressiveness — missing primitives | `Lang/Syntax.lean`                    | Writing `evalCnfCmd` already surfaced two needs: no conditional/guarded loop (`Cmd.while`); no constant-comparison primitive (`Op.headEqVal`). Their type/cost shapes must be decided before downstream Cmd bookkeeping starts, or that work will be redone. |
-| 3 | `PolyTimeComputableLang` ↔ framework integration | `Lang/PolyTime.lean`, `Complexity/NP.lean` | The framework's `polyTimeComputable` doesn't carry a Lang witness, so `red_inNP` can't compose at the layer level. Sorry #3 in `NP.lean` is blocked on this structural change — either upgrade `PolyTimeComputableWitness` or introduce a parallel `PolyTimeComputableTM` and migrate. |
-| 4 | Cook tableau encoding                 | `Simulators/CookTableau.lean`         | `cookTableau M s steps` returns a `FlatTCC` with all fields `[]`. The encoding's `init`/`cards`/`final` triple has not been validated against `FlatTCC_wellformed` or `FlatTCCLang`. The size-bound polynomial's degree is also unjustified. |
-| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1a). |
-| 6 | `evalCnfCmd` inner bodies             | `Deciders/EvalCnfCmd.lean`            | Per-clause / per-literal / member-check are sorried Cmds. *Engineering* work, mostly dull, but each may surface another DSL gap. **Wait until (2) lands** so we don't write these twice. |
-| 7 | `cliqueRelCmd`                        | `Deciders/CliqueRelTM.lean`           | Same shape as (6). Strictly downstream of (2) and ideally (6). |
-| 8 | `hasDeciderClassical`                 | `GenNP_is_hard.lean`                  | Tractable once (3) lands. Last sorry to close. |
+- **Group S — soundness gaps.** These determine *what the
+  conditional `CookLevin` theorem currently means*. Several are
+  **sorry-free** and therefore were invisible to the old register and
+  to `#print axioms`. **Closing every Group C sorry does not close
+  these.** They do not "drop off" by refinement of the layer; each
+  needs the listed reduction/bridge to be rebuilt against real
+  content.
+- **Group C — completion risks.** The compiling-skeleton gaps,
+  ranked by **structural risk** (impact × likelihood-of-surfacing-a-
+  gap). **Refine the highest-ranked C item first.**
 
-**Risk grading convention:** items 1a–3 are *structural* — they
-either validate or surface gaps that change downstream type
-signatures. Items 4–5 are *medium* — they need design decisions
-but the surrounding types are stable. Items 6–8 are *engineering*
-— mostly mechanical once their dependencies are validated.
+### Group S — soundness gaps (on the proof path; mostly sorry-free)
+
+| # | Gap | Location | Why it matters |
+|---|-----|----------|----------------|
+| **S1** | **`if-on-the-answer` reductions** | `…/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `…/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | Both reduction maps are `noncomputable def … := if Source inst then yesInst else noInst` — the image depends on the *truth* of the source predicate, which is exactly what a many-one reduction may not do. They are **sorry-free**, so they never show up in the sorry count or in `#print axioms`; they typecheck only because of S3. This is the **deepest unsoundness in the project** and was entirely absent from the old register. A real `FlatSingleTMGenNP ⪯p FlatTCC` requires the Cook tableau (a *function* of `(M, s, steps)` that encodes the TM run), i.e. the construction that `Simulators/CookTableau.lean` aspires to (S4). |
+| **S2** | **Dummy bridge machines** | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | `bridgeMachine` is a 1-state TM that **discards the source machine `M`** and accepts via an empty/erased tape; `TMGenNP_fixed`/`mTMGenNP_fixed` are predicates that ignore `M`. These are reached on the path via `GenNP_to_TMGenNP` (`NP/TM/IntermediateProblems.lean`), so the `GenNP → TMGenNP_fixed` arrow carries no computational content. Sorry-free; invisible to the sorry count. |
+| **S3** | **`polyTimeComputable` bounds output size only** | `Complexity/Definitions.lean`, `Complexity/NP.lean` | `PolyTimeComputableWitness f` requires only `encodable.size (f x) ≤ bound (size x)`; it says nothing about a TM computing `f`. This is the **enabling weakness** that lets S1/S2 typecheck as "polynomial-time reductions." Until it is upgraded to carry a real (layer-backed) computation, no `⪯p` arrow on the `GenNP → FlatTCC` segment is real. (Cf. Part 0.1 and `instEncodableDefault`'s `size = 0` loophole, which combines with this for the bridge-stage types.) |
+| **S4** | **The "real" Part 5/6 constructions are orphans** | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | `cookTableau` and `multiToSingle` are compiled (imported by the `Complexity.Simulators` aggregator) but **referenced by no reduction** — `grep` finds zero uses outside their own files. Proving their 8 sorrys advances `CookLevin` by **zero** until S1/S2 are rewired to call them *and* the abstract-source-TM → `FlatTM` bridge exists. The old register's items #4/#5 pointed here, which created a false impression that proving those sorrys would close the corresponding soundness gap. |
+
+**Implication for the headline.** Today `CookLevin` is conditional on
+{four `sorry`s on the verifier/hardness side} **and** {S1, S2, S3 on
+the reduction side}. The fallback in the [Fallback plan](#fallback-plan-if-the-layer-also-overruns) makes this
+honest by stating the `inTimePoly`/reduction obligations as explicit
+axioms; if the layer (Group C) does not converge, S1–S3 are the
+obligations that move into that axiom interface.
+
+### Group C — completion risks (compiling skeleton)
+
+| # | Gap | Location | Why this ranking |
+|---|-----|----------|------------------|
+| **C1** | **Concretize one primitive `Op` end-to-end** (def **and** its slice of `compileOp_sound`) | `Lang/Compile.lean` | **Highest-information action available.** The entire pivot rests on the premise that primitives are "~50 LOC each" (Part 3.3). The Part-2 empirical datum is **1,000–2,500 LOC per primitive TM** (Appendix A, points 1–2). These cannot both hold. The layer amortises *composition* (`compileSeq`/`compileIfBit` discharge cheaply) but **not** the per-primitive operational proof, which is precisely what blew up. Pick the simplest op (`opNonEmpty` or `opHead`: read one cell, write one bit) and prove `compileOp_sound` for it. If that proof is small, the pivot premise holds and the rest of `compileOp` is bounded engineering; if it balloons, the premise is **falsified now** and the [Fallback plan](#fallback-plan-if-the-layer-also-overruns) (axiomatic `inTimePoly`) should trigger before more skeleton is built. The old register never prioritised this — it kept decomposing compiler *structure*, which validates nothing about the expensive part. |
+| **C2** | **`compileSeq_sound` operational composition** | `Lang/Compile.lean` | `compileSeq` composes via `composeFlatTM`, which **resumes M₂ on M₁'s halting configuration**; but the soundness hypotheses (`h2`) bound M₂ when started from `initFlatConfig` — head at cell 0, fresh tape framing. Unless every compiled fragment **resets the head to 0** before halting (a new `CompiledCmd` invariant), the resume point does not match the hypothesis. This is **distinct** from the halt-uniqueness gap that risk 1d resolved; it is currently buried inside the single `compileSeq_sound` sorry and is the real obstacle there. |
+| **C3** | **`loopTM` combinator + its run lemma** | `Complexity/TMPrimitives.lean`, `Lang/Compile.lean` | `compileForBnd` is a `compiledCmd_default` stub; `loopTM` is absent from `TMPrimitives`. The *combinator* is routine; the **run lemma** (iteration bookkeeping: threading tape state through the counter, post-loop cleanup) is, per Appendix A point 2, the **dominant cost** (~600 + ~400 LOC per loop site). Single-tape unary counter is the preferred design but unvalidated. Closely coupled to C1 (the loop body invokes compiled primitives). |
+| **C4** | **`PolyTimeComputableLang` ↔ framework** | `Lang/PolyTime.lean`, `Complexity/NP.lean` | `polyTimeComputable` carries no Lang witness, so `red_inNP` (the `NP.lean` sorry) cannot compose at the layer level. Requires upgrading `PolyTimeComputableWitness` (or adding a parallel TM-backed witness and migrating). **This is also the structural change that begins to retire S3** — the same upgrade that lets `red_inNP` compose is what lets the chain's reductions stop relying on the size-only bound. |
+| **C5** | **DSL expressiveness — missing primitives** | `Lang/Syntax.lean` | Writing `evalCnfCmd` surfaced two needs: no guarded loop (`Cmd.while`) and no constant-comparison primitive (`Op.headEqVal`). Decide their type/cost shapes before C7, or that work is redone. **Note the tension with C1/C3:** every new `Op` is another per-primitive soundness proof, so add primitives only when they materially shorten the verifiers. |
+| **C6** | **`compileIfBit` tester logic** | `Lang/Compile.lean` | Structure is done (`branchComposeFlatTM` + `joinTwoHalts`, all seven invariants discharge). `branchTester_default` is a no-op 2-state stub; the remaining work is the real bit-test (read register `t`'s first symbol, dispatch to `exitPos`/`exitNeg`) plus `compileIfBit_sound`. Same primitive-proof flavour as C1. |
+| **C7** | **`evalCnfCmd` / `cliqueRelCmd` bodies** | `Deciders/EvalCnfCmd.lean`, `Deciders/CliqueRelTM.lean` | Per-clause/per-literal/member-check (`evalCnfCmd`) and the whole `cliqueRelCmd`/`cliqueRelEncode` (still sorry-typed `def`s) are DSL-engineering. Mostly mechanical, but each may surface another C5 gap. **Wait for C5**, and note this is dead until C1–C4 make the layer→`DecidesBy` bridge real (otherwise the DSL programs decide nothing at the TM level). |
+| **C8** | **`hasDeciderClassical`** | `GenNP_is_hard.lean` | The `NPhard_GenNP` hardness sorry. Its signature is currently too strong (a decider for *any* predicate). Tractable once C4 lands and the verifier TM can be drawn from `InNPWitness`. Last sorry to close. |
+
+**Risk grading convention.** Group S items are **soundness**: they do
+not validate-and-drop by refinement; each is closed only by replacing
+a specific reduction/bridge with real content (or by moving it into
+the documented axiom interface of the [Fallback plan](#fallback-plan-if-the-layer-also-overruns)). Within Group
+C, **C1–C4 are structural** (they validate the pivot premise or
+change downstream type signatures), **C5–C6 are design**, and
+**C7–C8 are engineering** that is gated on the structural items above.
+
+**The single most important next step** is **C1**: it is the cheapest
+experiment that can falsify the pivot's central assumption, and the
+methodology (surface structural gaps *early*) demands running it
+before investing further in the skeleton.
 
 ### Iteration log
+
+- **May 2026 — Risk register audit (no code change).** Reviewed the
+  whole proof path against the documented risks; `lake build` green,
+  0 axioms. Findings: (1) the sorry count was wrong (`~26` headline,
+  table summed to 32, actual ~34; `CliqueRelTM` was 3, is 5).
+  (2) The two highest-impact gaps were **untracked** because they are
+  **sorry-free**: the `if-on-the-answer` reductions
+  (`FlatSingleTMGenNP_to_FlatTCC`,
+  `TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP`) and the dummy
+  `bridgeMachine`s reached via `GenNP_to_TMGenNP`. Now Risks **S1**/
+  **S2**, enabled by **S3** (`polyTimeComputable` size-only).
+  (3) Old risks **#4/#5 were mis-located** at `Simulators/CookTableau`
+  and `Simulators/MultiToSingle`, which are **orphans** (compiled,
+  referenced by no reduction) — proving their sorrys advances
+  `CookLevin` by zero until S1/S2 are rewired. Now Risk **S4**.
+  (4) Old risk **#1a was stale**: it listed `compileIfBit` as stubbed,
+  but the 1d-resolution iteration already concretized it. (5) The
+  register over-weighted *compiler structure* (cheap, discharges
+  `CompiledCmd` invariants) and under-weighted *per-primitive
+  operational soundness* (`compileOp_sound`), which is the exact
+  1,000–2,500-LOC/primitive cost that caused the pivot — the layer
+  does **not** amortise it. Register rewritten into Group S
+  (soundness) + Group C (completion); new top item **C1** = prove one
+  primitive `Op` sound end-to-end, to test the pivot premise before
+  building more skeleton. Also surfaced **C2** (`compileSeq_sound`
+  head-reset/resume gap, distinct from 1d).
 
 - **May 2026 — Risk #1 decomposed.** `Lang/Compile.lean` was
   refactored from the single `Compile := fun _ => validFlatTM_default`
