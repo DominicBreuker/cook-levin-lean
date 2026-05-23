@@ -2,6 +2,7 @@ import Complexity.Lang.Syntax
 import Complexity.Lang.Semantics
 import Complexity.Lang.ShiftTape
 import Complexity.Lang.Navigate
+import Complexity.Lang.ScanPast
 import Complexity.Lang.AppendGadget
 import Complexity.Lang.Compile
 import Complexity.Lang.PolyTime
@@ -22,6 +23,10 @@ A single import that brings in the entire layer skeleton:
                       delimiter / the end-of-tape terminator) plus their
                       trajectory lemmas (`scan_to_mark_traj`) used to glue
                       a scan ahead of a follow-on machine (Risk C1).
+- `Lang.ScanPast`   : `scanPastDelimTM`, a one-symbol variant of
+                      `scanRightUntilTM` that steps one cell *past* the
+                      delimiter (used to walk onto the next register, so the
+                      per-`Op` machines can recurse on `dst`) (Risk C1).
 - `Lang.AppendGadget`: `scan_then_insert_run`, the scan-to-delimiter ⨾
                       insert composition realizing `appendOne`/`appendZero`
                       on register 0 — the first `composeFlatTM_run`

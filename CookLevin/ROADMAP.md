@@ -487,9 +487,18 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
      insert composition for **register 0** (`composeFlatTM (scanRightUntilTM
      4 0) (insertCarryTM ins) 1`), via `composeFlatTM_run` — the first
      composition-spine exercise in the layer. *Sorry-free.*
-   - ⏳ **Remaining:** (a) general `dst > 0` needs a delimiter-*counting*
-     navigator (scan to the `dst`-th `0`), a new gadget — `scan_to_mark`
-     only reaches the first delimiter; (b) the decode round-trip
+   - ✅ `ScanPast.scanPastDelimTM`: the navigation primitive for `dst > 0`
+     — a one-symbol variant of `scanRightUntilTM` that steps one cell
+     *past* the delimiter (valid + step + run + trajectory +
+     `no_early_halt`, all *sorry-free*). This lets the per-`Op` machines
+     **recurse on `dst`**: `appendAt (d+1) = composeFlatTM (scanPastDelimTM
+     4 0) (appendAt d) 1`, where the recursive machine is always `M₂`, so
+     only the small fixed `scanPastDelimTM`'s trajectory is ever needed
+     (no parametric-state `find?` reasoning required).
+   - ⏳ **Remaining:** (a) the `appendAt` recursion + its run lemma by
+     induction on `dst` (base = `scan_then_insert_run`, step =
+     `composeFlatTM_run` with `M₁ = scanPastDelimTM`); (b) the decode
+     round-trip
      `decodeTape (final cfg) = Op.eval (appendOne dst) s` relating
      `body = shiftReg rₔₛₜ` / `0 :: post` to `encodeTape (s.set …)` under
      `BitState`; (c) packaging the composition as a `CompiledCmd` (7
@@ -502,6 +511,22 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
    length-decreasing ops.
 
 ### Iteration log
+
+- **May 2026 — C1 option A, step 4 (cont.): `scanPastDelimTM` navigation
+  primitive for general `dst`.** Added `Lang/ScanPast.lean` with
+  `scanPastDelimTM sig target` — a one-symbol variant of
+  `scanRightUntilTM` whose found-transition does `Rmove` (step one cell
+  *past* the marker) instead of `Nmove` (halt *on* it). Proved validity,
+  the step lemmas (`step_found`, `step_advance`), the run lemma
+  (`scanPastDelim_run`: scan a marker-free block and step past, halting in
+  state `1` one cell past the delimiter), the trajectory
+  (`scanPastDelim_traj`), and the `composeFlatTM_run`-shaped `h_traj1`
+  wrapper (`scanPastDelim_no_early_halt`), all *sorry-free*, mirroring the
+  proven `scanRightUntilTM` lemmas. This is the navigation step that lets
+  the per-`Op` machines recurse on `dst` with the recursive machine always
+  in the `M₂` slot — sidestepping any parametric-state `find?` proof. Full
+  build green; layer axiom-free. Next: the `appendAt` recursion + run
+  lemma (induction on `dst`).
 
 - **May 2026 — C1 option A, step 4 (partial): scan-trajectory lemmas +
   first composition-spine exercise.** Added the scan-trajectory
