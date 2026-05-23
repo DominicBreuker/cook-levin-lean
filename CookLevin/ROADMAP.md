@@ -25,11 +25,15 @@ turning it into an honest, mathematically rigorous proof.
 | 3–7   | TM-backed reductions, simulators, Cook tableau             | rescoped (see below) |
 
 - Repository size: **~25.7K LOC** of Lean.
-- Build state: **`lake build` is green** with exactly **four labelled
-  `sorry`s** ([detailed below](#the-four-open-sorrys)).
+- Build state: **`lake build` is green** (3350 jobs), **0 axioms**,
+  with **~34 labelled `sorry`s** across the Parts 3–7 skeleton
+  ([distribution and ranking](#current-skeleton-state)). The four
+  framework-migration `sorry`s ([listed below](#the-four-open-sorrys))
+  were decomposed into these when the skeleton was scaffolded.
 - `theorem CookLevin : NPcomplete SAT` typechecks against the strengthened
-  framework but still inherits the weaknesses captured by the four
-  `sorry`s and by Part 0.
+  framework but is **conditional**: it inherits the ~34 `sorry`s, the
+  `sorry`-free vacuous reductions/bridges (Risks **S1**/**S2**), the
+  `polyTimeComputable` weakness (Risk **S3**), and Part 0.
 
 ### Why the pivot
 

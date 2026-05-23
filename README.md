@@ -11,31 +11,44 @@ existing Coq development by Forster, Kunze, Roth et al.
 `theorem CookLevin : NPcomplete SAT` and Lean accepts it, but the
 term is not yet a faithful proof of Cook–Levin. The codebase
 captures the combinatorial heart of the proof rigorously, plus a
-strengthened complexity framework, but still has four labelled
-`sorry`s and a documented strategic pivot in progress. See
-[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full plan
-and current state.
+strengthened complexity framework, but the rest is a **compiling
+skeleton**: ~34 labelled `sorry`s across the Parts 3–7 scaffolding,
+**plus** a handful of `sorry`-free but *vacuous* reductions on the
+proof path (the deepest gaps — they do not show up as `sorry`s or
+under `#print axioms`). See
+[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full plan,
+and its **Risk register** for the soundness gaps (Group S) and
+completion gaps (Group C) tracked separately.
 
 ## Status at a glance (May 2026)
 
-- `lake build` succeeds.
+- `lake build` succeeds (3350 jobs); **0 axioms** repo-wide.
 - Repository size: **~11K LOC** of Lean on the proof path under
   `CookLevin/` (a further ~14K LOC of paused / superseded work
   lives under [`parked/`](parked/), not built).
-- **Four labelled `sorry`s remain**, all flagged with `TODO(...)`
-  tags pointing at the roadmap phase that closes them:
+- **~34 labelled `sorry`s** across the Parts 3–7 skeleton, all
+  flagged with `TODO(...)` tags. The current per-file distribution
+  and the next-step ranking live in the **Risk register** of
+  [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) (Group C). The
+  original "four `sorry`s" from the framework migration were
+  decomposed into these when Parts 3–7 were scaffolded as a
+  compiling skeleton.
+- **The `sorry` count is not the soundness metric.** The deepest
+  gaps on the proof path are `sorry`-**free** and so do not appear in
+  that count or under `#print axioms`:
+  - two `if-on-the-answer` reductions (`FlatSingleTMGenNP_to_FlatTCC`,
+    `TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP`) whose output
+    depends on the *truth* of the source predicate;
+  - the dummy `bridgeMachine`s (1-state TMs that discard the source
+    machine) reached via `GenNP_to_TMGenNP`;
+  - both licensed by `polyTimeComputable` bounding only *output size*,
+    not runtime.
 
-  | # | Location                                                              | Tag                                  | Closes at |
-  |---|-----------------------------------------------------------------------|--------------------------------------|-----------|
-  | 1 | `CookLevin/Complexity/Complexity/Deciders/EvalCnfTM.lean:58`          | `TODO(Part2-followup:EvalCnfTM)`     | New Part 3 of ROADMAP |
-  | 2 | `CookLevin/Complexity/Complexity/Deciders/CliqueRelTM.lean:66`        | `TODO(Part2-followup:CliqueRelTM)`   | New Part 3 of ROADMAP |
-  | 3 | `CookLevin/Complexity/Complexity/NP.lean:270`                         | `TODO(Part3:red_inNP_TMcompose)`     | New Part 4 of ROADMAP |
-  | 4 | `CookLevin/Complexity/GenNP_is_hard.lean:23`                          | `TODO(Part6:hasDeciderClassical)`    | New Part 7 of ROADMAP |
-
+  These are Risks **S1–S3** in the ROADMAP Risk register.
 - The build is **conditionally complete**: `theorem CookLevin :
-  NPcomplete SAT` typechecks, but it depends on the four sorrys above
-  and on a handful of placeholder TM-bridge constructions (see "Where
-  the project is not yet sound" below).
+  NPcomplete SAT` typechecks, but it depends on the ~34 `sorry`s
+  **and** on the `sorry`-free vacuous reductions/bridges above (see
+  "Where the project is not yet sound" below).
 
 ## Strategic situation — May 2026
 
@@ -266,24 +279,38 @@ The proof of Cook–Levin *after* a TM run has been encoded as a
 
 ## Where the project is not yet sound
 
-Two distinct gaps remain between "Lean accepts the theorem" and "the
-theorem is a real proof of Cook–Levin":
+Three distinct classes of gap remain between "Lean accepts the
+theorem" and "the theorem is a real proof of Cook–Levin". The first
+is visible as `sorry`s; the other two are **not**, which is why the
+`sorry` count alone overstates how close the proof is.
 
-1. **The four `sorry`s above.** Each corresponds to a piece of
-   infrastructure not yet built. They are detailed in the table at
-   the top of this README and discussed in
-   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+1. **The ~34 skeleton `sorry`s** (ROADMAP Risk register, Group C).
+   Each is a not-yet-built piece of the higher-level computable layer
+   (the compiler, its soundness, the verifier/reduction programs) or
+   of the final assembly. The highest-leverage one is **C1**: prove a
+   single primitive `Op` sound end-to-end, which tests the pivot's
+   premise that primitives are cheap.
 
-2. **`polyTimeComputable f` only bounds output size.** The current
-   `PolyTimeComputableWitness` requires
+2. **`sorry`-free vacuous reductions on the proof path** (Risks
+   S1/S2). Two reduction maps —
+   `…/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean` and
+   `…/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean`
+   — are `if (source instance is a yes-instance) then yesInst else
+   noInst`, so the reduction's output depends on the *answer* to the
+   source problem. The TM bridges `LM_to_mTM.lean` /
+   `mTM_to_singleTapeTM.lean` are 1-state machines that discard the
+   source machine. These compile without `sorry` and do not appear
+   under `#print axioms`, but carry no computational content. They
+   are the deepest unsoundness; fixing them is Parts 5–6, and depends
+   on the layer (Parts 3–4) landing first.
+
+3. **`polyTimeComputable f` only bounds output size** (Risk S3). The
+   current `PolyTimeComputableWitness` requires
    `encodable.size (f x) ≤ bound (encodable.size x)` and says
-   nothing about the TM that computes `f`. So every reduction in
-   the chain is *witnessed* by a size bound, not by a real
-   polynomial-time TM. The TM bridge layers
-   (`LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`,
-   `…/FlatSingleTMGenNP_to_FlatTCC.lean`, …) are
-   placeholders (1-state TMs, classical case-splits on the source
-   language). Fixing this is Parts 4–6 of the new roadmap.
+   nothing about the TM that computes `f`. This is the weakness that
+   *licenses* the vacuous reductions in (2): every reduction in the
+   chain is witnessed by a size bound, not by a real polynomial-time
+   TM. Upgrading it is Part 4 (Risk C4).
 
 ### Other smells (low priority)
 
