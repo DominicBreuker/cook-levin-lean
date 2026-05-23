@@ -409,33 +409,73 @@ is unaffected** (it produces `encodeTape(result)` exactly, no junk), so
 `appendOne`/`appendZero` remain fully viable; the wall is specific to
 length-decreasing ops.
 
-**Resolution fork (project-owner decision).** Two sound options:
+**Resolution fork.** Three sound options (a fourth, decode-by-head-
+position, is a non-starter: gadgets like `insertCarryTM` leave the head
+mid-tape, not at the logical end).
 
 - **(A) End-of-tape sentinel.** Bump the alphabet to `sig = 4` with a
-  dedicated terminator symbol; `decodeTape` reads up to the first
-  terminator. Delete shifts left and rewrites the terminator one cell
-  earlier; everything past it is ignored. *Exact* equality is recovered.
-  Cost: re-engineer `encodeTape`/`decodeTape` + re-prove the round-trip,
-  and generalize `insertCarryTM` (and every gadget) to `sig = 4`. More
-  invasive on the TM side.
+  dedicated terminator symbol `3` (`0`=delim, `1`/`2`=shifted bits,
+  `3`=end). `encodeTape s := … ++ [3]`; `decodeTape` reads up to the
+  first `3`. Delete shifts left and rewrites `3` one cell earlier;
+  everything past it is ignored. The terminator is a *distinct,
+  detectable* symbol, so gadgets navigate by "scan for `0`, or stop at
+  `3`" and **never read junk as content** — the terminator *firewalls*
+  the junk. *Exact, unconditional* equality is recovered, including the
+  padding case (`dst ≥ length`: scan to `3`, insert delimiters+content
+  before it). Cost: re-engineer `encodeTape`/`decodeTape` + re-prove the
+  round-trip, and generalize `insertCarryTM` to `sig = 4` (one more
+  carry state; the `interval_cases <;> simp` technique scales). All
+  front-loaded and mechanical.
 - **(B) Normalize + soundness up to trailing-empties.** Change
   `dropTrailingEmpty` to drop **all** trailing empty registers, and
-  weaken the soundness statements to equality **up to trailing empty
-  registers** (an equivalence `≈` under which `State.get`, `isAccept`,
-  and `size` are all invariant, so the final `decides`/accept-reject
-  conclusion is unaffected). Then the delete gadget *is* the clean
-  ~200-LOC mirror of `insertCarryTM` (shift left, leave trailing junk,
-  which `≈` absorbs). Keeps `sig = 3` and reuses `insertCarryTM`
-  as-is; the cost is meta-theoretic (thread `≈` through `compileOp_sound`
-  / `compileSeq_sound`, and prove every `Op` respects `≈`).
-- (Not viable: decode-by-head-position — gadgets like `insertCarryTM`
-  leave the head mid-tape, not at the logical end.)
+  weaken every soundness statement to equality **up to trailing empty
+  registers** (`≈`). Keeps `sig = 3` and reuses `insertCarryTM` as-is,
+  and the delete gadget becomes the ~200-LOC mirror — but the cost is
+  **pervasive and downstream**: (i) an `≈` relation threaded through
+  `compileOp_sound`/`compileSeq_sound`/`Compile_sound` and every
+  verifier proof; (ii) a register-pre-allocation invariant (`dst,src <
+  length`) to stop navigation miscounting junk `0`s as delimiters —
+  cheap to thread since `Op.eval` only grows `length`, but still extra;
+  and, decisively, (iii) **TM-tape junk-invariance lemmas**: `compileSeq`
+  physically runs `c₂`'s TM on `c₁`'s *junk-bearing* output tape (no
+  re-encoding in between), so each gadget must be proved to behave
+  identically with trailing junk present. (iii) grows with the layer and
+  is exactly the kind of friction the layer was meant to eliminate.
+- **(C) Multi-tape (one tape per register).** Ops become `O(1)` head
+  moves — no shift loops, no navigation counting, deletion is local —
+  so primitives become genuinely ~50 LOC. But the layer must then
+  compile to a *multi-tape* `FlatTM` and a **multi-tape → single-tape
+  simulator** (currently the orphaned `Simulators/MultiToSingle.lean`,
+  Risk S4) is required to plug into the single-tape framework, plus
+  `branchComposeFlatTM`'s `(sig+1)^k` bridge blow-up (Appendix A pt 4).
+  Trades bounded per-op cost for a large, unbuilt, risky simulator.
+  Textbook-clean end state, wrong near-term bet.
 
-Recommended: **(B)** — it keeps the alphabet and the existing insert
-gadget, makes the delete gadget the originally-estimated ~200-LOC piece,
-and the `≈` weakening is sound because the theorem only observes register
-0's accept/reject bit. Confirm before implementing, since both options
-reshape the (sorry'd) `compileOp_sound` / `compileSeq_sound` statements.
+**Recommended: (A).** The layer's entire value proposition is making the
+~10K-LOC downstream (Parts 4–7 verifier/reduction proofs) cheap and
+*clean*. (A) keeps every downstream lemma **exact and unconditional**;
+(B) injects `≈`-congruences, register-count invariants, and per-gadget
+junk-invariance into exactly that bulk. For a proof at risk of non-
+completion, minimizing friction in the bulk dominates minimizing a
+bounded one-time refactor. (A)'s upfront cost is bounded and reuses
+established techniques; (B)'s cost is unbounded and spreads through the
+part of the proof that is supposed to amortise. (C) is the clean end
+state but its simulator is unbuilt and risky. The sentinel is also the
+standard device (an explicit blank symbol) and benefits every later
+gadget (`loopTM`, the `compileIfBit` tester) that needs a detectable
+end-of-tape. Confirm before executing, since (A) re-touches the proven
+`decodeTape_encodeTape` and `insertCarryTM`.
+
+**Execution order for (A)** (each step bounded, build green between):
+1. `encodeTape`/`decodeTape` + terminator + re-prove round-trip.
+2. Generalize `insertCarryTM` to `sig = 4`; re-prove validity/step/run.
+3. Navigation: keep `scan_to_delim` (scans `0`, unaffected); add
+   `scan_to_end` (`scanRightUntilTM 4 3`) for the padding branch.
+4. `appendOne`/`appendZero` end-to-end (unconditional, exact) — also
+   validates the `composeFlatTM_run` gluing (needs the scan-trajectory
+   lemma: intermediate scan configs stay in state 0).
+5. Delete gadget (`sig = 4` mirror of `insertCarryTM`) + the
+   length-decreasing ops.
 
 ### Iteration log
 
@@ -452,11 +492,16 @@ reshape the (sorry'd) `compileOp_sound` / `compileSeq_sound` statements.
   trailing junk is indistinguishable from legitimate trailing empty
   registers under the single-delimiter encoding, so a naïve delete is
   **unsound**. The insert/append path is unaffected. Recorded the
-  resolution fork (sentinel `sig=4` vs. normalize-up-to-trailing-empties)
-  in [C1 progress](#go-stop-result-length-decreasing-ops-hit-a-tape-model-wall-may-2026);
-  **recommend option (B)**, pending owner confirmation. Full build green;
-  Lang layer still axiom-free. Next (append path, fork-independent):
-  scan-trajectory lemma + `composeFlatTM_run` gluing for `appendOne`.
+  resolution fork (sentinel `sig=4` vs. normalize-up-to-trailing-empties
+  vs. multi-tape) in
+  [C1 progress](#go-stop-result-length-decreasing-ops-hit-a-tape-model-wall-may-2026).
+  After fuller analysis, **recommend option (A) — the end-of-tape
+  sentinel** — because it keeps all downstream soundness exact and
+  unconditional (the sentinel *firewalls* delete junk so no gadget ever
+  reads it as content), whereas (B) spreads `≈`/invariant/junk-invariance
+  friction through the whole verifier layer. Pending owner confirmation.
+  Full build green; Lang layer still axiom-free. Next (append path,
+  fork-independent): scan-trajectory lemma + `composeFlatTM_run` gluing.
 
 - **May 2026 — C1 go/no-go: shared shift gadget built (GREEN).** Added
   `Lang/ShiftTape.lean`: `insertCarryTM` + validity + step lemmas +
