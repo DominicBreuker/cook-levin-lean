@@ -342,14 +342,121 @@ What this unblocks / what remains for `compileOp`:
 - `appendOne` / `appendZero` (insert at the end of register `dst`):
   navigate to `dst`'s delimiter (reuse `scanRightUntilTM`), then
   `insertCarryTM_run`. Should now be assembly + a navigation lemma.
-- Overwrite ops (`copy/tail/head/eqBit/nonEmpty`) and `clear` need the
-  **companion delete/shift-left gadget** — same shape and size as
-  `insertCarryTM`, expected ~200 LOC. Build it next.
+- Overwrite ops (`copy/tail/head/eqBit/nonEmpty`) and `clear` were
+  expected to reuse a **companion delete/shift-left gadget** — but see
+  the [tape-model finding](#go-stop-result-length-decreasing-ops-hit-a-tape-model-wall-may-2026)
+  below: a naïve delete gadget is **not sound** under the current
+  encoding. Resolving that is now the gating decision for half of
+  `compileOp`.
 - Revised `compileOp` estimate drops from ~2–4K LOC toward **~1.5–2K
   LOC** (two ~200-LOC shift gadgets + ~8 short per-`Op` assemblies +
   the `scanRightUntilTM`-based navigation lemma).
 
+##### Navigation atom built (May 2026)
+
+`Lang/Navigate.lean` adds `scan_to_delim` — *sorry-free*, ~40 LOC of
+proof — the encoding-aware specialization of `scanRightUntilTM_run_found`:
+
+```
+runFlatTM (reg.length + 1) (scanRightUntilTM 3 0)
+    { state_idx := 0, tapes := [([], pre.length, pre ++ reg ++ 0 :: post)] }
+  = some { state_idx := 1,
+           tapes := [([], pre.length + reg.length, pre ++ reg ++ 0 :: post)] }
+```
+
+i.e. scanning right for the delimiter `0` from the start of a register's
+shifted content (`reg` is delimiter-free and in-range) lands exactly on
+that register's terminating delimiter. This is the reusable navigation
+atom: chained `dst` times (`dst` is a compile-time constant) it locates
+register `dst` for *any* `Op`. It is independent of the tape-model
+question below, so it is sound to keep regardless of how that resolves.
+The two remaining mechanisms for `appendOne`/`appendZero` end-to-end are
+(a) the **scan trajectory lemma** (intermediate scan configs stay in
+state 0 — needed to discharge `composeFlatTM_run`'s `h_traj1`), and
+(b) the **padding/empty case** (`dst ≥ s.length`: `State.set` pads with
+empty registers, so the gadget must append delimiters + content at the
+tape end). Both only *grow* the tape, so they are compatible with the
+model — unlike the delete path.
+
+##### Go/STOP result: length-decreasing ops hit a tape-model wall (May 2026)
+
+Designing the "companion delete/shift-left gadget" surfaced a **genuine
+architectural gap**, exactly the kind C1 exists to catch. Reading the
+model (`MachineSemantics.lean`): `writeCurrentTapeSymbol` only ever
+*replaces in place* or *appends* (`right.take head ++ … ` or
+`right ++ …`), and `moveTapeHead` never touches `right`. **The tape
+content `right` is monotonically non-shrinking** for every config
+reachable from `initFlatConfig`.
+
+Consequence for length-*decreasing* `Op`s (`clear`, `tail`, and
+`copy/head/eqBit/nonEmpty` when they shorten a register):
+
+- A delete-shift-left can only shift the tail left; it **cannot drop the
+  now-redundant final cell**. So after deleting `k` cells the tape is
+  `encodeTape(result) ++ [0,…,0]` (`k` trailing junk delimiters), never
+  `encodeTape(result)` exactly.
+- Under the current decode (`splitOnZero` then drop **one** trailing
+  empty), those trailing junk `0`s become **spurious empty registers**,
+  so `decodeTape cfg ≠ Op.eval o s`. And the junk is **indistinguishable
+  from a legitimate trailing empty register** (e.g. one produced by
+  `State.set`'s padding): both are encoded as a trailing `0`. **No
+  flat-level decode rule can both preserve legit trailing empties and
+  discard delete junk** — they are the same bytes.
+
+So the originally-planned delete gadget is *not* a drop-in mirror of
+`insertCarryTM` under exact-equality soundness. The **insert/append path
+is unaffected** (it produces `encodeTape(result)` exactly, no junk), so
+`appendOne`/`appendZero` remain fully viable; the wall is specific to
+length-decreasing ops.
+
+**Resolution fork (project-owner decision).** Two sound options:
+
+- **(A) End-of-tape sentinel.** Bump the alphabet to `sig = 4` with a
+  dedicated terminator symbol; `decodeTape` reads up to the first
+  terminator. Delete shifts left and rewrites the terminator one cell
+  earlier; everything past it is ignored. *Exact* equality is recovered.
+  Cost: re-engineer `encodeTape`/`decodeTape` + re-prove the round-trip,
+  and generalize `insertCarryTM` (and every gadget) to `sig = 4`. More
+  invasive on the TM side.
+- **(B) Normalize + soundness up to trailing-empties.** Change
+  `dropTrailingEmpty` to drop **all** trailing empty registers, and
+  weaken the soundness statements to equality **up to trailing empty
+  registers** (an equivalence `≈` under which `State.get`, `isAccept`,
+  and `size` are all invariant, so the final `decides`/accept-reject
+  conclusion is unaffected). Then the delete gadget *is* the clean
+  ~200-LOC mirror of `insertCarryTM` (shift left, leave trailing junk,
+  which `≈` absorbs). Keeps `sig = 3` and reuses `insertCarryTM`
+  as-is; the cost is meta-theoretic (thread `≈` through `compileOp_sound`
+  / `compileSeq_sound`, and prove every `Op` respects `≈`).
+- (Not viable: decode-by-head-position — gadgets like `insertCarryTM`
+  leave the head mid-tape, not at the logical end.)
+
+Recommended: **(B)** — it keeps the alphabet and the existing insert
+gadget, makes the delete gadget the originally-estimated ~200-LOC piece,
+and the `≈` weakening is sound because the theorem only observes register
+0's accept/reject bit. Confirm before implementing, since both options
+reshape the (sorry'd) `compileOp_sound` / `compileSeq_sound` statements.
+
 ### Iteration log
+
+- **May 2026 — C1: navigation atom built + length-decreasing ops
+  blocked (architectural finding).** Added `Lang/Navigate.lean` with
+  `scan_to_delim` (*sorry-free*, ~40 LOC): scanning for the `0`
+  delimiter from a register's start lands on that register's
+  terminating delimiter — the reusable navigation atom for locating
+  register `dst`, built on `scanRightUntilTM_run_found`. While
+  designing the planned delete/shift-left companion, found a **genuine
+  tape-model wall**: `writeCurrentTapeSymbol`/`moveTapeHead` never
+  shrink the tape content, so length-*decreasing* `Op`s
+  (`clear/tail/...`) cannot produce `encodeTape(result)` exactly — the
+  trailing junk is indistinguishable from legitimate trailing empty
+  registers under the single-delimiter encoding, so a naïve delete is
+  **unsound**. The insert/append path is unaffected. Recorded the
+  resolution fork (sentinel `sig=4` vs. normalize-up-to-trailing-empties)
+  in [C1 progress](#go-stop-result-length-decreasing-ops-hit-a-tape-model-wall-may-2026);
+  **recommend option (B)**, pending owner confirmation. Full build green;
+  Lang layer still axiom-free. Next (append path, fork-independent):
+  scan-trajectory lemma + `composeFlatTM_run` gluing for `appendOne`.
 
 - **May 2026 — C1 go/no-go: shared shift gadget built (GREEN).** Added
   `Lang/ShiftTape.lean`: `insertCarryTM` + validity + step lemmas +
