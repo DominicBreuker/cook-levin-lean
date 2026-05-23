@@ -682,27 +682,32 @@ theorem Compile_sig (c : Cmd) : (Compile c).sig = 3 :=
 
 /-! ### Encoding / decoding tapes
 
-Convention:
+Convention (alphabet `sig = 4`; Risk C1, option A):
 
 - **Symbol 0** is the reserved register-delimiter.
 - Register values are restricted to `{0, 1}` (bit strings) and are
   **shifted by +1** on encode: `0 ↦ 1`, `1 ↦ 2`. Decoding shifts
-  back by `-1`. This keeps register values disjoint from the
-  delimiter without restricting the source language (which is bit-
-  shaped by convention; cf. `BitState` future work).
-- The encoded tape ends with a final `0` (one per register).
-  Decoding drops the trailing empty register.
+  back by `-1`. This keeps register values (`{1, 2}`) disjoint from
+  both the delimiter `0` and the terminator below.
+- **Symbol 3 = `endMark`** is the reserved end-of-tape terminator,
+  appended once after all registers. Decoding reads only up to the
+  first `endMark`. This is the device that makes length-*decreasing*
+  `Op`s sound: such an `Op` cannot shrink the tape (the model only
+  appends / overwrites), so it shifts content left and rewrites
+  `endMark` one cell earlier — anything past the terminator is junk
+  and is ignored by the decoder *and* by every navigation gadget,
+  which stop at the terminator rather than reading past it.
 
-So `encodeTape [[1, 0], [0, 1]] = [2, 1, 0, 1, 2, 0]`, and decoding
-splits on `0`, shifts each chunk by -1, drops the trailing empty.
+So `encodeTape [[1, 0], [0, 1]] = [2, 1, 0, 1, 2, 0, 3]`, and decoding
+takes the prefix before `3`, splits on `0`, shifts each chunk by `-1`,
+and drops the trailing empty.
 
-The encoded length satisfies
-`(encodeTape s).length = State.size s + s.length` (one delimiter
-per register). The alphabet used by `encodeTape` is `{0, 1, 2}`,
-matching `Compile_sig`.
-
-`State.size` is the sum of register lengths. The alphabet bound is
-ensured externally: callers must provide bit-shaped states. -/
+The shift+terminator scheme requires inputs to be **bit-shaped**
+(`Compile.BitState`): with a register value of `2`, `shiftReg` would
+emit `3` and collide with the terminator. `BitState` is the layer's
+standing convention (NP-completeness inputs are bit strings) and is
+preserved by `Op.eval`; it is also exactly what tape-validity needs
+(every symbol `< sig = 4`). -/
 
 /-- Encode the per-register shift `+1`. -/
 private def Compile.shiftReg (reg : List Nat) : List Nat := reg.map (· + 1)
@@ -712,17 +717,30 @@ on tapes that contain no raw `0` (i.e., tapes produced by `shiftReg`). -/
 private def Compile.unshiftReg (reg : List Nat) : List Nat :=
   reg.map (fun n => n - 1)
 
-/-- Encode a `State` as a flat tape with `0` as the register
-delimiter and per-register shift by `+1`. -/
-def Compile.encodeTape (s : State) : List Nat :=
+/-- The reserved end-of-tape terminator symbol. -/
+def Compile.endMark : Nat := 3
+
+/-- A state is *bit-shaped* if every register holds only `0`/`1`.
+The layer's standing convention; preserved by `Op.eval`. Keeps the
+shifted values `{1, 2}` disjoint from the terminator `endMark = 3`. -/
+def Compile.BitState (s : State) : Prop := ∀ reg ∈ s, ∀ x ∈ reg, x ≤ 1
+
+/-- Encode the registers contiguously: each shifted by `+1` and
+followed by the `0` delimiter. Does **not** include the terminator. -/
+def Compile.encodeRegs (s : State) : List Nat :=
   s.foldr (fun reg acc => Compile.shiftReg reg ++ [0] ++ acc) []
 
-theorem Compile.encodeTape_nil :
-    Compile.encodeTape [] = [] := rfl
+theorem Compile.encodeRegs_nil :
+    Compile.encodeRegs [] = [] := rfl
 
-theorem Compile.encodeTape_cons (reg : List Nat) (s : State) :
-    Compile.encodeTape (reg :: s) =
-      Compile.shiftReg reg ++ [0] ++ Compile.encodeTape s := rfl
+theorem Compile.encodeRegs_cons (reg : List Nat) (s : State) :
+    Compile.encodeRegs (reg :: s) =
+      Compile.shiftReg reg ++ [0] ++ Compile.encodeRegs s := rfl
+
+/-- Encode a `State` as a flat tape: the registers (`encodeRegs`)
+followed by the end-of-tape terminator `endMark`. -/
+def Compile.encodeTape (s : State) : List Nat :=
+  Compile.encodeRegs s ++ [Compile.endMark]
 
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
 
@@ -765,7 +783,8 @@ def Compile.decodeTape (cfg : FlatTMConfig) : State :=
   | []           => []
   | tape :: _    =>
       let flat := Compile.flattenTape tape
-      let groups := Compile.splitOnZero flat
+      let content := flat.takeWhile (· != Compile.endMark)
+      let groups := Compile.splitOnZero content
       let trimmed := Compile.dropTrailingEmpty groups
       trimmed.map Compile.unshiftReg
 
@@ -808,17 +827,48 @@ private theorem Compile.splitOnZero_append_zero :
 
 /-- The decoder's split step recovers exactly the shifted registers
 plus the trailing empty group from the encoder's final delimiter. -/
-private theorem Compile.splitOnZero_encodeTape :
+private theorem Compile.splitOnZero_encodeRegs :
     ∀ s : State,
-      Compile.splitOnZero (Compile.encodeTape s)
+      Compile.splitOnZero (Compile.encodeRegs s)
         = s.map Compile.shiftReg ++ [[]]
-  | []          => by simp [Compile.encodeTape, Compile.splitOnZero]
+  | []          => by simp [Compile.encodeRegs, Compile.splitOnZero]
   | reg :: rest => by
-      rw [Compile.encodeTape_cons]
-      have happ : Compile.shiftReg reg ++ [0] ++ Compile.encodeTape rest
-          = Compile.shiftReg reg ++ 0 :: Compile.encodeTape rest := by simp
+      rw [Compile.encodeRegs_cons]
+      have happ : Compile.shiftReg reg ++ [0] ++ Compile.encodeRegs rest
+          = Compile.shiftReg reg ++ 0 :: Compile.encodeRegs rest := by simp
       rw [happ, Compile.splitOnZero_append_zero _ _ (Compile.shiftReg_no_zero reg),
-          Compile.splitOnZero_encodeTape rest, List.map_cons, List.cons_append]
+          Compile.splitOnZero_encodeRegs rest, List.map_cons, List.cons_append]
+
+/-- `encodeRegs` of a bit-shaped state never emits the terminator
+`endMark`: delimiters are `0` and shifted bits are `{1, 2}`. -/
+private theorem Compile.encodeRegs_no_endMark :
+    ∀ (s : State), Compile.BitState s →
+      ∀ x ∈ Compile.encodeRegs s, x ≠ Compile.endMark
+  | [],          _, x, hx => by simp [Compile.encodeRegs] at hx
+  | reg :: rest, h, x, hx => by
+      rw [Compile.encodeRegs_cons] at hx
+      simp only [List.append_assoc, List.mem_append, List.mem_cons,
+        List.mem_singleton, List.not_mem_nil, or_false] at hx
+      rcases hx with hx | hx | hx
+      · simp only [Compile.shiftReg, List.mem_map] at hx
+        obtain ⟨y, hy, rfl⟩ := hx
+        have : y ≤ 1 := h reg (by simp) y hy
+        simp only [Compile.endMark]; omega
+      · simp only [Compile.endMark]; omega
+      · exact Compile.encodeRegs_no_endMark rest
+          (fun r hr => h r (by simp [hr])) x hx
+
+/-- Taking the prefix before the terminator recovers the registers,
+provided the registers themselves contain no terminator. -/
+private theorem Compile.takeWhile_no_endMark :
+    ∀ (l : List Nat), (∀ x ∈ l, x ≠ Compile.endMark) →
+      (l ++ [Compile.endMark]).takeWhile (· != Compile.endMark) = l
+  | [],     _ => by decide
+  | a :: t, h => by
+      have ha : a ≠ Compile.endMark := h a (by simp)
+      have ht : ∀ x ∈ t, x ≠ Compile.endMark := fun x hx => h x (by simp [hx])
+      rw [List.cons_append, List.takeWhile_cons,
+          if_pos (by simp [bne_iff_ne, ha]), Compile.takeWhile_no_endMark t ht]
 
 /-- `dropTrailingEmpty` peels exactly one trailing empty group. -/
 private theorem Compile.dropTrailingEmpty_cons_ne_nil
@@ -855,18 +905,21 @@ private theorem Compile.map_unshift_shift (s : State) :
       List.map_id]
 
 /-- Round-trip lemma — needed by `Compile_sound`. The decoder, applied
-to the encoder's initial configuration, recovers the state exactly. -/
-theorem Compile.decodeTape_encodeTape (s : State) :
+to the encoder's initial configuration, recovers the state exactly,
+for any bit-shaped state. -/
+theorem Compile.decodeTape_encodeTape (s : State) (h : Compile.BitState s) :
     Compile.decodeTape
         { tapes := [([], 0, Compile.encodeTape s)]
           state_idx := 0 } = s := by
   show (Compile.dropTrailingEmpty
         (Compile.splitOnZero
-          (Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)))).map
-        Compile.unshiftReg = s
+          ((Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)).takeWhile
+            (· != Compile.endMark)))).map Compile.unshiftReg = s
   rw [show Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)
         = Compile.encodeTape s from rfl,
-      Compile.splitOnZero_encodeTape, Compile.dropTrailingEmpty_append_nil,
+      show Compile.encodeTape s = Compile.encodeRegs s ++ [Compile.endMark] from rfl,
+      Compile.takeWhile_no_endMark _ (Compile.encodeRegs_no_endMark s h),
+      Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
       Compile.map_unshift_shift]
 
 /-! ## Cost / overhead
