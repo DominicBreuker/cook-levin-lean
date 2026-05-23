@@ -31,13 +31,13 @@ now recorded in the `ROADMAP.md` risk register:
    and `branchComposeFlatTM` require an explicit "designated exit
    state of `M₁`". A bare `FlatTM` is not enough for compositional
    compilation; the natural shape is `(M, exit, exit_lt)`.
-2. **Alphabet is fixed at `sig = 3`**: symbol `0` is the
+2. **Alphabet is fixed at `sig = 4`**: symbol `0` is the
    register-delimiter, symbols `1`, `2` are the shifted register
-   values for `0`, `1` respectively. This commits the layer's
-   inputs to bit-strings (the standard NP-completeness convention).
-   `Op.eval` on bit-shaped states stays bit-shaped — there is no
-   primitive that introduces other natural-number values. A future
-   refinement may want a `BitState` invariant to make this explicit.
+   values for `0`, `1`, and symbol `3` is the end-of-tape terminator
+   (`Compile.endMark`; see the encoding section / Risk C1 option A).
+   This commits the layer's inputs to bit-strings (the standard
+   NP-completeness convention), made explicit by `Compile.BitState`;
+   `Op.eval` on bit-shaped states stays bit-shaped.
 3. **`Compile.overhead`'s shape changed** from `Nat → Nat` applied
    to `State.size s` to `Nat → Nat` applied to `State.size s + cost`.
    The motivation: each TM-simulation of a `Cmd`-step costs `O(L)`
@@ -110,16 +110,16 @@ structure CompiledCmd where
   M_valid : validFlatTM M
   /-- The machine is single-tape (the layer's standing assumption). -/
   M_tapes : M.tapes = 1
-  /-- The machine's alphabet is exactly 3: `0` = delimiter,
-  `1` = shifted `0`, `2` = shifted `1`. -/
-  M_sig : M.sig = 3
+  /-- The machine's alphabet is exactly 4: `0` = delimiter,
+  `1` = shifted `0`, `2` = shifted `1`, `3` = end-of-tape terminator. -/
+  M_sig : M.sig = 4
 
 /-- The trivial 1-state halting machine, packaged as a
 `CompiledCmd` with `exit = 0`. Used as the default body of all
 the stub helpers. -/
 def compiledCmd_default : CompiledCmd where
   M :=
-    { sig := 3
+    { sig := 4
       tapes := 1
       states := 1
       trans := []
@@ -314,7 +314,7 @@ def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
     show (composeFlatTM r1.M r2.M r1.exit).tapes = 1
     rw [composeFlatTM_tapes]; exact r1.M_tapes
   M_sig := by
-    show (composeFlatTM r1.M r2.M r1.exit).sig = 3
+    show (composeFlatTM r1.M r2.M r1.exit).sig = 4
     rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
     rfl
 
@@ -469,7 +469,7 @@ structure BranchTester where
   exit_distinct : exitPos ≠ exitNeg
   M_valid : validFlatTM M
   M_tapes : M.tapes = 1
-  M_sig : M.sig = 3
+  M_sig : M.sig = 4
 
 /-- A placeholder 2-state tester. `exitPos = 0`, `exitNeg = 1`,
 no transitions, neither state halts (the bridge in
@@ -477,7 +477,7 @@ no transitions, neither state halts (the bridge in
 real bit-test once the per-register navigation primitives land. -/
 def branchTester_default : BranchTester where
   M :=
-    { sig := 3
+    { sig := 4
       tapes := 1
       states := 2
       trans := []
@@ -630,7 +630,7 @@ def compileIfBit (t : Var) (rT rE : CompiledCmd) : CompiledCmd :=
       exact h_branched_tapes
     M_sig := by
       rw [Compile.joinTwoHalts_sig]
-      show branched.sig = 3
+      show branched.sig = 4
       rw [show branched =
             branchComposeFlatTM tester.M rT.M rE.M
               tester.exitPos tester.exitNeg from rfl,
@@ -677,7 +677,7 @@ theorem Compile_valid (c : Cmd) : validFlatTM (Compile c) :=
 theorem Compile_tapes (c : Cmd) : (Compile c).tapes = 1 :=
   (compileCmd c).M_tapes
 
-theorem Compile_sig (c : Cmd) : (Compile c).sig = 3 :=
+theorem Compile_sig (c : Cmd) : (Compile c).sig = 4 :=
   (compileCmd c).M_sig
 
 /-! ### Encoding / decoding tapes

@@ -29,12 +29,12 @@ terminating delimiter.
 
 The tape is `pre ++ reg ++ 0 :: post`, head at `pre.length` (the first
 cell of `reg`); `reg` is one register's shifted content, so it contains
-no `0` and every symbol is `< 3`. After `reg.length + 1` steps the
-scanner halts in its accept state `1` at the delimiter, head at
-`pre.length + reg.length`, tape unchanged. -/
+no `0` and every symbol is `< 4` (the alphabet bound). After
+`reg.length + 1` steps the scanner halts in its accept state `1` at the
+delimiter, head at `pre.length + reg.length`, tape unchanged. -/
 theorem scan_to_delim (pre reg post : List Nat)
-    (h_no_zero : ∀ x ∈ reg, x ≠ 0) (h_lt : ∀ x ∈ reg, x < 3) :
-    runFlatTM (reg.length + 1) (scanRightUntilTM 3 0)
+    (h_no_zero : ∀ x ∈ reg, x ≠ 0) (h_lt : ∀ x ∈ reg, x < 4) :
+    runFlatTM (reg.length + 1) (scanRightUntilTM 4 0)
         { state_idx := 0, tapes := [([], pre.length, pre ++ reg ++ 0 :: post)] }
       = some { state_idx := 1,
                tapes := [([], pre.length + reg.length, pre ++ reg ++ 0 :: post)] } := by
@@ -49,7 +49,7 @@ theorem scan_to_delim (pre reg post : List Nat)
     simp
   have h_before : ∀ k, k < reg.length →
       ∃ (h : pre.length + k < (pre ++ reg ++ 0 :: post).length),
-        (pre ++ reg ++ 0 :: post).get ⟨pre.length + k, h⟩ < 3 ∧
+        (pre ++ reg ++ 0 :: post).get ⟨pre.length + k, h⟩ < 4 ∧
         (pre ++ reg ++ 0 :: post).get ⟨pre.length + k, h⟩ ≠ 0 := by
     intro k hk
     have hh : pre.length + k < (pre ++ reg ++ 0 :: post).length := by
@@ -63,7 +63,7 @@ theorem scan_to_delim (pre reg post : List Nat)
       simp only [Nat.add_sub_cancel_left]
     have hmem : reg[k]'hk ∈ reg := List.getElem_mem hk
     exact ⟨hh, by rw [hval]; exact h_lt _ hmem, by rw [hval]; exact h_no_zero _ hmem⟩
-  exact scanRightUntilTM_run_found 3 0 [] (pre ++ reg ++ 0 :: post)
+  exact scanRightUntilTM_run_found 4 0 [] (pre ++ reg ++ 0 :: post)
     reg.length pre.length h_in_range h_get_target h_before
 
 end Complexity.Lang.Navigate

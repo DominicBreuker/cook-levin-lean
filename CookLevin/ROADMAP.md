@@ -467,9 +467,13 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
 `decodeTape_encodeTape` and `insertCarryTM`.
 
 **Execution order for (A)** (each step bounded, build green between):
-1. `encodeTape`/`decodeTape` + terminator + re-prove round-trip.
-2. Generalize `insertCarryTM` to `sig = 4`; re-prove validity/step/run.
-3. Navigation: keep `scan_to_delim` (scans `0`, unaffected); add
+1. ✅ **Done.** `encodeTape`/`decodeTape` + terminator (`endMark = 3`)
+   + re-proved round-trip (now requires `Compile.BitState`).
+2. ✅ **Done.** Generalized `insertCarryTM` to `sig = 4` (extra carry
+   state for the terminator); re-proved validity/step/run, *sorry-free*.
+   Bumped `CompiledCmd.M_sig`/`Compile_sig`/defaults and `scan_to_delim`
+   to `sig = 4`. Full `Complexity.Lang` build green.
+3. Navigation: keep `scan_to_delim` (scans `0`, now `sig = 4`); add
    `scan_to_end` (`scanRightUntilTM 4 3`) for the padding branch.
 4. `appendOne`/`appendZero` end-to-end (unconditional, exact) — also
    validates the `composeFlatTM_run` gluing (needs the scan-trajectory
@@ -478,6 +482,21 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
    length-decreasing ops.
 
 ### Iteration log
+
+- **May 2026 — C1 option A, steps 1–2: end-of-tape terminator +
+  `sig = 4` gadget.** Owner chose the **sentinel** resolution. Step 1:
+  reworked `encodeTape`/`decodeTape` to use a reserved terminator
+  (`Compile.endMark = 3`) — encode appends it, decode reads up to the
+  first one — and re-proved `decodeTape_encodeTape` (now requires
+  `Compile.BitState`, since shifted bits `{1,2}` must stay disjoint
+  from `3`). Step 2: generalized `insertCarryTM` from `sig = 3` to
+  `sig = 4` (one more carry state, so it can shift the terminator),
+  re-proved validity/step/run *sorry-free* (the heavy 20-case step
+  lemma needs a raised `maxHeartbeats`); bumped `CompiledCmd.M_sig`,
+  `Compile_sig`, the default machines, and `scan_to_delim` to `sig = 4`.
+  Full `Complexity.Lang` build green; layer still axiom-free. Next:
+  step 3 (`scan_to_end` for the padding branch) → step 4 (`appendOne`
+  end-to-end + scan-trajectory lemma).
 
 - **May 2026 — C1: navigation atom built + length-decreasing ops
   blocked (architectural finding).** Added `Lang/Navigate.lean` with
