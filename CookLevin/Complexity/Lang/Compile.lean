@@ -725,10 +725,18 @@ theorem Compile.encodeTape_cons (reg : List Nat) (s : State) :
       Compile.shiftReg reg ++ [0] ++ Compile.encodeTape s := rfl
 
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
-`left` is stored in reverse order (most-recently-passed cells first),
-so we reverse it before concatenating. -/
+
+In this machine model (`MachineSemantics.lean`) the head is an *index*
+into `right`, and the `left` component is never written by
+`writeCurrentTapeSymbol` / `moveTapeHead` — it stays `[]` for every
+configuration reachable from `initFlatConfig`. The full tape contents
+are therefore exactly `right` (`tape.2.2`); `left` and the head index
+carry no content. (The earlier definition concatenated
+`left.reverse ++ [head] ++ right`, which spliced the head *index* into
+the contents as if it were a symbol — that made the round-trip lemma
+below unprovable.) -/
 private def Compile.flattenTape (tape : List Nat × Nat × List Nat) : List Nat :=
-  tape.1.reverse ++ [tape.2.1] ++ tape.2.2
+  tape.2.2
 
 /-- Split a `List Nat` on `0`. Used to recover registers from an
 encoded tape. -/
@@ -761,13 +769,105 @@ def Compile.decodeTape (cfg : FlatTMConfig) : State :=
       let trimmed := Compile.dropTrailingEmpty groups
       trimmed.map Compile.unshiftReg
 
-/-- Round-trip lemma — needed by `Compile_sound`. -/
+/-! ### Round-trip lemmas for `decodeTape ∘ encodeTape`
+
+These discharge the `decodeTape_encodeTape` obligation by a short
+chain of structural inductions over the encoder's pieces. -/
+
+/-- `splitOnZero` never returns the empty list (every branch produces
+at least one group). -/
+private theorem Compile.splitOnZero_ne_nil :
+    ∀ l : List Nat, Compile.splitOnZero l ≠ []
+  | []          => by simp [Compile.splitOnZero]
+  | 0 :: _      => by simp [Compile.splitOnZero]
+  | (_ + 1) :: xs => by
+      simp only [Compile.splitOnZero]
+      cases Compile.splitOnZero xs <;> simp
+
+/-- Shifted register contents contain no `0` (the delimiter), since
+`shiftReg` maps every value to its successor. -/
+private theorem Compile.shiftReg_no_zero (reg : List Nat) :
+    ∀ x ∈ Compile.shiftReg reg, x ≠ 0 := by
+  intro x hx
+  simp only [Compile.shiftReg, List.mem_map] at hx
+  obtain ⟨y, _, rfl⟩ := hx
+  omega
+
+/-- Splitting `a ++ 0 :: b` on the delimiter, when `a` has no
+delimiter, peels off `a` as the first group. -/
+private theorem Compile.splitOnZero_append_zero :
+    ∀ (a b : List Nat), (∀ x ∈ a, x ≠ 0) →
+      Compile.splitOnZero (a ++ 0 :: b) = a :: Compile.splitOnZero b
+  | [],          b, _ => by simp [Compile.splitOnZero]
+  | (x :: a'), b, h => by
+      have hx : x ≠ 0 := h x (by simp)
+      have ha' : ∀ y ∈ a', y ≠ 0 := fun y hy => h y (by simp [hy])
+      obtain ⟨n, rfl⟩ := Nat.exists_eq_succ_of_ne_zero hx
+      simp only [List.cons_append, Compile.splitOnZero,
+        Compile.splitOnZero_append_zero a' b ha']
+
+/-- The decoder's split step recovers exactly the shifted registers
+plus the trailing empty group from the encoder's final delimiter. -/
+private theorem Compile.splitOnZero_encodeTape :
+    ∀ s : State,
+      Compile.splitOnZero (Compile.encodeTape s)
+        = s.map Compile.shiftReg ++ [[]]
+  | []          => by simp [Compile.encodeTape, Compile.splitOnZero]
+  | reg :: rest => by
+      rw [Compile.encodeTape_cons]
+      have happ : Compile.shiftReg reg ++ [0] ++ Compile.encodeTape rest
+          = Compile.shiftReg reg ++ 0 :: Compile.encodeTape rest := by simp
+      rw [happ, Compile.splitOnZero_append_zero _ _ (Compile.shiftReg_no_zero reg),
+          Compile.splitOnZero_encodeTape rest, List.map_cons, List.cons_append]
+
+/-- `dropTrailingEmpty` peels exactly one trailing empty group. -/
+private theorem Compile.dropTrailingEmpty_cons_ne_nil
+    (x : List Nat) (ys : List (List Nat)) (h : ys ≠ []) :
+    Compile.dropTrailingEmpty (x :: ys) = x :: Compile.dropTrailingEmpty ys := by
+  cases ys with
+  | nil => exact absurd rfl h
+  | cons _ _ => cases x <;> rfl
+
+/-- The encoder's trailing empty group is exactly what
+`dropTrailingEmpty` removes, leaving the list of shifted registers. -/
+private theorem Compile.dropTrailingEmpty_append_nil :
+    ∀ l : List (List Nat), Compile.dropTrailingEmpty (l ++ [[]]) = l
+  | []        => rfl
+  | x :: rest => by
+      have h : rest ++ [[]] ≠ [] := by
+        intro hc; simpa using congrArg List.length hc
+      rw [List.cons_append, Compile.dropTrailingEmpty_cons_ne_nil x _ h,
+          Compile.dropTrailingEmpty_append_nil rest]
+
+/-- `unshiftReg` inverts `shiftReg`. -/
+private theorem Compile.unshiftReg_shiftReg (reg : List Nat) :
+    Compile.unshiftReg (Compile.shiftReg reg) = reg := by
+  simp only [Compile.unshiftReg, Compile.shiftReg, List.map_map]
+  have h : ((fun n => n - 1) ∘ fun x => x + 1) = id := by funext n; simp
+  rw [h, List.map_id]
+
+/-- Decoding the shifted registers recovers the original state. -/
+private theorem Compile.map_unshift_shift (s : State) :
+    (s.map Compile.shiftReg).map Compile.unshiftReg = s := by
+  rw [List.map_map,
+      show Compile.unshiftReg ∘ Compile.shiftReg = id from
+        funext Compile.unshiftReg_shiftReg,
+      List.map_id]
+
+/-- Round-trip lemma — needed by `Compile_sound`. The decoder, applied
+to the encoder's initial configuration, recovers the state exactly. -/
 theorem Compile.decodeTape_encodeTape (s : State) :
     Compile.decodeTape
         { tapes := [([], 0, Compile.encodeTape s)]
           state_idx := 0 } = s := by
-  sorry  -- TODO(Part3.4): induction on s; uses `splitOnZero` and
-         -- `dropTrailingEmpty` equational lemmas.
+  show (Compile.dropTrailingEmpty
+        (Compile.splitOnZero
+          (Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)))).map
+        Compile.unshiftReg = s
+  rw [show Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)
+        = Compile.encodeTape s from rfl,
+      Compile.splitOnZero_encodeTape, Compile.dropTrailingEmpty_append_nil,
+      Compile.map_unshift_shift]
 
 /-! ## Cost / overhead
 
