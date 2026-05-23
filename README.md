@@ -291,12 +291,14 @@ is visible as `sorry`s; the other two are **not**, which is why the
    single primitive `Op` sound end-to-end, which tests the pivot's
    premise that primitives are cheap. **In progress:** the shared,
    reusable gadgets are built `sorry`-free — `insertCarryTM` (single-tape
-   insert/shift-right, `Lang/ShiftTape.lean`) and `scan_to_mark`/
-   `scan_to_delim`/`scan_to_end` (register navigation +
-   trajectory lemmas, `Lang/Navigate.lean`) — and they now compose:
-   `scan_then_insert_run` (`Lang/AppendGadget.lean`) glues a scan ahead of
-   an insert via `composeFlatTM_run`, realizing `appendOne`/`appendZero`
-   on register 0 (the first composition-spine exercise in the layer). C1
+   insert/shift-right, `Lang/ShiftTape.lean`), `scan_to_mark`/
+   `scan_to_delim`/`scan_to_end` (register navigation + trajectory lemmas,
+   `Lang/Navigate.lean`) and `scanPastDelimTM` (step past a delimiter,
+   `Lang/ScanPast.lean`) — and they compose into the full
+   `appendOne`/`appendZero` action for an **arbitrary register `dst`**:
+   `AppendGadget.appendAt_run` proves the tape transformation by induction
+   on `dst` (each step one `composeFlatTM_run` gluing a scan ahead of the
+   recursive machine), axiom-clean and `sorry`-free. C1
    also surfaced a real architectural gap — the tape model's content never
    shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…) cannot
    produce the exact encoding — resolved by the **sentinel** alphabet

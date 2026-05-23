@@ -495,9 +495,18 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
      4 0) (appendAt d) 1`, where the recursive machine is always `M₂`, so
      only the small fixed `scanPastDelimTM`'s trajectory is ever needed
      (no parametric-state `find?` reasoning required).
-   - ⏳ **Remaining:** (a) the `appendAt` recursion + its run lemma by
-     induction on `dst` (base = `scan_then_insert_run`, step =
-     `composeFlatTM_run` with `M₁ = scanPastDelimTM`); (b) the decode
+   - ✅ `AppendGadget.appendAtTM` + `appendAt_run`: the general-`dst`
+     machine `appendAtTM ins dst` (recursion: `appendAtTM ins (d+1) =
+     composeFlatTM (scanPastDelimTM 4 0) (appendAtTM ins d) 1`) and its run
+     lemma by induction on `dst` (base = `scanInsert_run`, step =
+     `composeFlatTM_run` with `M₁ = scanPastDelimTM`). Proves the **full
+     `appendOne`/`appendZero` tape transformation for arbitrary register
+     `dst`**: `pre ++ regBlocks skipped ++ body ++ 0 :: post ↦ pre ++
+     regBlocks skipped ++ body ++ ins :: 0 :: post`. Axiom-clean
+     (`propext`/`Classical.choice`/`Quot.sound` only), *sorry-free*. Step
+     count, exit state and final head are existential (a step *bound* is a
+     separate concern — item (d)).
+   - ⏳ **Remaining:** (b) the decode
      round-trip
      `decodeTape (final cfg) = Op.eval (appendOne dst) s` relating
      `body = shiftReg rₔₛₜ` / `0 :: post` to `encodeTape (s.set …)` under
@@ -511,6 +520,25 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
    length-decreasing ops.
 
 ### Iteration log
+
+- **May 2026 — C1 option A, step 4 (cont.): general-`dst` append run
+  lemma (`appendAt_run`).** Added to `Lang/AppendGadget.lean`: the
+  arbitrary-prefix `scanInsert_run` (generalizing `scan_then_insert_run`
+  off register 0), the navigation wrapper `scanPast_block`, the encoded
+  register-prefix helper `regBlocks` (+ `regBlocks_cons`/`regBlocks_lt`),
+  the recursive machine `appendAtTM ins dst` (`appendAtTM ins (d+1) =
+  composeFlatTM (scanPastDelimTM 4 0) (appendAtTM ins d) 1`) with its
+  `tapes`/`sig`/`start`/`valid` facts, and the headline `appendAt_run` —
+  the full `appendOne`/`appendZero` tape transformation for **arbitrary
+  register `dst`**, by induction on `dst` (base = `scanInsert_run`, step =
+  one `composeFlatTM_run` with `M₁ = scanPastDelimTM`, so only the small
+  fixed scanner's trajectory is needed). The recursion peels one register
+  per step into the prefix `pre`; `composeFlatTM`'s state/tape/head
+  threading is reconciled via `appendAtTM_start`/length rewrites. The step
+  count/exit state/final head are existential (a step *bound* is deferred
+  to the cost item). Axiom-clean, *sorry-free*; full build green; layer
+  axiom-free. Next: decode round-trip + `CompiledCmd` packaging + cost
+  bound + `BitState` threading to finish the `compileOp_sound` slice.
 
 - **May 2026 — C1 option A, step 4 (cont.): `scanPastDelimTM` navigation
   primitive for general `dst`.** Added `Lang/ScanPast.lean` with
