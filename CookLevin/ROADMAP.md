@@ -473,8 +473,9 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
    state for the terminator); re-proved validity/step/run, *sorry-free*.
    Bumped `CompiledCmd.M_sig`/`Compile_sig`/defaults and `scan_to_delim`
    to `sig = 4`. Full `Complexity.Lang` build green.
-3. Navigation: keep `scan_to_delim` (scans `0`, now `sig = 4`); add
-   `scan_to_end` (`scanRightUntilTM 4 3`) for the padding branch.
+3. ✅ **Done.** Generalized navigation to `scan_to_mark` (parametric
+   target); `scan_to_delim` (marker `0`) and `scan_to_end` (marker `3`,
+   for the padding branch) fall out as corollaries. All *sorry-free*.
 4. `appendOne`/`appendZero` end-to-end (unconditional, exact) — also
    validates the `composeFlatTM_run` gluing (needs the scan-trajectory
    lemma: intermediate scan configs stay in state 0).
@@ -494,9 +495,12 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
   re-proved validity/step/run *sorry-free* (the heavy 20-case step
   lemma needs a raised `maxHeartbeats`); bumped `CompiledCmd.M_sig`,
   `Compile_sig`, the default machines, and `scan_to_delim` to `sig = 4`.
-  Full `Complexity.Lang` build green; layer still axiom-free. Next:
-  step 3 (`scan_to_end` for the padding branch) → step 4 (`appendOne`
-  end-to-end + scan-trajectory lemma).
+  Step 3: generalized navigation to `scan_to_mark` (parametric target),
+  with `scan_to_delim` (marker `0`) and `scan_to_end` (marker `3`, the
+  padding-branch navigator) as corollaries, all *sorry-free*. Full
+  `Complexity.Lang` build green; layer still axiom-free. Next: step 4
+  (`appendOne` end-to-end + the scan-trajectory lemma for the
+  `composeFlatTM_run` gluing).
 
 - **May 2026 — C1: navigation atom built + length-decreasing ops
   blocked (architectural finding).** Added `Lang/Navigate.lean` with
