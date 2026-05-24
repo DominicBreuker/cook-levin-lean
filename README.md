@@ -57,7 +57,10 @@ completion gaps (Group C) tracked separately.
   is closed at the design level by `compileSeq_compose_physical`. This
   confirms the part of the pivot that was supposed to amortise. The
   remaining layer work is bounded engineering, with one unvalidated piece
-  left (`loopTM`, the counted-loop combinator — Risk **C3**).
+  left (`loopTM`, the counted-loop combinator — Risk **C3**). `loopTM` is
+  the **selected next topic** (it gates `Compile_sound` and therefore the
+  retirement of S3); a self-contained handoff brief is at
+  [`CookLevin/LOOPTM_EXPLORATION.md`](CookLevin/LOOPTM_EXPLORATION.md).
 - **The `sorry` count is not the soundness metric.** The deepest
   gaps on the proof path are `sorry`-**free** and so do not appear in
   that count or under `#print axioms`:

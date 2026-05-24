@@ -636,6 +636,30 @@ and instantiate `compileSeq_compose_physical` for `appendOne ∘ appendOne`.
 
 ### Iteration log
 
+- **May 2026 — Next-topic selection (doc + handoff): C3 `loopTM` is the
+  go/no-go.** With the S1 Cook-tableau probe concluded (verdict: feasible but
+  expensive, *downstream* of the layer and dead until S3 is retired), reviewed
+  the whole proof state to pick the single highest-risk next topic toward a
+  faithful, unconditional `CookLevin`. Independent code review confirmed the
+  ROADMAP's standing ranking: **`loopTM` (C3) is the biggest *unvalidated*
+  risk.** It is absent from `TMPrimitives.lean`; `compileForBnd` is a
+  `compiledCmd_default` stub and `compileForBnd_sound` is `sorry`; and *every*
+  layer→framework bridge in `Lang/PolyTime.lean` reduces to `Compile_sound`,
+  which needs `compileForBnd_sound`. So `loopTM` is upstream of retiring the
+  enabling weakness **S3** (output-size-only `polyTimeComputable`), which is
+  what currently lets the vacuous reductions S1/S2 typecheck. It was also the
+  dominant cost of the abandoned hand-rolled approach (~1,000 LOC/loop site,
+  Appendix A) and is needed by every verifier (`forBnd`). C1/C2 validated the
+  per-primitive and *composition* stories; `loopTM` is the last structural
+  unknown — if it lands at ≲ per-op cost the layer's cost model is validated
+  and the rest of Group C is bounded engineering; if it balloons, that is the
+  trigger for the [Fallback plan](#fallback-plan-if-the-layer-also-overruns).
+  Wrote a self-contained handoff brief for the next agent at
+  **`CookLevin/LOOPTM_EXPLORATION.md`** (mission, the physical-contract
+  foundation from C2, `composeFlatTM_run` as the proof template, a cheapest-
+  first work plan A→B→C, subtleties, and the verdict to deliver). Removed the
+  now-completed `CookLevin/TABLEAU_EXPLORATION.md`. No code change; build green.
+
 - **May 2026 — S1 Cook-tableau feasibility probe: VERDICT = feasible but
   expensive; no structural blocker found.** Replaced the orphan
   `Simulators/CookTableau.lean` stub (was 5 sorrys, an empty-field placeholder)
