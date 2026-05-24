@@ -22,14 +22,36 @@ turning it into an honest, mathematically rigorous proof.
 | 1     | Foundational hygiene, small-`sorry` cleanup                | ✅ done |
 | 2 (framework) | TM-backed `DecidesBy` + `inTimePoly`               | ✅ done |
 | 2 (content)   | Hand-rolled `EvalCnfTM` / `CliqueRelTM` verifiers  | ⏸ paused mid-stream |
-| 3–7   | TM-backed reductions, simulators, Cook tableau             | rescoped (see below) |
+| 3 (layer)     | `Cmd`/`Op` + compiler skeleton + gadget library    | 🟡 in progress (C1 append-`Op` slice + C2 composition validated) |
+| 4–7   | TM-backed reductions, simulators, Cook tableau             | rescoped (see below) |
 
 - Repository size: **~25.7K LOC** of Lean.
-- Build state: **`lake build` is green** with exactly **four labelled
-  `sorry`s** ([detailed below](#the-four-open-sorrys)).
+- Build state: **`lake build` is green** (3355 jobs), **0 project axioms**
+  (the layer is axiom-clean beyond the standard
+  `propext`/`Classical.choice`/`Quot.sound`), with **~32 labelled
+  `sorry`s** across the Parts 3–7 skeleton
+  ([distribution and ranking](#current-skeleton-state)). The four
+  framework-migration `sorry`s ([listed below](#the-four-open-sorrys))
+  were decomposed into these when the skeleton was scaffolded.
+- **What moved since the last full assessment (the C1/C2 work).** The layer
+  now has a real, *sorry-free* gadget library (`insertCarryTM`, the
+  `scan_to_mark` / `scanPastDelimTM` / `scanLeftUntilTM` family) and the
+  first compiled primitive: `Compile.opAppendOne` / `opAppendZero` are real
+  `CompiledCmd`s built from `appendAtTM` (general register `dst`). **C2 — the
+  `compileSeq` resume gap — is validated:** `compileSeq_compose_physical`
+  proves two fragments compose cleanly *given the physical per-`Op` contract*
+  (halt at `exit`, head rewound to `0`, tape `= encodeTape (output)`, with an
+  exact step and a no-early-halt trajectory). C2 thus drops from a structural
+  unknown to bounded engineering. See the
+  [C1](#c1-progress--interim-measurement-may-2026) /
+  [C2](#c2-analysis-the-per-op-soundness-contract-is-too-weak-to-compose-may-2026)
+  analyses.
 - `theorem CookLevin : NPcomplete SAT` typechecks against the strengthened
-  framework but still inherits the weaknesses captured by the four
-  `sorry`s and by Part 0.
+  framework but is **conditional**: it inherits the ~32 `sorry`s, the
+  `sorry`-free vacuous reductions/bridges (Risks **S1**/**S2**), the
+  `polyTimeComputable` weakness (Risk **S3**), and Part 0. **None of the
+  C1/C2 layer progress moves this headline** — the soundness gaps are on the
+  reduction side (Parts 5–6), downstream of the layer.
 
 ### Why the pivot
 
@@ -154,56 +176,684 @@ iteration.**
 
 | Metric                                | Value             | Trend |
 |---------------------------------------|-------------------|-------|
-| `lake build`                          | ✅ green (~3350 jobs) | unchanged |
-| Axiom count (Lang layer)              | **0**             | unchanged |
-| Tactical sorrys                       | ~26               | ↓ −1: risk #1d resolved via `Compile.joinTwoHalts` + proved validity |
-| `theorem CookLevin : NPcomplete SAT` | typechecks        | unchanged since pre-pivot |
+| `lake build`                          | ✅ green (~3355 jobs) | unchanged |
+| Axiom count (repo-wide)               | **0** project axioms | unchanged |
+| `sorry`s on the proof path            | **~32**           | flat: C1/C2 added *sorry-free* gadgets + lemmas (`appendAtTM`, `scanLeftUntilTM`, `compileSeq_compose_physical`) and concretized two `compileOp` stubs, without closing any of the six `Compile.lean` sorrys (they await the contract restatement) |
+| Sorry-**free** vacuous defs on the proof path | **≥ 4**   | unchanged — see Risk **S1**/**S2** |
+| Reusable layer gadget library         | `insertCarryTM`, `scan_to_mark`/`scanPastDelimTM`/`scanLeftUntilTM`, `appendAtTM`, `compileSeq_compose_physical` | ↑ new this cycle, all axiom-clean |
+| `theorem CookLevin : NPcomplete SAT` | typechecks, **conditional** on all of the above | unchanged since pre-pivot |
 
-Sorry distribution at the current snapshot (May 2026):
+> **Sorry count is not the soundness metric (review note, May 2026).**
+> The headline number on this row was stale (`~26`) and even its own
+> per-file table summed to 32. The accurate count was ~34 at the
+> audit (now ~33: C1 step 1 closed `decodeTape_encodeTape`). More
+> importantly, the count is a *misleading* progress signal: the
+> deepest unsoundness in the development is **sorry-free** (the
+> `if-on-the-answer` reductions and dummy bridges of Risks S1/S2),
+> so it does not appear here and does not show up under
+> `#print axioms`. Track the soundness risks (Group S) separately
+> from the completion risks (Group C); closing every `sorry` does
+> **not** by itself make `CookLevin` unconditional.
+
+Sorry distribution at the current snapshot (May 2026, recounted):
 
 | File                                       | Sorrys | What they are |
 |--------------------------------------------|--------|---------------|
-| `Lang/Compile.lean`                        | 7      | `decodeTape_encodeTape`, `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` |
+| `Lang/Compile.lean`                        | 6      | `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound`. (`decodeTape_encodeTape` ✅; `opAppendOne`/`opAppendZero` ✅ real `CompiledCmd`s; `compileSeq_compose_physical` ✅ proves composition under the physical contract — the six sorrys await restating these lemmas to that contract) |
 | `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
-| `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition (sorry #3 of the original four) |
-| `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` (sorry #4) |
-| `Simulators/MultiToSingle.lean`            | 3      | step-bound poly/mono + acceptance |
-| `Simulators/CookTableau.lean`              | 5      | wellformedness + bijection + size bound |
+| `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition |
+| `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` |
+| `Deciders/EvalCnfCmd.lean`                 | 7      | `processOneClause`/`processOneLiteral`/`memberCheck` (sorry-typed `def`s) + `encodeCnf_length` + `encodeState_size_bound` + `evalCnfCmd_decides` + `evalCnfCmd_cost_bound` |
+| `Deciders/CliqueRelTM.lean`                | **5**  | sorry-typed `cliqueRelCmd` + `cliqueRelEncode` **defs**, plus `encodeIn_size` + `decides` + `cost_bound` (prior snapshot said 3) |
 | `Deciders/EvalCnfTM.lean`                  | 1      | `encodeIn_size` (`5·n + 20 ≤ (n+1)^3`) |
-| `Deciders/CliqueRelTM.lean`                | 3      | still-fully-stubbed `cliqueRelCmd` + encoding + lemmas |
-| `Deciders/EvalCnfCmd.lean`                 | 7      | `processOneClause`/`processOneLiteral`/`memberCheck` + size lemmas + correctness + cost |
+| `Simulators/CookTableau.lean`              | 5      | wellformedness + bijection + size bound — **but this file is an orphan (Risk S4)** |
+| `Simulators/MultiToSingle.lean`            | 3      | step-bound poly/mono + acceptance — **orphan (Risk S4)** |
 
 ---
 
 ## Risk register
 
-The next iteration's priority list, ranked by **structural risk**
-(impact × likelihood-of-surfacing-a-gap). **Refine the highest-
-ranked item first.** Update after every iteration: items that get
-validated drop off, items that surface new gaps may climb or
-split.
+**Rewritten May 2026 after a structural review** (see the iteration
+log entry "Risk register audit"). The previous register tracked only
+the compiler-skeleton sorrys and mis-located two items at orphan
+files. It is split into two groups:
 
-| # | Gap                                   | Location                              | Why this is high-risk |
-|---|---------------------------------------|---------------------------------------|-----------------------|
-| 1a | Per-constructor compiler helpers (compileOp / compileIfBit / compileForBnd; **compileSeq concretized**) | `Lang/Compile.lean` | The single `Compile := fun _ => …` stub has been **decomposed** (May 2026 iteration) and `compileSeq` has been **concretized** via `composeFlatTM`. Three helpers remain stubbed to `compiledCmd_default`: `compileOp`, `compileIfBit`, `compileForBnd`. The remaining structural risk is the per-`Op` TM design — most opaque is the per-`Op` head-movement / insert-symbol bookkeeping under the 3-symbol alphabet convention (`{0=delim, 1=shifted 0, 2=shifted 1}`). |
-| 1b | `loopTM` combinator missing from `TMPrimitives.lean` | `Complexity/TMPrimitives.lean` | `compileForBnd` cannot be filled in without a `loopTM (body : FlatTM) → FlatTM` combinator analogous to `composeFlatTM` / `branchComposeFlatTM`. Design: counter on the same tape (in unary) or on a dedicated tape (then the layer needs multi-tape support and Part 5's simulator). The single-tape design is preferred but the bookkeeping has not been validated. |
-| 1c | `compileIfBit` two-exit tester       | `Lang/Compile.lean`                   | `branchComposeFlatTM` requires `exit_pos ≠ exit_neg`. The tester TM (reads register `t`, dispatches to one of two exit states) is now in place as a 2-state stub `branchTester_default` and the multi-halt resolution (risk 1d) is fully closed via `Compile.joinTwoHalts`. The substantive remaining work is per-bit testing logic — the real tester reads register `t`'s first symbol and dispatches; the stub always dispatches to `exitPos`. |
-| ~~1d~~ | ~~Multi-halt-state output from `branchComposeFlatTM`~~ | ~~`Lang/Compile.lean`~~ | ✅ **Resolved (May 2026).** Local combinator `Compile.joinTwoHalts M h1 h2` added: demotes `h2` to non-halt and bridges it to `h1`, yielding a single-halt TM. All four key lemmas proven (`_states`/`_start`/`_sig`/`_tapes` accessors, `_h1_is_halt`, `_halt_unique`, `_valid`). The `compileIfBit` helper now closes all seven `CompiledCmd` invariants with no sorrys. |
-| 2 | DSL expressiveness — missing primitives | `Lang/Syntax.lean`                    | Writing `evalCnfCmd` already surfaced two needs: no conditional/guarded loop (`Cmd.while`); no constant-comparison primitive (`Op.headEqVal`). Their type/cost shapes must be decided before downstream Cmd bookkeeping starts, or that work will be redone. |
-| 3 | `PolyTimeComputableLang` ↔ framework integration | `Lang/PolyTime.lean`, `Complexity/NP.lean` | The framework's `polyTimeComputable` doesn't carry a Lang witness, so `red_inNP` can't compose at the layer level. Sorry #3 in `NP.lean` is blocked on this structural change — either upgrade `PolyTimeComputableWitness` or introduce a parallel `PolyTimeComputableTM` and migrate. |
-| 4 | Cook tableau encoding                 | `Simulators/CookTableau.lean`         | `cookTableau M s steps` returns a `FlatTCC` with all fields `[]`. The encoding's `init`/`cards`/`final` triple has not been validated against `FlatTCC_wellformed` or `FlatTCCLang`. The size-bound polynomial's degree is also unjustified. |
-| 5 | Multi-tape simulator design           | `Simulators/MultiToSingle.lean`       | Alphabet extension (delimiter + head-marker symbols) and the single-step simulation gadget haven't been designed; structurally similar to (1a). |
-| 6 | `evalCnfCmd` inner bodies             | `Deciders/EvalCnfCmd.lean`            | Per-clause / per-literal / member-check are sorried Cmds. *Engineering* work, mostly dull, but each may surface another DSL gap. **Wait until (2) lands** so we don't write these twice. |
-| 7 | `cliqueRelCmd`                        | `Deciders/CliqueRelTM.lean`           | Same shape as (6). Strictly downstream of (2) and ideally (6). |
-| 8 | `hasDeciderClassical`                 | `GenNP_is_hard.lean`                  | Tractable once (3) lands. Last sorry to close. |
+- **Group S — soundness gaps.** These determine *what the
+  conditional `CookLevin` theorem currently means*. Several are
+  **sorry-free** and therefore were invisible to the old register and
+  to `#print axioms`. **Closing every Group C sorry does not close
+  these.** They do not "drop off" by refinement of the layer; each
+  needs the listed reduction/bridge to be rebuilt against real
+  content.
+- **Group C — completion risks.** The compiling-skeleton gaps,
+  ranked by **structural risk** (impact × likelihood-of-surfacing-a-
+  gap). **Refine the highest-ranked C item first.**
 
-**Risk grading convention:** items 1a–3 are *structural* — they
-either validate or surface gaps that change downstream type
-signatures. Items 4–5 are *medium* — they need design decisions
-but the surrounding types are stable. Items 6–8 are *engineering*
-— mostly mechanical once their dependencies are validated.
+### Group S — soundness gaps (on the proof path; mostly sorry-free)
+
+| # | Gap | Location | Why it matters |
+|---|-----|----------|----------------|
+| **S1** | **`if-on-the-answer` reductions** | `…/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `…/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | Both reduction maps are `noncomputable def … := if Source inst then yesInst else noInst` — the image depends on the *truth* of the source predicate, which is exactly what a many-one reduction may not do. They are **sorry-free**, so they never show up in the sorry count or in `#print axioms`; they typecheck only because of S3. This is the **deepest unsoundness in the project** and was entirely absent from the old register. A real `FlatSingleTMGenNP ⪯p FlatTCC` requires the Cook tableau (a *function* of `(M, s, steps)` that encodes the TM run), i.e. the construction that `Simulators/CookTableau.lean` aspires to (S4). |
+| **S2** | **Dummy bridge machines** | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | `bridgeMachine` is a 1-state TM that **discards the source machine `M`** and accepts via an empty/erased tape; `TMGenNP_fixed`/`mTMGenNP_fixed` are predicates that ignore `M`. These are reached on the path via `GenNP_to_TMGenNP` (`NP/TM/IntermediateProblems.lean`), so the `GenNP → TMGenNP_fixed` arrow carries no computational content. Sorry-free; invisible to the sorry count. |
+| **S3** | **`polyTimeComputable` bounds output size only** | `Complexity/Definitions.lean`, `Complexity/NP.lean` | `PolyTimeComputableWitness f` requires only `encodable.size (f x) ≤ bound (size x)`; it says nothing about a TM computing `f`. This is the **enabling weakness** that lets S1/S2 typecheck as "polynomial-time reductions." Until it is upgraded to carry a real (layer-backed) computation, no `⪯p` arrow on the `GenNP → FlatTCC` segment is real. (Cf. Part 0.1 and `instEncodableDefault`'s `size = 0` loophole, which combines with this for the bridge-stage types.) |
+| **S4** | **The "real" Part 5/6 constructions are orphans** | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | `cookTableau` and `multiToSingle` are compiled (imported by the `Complexity.Simulators` aggregator) but **referenced by no reduction** — `grep` finds zero uses outside their own files. Proving their 8 sorrys advances `CookLevin` by **zero** until S1/S2 are rewired to call them *and* the abstract-source-TM → `FlatTM` bridge exists. The old register's items #4/#5 pointed here, which created a false impression that proving those sorrys would close the corresponding soundness gap. |
+
+**Implication for the headline.** Today `CookLevin` is conditional on
+{four `sorry`s on the verifier/hardness side} **and** {S1, S2, S3 on
+the reduction side}. The fallback in the [Fallback plan](#fallback-plan-if-the-layer-also-overruns) makes this
+honest by stating the `inTimePoly`/reduction obligations as explicit
+axioms; if the layer (Group C) does not converge, S1–S3 are the
+obligations that move into that axiom interface.
+
+### Group C — completion risks (compiling skeleton)
+
+| # | Gap | Location | Why this ranking |
+|---|-----|----------|------------------|
+| **C3** | **`loopTM` combinator + its run lemma** | `Complexity/TMPrimitives.lean`, `Lang/Compile.lean` | **Now the top *unvalidated* completion risk.** `compileForBnd` is a `compiledCmd_default` stub; `loopTM` is absent from `TMPrimitives`. The *combinator* is routine; the **run lemma** (iteration bookkeeping: threading tape state through the counter, post-loop cleanup) was, per Appendix A point 2, the **dominant cost** of the hand-rolled approach (~600 + ~400 LOC per loop site). Every verifier (`evalCnfCmd` iterates clauses × literals) needs it, and *nothing has touched it*. With C1/C2 having validated the per-primitive + composition story, `loopTM` is the next go/no-go experiment: build a single-tape unary-counter `loopTM` + its run lemma and measure. If it is ≲ the per-op cost, the layer converges; if it balloons, that is the signal to trigger the [Fallback plan](#fallback-plan-if-the-layer-also-overruns). |
+| **C1** | **Concretize one primitive `Op` end-to-end** (def **and** its slice of `compileOp_sound`) | `Lang/Compile.lean`, `Lang/*` | **Largely validated; finishing in progress.** The pivot premise ("primitives ~50 LOC each") is **partly falsified but in a benign way**: each primitive is hundreds of LOC, *but* the cost is front-loaded into a **reusable gadget library** (`insertCarryTM`, the scan family, `scanLeftUntilTM`) that amortises across ops, and *composition is cheap* (C2). `appendOne`/`appendZero` are built end-to-end as machines (`appendAtTM` + run lemma, packaged as `CompiledCmd`s). **Remaining for the slice:** (i) the leading-sentinel encoding + `decodeTape` round-trip re-proof, then (iv) the *physical* `compileOp_sound` for `appendOne` (`appendAtTM ⨾ scanLeftUntilTM`, with trajectory + step bound). Revised `compileOp` estimate **~2–3K LOC** total for all 8 ops + the delete gadget, most of it reused infra. |
+| **C2** | **Per-`Op` soundness contract + `compileSeq_sound` composition** | `Lang/Compile.lean` | **De-risked (structural unknown → bounded engineering).** Reading `composeFlatTM_run` showed the gap precisely: it resumes `M₂` on `M₁`'s halting config, so the per-`Op` contract must expose an **exact halt step, a no-early-halt trajectory, and a head-`0` exit config** — none of which the current `decodeTape`-equality `compileOp_sound` provides. The fix is built: the `scanLeftUntilTM` head-rewind gadget, and `compileSeq_compose_physical`, which **proves** that two fragments meeting this *physical contract* compose via `composeFlatTM_run` (head-`0` output makes `M₁`'s exit config literally `initFlatConfig M₂ […]`). Remaining: restate `compileOp_sound`/`compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` to the physical contract (a known, file-local refactor). |
+| **C4** | **`PolyTimeComputableLang` ↔ framework** | `Lang/PolyTime.lean`, `Complexity/NP.lean` | `polyTimeComputable` carries no Lang witness, so `red_inNP` (the `NP.lean` sorry) cannot compose at the layer level. Requires upgrading `PolyTimeComputableWitness` (or adding a parallel TM-backed witness and migrating). **This is also the structural change that begins to retire S3** — the same upgrade that lets `red_inNP` compose is what lets the chain's reductions stop relying on the size-only bound. |
+| **C5** | **DSL expressiveness — missing primitives** | `Lang/Syntax.lean` | Writing `evalCnfCmd` surfaced two needs: no guarded loop (`Cmd.while`) and no constant-comparison primitive (`Op.headEqVal`). Decide their type/cost shapes before C7, or that work is redone. **Note the tension with C1/C3:** every new `Op` is another per-primitive soundness proof, so add primitives only when they materially shorten the verifiers. |
+| **C6** | **`compileIfBit` tester logic** | `Lang/Compile.lean` | Structure is done (`branchComposeFlatTM` + `joinTwoHalts`, all seven invariants discharge). `branchTester_default` is a no-op 2-state stub; the remaining work is the real bit-test (read register `t`'s first symbol, dispatch to `exitPos`/`exitNeg`) plus `compileIfBit_sound`. Same primitive-proof flavour as C1, and its `compileIfBit_sound` needs the same physical-contract restatement as C2. |
+| **C7** | **`evalCnfCmd` / `cliqueRelCmd` bodies** | `Deciders/EvalCnfCmd.lean`, `Deciders/CliqueRelTM.lean` | Per-clause/per-literal/member-check (`evalCnfCmd`) and the whole `cliqueRelCmd`/`cliqueRelEncode` (still sorry-typed `def`s) are DSL-engineering. Mostly mechanical, but each may surface another C5 gap. **Gated on C3** (they are loops) **and C5**, and dead until C1–C4 make the layer→`DecidesBy` bridge real (otherwise the DSL programs decide nothing at the TM level). |
+| **C8** | **`hasDeciderClassical`** | `GenNP_is_hard.lean` | The `NPhard_GenNP` hardness sorry. Its signature is currently too strong (a decider for *any* predicate). Tractable once C4 lands and the verifier TM can be drawn from `InNPWitness`. Last sorry to close. |
+
+**Risk grading convention.** Group S items are **soundness**: they do
+not validate-and-drop by refinement; each is closed only by replacing
+a specific reduction/bridge with real content (or by moving it into
+the documented axiom interface of the [Fallback plan](#fallback-plan-if-the-layer-also-overruns)). Within Group
+C, **C1–C4 are structural** (they validate the pivot premise or
+change downstream type signatures), **C5–C6 are design**, and
+**C7–C8 are engineering** that is gated on the structural items above.
+
+**Reordered ranking (May 2026, post-C1/C2).** C1 and C2 — the two items
+that were the pivot's make-or-break structural unknowns — are now
+**validated**: a primitive compiles end-to-end with a reusable gadget
+library, and compositions glue cleanly under a now-explicit physical
+contract. The remaining open *structural* question is **C3 (`loopTM`)**,
+which is why it is promoted to the top. **The single most important next
+step** is therefore: (a) finish the `appendOne` physical slice (C1 steps
+(i)+(iv)) to retire the contract restatement on a concrete example, then
+(b) run the **`loopTM` go/no-go** (C3). If both hold, the layer's cost
+model is fully validated and the rest of Group C is bounded engineering;
+if `loopTM` balloons, trigger the fallback before building the verifiers.
+
+#### C1 progress + interim measurement (May 2026)
+
+Step 1 of C1 is **done**: the decoder round-trip
+(`decodeTape_encodeTape`) is proved and a real bug was fixed along the
+way (`flattenTape` spliced the head *index* into the tape contents).
+This measures the **infrastructure** cost of a primitive's soundness:
+~120 LOC of short structural inductions. Cheap. ✅
+
+Working out the rest of one primitive's TM surfaced a sharper model of
+the per-`Op` cost than "1,000–2,500 LOC each":
+
+- **Navigation amortises.** Reaching register `dst` is "scan right to
+  the next `0` delimiter, step past it" repeated `dst` times (`dst` is
+  a compile-time constant). This **reuses the existing
+  `scanRightUntilTM` + its run lemmas** (`scanRightUntilTM_run_found`)
+  composed via `composeFlatTM_run` — *not* fresh work per op. This is
+  a genuine win over hand-rolled Part 2, where nothing amortised.
+- **The data-movement loop does not.** Every `Op` writes a register
+  whose length changes (`clear` deletes, `appendOne/Zero` insert one
+  cell, `copy/tail/head/eqBit/nonEmpty` overwrite with a different
+  length), so each needs a bespoke single-tape **shift/carry loop**
+  (carry a symbol in the finite state, march down the tape) with its
+  own run-lemma induction over the tape suffix length. **No `Op` is
+  shift-free for general `dst`.** (Special case: appending to the
+  *last* register is shift-free — scan to end, overwrite the final
+  delimiter, re-emit it — but that does not generalise.)
+
+**Revised estimate.** Per `Op`: navigation ≈ free (reused) + a bespoke
+data loop ≈ 200–500 LOC (def + per-state step lemmas + the shift
+induction + assembly). Across the 8 `Op`s, `compileOp` alone is
+plausibly **~2–4K LOC** — i.e. it consumes most of Part 3.3's ~5K-LOC
+budget, and Part 3.3 was the cheapest of the layer parts. So the pivot
+premise ("primitives are ~50 LOC each") is **partly falsified**: the
+layer amortises *navigation and composition*, but the per-primitive
+data-movement proof is real and is where the cost now sits.
+
+**Decision point (for the next iteration / project owner).** Three
+options, in increasing radicalism:
+1. **Push through the 8 primitive proofs.** ~2–4K LOC, mechanical once
+   the first shift-loop run lemma is built (it is reusable across the
+   insert/delete/overwrite ops). Build one shared `shiftTape` /
+   `carryRight` combinator + run lemma, then each `Op` is assembly.
+2. **Change the encoding to one tape per register** (multi-tape
+   layer). Then every `Op` is O(1) head moves — primitives become
+   genuinely ~50 LOC — but composition needs the multi-tape simulator
+   (Part 5 / Risk S4-area) and `branchComposeFlatTM`'s `(sig+1)^k`
+   bridge-entry blow-up (Appendix A point 4). Trades per-op cost for
+   composition cost.
+3. **Trigger the [Fallback plan](#fallback-plan-if-the-layer-also-overruns).**
+   If neither the ~2–4K-LOC `compileOp` nor the encoding change is
+   worth it, state `inTimePoly` axiomatically and keep the
+   combinatorial chain.
+
+Recommended: build the **shared `shiftTape` run lemma first** (option
+1's reusable core); its size is the real go/no-go signal — if *that*
+one lemma balloons past ~500 LOC, prefer option 3.
+
+##### Go/no-go result: **GREEN** (May 2026)
+
+Built `Lang/ShiftTape.lean`: `insertCarryTM` (the single-tape
+"insert one symbol, carry the rest right" gadget, alphabet fixed at
+`sig = 3`) with full validity and the headline run lemma
+`insertCarryTM_run` — *sorry-free*, **~200 LOC** total (well under the
+500-LOC threshold). The reusable core is `insertCarryTM_run`:
+
+```
+runFlatTM (suf.length + 1) (insertCarryTM ins)
+    { state_idx := 0, tapes := [([], pre.length, pre ++ suf)] }
+  = some { state_idx := 4,
+           tapes := [([], pre.length + suf.length, pre ++ ins :: suf)] }
+```
+
+i.e. from the head at `pre.length`, insert `ins` and shift `suf` right
+in `|suf| + 1` steps. **Decision: proceed with option 1.**
+
+Key techniques that kept it small (reusable for every other `Op`):
+- **`simp` computes `find?` over the concrete transition table.** With
+  the alphabet fixed at 3 and the current symbol case-split to a
+  literal, each per-state step lemma
+  (`insertCarryTM_step_nonblank` / `_blank`) is ~15 LOC via
+  `interval_cases <;> simp_all [stepFlatTM, …]` — *no* hand-rolled
+  `find?`-peeling à la `scanRightUntilTM` (which was ~40 LOC/step).
+- **One `run_succ_of_step` unfolder** + a clean induction on the tape
+  suffix (carrying value lives in the state; `interval_cases` the
+  symbol where a literal is needed) gives the run lemma in ~50 LOC.
+
+What this unblocks / what remains for `compileOp`:
+- `appendOne` / `appendZero` (insert at the end of register `dst`):
+  navigate to `dst`'s delimiter (reuse `scanRightUntilTM`), then
+  `insertCarryTM_run`. Should now be assembly + a navigation lemma.
+- Overwrite ops (`copy/tail/head/eqBit/nonEmpty`) and `clear` were
+  expected to reuse a **companion delete/shift-left gadget** — but see
+  the [tape-model finding](#go-stop-result-length-decreasing-ops-hit-a-tape-model-wall-may-2026)
+  below: a naïve delete gadget is **not sound** under the current
+  encoding. Resolving that is now the gating decision for half of
+  `compileOp`.
+- Revised `compileOp` estimate drops from ~2–4K LOC toward **~1.5–2K
+  LOC** (two ~200-LOC shift gadgets + ~8 short per-`Op` assemblies +
+  the `scanRightUntilTM`-based navigation lemma).
+
+##### Navigation atom built (May 2026)
+
+`Lang/Navigate.lean` adds `scan_to_delim` — *sorry-free*, ~40 LOC of
+proof — the encoding-aware specialization of `scanRightUntilTM_run_found`:
+
+```
+runFlatTM (reg.length + 1) (scanRightUntilTM 3 0)
+    { state_idx := 0, tapes := [([], pre.length, pre ++ reg ++ 0 :: post)] }
+  = some { state_idx := 1,
+           tapes := [([], pre.length + reg.length, pre ++ reg ++ 0 :: post)] }
+```
+
+i.e. scanning right for the delimiter `0` from the start of a register's
+shifted content (`reg` is delimiter-free and in-range) lands exactly on
+that register's terminating delimiter. This is the reusable navigation
+atom: chained `dst` times (`dst` is a compile-time constant) it locates
+register `dst` for *any* `Op`. It is independent of the tape-model
+question below, so it is sound to keep regardless of how that resolves.
+The two remaining mechanisms for `appendOne`/`appendZero` end-to-end are
+(a) the **scan trajectory lemma** (intermediate scan configs stay in
+state 0 — needed to discharge `composeFlatTM_run`'s `h_traj1`), and
+(b) the **padding/empty case** (`dst ≥ s.length`: `State.set` pads with
+empty registers, so the gadget must append delimiters + content at the
+tape end). Both only *grow* the tape, so they are compatible with the
+model — unlike the delete path.
+
+##### Go/STOP result: length-decreasing ops hit a tape-model wall (May 2026)
+
+Designing the "companion delete/shift-left gadget" surfaced a **genuine
+architectural gap**, exactly the kind C1 exists to catch. Reading the
+model (`MachineSemantics.lean`): `writeCurrentTapeSymbol` only ever
+*replaces in place* or *appends* (`right.take head ++ … ` or
+`right ++ …`), and `moveTapeHead` never touches `right`. **The tape
+content `right` is monotonically non-shrinking** for every config
+reachable from `initFlatConfig`.
+
+Consequence for length-*decreasing* `Op`s (`clear`, `tail`, and
+`copy/head/eqBit/nonEmpty` when they shorten a register):
+
+- A delete-shift-left can only shift the tail left; it **cannot drop the
+  now-redundant final cell**. So after deleting `k` cells the tape is
+  `encodeTape(result) ++ [0,…,0]` (`k` trailing junk delimiters), never
+  `encodeTape(result)` exactly.
+- Under the current decode (`splitOnZero` then drop **one** trailing
+  empty), those trailing junk `0`s become **spurious empty registers**,
+  so `decodeTape cfg ≠ Op.eval o s`. And the junk is **indistinguishable
+  from a legitimate trailing empty register** (e.g. one produced by
+  `State.set`'s padding): both are encoded as a trailing `0`. **No
+  flat-level decode rule can both preserve legit trailing empties and
+  discard delete junk** — they are the same bytes.
+
+So the originally-planned delete gadget is *not* a drop-in mirror of
+`insertCarryTM` under exact-equality soundness. The **insert/append path
+is unaffected** (it produces `encodeTape(result)` exactly, no junk), so
+`appendOne`/`appendZero` remain fully viable; the wall is specific to
+length-decreasing ops.
+
+**Resolution fork.** Three sound options (a fourth, decode-by-head-
+position, is a non-starter: gadgets like `insertCarryTM` leave the head
+mid-tape, not at the logical end).
+
+- **(A) End-of-tape sentinel.** Bump the alphabet to `sig = 4` with a
+  dedicated terminator symbol `3` (`0`=delim, `1`/`2`=shifted bits,
+  `3`=end). `encodeTape s := … ++ [3]`; `decodeTape` reads up to the
+  first `3`. Delete shifts left and rewrites `3` one cell earlier;
+  everything past it is ignored. The terminator is a *distinct,
+  detectable* symbol, so gadgets navigate by "scan for `0`, or stop at
+  `3`" and **never read junk as content** — the terminator *firewalls*
+  the junk. *Exact, unconditional* equality is recovered, including the
+  padding case (`dst ≥ length`: scan to `3`, insert delimiters+content
+  before it). Cost: re-engineer `encodeTape`/`decodeTape` + re-prove the
+  round-trip, and generalize `insertCarryTM` to `sig = 4` (one more
+  carry state; the `interval_cases <;> simp` technique scales). All
+  front-loaded and mechanical.
+- **(B) Normalize + soundness up to trailing-empties.** Change
+  `dropTrailingEmpty` to drop **all** trailing empty registers, and
+  weaken every soundness statement to equality **up to trailing empty
+  registers** (`≈`). Keeps `sig = 3` and reuses `insertCarryTM` as-is,
+  and the delete gadget becomes the ~200-LOC mirror — but the cost is
+  **pervasive and downstream**: (i) an `≈` relation threaded through
+  `compileOp_sound`/`compileSeq_sound`/`Compile_sound` and every
+  verifier proof; (ii) a register-pre-allocation invariant (`dst,src <
+  length`) to stop navigation miscounting junk `0`s as delimiters —
+  cheap to thread since `Op.eval` only grows `length`, but still extra;
+  and, decisively, (iii) **TM-tape junk-invariance lemmas**: `compileSeq`
+  physically runs `c₂`'s TM on `c₁`'s *junk-bearing* output tape (no
+  re-encoding in between), so each gadget must be proved to behave
+  identically with trailing junk present. (iii) grows with the layer and
+  is exactly the kind of friction the layer was meant to eliminate.
+- **(C) Multi-tape (one tape per register).** Ops become `O(1)` head
+  moves — no shift loops, no navigation counting, deletion is local —
+  so primitives become genuinely ~50 LOC. But the layer must then
+  compile to a *multi-tape* `FlatTM` and a **multi-tape → single-tape
+  simulator** (currently the orphaned `Simulators/MultiToSingle.lean`,
+  Risk S4) is required to plug into the single-tape framework, plus
+  `branchComposeFlatTM`'s `(sig+1)^k` bridge blow-up (Appendix A pt 4).
+  Trades bounded per-op cost for a large, unbuilt, risky simulator.
+  Textbook-clean end state, wrong near-term bet.
+
+**Recommended: (A).** The layer's entire value proposition is making the
+~10K-LOC downstream (Parts 4–7 verifier/reduction proofs) cheap and
+*clean*. (A) keeps every downstream lemma **exact and unconditional**;
+(B) injects `≈`-congruences, register-count invariants, and per-gadget
+junk-invariance into exactly that bulk. For a proof at risk of non-
+completion, minimizing friction in the bulk dominates minimizing a
+bounded one-time refactor. (A)'s upfront cost is bounded and reuses
+established techniques; (B)'s cost is unbounded and spreads through the
+part of the proof that is supposed to amortise. (C) is the clean end
+state but its simulator is unbuilt and risky. The sentinel is also the
+standard device (an explicit blank symbol) and benefits every later
+gadget (`loopTM`, the `compileIfBit` tester) that needs a detectable
+end-of-tape. Confirm before executing, since (A) re-touches the proven
+`decodeTape_encodeTape` and `insertCarryTM`.
+
+**Execution order for (A)** (each step bounded, build green between):
+1. ✅ **Done.** `encodeTape`/`decodeTape` + terminator (`endMark = 3`)
+   + re-proved round-trip (now requires `Compile.BitState`).
+2. ✅ **Done.** Generalized `insertCarryTM` to `sig = 4` (extra carry
+   state for the terminator); re-proved validity/step/run, *sorry-free*.
+   Bumped `CompiledCmd.M_sig`/`Compile_sig`/defaults and `scan_to_delim`
+   to `sig = 4`. Full `Complexity.Lang` build green.
+3. ✅ **Done.** Generalized navigation to `scan_to_mark` (parametric
+   target); `scan_to_delim` (marker `0`) and `scan_to_end` (marker `3`,
+   for the padding branch) fall out as corollaries. All *sorry-free*.
+4. `appendOne`/`appendZero` end-to-end (unconditional, exact) — also
+   validates the `composeFlatTM_run` gluing. **In progress:**
+   - ✅ Scan-trajectory lemmas (`Navigate.scan_traj`,
+     `scan_no_early_halt`, `scan_to_mark_traj`): intermediate scan configs
+     stay in the non-halting state `0`, the exact `h_traj1` shape
+     `composeFlatTM_run` needs. Refactored out `scan_block_before` (shared
+     in-range/≠-target obligation). All *sorry-free*.
+   - ✅ `AppendGadget.scan_then_insert_run`: the scan-to-delimiter ⨾
+     insert composition for **register 0** (`composeFlatTM (scanRightUntilTM
+     4 0) (insertCarryTM ins) 1`), via `composeFlatTM_run` — the first
+     composition-spine exercise in the layer. *Sorry-free.*
+   - ✅ `ScanPast.scanPastDelimTM`: the navigation primitive for `dst > 0`
+     — a one-symbol variant of `scanRightUntilTM` that steps one cell
+     *past* the delimiter (valid + step + run + trajectory +
+     `no_early_halt`, all *sorry-free*). This lets the per-`Op` machines
+     **recurse on `dst`**: `appendAt (d+1) = composeFlatTM (scanPastDelimTM
+     4 0) (appendAt d) 1`, where the recursive machine is always `M₂`, so
+     only the small fixed `scanPastDelimTM`'s trajectory is ever needed
+     (no parametric-state `find?` reasoning required).
+   - ✅ `AppendGadget.appendAtTM` + `appendAt_run`: the general-`dst`
+     machine `appendAtTM ins dst` (recursion: `appendAtTM ins (d+1) =
+     composeFlatTM (scanPastDelimTM 4 0) (appendAtTM ins d) 1`) and its run
+     lemma by induction on `dst` (base = `scanInsert_run`, step =
+     `composeFlatTM_run` with `M₁ = scanPastDelimTM`). Proves the **full
+     `appendOne`/`appendZero` tape transformation for arbitrary register
+     `dst`**: `pre ++ regBlocks skipped ++ body ++ 0 :: post ↦ pre ++
+     regBlocks skipped ++ body ++ ins :: 0 :: post`. Axiom-clean
+     (`propext`/`Classical.choice`/`Quot.sound` only), *sorry-free*. Step
+     count, exit state and final head are existential (a step *bound* is a
+     separate concern — item (d)).
+   - ✅ **(c) `CompiledCmd` packaging.** `Compile.opAppendOne dst` /
+     `opAppendZero dst` now return real `CompiledCmd`s built on
+     `AppendGadget.appendAtTM` (`ins = 2` / `ins = 1`), replacing the
+     `compiledCmd_default` stubs. The designated exit is
+     `appendAtTM_exit dst` (`= 8 + 3·dst`: the inserter's halt state `5`
+     shifted past `scanRightUntilTM`'s `3` states, plus `3` per skipped
+     register's `scanPastDelimTM`). All seven invariants discharge via two
+     reusable generic facts — `composeFlatTM_shifted_is_halt` /
+     `composeFlatTM_shifted_halt_unique` (a `M₂`-halt-state `e₂` becomes the
+     composite's `M₁.states + e₂`, *uniquely* when it is `M₂`'s unique halt)
+     — applied by induction on `dst`, plus the existing
+     `appendAtTM_valid`/`_tapes`/`_sig`. Note `scanRightUntilTM` itself has
+     **two** halt states (`[F,T,T]`), so it is **not** a `CompiledCmd`; the
+     composite is single-halt only because `composeFlatTM` zeroes `M₁`'s
+     halt bits. *Sorry-free*; full build green.
+   - ⏳ **Remaining:** (b) the decode
+     round-trip
+     `decodeTape (final cfg) = Op.eval (appendOne dst) s` relating
+     `body = shiftReg rₔₛₜ` / `0 :: post` to `encodeTape (s.set …)` under
+     `BitState`; (d) the cost bound (steps ≤
+     `overhead (size s + 1)`); (e) **threading `BitState s` as a hypothesis
+     of `compileOp_sound`** (the round-trip needs it) — a signature change
+     that ripples to `compileSeq_sound` / `Compile_sound`. **NB (C2):** the
+     append gadget halts with the head *mid-tape*, not at `0`, so the
+     current `decodeTape cfg = eval` contract cannot chain through
+     `compileSeq` (which resumes `M₂` on `M₁`'s halting config). Closing
+     (b)/(d)/(e) finishes the single-op slice but a head-reset invariant
+     (or a physical tape+head postcondition) is needed before composition
+     — decide its shape before grinding the remaining ops.
+5. Delete gadget (`sig = 4` mirror of `insertCarryTM`) + the
+   length-decreasing ops.
+
+#### C2 analysis: the per-`Op` soundness *contract* is too weak to compose (May 2026)
+
+Owner chose to validate **C2** (the `compileSeq` resume gap) before grinding
+the remaining single-op items. Reading the only cross-machine glue lemma,
+`composeFlatTM_run` (`TMPrimitives.lean:1005`), pins down exactly what the
+per-`Op` contract must provide — and the current
+`compileOp_sound` shape provides **none of it**:
+
+`composeFlatTM_run` needs, for `M₁ = r1.M`:
+1. an **exact** halt step `t₁` with `runFlatTM t₁ M₁ cfg0 = some {exit, [(left₁,head₁,right₁)]}` (`h_run1`);
+2. a **trajectory** `h_traj1 : ∀ k < t₁, ∀ ck, runFlatTM k M₁ cfg0 = some ck → ck.state_idx ≠ exit ∧ ¬ halting` (M₁ does not halt early);
+3. the resumed config `{M₂.start, [(left₁,head₁,right₁)]}` must equal `initFlatConfig M₂ [encodeTape (eval1 s)]`, i.e. **`head₁ = 0`** and `right₁ = encodeTape (eval1 s)` (`left₁ = []` always holds).
+
+The current `compileOp_sound` states only `runFlatTM (overhead (size+1)) M init = some cfg ∧ halting ∧ decodeTape cfg = eval`. That gives a **fixed budget**, not the exact halt step (1); says nothing about early halting (2); and `decodeTape` discards the head and trailing tape, so it cannot supply `head₁ = 0` / exact `right₁` (3). **So the contract, not just the gadget, must change.**
+
+**Required contract redesign** (`compileOp_sound` and the IH shape of
+`compileSeq_sound` / `compileIfBit_sound` / `compileForBnd_sound`):
+```
+∃ t, t + 1 ≤ overhead (State.size s + 1) ∧
+     runFlatTM t M (initFlatConfig M [encodeTape s])
+       = some { state_idx := exit, tapes := [([], 0, encodeTape (Op.eval o s))] } ∧
+     (∀ k, k < t → ∀ ck, runFlatTM k M init = some ck →
+        ck.state_idx ≠ exit ∧ haltingStateReached M ck = false)
+```
+i.e. a **physical head-`0` exit config + exact halt step + trajectory**. The
+old `decodeTape cfg = eval` is then a corollary (via
+`decodeTape_encodeTape`), and the fixed-budget form follows by
+`runFlatTM_extend` (`MachineSemantics.lean:175`). With head-`0` output, the
+bridged config in `composeFlatTM_run` is *literally* `initFlatConfig M₂ […]`,
+so the M₂ IH plugs straight into `h_run2`. The trajectory is the new
+obligation each gadget must expose (the scan/insert run lemmas already track
+it internally — e.g. `scanPastDelim_no_early_halt` — it is just discarded by
+`appendAt_run`'s `∃ steps` statement).
+
+**Two new constructions this forces** (both fork-independent of the delete path):
+- **Head-rewind to `0`.** `appendAt` halts with the head at the *last* cell;
+  to reach `head = 0` it must scan left. `moveTapeHead Lmove` clamps at `0`
+  and states cannot read the head index, so rewind needs a **detectable
+  leading sentinel**. Owner chose to **reuse `endMark = 3`** as a two-sided
+  marker (`encodeTape s := 3 :: encodeRegs s ++ [3]`, `sig` stays `4`); the
+  rewind steps left once (off the trailing `3`, always onto the last `0`
+  delimiter since `encodeRegs` ends in `0`) then scans left to the leading
+  `3` at index `0`. This re-touches `encodeTape` / `decodeTape` (drop the
+  leading marker) and re-proves `decodeTape_encodeTape`, and absorbs the
+  leading `3` into the gadgets' generic `pre` prefix.
+- **Trajectory-exposing run lemmas.** `appendAt_run` (and the per-`Op`
+  contract proof) must additionally return the no-early-halt trajectory.
+
+**Recommended build order for C2** (each green + committed):
+(i) leading-sentinel encoding + `decodeTape` + round-trip re-proof;
+(ii) ✅ **Done.** the left-scan **rewind primitive** (`Lang/ScanLeft.lean`,
+mirror of `scanRightUntilTM` with `Lmove`): `scanLeftUntilTM` + `scanLeft_run`
+(rewind the head to the leading sentinel at index `0` in `head + 1` steps) +
+`scanLeft_no_early_halt` trajectory, all *sorry-free*, axiom-clean.
+(iii) ✅ **Done (the decisive composition check).** `compileSeq_compose_physical`
+(`Lang/Compile.lean`) proves that two fragments each meeting the **physical
+contract** (halt at `exit` with head `0` and tape `encodeTape (output)`,
+reached at explicit step `t` with a no-early-halt trajectory) compose cleanly
+via `composeFlatTM_run`: with head `0`, `M₁`'s exit config is *literally*
+`initFlatConfig M₂ […]`, so `M₂`'s contract is `composeFlatTM_run`'s `h_run2`.
+*Sorry-free*, axiom-clean. **This confirms the C2 contract redesign works** —
+the remaining work is engineering (achieve the contract per-`Op`), not a
+structural unknown. Added *additively*; the file-wide restatement of
+`compileOp_sound`/`compileSeq_sound`/… to this shape is deferred.
+(iv) prove the physical `compileOp_sound` for `appendOne`/`appendZero`
+(`appendAtTM ⨾ scanLeftUntilTM`, with trajectory + step bound) — needs (i) —
+and instantiate `compileSeq_compose_physical` for `appendOne ∘ appendOne`.
 
 ### Iteration log
+
+- **May 2026 — Risk reassessment (doc-only) after the C1/C2 work.**
+  Re-ranked Group C in light of the validated layer progress. **C1 and C2
+  — the pivot's two make-or-break structural unknowns — are now validated**:
+  a primitive (`appendOne`) compiles end-to-end via a reusable gadget
+  library, and `compileSeq_compose_physical` proves compiled fragments
+  compose under an explicit physical contract. Consequences for the plan:
+  (1) the pivot's *composition* premise holds; the *per-primitive* premise
+  is "moderate but front-loaded into reusable gadgets" (revised `compileOp`
+  ≈ 2–3K LOC). (2) **`loopTM` (C3) is promoted to the top open completion
+  risk** — it was the dominant cost of the hand-rolled approach, every
+  verifier needs it, and nothing has touched it; it is the next go/no-go.
+  (3) A bounded follow-through surfaced: the per-`Op` soundness lemmas must
+  be restated file-wide to the physical contract. (4) **The deepest risks
+  are unchanged and untouched by layer work** — S1 (the faked Cook tableau)
+  and S2 (dummy bridges) are the actual "faithful/meaningful" gates and sit
+  in Parts 5–6, downstream of the layer; closing every Group C `sorry`
+  still leaves `CookLevin` conditional. README + ROADMAP status/risk
+  sections updated to match. No code change; build green.
+
+- **May 2026 — C2 validation: rewind primitive + composition proven under
+  the physical contract.** Owner chose to validate **C2** (the `compileSeq`
+  resume gap) before finishing the single-op slice, and to keep `sig = 4` by
+  reusing `endMark = 3` as a two-sided sentinel. Established by reading
+  `composeFlatTM_run` that the per-`Op` contract must expose an exact halt
+  step, a no-early-halt trajectory, and a head-`0` exit config — recorded the
+  required physical-contract redesign (see the C2 analysis subsection). Then,
+  in two additive, *sorry-free*, axiom-clean checkpoints: **(ii)** built
+  `Lang/ScanLeft.lean` (`scanLeftUntilTM`, the `Lmove` mirror of
+  `scanRightUntilTM`) with `scanLeft_run` (rewind head to the leading
+  sentinel at index `0`) and `scanLeft_no_early_halt`; **(iii)** proved
+  `compileSeq_compose_physical` in `Lang/Compile.lean` — two fragments meeting
+  the physical contract compose via `composeFlatTM_run`, because head-`0`
+  output makes `M₁`'s exit config literally `initFlatConfig M₂ […]`. **C2 is
+  thus de-risked: the composition story holds; the remainder is engineering
+  (achieve the physical contract per-`Op`), not a structural unknown.** Both
+  checkpoints additive (existing `compileSeq_sound` sorry untouched); full
+  build green. Next: (i) leading-sentinel encoding + round-trip, then (iv)
+  the physical `compileOp_sound` for `appendOne` and the
+  `appendOne ∘ appendOne` instantiation.
+
+- **May 2026 — C1 option A, step 4 (cont.): `CompiledCmd` packaging of
+  `appendAtTM` (item (c)).** Concretized `Compile.opAppendOne` /
+  `Compile.opAppendZero` from `compiledCmd_default` stubs into real
+  `CompiledCmd`s wrapping `AppendGadget.appendAtTM` (`ins = 2` for
+  `appendOne`, `ins = 1` for `appendZero`). Added to `Lang/AppendGadget.lean`:
+  the recursive exit `appendAtTM_exit dst` (`= 8 + 3·dst`), the two generic
+  composite-halt facts `composeFlatTM_shifted_is_halt` /
+  `composeFlatTM_shifted_halt_unique` (a halt state of `M₂` becomes the
+  composite's, shifted by `M₁.states`, *uniquely* when `M₂`'s is unique;
+  reusable, factored out of the inlined `compileSeq` proof), the
+  `insertCarryTM_halt_unique` fact (halts only at state `5`), and the three
+  invariant lemmas `appendAtTM_exit_lt`/`_is_halt`/`_halt_unique` by
+  induction on `dst`. `Compile.lean` now imports `Lang.AppendGadget`; all
+  seven `CompiledCmd` fields discharge from these + the existing
+  `appendAtTM_valid`/`_tapes`/`_sig`. *Sorry-free*; full build green (3313
+  jobs); layer axiom-free. **Surfaced for the next step (C2):** the gadget
+  halts head-mid-tape, so the single-op `decodeTape cfg = eval` contract
+  will not chain through `compileSeq` without a head-reset invariant —
+  decide that contract shape before (b)/(d)/(e) and the remaining ops.
+
+- **May 2026 — C1 option A, step 4 (cont.): general-`dst` append run
+  lemma (`appendAt_run`).** Added to `Lang/AppendGadget.lean`: the
+  arbitrary-prefix `scanInsert_run` (generalizing `scan_then_insert_run`
+  off register 0), the navigation wrapper `scanPast_block`, the encoded
+  register-prefix helper `regBlocks` (+ `regBlocks_cons`/`regBlocks_lt`),
+  the recursive machine `appendAtTM ins dst` (`appendAtTM ins (d+1) =
+  composeFlatTM (scanPastDelimTM 4 0) (appendAtTM ins d) 1`) with its
+  `tapes`/`sig`/`start`/`valid` facts, and the headline `appendAt_run` —
+  the full `appendOne`/`appendZero` tape transformation for **arbitrary
+  register `dst`**, by induction on `dst` (base = `scanInsert_run`, step =
+  one `composeFlatTM_run` with `M₁ = scanPastDelimTM`, so only the small
+  fixed scanner's trajectory is needed). The recursion peels one register
+  per step into the prefix `pre`; `composeFlatTM`'s state/tape/head
+  threading is reconciled via `appendAtTM_start`/length rewrites. The step
+  count/exit state/final head are existential (a step *bound* is deferred
+  to the cost item). Axiom-clean, *sorry-free*; full build green; layer
+  axiom-free. Next: decode round-trip + `CompiledCmd` packaging + cost
+  bound + `BitState` threading to finish the `compileOp_sound` slice.
+
+- **May 2026 — C1 option A, step 4 (cont.): `scanPastDelimTM` navigation
+  primitive for general `dst`.** Added `Lang/ScanPast.lean` with
+  `scanPastDelimTM sig target` — a one-symbol variant of
+  `scanRightUntilTM` whose found-transition does `Rmove` (step one cell
+  *past* the marker) instead of `Nmove` (halt *on* it). Proved validity,
+  the step lemmas (`step_found`, `step_advance`), the run lemma
+  (`scanPastDelim_run`: scan a marker-free block and step past, halting in
+  state `1` one cell past the delimiter), the trajectory
+  (`scanPastDelim_traj`), and the `composeFlatTM_run`-shaped `h_traj1`
+  wrapper (`scanPastDelim_no_early_halt`), all *sorry-free*, mirroring the
+  proven `scanRightUntilTM` lemmas. This is the navigation step that lets
+  the per-`Op` machines recurse on `dst` with the recursive machine always
+  in the `M₂` slot — sidestepping any parametric-state `find?` proof. Full
+  build green; layer axiom-free. Next: the `appendAt` recursion + run
+  lemma (induction on `dst`).
+
+- **May 2026 — C1 option A, step 4 (partial): scan-trajectory lemmas +
+  first composition-spine exercise.** Added the scan-trajectory
+  infrastructure to `Lang/Navigate.lean`: `scan_traj` (every intermediate
+  right-scan config is in the non-halting state `0` with the head advanced
+  by exactly the step count, proved by induction via the public
+  `runFlatTM_extend_by_step` + `scanRightUntilTM_step_advance`),
+  `scan_no_early_halt` (the same fact packaged in `composeFlatTM_run`'s
+  `h_traj1` shape: never reaches the accept state `1`, never halts), and
+  `scan_to_mark_traj` (the `h_traj1` for the standard `pre ++ body ++
+  target :: post` layout). Refactored the shared in-range/≠-target
+  obligation out of `scan_to_mark` into `scan_block_before`. Then added
+  `Lang/AppendGadget.lean` with `scan_then_insert_run`: the
+  scan-to-delimiter ⨾ insert composition for register 0
+  (`composeFlatTM (scanRightUntilTM 4 0) (insertCarryTM ins) 1`), the
+  **first `composeFlatTM_run` gluing in the layer**, inserting `ins`
+  (`2 = appendOne`, `1 = appendZero`) before register 0's delimiter:
+  `body ++ 0 :: post ↦ body ++ ins :: 0 :: post`. All *sorry-free*; full
+  build green; layer axiom-free. Remaining for the `compileOp_sound` slice:
+  delimiter-counting navigator for `dst > 0`, the decode round-trip,
+  `CompiledCmd` packaging, the cost bound, and threading `BitState` as a
+  `compileOp_sound` hypothesis (see the execution order, step 4).
+
+- **May 2026 — C1 option A, steps 1–2: end-of-tape terminator +
+  `sig = 4` gadget.** Owner chose the **sentinel** resolution. Step 1:
+  reworked `encodeTape`/`decodeTape` to use a reserved terminator
+  (`Compile.endMark = 3`) — encode appends it, decode reads up to the
+  first one — and re-proved `decodeTape_encodeTape` (now requires
+  `Compile.BitState`, since shifted bits `{1,2}` must stay disjoint
+  from `3`). Step 2: generalized `insertCarryTM` from `sig = 3` to
+  `sig = 4` (one more carry state, so it can shift the terminator),
+  re-proved validity/step/run *sorry-free* (the heavy 20-case step
+  lemma needs a raised `maxHeartbeats`); bumped `CompiledCmd.M_sig`,
+  `Compile_sig`, the default machines, and `scan_to_delim` to `sig = 4`.
+  Step 3: generalized navigation to `scan_to_mark` (parametric target),
+  with `scan_to_delim` (marker `0`) and `scan_to_end` (marker `3`, the
+  padding-branch navigator) as corollaries, all *sorry-free*. Full
+  `Complexity.Lang` build green; layer still axiom-free. Next: step 4
+  (`appendOne` end-to-end + the scan-trajectory lemma for the
+  `composeFlatTM_run` gluing).
+
+- **May 2026 — C1: navigation atom built + length-decreasing ops
+  blocked (architectural finding).** Added `Lang/Navigate.lean` with
+  `scan_to_delim` (*sorry-free*, ~40 LOC): scanning for the `0`
+  delimiter from a register's start lands on that register's
+  terminating delimiter — the reusable navigation atom for locating
+  register `dst`, built on `scanRightUntilTM_run_found`. While
+  designing the planned delete/shift-left companion, found a **genuine
+  tape-model wall**: `writeCurrentTapeSymbol`/`moveTapeHead` never
+  shrink the tape content, so length-*decreasing* `Op`s
+  (`clear/tail/...`) cannot produce `encodeTape(result)` exactly — the
+  trailing junk is indistinguishable from legitimate trailing empty
+  registers under the single-delimiter encoding, so a naïve delete is
+  **unsound**. The insert/append path is unaffected. Recorded the
+  resolution fork (sentinel `sig=4` vs. normalize-up-to-trailing-empties
+  vs. multi-tape) in
+  [C1 progress](#go-stop-result-length-decreasing-ops-hit-a-tape-model-wall-may-2026).
+  After fuller analysis, **recommend option (A) — the end-of-tape
+  sentinel** — because it keeps all downstream soundness exact and
+  unconditional (the sentinel *firewalls* delete junk so no gadget ever
+  reads it as content), whereas (B) spreads `≈`/invariant/junk-invariance
+  friction through the whole verifier layer. Pending owner confirmation.
+  Full build green; Lang layer still axiom-free. Next (append path,
+  fork-independent): scan-trajectory lemma + `composeFlatTM_run` gluing.
+
+- **May 2026 — C1 go/no-go: shared shift gadget built (GREEN).** Added
+  `Lang/ShiftTape.lean`: `insertCarryTM` + validity + step lemmas +
+  the run lemma `insertCarryTM_run`, **sorry-free, ~200 LOC**, well
+  under the 500-LOC threshold. This is the reusable single-tape
+  "insert one symbol, shift right" core that `appendOne`/`appendZero`
+  use directly and the overwrite ops use after a delete. **Decision:
+  proceed with option 1** (build out `compileOp`). Technique that kept
+  it small: `simp` computes `find?` over the fixed 3-symbol transition
+  table, so each per-state step lemma is ~15 LOC (vs ~40 for hand-
+  rolled `find?`-peeling). Revised `compileOp` estimate: **~1.5–2K
+  LOC** (two ~200-LOC shift gadgets + per-`Op` assembly +
+  `scanRightUntilTM`-based navigation). Wired into the build via
+  `Complexity.Lang`; full build green (3351 jobs), Lang layer still
+  axiom-free. Next: the delete/shift-left companion, then `appendOne`
+  end-to-end (def + `compileOp_sound` slice). See
+  [C1 progress](#c1-progress--interim-measurement-may-2026).
+
+- **May 2026 — C1 step 1: decoder round-trip proved, `flattenTape`
+  bug fixed.** Started the top risk (C1). Proved
+  `Compile.decodeTape_encodeTape` (was a `sorry`), via four short
+  structural-induction helpers (`splitOnZero_append_zero`,
+  `splitOnZero_encodeTape`, `dropTrailingEmpty_append_nil`,
+  `unshiftReg_shiftReg`). **Bug surfaced and fixed**: `flattenTape`
+  reconstructed `left.reverse ++ [head] ++ right`, splicing the head
+  *index* into the tape contents as if it were a symbol; in this
+  model `left` is never written and `head` is a cursor index, so the
+  contents are exactly `right`. The old definition made the round-trip
+  unprovable. `Compile.lean` sorrys 7 → 6; build green (3350 jobs);
+  Lang layer still axiom-free. **Measurement:** the decode
+  *infrastructure* for a primitive's soundness is cheap (~120 LOC); the
+  remaining per-`Op` cost is the TM build + run lemma. See
+  [C1 progress](#c1-progress--interim-measurement-may-2026) for the
+  revised per-`Op` cost model (navigation amortises via
+  `scanRightUntilTM`; the data-movement shift loop does not) and the
+  resulting decision point.
+
+- **May 2026 — Risk register audit (no code change).** Reviewed the
+  whole proof path against the documented risks; `lake build` green,
+  0 axioms. Findings: (1) the sorry count was wrong (`~26` headline,
+  table summed to 32, actual ~34; `CliqueRelTM` was 3, is 5).
+  (2) The two highest-impact gaps were **untracked** because they are
+  **sorry-free**: the `if-on-the-answer` reductions
+  (`FlatSingleTMGenNP_to_FlatTCC`,
+  `TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP`) and the dummy
+  `bridgeMachine`s reached via `GenNP_to_TMGenNP`. Now Risks **S1**/
+  **S2**, enabled by **S3** (`polyTimeComputable` size-only).
+  (3) Old risks **#4/#5 were mis-located** at `Simulators/CookTableau`
+  and `Simulators/MultiToSingle`, which are **orphans** (compiled,
+  referenced by no reduction) — proving their sorrys advances
+  `CookLevin` by zero until S1/S2 are rewired. Now Risk **S4**.
+  (4) Old risk **#1a was stale**: it listed `compileIfBit` as stubbed,
+  but the 1d-resolution iteration already concretized it. (5) The
+  register over-weighted *compiler structure* (cheap, discharges
+  `CompiledCmd` invariants) and under-weighted *per-primitive
+  operational soundness* (`compileOp_sound`), which is the exact
+  1,000–2,500-LOC/primitive cost that caused the pivot — the layer
+  does **not** amortise it. Register rewritten into Group S
+  (soundness) + Group C (completion); new top item **C1** = prove one
+  primitive `Op` sound end-to-end, to test the pivot premise before
+  building more skeleton. Also surfaced **C2** (`compileSeq_sound`
+  head-reset/resume gap, distinct from 1d).
 
 - **May 2026 — Risk #1 decomposed.** `Lang/Compile.lean` was
   refactored from the single `Compile := fun _ => validFlatTM_default`
@@ -767,7 +1417,7 @@ shrinks.
 | 1     | Cleanup & `sorry` discharge                          |  ~500 LOC    |  ~500 LOC         | ✅ done |
 | 2     | TM-backed `inTimePoly` *framework*                   | ~1,500 LOC   | (subset of 1,500) | ✅ done |
 | 2c    | Hand-rolled deciders *(retired)*                     | n/a          | n/a               | ⏸ retired in favour of Part 3 |
-| 3     | Higher-level computable layer (skeleton landed)      | ~7,000 LOC   | n/a               | 🟡 skeleton; refining |
+| 3     | Higher-level computable layer (skeleton landed)      | ~7,000 LOC   | n/a               | 🟡 gadget library + 1st primitive + composition validated; `loopTM` + verifiers pending |
 | 4     | `polyTimeComputable` via the layer                   | ~1,500 LOC   | ~4,000 LOC        | 🟡 skeleton; refining |
 | 5     | Multi-tape → 1-tape simulator via the layer          | ~1,000 LOC   | ~3,000 LOC        | 🟡 skeleton; refining |
 | 6     | Cook tableau (TM → FlatTCC) via the layer            | ~2,700 LOC   | ~3,000 LOC        | 🟡 skeleton; refining |

@@ -1,4 +1,5 @@
 import Complexity.Lang.Semantics
+import Complexity.Lang.AppendGadget
 import Complexity.Complexity.TMPrimitives
 
 set_option autoImplicit false
@@ -31,13 +32,13 @@ now recorded in the `ROADMAP.md` risk register:
    and `branchComposeFlatTM` require an explicit "designated exit
    state of `M₁`". A bare `FlatTM` is not enough for compositional
    compilation; the natural shape is `(M, exit, exit_lt)`.
-2. **Alphabet is fixed at `sig = 3`**: symbol `0` is the
+2. **Alphabet is fixed at `sig = 4`**: symbol `0` is the
    register-delimiter, symbols `1`, `2` are the shifted register
-   values for `0`, `1` respectively. This commits the layer's
-   inputs to bit-strings (the standard NP-completeness convention).
-   `Op.eval` on bit-shaped states stays bit-shaped — there is no
-   primitive that introduces other natural-number values. A future
-   refinement may want a `BitState` invariant to make this explicit.
+   values for `0`, `1`, and symbol `3` is the end-of-tape terminator
+   (`Compile.endMark`; see the encoding section / Risk C1 option A).
+   This commits the layer's inputs to bit-strings (the standard
+   NP-completeness convention), made explicit by `Compile.BitState`;
+   `Op.eval` on bit-shaped states stays bit-shaped.
 3. **`Compile.overhead`'s shape changed** from `Nat → Nat` applied
    to `State.size s` to `Nat → Nat` applied to `State.size s + cost`.
    The motivation: each TM-simulation of a `Cmd`-step costs `O(L)`
@@ -110,16 +111,16 @@ structure CompiledCmd where
   M_valid : validFlatTM M
   /-- The machine is single-tape (the layer's standing assumption). -/
   M_tapes : M.tapes = 1
-  /-- The machine's alphabet is exactly 3: `0` = delimiter,
-  `1` = shifted `0`, `2` = shifted `1`. -/
-  M_sig : M.sig = 3
+  /-- The machine's alphabet is exactly 4: `0` = delimiter,
+  `1` = shifted `0`, `2` = shifted `1`, `3` = end-of-tape terminator. -/
+  M_sig : M.sig = 4
 
 /-- The trivial 1-state halting machine, packaged as a
 `CompiledCmd` with `exit = 0`. Used as the default body of all
 the stub helpers. -/
 def compiledCmd_default : CompiledCmd where
   M :=
-    { sig := 3
+    { sig := 4
       tapes := 1
       states := 1
       trans := []
@@ -194,11 +195,33 @@ decomposed per-`Op` when those helpers are concretized). -/
 /-- Compile `Op.clear dst`. **Stub.** -/
 def Compile.opClear (_dst : Var) : CompiledCmd := compiledCmd_default
 
-/-- Compile `Op.appendOne dst`. **Stub.** -/
-def Compile.opAppendOne (_dst : Var) : CompiledCmd := compiledCmd_default
+/-- Compile `Op.appendOne dst`: navigate past the `dst` preceding
+register-delimiters, then insert symbol `2` (the shifted bit `1`) just
+before register `dst`'s delimiter. Realized by `AppendGadget.appendAtTM`
+with `ins = 2`; all `CompiledCmd` invariants come from that gadget's
+exit/halt lemmas. -/
+def Compile.opAppendOne (dst : Var) : CompiledCmd where
+  M := AppendGadget.appendAtTM 2 dst
+  exit := AppendGadget.appendAtTM_exit dst
+  exit_lt := AppendGadget.appendAtTM_exit_lt 2 dst
+  exit_is_halt := AppendGadget.appendAtTM_exit_is_halt 2 dst
+  halt_unique := AppendGadget.appendAtTM_halt_unique 2 dst
+  M_valid := AppendGadget.appendAtTM_valid 2 (by decide) dst
+  M_tapes := AppendGadget.appendAtTM_tapes 2 dst
+  M_sig := AppendGadget.appendAtTM_sig 2 dst
 
-/-- Compile `Op.appendZero dst`. **Stub.** -/
-def Compile.opAppendZero (_dst : Var) : CompiledCmd := compiledCmd_default
+/-- Compile `Op.appendZero dst`: as `opAppendOne`, but inserts symbol `1`
+(the shifted bit `0`). Realized by `AppendGadget.appendAtTM` with
+`ins = 1`. -/
+def Compile.opAppendZero (dst : Var) : CompiledCmd where
+  M := AppendGadget.appendAtTM 1 dst
+  exit := AppendGadget.appendAtTM_exit dst
+  exit_lt := AppendGadget.appendAtTM_exit_lt 1 dst
+  exit_is_halt := AppendGadget.appendAtTM_exit_is_halt 1 dst
+  halt_unique := AppendGadget.appendAtTM_halt_unique 1 dst
+  M_valid := AppendGadget.appendAtTM_valid 1 (by decide) dst
+  M_tapes := AppendGadget.appendAtTM_tapes 1 dst
+  M_sig := AppendGadget.appendAtTM_sig 1 dst
 
 /-- Compile `Op.copy dst src`. **Stub.** -/
 def Compile.opCopy (_dst _src : Var) : CompiledCmd := compiledCmd_default
@@ -314,7 +337,7 @@ def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
     show (composeFlatTM r1.M r2.M r1.exit).tapes = 1
     rw [composeFlatTM_tapes]; exact r1.M_tapes
   M_sig := by
-    show (composeFlatTM r1.M r2.M r1.exit).sig = 3
+    show (composeFlatTM r1.M r2.M r1.exit).sig = 4
     rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
     rfl
 
@@ -469,7 +492,7 @@ structure BranchTester where
   exit_distinct : exitPos ≠ exitNeg
   M_valid : validFlatTM M
   M_tapes : M.tapes = 1
-  M_sig : M.sig = 3
+  M_sig : M.sig = 4
 
 /-- A placeholder 2-state tester. `exitPos = 0`, `exitNeg = 1`,
 no transitions, neither state halts (the bridge in
@@ -477,7 +500,7 @@ no transitions, neither state halts (the bridge in
 real bit-test once the per-register navigation primitives land. -/
 def branchTester_default : BranchTester where
   M :=
-    { sig := 3
+    { sig := 4
       tapes := 1
       states := 2
       trans := []
@@ -630,7 +653,7 @@ def compileIfBit (t : Var) (rT rE : CompiledCmd) : CompiledCmd :=
       exact h_branched_tapes
     M_sig := by
       rw [Compile.joinTwoHalts_sig]
-      show branched.sig = 3
+      show branched.sig = 4
       rw [show branched =
             branchComposeFlatTM tester.M rT.M rE.M
               tester.exitPos tester.exitNeg from rfl,
@@ -677,32 +700,37 @@ theorem Compile_valid (c : Cmd) : validFlatTM (Compile c) :=
 theorem Compile_tapes (c : Cmd) : (Compile c).tapes = 1 :=
   (compileCmd c).M_tapes
 
-theorem Compile_sig (c : Cmd) : (Compile c).sig = 3 :=
+theorem Compile_sig (c : Cmd) : (Compile c).sig = 4 :=
   (compileCmd c).M_sig
 
 /-! ### Encoding / decoding tapes
 
-Convention:
+Convention (alphabet `sig = 4`; Risk C1, option A):
 
 - **Symbol 0** is the reserved register-delimiter.
 - Register values are restricted to `{0, 1}` (bit strings) and are
   **shifted by +1** on encode: `0 ↦ 1`, `1 ↦ 2`. Decoding shifts
-  back by `-1`. This keeps register values disjoint from the
-  delimiter without restricting the source language (which is bit-
-  shaped by convention; cf. `BitState` future work).
-- The encoded tape ends with a final `0` (one per register).
-  Decoding drops the trailing empty register.
+  back by `-1`. This keeps register values (`{1, 2}`) disjoint from
+  both the delimiter `0` and the terminator below.
+- **Symbol 3 = `endMark`** is the reserved end-of-tape terminator,
+  appended once after all registers. Decoding reads only up to the
+  first `endMark`. This is the device that makes length-*decreasing*
+  `Op`s sound: such an `Op` cannot shrink the tape (the model only
+  appends / overwrites), so it shifts content left and rewrites
+  `endMark` one cell earlier — anything past the terminator is junk
+  and is ignored by the decoder *and* by every navigation gadget,
+  which stop at the terminator rather than reading past it.
 
-So `encodeTape [[1, 0], [0, 1]] = [2, 1, 0, 1, 2, 0]`, and decoding
-splits on `0`, shifts each chunk by -1, drops the trailing empty.
+So `encodeTape [[1, 0], [0, 1]] = [2, 1, 0, 1, 2, 0, 3]`, and decoding
+takes the prefix before `3`, splits on `0`, shifts each chunk by `-1`,
+and drops the trailing empty.
 
-The encoded length satisfies
-`(encodeTape s).length = State.size s + s.length` (one delimiter
-per register). The alphabet used by `encodeTape` is `{0, 1, 2}`,
-matching `Compile_sig`.
-
-`State.size` is the sum of register lengths. The alphabet bound is
-ensured externally: callers must provide bit-shaped states. -/
+The shift+terminator scheme requires inputs to be **bit-shaped**
+(`Compile.BitState`): with a register value of `2`, `shiftReg` would
+emit `3` and collide with the terminator. `BitState` is the layer's
+standing convention (NP-completeness inputs are bit strings) and is
+preserved by `Op.eval`; it is also exactly what tape-validity needs
+(every symbol `< sig = 4`). -/
 
 /-- Encode the per-register shift `+1`. -/
 private def Compile.shiftReg (reg : List Nat) : List Nat := reg.map (· + 1)
@@ -712,23 +740,44 @@ on tapes that contain no raw `0` (i.e., tapes produced by `shiftReg`). -/
 private def Compile.unshiftReg (reg : List Nat) : List Nat :=
   reg.map (fun n => n - 1)
 
-/-- Encode a `State` as a flat tape with `0` as the register
-delimiter and per-register shift by `+1`. -/
-def Compile.encodeTape (s : State) : List Nat :=
+/-- The reserved end-of-tape terminator symbol. -/
+def Compile.endMark : Nat := 3
+
+/-- A state is *bit-shaped* if every register holds only `0`/`1`.
+The layer's standing convention; preserved by `Op.eval`. Keeps the
+shifted values `{1, 2}` disjoint from the terminator `endMark = 3`. -/
+def Compile.BitState (s : State) : Prop := ∀ reg ∈ s, ∀ x ∈ reg, x ≤ 1
+
+/-- Encode the registers contiguously: each shifted by `+1` and
+followed by the `0` delimiter. Does **not** include the terminator. -/
+def Compile.encodeRegs (s : State) : List Nat :=
   s.foldr (fun reg acc => Compile.shiftReg reg ++ [0] ++ acc) []
 
-theorem Compile.encodeTape_nil :
-    Compile.encodeTape [] = [] := rfl
+theorem Compile.encodeRegs_nil :
+    Compile.encodeRegs [] = [] := rfl
 
-theorem Compile.encodeTape_cons (reg : List Nat) (s : State) :
-    Compile.encodeTape (reg :: s) =
-      Compile.shiftReg reg ++ [0] ++ Compile.encodeTape s := rfl
+theorem Compile.encodeRegs_cons (reg : List Nat) (s : State) :
+    Compile.encodeRegs (reg :: s) =
+      Compile.shiftReg reg ++ [0] ++ Compile.encodeRegs s := rfl
+
+/-- Encode a `State` as a flat tape: the registers (`encodeRegs`)
+followed by the end-of-tape terminator `endMark`. -/
+def Compile.encodeTape (s : State) : List Nat :=
+  Compile.encodeRegs s ++ [Compile.endMark]
 
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
-`left` is stored in reverse order (most-recently-passed cells first),
-so we reverse it before concatenating. -/
+
+In this machine model (`MachineSemantics.lean`) the head is an *index*
+into `right`, and the `left` component is never written by
+`writeCurrentTapeSymbol` / `moveTapeHead` — it stays `[]` for every
+configuration reachable from `initFlatConfig`. The full tape contents
+are therefore exactly `right` (`tape.2.2`); `left` and the head index
+carry no content. (The earlier definition concatenated
+`left.reverse ++ [head] ++ right`, which spliced the head *index* into
+the contents as if it were a symbol — that made the round-trip lemma
+below unprovable.) -/
 private def Compile.flattenTape (tape : List Nat × Nat × List Nat) : List Nat :=
-  tape.1.reverse ++ [tape.2.1] ++ tape.2.2
+  tape.2.2
 
 /-- Split a `List Nat` on `0`. Used to recover registers from an
 encoded tape. -/
@@ -757,17 +806,144 @@ def Compile.decodeTape (cfg : FlatTMConfig) : State :=
   | []           => []
   | tape :: _    =>
       let flat := Compile.flattenTape tape
-      let groups := Compile.splitOnZero flat
+      let content := flat.takeWhile (· != Compile.endMark)
+      let groups := Compile.splitOnZero content
       let trimmed := Compile.dropTrailingEmpty groups
       trimmed.map Compile.unshiftReg
 
-/-- Round-trip lemma — needed by `Compile_sound`. -/
-theorem Compile.decodeTape_encodeTape (s : State) :
+/-! ### Round-trip lemmas for `decodeTape ∘ encodeTape`
+
+These discharge the `decodeTape_encodeTape` obligation by a short
+chain of structural inductions over the encoder's pieces. -/
+
+/-- `splitOnZero` never returns the empty list (every branch produces
+at least one group). -/
+private theorem Compile.splitOnZero_ne_nil :
+    ∀ l : List Nat, Compile.splitOnZero l ≠ []
+  | []          => by simp [Compile.splitOnZero]
+  | 0 :: _      => by simp [Compile.splitOnZero]
+  | (_ + 1) :: xs => by
+      simp only [Compile.splitOnZero]
+      cases Compile.splitOnZero xs <;> simp
+
+/-- Shifted register contents contain no `0` (the delimiter), since
+`shiftReg` maps every value to its successor. -/
+private theorem Compile.shiftReg_no_zero (reg : List Nat) :
+    ∀ x ∈ Compile.shiftReg reg, x ≠ 0 := by
+  intro x hx
+  simp only [Compile.shiftReg, List.mem_map] at hx
+  obtain ⟨y, _, rfl⟩ := hx
+  omega
+
+/-- Splitting `a ++ 0 :: b` on the delimiter, when `a` has no
+delimiter, peels off `a` as the first group. -/
+private theorem Compile.splitOnZero_append_zero :
+    ∀ (a b : List Nat), (∀ x ∈ a, x ≠ 0) →
+      Compile.splitOnZero (a ++ 0 :: b) = a :: Compile.splitOnZero b
+  | [],          b, _ => by simp [Compile.splitOnZero]
+  | (x :: a'), b, h => by
+      have hx : x ≠ 0 := h x (by simp)
+      have ha' : ∀ y ∈ a', y ≠ 0 := fun y hy => h y (by simp [hy])
+      obtain ⟨n, rfl⟩ := Nat.exists_eq_succ_of_ne_zero hx
+      simp only [List.cons_append, Compile.splitOnZero,
+        Compile.splitOnZero_append_zero a' b ha']
+
+/-- The decoder's split step recovers exactly the shifted registers
+plus the trailing empty group from the encoder's final delimiter. -/
+private theorem Compile.splitOnZero_encodeRegs :
+    ∀ s : State,
+      Compile.splitOnZero (Compile.encodeRegs s)
+        = s.map Compile.shiftReg ++ [[]]
+  | []          => by simp [Compile.encodeRegs, Compile.splitOnZero]
+  | reg :: rest => by
+      rw [Compile.encodeRegs_cons]
+      have happ : Compile.shiftReg reg ++ [0] ++ Compile.encodeRegs rest
+          = Compile.shiftReg reg ++ 0 :: Compile.encodeRegs rest := by simp
+      rw [happ, Compile.splitOnZero_append_zero _ _ (Compile.shiftReg_no_zero reg),
+          Compile.splitOnZero_encodeRegs rest, List.map_cons, List.cons_append]
+
+/-- `encodeRegs` of a bit-shaped state never emits the terminator
+`endMark`: delimiters are `0` and shifted bits are `{1, 2}`. -/
+private theorem Compile.encodeRegs_no_endMark :
+    ∀ (s : State), Compile.BitState s →
+      ∀ x ∈ Compile.encodeRegs s, x ≠ Compile.endMark
+  | [],          _, x, hx => by simp [Compile.encodeRegs] at hx
+  | reg :: rest, h, x, hx => by
+      rw [Compile.encodeRegs_cons] at hx
+      simp only [List.append_assoc, List.mem_append, List.mem_cons,
+        List.mem_singleton, List.not_mem_nil, or_false] at hx
+      rcases hx with hx | hx | hx
+      · simp only [Compile.shiftReg, List.mem_map] at hx
+        obtain ⟨y, hy, rfl⟩ := hx
+        have : y ≤ 1 := h reg (by simp) y hy
+        simp only [Compile.endMark]; omega
+      · simp only [Compile.endMark]; omega
+      · exact Compile.encodeRegs_no_endMark rest
+          (fun r hr => h r (by simp [hr])) x hx
+
+/-- Taking the prefix before the terminator recovers the registers,
+provided the registers themselves contain no terminator. -/
+private theorem Compile.takeWhile_no_endMark :
+    ∀ (l : List Nat), (∀ x ∈ l, x ≠ Compile.endMark) →
+      (l ++ [Compile.endMark]).takeWhile (· != Compile.endMark) = l
+  | [],     _ => by decide
+  | a :: t, h => by
+      have ha : a ≠ Compile.endMark := h a (by simp)
+      have ht : ∀ x ∈ t, x ≠ Compile.endMark := fun x hx => h x (by simp [hx])
+      rw [List.cons_append, List.takeWhile_cons,
+          if_pos (by simp [bne_iff_ne, ha]), Compile.takeWhile_no_endMark t ht]
+
+/-- `dropTrailingEmpty` peels exactly one trailing empty group. -/
+private theorem Compile.dropTrailingEmpty_cons_ne_nil
+    (x : List Nat) (ys : List (List Nat)) (h : ys ≠ []) :
+    Compile.dropTrailingEmpty (x :: ys) = x :: Compile.dropTrailingEmpty ys := by
+  cases ys with
+  | nil => exact absurd rfl h
+  | cons _ _ => cases x <;> rfl
+
+/-- The encoder's trailing empty group is exactly what
+`dropTrailingEmpty` removes, leaving the list of shifted registers. -/
+private theorem Compile.dropTrailingEmpty_append_nil :
+    ∀ l : List (List Nat), Compile.dropTrailingEmpty (l ++ [[]]) = l
+  | []        => rfl
+  | x :: rest => by
+      have h : rest ++ [[]] ≠ [] := by
+        intro hc; simpa using congrArg List.length hc
+      rw [List.cons_append, Compile.dropTrailingEmpty_cons_ne_nil x _ h,
+          Compile.dropTrailingEmpty_append_nil rest]
+
+/-- `unshiftReg` inverts `shiftReg`. -/
+private theorem Compile.unshiftReg_shiftReg (reg : List Nat) :
+    Compile.unshiftReg (Compile.shiftReg reg) = reg := by
+  simp only [Compile.unshiftReg, Compile.shiftReg, List.map_map]
+  have h : ((fun n => n - 1) ∘ fun x => x + 1) = id := by funext n; simp
+  rw [h, List.map_id]
+
+/-- Decoding the shifted registers recovers the original state. -/
+private theorem Compile.map_unshift_shift (s : State) :
+    (s.map Compile.shiftReg).map Compile.unshiftReg = s := by
+  rw [List.map_map,
+      show Compile.unshiftReg ∘ Compile.shiftReg = id from
+        funext Compile.unshiftReg_shiftReg,
+      List.map_id]
+
+/-- Round-trip lemma — needed by `Compile_sound`. The decoder, applied
+to the encoder's initial configuration, recovers the state exactly,
+for any bit-shaped state. -/
+theorem Compile.decodeTape_encodeTape (s : State) (h : Compile.BitState s) :
     Compile.decodeTape
         { tapes := [([], 0, Compile.encodeTape s)]
           state_idx := 0 } = s := by
-  sorry  -- TODO(Part3.4): induction on s; uses `splitOnZero` and
-         -- `dropTrailingEmpty` equational lemmas.
+  show (Compile.dropTrailingEmpty
+        (Compile.splitOnZero
+          ((Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)).takeWhile
+            (· != Compile.endMark)))).map Compile.unshiftReg = s
+  rw [show Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)
+        = Compile.encodeTape s from rfl,
+      show Compile.encodeTape s = Compile.encodeRegs s ++ [Compile.endMark] from rfl,
+      Compile.takeWhile_no_endMark _ (Compile.encodeRegs_no_endMark s h),
+      Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
+      Compile.map_unshift_shift]
 
 /-! ## Cost / overhead
 
@@ -858,6 +1034,46 @@ theorem compileSeq_sound
       haltingStateReached (compileSeq r1 r2).M cfg = true ∧
       Compile.decodeTape cfg = eval2 (eval1 s) := by
   sorry  -- TODO(Part3.3:compileSeq): apply composeFlatTM_run.
+
+/-! ### C2 validation: composition under the *physical* per-`Op` contract
+
+The fixed-budget `decodeTape`-equality contract above cannot feed
+`composeFlatTM_run` (it lacks the exact halt step, the no-early-halt
+trajectory, and the head-`0` exit config). The lemma below is the decisive
+check that the **physical** contract — each fragment halts at its `exit`
+state with the head rewound to `0` and tape exactly `encodeTape (output)`,
+reached at an explicit step `t` with a no-early-halt trajectory — composes
+cleanly: with head `0`, `M₁`'s exit config *is* `initFlatConfig M₂ […]`, so
+`M₂`'s contract plugs straight into `composeFlatTM_run`'s `h_run2`. It is
+additive (the sorry'd `compileSeq_sound` above is left untouched pending the
+file-wide contract restatement). See ROADMAP Risk C2. -/
+theorem compileSeq_compose_physical
+    (r1 r2 : CompiledCmd) (enc1 enc2 : List Nat) {t1 t2 : Nat} {cfg2 : FlatTMConfig}
+    (h_sym2 : ∀ v, currentTapeSymbol (([] : List Nat), 0, enc2) = some v → v < 4)
+    (h_run1 : runFlatTM t1 r1.M (initFlatConfig r1.M [enc1])
+                = some { state_idx := r1.exit, tapes := [([], 0, enc2)] })
+    (h_traj1 : ∀ k, k < t1 → ∀ ck,
+        runFlatTM k r1.M (initFlatConfig r1.M [enc1]) = some ck →
+        ck.state_idx ≠ r1.exit ∧ haltingStateReached r1.M ck = false)
+    (h_run2 : runFlatTM t2 r2.M (initFlatConfig r2.M [enc2]) = some cfg2)
+    (h_halt2 : haltingStateReached r2.M cfg2 = true) :
+    runFlatTM (t1 + 1 + t2) (compileSeq r1 r2).M
+        (initFlatConfig (compileSeq r1 r2).M [enc1])
+      = some { state_idx := cfg2.state_idx + r1.M.states, tapes := cfg2.tapes } ∧
+    haltingStateReached (compileSeq r1 r2).M
+      { state_idx := cfg2.state_idx + r1.M.states, tapes := cfg2.tapes } = true := by
+  have h_cfg0_state_lt :
+      (initFlatConfig r1.M [enc1]).state_idx < r1.M.states := r1.M_valid.1
+  have h_sym_bound :
+      ∀ v, currentTapeSymbol (([] : List Nat), 0, enc2) = some v →
+        v < max r1.M.sig r2.M.sig := by
+    intro v hv
+    rw [r1.M_sig, r2.M_sig]
+    exact h_sym2 v hv
+  exact composeFlatTM_run (M₁ := r1.M) (M₂ := r2.M) (exit := r1.exit)
+    r1.M_valid r2.M_valid r1.exit_lt
+    (initFlatConfig r1.M [enc1]) h_cfg0_state_lt
+    [] 0 enc2 h_sym_bound h_run1 h_traj1 h_run2 h_halt2
 
 /-- Soundness obligation for `compileIfBit`. The two branches are
 mutually exclusive on the value of `s.get t`, so the IH for the

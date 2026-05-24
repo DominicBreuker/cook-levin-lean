@@ -11,31 +11,58 @@ existing Coq development by Forster, Kunze, Roth et al.
 `theorem CookLevin : NPcomplete SAT` and Lean accepts it, but the
 term is not yet a faithful proof of Cook–Levin. The codebase
 captures the combinatorial heart of the proof rigorously, plus a
-strengthened complexity framework, but still has four labelled
-`sorry`s and a documented strategic pivot in progress. See
-[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full plan
-and current state.
+strengthened complexity framework, but the rest is a **compiling
+skeleton**: ~33 labelled `sorry`s across the Parts 3–7 scaffolding,
+**plus** a handful of `sorry`-free but *vacuous* reductions on the
+proof path (the deepest gaps — they do not show up as `sorry`s or
+under `#print axioms`). See
+[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full plan,
+and its **Risk register** for the soundness gaps (Group S) and
+completion gaps (Group C) tracked separately.
 
 ## Status at a glance (May 2026)
 
-- `lake build` succeeds.
+- `lake build` succeeds (3355 jobs); **0 project axioms** (nothing beyond
+  the standard `propext` / `Classical.choice` / `Quot.sound`).
 - Repository size: **~11K LOC** of Lean on the proof path under
   `CookLevin/` (a further ~14K LOC of paused / superseded work
   lives under [`parked/`](parked/), not built).
-- **Four labelled `sorry`s remain**, all flagged with `TODO(...)`
-  tags pointing at the roadmap phase that closes them:
+- **~32 labelled `sorry`s** across the Parts 3–7 skeleton, all
+  flagged with `TODO(...)` tags. The current per-file distribution
+  and the next-step ranking live in the **Risk register** of
+  [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) (Group C). The
+  original "four `sorry`s" from the framework migration were
+  decomposed into these when Parts 3–7 were scaffolded as a
+  compiling skeleton.
+- **Recent progress (the layer's C1/C2 work).** The higher-level
+  computable layer now has a real, *sorry-free* gadget library —
+  `insertCarryTM` (insert/shift-right), the `scan_to_mark` /
+  `scanPastDelimTM` / `scanLeftUntilTM` navigation family — and its first
+  compiled primitive: `Op.appendOne` / `Op.appendZero` compile to real
+  `CompiledCmd`s. Crucially, **composition is validated**: the
+  `compileSeq` resume gap (does a follow-on machine see the right tape?)
+  is closed at the design level by `compileSeq_compose_physical`. This
+  confirms the part of the pivot that was supposed to amortise. The
+  remaining layer work is bounded engineering, with one unvalidated piece
+  left (`loopTM`, the counted-loop combinator — Risk **C3**).
+- **The `sorry` count is not the soundness metric.** The deepest
+  gaps on the proof path are `sorry`-**free** and so do not appear in
+  that count or under `#print axioms`:
+  - two `if-on-the-answer` reductions (`FlatSingleTMGenNP_to_FlatTCC`,
+    `TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP`) whose output
+    depends on the *truth* of the source predicate;
+  - the dummy `bridgeMachine`s (1-state TMs that discard the source
+    machine) reached via `GenNP_to_TMGenNP`;
+  - both licensed by `polyTimeComputable` bounding only *output size*,
+    not runtime.
 
-  | # | Location                                                              | Tag                                  | Closes at |
-  |---|-----------------------------------------------------------------------|--------------------------------------|-----------|
-  | 1 | `CookLevin/Complexity/Complexity/Deciders/EvalCnfTM.lean:58`          | `TODO(Part2-followup:EvalCnfTM)`     | New Part 3 of ROADMAP |
-  | 2 | `CookLevin/Complexity/Complexity/Deciders/CliqueRelTM.lean:66`        | `TODO(Part2-followup:CliqueRelTM)`   | New Part 3 of ROADMAP |
-  | 3 | `CookLevin/Complexity/Complexity/NP.lean:270`                         | `TODO(Part3:red_inNP_TMcompose)`     | New Part 4 of ROADMAP |
-  | 4 | `CookLevin/Complexity/GenNP_is_hard.lean:23`                          | `TODO(Part6:hasDeciderClassical)`    | New Part 7 of ROADMAP |
-
+  These are Risks **S1–S3** in the ROADMAP Risk register, and **the
+  layer's C1/C2 progress does not touch them** — they live on the
+  reduction side (Parts 5–6), downstream of the layer.
 - The build is **conditionally complete**: `theorem CookLevin :
-  NPcomplete SAT` typechecks, but it depends on the four sorrys above
-  and on a handful of placeholder TM-bridge constructions (see "Where
-  the project is not yet sound" below).
+  NPcomplete SAT` typechecks, but it depends on the ~32 `sorry`s
+  **and** on the `sorry`-free vacuous reductions/bridges above (see
+  "Where the project is not yet sound" below).
 
 ## Strategic situation — May 2026
 
@@ -70,6 +97,38 @@ The full discussion, including a fallback plan if the layer also
 overruns (state Cook–Levin **conditionally** on an axiomatic
 `inTimePoly` interface), is in
 [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+
+### Updated assessment after the C1/C2 work (May 2026)
+
+The layer's two make-or-break structural unknowns have now been tested
+on a concrete primitive, with encouraging results:
+
+- **Composition is cheap and proven (C2).** Compiling `seq c₁ c₂` glues
+  two sub-machines via `composeFlatTM`, which physically resumes the
+  second machine on the first's halting tape. The check that this
+  resume point is the right one — and that the contract chains — is
+  `compileSeq_compose_physical`, proved `sorry`-free. This validates the
+  pivot's core bet: the *composition* of compiled fragments amortises.
+- **Per-primitive cost is moderate, not cheap, but front-loaded.** The
+  original "~50 LOC per primitive" estimate is too optimistic — each
+  primitive is hundreds of LOC — *but* most of that lives in a reusable
+  gadget library (`insertCarryTM`, the scan family, `scanLeftUntilTM`)
+  that is paid once and shared across ops. Revised estimate for the
+  whole `compileOp` (8 ops + a delete gadget): **~2–3K LOC**.
+- **The remaining structural unknown is `loopTM` (C3).** The
+  counted-loop combinator and its run lemma were the dominant cost of
+  the abandoned hand-rolled approach and have not yet been built. Every
+  verifier needs it. This is the next go/no-go experiment; if it
+  balloons, the fallback plan triggers before the verifiers are written.
+
+**What this does *not* change:** the deepest gaps (the faked Cook
+tableau and the dummy TM bridges, Risks S1/S2) are on the reduction
+side and are untouched by layer progress. A faithful, unconditional
+Cook–Levin still requires Parts 5–6 (multi-tape simulator + the real
+2D tableau construction), which are the genuine mathematical content of
+the hardness direction and have not been started. See the **Risk
+register** in [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the
+ranked plan (Group S = soundness, Group C = completion).
 
 ## Development strategy: skeleton-first, risk-driven refinement
 
@@ -266,24 +325,67 @@ The proof of Cook–Levin *after* a TM run has been encoded as a
 
 ## Where the project is not yet sound
 
-Two distinct gaps remain between "Lean accepts the theorem" and "the
-theorem is a real proof of Cook–Levin":
+Three distinct classes of gap remain between "Lean accepts the
+theorem" and "the theorem is a real proof of Cook–Levin". The first
+is visible as `sorry`s; the other two are **not**, which is why the
+`sorry` count alone overstates how close the proof is.
 
-1. **The four `sorry`s above.** Each corresponds to a piece of
-   infrastructure not yet built. They are detailed in the table at
-   the top of this README and discussed in
-   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+1. **The ~32 skeleton `sorry`s** (ROADMAP Risk register, Group C).
+   Each is a not-yet-built piece of the higher-level computable layer
+   (the compiler, its soundness, the verifier/reduction programs) or
+   of the final assembly. These are **completion** gaps — closing them
+   makes the layer real, but does not by itself make the headline
+   theorem unconditional (see (2)/(3) below).
 
-2. **`polyTimeComputable f` only bounds output size.** The current
-   `PolyTimeComputableWitness` requires
+   The two highest-risk structural items, **C1** (compile one primitive
+   `Op` end-to-end) and **C2** (do compiled fragments compose?), have now
+   been **validated**:
+   - the reusable gadgets are built `sorry`-free — `insertCarryTM`
+     (insert/shift-right, `Lang/ShiftTape.lean`), the `scan_to_mark` /
+     `scanPastDelimTM` navigation family (`Lang/Navigate.lean`,
+     `Lang/ScanPast.lean`), and the head-rewind `scanLeftUntilTM`
+     (`Lang/ScanLeft.lean`) — and they compose into the full
+     `appendOne`/`appendZero` action for an **arbitrary register `dst`**
+     (`AppendGadget.appendAt_run`), packaged as real `CompiledCmd`s
+     (`Compile.opAppendOne`/`opAppendZero`);
+   - **composition is proven** by `compileSeq_compose_physical`: once a
+     compiled `Op` halts with its head rewound to `0` and tape equal to
+     the encoding of its output (the *physical contract*),
+     `composeFlatTM` resumes the next machine on exactly an
+     `initFlatConfig`, so `compileSeq` chains with no friction.
+
+   C1 also surfaced a real architectural gap — the tape model's content
+   never shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…)
+   cannot produce the exact encoding — resolved by the **sentinel**
+   alphabet (a reserved terminator `endMark = 3`, `sig = 4`, now also
+   reused as a *leading* sentinel for the head-rewind). What remains for
+   the append slice is bounded: the leading-sentinel encoding + decode
+   round-trip, then the *physical* `compileOp_sound` for `appendOne`
+   (`appendAtTM ⨾ scanLeftUntilTM`). The one **unvalidated** completion
+   risk left is **C3 — the `loopTM` counted-loop combinator** (the
+   dominant cost of the abandoned hand-rolled approach; needed by every
+   verifier). See ROADMAP Risks **C1**/**C2**/**C3**.
+
+2. **`sorry`-free vacuous reductions on the proof path** (Risks
+   S1/S2). Two reduction maps —
+   `…/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean` and
+   `…/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean`
+   — are `if (source instance is a yes-instance) then yesInst else
+   noInst`, so the reduction's output depends on the *answer* to the
+   source problem. The TM bridges `LM_to_mTM.lean` /
+   `mTM_to_singleTapeTM.lean` are 1-state machines that discard the
+   source machine. These compile without `sorry` and do not appear
+   under `#print axioms`, but carry no computational content. They
+   are the deepest unsoundness; fixing them is Parts 5–6, and depends
+   on the layer (Parts 3–4) landing first.
+
+3. **`polyTimeComputable f` only bounds output size** (Risk S3). The
+   current `PolyTimeComputableWitness` requires
    `encodable.size (f x) ≤ bound (encodable.size x)` and says
-   nothing about the TM that computes `f`. So every reduction in
-   the chain is *witnessed* by a size bound, not by a real
-   polynomial-time TM. The TM bridge layers
-   (`LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`,
-   `…/FlatSingleTMGenNP_to_FlatTCC.lean`, …) are
-   placeholders (1-state TMs, classical case-splits on the source
-   language). Fixing this is Parts 4–6 of the new roadmap.
+   nothing about the TM that computes `f`. This is the weakness that
+   *licenses* the vacuous reductions in (2): every reduction in the
+   chain is witnessed by a size bound, not by a real polynomial-time
+   TM. Upgrading it is Part 4 (Risk C4).
 
 ### Other smells (low priority)
 
