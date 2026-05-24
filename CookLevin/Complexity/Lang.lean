@@ -3,6 +3,7 @@ import Complexity.Lang.Semantics
 import Complexity.Lang.ShiftTape
 import Complexity.Lang.Navigate
 import Complexity.Lang.ScanPast
+import Complexity.Lang.ScanLeft
 import Complexity.Lang.AppendGadget
 import Complexity.Lang.Compile
 import Complexity.Lang.PolyTime
@@ -27,6 +28,11 @@ A single import that brings in the entire layer skeleton:
                       `scanRightUntilTM` that steps one cell *past* the
                       delimiter (used to walk onto the next register, so the
                       per-`Op` machines can recurse on `dst`) (Risk C1).
+- `Lang.ScanLeft`   : `scanLeftUntilTM` + `scanLeft_run`, the leftward
+                      mirror that rewinds the head to the leading sentinel
+                      at index `0` — the head-reset needed so a compiled
+                      `Op` halts in `initFlatConfig` shape and `compileSeq`
+                      can resume the next machine (Risk C2).
 - `Lang.AppendGadget`: `scan_then_insert_run`, the scan-to-delimiter ⨾
                       insert composition realizing `appendOne`/`appendZero`
                       on register 0 — the first `composeFlatTM_run`
