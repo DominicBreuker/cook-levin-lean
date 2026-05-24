@@ -232,13 +232,19 @@ encodes six cells whose flat values reach `Θ(|Σ|)` (and `encodable.size` on
 `Θ((M.sig·M.states)⁴)`. That already exceeds the old
 `(s.length + steps + M.sig + M.states + 1)³` bound for, e.g., `M.sig = 2`,
 `M.states = s = steps = 0`. The size is still polynomial, but quartic in the
-machine description, not cubic. Proving the corrected closed form requires
-summing `encodable.size` over the `flatMap`-of-`finRange` card lists; this is
-the routine-but-not-free part of step B and is left as a documented gap. -/
+machine description, not cubic.
+
+The statement below is the **corrected** bound: a (generous) degree-8 polynomial
+in the machine description that dominates the true `Θ(M.sig⁴·M.states²)` card
+cost plus the smaller `init`/`final` contributions. It is left as a documented
+gap because proving it rigorously requires summing `encodable.size` over the
+`flatMap`-of-`finRange` card lists (no off-the-shelf lemma; ~150–300 LOC of
+foldl arithmetic) — which is the part of step B that turned out to be
+*not* "the easy end" the ROADMAP assumed. -/
 theorem cookTableau_size_bound (M : FlatTM) (s : List Nat) (steps : Nat) :
     encodable.size (cookTableau M s steps) ≤
-      (s.length + steps + M.sig + M.states + 1) ^ 3 := by
-  sorry  -- FINDING: false as stated; the card list alone is Θ(|Σ|⁴). See note.
+      (s.length + steps + M.sig + M.states + M.trans.length + 2) ^ 8 := by
+  sorry  -- corrected polynomial bound; foldl-over-flatMap sum left as gap. See note.
 
 /-! ## Correctness
 
