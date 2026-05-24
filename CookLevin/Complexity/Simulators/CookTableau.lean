@@ -267,12 +267,138 @@ direction (run ⇒ tableau) on the trivial run, and it genuinely exercises the
 alphabet (the existing `mkTCCWitness` proof only does it over a one-symbol
 alphabet with no head cell). -/
 
+/-- The empty-input tape row is a block of blanks. -/
+theorem tapeRow_nil (M : FlatTM) (steps : Nat) :
+    tapeRow M [] steps = List.replicate (steps + 3) (blankSym M) := by
+  simp [tapeRow]
+
+/-- The empty-input initial row: a head cell followed by a block of blank
+tape cells. -/
+theorem cookInit_nil (M : FlatTM) (steps : Nat) :
+    cookInit M [] steps =
+      hCell M (stateOf M M.start) (blankSym M) ::
+        List.replicate (steps + 2) (tCell M (blankSym M)) := by
+  unfold cookInit
+  rw [tapeRow_nil]
+  rw [show steps + 3 = (steps + 2) + 1 from rfl, List.replicate_succ]
+  simp [List.map_replicate]
+
+/-- A copy card licenses an unchanged window once its first three cells match. -/
+theorem coversHead_copy (M : FlatTM) (x y z : Fin (Sg M)) (l rest : List (Fin (Sg M)))
+    (h : l = x :: y :: z :: rest) :
+    TCC.coversHead (copyCard M x y z) l l := by
+  refine ⟨⟨rest, ?_⟩, ⟨rest, ?_⟩⟩ <;>
+    · show l = [x, y, z] ++ rest
+      exact h
+
+theorem copyCard_mem (M : FlatTM) (a b c : Fin (M.sig + 1)) :
+    copyCard M (tCell M a) (tCell M b) (tCell M c) ∈ copyCards M := by
+  unfold copyCards
+  refine List.mem_flatMap.2 ⟨a, List.mem_finRange a, ?_⟩
+  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
+  exact List.mem_map.2 ⟨c, List.mem_finRange c, rfl⟩
+
+theorem haltLeftCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b x y : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (hCell M q b) (tCell M x) (tCell M y) ∈ haltLeftCards M := by
+  unfold haltLeftCards
+  refine List.mem_flatMap.2 ⟨q, List.mem_finRange q, ?_⟩
+  rw [if_pos hq]
+  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
+  refine List.mem_flatMap.2 ⟨x, List.mem_finRange x, ?_⟩
+  exact List.mem_map.2 ⟨y, List.mem_finRange y, rfl⟩
+
+theorem copyCard_mem_cookCards (M : FlatTM) (a b c : Fin (M.sig + 1)) :
+    copyCard M (tCell M a) (tCell M b) (tCell M c) ∈ cookCards M :=
+  List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inl (copyCard_mem M a b c))))
+
+theorem haltLeftCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1)) (b x y : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (hCell M q b) (tCell M x) (tCell M y) ∈ cookCards M :=
+  List.mem_append.2 (Or.inl (List.mem_append.2 (Or.inr (haltLeftCard_mem M q b x y hq))))
+
+/-- **Freeze step (probe step C, the load-bearing window bookkeeping).** A
+halting machine's empty-input row covers itself: every 3-window is licensed —
+the head window by a halt-left card, the all-blank windows by copy cards. -/
+theorem freeze_validStep (M : FlatTM) (steps : Nat)
+    (hHalt : M.halt.getD (stateOf M M.start).1 false = true) :
+    TCC.validStep (cookCards M) (cookInit M [] steps) (cookInit M [] steps) := by
+  refine ⟨rfl, ?_⟩
+  intro i hi
+  rw [cookInit_nil] at hi ⊢
+  set H := hCell M (stateOf M M.start) (blankSym M) with hHdef
+  set B := tCell M (blankSym M) with hBdef
+  have hlen : (H :: List.replicate (steps + 2) B).length = steps + 3 := by
+    simp
+  rw [hlen] at hi
+  rcases Nat.eq_zero_or_pos i with hi0 | hipos
+  · subst hi0
+    refine ⟨copyCard M H B B, haltLeftCard_mem_cookCards M _ _ _ _ hHalt, ?_⟩
+    rw [List.drop_zero]
+    exact coversHead_copy M H B B _ (List.replicate steps B) rfl
+  · obtain ⟨j, rfl⟩ := Nat.exists_eq_succ_of_ne_zero hipos.ne'
+    refine ⟨copyCard M B B B,
+      copyCard_mem_cookCards M (blankSym M) (blankSym M) (blankSym M), ?_⟩
+    show TCC.coversHead _ ((List.replicate (steps + 2) B).drop j)
+      ((List.replicate (steps + 2) B).drop j)
+    rw [List.drop_replicate]
+    apply coversHead_copy M B B B _ (List.replicate (steps + 2 - j - 3) B)
+    generalize hK : steps + 2 - j - 3 = K
+    rw [show steps + 2 - j = 3 + K from by omega, List.replicate_add]
+    rfl
+
+theorem freeze_relpower (M : FlatTM) (steps : Nat)
+    (hHalt : M.halt.getD (stateOf M M.start).1 false = true) :
+    ∀ k, relpower (TCC.validStep (cookCards M)) k (cookInit M [] steps) (cookInit M [] steps)
+  | 0 => relpower.refl _
+  | k + 1 => relpower.step (freeze_validStep M steps hHalt) (freeze_relpower M steps hHalt k)
+
+theorem freeze_satFinal (M : FlatTM) (steps : Nat)
+    (hHalt : M.halt.getD (stateOf M M.start).1 false = true) :
+    TCC.satFinal (cookFinal M) (cookInit M [] steps) := by
+  refine ⟨[hCell M (stateOf M M.start) (blankSym M)], ?_, ?_⟩
+  · unfold cookFinal
+    refine List.mem_flatMap.2 ⟨stateOf M M.start, List.mem_finRange _, ?_⟩
+    rw [if_pos hHalt]
+    exact List.mem_map.2 ⟨blankSym M, List.mem_finRange _, rfl⟩
+  · rw [cookInit_nil]
+    exact ⟨[], List.replicate (steps + 2) (tCell M (blankSym M)), rfl⟩
+
+theorem cookTableau_lang (M : FlatTM) (steps : Nat)
+    (hHalt : M.halt.getD (stateOf M M.start).1 false = true) :
+    FlatTCC.FlatTCCLang (cookTableau M [] steps) := by
+  have htccLang : TCC.TCCLang (cookTableauTyped M [] steps) :=
+    ⟨cookTableauTyped_wellformed M [] steps,
+      cookInit M [] steps,
+      freeze_relpower M steps hHalt steps,
+      freeze_satFinal M steps hHalt⟩
+  refine ⟨FlatTCC.flattenTCC_wellformed htccLang.1,
+    ⟨FlatTCC.isValidFlattening_flattenTCC _, ?_⟩⟩
+  simpa [cookTableau, FlatTCC.unflatten_flattenTCC] using htccLang
+
+theorem accepts_immediateHalt (M : FlatTM) (steps : Nat)
+    (hTapes : M.tapes = 1) (hHalt : M.halt.getD M.start false = true) :
+    acceptsFlatTM M [[]] steps = true := by
+  have hvalid : isValidFlatTapes M [[]] = true := by
+    simp [isValidFlatTapes, hTapes, isValidFlatTape]
+  have hinit : haltingStateReached M (initFlatConfig M [[]]) = true := by
+    show M.halt.getD M.start false = true
+    exact hHalt
+  rw [acceptsFlatTM_eq_true_iff]
+  refine ⟨initFlatConfig M [[]], ?_, hinit⟩
+  rw [execFlatTM_eq_some_runFlatTM hvalid]
+  exact runFlatTM_of_halting M (initFlatConfig M [[]]) steps hinit
+
 theorem cookTableau_correct_immediateHalt (M : FlatTM) (steps : Nat)
     (hTapes : M.tapes = 1) (hStart : M.start < M.states)
     (hHalt : M.halt.getD M.start false = true) :
     acceptsFlatTM M [[]] steps = true ↔
     FlatTCC.FlatTCCLang (cookTableau M [] steps) := by
-  sorry  -- probe step C; proved below piecewise
+  have hstate : (stateOf M M.start).1 = M.start := by
+    simp [stateOf]; omega
+  have hHalt' : M.halt.getD (stateOf M M.start).1 false = true := by rw [hstate]; exact hHalt
+  exact ⟨fun _ => cookTableau_lang M steps hHalt',
+    fun _ => accepts_immediateHalt M steps hTapes hHalt⟩
 
 /-! ## Polynomial size-bound function (unchanged framework obligations) -/
 
