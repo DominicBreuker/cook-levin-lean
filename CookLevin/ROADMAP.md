@@ -538,6 +538,65 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
 5. Delete gadget (`sig = 4` mirror of `insertCarryTM`) + the
    length-decreasing ops.
 
+#### C2 analysis: the per-`Op` soundness *contract* is too weak to compose (May 2026)
+
+Owner chose to validate **C2** (the `compileSeq` resume gap) before grinding
+the remaining single-op items. Reading the only cross-machine glue lemma,
+`composeFlatTM_run` (`TMPrimitives.lean:1005`), pins down exactly what the
+per-`Op` contract must provide — and the current
+`compileOp_sound` shape provides **none of it**:
+
+`composeFlatTM_run` needs, for `M₁ = r1.M`:
+1. an **exact** halt step `t₁` with `runFlatTM t₁ M₁ cfg0 = some {exit, [(left₁,head₁,right₁)]}` (`h_run1`);
+2. a **trajectory** `h_traj1 : ∀ k < t₁, ∀ ck, runFlatTM k M₁ cfg0 = some ck → ck.state_idx ≠ exit ∧ ¬ halting` (M₁ does not halt early);
+3. the resumed config `{M₂.start, [(left₁,head₁,right₁)]}` must equal `initFlatConfig M₂ [encodeTape (eval1 s)]`, i.e. **`head₁ = 0`** and `right₁ = encodeTape (eval1 s)` (`left₁ = []` always holds).
+
+The current `compileOp_sound` states only `runFlatTM (overhead (size+1)) M init = some cfg ∧ halting ∧ decodeTape cfg = eval`. That gives a **fixed budget**, not the exact halt step (1); says nothing about early halting (2); and `decodeTape` discards the head and trailing tape, so it cannot supply `head₁ = 0` / exact `right₁` (3). **So the contract, not just the gadget, must change.**
+
+**Required contract redesign** (`compileOp_sound` and the IH shape of
+`compileSeq_sound` / `compileIfBit_sound` / `compileForBnd_sound`):
+```
+∃ t, t + 1 ≤ overhead (State.size s + 1) ∧
+     runFlatTM t M (initFlatConfig M [encodeTape s])
+       = some { state_idx := exit, tapes := [([], 0, encodeTape (Op.eval o s))] } ∧
+     (∀ k, k < t → ∀ ck, runFlatTM k M init = some ck →
+        ck.state_idx ≠ exit ∧ haltingStateReached M ck = false)
+```
+i.e. a **physical head-`0` exit config + exact halt step + trajectory**. The
+old `decodeTape cfg = eval` is then a corollary (via
+`decodeTape_encodeTape`), and the fixed-budget form follows by
+`runFlatTM_extend` (`MachineSemantics.lean:175`). With head-`0` output, the
+bridged config in `composeFlatTM_run` is *literally* `initFlatConfig M₂ […]`,
+so the M₂ IH plugs straight into `h_run2`. The trajectory is the new
+obligation each gadget must expose (the scan/insert run lemmas already track
+it internally — e.g. `scanPastDelim_no_early_halt` — it is just discarded by
+`appendAt_run`'s `∃ steps` statement).
+
+**Two new constructions this forces** (both fork-independent of the delete path):
+- **Head-rewind to `0`.** `appendAt` halts with the head at the *last* cell;
+  to reach `head = 0` it must scan left. `moveTapeHead Lmove` clamps at `0`
+  and states cannot read the head index, so rewind needs a **detectable
+  leading sentinel**. Owner chose to **reuse `endMark = 3`** as a two-sided
+  marker (`encodeTape s := 3 :: encodeRegs s ++ [3]`, `sig` stays `4`); the
+  rewind steps left once (off the trailing `3`, always onto the last `0`
+  delimiter since `encodeRegs` ends in `0`) then scans left to the leading
+  `3` at index `0`. This re-touches `encodeTape` / `decodeTape` (drop the
+  leading marker) and re-proves `decodeTape_encodeTape`, and absorbs the
+  leading `3` into the gadgets' generic `pre` prefix.
+- **Trajectory-exposing run lemmas.** `appendAt_run` (and the per-`Op`
+  contract proof) must additionally return the no-early-halt trajectory.
+
+**Recommended build order for C2** (each green + committed):
+(i) leading-sentinel encoding + `decodeTape` + round-trip re-proof;
+(ii) the left-scan **rewind primitive** (`Lang/ScanLeft.lean`, mirror of
+`scanPastDelimTM` with `Lmove`) + run/trajectory lemmas;
+(iii) restate `compileOp_sound` to the physical contract above and prove a
+generic `compileSeq_sound` from it via `composeFlatTM_run` (**the decisive
+composition check**);
+(iv) prove the physical `compileOp_sound` for `appendOne`/`appendZero`
+(`appendAtTM ⨾ rewind`, with trajectory + step bound) and instantiate
+`compileSeq_sound` for `appendOne ∘ appendOne`.
+
 ### Iteration log
 
 - **May 2026 — C1 option A, step 4 (cont.): `CompiledCmd` packaging of
