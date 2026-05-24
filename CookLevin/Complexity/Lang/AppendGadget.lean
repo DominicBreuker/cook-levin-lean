@@ -237,6 +237,104 @@ theorem appendAtTM_valid (ins : Nat) (h_ins : ins < 4) :
         (scanPastDelimTM_valid 4 0 (by decide)) (appendAtTM_valid ins h_ins d)
         (by decide) rfl (appendAtTM_tapes ins d)
 
+/-! ### Exit state and halt-vector invariants of `appendAtTM`
+
+`appendAtTM ins dst` is a nest of `composeFlatTM`s whose innermost second
+machine is `insertCarryTM ins` (unique halt state `5`). Composition zeroes
+each outer `M₁`'s halt bits, so the composite has a single halt state,
+shifted by the accumulated `M₁.states`. We package these facts so that
+`Compile.opAppendOne`/`opAppendZero` can build a `CompiledCmd`. -/
+
+/-- A halt state `e₂` of the second machine becomes the halt state
+`M₁.states + e₂` of `composeFlatTM M₁ M₂ exit` (the composite zeroes
+`M₁`'s own halt bits). -/
+theorem composeFlatTM_shifted_is_halt (M₁ M₂ : FlatTM) (exit e₂ : Nat)
+    (h_is : M₂.halt[e₂]? = some true) :
+    (composeFlatTM M₁ M₂ exit).halt[M₁.states + e₂]? = some true := by
+  show (composedHalt M₁ M₂)[M₁.states + e₂]? = some true
+  unfold composedHalt
+  have h_len : (List.replicate M₁.states false).length ≤ M₁.states + e₂ := by
+    rw [List.length_replicate]; exact Nat.le_add_right _ _
+  rw [List.getElem?_append_right h_len]
+  have h_idx :
+      M₁.states + e₂ - (List.replicate M₁.states false).length = e₂ := by
+    rw [List.length_replicate]; omega
+  rw [h_idx]; exact h_is
+
+/-- If `e₂` is the unique halt state of `M₂`, then `M₁.states + e₂` is the
+unique halt state of `composeFlatTM M₁ M₂ exit`. -/
+theorem composeFlatTM_shifted_halt_unique (M₁ M₂ : FlatTM) (exit e₂ : Nat)
+    (h_uniq : ∀ i, M₂.halt[i]? = some true → i = e₂) :
+    ∀ i, (composeFlatTM M₁ M₂ exit).halt[i]? = some true →
+      i = M₁.states + e₂ := by
+  intro i hi
+  change (composedHalt M₁ M₂)[i]? = some true at hi
+  unfold composedHalt at hi
+  by_cases hlt : i < M₁.states
+  · exfalso
+    have h_lt' : i < (List.replicate M₁.states false).length := by
+      rw [List.length_replicate]; exact hlt
+    rw [List.getElem?_append_left h_lt'] at hi
+    rw [List.getElem?_replicate] at hi
+    simp [hlt] at hi
+  · rw [Nat.not_lt] at hlt
+    have h_ge : (List.replicate M₁.states false).length ≤ i := by
+      rw [List.length_replicate]; exact hlt
+    rw [List.getElem?_append_right h_ge, List.length_replicate] at hi
+    have h_idx : i - M₁.states = e₂ := h_uniq _ hi
+    omega
+
+/-- The unique halt (= designated exit) state of `appendAtTM ins dst`:
+`8` for `dst = 0` (the `insertCarryTM` halt state `5`, shifted past
+`scanRightUntilTM`'s `3` states), plus `3` for each skipped register's
+`scanPastDelimTM`. -/
+def appendAtTM_exit : Nat → Nat
+  | 0     => 8
+  | d + 1 => 3 + appendAtTM_exit d
+
+/-- `insertCarryTM ins` halts only at state `5`. -/
+theorem insertCarryTM_halt_unique (ins : Nat) :
+    ∀ i, (insertCarryTM ins).halt[i]? = some true → i = 5 := by
+  intro i hi
+  rcases i with _ | _ | _ | _ | _ | _ | i <;> simp [insertCarryTM] at hi ⊢
+
+theorem appendAtTM_exit_lt (ins : Nat) :
+    ∀ dst, appendAtTM_exit dst < (appendAtTM ins dst).states
+  | 0     => by
+      show (8 : Nat) < 9
+      decide
+  | d + 1 => by
+      show 3 + appendAtTM_exit d < 3 + (appendAtTM ins d).states
+      exact Nat.add_lt_add_left (appendAtTM_exit_lt ins d) 3
+
+theorem appendAtTM_exit_is_halt (ins : Nat) :
+    ∀ dst, (appendAtTM ins dst).halt[appendAtTM_exit dst]? = some true
+  | 0     => by
+      show (composeFlatTM (scanRightUntilTM 4 0) (insertCarryTM ins) 1).halt[8]?
+          = some true
+      exact composeFlatTM_shifted_is_halt (scanRightUntilTM 4 0)
+        (insertCarryTM ins) 1 5 (by simp [insertCarryTM])
+  | d + 1 => by
+      show (composeFlatTM (scanPastDelimTM 4 0) (appendAtTM ins d) 1).halt[3 +
+          appendAtTM_exit d]? = some true
+      exact composeFlatTM_shifted_is_halt (scanPastDelimTM 4 0)
+        (appendAtTM ins d) 1 (appendAtTM_exit d) (appendAtTM_exit_is_halt ins d)
+
+theorem appendAtTM_halt_unique (ins : Nat) :
+    ∀ dst i, (appendAtTM ins dst).halt[i]? = some true → i = appendAtTM_exit dst
+  | 0     => by
+      show ∀ i,
+        (composeFlatTM (scanRightUntilTM 4 0) (insertCarryTM ins) 1).halt[i]?
+          = some true → i = 8
+      exact composeFlatTM_shifted_halt_unique (scanRightUntilTM 4 0)
+        (insertCarryTM ins) 1 5 (insertCarryTM_halt_unique ins)
+  | d + 1 => by
+      show ∀ i,
+        (composeFlatTM (scanPastDelimTM 4 0) (appendAtTM ins d) 1).halt[i]?
+          = some true → i = 3 + appendAtTM_exit d
+      exact composeFlatTM_shifted_halt_unique (scanPastDelimTM 4 0)
+        (appendAtTM ins d) 1 (appendAtTM_exit d) (appendAtTM_halt_unique ins d)
+
 /-- Every symbol of the encoded register prefix `regBlocks s` is `< 4`,
 given each register is. -/
 theorem regBlocks_lt (s : List (List Nat)) (h : ∀ b ∈ s, ∀ x ∈ b, x < 4) :

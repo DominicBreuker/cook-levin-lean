@@ -1,4 +1,5 @@
 import Complexity.Lang.Semantics
+import Complexity.Lang.AppendGadget
 import Complexity.Complexity.TMPrimitives
 
 set_option autoImplicit false
@@ -194,11 +195,33 @@ decomposed per-`Op` when those helpers are concretized). -/
 /-- Compile `Op.clear dst`. **Stub.** -/
 def Compile.opClear (_dst : Var) : CompiledCmd := compiledCmd_default
 
-/-- Compile `Op.appendOne dst`. **Stub.** -/
-def Compile.opAppendOne (_dst : Var) : CompiledCmd := compiledCmd_default
+/-- Compile `Op.appendOne dst`: navigate past the `dst` preceding
+register-delimiters, then insert symbol `2` (the shifted bit `1`) just
+before register `dst`'s delimiter. Realized by `AppendGadget.appendAtTM`
+with `ins = 2`; all `CompiledCmd` invariants come from that gadget's
+exit/halt lemmas. -/
+def Compile.opAppendOne (dst : Var) : CompiledCmd where
+  M := AppendGadget.appendAtTM 2 dst
+  exit := AppendGadget.appendAtTM_exit dst
+  exit_lt := AppendGadget.appendAtTM_exit_lt 2 dst
+  exit_is_halt := AppendGadget.appendAtTM_exit_is_halt 2 dst
+  halt_unique := AppendGadget.appendAtTM_halt_unique 2 dst
+  M_valid := AppendGadget.appendAtTM_valid 2 (by decide) dst
+  M_tapes := AppendGadget.appendAtTM_tapes 2 dst
+  M_sig := AppendGadget.appendAtTM_sig 2 dst
 
-/-- Compile `Op.appendZero dst`. **Stub.** -/
-def Compile.opAppendZero (_dst : Var) : CompiledCmd := compiledCmd_default
+/-- Compile `Op.appendZero dst`: as `opAppendOne`, but inserts symbol `1`
+(the shifted bit `0`). Realized by `AppendGadget.appendAtTM` with
+`ins = 1`. -/
+def Compile.opAppendZero (dst : Var) : CompiledCmd where
+  M := AppendGadget.appendAtTM 1 dst
+  exit := AppendGadget.appendAtTM_exit dst
+  exit_lt := AppendGadget.appendAtTM_exit_lt 1 dst
+  exit_is_halt := AppendGadget.appendAtTM_exit_is_halt 1 dst
+  halt_unique := AppendGadget.appendAtTM_halt_unique 1 dst
+  M_valid := AppendGadget.appendAtTM_valid 1 (by decide) dst
+  M_tapes := AppendGadget.appendAtTM_tapes 1 dst
+  M_sig := AppendGadget.appendAtTM_sig 1 dst
 
 /-- Compile `Op.copy dst src`. **Stub.** -/
 def Compile.opCopy (_dst _src : Var) : CompiledCmd := compiledCmd_default

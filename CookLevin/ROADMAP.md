@@ -506,20 +506,59 @@ end-of-tape. Confirm before executing, since (A) re-touches the proven
      (`propext`/`Classical.choice`/`Quot.sound` only), *sorry-free*. Step
      count, exit state and final head are existential (a step *bound* is a
      separate concern — item (d)).
+   - ✅ **(c) `CompiledCmd` packaging.** `Compile.opAppendOne dst` /
+     `opAppendZero dst` now return real `CompiledCmd`s built on
+     `AppendGadget.appendAtTM` (`ins = 2` / `ins = 1`), replacing the
+     `compiledCmd_default` stubs. The designated exit is
+     `appendAtTM_exit dst` (`= 8 + 3·dst`: the inserter's halt state `5`
+     shifted past `scanRightUntilTM`'s `3` states, plus `3` per skipped
+     register's `scanPastDelimTM`). All seven invariants discharge via two
+     reusable generic facts — `composeFlatTM_shifted_is_halt` /
+     `composeFlatTM_shifted_halt_unique` (a `M₂`-halt-state `e₂` becomes the
+     composite's `M₁.states + e₂`, *uniquely* when it is `M₂`'s unique halt)
+     — applied by induction on `dst`, plus the existing
+     `appendAtTM_valid`/`_tapes`/`_sig`. Note `scanRightUntilTM` itself has
+     **two** halt states (`[F,T,T]`), so it is **not** a `CompiledCmd`; the
+     composite is single-halt only because `composeFlatTM` zeroes `M₁`'s
+     halt bits. *Sorry-free*; full build green.
    - ⏳ **Remaining:** (b) the decode
      round-trip
      `decodeTape (final cfg) = Op.eval (appendOne dst) s` relating
      `body = shiftReg rₔₛₜ` / `0 :: post` to `encodeTape (s.set …)` under
-     `BitState`; (c) packaging the composition as a `CompiledCmd` (7
-     invariants discharge from `composeFlatTM_*` since the inserter has a
-     unique halt at state 5); (d) the cost bound (steps ≤
+     `BitState`; (d) the cost bound (steps ≤
      `overhead (size s + 1)`); (e) **threading `BitState s` as a hypothesis
      of `compileOp_sound`** (the round-trip needs it) — a signature change
-     that ripples to `compileSeq_sound` / `Compile_sound`.
+     that ripples to `compileSeq_sound` / `Compile_sound`. **NB (C2):** the
+     append gadget halts with the head *mid-tape*, not at `0`, so the
+     current `decodeTape cfg = eval` contract cannot chain through
+     `compileSeq` (which resumes `M₂` on `M₁`'s halting config). Closing
+     (b)/(d)/(e) finishes the single-op slice but a head-reset invariant
+     (or a physical tape+head postcondition) is needed before composition
+     — decide its shape before grinding the remaining ops.
 5. Delete gadget (`sig = 4` mirror of `insertCarryTM`) + the
    length-decreasing ops.
 
 ### Iteration log
+
+- **May 2026 — C1 option A, step 4 (cont.): `CompiledCmd` packaging of
+  `appendAtTM` (item (c)).** Concretized `Compile.opAppendOne` /
+  `Compile.opAppendZero` from `compiledCmd_default` stubs into real
+  `CompiledCmd`s wrapping `AppendGadget.appendAtTM` (`ins = 2` for
+  `appendOne`, `ins = 1` for `appendZero`). Added to `Lang/AppendGadget.lean`:
+  the recursive exit `appendAtTM_exit dst` (`= 8 + 3·dst`), the two generic
+  composite-halt facts `composeFlatTM_shifted_is_halt` /
+  `composeFlatTM_shifted_halt_unique` (a halt state of `M₂` becomes the
+  composite's, shifted by `M₁.states`, *uniquely* when `M₂`'s is unique;
+  reusable, factored out of the inlined `compileSeq` proof), the
+  `insertCarryTM_halt_unique` fact (halts only at state `5`), and the three
+  invariant lemmas `appendAtTM_exit_lt`/`_is_halt`/`_halt_unique` by
+  induction on `dst`. `Compile.lean` now imports `Lang.AppendGadget`; all
+  seven `CompiledCmd` fields discharge from these + the existing
+  `appendAtTM_valid`/`_tapes`/`_sig`. *Sorry-free*; full build green (3313
+  jobs); layer axiom-free. **Surfaced for the next step (C2):** the gadget
+  halts head-mid-tape, so the single-op `decodeTape cfg = eval` contract
+  will not chain through `compileSeq` without a head-reset invariant —
+  decide that contract shape before (b)/(d)/(e) and the remaining ops.
 
 - **May 2026 — C1 option A, step 4 (cont.): general-`dst` append run
   lemma (`appendAt_run`).** Added to `Lang/AppendGadget.lean`: the

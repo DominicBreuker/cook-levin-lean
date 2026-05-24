@@ -298,7 +298,10 @@ is visible as `sorry`s; the other two are **not**, which is why the
    `appendOne`/`appendZero` action for an **arbitrary register `dst`**:
    `AppendGadget.appendAt_run` proves the tape transformation by induction
    on `dst` (each step one `composeFlatTM_run` gluing a scan ahead of the
-   recursive machine), axiom-clean and `sorry`-free. C1
+   recursive machine), axiom-clean and `sorry`-free. These machines are
+   packaged as real `CompiledCmd`s: `Compile.opAppendOne`/`opAppendZero`
+   are no longer stubs (their seven invariants discharge from the gadget's
+   exit/halt lemmas). C1
    also surfaced a real architectural gap — the tape model's content never
    shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…) cannot
    produce the exact encoding — resolved by the **sentinel** alphabet
