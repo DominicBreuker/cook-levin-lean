@@ -22,17 +22,29 @@ completion gaps (Group C) tracked separately.
 
 ## Status at a glance (May 2026)
 
-- `lake build` succeeds (3350 jobs); **0 axioms** repo-wide.
+- `lake build` succeeds (3355 jobs); **0 project axioms** (nothing beyond
+  the standard `propext` / `Classical.choice` / `Quot.sound`).
 - Repository size: **~11K LOC** of Lean on the proof path under
   `CookLevin/` (a further ~14K LOC of paused / superseded work
   lives under [`parked/`](parked/), not built).
-- **~33 labelled `sorry`s** across the Parts 3–7 skeleton, all
+- **~32 labelled `sorry`s** across the Parts 3–7 skeleton, all
   flagged with `TODO(...)` tags. The current per-file distribution
   and the next-step ranking live in the **Risk register** of
   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) (Group C). The
   original "four `sorry`s" from the framework migration were
   decomposed into these when Parts 3–7 were scaffolded as a
   compiling skeleton.
+- **Recent progress (the layer's C1/C2 work).** The higher-level
+  computable layer now has a real, *sorry-free* gadget library —
+  `insertCarryTM` (insert/shift-right), the `scan_to_mark` /
+  `scanPastDelimTM` / `scanLeftUntilTM` navigation family — and its first
+  compiled primitive: `Op.appendOne` / `Op.appendZero` compile to real
+  `CompiledCmd`s. Crucially, **composition is validated**: the
+  `compileSeq` resume gap (does a follow-on machine see the right tape?)
+  is closed at the design level by `compileSeq_compose_physical`. This
+  confirms the part of the pivot that was supposed to amortise. The
+  remaining layer work is bounded engineering, with one unvalidated piece
+  left (`loopTM`, the counted-loop combinator — Risk **C3**).
 - **The `sorry` count is not the soundness metric.** The deepest
   gaps on the proof path are `sorry`-**free** and so do not appear in
   that count or under `#print axioms`:
@@ -44,9 +56,11 @@ completion gaps (Group C) tracked separately.
   - both licensed by `polyTimeComputable` bounding only *output size*,
     not runtime.
 
-  These are Risks **S1–S3** in the ROADMAP Risk register.
+  These are Risks **S1–S3** in the ROADMAP Risk register, and **the
+  layer's C1/C2 progress does not touch them** — they live on the
+  reduction side (Parts 5–6), downstream of the layer.
 - The build is **conditionally complete**: `theorem CookLevin :
-  NPcomplete SAT` typechecks, but it depends on the ~33 `sorry`s
+  NPcomplete SAT` typechecks, but it depends on the ~32 `sorry`s
   **and** on the `sorry`-free vacuous reductions/bridges above (see
   "Where the project is not yet sound" below).
 
@@ -83,6 +97,38 @@ The full discussion, including a fallback plan if the layer also
 overruns (state Cook–Levin **conditionally** on an axiomatic
 `inTimePoly` interface), is in
 [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+
+### Updated assessment after the C1/C2 work (May 2026)
+
+The layer's two make-or-break structural unknowns have now been tested
+on a concrete primitive, with encouraging results:
+
+- **Composition is cheap and proven (C2).** Compiling `seq c₁ c₂` glues
+  two sub-machines via `composeFlatTM`, which physically resumes the
+  second machine on the first's halting tape. The check that this
+  resume point is the right one — and that the contract chains — is
+  `compileSeq_compose_physical`, proved `sorry`-free. This validates the
+  pivot's core bet: the *composition* of compiled fragments amortises.
+- **Per-primitive cost is moderate, not cheap, but front-loaded.** The
+  original "~50 LOC per primitive" estimate is too optimistic — each
+  primitive is hundreds of LOC — *but* most of that lives in a reusable
+  gadget library (`insertCarryTM`, the scan family, `scanLeftUntilTM`)
+  that is paid once and shared across ops. Revised estimate for the
+  whole `compileOp` (8 ops + a delete gadget): **~2–3K LOC**.
+- **The remaining structural unknown is `loopTM` (C3).** The
+  counted-loop combinator and its run lemma were the dominant cost of
+  the abandoned hand-rolled approach and have not yet been built. Every
+  verifier needs it. This is the next go/no-go experiment; if it
+  balloons, the fallback plan triggers before the verifiers are written.
+
+**What this does *not* change:** the deepest gaps (the faked Cook
+tableau and the dummy TM bridges, Risks S1/S2) are on the reduction
+side and are untouched by layer progress. A faithful, unconditional
+Cook–Levin still requires Parts 5–6 (multi-tape simulator + the real
+2D tableau construction), which are the genuine mathematical content of
+the hardness direction and have not been started. See the **Risk
+register** in [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the
+ranked plan (Group S = soundness, Group C = completion).
 
 ## Development strategy: skeleton-first, risk-driven refinement
 
@@ -284,30 +330,41 @@ theorem" and "the theorem is a real proof of Cook–Levin". The first
 is visible as `sorry`s; the other two are **not**, which is why the
 `sorry` count alone overstates how close the proof is.
 
-1. **The ~33 skeleton `sorry`s** (ROADMAP Risk register, Group C).
+1. **The ~32 skeleton `sorry`s** (ROADMAP Risk register, Group C).
    Each is a not-yet-built piece of the higher-level computable layer
    (the compiler, its soundness, the verifier/reduction programs) or
-   of the final assembly. The highest-leverage one is **C1**: prove a
-   single primitive `Op` sound end-to-end, which tests the pivot's
-   premise that primitives are cheap. **In progress:** the shared,
-   reusable gadgets are built `sorry`-free — `insertCarryTM` (single-tape
-   insert/shift-right, `Lang/ShiftTape.lean`), `scan_to_mark`/
-   `scan_to_delim`/`scan_to_end` (register navigation + trajectory lemmas,
-   `Lang/Navigate.lean`) and `scanPastDelimTM` (step past a delimiter,
-   `Lang/ScanPast.lean`) — and they compose into the full
-   `appendOne`/`appendZero` action for an **arbitrary register `dst`**:
-   `AppendGadget.appendAt_run` proves the tape transformation by induction
-   on `dst` (each step one `composeFlatTM_run` gluing a scan ahead of the
-   recursive machine), axiom-clean and `sorry`-free. These machines are
-   packaged as real `CompiledCmd`s: `Compile.opAppendOne`/`opAppendZero`
-   are no longer stubs (their seven invariants discharge from the gadget's
-   exit/halt lemmas). C1
-   also surfaced a real architectural gap — the tape model's content never
-   shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…) cannot
-   produce the exact encoding — resolved by the **sentinel** alphabet
-   (a reserved end-of-tape terminator `endMark = 3`, `sig = 4`); decode
-   reads up to the first terminator and the delete gadget rewrites it
-   leftward. See ROADMAP Risk C1 for the execution order.
+   of the final assembly. These are **completion** gaps — closing them
+   makes the layer real, but does not by itself make the headline
+   theorem unconditional (see (2)/(3) below).
+
+   The two highest-risk structural items, **C1** (compile one primitive
+   `Op` end-to-end) and **C2** (do compiled fragments compose?), have now
+   been **validated**:
+   - the reusable gadgets are built `sorry`-free — `insertCarryTM`
+     (insert/shift-right, `Lang/ShiftTape.lean`), the `scan_to_mark` /
+     `scanPastDelimTM` navigation family (`Lang/Navigate.lean`,
+     `Lang/ScanPast.lean`), and the head-rewind `scanLeftUntilTM`
+     (`Lang/ScanLeft.lean`) — and they compose into the full
+     `appendOne`/`appendZero` action for an **arbitrary register `dst`**
+     (`AppendGadget.appendAt_run`), packaged as real `CompiledCmd`s
+     (`Compile.opAppendOne`/`opAppendZero`);
+   - **composition is proven** by `compileSeq_compose_physical`: once a
+     compiled `Op` halts with its head rewound to `0` and tape equal to
+     the encoding of its output (the *physical contract*),
+     `composeFlatTM` resumes the next machine on exactly an
+     `initFlatConfig`, so `compileSeq` chains with no friction.
+
+   C1 also surfaced a real architectural gap — the tape model's content
+   never shrinks, so **length-decreasing `Op`s** (`clear`/`tail`/…)
+   cannot produce the exact encoding — resolved by the **sentinel**
+   alphabet (a reserved terminator `endMark = 3`, `sig = 4`, now also
+   reused as a *leading* sentinel for the head-rewind). What remains for
+   the append slice is bounded: the leading-sentinel encoding + decode
+   round-trip, then the *physical* `compileOp_sound` for `appendOne`
+   (`appendAtTM ⨾ scanLeftUntilTM`). The one **unvalidated** completion
+   risk left is **C3 — the `loopTM` counted-loop combinator** (the
+   dominant cost of the abandoned hand-rolled approach; needed by every
+   verifier). See ROADMAP Risks **C1**/**C2**/**C3**.
 
 2. **`sorry`-free vacuous reductions on the proof path** (Risks
    S1/S2). Two reduction maps —

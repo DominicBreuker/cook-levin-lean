@@ -22,18 +22,36 @@ turning it into an honest, mathematically rigorous proof.
 | 1     | Foundational hygiene, small-`sorry` cleanup                | ✅ done |
 | 2 (framework) | TM-backed `DecidesBy` + `inTimePoly`               | ✅ done |
 | 2 (content)   | Hand-rolled `EvalCnfTM` / `CliqueRelTM` verifiers  | ⏸ paused mid-stream |
-| 3–7   | TM-backed reductions, simulators, Cook tableau             | rescoped (see below) |
+| 3 (layer)     | `Cmd`/`Op` + compiler skeleton + gadget library    | 🟡 in progress (C1 append-`Op` slice + C2 composition validated) |
+| 4–7   | TM-backed reductions, simulators, Cook tableau             | rescoped (see below) |
 
 - Repository size: **~25.7K LOC** of Lean.
-- Build state: **`lake build` is green** (3350 jobs), **0 axioms**,
-  with **~33 labelled `sorry`s** across the Parts 3–7 skeleton
+- Build state: **`lake build` is green** (3355 jobs), **0 project axioms**
+  (the layer is axiom-clean beyond the standard
+  `propext`/`Classical.choice`/`Quot.sound`), with **~32 labelled
+  `sorry`s** across the Parts 3–7 skeleton
   ([distribution and ranking](#current-skeleton-state)). The four
   framework-migration `sorry`s ([listed below](#the-four-open-sorrys))
   were decomposed into these when the skeleton was scaffolded.
+- **What moved since the last full assessment (the C1/C2 work).** The layer
+  now has a real, *sorry-free* gadget library (`insertCarryTM`, the
+  `scan_to_mark` / `scanPastDelimTM` / `scanLeftUntilTM` family) and the
+  first compiled primitive: `Compile.opAppendOne` / `opAppendZero` are real
+  `CompiledCmd`s built from `appendAtTM` (general register `dst`). **C2 — the
+  `compileSeq` resume gap — is validated:** `compileSeq_compose_physical`
+  proves two fragments compose cleanly *given the physical per-`Op` contract*
+  (halt at `exit`, head rewound to `0`, tape `= encodeTape (output)`, with an
+  exact step and a no-early-halt trajectory). C2 thus drops from a structural
+  unknown to bounded engineering. See the
+  [C1](#c1-progress--interim-measurement-may-2026) /
+  [C2](#c2-analysis-the-per-op-soundness-contract-is-too-weak-to-compose-may-2026)
+  analyses.
 - `theorem CookLevin : NPcomplete SAT` typechecks against the strengthened
-  framework but is **conditional**: it inherits the ~33 `sorry`s, the
+  framework but is **conditional**: it inherits the ~32 `sorry`s, the
   `sorry`-free vacuous reductions/bridges (Risks **S1**/**S2**), the
-  `polyTimeComputable` weakness (Risk **S3**), and Part 0.
+  `polyTimeComputable` weakness (Risk **S3**), and Part 0. **None of the
+  C1/C2 layer progress moves this headline** — the soundness gaps are on the
+  reduction side (Parts 5–6), downstream of the layer.
 
 ### Why the pivot
 
@@ -158,10 +176,11 @@ iteration.**
 
 | Metric                                | Value             | Trend |
 |---------------------------------------|-------------------|-------|
-| `lake build`                          | ✅ green (~3350 jobs) | unchanged |
-| Axiom count (repo-wide)               | **0**             | unchanged |
-| `sorry`s on the proof path            | **~33**           | ↓ −1: `decodeTape_encodeTape` proved (C1 step 1); prior "~26" had undercounted |
-| Sorry-**free** vacuous defs on the proof path | **≥ 4**   | newly tracked — see Risk **S1**/**S2** |
+| `lake build`                          | ✅ green (~3355 jobs) | unchanged |
+| Axiom count (repo-wide)               | **0** project axioms | unchanged |
+| `sorry`s on the proof path            | **~32**           | flat: C1/C2 added *sorry-free* gadgets + lemmas (`appendAtTM`, `scanLeftUntilTM`, `compileSeq_compose_physical`) and concretized two `compileOp` stubs, without closing any of the six `Compile.lean` sorrys (they await the contract restatement) |
+| Sorry-**free** vacuous defs on the proof path | **≥ 4**   | unchanged — see Risk **S1**/**S2** |
+| Reusable layer gadget library         | `insertCarryTM`, `scan_to_mark`/`scanPastDelimTM`/`scanLeftUntilTM`, `appendAtTM`, `compileSeq_compose_physical` | ↑ new this cycle, all axiom-clean |
 | `theorem CookLevin : NPcomplete SAT` | typechecks, **conditional** on all of the above | unchanged since pre-pivot |
 
 > **Sorry count is not the soundness metric (review note, May 2026).**
@@ -180,7 +199,7 @@ Sorry distribution at the current snapshot (May 2026, recounted):
 
 | File                                       | Sorrys | What they are |
 |--------------------------------------------|--------|---------------|
-| `Lang/Compile.lean`                        | 6      | `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound` (`decodeTape_encodeTape` ✅ proved, C1 step 1) |
+| `Lang/Compile.lean`                        | 6      | `compileOp_sound`, `compileSeq_sound`, `compileIfBit_sound`, `compileForBnd_sound`, `Compile_sound`, `Compile_polyBound`. (`decodeTape_encodeTape` ✅; `opAppendOne`/`opAppendZero` ✅ real `CompiledCmd`s; `compileSeq_compose_physical` ✅ proves composition under the physical contract — the six sorrys await restating these lemmas to that contract) |
 | `Lang/PolyTime.lean`                       | 4      | `DecidesLang.toDecidesBy`, `inTimePolyLang_to_inTimePoly`, `PolyTimeComputableLang.comp`, `red_inNP_via_lang` |
 | `Complexity/NP.lean`                       | 1      | `red_inNP` TM-composition |
 | `GenNP_is_hard.lean`                       | 1      | `hasDeciderClassical` |
@@ -230,13 +249,13 @@ obligations that move into that axiom interface.
 
 | # | Gap | Location | Why this ranking |
 |---|-----|----------|------------------|
-| **C1** | **Concretize one primitive `Op` end-to-end** (def **and** its slice of `compileOp_sound`) | `Lang/Compile.lean` | **Highest-information action available.** The entire pivot rests on the premise that primitives are "~50 LOC each" (Part 3.3). The Part-2 empirical datum is **1,000–2,500 LOC per primitive TM** (Appendix A, points 1–2). These cannot both hold. The layer amortises *composition* (`compileSeq`/`compileIfBit` discharge cheaply) but **not** the per-primitive operational proof, which is precisely what blew up. Pick the simplest op (`opNonEmpty` or `opHead`: read one cell, write one bit) and prove `compileOp_sound` for it. If that proof is small, the pivot premise holds and the rest of `compileOp` is bounded engineering; if it balloons, the premise is **falsified now** and the [Fallback plan](#fallback-plan-if-the-layer-also-overruns) (axiomatic `inTimePoly`) should trigger before more skeleton is built. The old register never prioritised this — it kept decomposing compiler *structure*, which validates nothing about the expensive part. |
-| **C2** | **`compileSeq_sound` operational composition** | `Lang/Compile.lean` | `compileSeq` composes via `composeFlatTM`, which **resumes M₂ on M₁'s halting configuration**; but the soundness hypotheses (`h2`) bound M₂ when started from `initFlatConfig` — head at cell 0, fresh tape framing. Unless every compiled fragment **resets the head to 0** before halting (a new `CompiledCmd` invariant), the resume point does not match the hypothesis. This is **distinct** from the halt-uniqueness gap that risk 1d resolved; it is currently buried inside the single `compileSeq_sound` sorry and is the real obstacle there. |
-| **C3** | **`loopTM` combinator + its run lemma** | `Complexity/TMPrimitives.lean`, `Lang/Compile.lean` | `compileForBnd` is a `compiledCmd_default` stub; `loopTM` is absent from `TMPrimitives`. The *combinator* is routine; the **run lemma** (iteration bookkeeping: threading tape state through the counter, post-loop cleanup) is, per Appendix A point 2, the **dominant cost** (~600 + ~400 LOC per loop site). Single-tape unary counter is the preferred design but unvalidated. Closely coupled to C1 (the loop body invokes compiled primitives). |
+| **C3** | **`loopTM` combinator + its run lemma** | `Complexity/TMPrimitives.lean`, `Lang/Compile.lean` | **Now the top *unvalidated* completion risk.** `compileForBnd` is a `compiledCmd_default` stub; `loopTM` is absent from `TMPrimitives`. The *combinator* is routine; the **run lemma** (iteration bookkeeping: threading tape state through the counter, post-loop cleanup) was, per Appendix A point 2, the **dominant cost** of the hand-rolled approach (~600 + ~400 LOC per loop site). Every verifier (`evalCnfCmd` iterates clauses × literals) needs it, and *nothing has touched it*. With C1/C2 having validated the per-primitive + composition story, `loopTM` is the next go/no-go experiment: build a single-tape unary-counter `loopTM` + its run lemma and measure. If it is ≲ the per-op cost, the layer converges; if it balloons, that is the signal to trigger the [Fallback plan](#fallback-plan-if-the-layer-also-overruns). |
+| **C1** | **Concretize one primitive `Op` end-to-end** (def **and** its slice of `compileOp_sound`) | `Lang/Compile.lean`, `Lang/*` | **Largely validated; finishing in progress.** The pivot premise ("primitives ~50 LOC each") is **partly falsified but in a benign way**: each primitive is hundreds of LOC, *but* the cost is front-loaded into a **reusable gadget library** (`insertCarryTM`, the scan family, `scanLeftUntilTM`) that amortises across ops, and *composition is cheap* (C2). `appendOne`/`appendZero` are built end-to-end as machines (`appendAtTM` + run lemma, packaged as `CompiledCmd`s). **Remaining for the slice:** (i) the leading-sentinel encoding + `decodeTape` round-trip re-proof, then (iv) the *physical* `compileOp_sound` for `appendOne` (`appendAtTM ⨾ scanLeftUntilTM`, with trajectory + step bound). Revised `compileOp` estimate **~2–3K LOC** total for all 8 ops + the delete gadget, most of it reused infra. |
+| **C2** | **Per-`Op` soundness contract + `compileSeq_sound` composition** | `Lang/Compile.lean` | **De-risked (structural unknown → bounded engineering).** Reading `composeFlatTM_run` showed the gap precisely: it resumes `M₂` on `M₁`'s halting config, so the per-`Op` contract must expose an **exact halt step, a no-early-halt trajectory, and a head-`0` exit config** — none of which the current `decodeTape`-equality `compileOp_sound` provides. The fix is built: the `scanLeftUntilTM` head-rewind gadget, and `compileSeq_compose_physical`, which **proves** that two fragments meeting this *physical contract* compose via `composeFlatTM_run` (head-`0` output makes `M₁`'s exit config literally `initFlatConfig M₂ […]`). Remaining: restate `compileOp_sound`/`compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` to the physical contract (a known, file-local refactor). |
 | **C4** | **`PolyTimeComputableLang` ↔ framework** | `Lang/PolyTime.lean`, `Complexity/NP.lean` | `polyTimeComputable` carries no Lang witness, so `red_inNP` (the `NP.lean` sorry) cannot compose at the layer level. Requires upgrading `PolyTimeComputableWitness` (or adding a parallel TM-backed witness and migrating). **This is also the structural change that begins to retire S3** — the same upgrade that lets `red_inNP` compose is what lets the chain's reductions stop relying on the size-only bound. |
 | **C5** | **DSL expressiveness — missing primitives** | `Lang/Syntax.lean` | Writing `evalCnfCmd` surfaced two needs: no guarded loop (`Cmd.while`) and no constant-comparison primitive (`Op.headEqVal`). Decide their type/cost shapes before C7, or that work is redone. **Note the tension with C1/C3:** every new `Op` is another per-primitive soundness proof, so add primitives only when they materially shorten the verifiers. |
-| **C6** | **`compileIfBit` tester logic** | `Lang/Compile.lean` | Structure is done (`branchComposeFlatTM` + `joinTwoHalts`, all seven invariants discharge). `branchTester_default` is a no-op 2-state stub; the remaining work is the real bit-test (read register `t`'s first symbol, dispatch to `exitPos`/`exitNeg`) plus `compileIfBit_sound`. Same primitive-proof flavour as C1. |
-| **C7** | **`evalCnfCmd` / `cliqueRelCmd` bodies** | `Deciders/EvalCnfCmd.lean`, `Deciders/CliqueRelTM.lean` | Per-clause/per-literal/member-check (`evalCnfCmd`) and the whole `cliqueRelCmd`/`cliqueRelEncode` (still sorry-typed `def`s) are DSL-engineering. Mostly mechanical, but each may surface another C5 gap. **Wait for C5**, and note this is dead until C1–C4 make the layer→`DecidesBy` bridge real (otherwise the DSL programs decide nothing at the TM level). |
+| **C6** | **`compileIfBit` tester logic** | `Lang/Compile.lean` | Structure is done (`branchComposeFlatTM` + `joinTwoHalts`, all seven invariants discharge). `branchTester_default` is a no-op 2-state stub; the remaining work is the real bit-test (read register `t`'s first symbol, dispatch to `exitPos`/`exitNeg`) plus `compileIfBit_sound`. Same primitive-proof flavour as C1, and its `compileIfBit_sound` needs the same physical-contract restatement as C2. |
+| **C7** | **`evalCnfCmd` / `cliqueRelCmd` bodies** | `Deciders/EvalCnfCmd.lean`, `Deciders/CliqueRelTM.lean` | Per-clause/per-literal/member-check (`evalCnfCmd`) and the whole `cliqueRelCmd`/`cliqueRelEncode` (still sorry-typed `def`s) are DSL-engineering. Mostly mechanical, but each may surface another C5 gap. **Gated on C3** (they are loops) **and C5**, and dead until C1–C4 make the layer→`DecidesBy` bridge real (otherwise the DSL programs decide nothing at the TM level). |
 | **C8** | **`hasDeciderClassical`** | `GenNP_is_hard.lean` | The `NPhard_GenNP` hardness sorry. Its signature is currently too strong (a decider for *any* predicate). Tractable once C4 lands and the verifier TM can be drawn from `InNPWitness`. Last sorry to close. |
 
 **Risk grading convention.** Group S items are **soundness**: they do
@@ -247,10 +266,17 @@ C, **C1–C4 are structural** (they validate the pivot premise or
 change downstream type signatures), **C5–C6 are design**, and
 **C7–C8 are engineering** that is gated on the structural items above.
 
-**The single most important next step** is **C1**: it is the cheapest
-experiment that can falsify the pivot's central assumption, and the
-methodology (surface structural gaps *early*) demands running it
-before investing further in the skeleton.
+**Reordered ranking (May 2026, post-C1/C2).** C1 and C2 — the two items
+that were the pivot's make-or-break structural unknowns — are now
+**validated**: a primitive compiles end-to-end with a reusable gadget
+library, and compositions glue cleanly under a now-explicit physical
+contract. The remaining open *structural* question is **C3 (`loopTM`)**,
+which is why it is promoted to the top. **The single most important next
+step** is therefore: (a) finish the `appendOne` physical slice (C1 steps
+(i)+(iv)) to retire the contract restatement on a concrete example, then
+(b) run the **`loopTM` go/no-go** (C3). If both hold, the layer's cost
+model is fully validated and the rest of Group C is bounded engineering;
+if `loopTM` balloons, trigger the fallback before building the verifiers.
 
 #### C1 progress + interim measurement (May 2026)
 
@@ -607,6 +633,25 @@ structural unknown. Added *additively*; the file-wide restatement of
 and instantiate `compileSeq_compose_physical` for `appendOne ∘ appendOne`.
 
 ### Iteration log
+
+- **May 2026 — Risk reassessment (doc-only) after the C1/C2 work.**
+  Re-ranked Group C in light of the validated layer progress. **C1 and C2
+  — the pivot's two make-or-break structural unknowns — are now validated**:
+  a primitive (`appendOne`) compiles end-to-end via a reusable gadget
+  library, and `compileSeq_compose_physical` proves compiled fragments
+  compose under an explicit physical contract. Consequences for the plan:
+  (1) the pivot's *composition* premise holds; the *per-primitive* premise
+  is "moderate but front-loaded into reusable gadgets" (revised `compileOp`
+  ≈ 2–3K LOC). (2) **`loopTM` (C3) is promoted to the top open completion
+  risk** — it was the dominant cost of the hand-rolled approach, every
+  verifier needs it, and nothing has touched it; it is the next go/no-go.
+  (3) A bounded follow-through surfaced: the per-`Op` soundness lemmas must
+  be restated file-wide to the physical contract. (4) **The deepest risks
+  are unchanged and untouched by layer work** — S1 (the faked Cook tableau)
+  and S2 (dummy bridges) are the actual "faithful/meaningful" gates and sit
+  in Parts 5–6, downstream of the layer; closing every Group C `sorry`
+  still leaves `CookLevin` conditional. README + ROADMAP status/risk
+  sections updated to match. No code change; build green.
 
 - **May 2026 — C2 validation: rewind primitive + composition proven under
   the physical contract.** Owner chose to validate **C2** (the `compileSeq`
@@ -1372,7 +1417,7 @@ shrinks.
 | 1     | Cleanup & `sorry` discharge                          |  ~500 LOC    |  ~500 LOC         | ✅ done |
 | 2     | TM-backed `inTimePoly` *framework*                   | ~1,500 LOC   | (subset of 1,500) | ✅ done |
 | 2c    | Hand-rolled deciders *(retired)*                     | n/a          | n/a               | ⏸ retired in favour of Part 3 |
-| 3     | Higher-level computable layer (skeleton landed)      | ~7,000 LOC   | n/a               | 🟡 skeleton; refining |
+| 3     | Higher-level computable layer (skeleton landed)      | ~7,000 LOC   | n/a               | 🟡 gadget library + 1st primitive + composition validated; `loopTM` + verifiers pending |
 | 4     | `polyTimeComputable` via the layer                   | ~1,500 LOC   | ~4,000 LOC        | 🟡 skeleton; refining |
 | 5     | Multi-tape → 1-tape simulator via the layer          | ~1,000 LOC   | ~3,000 LOC        | 🟡 skeleton; refining |
 | 6     | Cook tableau (TM → FlatTCC) via the layer            | ~2,700 LOC   | ~3,000 LOC        | 🟡 skeleton; refining |
