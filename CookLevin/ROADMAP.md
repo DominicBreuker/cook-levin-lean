@@ -588,16 +588,46 @@ it internally — e.g. `scanPastDelim_no_early_halt` — it is just discarded by
 
 **Recommended build order for C2** (each green + committed):
 (i) leading-sentinel encoding + `decodeTape` + round-trip re-proof;
-(ii) the left-scan **rewind primitive** (`Lang/ScanLeft.lean`, mirror of
-`scanPastDelimTM` with `Lmove`) + run/trajectory lemmas;
-(iii) restate `compileOp_sound` to the physical contract above and prove a
-generic `compileSeq_sound` from it via `composeFlatTM_run` (**the decisive
-composition check**);
+(ii) ✅ **Done.** the left-scan **rewind primitive** (`Lang/ScanLeft.lean`,
+mirror of `scanRightUntilTM` with `Lmove`): `scanLeftUntilTM` + `scanLeft_run`
+(rewind the head to the leading sentinel at index `0` in `head + 1` steps) +
+`scanLeft_no_early_halt` trajectory, all *sorry-free*, axiom-clean.
+(iii) ✅ **Done (the decisive composition check).** `compileSeq_compose_physical`
+(`Lang/Compile.lean`) proves that two fragments each meeting the **physical
+contract** (halt at `exit` with head `0` and tape `encodeTape (output)`,
+reached at explicit step `t` with a no-early-halt trajectory) compose cleanly
+via `composeFlatTM_run`: with head `0`, `M₁`'s exit config is *literally*
+`initFlatConfig M₂ […]`, so `M₂`'s contract is `composeFlatTM_run`'s `h_run2`.
+*Sorry-free*, axiom-clean. **This confirms the C2 contract redesign works** —
+the remaining work is engineering (achieve the contract per-`Op`), not a
+structural unknown. Added *additively*; the file-wide restatement of
+`compileOp_sound`/`compileSeq_sound`/… to this shape is deferred.
 (iv) prove the physical `compileOp_sound` for `appendOne`/`appendZero`
-(`appendAtTM ⨾ rewind`, with trajectory + step bound) and instantiate
-`compileSeq_sound` for `appendOne ∘ appendOne`.
+(`appendAtTM ⨾ scanLeftUntilTM`, with trajectory + step bound) — needs (i) —
+and instantiate `compileSeq_compose_physical` for `appendOne ∘ appendOne`.
 
 ### Iteration log
+
+- **May 2026 — C2 validation: rewind primitive + composition proven under
+  the physical contract.** Owner chose to validate **C2** (the `compileSeq`
+  resume gap) before finishing the single-op slice, and to keep `sig = 4` by
+  reusing `endMark = 3` as a two-sided sentinel. Established by reading
+  `composeFlatTM_run` that the per-`Op` contract must expose an exact halt
+  step, a no-early-halt trajectory, and a head-`0` exit config — recorded the
+  required physical-contract redesign (see the C2 analysis subsection). Then,
+  in two additive, *sorry-free*, axiom-clean checkpoints: **(ii)** built
+  `Lang/ScanLeft.lean` (`scanLeftUntilTM`, the `Lmove` mirror of
+  `scanRightUntilTM`) with `scanLeft_run` (rewind head to the leading
+  sentinel at index `0`) and `scanLeft_no_early_halt`; **(iii)** proved
+  `compileSeq_compose_physical` in `Lang/Compile.lean` — two fragments meeting
+  the physical contract compose via `composeFlatTM_run`, because head-`0`
+  output makes `M₁`'s exit config literally `initFlatConfig M₂ […]`. **C2 is
+  thus de-risked: the composition story holds; the remainder is engineering
+  (achieve the physical contract per-`Op`), not a structural unknown.** Both
+  checkpoints additive (existing `compileSeq_sound` sorry untouched); full
+  build green. Next: (i) leading-sentinel encoding + round-trip, then (iv)
+  the physical `compileOp_sound` for `appendOne` and the
+  `appendOne ∘ appendOne` instantiation.
 
 - **May 2026 — C1 option A, step 4 (cont.): `CompiledCmd` packaging of
   `appendAtTM` (item (c)).** Concretized `Compile.opAppendOne` /

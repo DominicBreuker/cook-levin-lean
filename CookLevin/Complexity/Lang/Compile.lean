@@ -1035,6 +1035,46 @@ theorem compileSeq_sound
       Compile.decodeTape cfg = eval2 (eval1 s) := by
   sorry  -- TODO(Part3.3:compileSeq): apply composeFlatTM_run.
 
+/-! ### C2 validation: composition under the *physical* per-`Op` contract
+
+The fixed-budget `decodeTape`-equality contract above cannot feed
+`composeFlatTM_run` (it lacks the exact halt step, the no-early-halt
+trajectory, and the head-`0` exit config). The lemma below is the decisive
+check that the **physical** contract — each fragment halts at its `exit`
+state with the head rewound to `0` and tape exactly `encodeTape (output)`,
+reached at an explicit step `t` with a no-early-halt trajectory — composes
+cleanly: with head `0`, `M₁`'s exit config *is* `initFlatConfig M₂ […]`, so
+`M₂`'s contract plugs straight into `composeFlatTM_run`'s `h_run2`. It is
+additive (the sorry'd `compileSeq_sound` above is left untouched pending the
+file-wide contract restatement). See ROADMAP Risk C2. -/
+theorem compileSeq_compose_physical
+    (r1 r2 : CompiledCmd) (enc1 enc2 : List Nat) {t1 t2 : Nat} {cfg2 : FlatTMConfig}
+    (h_sym2 : ∀ v, currentTapeSymbol (([] : List Nat), 0, enc2) = some v → v < 4)
+    (h_run1 : runFlatTM t1 r1.M (initFlatConfig r1.M [enc1])
+                = some { state_idx := r1.exit, tapes := [([], 0, enc2)] })
+    (h_traj1 : ∀ k, k < t1 → ∀ ck,
+        runFlatTM k r1.M (initFlatConfig r1.M [enc1]) = some ck →
+        ck.state_idx ≠ r1.exit ∧ haltingStateReached r1.M ck = false)
+    (h_run2 : runFlatTM t2 r2.M (initFlatConfig r2.M [enc2]) = some cfg2)
+    (h_halt2 : haltingStateReached r2.M cfg2 = true) :
+    runFlatTM (t1 + 1 + t2) (compileSeq r1 r2).M
+        (initFlatConfig (compileSeq r1 r2).M [enc1])
+      = some { state_idx := cfg2.state_idx + r1.M.states, tapes := cfg2.tapes } ∧
+    haltingStateReached (compileSeq r1 r2).M
+      { state_idx := cfg2.state_idx + r1.M.states, tapes := cfg2.tapes } = true := by
+  have h_cfg0_state_lt :
+      (initFlatConfig r1.M [enc1]).state_idx < r1.M.states := r1.M_valid.1
+  have h_sym_bound :
+      ∀ v, currentTapeSymbol (([] : List Nat), 0, enc2) = some v →
+        v < max r1.M.sig r2.M.sig := by
+    intro v hv
+    rw [r1.M_sig, r2.M_sig]
+    exact h_sym2 v hv
+  exact composeFlatTM_run (M₁ := r1.M) (M₂ := r2.M) (exit := r1.exit)
+    r1.M_valid r2.M_valid r1.exit_lt
+    (initFlatConfig r1.M [enc1]) h_cfg0_state_lt
+    [] 0 enc2 h_sym_bound h_run1 h_traj1 h_run2 h_halt2
+
 /-- Soundness obligation for `compileIfBit`. The two branches are
 mutually exclusive on the value of `s.get t`, so the IH for the
 *taken* branch is the only one needed; we state both for symmetry. -/
