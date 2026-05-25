@@ -114,3 +114,68 @@ theorem ExplicitMTMTarget_to_TMGenNP_singleTM {σ : finType} [encodable σ] (M :
         (initTape_singleTapeTM (inst.workTapes.foldr List.append [])) cert inst.steps⟩⟩
     · rintro ⟨cert, hsize, hacc, _⟩
       exact ⟨cert, hsize, hacc⟩
+
+/-! ## S2 go/no-go probe (May 2026): is the multi-tape → single-tape
+simulator (`Simulators/MultiToSingle.lean`) needed?
+
+Verdict: **NO — do not build it.** The "multi-tape stage" is a
+Coq-porting artifact with zero footprint in the layer-based Lean
+architecture. The evidence below is additive and sorry-free; it does not
+touch the live chain. See `ROADMAP.md` for the full verdict. -/
+
+/-- **Evidence 1: the tape count is an erased phantom.** `TM σ n` is
+`abbrev`-ed to `FlatTM` (`Definitions.lean`), discarding `n`. So the
+"2-tape" source machine and the "1-tape" target machine are *literally the
+same type* — there is no multi-tape object to simulate down to one tape. -/
+theorem TM_tapecount_phantom : TM Bool 2 = TM Bool 1 := rfl
+
+/-- **Evidence 2: the bridge machine is content-free.** It accepts *every*
+validly-encoded tape configuration in *any* step budget, regardless of the
+certificate. So the `acceptsFlatTM bridgeMachine …` conjunct that the
+front-chain reductions thread through carries **no information** — it is a
+decorative `True` that can be removed. (The real content is the abstract
+relation `inst.source.rel`, threaded unchanged.) -/
+theorem bridgeMachine_accepts_any {σ : finType} (tps : List (List Nat)) (steps : Nat)
+    (hvalid : isValidFlatTapes (MultiToMonoBridge.bridgeMachine (σ := σ)) tps = true) :
+    acceptsFlatTM (MultiToMonoBridge.bridgeMachine (σ := σ)) tps steps = true := by
+  refine (acceptsFlatTM_eq_true_iff).2 ?_
+  refine ⟨initFlatConfig (MultiToMonoBridge.bridgeMachine (σ := σ)) tps, ?_, ?_⟩
+  · unfold execFlatTM
+    rw [if_pos hvalid]
+    apply runFlatTM_of_halting
+    simp [haltingStateReached, MultiToMonoBridge.bridgeMachine, initFlatConfig]
+  · simp [haltingStateReached, MultiToMonoBridge.bridgeMachine, initFlatConfig]
+
+/-- A phantom-free single-tape target map: it threads the source NP
+relation directly, with **no** decorative TM-acceptance conjunct (contrast
+`multiTapeToSingleTapeInput`, which conjoins `bridgeMachine_accepts`). -/
+def directLMtoSingleTapeInput (inst : LMGenNP.Instance (List Bool)) :
+    TMGenNPFixedInput Bool where
+  input := []
+  maxSize := inst.maxSize
+  steps := inst.steps
+  accepts := fun cert =>
+    @certificateMeasure (List Bool) (@instEncodableList Bool instEncodableBool) cert
+        ≤ inst.source.maxSize ∧
+      inst.source.rel cert
+
+/-- **Evidence 3: the multi-tape node is removable.** `LMGenNP` reduces
+*directly* to the single-tape target, skipping the `mTM` intermediate
+entirely, via a real (phantom-free, identity-threading) map. This is the
+one-step replacement for the live `LMGenNP_to_TMGenNP_mTM ; TMGenNP_mTM_to_…`
+two-step chain — proof that the multi-tape detour adds nothing. -/
+theorem LMGenNP_to_TMGenNP_singleTM_direct :
+    LMGenNP.LMGenNP (List Bool) ⪯p
+      TMGenNP_fixed (σ := Bool) (MultiToMonoBridge.bridgeMachine (σ := Bool)) := by
+  refine ⟨⟨directLMtoSingleTapeInput, ?_, fun {inst} => ?_⟩⟩
+  · refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
+    · intro a b hab
+      simp
+    · intro inst
+      exact Nat.le_refl _
+  · constructor
+    · rintro ⟨cert, hsize, hsource, hrel⟩
+      exact ⟨cert, by simpa [directLMtoSingleTapeInput] using hsize,
+        by simpa [directLMtoSingleTapeInput] using And.intro hsource hrel⟩
+    · rintro ⟨cert, hsize, hsource, hrel⟩
+      exact ⟨cert, by simpa [directLMtoSingleTapeInput] using hsize, hsource, hrel⟩

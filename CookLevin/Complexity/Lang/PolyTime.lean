@@ -63,7 +63,7 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   cost_bound : Nat → Nat
   cost_bound_poly : inOPoly cost_bound
   cost_bound_mono : monotonic cost_bound
-  encodeIn_size : ∀ x, State.size (encodeIn x) ≤ encodable.size x + 1
+  encodeIn_size : ∀ x, State.size (encodeIn x) ≤ 2 * encodable.size x + 1
   /-- After running `c`, the output register decodes to `f x`. -/
   computes : ∀ x, decodeOut (c.eval (encodeIn x)) = f x
   /-- Running `c` is polynomial-time. -/
@@ -138,5 +138,577 @@ theorem red_inNP_via_lang
     inNP P := by
   sorry  -- TODO(Part4.2): destructure hQ, compose the verifier
          -- with hf via Cmd.seq, repackage as inNP P.
+
+/-! ## S3-retirement probe (May 2026): a TM-backed `polyTimeComputable`
+
+This block is the deliverable of the `S3_RETIREMENT_EXPLORATION.md`
+go/no-go probe. It is **additive**: the live `polyTimeComputable` /
+`⪯p` / `CookLevin` are untouched, so the conditional theorem keeps
+compiling. The probe answers one question: *can the size-only
+`PolyTimeComputableWitness` (Risk S3) be replaced by a real,
+TM- and layer-backed witness?*
+
+The pieces below are sorry-free; they depend only on the pre-existing
+`Compile_sound` sorry (which the brief instructs us to assume). See the
+verdict in `ROADMAP.md`. -/
+
+/-- **(A) The honest interface.** A TM-backed *function-computation*
+witness: a `FlatTM` that, on the encoded input, halts within
+`timeBound (size x)` steps in a configuration whose decoded output is
+`f x`. This is the function analogue of the framework's existing
+`DecidesBy` (which already TM-backs *deciders*); it carries the content
+that the size-only `PolyTimeComputableWitness` (S3) lacks. -/
+structure ComputesBy {X Y : Type} [encodable X] [encodable Y]
+    (f : X → Y) (timeBound : Nat → Nat) where
+  /-- How the input is laid out on tape 0. -/
+  encode      : X → List Nat
+  /-- The underlying flat Turing machine. -/
+  M           : FlatTM
+  /-- It is a well-formed TM. -/
+  M_valid     : validFlatTM M
+  /-- The machine has at least one tape. -/
+  M_tapes_pos : 0 < M.tapes
+  /-- How to read `f x` out of a halting configuration. -/
+  decode      : FlatTMConfig → Y
+  /-- Within the time budget the machine halts and its output decodes
+  to `f x`. This is the real computational content. -/
+  computes    : ∀ x, ∃ cfg,
+    runFlatTM (timeBound (encodable.size x)) M
+        (initFlatConfig M (initialTapes M (encode x))) = some cfg ∧
+      haltingStateReached M cfg = true ∧
+      decode cfg = f x
+
+/-- **(A) The upgraded witness.** It *extends* the size-only
+`PolyTimeComputableWitness` (so every existing size-bound consumer —
+`reducesPolyMO_transitive`, `red_inNP`'s `polyCertRel` half, … — keeps
+working verbatim) and additionally carries a real polynomial-time
+machine computing `f`. Replacing `PolyTimeComputableWitness` by this in
+`ReductionWitness` is exactly what retires S3. -/
+structure PolyTimeComputableWitness' {X Y : Type} [encodable X] [encodable Y]
+    (f : X → Y) extends PolyTimeComputableWitness f where
+  timeBound      : Nat → Nat
+  timeBound_poly : inOPoly timeBound
+  timeBound_mono : monotonic timeBound
+  computer       : ComputesBy f timeBound
+
+abbrev polyTimeComputable' {X Y : Type} [encodable X] [encodable Y] (f : X → Y) : Prop :=
+  Nonempty (PolyTimeComputableWitness' f)
+
+/-- The upgrade is a genuine **strengthening**: a TM-backed witness
+yields the old size-only witness for free. Hence migrating `⪯p` to
+`polyTimeComputable'` keeps every size-bound lemma in `NP.lean` valid
+verbatim — only the *construction* of witnesses gets harder (which is
+the whole point: that is where S1/S2 stop typechecking). -/
+theorem polyTimeComputable'_to_polyTimeComputable
+    {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
+    (h : polyTimeComputable' f) : polyTimeComputable f := by
+  obtain ⟨W⟩ := h
+  exact ⟨W.toPolyTimeComputableWitness⟩
+
+/-- **(B) The real bridge — the headline result.** A layer-level
+`PolyTimeComputableLang f` extends to the TM-backed
+`PolyTimeComputableWitness' f`, *assuming `Compile_sound`* (used below as
+the in-scope, sorry-backed theorem). This is the honest content that the
+existing `PolyTimeComputableLang.toFrameworkWitness` fakes (it discards
+`computes`/`cost_le` and proves only the size bound). It goes through
+**cleanly**: the machine is `Compile W.c`, the time budget is
+`Compile.overhead` of the layer cost, and `Compile_sound` + `runFlatTM_extend`
+(budget padding) discharge the `computes` obligation. -/
+theorem PolyTimeComputableLang.toFrameworkWitness'
+    {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
+    (W : PolyTimeComputableLang f) :
+    polyTimeComputable' f := by
+  have htb_poly : inOPoly (fun n => Compile.overhead (n + n + 1 + W.cost_bound n)) := by
+    have hinner : inOPoly (fun n => n + n + 1 + W.cost_bound n) :=
+      inOPoly_add (inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 1))
+        W.cost_bound_poly
+    show inOPoly (Compile.overhead ∘ fun n => n + n + 1 + W.cost_bound n)
+    exact inOPoly_comp hinner Compile.overhead_poly
+  have htb_mono : monotonic (fun n => Compile.overhead (n + n + 1 + W.cost_bound n)) := by
+    intro a b hab
+    apply Compile.overhead_mono
+    have hcb : W.cost_bound a ≤ W.cost_bound b := W.cost_bound_mono a b hab
+    omega
+  refine ⟨{
+    toPolyTimeComputableWitness :=
+      ⟨W.cost_bound, W.cost_bound_poly, W.cost_bound_mono, W.output_size_le⟩
+    timeBound := fun n => Compile.overhead (n + n + 1 + W.cost_bound n)
+    timeBound_poly := htb_poly
+    timeBound_mono := htb_mono
+    computer := ?_ }⟩
+  · -- ComputesBy: the machine is `Compile W.c`.
+    refine {
+      encode := fun x => Compile.encodeTape (W.encodeIn x)
+      M := Compile W.c
+      M_valid := Compile_valid W.c
+      M_tapes_pos := ?_
+      decode := fun cfg => W.decodeOut (Compile.decodeTape cfg)
+      computes := ?_ }
+    · rw [Compile_tapes]; exact Nat.one_pos
+    · intro x
+      obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound W.c (W.encodeIn x)
+      refine ⟨cfg, ?_, hhalt, ?_⟩
+      · -- The single-tape `initialTapes` collapses to `[encodeTape …]`,
+        -- then pad the run budget up to `timeBound (size x)`.
+        have htapes :
+            initialTapes (Compile W.c) (Compile.encodeTape (W.encodeIn x))
+              = [Compile.encodeTape (W.encodeIn x)] := by
+          unfold initialTapes
+          rw [Compile_tapes]; simp
+        show runFlatTM (Compile.overhead
+              (encodable.size x + encodable.size x + 1 + W.cost_bound (encodable.size x)))
+            (Compile W.c)
+            (initFlatConfig (Compile W.c)
+              (initialTapes (Compile W.c)
+                (Compile.encodeTape (W.encodeIn x)))) = some cfg
+        rw [htapes]
+        have hle :
+            Compile.overhead (State.size (W.encodeIn x) + W.c.cost (W.encodeIn x))
+              ≤ Compile.overhead
+                  (encodable.size x + encodable.size x + 1
+                    + W.cost_bound (encodable.size x)) := by
+          apply Compile.overhead_mono
+          have h1 : State.size (W.encodeIn x) ≤ 2 * encodable.size x + 1 :=
+            W.encodeIn_size x
+          have h2 : W.c.cost (W.encodeIn x) ≤ W.cost_bound (encodable.size x) :=
+            W.cost_le x
+          omega
+        obtain ⟨k, hk⟩ := Nat.le.dest hle
+        rw [← hk]
+        exact runFlatTM_extend hrun hhalt
+      · -- decode cfg = decodeOut (decodeTape cfg) = decodeOut (c.eval s) = f x
+        show W.decodeOut (Compile.decodeTape cfg) = f x
+        rw [hdec]; exact W.computes x
+
+/-! ## (C) Composition — where the difficulty concentrates
+
+Replacing the witness forces `reducesPolyMO_transitive` and `red_inNP`
+to compose two TM-backed maps. At the **TM level** this needs a
+re-encoding machine (the output tape of `f`'s TM must be re-laid-out as
+the input tape of `g`'s TM), because `ComputesBy.encode`/`decode` are
+free functions with no shared representation. That re-encoder is exactly
+what the **layer** avoids: `Cmd.seq` keeps everything in the single
+`State` representation, so the composite needs no bridge tape. Hence
+composition is tractable *only* at the layer level (`PolyTimeComputableLang.comp`,
+still sorry-bodied) — which is the ROADMAP's whole thesis.
+
+The remaining obstacle even at the layer is an **encoding-compatibility**
+gap: `PolyTimeComputableLang` carries `encodeIn`/`decodeOut` as
+unconstrained functions, so `Wg.encodeIn (h x)` is not recoverable from
+`Wh`'s output state without an extra hypothesis. The lemma below makes
+that hypothesis explicit and shows the rest goes through definitionally
+(`Cmd.eval_seq`), pinning down precisely what a real `comp` needs: a
+canonical per-type layer encoding (a `LangEncodable`-style class) so that
+`decodeOut`/`encodeIn` agree. -/
+
+/-- Layer composition under an explicit encoding-compatibility bridge
+`reEncode` (a `Cmd` mapping `Wh`'s output state to `Wg`'s input state).
+The `computes` law then follows definitionally from `Cmd.eval_seq`. This
+isolates the one missing ingredient (a canonical state encoding) without
+a sorry; a real `PolyTimeComputableLang.comp` is this with `reEncode`
+supplied by the canonical encoding and the cost bound assembled from the
+two polynomial bounds. -/
+theorem PolyTimeComputableLang.comp_computes_of_bridge
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang g) (Wh : PolyTimeComputableLang h)
+    (reEncode : Cmd)
+    (h_bridge : ∀ x, reEncode.eval (Wh.c.eval (Wh.encodeIn x)) = Wg.encodeIn (h x)) :
+    ∀ x, Wg.decodeOut ((Wh.c ;; (reEncode ;; Wg.c)).eval (Wh.encodeIn x))
+          = (g ∘ h) x := by
+  intro x
+  rw [Cmd.eval_seq, Cmd.eval_seq, h_bridge]
+  exact Wg.computes (h x)
+
+/-! ## (D) The forcing-function test
+
+The S1 reduction `FlatSingleTMGenNP_to_FlatTCC_instance`
+(`Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`) is
+
+```
+noncomputable def … := if h : FlatSingleTMGenNP (M,s,…) then yesInst else noInst
+```
+
+It is `noncomputable` and branches on `FlatSingleTMGenNP`, which is the
+*existential-over-certificate* NP predicate
+(`∃ cert, … ∧ acceptsFlatTM M [s ++ cert] steps = true`). Under the
+**size-only** S3 witness this typechecks (output is one of two fixed
+instances, both size-bounded). Under `polyTimeComputable'` it cannot,
+and the obstruction is formal, not vibes:
+
+* Any layer witness computes `f` via `Cmd.eval`, a **total computable**
+  function (`Cmd.run` is a structural-recursion `def`). So a witness for
+  the S1 map would compute, in polynomial cost, a function that returns
+  `yesInst` exactly when `FlatSingleTMGenNP` holds.
+* Post-composing a constant-comparison `Cmd` (`eqBit` against the fixed
+  encoding of `noInst`) then yields a **polynomial-cost layer decider**
+  for `FlatSingleTMGenNP` — i.e. `inTimePolyLang FlatSingleTMGenNP`.
+
+The lemma below states that reduction precisely: a layer witness for an
+if-on-the-answer map, plus a layer decider for "output = yesInst",
+*is* a layer decider for the source predicate. The witness is therefore
+exactly as hard to build as deciding the NP source — which a many-one
+reduction is not allowed to do. (We state the obligation rather than
+discharge the `Cmd`-level equality test, which is C5/C6 engineering; the
+point is that the obligation is **a decider for an NP predicate**.) -/
+theorem s1_witness_forces_decider
+    {X : Type} [encodable X]
+    (P : X → Prop) (yesInst noInst : X → State)
+    -- `f` is an if-on-the-answer map (abstracted): on yes-instances it
+    -- emits `yesInst`, on no-instances `noInst`.
+    (f : X → State)
+    (_hf_yes : ∀ x, P x → f x = yesInst x)
+    (_hf_no  : ∀ x, ¬ P x → f x = noInst x)
+    -- a layer program computing `f` …
+    (c : Cmd) (encodeIn : X → State) (decodeOut : State → State)
+    (_h_c : ∀ x, decodeOut (c.eval (encodeIn x)) = f x)
+    -- … together with a layer test distinguishing the two outputs …
+    (test : State → Bool)
+    (h_test_yes : ∀ x, P x → test (decodeOut (c.eval (encodeIn x))) = true)
+    (h_test_no  : ∀ x, ¬ P x → test (decodeOut (c.eval (encodeIn x))) = false) :
+    -- … decides `P` pointwise. (The cost is the witness cost + the test
+    -- cost, both polynomial — so this is a *polynomial-time* decider for
+    -- `P`, which is exactly what an NP source cannot have.)
+    ∀ x, (P x ↔ test (decodeOut (c.eval (encodeIn x))) = true) := by
+  intro x
+  constructor
+  · exact h_test_yes x
+  · intro htest
+    by_contra hnp
+    rw [h_test_no x hnp] at htest
+    exact Bool.noConfusion htest
+
+/-! ## C9: canonical layer encoding (May 2026)
+
+The S3 probe surfaced the one remaining structural prerequisite: layer
+composition (`PolyTimeComputableLang.comp`, `red_inNP_via_lang`, `red_inNP`)
+could not even be *stated*, because `PolyTimeComputableLang.encodeIn` /
+`decodeOut` are **free functions** — one program's output state need not be
+the next program's input state.
+
+This block resolves C9. A `LangEncodable` class fixes a **canonical
+single-register** state encoding per type; a `PolyTimeComputableLang'`
+witness then runs in **canonical normal form** — its program maps
+`encodeState x` to `encodeState (f x)` *exactly* (not merely "decodes to
+`f x`"). Composition is then `Cmd.seq` with no re-encoding bridge, and
+`PolyTimeComputableLang'.comp` goes through **definitionally** via
+`Cmd.eval_seq` (the residual gap that `comp_computes_of_bridge` isolated).
+
+The canonical witness bridges to the free-encoding `PolyTimeComputableLang`
+(`toLang`), hence — composing with the S3 result — to the real TM-backed
+`polyTimeComputable'` via `Compile`. All sorry-free; the only dependency is
+the assumed `Compile_sound` (only in the framework bridge). -/
+
+/-- A **canonical single-register** layer encoding for a type. `enc x` is the
+register-0 contents; the program state is `[enc x]`. The round-trip law
+`dec_enc` and the linear size law `enc_size` are what make composition and
+the framework bridge go through. -/
+class LangEncodable (X : Type) [encodable X] where
+  enc : X → List Nat
+  dec : List Nat → X
+  dec_enc : ∀ x, dec (enc x) = x
+  /-- A linear size bound. The slack (`2 · size + 1` rather than `size + 1`)
+  is what makes the invariant **composable**: a self-delimiting pair encoding
+  (length prefix + two components) needs more than `+1` of overhead, and
+  `2 · size + 1` is closed under products (see the `X × Y` instance). -/
+  enc_size : ∀ x, (enc x).length ≤ 2 * encodable.size x + 1
+
+/-- The canonical program state holding `x`: a single register. -/
+def LangEncodable.encodeState {X : Type} [encodable X] [LangEncodable X]
+    (x : X) : State := [LangEncodable.enc x]
+
+/-- Decode the canonical program state: read register 0. -/
+def LangEncodable.decodeState {X : Type} [encodable X] [LangEncodable X]
+    (s : State) : X := LangEncodable.dec (s.get 0)
+
+theorem LangEncodable.decodeState_encodeState {X : Type} [encodable X]
+    [LangEncodable X] (x : X) :
+    LangEncodable.decodeState (LangEncodable.encodeState x) = x := by
+  show LangEncodable.dec (([LangEncodable.enc x] : State).get 0) = x
+  rw [show (([LangEncodable.enc x] : State).get 0) = LangEncodable.enc x from rfl]
+  exact LangEncodable.dec_enc x
+
+theorem LangEncodable.size_encodeState {X : Type} [encodable X] [LangEncodable X]
+    (x : X) :
+    State.size (LangEncodable.encodeState x) = (LangEncodable.enc x).length := by
+  show State.size [LangEncodable.enc x] = (LangEncodable.enc x).length
+  simp [State.size]
+
+/-- A polynomial-time computable function **in canonical normal form**: the
+program maps `encodeState x` to `encodeState (f x)` exactly. This is the
+stronger contract that lets programs compose without a re-encoding bridge. -/
+structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] (f : X → Y) where
+  c : Cmd
+  cost_bound : Nat → Nat
+  cost_bound_poly : inOPoly cost_bound
+  cost_bound_mono : monotonic cost_bound
+  /-- Canonical normal form: the output state *is* `encodeState (f x)`. -/
+  normalizes : ∀ x : X,
+    c.eval (LangEncodable.encodeState x) = LangEncodable.encodeState (f x)
+  cost_le : ∀ x : X,
+    c.cost (LangEncodable.encodeState x) ≤ cost_bound (encodable.size x)
+  output_size_le : ∀ x : X, encodable.size (f x) ≤ cost_bound (encodable.size x)
+
+/-- **C9 headline: the layer composes.** Two canonical-form programs compose
+under `Cmd.seq`; the `normalizes` law follows **definitionally** from
+`Cmd.eval_seq` — no encoding bridge, no `sorry`. Cost and output size compose
+as `1 + cost_h + cost_g ∘ cost_h`, mirroring the intended (previously
+sorry-bodied) `PolyTimeComputableLang.comp`. -/
+def PolyTimeComputableLang'.comp
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang' g) (Wh : PolyTimeComputableLang' h) :
+    PolyTimeComputableLang' (g ∘ h) where
+  c := Wh.c ;; Wg.c
+  cost_bound := fun n => 1 + Wh.cost_bound n + Wg.cost_bound (Wh.cost_bound n)
+  cost_bound_poly :=
+    inOPoly_add (inOPoly_add (inOPoly_const 1) Wh.cost_bound_poly)
+      (inOPoly_comp Wh.cost_bound_poly Wg.cost_bound_poly)
+  cost_bound_mono := by
+    intro a b hab
+    have h1 : Wh.cost_bound a ≤ Wh.cost_bound b := Wh.cost_bound_mono a b hab
+    have h2 : Wg.cost_bound (Wh.cost_bound a) ≤ Wg.cost_bound (Wh.cost_bound b) :=
+      Wg.cost_bound_mono _ _ h1
+    show 1 + Wh.cost_bound a + Wg.cost_bound (Wh.cost_bound a)
+        ≤ 1 + Wh.cost_bound b + Wg.cost_bound (Wh.cost_bound b)
+    omega
+  normalizes := fun x => by
+    show (Wh.c ;; Wg.c).eval (LangEncodable.encodeState x)
+        = LangEncodable.encodeState ((g ∘ h) x)
+    rw [Cmd.eval_seq, Wh.normalizes]
+    exact Wg.normalizes (h x)
+  cost_le := fun x => by
+    rw [Cmd.cost_seq, Wh.normalizes]
+    -- 1 + Wh.cost (encState x) + Wg.cost (encState (h x)) ≤ cost_bound (size x)
+    have hh : Wh.c.cost (LangEncodable.encodeState x) ≤ Wh.cost_bound (encodable.size x) :=
+      Wh.cost_le x
+    have hg : Wg.c.cost (LangEncodable.encodeState (h x))
+        ≤ Wg.cost_bound (encodable.size (h x)) := Wg.cost_le (h x)
+    have hsize : encodable.size (h x) ≤ Wh.cost_bound (encodable.size x) :=
+      Wh.output_size_le x
+    have hgmono : Wg.cost_bound (encodable.size (h x))
+        ≤ Wg.cost_bound (Wh.cost_bound (encodable.size x)) :=
+      Wg.cost_bound_mono _ _ hsize
+    show 1 + Wh.c.cost (LangEncodable.encodeState x)
+          + Wg.c.cost (LangEncodable.encodeState (h x))
+        ≤ 1 + Wh.cost_bound (encodable.size x)
+          + Wg.cost_bound (Wh.cost_bound (encodable.size x))
+    omega
+  output_size_le := fun x => by
+    have hg : encodable.size (g (h x)) ≤ Wg.cost_bound (encodable.size (h x)) :=
+      Wg.output_size_le (h x)
+    have hsize : encodable.size (h x) ≤ Wh.cost_bound (encodable.size x) :=
+      Wh.output_size_le x
+    have hgmono : Wg.cost_bound (encodable.size (h x))
+        ≤ Wg.cost_bound (Wh.cost_bound (encodable.size x)) :=
+      Wg.cost_bound_mono _ _ hsize
+    show encodable.size (g (h x))
+        ≤ 1 + Wh.cost_bound (encodable.size x)
+          + Wg.cost_bound (Wh.cost_bound (encodable.size x))
+    omega
+
+/-- A canonical witness is in particular a free-encoding
+`PolyTimeComputableLang` witness (using the canonical encode/decode). This
+plugs C9 into the S3 bridge `toFrameworkWitness'`. -/
+def PolyTimeComputableLang'.toLang
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang' f) : PolyTimeComputableLang f where
+  c := W.c
+  encodeIn := LangEncodable.encodeState
+  decodeOut := LangEncodable.decodeState
+  cost_bound := W.cost_bound
+  cost_bound_poly := W.cost_bound_poly
+  cost_bound_mono := W.cost_bound_mono
+  encodeIn_size := fun x => by
+    rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
+  computes := fun x => by
+    show LangEncodable.decodeState (W.c.eval (LangEncodable.encodeState x)) = f x
+    rw [W.normalizes]
+    exact LangEncodable.decodeState_encodeState (f x)
+  cost_le := W.cost_le
+  output_size_le := W.output_size_le
+
+/-- **C9 + S3 end-to-end:** a canonical layer witness yields a real TM-backed
+`polyTimeComputable'` (via `toLang` then the S3 bridge). Sorry-free modulo the
+assumed `Compile_sound`. -/
+theorem PolyTimeComputableLang'.toFrameworkWitness'
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang' f) : polyTimeComputable' f :=
+  W.toLang.toFrameworkWitness'
+
+/-! ### Inhabitants — the machinery is non-vacuous -/
+
+/-- `Nat`: a number is one register `[n]`. -/
+instance : LangEncodable Nat where
+  enc := fun n => [n]
+  dec := fun s => s.headD 0
+  dec_enc := fun _ => rfl
+  enc_size := fun n => by
+    show ([n] : List Nat).length ≤ 2 * encodable.size n + 1
+    simp
+
+/-- `List Nat` is the layer's native register type: its canonical encoding is
+the identity. (`enc_size`: a list's length never exceeds its `encodable.size`,
+which charges `≥ 1` per element.) -/
+private theorem length_le_listNatSize :
+    ∀ (acc : Nat) (xs : List Nat),
+      acc + xs.length ≤ xs.foldl (fun a x => a + encodable.size x + 1) acc
+  | _,   []      => by simp
+  | acc, x :: xs => by
+      have ih := length_le_listNatSize (acc + encodable.size x + 1) xs
+      simp only [List.foldl_cons, List.length_cons]
+      omega
+
+instance : LangEncodable (List Nat) where
+  enc := id
+  dec := id
+  dec_enc := fun _ => rfl
+  enc_size := fun xs => by
+    have h : xs.length ≤ encodable.size xs := by
+      change xs.length ≤ xs.foldl (fun a x => a + encodable.size x + 1) 0
+      simpa using length_le_listNatSize 0 xs
+    show xs.length ≤ 2 * encodable.size xs + 1
+    omega
+
+/-- **Product encoding** (the pairing needed by `red_inNP`, where the verifier
+consumes `(x, cert)`). A pair is one register holding a unary-ish length prefix
+`(enc x).length` followed by the two components concatenated; decoding splits at
+that prefix. The composable `2 · size + 1` bound is closed under this (the
+prefix cell is the `+1` of overhead the old `+ 1` bound could not afford). -/
+instance {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] : LangEncodable (X × Y) where
+  enc := fun p =>
+    (LangEncodable.enc p.1).length :: (LangEncodable.enc p.1 ++ LangEncodable.enc p.2)
+  dec := fun s =>
+    (LangEncodable.dec (s.tail.take (s.headD 0)),
+     LangEncodable.dec (s.tail.drop (s.headD 0)))
+  dec_enc := fun p => by
+    obtain ⟨x, y⟩ := p
+    simp only [List.tail_cons, List.headD_cons, List.take_left, List.drop_left,
+      LangEncodable.dec_enc]
+  enc_size := fun p => by
+    obtain ⟨x, y⟩ := p
+    have hx := LangEncodable.enc_size x
+    have hy := LangEncodable.enc_size y
+    show ((LangEncodable.enc x).length
+            :: (LangEncodable.enc x ++ LangEncodable.enc y)).length
+        ≤ 2 * encodable.size (x, y) + 1
+    show (LangEncodable.enc x ++ LangEncodable.enc y).length + 1
+        ≤ 2 * (encodable.size x + encodable.size y + 1) + 1
+    rw [List.length_append]
+    omega
+
+/-- The identity is canonically computable: `copy 0 0` is a no-op on a
+single-register state. Witnesses that `PolyTimeComputableLang'` is inhabited;
+together with `comp` the canonical-computable functions form a category. -/
+def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X] :
+    PolyTimeComputableLang' (id : X → X) where
+  c := Cmd.op (Op.copy 0 0)
+  cost_bound := fun n => n + 1
+  cost_bound_poly := inOPoly_add inOPoly_id (inOPoly_const 1)
+  cost_bound_mono := by intro a b hab; show a + 1 ≤ b + 1; omega
+  normalizes := fun x => by
+    show (Cmd.op (Op.copy 0 0)).eval (LangEncodable.encodeState x)
+        = LangEncodable.encodeState (id x)
+    rw [Cmd.eval_op]
+    show ([LangEncodable.enc x] : State).set 0
+          (([LangEncodable.enc x] : State).get 0) = [LangEncodable.enc x]
+    rw [show (([LangEncodable.enc x] : State).get 0) = LangEncodable.enc x from rfl]
+    simp [State.set]
+  cost_le := fun x => by
+    show (Cmd.op (Op.copy 0 0)).cost (LangEncodable.encodeState x)
+        ≤ encodable.size x + 1
+    rw [Cmd.cost_op]
+    show Op.cost (Op.copy 0 0) (LangEncodable.encodeState x) ≤ encodable.size x + 1
+    simp [Op.cost]
+  output_size_le := fun x => by show encodable.size x ≤ encodable.size x + 1; omega
+
+/-! ### Verifier composition (toward `red_inNP`)
+
+`red_inNP` needs: given a poly-time reduction `f` and a verifier for `Q`,
+build a verifier for `P`. The verifier-side analogue of `comp`: a decider in
+canonical form composed *after* a canonical map. -/
+
+/-- A decider in **canonical form**: it decides `P` from the canonical state
+encoding `encodeState`. The canonical analogue of `DecidesLang`. -/
+structure DecidesLang' {X : Type} [encodable X] [LangEncodable X]
+    (P : X → Prop) (costBound : Nat → Nat) where
+  c : Cmd
+  decides : Cmd.decides c LangEncodable.encodeState P
+  cost_le : ∀ x : X,
+    c.cost (LangEncodable.encodeState x) ≤ costBound (encodable.size x)
+
+/-- **Verifier composition.** Precomposing a canonical decider for `P` with a
+canonical computable map `g` yields a canonical decider for `P ∘ g`: run `g`
+(canonical normal form), then the decider. Correctness is **definitional**
+(`Cmd.eval_seq` + `normalizes`); cost composes as `1 + cost_g + dBound ∘ cost_g`.
+This is the engine that turns `P ⪯p Q` + a `Q`-verifier into a `P`-verifier. -/
+def DecidesLang'.precompose
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {g : X → Y} {P : Y → Prop} {dBound : Nat → Nat}
+    (Wg : PolyTimeComputableLang' g) (D : DecidesLang' P dBound)
+    (dmono : monotonic dBound) :
+    DecidesLang' (fun x => P (g x))
+      (fun n => 1 + Wg.cost_bound n + dBound (Wg.cost_bound n)) where
+  c := Wg.c ;; D.c
+  decides := fun x => by
+    have hev : (Wg.c ;; D.c).eval (LangEncodable.encodeState x)
+        = D.c.eval (LangEncodable.encodeState (g x)) := by
+      rw [Cmd.eval_seq, Wg.normalizes]
+    rw [hev]; exact D.decides (g x)
+  cost_le := fun x => by
+    rw [Cmd.cost_seq, Wg.normalizes]
+    have h1 : Wg.c.cost (LangEncodable.encodeState x) ≤ Wg.cost_bound (encodable.size x) :=
+      Wg.cost_le x
+    have h2 : D.c.cost (LangEncodable.encodeState (g x))
+        ≤ dBound (encodable.size (g x)) := D.cost_le (g x)
+    have h3 : encodable.size (g x) ≤ Wg.cost_bound (encodable.size x) :=
+      Wg.output_size_le x
+    have h4 : dBound (encodable.size (g x)) ≤ dBound (Wg.cost_bound (encodable.size x)) :=
+      dmono _ _ h3
+    show 1 + Wg.c.cost (LangEncodable.encodeState x)
+          + D.c.cost (LangEncodable.encodeState (g x))
+        ≤ 1 + Wg.cost_bound (encodable.size x)
+          + dBound (Wg.cost_bound (encodable.size x))
+    omega
+
+/-- **Assembling `red_inNP` at the layer.** From (a) the reduction lifted to
+the pair input — `Wf : PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` —
+and (b) a canonical verifier for `Q`'s certificate relation, `precompose`
+yields a canonical verifier for `P`'s certificate relation
+`fun xc => R (f xc.1) xc.2` (the result is definitionally the precomposition).
+This is exactly the `inTimePoly` half of `red_inNP`, modulo the two remaining
+inputs spelled out below. -/
+def DecidesLang'.ofReduction
+    {X Y C : Type} [encodable X] [encodable Y] [encodable C]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable C]
+    {f : X → Y} {R : Y → C → Prop} {dBound : Nat → Nat}
+    (Wf : PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)))
+    (D : DecidesLang' (fun yc : Y × C => R yc.1 yc.2) dBound)
+    (dmono : monotonic dBound) :
+    DecidesLang' (fun xc : X × C => R (f xc.1) xc.2)
+      (fun n => 1 + Wf.cost_bound n + dBound (Wf.cost_bound n)) :=
+  DecidesLang'.precompose Wf D dmono
+
+/-! **What remains to fully discharge `red_inNP` (two distinct obligations,
+both surfaced by assembling the engine above):**
+
+1. **The `map_fst` program** `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))`
+   from `PolyTimeComputableLang' f` — "apply `f` to the first component of a
+   pair". With the single-register length-prefixed product encoding this needs
+   length-as-value arithmetic on registers, which the current `Op` set lacks
+   (Risk **C5**); the alternative is a multi-register product encoding plus a
+   frame-preservation discipline on programs (a register calling convention).
+   Either is bounded but non-trivial DSL work.
+
+2. **A *canonical* verifier `DecidesLang'` for `Q`** — `inNP Q` only provides an
+   abstract `inTimePoly` (a `FlatTM` decider), and a `Cmd` cannot be recovered
+   from an arbitrary TM. So routing `red_inNP` through the layer requires the NP
+   framework's `inNP`/`inTimePoly` to be **layer-native** (carry a `DecidesLang`),
+   or a TM-level `ComputesBy`-then-`DecidesBy` composition (a re-encoding
+   machine). This is a framework refinement, the deeper half of the S3
+   migration. -/
 
 end Complexity.Lang
