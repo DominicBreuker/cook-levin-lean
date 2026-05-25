@@ -3057,6 +3057,146 @@ theorem scanRightUntilTM_run_not_found
 `DecidesBy.proj_left`). Existing references downstream resolve to the
 new location transparently. -/
 
+/-! ## Step 11.7 — counted-loop combinator `loopTM` (Risk C3 probe)
+
+`loopTM B exitDone exitLoop` wraps a single black-box *iteration body*
+machine `B` into a counted loop. `B` is a two-exit machine: from its
+start it inspects the (encoded) counter region and either
+
+- reaches `exitDone` (counter empty → the loop is finished), or
+- reaches `exitLoop` (counter nonempty → it ran the user body and
+  decremented the counter, leaving the tape ready for the next pass).
+
+The wrapper adds a single dedicated halt state (index `B.states`) and
+two bridge edges:
+
+- `exitDone → haltState`  (forward — leave the loop), and
+- `exitLoop → B.start`    (**backward** — re-enter the body; this is the
+  genuinely new edge versus `composeFlatTM` / `branchComposeFlatTM`,
+  whose every bridge goes *forward*).
+
+This isolates the one structural unknown a loop adds over the proven
+forward-only combinators: a backward bridge whose target (`B.start`) is
+re-entered once per iteration, and whose `state_idx`-range and
+no-early-halt trajectory must survive that re-entry. The user body, the
+counter-empty guard, and the decrement gadget are folded into `B` and
+treated as a black box satisfying the physical contract (head-`0`,
+`encodeTape`-shaped exit, exact step, no-early-halt) — exactly the
+contract `composeFlatTM_run` already validates for forward composition.
+
+`exitDone` and `exitLoop` must be distinct states of `B`; the bridges
+are placed *before* `B.trans` so they take precedence over any outgoing
+`B`-transition from those states (mirroring `branchComposeFlatTM`). -/
+
+/-- Halt vector of `loopTM B …`: every `B`-state is non-halting (we
+re-enter `B` rather than stop in it), and a single dedicated halt state
+sits at index `B.states`. -/
+def loopHalt (B : FlatTM) : List Bool :=
+  List.replicate B.states false ++ [true]
+
+/-- The counted-loop wrapper around an iteration body `B` with two
+designated exit states `exitDone` (leave) and `exitLoop` (re-enter). -/
+def loopTM (B : FlatTM) (exitDone exitLoop : Nat) : FlatTM where
+  sig := B.sig
+  tapes := B.tapes
+  states := B.states + 1
+  trans :=
+    bridgeEntries B.sig exitDone B.states ++
+    bridgeEntries B.sig exitLoop B.start ++
+    B.trans
+  start := B.start
+  halt := loopHalt B
+
+/-! ### Basic accessors -/
+
+theorem loopTM_states (B : FlatTM) (exitDone exitLoop : Nat) :
+    (loopTM B exitDone exitLoop).states = B.states + 1 := rfl
+
+theorem loopTM_start (B : FlatTM) (exitDone exitLoop : Nat) :
+    (loopTM B exitDone exitLoop).start = B.start := rfl
+
+theorem loopTM_tapes (B : FlatTM) (exitDone exitLoop : Nat) :
+    (loopTM B exitDone exitLoop).tapes = B.tapes := rfl
+
+theorem loopTM_sig (B : FlatTM) (exitDone exitLoop : Nat) :
+    (loopTM B exitDone exitLoop).sig = B.sig := rfl
+
+theorem loopHalt_length (B : FlatTM) :
+    (loopHalt B).length = B.states + 1 := by
+  show (List.replicate B.states false ++ [true]).length = B.states + 1
+  rw [List.length_append, List.length_replicate]
+  rfl
+
+theorem loopTM_halt_length (B : FlatTM) (exitDone exitLoop : Nat) :
+    (loopTM B exitDone exitLoop).halt.length =
+      (loopTM B exitDone exitLoop).states := by
+  rw [loopTM_states]
+  show (loopHalt B).length = B.states + 1
+  rw [loopHalt_length]
+
+/-! ### Validity of `loopTM` -/
+
+/-- `loopTM` of a valid body, with both exits in range and single-tape,
+is a valid `FlatTM`. -/
+theorem loopTM_valid (B : FlatTM) (exitDone exitLoop : Nat)
+    (hB : validFlatTM B)
+    (h_done : exitDone < B.states) (h_loop : exitLoop < B.states)
+    (h_t : B.tapes = 1) :
+    validFlatTM (loopTM B exitDone exitLoop) := by
+  obtain ⟨hB_start, hB_halt, hB_trans⟩ := hB
+  refine ⟨?_, ?_, ?_⟩
+  · -- start < states
+    show B.start < B.states + 1
+    exact Nat.lt_succ_of_lt hB_start
+  · -- halt.length = states
+    show (loopHalt B).length = B.states + 1
+    rw [loopHalt_length]
+  · -- every transition is valid
+    intro entry hentry
+    show flatTMTransEntryValid (loopTM B exitDone exitLoop) entry
+    have hsig_eq : (loopTM B exitDone exitLoop).sig = B.sig := rfl
+    have hstates_eq : (loopTM B exitDone exitLoop).states = B.states + 1 := rfl
+    have htapes_eq : (loopTM B exitDone exitLoop).tapes = B.tapes := rfl
+    have hentry' : entry ∈
+        bridgeEntries B.sig exitDone B.states ++
+        bridgeEntries B.sig exitLoop B.start ++
+        B.trans := hentry
+    rcases List.mem_append.mp hentry' with hLeft | h_body
+    rcases List.mem_append.mp hLeft with h_bridgeDone | h_bridgeLoop
+    · -- exitDone bridge: src = exitDone < B.states, dst = B.states
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ :=
+        bridgeEntries_mem h_bridgeDone
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hsrc, hstates_eq]; exact Nat.lt_succ_of_lt h_done
+      · rw [hdst, hstates_eq]; exact Nat.lt_succ_self _
+      · rw [hsrcLen, htapes_eq, h_t]
+      · rw [hdstLen, htapes_eq, h_t]
+      · rw [hmovLen, htapes_eq, h_t]
+      · rw [hsig_eq]; exact hsymSrc
+      · rw [hsig_eq]; exact hsymDst
+    · -- exitLoop bridge: src = exitLoop < B.states, dst = B.start < B.states
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ :=
+        bridgeEntries_mem h_bridgeLoop
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hsrc, hstates_eq]; exact Nat.lt_succ_of_lt h_loop
+      · rw [hdst, hstates_eq]; exact Nat.lt_succ_of_lt hB_start
+      · rw [hsrcLen, htapes_eq, h_t]
+      · rw [hdstLen, htapes_eq, h_t]
+      · rw [hmovLen, htapes_eq, h_t]
+      · rw [hsig_eq]; exact hsymSrc
+      · rw [hsig_eq]; exact hsymDst
+    · -- original B transition: src, dst < B.states
+      obtain ⟨hsrc, hdst, hsrcLen, hdstLen, hmovLen, hsymSrc, hsymDst⟩ :=
+        hB_trans entry h_body
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · rw [hstates_eq]; exact Nat.lt_succ_of_lt hsrc
+      · rw [hstates_eq]; exact Nat.lt_succ_of_lt hdst
+      · rw [htapes_eq]; exact hsrcLen
+      · rw [htapes_eq]; exact hdstLen
+      · rw [htapes_eq]; exact hmovLen
+      · rw [hsig_eq]; exact hsymSrc
+      · rw [hsig_eq]; exact hsymDst
+
 /-! ### `AllFalse` namespace: pre-work for a real `DecidesBy` example
 
 We are building toward a complete `DecidesBy` witness for
