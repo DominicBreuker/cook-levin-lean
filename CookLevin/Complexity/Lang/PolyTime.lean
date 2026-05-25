@@ -674,4 +674,41 @@ def DecidesLang'.precompose
           + dBound (Wg.cost_bound (encodable.size x))
     omega
 
+/-- **Assembling `red_inNP` at the layer.** From (a) the reduction lifted to
+the pair input — `Wf : PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` —
+and (b) a canonical verifier for `Q`'s certificate relation, `precompose`
+yields a canonical verifier for `P`'s certificate relation
+`fun xc => R (f xc.1) xc.2` (the result is definitionally the precomposition).
+This is exactly the `inTimePoly` half of `red_inNP`, modulo the two remaining
+inputs spelled out below. -/
+def DecidesLang'.ofReduction
+    {X Y C : Type} [encodable X] [encodable Y] [encodable C]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable C]
+    {f : X → Y} {R : Y → C → Prop} {dBound : Nat → Nat}
+    (Wf : PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)))
+    (D : DecidesLang' (fun yc : Y × C => R yc.1 yc.2) dBound)
+    (dmono : monotonic dBound) :
+    DecidesLang' (fun xc : X × C => R (f xc.1) xc.2)
+      (fun n => 1 + Wf.cost_bound n + dBound (Wf.cost_bound n)) :=
+  DecidesLang'.precompose Wf D dmono
+
+/-! **What remains to fully discharge `red_inNP` (two distinct obligations,
+both surfaced by assembling the engine above):**
+
+1. **The `map_fst` program** `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))`
+   from `PolyTimeComputableLang' f` — "apply `f` to the first component of a
+   pair". With the single-register length-prefixed product encoding this needs
+   length-as-value arithmetic on registers, which the current `Op` set lacks
+   (Risk **C5**); the alternative is a multi-register product encoding plus a
+   frame-preservation discipline on programs (a register calling convention).
+   Either is bounded but non-trivial DSL work.
+
+2. **A *canonical* verifier `DecidesLang'` for `Q`** — `inNP Q` only provides an
+   abstract `inTimePoly` (a `FlatTM` decider), and a `Cmd` cannot be recovered
+   from an arbitrary TM. So routing `red_inNP` through the layer requires the NP
+   framework's `inNP`/`inTimePoly` to be **layer-native** (carry a `DecidesLang`),
+   or a TM-level `ComputesBy`-then-`DecidesBy` composition (a re-encoding
+   machine). This is a framework refinement, the deeper half of the S3
+   migration. -/
+
 end Complexity.Lang
