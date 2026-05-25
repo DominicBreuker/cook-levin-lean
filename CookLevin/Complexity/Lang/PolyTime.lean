@@ -376,4 +376,216 @@ theorem s1_witness_forces_decider
     rw [h_test_no x hnp] at htest
     exact Bool.noConfusion htest
 
+/-! ## C9: canonical layer encoding (May 2026)
+
+The S3 probe surfaced the one remaining structural prerequisite: layer
+composition (`PolyTimeComputableLang.comp`, `red_inNP_via_lang`, `red_inNP`)
+could not even be *stated*, because `PolyTimeComputableLang.encodeIn` /
+`decodeOut` are **free functions** — one program's output state need not be
+the next program's input state.
+
+This block resolves C9. A `LangEncodable` class fixes a **canonical
+single-register** state encoding per type; a `PolyTimeComputableLang'`
+witness then runs in **canonical normal form** — its program maps
+`encodeState x` to `encodeState (f x)` *exactly* (not merely "decodes to
+`f x`"). Composition is then `Cmd.seq` with no re-encoding bridge, and
+`PolyTimeComputableLang'.comp` goes through **definitionally** via
+`Cmd.eval_seq` (the residual gap that `comp_computes_of_bridge` isolated).
+
+The canonical witness bridges to the free-encoding `PolyTimeComputableLang`
+(`toLang`), hence — composing with the S3 result — to the real TM-backed
+`polyTimeComputable'` via `Compile`. All sorry-free; the only dependency is
+the assumed `Compile_sound` (only in the framework bridge). -/
+
+/-- A **canonical single-register** layer encoding for a type. `enc x` is the
+register-0 contents; the program state is `[enc x]`. The round-trip law
+`dec_enc` and the linear size law `enc_size` are what make composition and
+the framework bridge go through. -/
+class LangEncodable (X : Type) [encodable X] where
+  enc : X → List Nat
+  dec : List Nat → X
+  dec_enc : ∀ x, dec (enc x) = x
+  enc_size : ∀ x, (enc x).length ≤ encodable.size x + 1
+
+/-- The canonical program state holding `x`: a single register. -/
+def LangEncodable.encodeState {X : Type} [encodable X] [LangEncodable X]
+    (x : X) : State := [LangEncodable.enc x]
+
+/-- Decode the canonical program state: read register 0. -/
+def LangEncodable.decodeState {X : Type} [encodable X] [LangEncodable X]
+    (s : State) : X := LangEncodable.dec (s.get 0)
+
+theorem LangEncodable.decodeState_encodeState {X : Type} [encodable X]
+    [LangEncodable X] (x : X) :
+    LangEncodable.decodeState (LangEncodable.encodeState x) = x := by
+  show LangEncodable.dec (([LangEncodable.enc x] : State).get 0) = x
+  rw [show (([LangEncodable.enc x] : State).get 0) = LangEncodable.enc x from rfl]
+  exact LangEncodable.dec_enc x
+
+theorem LangEncodable.size_encodeState {X : Type} [encodable X] [LangEncodable X]
+    (x : X) :
+    State.size (LangEncodable.encodeState x) = (LangEncodable.enc x).length := by
+  show State.size [LangEncodable.enc x] = (LangEncodable.enc x).length
+  simp [State.size]
+
+/-- A polynomial-time computable function **in canonical normal form**: the
+program maps `encodeState x` to `encodeState (f x)` exactly. This is the
+stronger contract that lets programs compose without a re-encoding bridge. -/
+structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] (f : X → Y) where
+  c : Cmd
+  cost_bound : Nat → Nat
+  cost_bound_poly : inOPoly cost_bound
+  cost_bound_mono : monotonic cost_bound
+  /-- Canonical normal form: the output state *is* `encodeState (f x)`. -/
+  normalizes : ∀ x : X,
+    c.eval (LangEncodable.encodeState x) = LangEncodable.encodeState (f x)
+  cost_le : ∀ x : X,
+    c.cost (LangEncodable.encodeState x) ≤ cost_bound (encodable.size x)
+  output_size_le : ∀ x : X, encodable.size (f x) ≤ cost_bound (encodable.size x)
+
+/-- **C9 headline: the layer composes.** Two canonical-form programs compose
+under `Cmd.seq`; the `normalizes` law follows **definitionally** from
+`Cmd.eval_seq` — no encoding bridge, no `sorry`. Cost and output size compose
+as `1 + cost_h + cost_g ∘ cost_h`, mirroring the intended (previously
+sorry-bodied) `PolyTimeComputableLang.comp`. -/
+def PolyTimeComputableLang'.comp
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang' g) (Wh : PolyTimeComputableLang' h) :
+    PolyTimeComputableLang' (g ∘ h) where
+  c := Wh.c ;; Wg.c
+  cost_bound := fun n => 1 + Wh.cost_bound n + Wg.cost_bound (Wh.cost_bound n)
+  cost_bound_poly :=
+    inOPoly_add (inOPoly_add (inOPoly_const 1) Wh.cost_bound_poly)
+      (inOPoly_comp Wh.cost_bound_poly Wg.cost_bound_poly)
+  cost_bound_mono := by
+    intro a b hab
+    have h1 : Wh.cost_bound a ≤ Wh.cost_bound b := Wh.cost_bound_mono a b hab
+    have h2 : Wg.cost_bound (Wh.cost_bound a) ≤ Wg.cost_bound (Wh.cost_bound b) :=
+      Wg.cost_bound_mono _ _ h1
+    show 1 + Wh.cost_bound a + Wg.cost_bound (Wh.cost_bound a)
+        ≤ 1 + Wh.cost_bound b + Wg.cost_bound (Wh.cost_bound b)
+    omega
+  normalizes := fun x => by
+    show (Wh.c ;; Wg.c).eval (LangEncodable.encodeState x)
+        = LangEncodable.encodeState ((g ∘ h) x)
+    rw [Cmd.eval_seq, Wh.normalizes]
+    exact Wg.normalizes (h x)
+  cost_le := fun x => by
+    rw [Cmd.cost_seq, Wh.normalizes]
+    -- 1 + Wh.cost (encState x) + Wg.cost (encState (h x)) ≤ cost_bound (size x)
+    have hh : Wh.c.cost (LangEncodable.encodeState x) ≤ Wh.cost_bound (encodable.size x) :=
+      Wh.cost_le x
+    have hg : Wg.c.cost (LangEncodable.encodeState (h x))
+        ≤ Wg.cost_bound (encodable.size (h x)) := Wg.cost_le (h x)
+    have hsize : encodable.size (h x) ≤ Wh.cost_bound (encodable.size x) :=
+      Wh.output_size_le x
+    have hgmono : Wg.cost_bound (encodable.size (h x))
+        ≤ Wg.cost_bound (Wh.cost_bound (encodable.size x)) :=
+      Wg.cost_bound_mono _ _ hsize
+    show 1 + Wh.c.cost (LangEncodable.encodeState x)
+          + Wg.c.cost (LangEncodable.encodeState (h x))
+        ≤ 1 + Wh.cost_bound (encodable.size x)
+          + Wg.cost_bound (Wh.cost_bound (encodable.size x))
+    omega
+  output_size_le := fun x => by
+    have hg : encodable.size (g (h x)) ≤ Wg.cost_bound (encodable.size (h x)) :=
+      Wg.output_size_le (h x)
+    have hsize : encodable.size (h x) ≤ Wh.cost_bound (encodable.size x) :=
+      Wh.output_size_le x
+    have hgmono : Wg.cost_bound (encodable.size (h x))
+        ≤ Wg.cost_bound (Wh.cost_bound (encodable.size x)) :=
+      Wg.cost_bound_mono _ _ hsize
+    show encodable.size (g (h x))
+        ≤ 1 + Wh.cost_bound (encodable.size x)
+          + Wg.cost_bound (Wh.cost_bound (encodable.size x))
+    omega
+
+/-- A canonical witness is in particular a free-encoding
+`PolyTimeComputableLang` witness (using the canonical encode/decode). This
+plugs C9 into the S3 bridge `toFrameworkWitness'`. -/
+def PolyTimeComputableLang'.toLang
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang' f) : PolyTimeComputableLang f where
+  c := W.c
+  encodeIn := LangEncodable.encodeState
+  decodeOut := LangEncodable.decodeState
+  cost_bound := W.cost_bound
+  cost_bound_poly := W.cost_bound_poly
+  cost_bound_mono := W.cost_bound_mono
+  encodeIn_size := fun x => by
+    rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
+  computes := fun x => by
+    show LangEncodable.decodeState (W.c.eval (LangEncodable.encodeState x)) = f x
+    rw [W.normalizes]
+    exact LangEncodable.decodeState_encodeState (f x)
+  cost_le := W.cost_le
+  output_size_le := W.output_size_le
+
+/-- **C9 + S3 end-to-end:** a canonical layer witness yields a real TM-backed
+`polyTimeComputable'` (via `toLang` then the S3 bridge). Sorry-free modulo the
+assumed `Compile_sound`. -/
+theorem PolyTimeComputableLang'.toFrameworkWitness'
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang' f) : polyTimeComputable' f :=
+  W.toLang.toFrameworkWitness'
+
+/-! ### Inhabitants — the machinery is non-vacuous -/
+
+/-- `Nat`: a number is one register `[n]`. -/
+instance : LangEncodable Nat where
+  enc := fun n => [n]
+  dec := fun s => s.headD 0
+  dec_enc := fun _ => rfl
+  enc_size := fun n => by simp
+
+/-- `List Nat` is the layer's native register type: its canonical encoding is
+the identity. (`enc_size`: a list's length never exceeds its `encodable.size`,
+which charges `≥ 1` per element.) -/
+private theorem length_le_listNatSize :
+    ∀ (acc : Nat) (xs : List Nat),
+      acc + xs.length ≤ xs.foldl (fun a x => a + encodable.size x + 1) acc
+  | _,   []      => by simp
+  | acc, x :: xs => by
+      have ih := length_le_listNatSize (acc + encodable.size x + 1) xs
+      simp only [List.foldl_cons, List.length_cons]
+      omega
+
+instance : LangEncodable (List Nat) where
+  enc := id
+  dec := id
+  dec_enc := fun _ => rfl
+  enc_size := fun xs => by
+    have h := length_le_listNatSize 0 xs
+    simp only [Nat.zero_add] at h
+    show xs.length ≤ encodable.size xs + 1
+    exact Nat.le_succ_of_le h
+
+/-- The identity is canonically computable: `copy 0 0` is a no-op on a
+single-register state. Witnesses that `PolyTimeComputableLang'` is inhabited;
+together with `comp` the canonical-computable functions form a category. -/
+def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X] :
+    PolyTimeComputableLang' (id : X → X) where
+  c := Cmd.op (Op.copy 0 0)
+  cost_bound := fun n => n + 1
+  cost_bound_poly := inOPoly_add inOPoly_id (inOPoly_const 1)
+  cost_bound_mono := by intro a b hab; show a + 1 ≤ b + 1; omega
+  normalizes := fun x => by
+    show (Cmd.op (Op.copy 0 0)).eval (LangEncodable.encodeState x)
+        = LangEncodable.encodeState (id x)
+    rw [Cmd.eval_op]
+    show ([LangEncodable.enc x] : State).set 0
+          (([LangEncodable.enc x] : State).get 0) = [LangEncodable.enc x]
+    rw [show (([LangEncodable.enc x] : State).get 0) = LangEncodable.enc x from rfl]
+    simp [State.set]
+  cost_le := fun x => by
+    show (Cmd.op (Op.copy 0 0)).cost (LangEncodable.encodeState x)
+        ≤ encodable.size x + 1
+    rw [Cmd.cost_op]
+    show Op.cost (Op.copy 0 0) (LangEncodable.encodeState x) ≤ encodable.size x + 1
+    simp [Op.cost]
+  output_size_le := fun x => by show encodable.size x ≤ encodable.size x + 1; omega
+
 end Complexity.Lang

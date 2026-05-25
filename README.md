@@ -23,8 +23,10 @@ for direction.
   (Risks S1/S2/S3). They do **not** appear in the `sorry` count or under
   `#print axioms`, so the `sorry` count overstates how close the proof is.
 - `CookLevin : NPcomplete SAT` typechecks but is **conditional** on all of the
-  above. **No unprobed structural unknown remains**: every gap is now either
-  bounded engineering or one bounded design item (Risk C9, the next topic).
+  above. **No unprobed structural unknown remains**: every gap is now bounded
+  engineering. (The last design item, Risk C9 — canonical layer encoding — is
+  built and its composition proved; the next topic is executing the S3
+  migration.)
 
 ## What is sound vs. what is not
 
@@ -78,10 +80,11 @@ unnecessary.
 The layer's three make-or-break structural unknowns are **validated**:
 per-primitive compilation (C1), composition (C2, `compileSeq_compose_physical`),
 and the counted loop (C3, `loopTM` + `loopTM_run`, sorry-free). The S3
-layer→framework bridge is validated too (`toFrameworkWitness'`). The one
-remaining design item the S3 probe surfaced is **Risk C9** — a canonical
-per-type layer encoding, the prerequisite for layer-level composition and the
-S3 migration, and the project's **next topic**. See the ROADMAP plan.
+layer→framework bridge is validated too (`toFrameworkWitness'`), and the design
+item the S3 probe surfaced — **Risk C9**, a canonical per-type layer encoding
+(`LangEncodable` + `PolyTimeComputableLang'`) — is now built with its
+composition proved. The **next topic** is executing the S3 migration (migrate
+`⪯p` to the TM-backed witness). See the ROADMAP plan.
 
 ## Development methodology: skeleton-first, risk-driven
 
@@ -142,7 +145,7 @@ root is `CookLevin/`, so `parked/` is not built.
 ## Where to look first
 
 - **The plan:** [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) — *The plan from
-  here* (next topic: Risk C9) and the Risk register.
+  here* (next topic: the S3 migration) and the Risk register.
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
   `NP/FSAT_to_SAT.lean`.

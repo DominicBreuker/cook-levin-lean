@@ -15,8 +15,10 @@ with explicit cost semantics, compiled once to `FlatTM` (`Compile`), so every
 verifier and reduction is a short DSL program instead of a hand-rolled Turing
 machine.
 
-**Next topic: Risk C9** (canonical layer encoding) — the one remaining design
-prerequisite; see *The plan from here*.
+**Next topic: execute the S3 migration** (*The plan from here*, step 2). Its
+prerequisite — Risk **C9**, the canonical layer encoding — is now **built and
+the composition is proved** (`Lang/PolyTime.lean`); what remains is the
+product encoding for `red_inNP` and migrating `⪯p`.
 
 ---
 
@@ -29,7 +31,7 @@ prerequisite; see *The plan from here*.
 | Proof-path size | ~11K LOC under `CookLevin/` (a further ~14K parked, not built) |
 | `sorry`s on the proof path | ~29, all `TODO(...)`-tagged (Group C) |
 | `sorry`-**free** vacuous defs on the proof path | ≥ 4 (Risks S1/S2 — the deepest gaps; invisible to `#print axioms`) |
-| Structural unknowns remaining | **none** — all probed; what's left is bounded engineering + one bounded design item (C9) |
+| Structural unknowns remaining | **none** — all probed; C9 (composition) now built & proved; what's left is bounded engineering |
 | Headline | `CookLevin : NPcomplete SAT` typechecks, **conditional** on Group C **and** S1/S2/S3 |
 
 > **The `sorry` count is not the soundness metric.** The deepest unsoundness
@@ -107,8 +109,23 @@ time-boxed go/no-go probes (methodology below). The findings:
     the NP source — so S1/S2 **stop typechecking** under the upgrade. The
     upgrade is real.
   - Difficulty concentrates in **composition**, which needs a shared encoding
-    → **Risk C9** (see plan). `red_inNP` cannot be discharged additively (it is
-    stated over the size-only `⪯p`); it is part of the migration.
+    → **Risk C9** (now resolved, below). `red_inNP` cannot be discharged
+    additively (it is stated over the size-only `⪯p`); it is part of the
+    migration.
+
+- **The layer composes — C9 built and proved.** The canonical encoding is a
+  `LangEncodable` class (a per-type single-register `enc`/`dec` with round-trip
+  + linear-size laws); a `PolyTimeComputableLang'` witness runs in **canonical
+  normal form** (`c.eval (encodeState x) = encodeState (f x)` *exactly*).
+  `PolyTimeComputableLang'.comp` is then proved **definitionally** via
+  `Cmd.eval_seq` — no re-encoding bridge — with cost `1 + cost_h + cost_g ∘
+  cost_h`. `toLang` bridges a canonical witness to the free-encoding
+  `PolyTimeComputableLang`, and `toFrameworkWitness'` carries it to a real
+  TM-backed `polyTimeComputable'` (sorry-free modulo `Compile_sound`).
+  Inhabited (`Nat`, `List Nat`, `id_witness`). **What remains for `red_inNP`:**
+  a product instance `LangEncodable (X × Y)` (pair two register-0 values) and
+  composing a computable map with a `DecidesLang` verifier — both fold into the
+  S3 migration (plan step 2).
 
 - **S2 needs no simulator — probed.** The multi-tape→single-tape simulator
   (`Simulators/MultiToSingle.lean`) is a Coq-porting artifact with **zero
@@ -140,25 +157,25 @@ Two honest destinations. The probes have shown the unconditional one (A) is
 
 Ordered by dependency. Each step is bounded engineering except where noted.
 
-1. **C9 — canonical layer encoding (next topic).** Give `Cmd` programs a
-   shared per-type state encoding (a `LangEncodable`-style class with
-   `decode ∘ encode = id` and register-layout lemmas) so that one program's
-   output state *is* the next program's input state. This unblocks
-   `PolyTimeComputableLang.comp`, `red_inNP_via_lang`, and `red_inNP` — all
-   currently unstatable without it. `comp_computes_of_bridge` (in
-   `Lang/PolyTime.lean`) already shows the rest is definitional once the
-   encoding aligns. Bounded *design*, not research.
+1. **C9 — canonical layer encoding. ✅ DONE.** `Cmd` programs now share a
+   per-type state encoding (the `LangEncodable` class) and run in canonical
+   normal form (`PolyTimeComputableLang'`), so composition
+   (`PolyTimeComputableLang'.comp`) is proved definitionally via `Cmd.eval_seq`
+   — no re-encoding bridge. Bridged to the TM-backed witness via `toLang` +
+   `toFrameworkWitness'`. (Built in `Lang/PolyTime.lean`, sorry-free.)
 
-2. **Retire S3 — migrate `⪯p` to the TM-backed witness.** Replace
+2. **Retire S3 — migrate `⪯p` to the TM-backed witness (next topic).** Replace
    `ReductionWitness.reduction_poly`'s `polyTimeComputable` with
-   `polyTimeComputable'` (already built by the S3 probe; the strengthening
-   lemma keeps the size-bound lemmas working). This is the soundness gate: it forces every
-   reduction to carry a real computation. Ripple cost: the **sound tail** must
-   each gain a `Cmd` — `flatTCC_to_flatCC` cheap (its `if isValidFlattening`
-   guard is a *decidable input* check, expressible), `FlatCC_to_BinaryCC`
-   medium, **`BinaryCC_to_FSAT` (Tseytin, `500n⁶`) the expensive item** (a
-   ~1K-LOC `formula` builder re-expressed as a `Cmd`, likely needing new `Op`s
-   — see C5).
+   `polyTimeComputable'` (built by the S3 probe; the strengthening lemma keeps
+   the size-bound lemmas working). First sub-tasks, building on C9: a product
+   instance `LangEncodable (X × Y)` and composing a computable map with a
+   `DecidesLang` verifier, which together discharge `red_inNP_via_lang` /
+   `red_inNP`. This is the soundness gate: it forces every reduction to carry a
+   real computation. Ripple cost: the **sound tail** must each gain a `Cmd` —
+   `flatTCC_to_flatCC` cheap (its `if isValidFlattening` guard is a *decidable
+   input* check, expressible), `FlatCC_to_BinaryCC` medium, **`BinaryCC_to_FSAT`
+   (Tseytin, `500n⁶`) the expensive item** (a ~1K-LOC `formula` builder
+   re-expressed as a `Cmd`, likely needing new `Op`s — see C5).
 
 3. **Finish the layer → `Compile_sound`.** Land the per-`Op` gadgets (C1) + the
    `compileForBnd` guard/decrement wiring (C3) + the bit-test tester (C6). Then
@@ -196,7 +213,7 @@ is the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Location | Status / what closing it needs |
 |---|-----|----------|--------------------------------|
-| **S3** | `polyTimeComputable` bounds **output size only** — the enabling weakness that lets S1/S2 typecheck. | `Complexity/NP.lean`, `Lang/PolyTime.lean` | **Probed: feasible but expensive.** Honest witness `PolyTimeComputableWitness'` + bridge `toFrameworkWitness'` built (sorry-free modulo `Compile_sound`); forcing function confirmed. Execute via plan steps 1–2: needs **C9**, then migrate `⪯p`. |
+| **S3** | `polyTimeComputable` bounds **output size only** — the enabling weakness that lets S1/S2 typecheck. | `Complexity/NP.lean`, `Lang/PolyTime.lean` | **Probed: feasible but expensive.** Honest witness `PolyTimeComputableWitness'` + bridge `toFrameworkWitness'` built (sorry-free modulo `Compile_sound`); forcing function confirmed. **C9 done**; execute via plan step 2 (migrate `⪯p`). |
 | **S1** | **if-on-the-answer reduction** `FlatSingleTMGenNP ⪯p FlatTCC` (`if yes-inst then yesInst else noInst`). Deepest unsoundness. | `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `.../TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | **Probed: feasible but expensive (~6–11K LOC).** Real fix = the Cook 2D tableau (`Simulators/CookTableau.lean`). Gated on S3 (dead until then) — plan step 4. |
 | **S2** | **dummy TM bridges** — `bridgeMachine` discards `M`; `*GenNP_fixed` ignore `M`. | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | **Probed: no simulator needed** (Coq-porting artifact; tape count erased; predicates ignore `M`). Fix = collapse the phantom bridges and bind the predicates to the single-tape layer decider → **folds into C8**. Gated on S3. |
 | **S4** | **orphan constructions.** | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | `cookTableau` (real, 2 `sorry`s): wire into S1 after S3 (plan step 4). `multiToSingle` (3-`sorry` stub): **dead code** per the S2 probe → park/delete. |
@@ -211,8 +228,8 @@ instances on every chain intermediate. Plan step 5.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C9** | **canonical layer encoding** (surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so layer composition cannot be stated. Needs a per-type `LangEncodable` class. | **Open — the next topic.** Bounded design; `comp_computes_of_bridge` isolates exactly what's missing. Prerequisite for C4-composition, `red_inNP`, and the S3 migration. |
-| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s 4 bridges, `NP.lean`'s `red_inNP`). | **Bridge B done** (`toFrameworkWitness'`, sorry-free modulo `Compile_sound`). The composition bridges (`comp`, `red_inNP_via_lang`) and `red_inNP` remain `sorry`, blocked on **C9** (not on `Compile_sound`). |
+| **C9** | **canonical layer encoding** (surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so layer composition could not be stated. | ✅ **Done.** `LangEncodable` class + `PolyTimeComputableLang'` (canonical normal form) + `comp` proved definitionally (`Lang/PolyTime.lean`, sorry-free). Remaining for `red_inNP`: a product instance `LangEncodable (X × Y)` + map-with-verifier composition — folds into the S3 migration. |
+| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s bridges, `NP.lean`'s `red_inNP`). | **Bridge + composition done** (`toFrameworkWitness'` sorry-free modulo `Compile_sound`; `PolyTimeComputableLang'.comp` sorry-free via C9). `red_inNP` / `red_inNP_via_lang` remain `sorry` — discharged by the S3 migration (product encoding + verifier composition), not blocked on `Compile_sound`. |
 | **C1** | **per-`Op` compilation** (`compileOp` + `compileOp_sound`). | ✅ **validated.** Remaining: physical `compileOp_sound` per op + length-decreasing ops (use `endMark` sentinel). Bounded eng (~1.5–2.5K LOC for all 8 ops). |
 | **C2** | **composition** (`compileSeq_sound`). | ✅ **validated** (`compileSeq_compose_physical`). Bounded eng. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + `_sound`). | ✅ **validated** (`loopTM` + `loopTM_run`, sorry-free). Remaining: guard + marker-overwrite decrement gadget, wire `compileForBnd`, instantiate `loopTM_run`. Bounded eng. |
