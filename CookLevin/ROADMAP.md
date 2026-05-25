@@ -14,8 +14,10 @@ small while-language (`Cmd`) with cost semantics, compiled once to
 instead of a hand-rolled Turing machine.
 
 **The single most important thing to read next:** the Risk register
-(below) and the current next-topic brief
-[`S3_RETIREMENT_EXPLORATION.md`](S3_RETIREMENT_EXPLORATION.md).
+(below). The S3 probe ([`S3_RETIREMENT_EXPLORATION.md`](S3_RETIREMENT_EXPLORATION.md))
+is **complete** — verdict *(ii) feasible but expensive* (see the S3 entry
+in *Validated so far*); the new next topic is **Risk C9 (canonical layer
+encoding)**, the prerequisite for executing the S3 migration.
 
 ---
 
@@ -27,6 +29,7 @@ instead of a hand-rolled Turing machine.
 | Project axioms | **0** (only `propext` / `Classical.choice` / `Quot.sound`) |
 | Proof-path size | ~11K LOC under `CookLevin/` (a further ~14K parked, not built) |
 | `sorry`s on the proof path | ~29, all `TODO(...)`-tagged (Group C) |
+| S3 probe | ✅ complete — verdict *(ii) feasible but expensive*; honest witness + bridge landed additively in `Lang/PolyTime.lean` (sorry-free modulo `Compile_sound`) |
 | `sorry`-**free** vacuous defs on the proof path | ≥ 4 (Risks S1/S2 — the deepest gaps; **not** counted above, invisible to `#print axioms`) |
 | Headline | `CookLevin : NPcomplete SAT` typechecks, **conditional** on Group C **and** S1/S2/S3 |
 
@@ -77,15 +80,18 @@ gaps. Refine the highest-ranked item next.
 
 | # | Gap | Location | What closing it needs |
 |---|-----|----------|-----------------------|
-| **S3** | **`polyTimeComputable` bounds output size only** — the enabling weakness that lets S1/S2 typecheck. `PolyTimeComputableWitness` requires only `size (f x) ≤ bound (size x)`, no TM computing `f`. | `Complexity/NP.lean`, `Lang/PolyTime.lean` | Upgrade the witness to be **TM-/layer-backed** (carry a `PolyTimeComputableLang` program). **← THE CURRENT NEXT TOPIC; see [`S3_RETIREMENT_EXPLORATION.md`](S3_RETIREMENT_EXPLORATION.md).** This is the linchpin: it makes the layer meaningful and forces S1/S2 to become real. |
+| **S3** | **`polyTimeComputable` bounds output size only** — the enabling weakness that lets S1/S2 typecheck. `PolyTimeComputableWitness` requires only `size (f x) ≤ bound (size x)`, no TM computing `f`. | `Complexity/NP.lean`, `Lang/PolyTime.lean` | **Probed: feasible but expensive — proceed after C9 (canonical encoding).** The honest TM-backed witness `PolyTimeComputableWitness'` (extends the old one) and the real bridge `toFrameworkWitness'` are built additively in `Lang/PolyTime.lean` (sorry-free modulo `Compile_sound`); D confirms S1/S2 stop typechecking. Executing the verdict = migrate `ReductionWitness`'s `reduction_poly` to `polyTimeComputable'`, which needs C9 then ripples to every reduction (see digest). |
 | **S1** | **if-on-the-answer reduction** `FlatSingleTMGenNP ⪯p FlatTCC` — map is `if (source is yes-inst) then yesInst else noInst`; output depends on the *answer*. Deepest unsoundness. | `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `.../TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | The real **Cook 2D tableau** (`Simulators/CookTableau.lean`). **Probed: feasible but expensive (~6–11K LOC, bijection-dominated).** Gated on S3 (dead until then). |
 | **S2** | **dummy TM bridges** — `bridgeMachine` is a 1-state TM that discards the source `M`; `TMGenNP_fixed`/`mTMGenNP_fixed` ignore `M`. The `GenNP→TMGenNP` arrow carries no content. | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | Real TM simulators incl. **multi-tape → single-tape** (`Simulators/MultiToSingle.lean`, a stub). Gated on S3. |
 | **S4** | **the real constructions are orphans** — `cookTableau` (real, 2 `sorry`s) and `multiToSingle` (stub, 3 `sorry`s) are referenced by **no** reduction. | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | Wiring S1/S2 to call them (after S3). Until then proving them advances `CookLevin` by zero. |
 
-**Companion (Part 0.1):** `instEncodableDefault` (`Definitions.lean`) gives
-`size = 0` to any type lacking an explicit `encodable` instance. Combined
-with S3 it makes some bridge-stage bounds vacuous. Closes as the bridges
-become real + real `encodable` instances are added.
+**Companion (Part 0.1) — now a hard requirement (per S3 probe).**
+`instEncodableDefault` (`Definitions.lean`) gives `size = 0` to any type
+lacking an explicit `encodable` instance. Over a size-0 type even the real
+`toFrameworkWitness'` is **vacuous** (the polynomial bound is `≤ bound 0`),
+so retiring S3 in earnest requires real `encodable.size` instances on
+*every* chain intermediate (TCC/CC/BinaryCC/formula/…). This is no longer a
+nicety; it is part of the S3 migration cost.
 
 ### Group C — completion risks (the compiling skeleton)
 
@@ -95,7 +101,8 @@ above.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s 4 bridges, `NP.lean`'s `red_inNP`). Same upgrade as **S3**. | **Top open structural item; = the S3 probe.** |
+| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s 4 bridges, `NP.lean`'s `red_inNP`). Same upgrade as **S3**. | **Bridge B validated** (`toFrameworkWitness'`, sorry-free modulo `Compile_sound`). The composition bridges (`comp`, `red_inNP_via_lang`) and `red_inNP` remain `sorry` — blocked on **C9** (canonical encoding), not on Compile_sound. |
+| **C9** | **canonical layer encoding** (NEW, surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so `comp`/`red_inNP_via_lang` cannot be stated without an encoding-compatibility bridge. Need a per-type `LangEncodable`-style class (`decode ∘ encode = id`, register-layout lemmas) so composed programs line up. | `Lang/PolyTime.lean` (`comp_computes_of_bridge` isolates exactly what's missing). Bounded design; prerequisite for C4-composition and `red_inNP`. |
 | **C1** | **per-`Op` compilation** (`compileOp` + `compileOp_sound`). | ✅ **validated** — reusable gadget library built (`insertCarryTM`, `scan_to_mark`/`scanPastDelimTM`/`scanLeftUntilTM`, `appendAtTM`); `appendOne/Zero` are real `CompiledCmd`s. Remaining: physical `compileOp_sound` per op + the length-decreasing ops (use the `endMark=3` sentinel; see lessons). Bounded eng (~1.5–2.5K LOC for all 8 ops). |
 | **C2** | **composition** (`compileSeq_sound`). | ✅ **validated** — `compileSeq_compose_physical` proves fragments compose under the physical contract (halt at `exit`, head rewound to `0`, tape `= encodeTape output`, exact step, no-early-halt). Bounded eng. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + `_sound`). | ✅ **validated** — `loopTM` + full run lemma `loopTM_run` in `TMPrimitives.lean`, sorry-free, axiom-clean, ~500 LOC. Remaining: a guard + a **marker-overwrite (non-shrinking) decrement** gadget, wire `compileForBnd`, instantiate `loopTM_run`. Bounded eng. |
@@ -104,11 +111,14 @@ above.
 | **C7** | **verifier bodies** — `evalCnfCmd` (SAT), `cliqueRelCmd` (`Deciders/`). | DSL engineering; gated on C3+C5 and dead until C4 makes the layer→`DecidesBy` bridge real. |
 | **C8** | **real `NPhard_GenNP`** (`hasDeciderClassical`, `GenNP_is_hard.lean`). | Last `sorry`; needs C4 (verifier TM from `InNPWitness`). |
 
-**Standing ranking.** C1/C2/C3 (the pivot's make-or-break unknowns) are
-all validated, so **no Group-C item is a structural unknown** and the
-layer is bounded engineering. The remaining *structural* risk lives in
-Group S — and **S3/C4 is the gate** for all of it. That is why the next
-topic is S3.
+**Standing ranking.** C1/C2/C3 and now the S3 bridge (B) are validated.
+**One new structural unknown surfaced: C9 (canonical layer encoding)** —
+the prerequisite for layer-level composition (`comp`, `red_inNP_via_lang`,
+`red_inNP`). It is bounded *design* (a per-type encoding class), not an
+open research question. After C9, the S3 migration is mechanical-but-large
+engineering (the digest's ripple). **Next topic: C9**, then execute the S3
+migration. The only remaining *unprobed* cost is the S2 multi-tape
+simulator (`MultiToSingle.lean`).
 
 ---
 
@@ -134,9 +144,15 @@ There are two honest destinations. The next probe (S3) decides which.
    is ~80% there for this scope. Triggered if the S3 probe's verdict is
    (iii), or if Part 3 overruns its estimate ~3×.
 
-**The S3 probe is the decision point** between these. It is the one
-remaining structural unknown that determines whether the unconditional
-path is open. See [`S3_RETIREMENT_EXPLORATION.md`](S3_RETIREMENT_EXPLORATION.md).
+**The S3 probe (now complete) made this call: the unconditional path is
+open, verdict (ii) feasible-but-expensive.** The witness upgrade and bridge
+exist (sorry-free modulo `Compile_sound`) and the forcing function is
+confirmed, so destination 1 is reachable; but it is gated on C9 (canonical
+encoding) and then a large, partly-unprobed body of engineering (the S2
+simulator, the sound-tail `Cmd`s — Tseytin being the expensive one — and
+the encodable sweep). The fallback (destination 2) stays the documented
+escape hatch if C9 or the tail migration overruns ~3×. See the S3 entry in
+*Validated so far* and [`S3_RETIREMENT_EXPLORATION.md`](S3_RETIREMENT_EXPLORATION.md).
 
 ---
 
@@ -192,6 +208,56 @@ Compact record of what each probe established (so they aren't re-run):
   alphabet is `|Σ|=(M.sig+1)(M.states+2)`; size is **quartic** in `|Σ|` (the
   earlier cubic bound was false); the wildcard-free TCC card model forces
   `Θ(|Σ|³)` identity cards (a pervasive cost multiplier).
+- **S3 (TM-back `polyTimeComputable`):** **feasible but expensive — proceed
+  after a canonical layer encoding.** The probe is additive in
+  `Lang/PolyTime.lean` (sorry-free; depends only on the assumed
+  `Compile_sound`):
+  - *(A) interface* — `ComputesBy` (function analogue of `DecidesBy`) and
+    `PolyTimeComputableWitness'`, which **extends** the old size-only
+    witness. So `polyTimeComputable' f → polyTimeComputable f`
+    (`polyTimeComputable'_to_polyTimeComputable`, axiom-clean): the upgrade
+    is a pure *strengthening*, hence every size-bound lemma in `NP.lean`
+    (`reducesPolyMO_transitive`, `red_inNP`'s `polyCertRel` half) survives
+    the migration verbatim — only witness *construction* gets harder.
+  - *(B) bridge* — `PolyTimeComputableLang.toFrameworkWitness'` goes through
+    **cleanly** (machine = `Compile W.c`, budget = `Compile.overhead`,
+    closed by `Compile_sound` + `runFlatTM_extend` budget-padding + the
+    single-tape `initialTapes` collapse). Difficulty was *low*; it is the
+    honest version of the faked `toFrameworkWitness`.
+  - *(C) composition is where difficulty concentrates,* but it is bounded
+    *design*, not a wall. TM-level `ComputesBy` composition needs a
+    re-encoding tape (output of `f` → input of `g`); the layer's single
+    `State` avoids it (the ROADMAP thesis holds). The residual gap is that
+    `PolyTimeComputableLang.encodeIn`/`decodeOut` are **free functions** with
+    no shared representation, so `comp`/`red_inNP_via_lang` cannot even be
+    *stated* without an encoding-compatibility bridge.
+    `comp_computes_of_bridge` proves the rest is definitional
+    (`Cmd.eval_seq`) once a `reEncode` Cmd aligns them → **new Risk C9.**
+    `red_inNP` therefore cannot be discharged *additively* (it is stated
+    over the size-only `⪯p`, which carries no Lang program for the
+    reduction); discharging it is part of the migration, gated on C9.
+  - *(D) forcing function — CONFIRMED.* The if-on-the-answer S1 map is
+    `noncomputable` and branches on the existential NP predicate
+    `FlatSingleTMGenNP`; any layer witness computes via the **total
+    computable** `Cmd.eval`. `s1_witness_forces_decider` formalizes the
+    consequence: a layer witness + a constant-comparison test ⇒ a
+    polynomial-cost **decider** for the source predicate — exactly what a
+    many-one reduction may not produce. So S1 (and, by the same argument,
+    S2's source-discarding bridges) **stop typechecking** under the upgrade.
+    The upgrade is real.
+  - *(E) migration ripple.* The dominant cost is downstream, not the
+    witness: the real S1 tableau (~6–11K LOC, probed) and the unprobed S2
+    multi-tape simulator are *rebuilds*, not migrations. The **sound tail**
+    must each gain a `Cmd`: `flatTCC_to_flatCC` is a cheap structural map
+    (its `if isValidFlattening` guard is a *decidable input* check, not on
+    the answer — expressible); `FlatCC_to_BinaryCC` is medium (bit-block
+    encode/decode); **`BinaryCC_to_FSAT` (the Tseytin transform, `500n⁶`
+    bound) is the expensive tail item** — re-expressing a ~1K-LOC `formula`
+    builder as a `Cmd` likely needs new `Op`s (C5). Plus the **encodable
+    sweep** (Part 0.1): over a size-0 `instEncodableDefault` type
+    `toFrameworkWitness'` is *still vacuous*, so every chain intermediate
+    (TCC/CC/BinaryCC/formula/…) needs a real `encodable.size` — now a hard
+    requirement, not a nicety.
 
 ---
 

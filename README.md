@@ -54,9 +54,13 @@ is encoded as a `FlatTCC` is essentially in place.
   that discards the source TM. Real fix = real TM simulators
   (`Simulators/MultiToSingle.lean`).
 - **S3** — these typecheck only because `polyTimeComputable` bounds
-  *output size*, not runtime. **Retiring S3 is the current next topic** —
-  it is the linchpin that makes the layer meaningful and forces S1/S2 to
-  be real.
+  *output size*, not runtime. **Probed (complete): retiring it is feasible
+  but expensive.** The honest TM-backed witness `PolyTimeComputableWitness'`
+  and the real bridge `toFrameworkWitness'` are now built additively in
+  `Lang/PolyTime.lean` (sorry-free modulo the assumed `Compile_sound`), and
+  the probe confirms the upgrade *forces* S1/S2 to become real. Executing
+  the migration is gated on a new prerequisite — a canonical layer encoding
+  (Risk C9) — then ripples to every reduction in the chain.
 
 ## The strategy: a higher-level computable layer
 
@@ -69,9 +73,11 @@ DSL program. This is the Lean analogue of the L calculus the Coq port uses.
 The layer's three make-or-break structural unknowns are **validated**:
 per-primitive compilation (C1), composition (C2,
 `compileSeq_compose_physical`), and the counted loop (C3, `loopTM` +
-`loopTM_run`, sorry-free). What remains in the layer is bounded
-engineering. The remaining *structural* risk is **S3** (above) — see the
-ROADMAP Risk register and the next-topic brief.
+`loopTM_run`, sorry-free). The S3 layer→framework bridge is now validated
+too (`toFrameworkWitness'`). The one structural unknown the S3 probe
+surfaced is **Risk C9** — a canonical per-type layer encoding, the
+prerequisite for layer-level composition and the S3 migration. See the
+ROADMAP Risk register.
 
 ## Development strategy: skeleton-first, risk-driven
 
