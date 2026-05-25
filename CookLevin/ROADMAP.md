@@ -22,7 +22,7 @@ turning it into an honest, mathematically rigorous proof.
 | 1     | Foundational hygiene, small-`sorry` cleanup                | ✅ done |
 | 2 (framework) | TM-backed `DecidesBy` + `inTimePoly`               | ✅ done |
 | 2 (content)   | Hand-rolled `EvalCnfTM` / `CliqueRelTM` verifiers  | ⏸ paused mid-stream |
-| 3 (layer)     | `Cmd`/`Op` + compiler skeleton + gadget library    | 🟡 in progress (C1 append-`Op` slice + C2 composition validated) |
+| 3 (layer)     | `Cmd`/`Op` + compiler skeleton + gadget library    | 🟡 in progress (C1 append-`Op` slice + C2 composition + C3 `loopTM` all validated; remaining is bounded engineering) |
 | 4–7   | TM-backed reductions, simulators, Cook tableau             | rescoped (see below) |
 
 - Repository size: **~25.7K LOC** of Lean.
@@ -45,7 +45,13 @@ turning it into an honest, mathematically rigorous proof.
   unknown to bounded engineering. See the
   [C1](#c1-progress--interim-measurement-may-2026) /
   [C2](#c2-analysis-the-per-op-soundness-contract-is-too-weak-to-compose-may-2026)
-  analyses.
+  analyses. **C3 — the `loopTM` counted-loop combinator — is now also
+  validated (GREEN):** `loopTM` + its full operational run lemma `loopTM_run`
+  are built in `TMPrimitives.lean`, *sorry*-free and axiom-clean, at ~500 LOC
+  marginal on the composition machinery (the backward bridge reuses the
+  forward-bridge proofs). With C1/C2/C3 all validated, **no Group-C item is a
+  structural unknown** — the rest of the layer is bounded engineering. See the
+  iteration-log verdict.
 - `theorem CookLevin : NPcomplete SAT` typechecks against the strengthened
   framework but is **conditional**: it inherits the ~29 `sorry`s, the
   `sorry`-free vacuous reductions/bridges (Risks **S1**/**S2**), the
@@ -178,9 +184,9 @@ iteration.**
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3355 jobs) | unchanged |
 | Axiom count (repo-wide)               | **0** project axioms | unchanged |
-| `sorry`s on the proof path            | **~29**           | the S1 Cook-tableau probe turned the orphan `CookTableau.lean` from a 5-sorry empty stub into a 2-sorry real construction (−3: well-formedness + a constrained-case bijection proved, axiom-clean). Group C unchanged this cycle |
+| `sorry`s on the proof path            | **~29**           | unchanged this cycle: the C3 `loopTM` probe added `loopTM` + `loopTM_run` *additively* (sorry-free, axiom-clean) and left `compileForBnd_sound` as its existing `sorry`, per the probe brief |
 | Sorry-**free** vacuous defs on the proof path | **≥ 4**   | unchanged — see Risk **S1**/**S2** |
-| Reusable layer gadget library         | `insertCarryTM`, `scan_to_mark`/`scanPastDelimTM`/`scanLeftUntilTM`, `appendAtTM`, `compileSeq_compose_physical` | ↑ new this cycle, all axiom-clean |
+| Reusable layer / TM-combinator library | `composeFlatTM`/`branchComposeFlatTM`, **`loopTM` + `loopTM_run` (counted loop, new this cycle)**, `insertCarryTM`, `scan_to_mark`/`scanPastDelimTM`/`scanLeftUntilTM`, `appendAtTM`, `compileSeq_compose_physical` | ↑ `loopTM` new this cycle (C3 validated), all axiom-clean |
 | `theorem CookLevin : NPcomplete SAT` | typechecks, **conditional** on all of the above | unchanged since pre-pivot |
 
 > **Sorry count is not the soundness metric (review note, May 2026).**
@@ -251,7 +257,7 @@ obligations that move into that axiom interface.
 
 | # | Gap | Location | Why this ranking |
 |---|-----|----------|------------------|
-| **C3** | **`loopTM` combinator + its run lemma** | `Complexity/TMPrimitives.lean`, `Lang/Compile.lean` | **Now the top *unvalidated* completion risk.** `compileForBnd` is a `compiledCmd_default` stub; `loopTM` is absent from `TMPrimitives`. The *combinator* is routine; the **run lemma** (iteration bookkeeping: threading tape state through the counter, post-loop cleanup) was, per Appendix A point 2, the **dominant cost** of the hand-rolled approach (~600 + ~400 LOC per loop site). Every verifier (`evalCnfCmd` iterates clauses × literals) needs it, and *nothing has touched it*. With C1/C2 having validated the per-primitive + composition story, `loopTM` is the next go/no-go experiment: build a single-tape unary-counter `loopTM` + its run lemma and measure. If it is ≲ the per-op cost, the layer converges; if it balloons, that is the signal to trigger the [Fallback plan](#fallback-plan-if-the-layer-also-overruns). |
+| **C3** | **`loopTM` combinator + its run lemma** — ✅ **VALIDATED (GREEN, May 2026)** | `Complexity/TMPrimitives.lean` (done), `Lang/Compile.lean` (`compileForBnd_sound` still `sorry`) | **Was the top *unvalidated* completion risk; the go/no-go probe closed it.** `loopTM` + its full operational run lemma `loopTM_run` are built in `TMPrimitives.lean`, *sorry*-free and axiom-clean, at **~500 LOC marginal** on the existing `composeFlatTM` machinery — under the ~600 + ~400 LOC/loop-site hand-rolled cost (Appendix A) and paid **once**. The feared cost (the **backward bridge** `exitLoop → body.start` and its re-entry trajectory) did *not* materialise: a backward edge is structurally identical to a forward one, and `runFlatTM_compose` chains the passes so the trajectory resets at each `body.start`. **Remaining (bounded engineering, ~1.5–2.5K LOC, same profile as C1 — *not* loop control):** a concrete counter-empty guard, a **marker-overwrite (non-shrinking) decrement** gadget (avoids the C1 delete-gadget wall), wiring `compileForBnd`, and discharging `compileForBnd_sound` by instantiating `loopTM_run` (relate `loopBudget` to `overhead(…)`, and `T n` to `encodeTape`). See the iteration-log verdict. |
 | **C1** | **Concretize one primitive `Op` end-to-end** (def **and** its slice of `compileOp_sound`) | `Lang/Compile.lean`, `Lang/*` | **Largely validated; finishing in progress.** The pivot premise ("primitives ~50 LOC each") is **partly falsified but in a benign way**: each primitive is hundreds of LOC, *but* the cost is front-loaded into a **reusable gadget library** (`insertCarryTM`, the scan family, `scanLeftUntilTM`) that amortises across ops, and *composition is cheap* (C2). `appendOne`/`appendZero` are built end-to-end as machines (`appendAtTM` + run lemma, packaged as `CompiledCmd`s). **Remaining for the slice:** (i) the leading-sentinel encoding + `decodeTape` round-trip re-proof, then (iv) the *physical* `compileOp_sound` for `appendOne` (`appendAtTM ⨾ scanLeftUntilTM`, with trajectory + step bound). Revised `compileOp` estimate **~2–3K LOC** total for all 8 ops + the delete gadget, most of it reused infra. |
 | **C2** | **Per-`Op` soundness contract + `compileSeq_sound` composition** | `Lang/Compile.lean` | **De-risked (structural unknown → bounded engineering).** Reading `composeFlatTM_run` showed the gap precisely: it resumes `M₂` on `M₁`'s halting config, so the per-`Op` contract must expose an **exact halt step, a no-early-halt trajectory, and a head-`0` exit config** — none of which the current `decodeTape`-equality `compileOp_sound` provides. The fix is built: the `scanLeftUntilTM` head-rewind gadget, and `compileSeq_compose_physical`, which **proves** that two fragments meeting this *physical contract* compose via `composeFlatTM_run` (head-`0` output makes `M₁`'s exit config literally `initFlatConfig M₂ […]`). Remaining: restate `compileOp_sound`/`compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` to the physical contract (a known, file-local refactor). |
 | **C4** | **`PolyTimeComputableLang` ↔ framework** | `Lang/PolyTime.lean`, `Complexity/NP.lean` | `polyTimeComputable` carries no Lang witness, so `red_inNP` (the `NP.lean` sorry) cannot compose at the layer level. Requires upgrading `PolyTimeComputableWitness` (or adding a parallel TM-backed witness and migrating). **This is also the structural change that begins to retire S3** — the same upgrade that lets `red_inNP` compose is what lets the chain's reductions stop relying on the size-only bound. |
@@ -268,17 +274,20 @@ C, **C1–C4 are structural** (they validate the pivot premise or
 change downstream type signatures), **C5–C6 are design**, and
 **C7–C8 are engineering** that is gated on the structural items above.
 
-**Reordered ranking (May 2026, post-C1/C2).** C1 and C2 — the two items
-that were the pivot's make-or-break structural unknowns — are now
-**validated**: a primitive compiles end-to-end with a reusable gadget
-library, and compositions glue cleanly under a now-explicit physical
-contract. The remaining open *structural* question is **C3 (`loopTM`)**,
-which is why it is promoted to the top. **The single most important next
-step** is therefore: (a) finish the `appendOne` physical slice (C1 steps
-(i)+(iv)) to retire the contract restatement on a concrete example, then
-(b) run the **`loopTM` go/no-go** (C3). If both hold, the layer's cost
-model is fully validated and the rest of Group C is bounded engineering;
-if `loopTM` balloons, trigger the fallback before building the verifiers.
+**Reordered ranking (May 2026, post-C1/C2/C3).** C1, C2, **and now C3** —
+the three items that were the pivot's make-or-break structural unknowns —
+are all **validated**: a primitive compiles end-to-end with a reusable
+gadget library (C1); compositions glue cleanly under an explicit physical
+contract (C2); and the counted loop's combinator + full run lemma land at
+~500 LOC marginal, *sorry*-free and axiom-clean, reusing the composition
+machinery (C3). **The layer's cost model is therefore validated
+end-to-end, and no Group-C item remains a structural unknown** — the rest
+is bounded engineering. **The single most important next step** is now:
+(a) finish the `appendOne` physical slice (C1 steps (i)+(iv)); then
+(b) build the counter guard + the **marker-overwrite (non-shrinking)
+decrement** gadget and wire `compileForBnd`, discharging
+`compileForBnd_sound` by instantiating `loopTM_run`. The fallback plan is
+not triggered.
 
 #### C1 progress + interim measurement (May 2026)
 
@@ -635,6 +644,108 @@ structural unknown. Added *additively*; the file-wide restatement of
 and instantiate `compileSeq_compose_physical` for `appendOne ∘ appendOne`.
 
 ### Iteration log
+
+- **May 2026 — C3 `loopTM` go/no-go probe: VERDICT = GREEN (feasible —
+  proceed).** Built the counted-loop combinator `loopTM` and its full
+  operational run lemma `loopTM_run` in `Complexity/TMPrimitives.lean`,
+  *sorry*-free and axiom-clean (`[propext, Classical.choice, Quot.sound]`).
+  Build green throughout; `compileForBnd_sound` left as the existing
+  `sorry` (untouched, per the brief). The four deliverable questions:
+
+  1. **Tractable? Where does difficulty concentrate?** **Yes** — all three
+     planned steps went through, and the general run lemma (step C) closed
+     by plain induction on the iteration count, so steps B (`iters = 0`/`1`)
+     are subsumed rather than special-cased.
+     - **Step A (combinator + validity): done, ~210 LOC.** `loopTM B
+       exitDone exitLoop` wraps a *single black-box iteration body* `B`
+       (guard ⨾ user-body ⨾ decrement, folded together) with one dedicated
+       halt state and two bridge edges: `exitDone → halt` (forward) and
+       **`exitLoop → B.start` (backward — the genuinely new edge)**.
+       `loopTM_valid` discharges exactly like `composeFlatTM_valid`/
+       `branchComposeFlatTM_valid`. This already answers "is the loop's
+       shape expressible + valid here?": **yes**.
+     - **Steps B+C (the run lemma): done, ~290 LOC.** `loopTM_run`: given
+       a body satisfying the per-pass physical contract (from head-`0`
+       config `T (j+1)` it reaches `exitLoop` on the decremented head-`0`
+       config `T j`; from the empty-counter config `T 0` it reaches
+       `exitDone`), the loop machine halts at its dedicated halt state on
+       `T 0` in `loopBudget tIter tDone n` steps. Proof by induction on the
+       iteration count.
+     - **Where the difficulty did *NOT* concentrate (the key finding):**
+       the three feared subtleties were cheap.
+       - *(a) The backward bridge / re-entry trajectory.* Structurally a
+         backward edge is **identical** to a forward one —
+         `bridgeEntries B.sig exitLoop B.start` — so the entire
+         `find?`-precedence + `bridgeEntries_find_eq_some` +
+         `applyBridgeMkEntry_singleTape` machinery built for
+         `composeFlatTM` applies verbatim (factored here into one reusable
+         `bridgeEntries_find_eq_some`). The "must survive re-entry into the
+         guard" worry **dissolved**: each pass is a fresh body-phase lift
+         starting from `{B.start, [T m]}`, and `runFlatTM_compose` chains
+         the passes *within the same machine*, so the no-early-halt
+         trajectory invariant is **re-established at every `B.start`**
+         rather than having to hold across re-entries globally.
+       - *(b) Termination / induction measure.* Plain structural induction
+         on the iteration count `n`; the decrement is modelled by the
+         body's contract delivering `T j` from `T (j+1)`, so
+         well-foundedness is immediate. The contract is required only for
+         `j < n` (bounded), so a finite-capacity counter machine can
+         instantiate it.
+       - *(c) Threading the physical contract.* Handled by parameterising
+         over a tape family `T : Nat → tape`; the body is a black box
+         meeting **exactly** the `composeFlatTM_run` contract shape, once
+         per pass.
+       The only genuinely-new code is the second bridge family, the
+       dedicated halt state, and **one extra `≠ exit`** in the body-phase
+       lift's trajectory (versus `composeFlatTM`'s single forward exit).
+
+  2. **Realistic cost.** **~500 LOC marginal** for the combinator + all
+     structural lemmas + validity + the **full** general run lemma,
+     axiom-clean, reusing `composeFlatTM`'s bridge / `find?` / state-range
+     *private* helpers. Calibration: `composeFlatTM` + `composeFlatTM_run`
+     is ~1,000 LOC *including* that reusable bridge machinery; `loopTM`
+     rides on it for ~500 LOC. This is **under** the ~600 + ~400 ≈ 1,000
+     LOC/loop-site hand-rolled cost (Appendix A) — and it is paid **once**
+     (the wrapper is generic over the body), so Appendix A's "pay it once"
+     premise **holds**. *Not yet counted* (the bounded engineering left to
+     land `compileForBnd_sound`, ~1.5–2.5K LOC, same profile as C1's
+     per-`Op` data-movement work, **not** loop control): (a) a concrete
+     counter-empty **guard** machine over `sig = 4` (~150–300); (b) a
+     concrete **decrement** gadget — use the **marker-overwrite
+     (non-shifting)** encoding (overwrite the next counter `1` with a
+     sentinel, head moves right) to keep the per-pass cost `O(L)` head
+     moves and **avoid the length-decreasing delete-gadget wall** of
+     Risk C1 (~200–400); (c) assemble guard ⨾ body ⨾ decrement into the
+     black-box `B` via `composeFlatTM` (cheap, reuses C2, ~100); (d)
+     instantiate `loopTM_run`'s contracts from the gadget run lemmas and
+     bound the exact `loopBudget = tDone + Σ_{j<n} tIter j + (n+1)` under
+     `Compile.overhead (size + 1 + folded.2 + iters)` (monotone arithmetic
+     + `runFlatTM_extend`, ~200–400); (e) relate the abstract `T n` family
+     to `encodeTape (folded-state)` under `BitState` (~150–300).
+
+  3. **Recommendation: (i) FEASIBLE — proceed; the layer's cost model is
+     validated end-to-end.** Per-primitive (C1), composition (C2), and now
+     **iteration (C3)** all land at ≲ per-op cost by reusing shared
+     infrastructure, so the rest of Group C is bounded engineering. Order
+     for the remainder: finish the `appendOne` physical slice (C1 (iv)) →
+     build the guard + marker-decrement gadgets → wire `compileForBnd` and
+     discharge `compileForBnd_sound` via `loopTM_run` → `compileIfBit`
+     tester (C6) → the verifiers (C7) → C4/S3. The fallback plan is **not**
+     triggered.
+
+  4. **New structural notes for the Risk register.**
+     - **Counter encoding must be non-shrinking (C3/C5 refinement).** The
+       run lemma needs a *uniform* per-pass contract (each pass: head-`0`
+       on `T (j+1)` → head-`0` on `T j`). A shift-left decrement would
+       re-hit Risk C1's length-decreasing tape-model wall; the
+       **marker-overwrite** decrement (move a sentinel right over the
+       consumed counter cells, "empty" = head sees the terminator)
+       satisfies the contract *and* stays `O(L)` per pass. Prefer it.
+     - **Cost accounting (subtlety e) is benign.** `loopBudget` is exactly
+       `tDone + Σ tIter j + (n+1)`; it fits under `overhead(size + 1 +
+       folded.2 + iters)` precisely when each per-pass body cost `tIter j`
+       is `O(L)` and sums to `≤ folded.2` — which the `O(L)` marker
+       decrement gives. No super-linear surprise.
 
 - **May 2026 — Next-topic selection (doc + handoff): C3 `loopTM` is the
   go/no-go.** With the S1 Cook-tableau probe concluded (verdict: feasible but

@@ -56,11 +56,20 @@ completion gaps (Group C) tracked separately.
   `compileSeq` resume gap (does a follow-on machine see the right tape?)
   is closed at the design level by `compileSeq_compose_physical`. This
   confirms the part of the pivot that was supposed to amortise. The
-  remaining layer work is bounded engineering, with one unvalidated piece
-  left (`loopTM`, the counted-loop combinator — Risk **C3**). `loopTM` is
-  the **selected next topic** (it gates `Compile_sound` and therefore the
-  retirement of S3); a self-contained handoff brief is at
-  [`CookLevin/LOOPTM_EXPLORATION.md`](CookLevin/LOOPTM_EXPLORATION.md).
+  remaining layer work is bounded engineering, and the **last structural
+  unknown — `loopTM`, the counted-loop combinator (Risk C3) — is now
+  validated** (GREEN). `loopTM` and its full operational run lemma
+  `loopTM_run` are built in `TMPrimitives.lean`, *sorry*-free and
+  axiom-clean: a real, total, valid counted-loop wrapper plus a proof, by
+  induction on the iteration count, that it threads the physical contract
+  through every pass — including the genuinely-new **backward bridge edge**
+  (`exitLoop → body.start`). The whole combinator + run lemma is ~500 LOC
+  marginal on top of the existing `composeFlatTM` machinery — well under
+  the ~1000 LOC/loop-site of the abandoned hand-rolled approach (ROADMAP
+  Appendix A), and paid *once*. So the layer's cost model is validated
+  end-to-end (per-primitive C1, composition C2, iteration C3); the rest of
+  Group C is bounded engineering. See the ROADMAP iteration log for the
+  go/no-go verdict and the remaining work to land `compileForBnd_sound`.
 - **The `sorry` count is not the soundness metric.** The deepest
   gaps on the proof path are `sorry`-**free** and so do not appear in
   that count or under `#print axioms`:
@@ -131,11 +140,20 @@ on a concrete primitive, with encouraging results:
   gadget library (`insertCarryTM`, the scan family, `scanLeftUntilTM`)
   that is paid once and shared across ops. Revised estimate for the
   whole `compileOp` (8 ops + a delete gadget): **~2–3K LOC**.
-- **The remaining structural unknown is `loopTM` (C3).** The
-  counted-loop combinator and its run lemma were the dominant cost of
-  the abandoned hand-rolled approach and have not yet been built. Every
-  verifier needs it. This is the next go/no-go experiment; if it
-  balloons, the fallback plan triggers before the verifiers are written.
+- **The last structural unknown — `loopTM` (C3) — is now validated
+  (GREEN).** The counted-loop combinator and its run lemma were the
+  dominant cost of the abandoned hand-rolled approach; every verifier
+  needs it. The go/no-go probe built `loopTM` + the full operational run
+  lemma `loopTM_run` (`TMPrimitives.lean`), *sorry*-free and axiom-clean,
+  by induction on the iteration count — including the new backward bridge
+  edge. It came in at ~500 LOC *marginal* on the existing composition
+  machinery (vs. ~1000 LOC/loop-site hand-rolled, paid once). The feared
+  difficulty (the backward edge / re-entry trajectory) did **not**
+  materialise: each pass is a fresh body-phase lift chained by
+  `runFlatTM_compose`, so the trajectory invariant resets at every
+  `body.start` rather than having to survive re-entry globally. The
+  remaining work to land `compileForBnd_sound` is the per-gadget guard +
+  decrement engineering (the same profile as C1), not loop control.
 
 **What this does *not* change:** the deepest gaps (the faked Cook
 tableau and the dummy TM bridges, Risks S1/S2) are on the reduction
@@ -377,10 +395,11 @@ is visible as `sorry`s; the other two are **not**, which is why the
    reused as a *leading* sentinel for the head-rewind). What remains for
    the append slice is bounded: the leading-sentinel encoding + decode
    round-trip, then the *physical* `compileOp_sound` for `appendOne`
-   (`appendAtTM ⨾ scanLeftUntilTM`). The one **unvalidated** completion
-   risk left is **C3 — the `loopTM` counted-loop combinator** (the
-   dominant cost of the abandoned hand-rolled approach; needed by every
-   verifier). See ROADMAP Risks **C1**/**C2**/**C3**.
+   (`appendAtTM ⨾ scanLeftUntilTM`). The last structural completion risk,
+   **C3 — the `loopTM` counted-loop combinator** (the dominant cost of the
+   abandoned hand-rolled approach; needed by every verifier) — is now
+   **validated**: `loopTM` + the full run lemma `loopTM_run` are built
+   *sorry*-free and axiom-clean. See ROADMAP Risks **C1**/**C2**/**C3**.
 
 2. **`sorry`-free vacuous reductions on the proof path** (Risks
    S1/S2). Two reduction maps —
