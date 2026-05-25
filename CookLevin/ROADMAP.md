@@ -28,7 +28,7 @@ turning it into an honest, mathematically rigorous proof.
 - Repository size: **~25.7K LOC** of Lean.
 - Build state: **`lake build` is green** (3355 jobs), **0 project axioms**
   (the layer is axiom-clean beyond the standard
-  `propext`/`Classical.choice`/`Quot.sound`), with **~32 labelled
+  `propext`/`Classical.choice`/`Quot.sound`), with **~29 labelled
   `sorry`s** across the Parts 3–7 skeleton
   ([distribution and ranking](#current-skeleton-state)). The four
   framework-migration `sorry`s ([listed below](#the-four-open-sorrys))
@@ -47,7 +47,7 @@ turning it into an honest, mathematically rigorous proof.
   [C2](#c2-analysis-the-per-op-soundness-contract-is-too-weak-to-compose-may-2026)
   analyses.
 - `theorem CookLevin : NPcomplete SAT` typechecks against the strengthened
-  framework but is **conditional**: it inherits the ~32 `sorry`s, the
+  framework but is **conditional**: it inherits the ~29 `sorry`s, the
   `sorry`-free vacuous reductions/bridges (Risks **S1**/**S2**), the
   `polyTimeComputable` weakness (Risk **S3**), and Part 0. **None of the
   C1/C2 layer progress moves this headline** — the soundness gaps are on the
@@ -178,7 +178,7 @@ iteration.**
 |---------------------------------------|-------------------|-------|
 | `lake build`                          | ✅ green (~3355 jobs) | unchanged |
 | Axiom count (repo-wide)               | **0** project axioms | unchanged |
-| `sorry`s on the proof path            | **~32**           | flat: C1/C2 added *sorry-free* gadgets + lemmas (`appendAtTM`, `scanLeftUntilTM`, `compileSeq_compose_physical`) and concretized two `compileOp` stubs, without closing any of the six `Compile.lean` sorrys (they await the contract restatement) |
+| `sorry`s on the proof path            | **~29**           | the S1 Cook-tableau probe turned the orphan `CookTableau.lean` from a 5-sorry empty stub into a 2-sorry real construction (−3: well-formedness + a constrained-case bijection proved, axiom-clean). Group C unchanged this cycle |
 | Sorry-**free** vacuous defs on the proof path | **≥ 4**   | unchanged — see Risk **S1**/**S2** |
 | Reusable layer gadget library         | `insertCarryTM`, `scan_to_mark`/`scanPastDelimTM`/`scanLeftUntilTM`, `appendAtTM`, `compileSeq_compose_physical` | ↑ new this cycle, all axiom-clean |
 | `theorem CookLevin : NPcomplete SAT` | typechecks, **conditional** on all of the above | unchanged since pre-pivot |
@@ -206,7 +206,7 @@ Sorry distribution at the current snapshot (May 2026, recounted):
 | `Deciders/EvalCnfCmd.lean`                 | 7      | `processOneClause`/`processOneLiteral`/`memberCheck` (sorry-typed `def`s) + `encodeCnf_length` + `encodeState_size_bound` + `evalCnfCmd_decides` + `evalCnfCmd_cost_bound` |
 | `Deciders/CliqueRelTM.lean`                | **5**  | sorry-typed `cliqueRelCmd` + `cliqueRelEncode` **defs**, plus `encodeIn_size` + `decides` + `cost_bound` (prior snapshot said 3) |
 | `Deciders/EvalCnfTM.lean`                  | 1      | `encodeIn_size` (`5·n + 20 ≤ (n+1)^3`) |
-| `Simulators/CookTableau.lean`              | 5      | wellformedness + bijection + size bound — **but this file is an orphan (Risk S4)** |
+| `Simulators/CookTableau.lean`              | 2      | corrected size bound + general bijection — **real computable construction post-probe (was a 5-sorry empty stub); well-formedness + a constrained-case bijection now proved; still an orphan (Risk S4)** |
 | `Simulators/MultiToSingle.lean`            | 3      | step-bound poly/mono + acceptance — **orphan (Risk S4)** |
 
 ---
@@ -233,10 +233,12 @@ files. It is split into two groups:
 
 | # | Gap | Location | Why it matters |
 |---|-----|----------|----------------|
-| **S1** | **`if-on-the-answer` reductions** | `…/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `…/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | Both reduction maps are `noncomputable def … := if Source inst then yesInst else noInst` — the image depends on the *truth* of the source predicate, which is exactly what a many-one reduction may not do. They are **sorry-free**, so they never show up in the sorry count or in `#print axioms`; they typecheck only because of S3. This is the **deepest unsoundness in the project** and was entirely absent from the old register. A real `FlatSingleTMGenNP ⪯p FlatTCC` requires the Cook tableau (a *function* of `(M, s, steps)` that encodes the TM run), i.e. the construction that `Simulators/CookTableau.lean` aspires to (S4). |
+| **S1** | **`if-on-the-answer` reductions** | `…/Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `…/Reductions/TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | Both reduction maps are `noncomputable def … := if Source inst then yesInst else noInst` — the image depends on the *truth* of the source predicate, which is exactly what a many-one reduction may not do. They are **sorry-free**, so they never show up in the sorry count or in `#print axioms`; they typecheck only because of S3. This is the **deepest unsoundness in the project** and was entirely absent from the old register. A real `FlatSingleTMGenNP ⪯p FlatTCC` requires the Cook tableau (a *function* of `(M, s, steps)` that encodes the TM run), i.e. the construction that `Simulators/CookTableau.lean` aspires to (S4). **Feasibility-probed May 2026 (verdict: feasible but expensive, ≈6–11K LOC, bijection-dominated; see iteration log).** |
+| **S1a** | **Cook-tableau Σ sizing & size order** | `Simulators/CookTableau.lean` | The stub's `Sigma = M.sig + M.states + 1` is too small (no room for `(state×symbol)` head cells); the real alphabet is `|Σ| = (M.sig+1)·(M.states+2)`. The stub's cubic size bound `(|s|+steps+|M|+1)³` is **false**: encoded tableau size is `Θ(|Σ|⁴) = Θ(M.sig⁴·M.states²)` (quartic in the machine), dominated by the cards. Corrected in-file to a degree-8 polynomial; the closed-form proof (a `foldl`-over-`flatMap` size sum) is an open gap. |
+| **S1b** | **TCC card model has no wildcards** | `Subproblems/FlatTCC.lean` (semantics), `Simulators/CookTableau.lean` (impact) | `TCCCard` cells are concrete symbols with no don't-care, so "identity away from the head" must be licensed by an explicit copy card for **every** all-tape 3-window: `Θ(|Σ|³)` cards. This is a pervasive **cost multiplier** — it drives the quartic size bound (S1a) *and* makes every card-membership / card-vs-transition-agreement proof enumerate concrete triples via `flatMap`-of-`finRange`. The Coq port mitigates the *count* with a polarity annotation (which it then pays for in bookkeeping); either way the agreement proof is the bulk of the work. |
 | **S2** | **Dummy bridge machines** | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | `bridgeMachine` is a 1-state TM that **discards the source machine `M`** and accepts via an empty/erased tape; `TMGenNP_fixed`/`mTMGenNP_fixed` are predicates that ignore `M`. These are reached on the path via `GenNP_to_TMGenNP` (`NP/TM/IntermediateProblems.lean`), so the `GenNP → TMGenNP_fixed` arrow carries no computational content. Sorry-free; invisible to the sorry count. |
 | **S3** | **`polyTimeComputable` bounds output size only** | `Complexity/Definitions.lean`, `Complexity/NP.lean` | `PolyTimeComputableWitness f` requires only `encodable.size (f x) ≤ bound (size x)`; it says nothing about a TM computing `f`. This is the **enabling weakness** that lets S1/S2 typecheck as "polynomial-time reductions." Until it is upgraded to carry a real (layer-backed) computation, no `⪯p` arrow on the `GenNP → FlatTCC` segment is real. (Cf. Part 0.1 and `instEncodableDefault`'s `size = 0` loophole, which combines with this for the bridge-stage types.) |
-| **S4** | **The "real" Part 5/6 constructions are orphans** | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | `cookTableau` and `multiToSingle` are compiled (imported by the `Complexity.Simulators` aggregator) but **referenced by no reduction** — `grep` finds zero uses outside their own files. Proving their 8 sorrys advances `CookLevin` by **zero** until S1/S2 are rewired to call them *and* the abstract-source-TM → `FlatTM` bridge exists. The old register's items #4/#5 pointed here, which created a false impression that proving those sorrys would close the corresponding soundness gap. |
+| **S4** | **The "real" Part 5/6 constructions are orphans** | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | `cookTableau` and `multiToSingle` are compiled (imported by the `Complexity.Simulators` aggregator) but **referenced by no reduction** — `grep` finds zero uses outside their own files. `cookTableau` is now a *real* computable construction (post-probe: 2 sorrys = corrected size bound + general bijection; was a 5-sorry empty stub), but proving the rest advances `CookLevin` by **zero** until S1 is rewired to call it *and* the abstract-source-TM → `FlatTM` bridge exists. The old register's items #4/#5 pointed here, which created a false impression that proving those sorrys would close the corresponding soundness gap. |
 
 **Implication for the headline.** Today `CookLevin` is conditional on
 {four `sorry`s on the verifier/hardness side} **and** {S1, S2, S3 on
@@ -633,6 +635,110 @@ structural unknown. Added *additively*; the file-wide restatement of
 and instantiate `compileSeq_compose_physical` for `appendOne ∘ appendOne`.
 
 ### Iteration log
+
+- **May 2026 — Next-topic selection (doc + handoff): C3 `loopTM` is the
+  go/no-go.** With the S1 Cook-tableau probe concluded (verdict: feasible but
+  expensive, *downstream* of the layer and dead until S3 is retired), reviewed
+  the whole proof state to pick the single highest-risk next topic toward a
+  faithful, unconditional `CookLevin`. Independent code review confirmed the
+  ROADMAP's standing ranking: **`loopTM` (C3) is the biggest *unvalidated*
+  risk.** It is absent from `TMPrimitives.lean`; `compileForBnd` is a
+  `compiledCmd_default` stub and `compileForBnd_sound` is `sorry`; and *every*
+  layer→framework bridge in `Lang/PolyTime.lean` reduces to `Compile_sound`,
+  which needs `compileForBnd_sound`. So `loopTM` is upstream of retiring the
+  enabling weakness **S3** (output-size-only `polyTimeComputable`), which is
+  what currently lets the vacuous reductions S1/S2 typecheck. It was also the
+  dominant cost of the abandoned hand-rolled approach (~1,000 LOC/loop site,
+  Appendix A) and is needed by every verifier (`forBnd`). C1/C2 validated the
+  per-primitive and *composition* stories; `loopTM` is the last structural
+  unknown — if it lands at ≲ per-op cost the layer's cost model is validated
+  and the rest of Group C is bounded engineering; if it balloons, that is the
+  trigger for the [Fallback plan](#fallback-plan-if-the-layer-also-overruns).
+  Wrote a self-contained handoff brief for the next agent at
+  **`CookLevin/LOOPTM_EXPLORATION.md`** (mission, the physical-contract
+  foundation from C2, `composeFlatTM_run` as the proof template, a cheapest-
+  first work plan A→B→C, subtleties, and the verdict to deliver). Removed the
+  now-completed `CookLevin/TABLEAU_EXPLORATION.md`. No code change; build green.
+
+- **May 2026 — S1 Cook-tableau feasibility probe: VERDICT = feasible but
+  expensive; no structural blocker found.** Replaced the orphan
+  `Simulators/CookTableau.lean` stub (was 5 sorrys, an empty-field placeholder)
+  with a **genuine computable construction** and proved a constrained slice of
+  the bijection. Build green throughout; proved parts are axiom-clean
+  (`[propext, Quot.sound]`). The four deliverable questions:
+
+  1. **Tractable? Where does difficulty concentrate?**
+     - **Step A (real `cookTableau` def): done, ~230 LOC.** Strong positive —
+       the encoding *shape is fully expressible* as a plain `def` (no
+       `noncomputable`, no `if`-on-the-answer). Alphabet
+       `|Σ| = (M.sig+1)·(M.states+2)` (tape cells ⊎ `(state,symbol)` head
+       cells, blank + overflow slots make it total); `init`, `final`, and three
+       card families (copy / halt-left / head-center transition) are computable
+       functions of `(M,s,steps)`; flattened via the existing `flattenTCC`
+       lemmas exactly as the fake `mkTCCWitness` does. This alone retires the
+       "is the construction even expressible here?" question: **yes**.
+     - **Step B (well-formedness): done, trivial (~15 LOC).** Reused
+       `flattenTCC_wellformed` + `isValidFlattening_flattenTCC`.
+     - **Step B (size bound): the stated cubic bound is FALSE — a real
+       finding.** The TCC card model has **no wildcard / don't-care cells**, so
+       "identity away from the head" must be licensed by a concrete copy card
+       for *every* all-tape 3-window: `Θ(|Σ|³)` cards, each of encoded size
+       `Θ(|Σ|)` (`encodable.size` on `Nat` is the identity), giving
+       `Θ(|Σ|⁴) = Θ(M.sig⁴·M.states²)` for the card list alone. This already
+       exceeds `(|s|+steps+|M|+1)³` at `M.sig=2, M.states=s=steps=0`. Corrected
+       the statement to a (generous) degree-8 polynomial and left its proof as
+       a documented gap: it needs a `foldl`-over-`flatMap` size sum (no
+       off-the-shelf lemma, ~150–300 LOC). So step B is **polynomial but not
+       "the easy end" the ROADMAP assumed.**
+     - **Step C (one direction, constrained): done, ~120 LOC, axiom-clean.**
+       `cookTableau_correct_immediateHalt`: for an immediately-halting
+       single-tape machine on empty input, the tableau is satisfiable for
+       *every* step budget iff the machine accepts (the run⇒tableau soundness
+       direction on the trivial run). This genuinely exercises
+       `validStep`/`relpower`/`satFinal` and the **`drop i` window
+       bookkeeping** with the real head+tape alphabet.
+     - **Where the difficulty actually sits:** (a) the `drop i` window
+       bookkeeping is *fiddly but manageable* even in the freeze case — needed
+       a per-window case split (`i=0` head window vs `i=j+1` blank windows),
+       `List.replicate` splitting, and a `generalize` to dodge a shared-subterm
+       `rw`; (b) the no-wildcard card model is a **cost multiplier** — it
+       inflates both the size bound and every card-membership/agreement proof
+       (they go through `flatMap`-of-`finRange`); (c) the genuinely hard,
+       **untouched** mass is the *card-vs-transition agreement* and the *full
+       simulation bijection* (the Coq port spends ≈5,000 of its ≈6,200 lines
+       exactly here, plus polarity bookkeeping it uses to shrink the cards).
+
+  2. **Realistic cost (revised).** The Coq reference
+     (`SingleTMGenNP_to_TCC`, Gäher/Forster) is **≈6,200 lines, ~95% proof**;
+     the cheap-to-state / expensive-to-prove split is stark. Mapping onto this
+     codebase (no-wildcard cards; ~10× historical underestimation):
+     construction with all card families + correctness-shaped transitions
+     ≈600–1,000 LOC; corrected size bound ≈150–300 LOC; **bijection
+     ≈4,000–8,000 LOC** (card-agreement ≈2–4K + simulation
+     soundness/completeness ≈2–4K + certificate nondeterminism + head-at-edge
+     windows). **Honest total ≈6,000–11,000 LOC**, dominated by the bijection —
+     i.e. the ROADMAP's ~2,700 LOC guess is **~3–4× low**, and ~10K is the
+     calibrated center.
+
+  3. **Recommendation: (ii) feasible but expensive — proceed only after the
+     upstream is real.** No structural blocker exists (shape expressible, a
+     slice proven, sizing now understood), so this is *not* the intractable
+     case (iii). But it is a multi-thousand-LOC effort whose bulk (the
+     bijection) should **not** start until (a) the layer / Group C converges
+     (esp. C3 `loopTM`) and (b) S2/S3 are resolved — because S1 is **dead until
+     the reduction is rewired to call `cookTableau`** and the abstract-source-TM
+     → `FlatTM` bridge exists (S4). If the layer overruns, the documented-axiom
+     **fallback** for the `GenNP → FlatTCC` segment is the right call. Landing
+     A + B now (done) is worthwhile: it de-risks shape and sizing cheaply.
+
+  4. **New Risk-register entries:** **S1a** (Σ sizing corrected to
+     `(sig+1)(states+2)`; size is quartic in `|Σ|`, not cubic) and **S1b**
+     (no-wildcard card model ⇒ `Θ(|Σ|³)` identity copy cards, a pervasive cost
+     multiplier on both the size bound and the card-agreement proofs). Both
+     added to Group S below. **S4 unchanged:** per the probe's guardrail, the
+     reduction was **not** rewired — `cookTableau` is still an orphan and the
+     fake `FlatSingleTMGenNP_to_FlatTCC.lean` is untouched; the downstream sound
+     chain is unchanged and the build stays green.
 
 - **May 2026 — Risk reassessment (doc-only) after the C1/C2 work.**
   Re-ranked Group C in light of the validated layer progress. **C1 and C2

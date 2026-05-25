@@ -27,13 +27,26 @@ completion gaps (Group C) tracked separately.
 - Repository size: **~11K LOC** of Lean on the proof path under
   `CookLevin/` (a further ~14K LOC of paused / superseded work
   lives under [`parked/`](parked/), not built).
-- **~32 labelled `sorry`s** across the Parts 3–7 skeleton, all
+- **~29 labelled `sorry`s** across the Parts 3–7 skeleton, all
   flagged with `TODO(...)` tags. The current per-file distribution
   and the next-step ranking live in the **Risk register** of
   [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) (Group C). The
   original "four `sorry`s" from the framework migration were
   decomposed into these when Parts 3–7 were scaffolded as a
   compiling skeleton.
+- **Recent progress (the S1 Cook-tableau feasibility probe).** The
+  orphan `Simulators/CookTableau.lean` — the home of the *real* Cook
+  2D tableau that must eventually replace the faked
+  `FlatSingleTMGenNP ⪯p FlatTCC` reduction — was turned from a 5-sorry
+  empty stub into a **genuine computable construction** (real alphabet,
+  `init`, `final`, card families; no `if`-on-the-answer), with
+  well-formedness and a constrained-case bijection now *proved*
+  (axiom-clean). **Verdict: feasible but expensive** (no structural
+  blocker; the full bijection is ≈6–11K LOC, bijection-dominated). Two
+  findings: the stub's Σ sizing and its cubic size bound were both wrong
+  (size is quartic in `|Σ|`), and the wildcard-free TCC card model forces
+  `Θ(|Σ|³)` identity cards (Risks **S1a/S1b**). See the ROADMAP iteration
+  log for the full write-up.
 - **Recent progress (the layer's C1/C2 work).** The higher-level
   computable layer now has a real, *sorry-free* gadget library —
   `insertCarryTM` (insert/shift-right), the `scan_to_mark` /
@@ -44,7 +57,10 @@ completion gaps (Group C) tracked separately.
   is closed at the design level by `compileSeq_compose_physical`. This
   confirms the part of the pivot that was supposed to amortise. The
   remaining layer work is bounded engineering, with one unvalidated piece
-  left (`loopTM`, the counted-loop combinator — Risk **C3**).
+  left (`loopTM`, the counted-loop combinator — Risk **C3**). `loopTM` is
+  the **selected next topic** (it gates `Compile_sound` and therefore the
+  retirement of S3); a self-contained handoff brief is at
+  [`CookLevin/LOOPTM_EXPLORATION.md`](CookLevin/LOOPTM_EXPLORATION.md).
 - **The `sorry` count is not the soundness metric.** The deepest
   gaps on the proof path are `sorry`-**free** and so do not appear in
   that count or under `#print axioms`:
@@ -60,7 +76,7 @@ completion gaps (Group C) tracked separately.
   layer's C1/C2 progress does not touch them** — they live on the
   reduction side (Parts 5–6), downstream of the layer.
 - The build is **conditionally complete**: `theorem CookLevin :
-  NPcomplete SAT` typechecks, but it depends on the ~32 `sorry`s
+  NPcomplete SAT` typechecks, but it depends on the ~29 `sorry`s
   **and** on the `sorry`-free vacuous reductions/bridges above (see
   "Where the project is not yet sound" below).
 
@@ -330,7 +346,7 @@ theorem" and "the theorem is a real proof of Cook–Levin". The first
 is visible as `sorry`s; the other two are **not**, which is why the
 `sorry` count alone overstates how close the proof is.
 
-1. **The ~32 skeleton `sorry`s** (ROADMAP Risk register, Group C).
+1. **The ~29 skeleton `sorry`s** (ROADMAP Risk register, Group C).
    Each is a not-yet-built piece of the higher-level computable layer
    (the compiler, its soundness, the verifier/reduction programs) or
    of the final assembly. These are **completion** gaps — closing them
@@ -377,7 +393,12 @@ is visible as `sorry`s; the other two are **not**, which is why the
    source machine. These compile without `sorry` and do not appear
    under `#print axioms`, but carry no computational content. They
    are the deepest unsoundness; fixing them is Parts 5–6, and depends
-   on the layer (Parts 3–4) landing first.
+   on the layer (Parts 3–4) landing first. The real replacement for the
+   `FlatSingleTMGenNP ⪯p FlatTCC` map — the Cook 2D tableau in
+   `Simulators/CookTableau.lean` — was **feasibility-probed (May 2026)**:
+   the construction is now real and computable and a constrained-case
+   bijection is proved, but the full simulation bijection is a ≈6–11K LOC
+   effort (verdict: feasible but expensive). See the ROADMAP iteration log.
 
 3. **`polyTimeComputable f` only bounds output size** (Risk S3). The
    current `PolyTimeComputableWitness` requires
