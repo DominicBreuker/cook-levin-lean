@@ -51,8 +51,12 @@ is encoded as a `FlatTCC` is essentially in place.
   gap. Real fix = the Cook 2D tableau (`Simulators/CookTableau.lean`,
   probed feasible-but-expensive).
 - **S2** — the `LM→mTM→singleTape` bridges use a 1-state `bridgeMachine`
-  that discards the source TM. Real fix = real TM simulators
-  (`Simulators/MultiToSingle.lean`).
+  that discards the source TM. **Probed: the multi-tape→single-tape
+  simulator (`Simulators/MultiToSingle.lean`) is NOT needed** — it is a
+  Coq-porting artifact (`TM σ n` erases the tape count; the predicates
+  ignore the machine; the layer is single-tape-native). Real fix = collapse
+  the phantom bridges and bind the predicates to the single-tape layer
+  decider, i.e. this folds into the universal-source work (C8).
 - **S3** — these typecheck only because `polyTimeComputable` bounds
   *output size*, not runtime. **Probed (complete): retiring it is feasible
   but expensive.** The honest TM-backed witness `PolyTimeComputableWitness'`
@@ -113,7 +117,7 @@ CookLevin/
 │   ├── Lang/                     -- the layer: Syntax, Semantics, Compile,
 │   │   │                            PolyTime (the S3/C4 bridges), gadgets
 │   │   └── …
-│   ├── Simulators/               -- CookTableau (S1), MultiToSingle (S2) — orphans (S4)
+│   ├── Simulators/               -- CookTableau (S1, real, orphan/S4); MultiToSingle (S2 probe: dead code, not needed)
 │   ├── GenNP_is_hard.lean        -- NPhard_GenNP (C8)
 │   ├── L_to_LM / LM_to_mTM / mTM_to_singleTapeTM.lean  -- bridges (S2)
 │   └── NP/

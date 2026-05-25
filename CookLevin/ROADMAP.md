@@ -82,8 +82,8 @@ gaps. Refine the highest-ranked item next.
 |---|-----|----------|-----------------------|
 | **S3** | **`polyTimeComputable` bounds output size only** — the enabling weakness that lets S1/S2 typecheck. `PolyTimeComputableWitness` requires only `size (f x) ≤ bound (size x)`, no TM computing `f`. | `Complexity/NP.lean`, `Lang/PolyTime.lean` | **Probed: feasible but expensive — proceed after C9 (canonical encoding).** The honest TM-backed witness `PolyTimeComputableWitness'` (extends the old one) and the real bridge `toFrameworkWitness'` are built additively in `Lang/PolyTime.lean` (sorry-free modulo `Compile_sound`); D confirms S1/S2 stop typechecking. Executing the verdict = migrate `ReductionWitness`'s `reduction_poly` to `polyTimeComputable'`, which needs C9 then ripples to every reduction (see digest). |
 | **S1** | **if-on-the-answer reduction** `FlatSingleTMGenNP ⪯p FlatTCC` — map is `if (source is yes-inst) then yesInst else noInst`; output depends on the *answer*. Deepest unsoundness. | `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`, `.../TMGenNP_fixed_singleTapeTM_to_FlatFunSingleTMGenNP.lean` | The real **Cook 2D tableau** (`Simulators/CookTableau.lean`). **Probed: feasible but expensive (~6–11K LOC, bijection-dominated).** Gated on S3 (dead until then). |
-| **S2** | **dummy TM bridges** — `bridgeMachine` is a 1-state TM that discards the source `M`; `TMGenNP_fixed`/`mTMGenNP_fixed` ignore `M`. The `GenNP→TMGenNP` arrow carries no content. | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | Real TM simulators incl. **multi-tape → single-tape** (`Simulators/MultiToSingle.lean`, a stub). Gated on S3. |
-| **S4** | **the real constructions are orphans** — `cookTableau` (real, 2 `sorry`s) and `multiToSingle` (stub, 3 `sorry`s) are referenced by **no** reduction. | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | Wiring S1/S2 to call them (after S3). Until then proving them advances `CookLevin` by zero. |
+| **S2** | **dummy TM bridges** — `bridgeMachine` is a 1-state TM that discards the source `M`; `TMGenNP_fixed`/`mTMGenNP_fixed` ignore `M`. The `GenNP→TMGenNP` arrow carries no content. | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `TMGenNP_fixed_mTM.lean` | **Probed: do NOT build a multi-tape→single-tape simulator** (`MultiToSingle.lean` is a Coq-porting orphan; `TM σ n` erases the tape count, the predicates ignore `M`). Real fix = collapse the phantom bridges and bind the `*GenNP_fixed` predicates to the **single-tape layer decider** — i.e. this folds into the **C8** work, single-tape throughout. Gated on S3. See the S2 digest. |
+| **S4** | **orphan constructions.** `cookTableau` (real, 2 `sorry`s) is referenced by no reduction — wire it into S1 (after S3). `multiToSingle` (stub, 3 `sorry`s) is **dead code** per the S2 probe → park/delete, do not complete. | `Simulators/CookTableau.lean`, `Simulators/MultiToSingle.lean` | Wiring `cookTableau` into S1 (after S3). `multiToSingle` is not on any honest path. |
 
 **Companion (Part 0.1) — now a hard requirement (per S3 probe).**
 `instEncodableDefault` (`Definitions.lean`) gives `size = 0` to any type
@@ -111,31 +111,36 @@ above.
 | **C7** | **verifier bodies** — `evalCnfCmd` (SAT), `cliqueRelCmd` (`Deciders/`). | DSL engineering; gated on C3+C5 and dead until C4 makes the layer→`DecidesBy` bridge real. |
 | **C8** | **real `NPhard_GenNP`** (`hasDeciderClassical`, `GenNP_is_hard.lean`). | Last `sorry`; needs C4 (verifier TM from `InNPWitness`). |
 
-**Standing ranking.** C1/C2/C3 and now the S3 bridge (B) are validated.
-**One new structural unknown surfaced: C9 (canonical layer encoding)** —
-the prerequisite for layer-level composition (`comp`, `red_inNP_via_lang`,
-`red_inNP`). It is bounded *design* (a per-type encoding class), not an
-open research question. After C9, the S3 migration is mechanical-but-large
-engineering (the digest's ripple). **Next topic: C9**, then execute the S3
-migration. The only remaining *unprobed* cost is the S2 multi-tape
-simulator (`MultiToSingle.lean`).
+**Standing ranking.** C1/C2/C3, the S3 bridge (B), and now the S2 question
+are all resolved. The S2 probe **removed** the last unprobed structural
+cost: the multi-tape simulator is not needed (Coq-porting artifact), so
+**no unprobed structural unknown remains** — every gap is now either
+validated or bounded engineering. The one new design item is **C9
+(canonical layer encoding)**, the prerequisite for layer-level composition
+(`comp`, `red_inNP_via_lang`, `red_inNP`); bounded *design*, not research.
+**Next topic: C9**, then execute the S3 migration (its ripple is the
+remaining large-but-bounded engineering).
 
 ---
 
 ## Strategic situation: two end-states
 
-There are two honest destinations. The next probe (S3) decides which.
+There are two honest destinations. The S3 + S2 probes have decided the
+structural questions; the call is now about engineering appetite.
 
 1. **Real, unconditional `CookLevin`.** Requires, in order:
-   (a) **retire S3** (TM-back `polyTimeComputable`) — the gate;
+   (a) **retire S3** (TM-back `polyTimeComputable`) — the gate (probed
+       feasible; needs **C9** then the migration);
    (b) finish the layer: `Compile_sound` (C1 ops + C3 `compileForBnd` +
        C6 tester), then the verifier C7 → `inNP SAT`;
    (c) the real reductions S3 exposes: S1 Cook tableau (~6–11K LOC,
-       probed feasible), S2 multi-tape simulator (S4, unprobed), C8;
+       probed feasible) and C8 (the universal-source decider, single-tape
+       via the layer — this also subsumes the old "S2 simulator", which the
+       S2 probe showed is *not* needed);
    (d) real `encodable` instances on the chain (Part 0.1).
-   Large but, post-C1/C2/C3, mostly *bounded* engineering — except the S1
-   tableau (expensive-but-feasible) and the S2 simulator (the remaining
-   unprobed cost).
+   Post-C1/C2/C3/S2/S3-bridge, this is mostly *bounded* engineering — the
+   only expensive-but-feasible item is the S1 tableau. **No unprobed
+   structural unknown remains.**
 
 2. **Honest conditional theorem (fallback).** If retiring S3, or the
    reductions it exposes, prove intractable for a side project: state
@@ -258,6 +263,30 @@ Compact record of what each probe established (so they aren't re-run):
     `toFrameworkWitness'` is *still vacuous*, so every chain intermediate
     (TCC/CC/BinaryCC/formula/…) needs a real `encodable.size` — now a hard
     requirement, not a nicety.
+- **S2 (multi-tape → single-tape simulator):** **do NOT build it — it is a
+  Coq-porting artifact with zero footprint in the layer architecture.**
+  Evidence is additive and sorry-free in `mTM_to_singleTapeTM.lean`:
+  - `TM_tapecount_phantom : TM Bool 2 = TM Bool 1` by **`rfl`** — `TM σ n`
+    is `abbrev`-ed to `FlatTM` (`Definitions.lean`), so the tape count is an
+    *erased phantom*; there is no multi-tape object to simulate.
+  - `bridgeMachine_accepts_any` — the bridge machine accepts **every** valid
+    tape config in any budget, so the `acceptsFlatTM bridgeMachine …`
+    conjunct the front-chain threads through is a decorative `True`; the
+    real content is the abstract relation `inst.source.rel`.
+  - `LMGenNP_to_TMGenNP_singleTM_direct` — `LMGenNP` reduces *directly* to
+    the single-tape target via a real phantom-free map, **skipping the mTM
+    node** (one-step replacement for the live two-step chain). The
+    intermediate adds nothing.
+  Why it was thought needed: the Coq port extracts *multi-tape* TMs from the
+  L-calculus, then converts to single-tape to feed the tableau. The Lean
+  pivot replaced L-extraction with the **single-tape** `Cmd` layer
+  (`Compile` emits `tapes = 1`) and the universal source's relation already
+  carries a single-tape decider (`GenNPInput.rel_poly : inTimePoly rel`),
+  so the conversion is structurally unnecessary. **Retiring S2 = collapse
+  the phantom bridges + bind the `*GenNP_fixed` predicates to the real
+  single-tape layer decider (= the C8 work), NOT build a simulator.**
+  `Simulators/MultiToSingle.lean` (the 3-sorry stub) is dead code → park or
+  delete; do not complete it.
 
 ---
 
