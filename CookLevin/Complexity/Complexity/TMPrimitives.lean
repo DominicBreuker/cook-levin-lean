@@ -3197,6 +3197,367 @@ theorem loopTM_valid (B : FlatTM) (exitDone exitLoop : Nat)
       · rw [hsig_eq]; exact hsymSrc
       · rw [hsig_eq]; exact hsymDst
 
+/-! ### Halt-bit lemmas for `loopTM` -/
+
+/-- On any `B`-state, the loop machine's halt-bit is `false` (we
+re-enter `B` rather than stop in it). -/
+private theorem loopTM_haltingStateReached_inB
+    (B : FlatTM) (exitDone exitLoop : Nat) (cfg : FlatTMConfig)
+    (h : cfg.state_idx < B.states) :
+    haltingStateReached (loopTM B exitDone exitLoop) cfg = false := by
+  show (loopHalt B).getD cfg.state_idx false = false
+  show ((List.replicate B.states false ++ [true]).getD cfg.state_idx false) = false
+  rw [List.getD_append _ _ _ _ (by rw [List.length_replicate]; exact h)]
+  exact List.getD_replicate false h
+
+/-- At the dedicated halt state `B.states`, the loop machine halts. -/
+private theorem loopTM_haltingStateReached_halt
+    (B : FlatTM) (exitDone exitLoop : Nat)
+    (tapes : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (loopTM B exitDone exitLoop)
+        { state_idx := B.states, tapes := tapes } = true := by
+  show (loopHalt B).getD B.states false = true
+  show ((List.replicate B.states false ++ [true]).getD B.states false) = true
+  rw [List.getD_append_right _ _ _ _ (by rw [List.length_replicate])]
+  rw [List.length_replicate, Nat.sub_self]
+  rfl
+
+/-! ### Bridge step lemmas for `loopTM`
+
+The two bridge edges (`exitDone → halt`, `exitLoop → B.start`) share the
+single-tape bridge-application pattern already used by
+`stepFlatTM_composeFlatTM_bridge`. We first factor out the `find?` over a
+single `bridgeEntries` block (it returns the matching `bridgeMkEntry`),
+then assemble the two step lemmas. -/
+
+/-- `find?` over a single `bridgeEntries` block whose source state equals
+the config's state returns the matching `bridgeMkEntry` (for whatever the
+current head symbol is). -/
+private theorem bridgeEntries_find_eq_some
+    (sig srcState dstState : Nat) (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v → v < sig) :
+    (bridgeEntries sig srcState dstState).find?
+        (fun e => entryMatchesConfig e
+          { state_idx := srcState, tapes := [(left, head, right)] }) =
+      some (bridgeMkEntry srcState dstState (currentTapeSymbol (left, head, right))) := by
+  set cfg : FlatTMConfig := { state_idx := srcState, tapes := [(left, head, right)] } with hcfg
+  have h_tape_map :
+      cfg.tapes.map currentTapeSymbol = [currentTapeSymbol (left, head, right)] := rfl
+  have h_cfg_state : cfg.state_idx = srcState := rfl
+  rw [bridgeEntries_eq_bridgeMkEntry]
+  cases h_sym : currentTapeSymbol (left, head, right) with
+  | none =>
+      have h_match :
+          entryMatchesConfig (bridgeMkEntry srcState dstState none) cfg = true := by
+        refine entryMatchesConfig_true_of rfl ?_
+        show ([none] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol
+        rw [h_tape_map, h_sym]
+      exact List.find?_cons_of_pos h_match
+  | some v =>
+      have h_no_match :
+          ¬ entryMatchesConfig (bridgeMkEntry srcState dstState none) cfg = true := by
+        intro h
+        have h_tape_eq := ((entryMatchesConfig_iff _ _).mp h).2
+        have h_eq : ([none] : List (Option Nat)) = [some v] := by
+          calc ([none] : List (Option Nat))
+              = (bridgeMkEntry srcState dstState none).src_tape_vals := rfl
+            _ = cfg.tapes.map currentTapeSymbol := h_tape_eq
+            _ = [currentTapeSymbol (left, head, right)] := h_tape_map
+            _ = [some v] := by rw [h_sym]
+        injection h_eq with h1 _
+        cases h1
+      have h_step :
+          (bridgeMkEntry srcState dstState none ::
+            (List.range sig).map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+              (fun e => entryMatchesConfig e cfg) =
+          ((List.range sig).map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+              (fun e => entryMatchesConfig e cfg) :=
+        List.find?_cons_of_neg h_no_match
+      rw [h_step]
+      exact find_bridgeRange_some sig srcState dstState v (h_sym_bound v h_sym) cfg
+        h_cfg_state (by rw [h_tape_map, h_sym])
+
+/-- Backward bridge step: at `exitLoop` the loop machine jumps to
+`B.start` without touching the tape. (Requires `exitDone ≠ exitLoop` so the
+preceding `exitDone` bridge does not fire.) -/
+private theorem stepFlatTM_loopTM_bridgeLoop
+    (B : FlatTM) (exitDone exitLoop : Nat) (h_ne : exitDone ≠ exitLoop)
+    (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v → v < B.sig) :
+    stepFlatTM (loopTM B exitDone exitLoop)
+        { state_idx := exitLoop, tapes := [(left, head, right)] } =
+      some { state_idx := B.start, tapes := [(left, head, right)] } := by
+  show ((loopTM B exitDone exitLoop).trans.find?
+          (fun e => entryMatchesConfig e
+            { state_idx := exitLoop, tapes := [(left, head, right)] })).bind
+        (applyTransitionEntry { state_idx := exitLoop, tapes := [(left, head, right)] }) = _
+  have h_trans : (loopTM B exitDone exitLoop).trans =
+      bridgeEntries B.sig exitDone B.states ++
+      bridgeEntries B.sig exitLoop B.start ++ B.trans := rfl
+  rw [h_trans, List.find?_append, List.find?_append]
+  have h_done_none :
+      (bridgeEntries B.sig exitDone B.states).find?
+        (fun e => entryMatchesConfig e
+          { state_idx := exitLoop, tapes := [(left, head, right)] }) = none :=
+    bridgeEntries_find_eq_none (fun heq => h_ne heq.symm)
+  have h_loop_some :
+      (bridgeEntries B.sig exitLoop B.start).find?
+        (fun e => entryMatchesConfig e
+          { state_idx := exitLoop, tapes := [(left, head, right)] }) =
+        some (bridgeMkEntry exitLoop B.start (currentTapeSymbol (left, head, right))) :=
+    bridgeEntries_find_eq_some B.sig exitLoop B.start left right head h_sym_bound
+  rw [h_done_none, h_loop_some]
+  simp only [Option.none_or, Option.some_or]
+  exact applyBridgeMkEntry_singleTape exitLoop B.start
+    (currentTapeSymbol (left, head, right)) left right head
+
+/-- Forward bridge step: at `exitDone` the loop machine jumps to the
+dedicated halt state `B.states` without touching the tape. -/
+private theorem stepFlatTM_loopTM_bridgeDone
+    (B : FlatTM) (exitDone exitLoop : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v → v < B.sig) :
+    stepFlatTM (loopTM B exitDone exitLoop)
+        { state_idx := exitDone, tapes := [(left, head, right)] } =
+      some { state_idx := B.states, tapes := [(left, head, right)] } := by
+  show ((loopTM B exitDone exitLoop).trans.find?
+          (fun e => entryMatchesConfig e
+            { state_idx := exitDone, tapes := [(left, head, right)] })).bind
+        (applyTransitionEntry { state_idx := exitDone, tapes := [(left, head, right)] }) = _
+  have h_trans : (loopTM B exitDone exitLoop).trans =
+      bridgeEntries B.sig exitDone B.states ++
+      bridgeEntries B.sig exitLoop B.start ++ B.trans := rfl
+  rw [h_trans, List.find?_append, List.find?_append]
+  have h_done_some :
+      (bridgeEntries B.sig exitDone B.states).find?
+        (fun e => entryMatchesConfig e
+          { state_idx := exitDone, tapes := [(left, head, right)] }) =
+        some (bridgeMkEntry exitDone B.states (currentTapeSymbol (left, head, right))) :=
+    bridgeEntries_find_eq_some B.sig exitDone B.states left right head h_sym_bound
+  rw [h_done_some]
+  simp only [Option.some_or]
+  exact applyBridgeMkEntry_singleTape exitDone B.states
+    (currentTapeSymbol (left, head, right)) left right head
+
+/-- Body-phase step: on a config in `B`'s state range that is neither
+exit, one loop-machine step coincides with one `B` step (the two bridges
+do not match, so `find?` falls through to `B.trans`). Mirror of
+`stepFlatTM_composeFlatTM_M1`. -/
+private theorem stepFlatTM_loopTM_B
+    (B : FlatTM) (exitDone exitLoop : Nat) (cfg : FlatTMConfig)
+    (h_state_lt : cfg.state_idx < B.states)
+    (h_ne_done : cfg.state_idx ≠ exitDone)
+    (h_ne_loop : cfg.state_idx ≠ exitLoop) :
+    stepFlatTM (loopTM B exitDone exitLoop) cfg = stepFlatTM B cfg := by
+  show ((loopTM B exitDone exitLoop).trans.find?
+          (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) =
+       (B.trans.find? (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg)
+  have h_trans : (loopTM B exitDone exitLoop).trans =
+      bridgeEntries B.sig exitDone B.states ++
+      bridgeEntries B.sig exitLoop B.start ++ B.trans := rfl
+  rw [h_trans, List.find?_append, List.find?_append]
+  have h_done_none :
+      (bridgeEntries B.sig exitDone B.states).find?
+        (fun e => entryMatchesConfig e cfg) = none :=
+    bridgeEntries_find_eq_none h_ne_done
+  have h_loop_none :
+      (bridgeEntries B.sig exitLoop B.start).find?
+        (fun e => entryMatchesConfig e cfg) = none :=
+    bridgeEntries_find_eq_none h_ne_loop
+  rw [h_done_none, h_loop_none, Option.none_or, Option.none_or]
+
+/-! ### Body-phase run lift for `loopTM`
+
+The exact analogue of `runFlatTM_composeFlatTM_M1_phase`: while the body
+`B` runs at a state `< B.states` that avoids both exits and does not halt
+in `B`, the loop machine's run coincides with `B`'s run. The extra
+"`≠ exitLoop`" obligation (versus the single forward exit of
+`composeFlatTM`) is what the backward edge contributes. -/
+private theorem runFlatTM_loopTM_B_phase
+    (B : FlatTM) (exitDone exitLoop : Nat) (h_validB : validFlatTM B) :
+    ∀ (n : Nat) (cfg : FlatTMConfig),
+      cfg.state_idx < B.states →
+      (∀ k, k < n → ∀ ck, runFlatTM k B cfg = some ck →
+         ck.state_idx ≠ exitDone ∧ ck.state_idx ≠ exitLoop ∧
+         haltingStateReached B ck = false) →
+      runFlatTM n (loopTM B exitDone exitLoop) cfg = runFlatTM n B cfg
+  | 0, _, _, _ => rfl
+  | n + 1, cfg, h_state_lt, h_traj => by
+      have h_k0 := h_traj 0 (Nat.zero_lt_succ _) cfg rfl
+      have h_ne_done : cfg.state_idx ≠ exitDone := h_k0.1
+      have h_ne_loop : cfg.state_idx ≠ exitLoop := h_k0.2.1
+      have h_halt_false_cfg : haltingStateReached B cfg = false := h_k0.2.2
+      have h_halt_loop_false :
+          haltingStateReached (loopTM B exitDone exitLoop) cfg = false :=
+        loopTM_haltingStateReached_inB B exitDone exitLoop cfg h_state_lt
+      have h_step_eq :
+          stepFlatTM (loopTM B exitDone exitLoop) cfg = stepFlatTM B cfg :=
+        stepFlatTM_loopTM_B B exitDone exitLoop cfg h_state_lt h_ne_done h_ne_loop
+      have h_unfold_B :
+          runFlatTM (n + 1) B cfg =
+            match stepFlatTM B cfg with
+            | none => some cfg
+            | some cfg' => runFlatTM n B cfg' := by
+        show (if haltingStateReached B cfg = true then some cfg
+              else match stepFlatTM B cfg with
+                | none => some cfg
+                | some cfg' => runFlatTM n B cfg') = _
+        rw [if_neg (by rw [h_halt_false_cfg]; decide)]
+      have h_unfold_loop :
+          runFlatTM (n + 1) (loopTM B exitDone exitLoop) cfg =
+            match stepFlatTM (loopTM B exitDone exitLoop) cfg with
+            | none => some cfg
+            | some cfg' => runFlatTM n (loopTM B exitDone exitLoop) cfg' := by
+        show (if haltingStateReached (loopTM B exitDone exitLoop) cfg = true then some cfg
+              else match stepFlatTM (loopTM B exitDone exitLoop) cfg with
+                | none => some cfg
+                | some cfg' => runFlatTM n (loopTM B exitDone exitLoop) cfg') = _
+        rw [if_neg (by rw [h_halt_loop_false]; decide)]
+      rw [h_unfold_B, h_unfold_loop, h_step_eq]
+      cases h_step : stepFlatTM B cfg with
+      | none => rfl
+      | some cfg' =>
+          have h_cfg'_lt : cfg'.state_idx < B.states :=
+            state_idx_lt_states_of_step B h_validB cfg cfg' h_step
+          have h_traj_shift : ∀ k, k < n → ∀ ck,
+              runFlatTM k B cfg' = some ck →
+              ck.state_idx ≠ exitDone ∧ ck.state_idx ≠ exitLoop ∧
+              haltingStateReached B ck = false := by
+            intro k hk ck h_run
+            have h_chain : runFlatTM (k + 1) B cfg = some ck := by
+              have h_unfold :
+                  runFlatTM (k + 1) B cfg =
+                    match stepFlatTM B cfg with
+                    | none => some cfg
+                    | some cfg'' => runFlatTM k B cfg'' := by
+                show (if haltingStateReached B cfg = true then some cfg
+                      else match stepFlatTM B cfg with
+                        | none => some cfg
+                        | some cfg'' => runFlatTM k B cfg'') = _
+                rw [if_neg (by rw [h_halt_false_cfg]; decide)]
+              rw [h_unfold, h_step]; exact h_run
+            exact h_traj (k + 1) (Nat.succ_lt_succ hk) ck h_chain
+          exact runFlatTM_loopTM_B_phase B exitDone exitLoop h_validB n cfg' h_cfg'_lt
+            h_traj_shift
+  termination_by n _ _ _ => n
+
+/-! ### The counted-loop run lemma
+
+`loopBudget` is the total step count: `tDone + 1` to do the final
+empty-counter guard + leave, plus `tIter m + 1` per iteration (body +
+backward bridge). The run lemma threads the physical contract (head-`0`,
+`encodeTape`-shaped, single-tape config `T n`) through every iteration by
+induction on the iteration count. The two contracts are exactly the shape
+`composeFlatTM_run` already validated for one fragment — here applied once
+per pass, with the backward bridge re-entering `B.start`. -/
+
+/-- Total step budget of the counted loop. -/
+def loopBudget (tIter : Nat → Nat) (tDone : Nat) : Nat → Nat
+  | 0     => tDone + 1
+  | n + 1 => tIter n + 1 + loopBudget tIter tDone n
+
+/-- **Operational correctness of `loopTM`.** Given an iteration body `B`
+that, on the single-tape head-`0` config `T (n+1)`, reaches `exitLoop` on
+the decremented config `T n` (the iteration contract), and on the
+empty-counter config `T 0` reaches `exitDone` leaving `T 0` (the done
+contract) — both at explicit step counts along no-early-halt trajectories
+— the loop machine, started at `B.start` on `T n`, halts at its dedicated
+halt state on `T 0` in `loopBudget tIter tDone n` steps.
+
+This is the load-bearing iteration lemma for the layer's `forBnd`. -/
+theorem loopTM_run
+    (B : FlatTM) (exitDone exitLoop : Nat)
+    (h_validB : validFlatTM B)
+    (h_done_lt : exitDone < B.states) (h_loop_lt : exitLoop < B.states)
+    (h_ne : exitDone ≠ exitLoop)
+    (T : Nat → List Nat × Nat × List Nat)
+    (h_sym : ∀ n v, currentTapeSymbol (T n) = some v → v < B.sig)
+    (tIter : Nat → Nat) (tDone : Nat)
+    (h_done :
+        runFlatTM tDone B { state_idx := B.start, tapes := [T 0] }
+          = some { state_idx := exitDone, tapes := [T 0] } ∧
+        (∀ k, k < tDone → ∀ ck,
+            runFlatTM k B { state_idx := B.start, tapes := [T 0] } = some ck →
+            ck.state_idx ≠ exitDone ∧ ck.state_idx ≠ exitLoop ∧
+            haltingStateReached B ck = false)) :
+    ∀ n,
+      -- iteration contract, required only for the iterations actually run
+      (∀ j, j < n →
+        runFlatTM (tIter j) B { state_idx := B.start, tapes := [T (j + 1)] }
+          = some { state_idx := exitLoop, tapes := [T j] } ∧
+        (∀ k, k < tIter j → ∀ ck,
+            runFlatTM k B { state_idx := B.start, tapes := [T (j + 1)] } = some ck →
+            ck.state_idx ≠ exitDone ∧ ck.state_idx ≠ exitLoop ∧
+            haltingStateReached B ck = false)) →
+      runFlatTM (loopBudget tIter tDone n) (loopTM B exitDone exitLoop)
+          { state_idx := B.start, tapes := [T n] }
+        = some { state_idx := B.states, tapes := [T 0] } := by
+  intro n
+  induction n with
+  | zero =>
+      intro _
+      have h_start_lt :
+          ({ state_idx := B.start, tapes := [T 0] } : FlatTMConfig).state_idx < B.states :=
+        h_validB.1
+      have h_lift :=
+        runFlatTM_loopTM_B_phase B exitDone exitLoop h_validB tDone
+          { state_idx := B.start, tapes := [T 0] } h_start_lt h_done.2
+      rw [h_done.1] at h_lift
+      have h_bridge :
+          stepFlatTM (loopTM B exitDone exitLoop)
+              { state_idx := exitDone, tapes := [T 0] } =
+            some { state_idx := B.states, tapes := [T 0] } :=
+        stepFlatTM_loopTM_bridgeDone B exitDone exitLoop
+          (T 0).1 (T 0).2.2 (T 0).2.1 (fun v hv => h_sym 0 v hv)
+      have h_mid_not_halt :
+          haltingStateReached (loopTM B exitDone exitLoop)
+              { state_idx := exitDone, tapes := [T 0] } = false :=
+        loopTM_haltingStateReached_inB B exitDone exitLoop _ h_done_lt
+      show runFlatTM (tDone + 1) (loopTM B exitDone exitLoop)
+          { state_idx := B.start, tapes := [T 0] }
+        = some { state_idx := B.states, tapes := [T 0] }
+      exact runFlatTM_extend_by_step (loopTM B exitDone exitLoop) tDone
+        { state_idx := B.start, tapes := [T 0] }
+        { state_idx := exitDone, tapes := [T 0] }
+        { state_idx := B.states, tapes := [T 0] }
+        h_lift h_mid_not_halt h_bridge
+  | succ m ih =>
+      intro h_iter
+      have h_iter_m := h_iter m (Nat.lt_succ_self m)
+      have ih' := ih (fun j hj => h_iter j (Nat.lt_succ_of_lt hj))
+      have h_start_lt :
+          ({ state_idx := B.start, tapes := [T (m + 1)] } : FlatTMConfig).state_idx < B.states :=
+        h_validB.1
+      have h_lift :=
+        runFlatTM_loopTM_B_phase B exitDone exitLoop h_validB (tIter m)
+          { state_idx := B.start, tapes := [T (m + 1)] } h_start_lt h_iter_m.2
+      rw [h_iter_m.1] at h_lift
+      have h_bridge :
+          stepFlatTM (loopTM B exitDone exitLoop)
+              { state_idx := exitLoop, tapes := [T m] } =
+            some { state_idx := B.start, tapes := [T m] } :=
+        stepFlatTM_loopTM_bridgeLoop B exitDone exitLoop h_ne
+          (T m).1 (T m).2.2 (T m).2.1 (fun v hv => h_sym m v hv)
+      have h_mid_not_halt :
+          haltingStateReached (loopTM B exitDone exitLoop)
+              { state_idx := exitLoop, tapes := [T m] } = false :=
+        loopTM_haltingStateReached_inB B exitDone exitLoop _ h_loop_lt
+      have h_step1 :
+          runFlatTM (tIter m + 1) (loopTM B exitDone exitLoop)
+              { state_idx := B.start, tapes := [T (m + 1)] }
+            = some { state_idx := B.start, tapes := [T m] } :=
+        runFlatTM_extend_by_step (loopTM B exitDone exitLoop) (tIter m)
+          { state_idx := B.start, tapes := [T (m + 1)] }
+          { state_idx := exitLoop, tapes := [T m] }
+          { state_idx := B.start, tapes := [T m] }
+          h_lift h_mid_not_halt h_bridge
+      show runFlatTM (tIter m + 1 + loopBudget tIter tDone m) (loopTM B exitDone exitLoop)
+          { state_idx := B.start, tapes := [T (m + 1)] }
+        = some { state_idx := B.states, tapes := [T 0] }
+      rw [runFlatTM_compose (loopTM B exitDone exitLoop) (tIter m + 1)
+        (loopBudget tIter tDone m) _ _ h_step1]
+      exact ih'
+
 /-! ### `AllFalse` namespace: pre-work for a real `DecidesBy` example
 
 We are building toward a complete `DecidesBy` witness for
