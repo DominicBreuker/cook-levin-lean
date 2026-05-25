@@ -15,10 +15,13 @@ with explicit cost semantics, compiled once to `FlatTM` (`Compile`), so every
 verifier and reduction is a short DSL program instead of a hand-rolled Turing
 machine.
 
-**Next topic: execute the S3 migration** (*The plan from here*, step 2). Its
-prerequisite — Risk **C9**, the canonical layer encoding — is now **built and
-the composition is proved** (`Lang/PolyTime.lean`); what remains is the
-product encoding for `red_inNP` and migrating `⪯p`.
+**Next topic: the S3 migration** (*The plan from here*, step 2), now **in
+progress**. Risk **C9** (canonical layer encoding) is done, and the layer-side
+migration engine is built and proved (`Lang/PolyTime.lean`): the product
+encoding, `comp`, and the verifier-composition `precompose`/`ofReduction`.
+Assembling it pinpointed the two remaining obligations — **C5a** (`map_fst`)
+and **C10** (layer-native `inNP`) — after which `⪯p` itself is migrated and the
+sound tail rippled. See *The plan from here*, step 2.
 
 ---
 
@@ -31,7 +34,8 @@ product encoding for `red_inNP` and migrating `⪯p`.
 | Proof-path size | ~11K LOC under `CookLevin/` (a further ~14K parked, not built) |
 | `sorry`s on the proof path | ~29, all `TODO(...)`-tagged (Group C) |
 | `sorry`-**free** vacuous defs on the proof path | ≥ 4 (Risks S1/S2 — the deepest gaps; invisible to `#print axioms`) |
-| Structural unknowns remaining | **none** — all probed; C9 (composition) now built & proved; what's left is bounded engineering |
+| Structural unknowns remaining | **none** — all probed; C9 (composition) built & proved; what's left is bounded engineering |
+| S3 migration | **in progress.** Layer engine done (C9 + product encoding + `precompose`/`ofReduction`, sorry-free). Remaining: **C5a** (`map_fst`), **C10** (layer-native `inNP`), then migrate `⪯p` + sound-tail ripple. |
 | Headline | `CookLevin : NPcomplete SAT` typechecks, **conditional** on Group C **and** S1/S2/S3 |
 
 > **The `sorry` count is not the soundness metric.** The deepest unsoundness

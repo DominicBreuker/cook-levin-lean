@@ -24,9 +24,15 @@ for direction.
   `#print axioms`, so the `sorry` count overstates how close the proof is.
 - `CookLevin : NPcomplete SAT` typechecks but is **conditional** on all of the
   above. **No unprobed structural unknown remains**: every gap is now bounded
-  engineering. (The last design item, Risk C9 — canonical layer encoding — is
-  built and its composition proved; the next topic is executing the S3
-  migration.)
+  engineering.
+- **Current work — the S3 migration (in progress).** Risk C9 (canonical layer
+  encoding) is done, and the layer-side migration engine is built and proved
+  in `Lang/PolyTime.lean` (product encoding, `comp`, verifier-composition
+  `precompose`/`ofReduction`), all sorry-free. Two obligations remain to
+  discharge `red_inNP`: **C5a** (`map_fst` — apply the reduction to a pair's
+  first component; a DSL pairing / calling-convention task) and **C10**
+  (layer-native `inNP`, so a verifier is a `Cmd` rather than an opaque TM).
+  Then `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
 
 ## What is sound vs. what is not
 
@@ -82,9 +88,11 @@ per-primitive compilation (C1), composition (C2, `compileSeq_compose_physical`),
 and the counted loop (C3, `loopTM` + `loopTM_run`, sorry-free). The S3
 layer→framework bridge is validated too (`toFrameworkWitness'`), and the design
 item the S3 probe surfaced — **Risk C9**, a canonical per-type layer encoding
-(`LangEncodable` + `PolyTimeComputableLang'`) — is now built with its
-composition proved. The **next topic** is executing the S3 migration (migrate
-`⪯p` to the TM-backed witness). See the ROADMAP plan.
+(`LangEncodable` + `PolyTimeComputableLang'`) — is built with its composition
+proved. The S3 migration is now **in progress**: the layer-side engine
+(product encoding, `comp`, verifier-composition `precompose`/`ofReduction`) is
+done, leaving **C5a** (`map_fst`) and **C10** (layer-native `inNP`) before
+`⪯p` itself is migrated. See the ROADMAP plan.
 
 ## Development methodology: skeleton-first, risk-driven
 
