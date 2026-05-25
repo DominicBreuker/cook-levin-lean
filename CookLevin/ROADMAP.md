@@ -122,10 +122,13 @@ time-boxed go/no-go probes (methodology below). The findings:
   cost_h`. `toLang` bridges a canonical witness to the free-encoding
   `PolyTimeComputableLang`, and `toFrameworkWitness'` carries it to a real
   TM-backed `polyTimeComputable'` (sorry-free modulo `Compile_sound`).
-  Inhabited (`Nat`, `List Nat`, `id_witness`). **What remains for `red_inNP`:**
-  a product instance `LangEncodable (X × Y)` (pair two register-0 values) and
-  composing a computable map with a `DecidesLang` verifier — both fold into the
-  S3 migration (plan step 2).
+  Inhabited (`Nat`, `List Nat`, product, `id_witness`). The verifier side is
+  built too: the product encoding `LangEncodable (X × Y)`, a canonical decider
+  `DecidesLang'`, and `precompose`/`ofReduction` assemble the `inTimePoly` half
+  of `red_inNP`. **What remains for `red_inNP`** (pinpointed by assembling the
+  engine): **C5a** (`map_fst` — apply `f` to a pair's first component, a
+  DSL-pairing/calling-convention task) and **C10** (layer-native `inNP`, so
+  `Q`'s verifier is a `Cmd` not an opaque TM). See the risk register.
 
 - **S2 needs no simulator — probed.** The multi-tape→single-tape simulator
   (`Simulators/MultiToSingle.lean`) is a Coq-porting artifact with **zero
@@ -164,18 +167,31 @@ Ordered by dependency. Each step is bounded engineering except where noted.
    — no re-encoding bridge. Bridged to the TM-backed witness via `toLang` +
    `toFrameworkWitness'`. (Built in `Lang/PolyTime.lean`, sorry-free.)
 
-2. **Retire S3 — migrate `⪯p` to the TM-backed witness (next topic).** Replace
+2. **Retire S3 — migrate `⪯p` to the TM-backed witness (in progress).** Replace
    `ReductionWitness.reduction_poly`'s `polyTimeComputable` with
    `polyTimeComputable'` (built by the S3 probe; the strengthening lemma keeps
-   the size-bound lemmas working). First sub-tasks, building on C9: a product
-   instance `LangEncodable (X × Y)` and composing a computable map with a
-   `DecidesLang` verifier, which together discharge `red_inNP_via_lang` /
-   `red_inNP`. This is the soundness gate: it forces every reduction to carry a
-   real computation. Ripple cost: the **sound tail** must each gain a `Cmd` —
-   `flatTCC_to_flatCC` cheap (its `if isValidFlattening` guard is a *decidable
-   input* check, expressible), `FlatCC_to_BinaryCC` medium, **`BinaryCC_to_FSAT`
-   (Tseytin, `500n⁶`) the expensive item** (a ~1K-LOC `formula` builder
-   re-expressed as a `Cmd`, likely needing new `Op`s — see C5).
+   the size-bound lemmas working). **Done so far** (`Lang/PolyTime.lean`,
+   sorry-free): the product encoding `LangEncodable (X × Y)`, the
+   verifier-composition engine `DecidesLang'.precompose`, and `ofReduction`
+   (which assembles them into exactly the `inTimePoly` half of `red_inNP`).
+   Assembling that engine **pinpointed two remaining obligations** (in-file
+   docs):
+   - **C5a — `map_fst`:** lift the reduction to the pair input,
+     `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))`. The single-register
+     length-prefix product encoding needs length-as-value register arithmetic
+     the `Op` set lacks → either new `Op`s (C5) or a **multi-register product
+     encoding + a frame-preservation calling convention**.
+   - **C10 — layer-native `inNP`:** `inNP Q` yields only an abstract TM decider
+     (`inTimePoly`); no `Cmd` can be recovered from it. Routing `red_inNP`
+     through the layer needs `inNP`/`inTimePoly` to *carry* a layer program
+     (`DecidesLang`), or a TM-level `ComputesBy`-then-`DecidesBy` composition.
+     This is the deeper half of the migration (a framework re-basing).
+
+   Then the **soundness gate**: migrating `⪯p` itself, which forces the **sound
+   tail** to each gain a `Cmd` — `flatTCC_to_flatCC` cheap (its
+   `if isValidFlattening` guard is a *decidable input* check, expressible),
+   `FlatCC_to_BinaryCC` medium, **`BinaryCC_to_FSAT` (Tseytin, `500n⁶`) the
+   expensive item** (a ~1K-LOC `formula` builder re-expressed as a `Cmd`).
 
 3. **Finish the layer → `Compile_sound`.** Land the per-`Op` gadgets (C1) + the
    `compileForBnd` guard/decrement wiring (C3) + the bit-test tester (C6). Then
@@ -228,8 +244,10 @@ instances on every chain intermediate. Plan step 5.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C9** | **canonical layer encoding** (surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so layer composition could not be stated. | ✅ **Done.** `LangEncodable` class + `PolyTimeComputableLang'` (canonical normal form) + `comp` proved definitionally (`Lang/PolyTime.lean`, sorry-free). Remaining for `red_inNP`: a product instance `LangEncodable (X × Y)` + map-with-verifier composition — folds into the S3 migration. |
-| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s bridges, `NP.lean`'s `red_inNP`). | **Bridge + composition done** (`toFrameworkWitness'` sorry-free modulo `Compile_sound`; `PolyTimeComputableLang'.comp` sorry-free via C9). `red_inNP` / `red_inNP_via_lang` remain `sorry` — discharged by the S3 migration (product encoding + verifier composition), not blocked on `Compile_sound`. |
+| **C9** | **canonical layer encoding** (surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so layer composition could not be stated. | ✅ **Done.** `LangEncodable` (incl. `Nat`/`List Nat`/product instances) + `PolyTimeComputableLang'` (canonical normal form) + `comp` + verifier-composition `DecidesLang'.precompose`/`ofReduction`, all proved definitionally (`Lang/PolyTime.lean`, sorry-free). |
+| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s bridges, `NP.lean`'s `red_inNP`). | **Bridge + composition done** (`toFrameworkWitness'` sorry-free modulo `Compile_sound`; `comp`/`precompose`/`ofReduction` sorry-free). `red_inNP` itself reduced to **C5a** + **C10** (below), not blocked on `Compile_sound`. |
+| **C5a** | **`map_fst`** — `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` from a witness for `f` ("apply `f` to a pair's first component"). Needed by `ofReduction`. | **Open.** The length-prefix product encoding needs length-as-value `Op`s (a C5 instance) **or** a multi-register encoding + a frame-preservation calling convention. Bounded but non-trivial DSL work. |
+| **C10** | **layer-native `inNP`** — `inNP`/`inTimePoly` carry an abstract `FlatTM` decider, from which no `Cmd` can be recovered, so `red_inNP` cannot route through the layer's `DecidesLang'.precompose`. | **Open (deeper half of the S3 migration).** Re-base `inNP`/`inTimePoly` to carry a `DecidesLang`, **or** provide a TM-level `ComputesBy`-then-`DecidesBy` composition (a re-encoding machine). |
 | **C1** | **per-`Op` compilation** (`compileOp` + `compileOp_sound`). | ✅ **validated.** Remaining: physical `compileOp_sound` per op + length-decreasing ops (use `endMark` sentinel). Bounded eng (~1.5–2.5K LOC for all 8 ops). |
 | **C2** | **composition** (`compileSeq_sound`). | ✅ **validated** (`compileSeq_compose_physical`). Bounded eng. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + `_sound`). | ✅ **validated** (`loopTM` + `loopTM_run`, sorry-free). Remaining: guard + marker-overwrite decrement gadget, wire `compileForBnd`, instantiate `loopTM_run`. Bounded eng. |
