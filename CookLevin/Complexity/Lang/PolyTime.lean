@@ -63,7 +63,7 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   cost_bound : Nat → Nat
   cost_bound_poly : inOPoly cost_bound
   cost_bound_mono : monotonic cost_bound
-  encodeIn_size : ∀ x, State.size (encodeIn x) ≤ encodable.size x + 1
+  encodeIn_size : ∀ x, State.size (encodeIn x) ≤ 2 * encodable.size x + 1
   /-- After running `c`, the output register decodes to `f x`. -/
   computes : ∀ x, decodeOut (c.eval (encodeIn x)) = f x
   /-- Running `c` is polynomial-time. -/
@@ -218,12 +218,13 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
     {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
     (W : PolyTimeComputableLang f) :
     polyTimeComputable' f := by
-  have htb_poly : inOPoly (fun n => Compile.overhead (n + 1 + W.cost_bound n)) := by
-    have hinner : inOPoly (fun n => n + 1 + W.cost_bound n) :=
-      inOPoly_add (inOPoly_add inOPoly_id (inOPoly_const 1)) W.cost_bound_poly
-    show inOPoly (Compile.overhead ∘ fun n => n + 1 + W.cost_bound n)
+  have htb_poly : inOPoly (fun n => Compile.overhead (n + n + 1 + W.cost_bound n)) := by
+    have hinner : inOPoly (fun n => n + n + 1 + W.cost_bound n) :=
+      inOPoly_add (inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 1))
+        W.cost_bound_poly
+    show inOPoly (Compile.overhead ∘ fun n => n + n + 1 + W.cost_bound n)
     exact inOPoly_comp hinner Compile.overhead_poly
-  have htb_mono : monotonic (fun n => Compile.overhead (n + 1 + W.cost_bound n)) := by
+  have htb_mono : monotonic (fun n => Compile.overhead (n + n + 1 + W.cost_bound n)) := by
     intro a b hab
     apply Compile.overhead_mono
     have hcb : W.cost_bound a ≤ W.cost_bound b := W.cost_bound_mono a b hab
@@ -231,7 +232,7 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
   refine ⟨{
     toPolyTimeComputableWitness :=
       ⟨W.cost_bound, W.cost_bound_poly, W.cost_bound_mono, W.output_size_le⟩
-    timeBound := fun n => Compile.overhead (n + 1 + W.cost_bound n)
+    timeBound := fun n => Compile.overhead (n + n + 1 + W.cost_bound n)
     timeBound_poly := htb_poly
     timeBound_mono := htb_mono
     computer := ?_ }⟩
@@ -255,7 +256,7 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
           unfold initialTapes
           rw [Compile_tapes]; simp
         show runFlatTM (Compile.overhead
-              (encodable.size x + 1 + W.cost_bound (encodable.size x)))
+              (encodable.size x + encodable.size x + 1 + W.cost_bound (encodable.size x)))
             (Compile W.c)
             (initFlatConfig (Compile W.c)
               (initialTapes (Compile W.c)
@@ -264,9 +265,10 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
         have hle :
             Compile.overhead (State.size (W.encodeIn x) + W.c.cost (W.encodeIn x))
               ≤ Compile.overhead
-                  (encodable.size x + 1 + W.cost_bound (encodable.size x)) := by
+                  (encodable.size x + encodable.size x + 1
+                    + W.cost_bound (encodable.size x)) := by
           apply Compile.overhead_mono
-          have h1 : State.size (W.encodeIn x) ≤ encodable.size x + 1 :=
+          have h1 : State.size (W.encodeIn x) ≤ 2 * encodable.size x + 1 :=
             W.encodeIn_size x
           have h2 : W.c.cost (W.encodeIn x) ≤ W.cost_bound (encodable.size x) :=
             W.cost_le x
@@ -405,7 +407,11 @@ class LangEncodable (X : Type) [encodable X] where
   enc : X → List Nat
   dec : List Nat → X
   dec_enc : ∀ x, dec (enc x) = x
-  enc_size : ∀ x, (enc x).length ≤ encodable.size x + 1
+  /-- A linear size bound. The slack (`2 · size + 1` rather than `size + 1`)
+  is what makes the invariant **composable**: a self-delimiting pair encoding
+  (length prefix + two components) needs more than `+1` of overhead, and
+  `2 · size + 1` is closed under products (see the `X × Y` instance). -/
+  enc_size : ∀ x, (enc x).length ≤ 2 * encodable.size x + 1
 
 /-- The canonical program state holding `x`: a single register. -/
 def LangEncodable.encodeState {X : Type} [encodable X] [LangEncodable X]
@@ -539,7 +545,9 @@ instance : LangEncodable Nat where
   enc := fun n => [n]
   dec := fun s => s.headD 0
   dec_enc := fun _ => rfl
-  enc_size := fun n => by simp
+  enc_size := fun n => by
+    show ([n] : List Nat).length ≤ 2 * encodable.size n + 1
+    simp
 
 /-- `List Nat` is the layer's native register type: its canonical encoding is
 the identity. (`enc_size`: a list's length never exceeds its `encodable.size`,
@@ -558,10 +566,39 @@ instance : LangEncodable (List Nat) where
   dec := id
   dec_enc := fun _ => rfl
   enc_size := fun xs => by
-    have h := length_le_listNatSize 0 xs
-    simp only [Nat.zero_add] at h
-    show xs.length ≤ encodable.size xs + 1
-    exact Nat.le_succ_of_le h
+    have h : xs.length ≤ encodable.size xs := by
+      change xs.length ≤ xs.foldl (fun a x => a + encodable.size x + 1) 0
+      simpa using length_le_listNatSize 0 xs
+    show xs.length ≤ 2 * encodable.size xs + 1
+    omega
+
+/-- **Product encoding** (the pairing needed by `red_inNP`, where the verifier
+consumes `(x, cert)`). A pair is one register holding a unary-ish length prefix
+`(enc x).length` followed by the two components concatenated; decoding splits at
+that prefix. The composable `2 · size + 1` bound is closed under this (the
+prefix cell is the `+1` of overhead the old `+ 1` bound could not afford). -/
+instance {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] : LangEncodable (X × Y) where
+  enc := fun p =>
+    (LangEncodable.enc p.1).length :: (LangEncodable.enc p.1 ++ LangEncodable.enc p.2)
+  dec := fun s =>
+    (LangEncodable.dec (s.tail.take (s.headD 0)),
+     LangEncodable.dec (s.tail.drop (s.headD 0)))
+  dec_enc := fun p => by
+    obtain ⟨x, y⟩ := p
+    simp only [List.tail_cons, List.headD_cons, List.take_left, List.drop_left,
+      LangEncodable.dec_enc]
+  enc_size := fun p => by
+    obtain ⟨x, y⟩ := p
+    have hx := LangEncodable.enc_size x
+    have hy := LangEncodable.enc_size y
+    show ((LangEncodable.enc x).length
+            :: (LangEncodable.enc x ++ LangEncodable.enc y)).length
+        ≤ 2 * encodable.size (x, y) + 1
+    show (LangEncodable.enc x ++ LangEncodable.enc y).length + 1
+        ≤ 2 * (encodable.size x + encodable.size y + 1) + 1
+    rw [List.length_append]
+    omega
 
 /-- The identity is canonically computable: `copy 0 0` is a no-op on a
 single-register state. Witnesses that `PolyTimeComputableLang'` is inhabited;
