@@ -625,4 +625,53 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
     simp [Op.cost]
   output_size_le := fun x => by show encodable.size x ≤ encodable.size x + 1; omega
 
+/-! ### Verifier composition (toward `red_inNP`)
+
+`red_inNP` needs: given a poly-time reduction `f` and a verifier for `Q`,
+build a verifier for `P`. The verifier-side analogue of `comp`: a decider in
+canonical form composed *after* a canonical map. -/
+
+/-- A decider in **canonical form**: it decides `P` from the canonical state
+encoding `encodeState`. The canonical analogue of `DecidesLang`. -/
+structure DecidesLang' {X : Type} [encodable X] [LangEncodable X]
+    (P : X → Prop) (costBound : Nat → Nat) where
+  c : Cmd
+  decides : Cmd.decides c LangEncodable.encodeState P
+  cost_le : ∀ x : X,
+    c.cost (LangEncodable.encodeState x) ≤ costBound (encodable.size x)
+
+/-- **Verifier composition.** Precomposing a canonical decider for `P` with a
+canonical computable map `g` yields a canonical decider for `P ∘ g`: run `g`
+(canonical normal form), then the decider. Correctness is **definitional**
+(`Cmd.eval_seq` + `normalizes`); cost composes as `1 + cost_g + dBound ∘ cost_g`.
+This is the engine that turns `P ⪯p Q` + a `Q`-verifier into a `P`-verifier. -/
+def DecidesLang'.precompose
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {g : X → Y} {P : Y → Prop} {dBound : Nat → Nat}
+    (Wg : PolyTimeComputableLang' g) (D : DecidesLang' P dBound)
+    (dmono : monotonic dBound) :
+    DecidesLang' (fun x => P (g x))
+      (fun n => 1 + Wg.cost_bound n + dBound (Wg.cost_bound n)) where
+  c := Wg.c ;; D.c
+  decides := fun x => by
+    have hev : (Wg.c ;; D.c).eval (LangEncodable.encodeState x)
+        = D.c.eval (LangEncodable.encodeState (g x)) := by
+      rw [Cmd.eval_seq, Wg.normalizes]
+    rw [hev]; exact D.decides (g x)
+  cost_le := fun x => by
+    rw [Cmd.cost_seq, Wg.normalizes]
+    have h1 : Wg.c.cost (LangEncodable.encodeState x) ≤ Wg.cost_bound (encodable.size x) :=
+      Wg.cost_le x
+    have h2 : D.c.cost (LangEncodable.encodeState (g x))
+        ≤ dBound (encodable.size (g x)) := D.cost_le (g x)
+    have h3 : encodable.size (g x) ≤ Wg.cost_bound (encodable.size x) :=
+      Wg.output_size_le x
+    have h4 : dBound (encodable.size (g x)) ≤ dBound (Wg.cost_bound (encodable.size x)) :=
+      dmono _ _ h3
+    show 1 + Wg.c.cost (LangEncodable.encodeState x)
+          + D.c.cost (LangEncodable.encodeState (g x))
+        ≤ 1 + Wg.cost_bound (encodable.size x)
+          + dBound (Wg.cost_bound (encodable.size x))
+    omega
+
 end Complexity.Lang
