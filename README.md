@@ -18,7 +18,8 @@ for direction.
   `Classical.choice` / `Quot.sound`).
 - ~11K LOC on the proof path under `CookLevin/` (a further ~14K parked, not
   built).
-- ~29 `TODO`-tagged `sorry`s (completion gaps, Risk register Group C).
+- ~31 `sorry`s (completion gaps, Risk register Group C); the 2 newest are in the
+  C5a `map_fst` (`normalizes`/`cost_le`) — *off* the `CookLevin` proof path.
 - **≥ 4 `sorry`-free *vacuous* defs** on the proof path — the deepest gaps
   (Risks S1/S2/S3). They do **not** appear in the `sorry` count or under
   `#print axioms`, so the `sorry` count overstates how close the proof is.
@@ -35,12 +36,17 @@ for direction.
   frame/locality lemmas; a `regBound`/`usesBelow` field on
   `PolyTimeComputableLang'`; the `eval_frame`/`eval_get_of_agree` applications) —
   so a witness program can run as a subroutine on register 0 while a stashed
-  pair component survives. Remaining to route the framework's `red_inNP` through
-  the layer: finish **C5a** (the length-as-value `Op`s + the `map_fst`
-  unpack/run/repack assembly — `map_fst` is the single explicit hypothesis of
-  `red_inNPLang`) and the **framework decider bridge** `inNPLang → inNP`
-  (`DecidesLang' → inTimePoly`, needs a tape→state branch gadget, C6). Then
-  `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
+  pair component survives. The contract was also **relaxed to register-wise
+  (pointwise) `normalizes`** — the exact-equality form silently forbade scratch
+  registers (so it was too weak for *every* real layer program, not just
+  `map_fst`); composition was re-validated for scratch-using programs via the
+  frame lemmas. The length-as-value `Op`s and the **`map_fst` program** are built
+  (`regBound`/`usesBelow`/`cost_bound`/`output_size_le` proved; `normalizes` +
+  `cost_le` remain as 2 bounded `sorry`s). Remaining to route the framework's
+  `red_inNP` through the layer: close those 2 `sorry`s + discharge
+  `red_inNPLang`'s hypothesis, and the **framework decider bridge** `inNPLang →
+  inNP` (`DecidesLang' → inTimePoly`, needs a tape→state branch gadget, C6).
+  Then `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
 
 ## What is sound vs. what is not
 

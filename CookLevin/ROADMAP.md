@@ -37,10 +37,10 @@ migrated and the sound tail rippled. See *The plan from here*, step 2.
 | `lake build` | ✅ green |
 | Project axioms | **0** (only `propext` / `Classical.choice` / `Quot.sound`) |
 | Proof-path size | ~11K LOC under `CookLevin/` (a further ~14K parked, not built) |
-| `sorry`s on the proof path | ~29, all `TODO(...)`-tagged (Group C) |
+| `sorry`s | ~31 (Group C); the 2 newest (`map_fst`'s `normalizes`/`cost_le`) are *off* the `CookLevin` proof path |
 | `sorry`-**free** vacuous defs on the proof path | ≥ 4 (Risks S1/S2 — the deepest gaps; invisible to `#print axioms`) |
 | Structural unknowns remaining | **none** — all probed; C9 (composition) built & proved; what's left is bounded engineering |
-| S3 migration | **in progress.** Layer engine done (C9 + product encoding + `precompose`/`ofReduction` + **`inNPLang`/`red_inNPLang`**, sorry-free & axiom-clean). **C5a frame-preservation done** (`Lang/Frame.lean` + `regBound`/`usesBelow` contract + `eval_frame`/`eval_get_of_agree`). Remaining: the C5a **length-as-value `Op`s + `map_fst` assembly**, and the **framework decider bridge** `inNPLang → inNP` (= `DecidesLang' → inTimePoly`), then migrate `⪯p` + sound-tail ripple. |
+| S3 migration | **in progress.** Layer engine done (C9 + product encoding + `precompose`/`ofReduction` + **`inNPLang`/`red_inNPLang`**, sorry-free & axiom-clean). **C5a frame-preservation + pointwise contract done** (composition re-validated for scratch-using programs); **`map_fst` built** (program + 4/6 fields proved, 2 `sorry`s left: `normalizes`/`cost_le`). Remaining: close those 2 `sorry`s + discharge `red_inNPLang`'s hypothesis, and the **framework decider bridge** `inNPLang → inNP` (= `DecidesLang' → inTimePoly`), then migrate `⪯p` + sound-tail ripple. |
 | Headline | `CookLevin : NPcomplete SAT` typechecks, **conditional** on Group C **and** S1/S2/S3 |
 
 > **The `sorry` count is not the soundness metric.** The deepest unsoundness
@@ -189,20 +189,20 @@ Ordered by dependency. Each step is bounded engineering except where noted.
    **two concrete interface obligations**:
    - **C5a — `map_fst`:** lift the reduction to the pair input,
      `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` (polymorphic in the
-     certificate type). This is now the **single explicit hypothesis** of
-     `red_inNPLang`. *The frame-preservation half is now done* (`Lang/Frame.lean`
-     + the contract change): `Cmd.UsesBelow` with the frame (`Cmd.eval_get_frame`)
-     and locality (`Cmd.eval_agree`) lemmas, a `regBound`/`usesBelow` field on
-     `PolyTimeComputableLang'`, and the witness-level applications
-     `eval_frame` / `eval_get_of_agree` — so a witness can be run as a subroutine
-     on register 0 while a stashed second component (register `≥ regBound`)
-     survives. *What's left:* the **length-as-value `Op`s** (a C5 instance —
-     `takeAt`/`dropAt`/`concat`/`consLen`, each unit-cost and of the form
-     `s.set dst (g …)` so they extend the `Op.eval`/`UsesBelow`/frame matches
-     uniformly and `compileOp` routes them to `compiledCmd_default`, folding into
-     the existing `Compile_sound` gap — no new `sorry`), and then the **`map_fst`
-     assembly**: unpack the length-prefixed product register, run the witness,
-     repack. All sorry-free and bounded.
+     certificate type), the **single explicit hypothesis** of `red_inNPLang`.
+     **Mostly done.** *Frame-preservation calling convention* (`Lang/Frame.lean`:
+     `Cmd.UsesBelow` + `eval_get_frame`/`eval_agree`/`cost_agree`/`UsesBelow_pos`;
+     `regBound`/`usesBelow` on the witness; `eval_frame`/`eval_get_of_agree`).
+     *Contract relaxation* — **the key design finding:** the exact-state-equality
+     `normalizes` silently forbade scratch registers (`State.set` never shrinks),
+     so it was too weak for *all* real layer programs, not just `map_fst`. Relaxed
+     to **register-wise (pointwise)** `normalizes`; re-validated composition
+     (`comp`/`precompose`) through the frame lemmas — sorry-free & axiom-clean.
+     *Ops*: `takeAt`/`dropAt`/`concat`/`consLen` (unit-cost; `compileOp` defaults
+     fold into the `Compile_sound` gap). *Program* `map_fst`/`mapFstCmd` built;
+     `regBound`/`usesBelow`/`cost_bound`/`output_size_le` proved. **Remaining: 2
+     `sorry`s** (`normalizes`, `cost_le`) — bounded state-threading through the
+     10-op straight-line program, no structural unknown.
    - **Framework decider bridge `inNPLang → inNP`** (was "C10"): the layer-native
      side is done; what remains is `DecidesLang' → inTimePoly`
      (`DecidesLang.toDecidesBy`). *Obstruction now precise:* `DecidesBy` reads
@@ -273,7 +273,7 @@ instances on every chain intermediate. Plan step 5.
 |---|-----|--------|
 | **C9** | **canonical layer encoding** (surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so layer composition could not be stated. | ✅ **Done.** `LangEncodable` (incl. `Nat`/`List Nat`/product instances) + `PolyTimeComputableLang'` (canonical normal form) + `comp` + verifier-composition `DecidesLang'.precompose`/`ofReduction`, all proved definitionally (`Lang/PolyTime.lean`, sorry-free). |
 | **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s bridges, `NP.lean`'s `red_inNP`). | **Bridge + composition done** (`toFrameworkWitness'` sorry-free modulo `Compile_sound`; `comp`/`precompose`/`ofReduction` sorry-free). **Layer-native NP closure done** (`inNPLang`/`red_inNPLang`, sorry-free & axiom-clean). `red_inNP` itself reduced to **C5a** + the **C10 bridge** (below). |
-| **C5a** | **`map_fst`** — `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` from a witness for `f` ("apply `f` to a pair's first component"). Now the single explicit hypothesis of `red_inNPLang`. | **Frame-preservation half ✅ done.** `Lang/Frame.lean` (`Cmd.UsesBelow` + `Cmd.eval_get_frame`/`Cmd.eval_agree`/`UsesBelow_mono`) + a `regBound`/`usesBelow` field on `PolyTimeComputableLang'` (updated `comp`/`id_witness`) + witness-level `eval_frame`/`eval_get_of_agree`, all sorry-free & axiom-clean. **Remaining:** the length-as-value `Op`s (`takeAt`/`dropAt`/`concat`/`consLen`, a C5 instance — unit-cost, `compileOp` defaults into the existing `Compile_sound` gap, no new `sorry`) + the `map_fst` unpack/run/repack assembly. |
+| **C5a** | **`map_fst`** — `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` from a witness for `f` ("apply `f` to a pair's first component"). Now the single explicit hypothesis of `red_inNPLang`. | **Mostly built.** (a) Frame-preservation calling convention ✅: `Lang/Frame.lean` (`Cmd.UsesBelow` + `eval_get_frame`/`eval_agree`/`cost_agree`/`UsesBelow_mono`/`UsesBelow_pos`) + `regBound`/`usesBelow` on `PolyTimeComputableLang'` + `eval_frame`/`eval_get_of_agree`. (b) The `normalizes` contract **relaxed to register-wise** (pointwise) — admits scratch; `comp`/`precompose` re-validated via the frame lemmas (sorry-free, axiom-clean). (c) Length-as-value `Op`s `takeAt`/`dropAt`/`concat`/`consLen` added (unit-cost; `compileOp` defaults fold into the `Compile_sound` gap). (d) The `map_fst` program (`mapFstCmd`) + `regBound`/`usesBelow`/`cost_bound`(poly/mono)/`output_size_le` ✅. **Remaining: 2 `sorry`s** — `normalizes` + `cost_le` (bounded state-threading through the 10-op program; no structural unknown). Then discharge `red_inNPLang`'s hypothesis. |
 | **C10** | **layer-native `inNP`** + **framework decider bridge.** `inNP`/`inTimePoly` carry an abstract `FlatTM` decider, from which no `Cmd` can be recovered. | **Layer-native side ✅ done** (`inNPLang`/`red_inNPLang`). **Bridge open:** `inNPLang → inNP` needs `DecidesLang' → inTimePoly` (`DecidesLang.toDecidesBy`). Obstruction: `DecidesBy` reads the answer from the TM **state index**; `Compile` writes it to the **tape** → needs the **C6** bit-test-to-state gadget after `Compile c` (not just `Compile_sound`). Framework re-basing. |
 | **C1** | **per-`Op` compilation** (`compileOp` + `compileOp_sound`). | ✅ **validated.** Remaining: physical `compileOp_sound` per op + length-decreasing ops (use `endMark` sentinel). Bounded eng (~1.5–2.5K LOC for all 8 ops). |
 | **C2** | **composition** (`compileSeq_sound`). | ✅ **validated** (`compileSeq_compose_physical`). Bounded eng. |

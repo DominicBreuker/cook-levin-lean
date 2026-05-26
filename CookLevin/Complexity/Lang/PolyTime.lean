@@ -857,12 +857,13 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
 both surfaced by assembling the engine above):**
 
 1. **The `map_fst` program** `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))`
-   from `PolyTimeComputableLang' f` — "apply `f` to the first component of a
-   pair". With the single-register length-prefixed product encoding this needs
-   length-as-value arithmetic on registers, which the current `Op` set lacks
-   (Risk **C5**); the alternative is a multi-register product encoding plus a
-   frame-preservation discipline on programs (a register calling convention).
-   Either is bounded but non-trivial DSL work.
+   from `PolyTimeComputableLang' f` — now **built** (`mapFstCmd` + `map_fst`
+   above), enabled by the frame-preservation calling convention. The program,
+   `regBound`, `usesBelow`, `cost_bound`(poly/mono) and `output_size_le` are
+   proved; the two remaining `sorry`s — `normalizes` and `cost_le` — are bounded
+   state-threading through the 10-op straight-line program (each `get_set` step
+   discharging a `Var`-typed register disequality), no structural unknown. Once
+   closed, `red_inNPLang`'s `map_fst` hypothesis is dischargeable by `map_fst`.
 
 2. **A *canonical* verifier `DecidesLang'` for `Q`** — `inNP Q` only provides an
    abstract `inTimePoly` (a `FlatTM` decider), and a `Cmd` cannot be recovered
