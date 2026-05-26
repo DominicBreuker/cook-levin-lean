@@ -70,6 +70,16 @@ inductive Op : Type where
   /-- `nonEmpty dst src` : `s[dst] := [1]` if `s[src]` is non-empty,
   else `[0]`. -/
   | nonEmpty (dst src : Var)
+  /-- `takeAt dst src lenReg` : `s[dst] := (s[src]).take (head of s[lenReg])`.
+  Length-as-value prefix extraction (the count is read from a register). -/
+  | takeAt (dst src lenReg : Var)
+  /-- `dropAt dst src lenReg` : `s[dst] := (s[src]).drop (head of s[lenReg])`. -/
+  | dropAt (dst src lenReg : Var)
+  /-- `concat dst src1 src2` : `s[dst] := s[src1] ++ s[src2]`. -/
+  | concat (dst src1 src2 : Var)
+  /-- `consLen dst lenSrc src` : `s[dst] := (length of s[lenSrc]) :: s[src]`.
+  Prepends the length of one register (as a single cell) onto another. -/
+  | consLen (dst lenSrc src : Var)
   deriving Repr, BEq
 
 /-- Commands. The layer is a structured while-language with:

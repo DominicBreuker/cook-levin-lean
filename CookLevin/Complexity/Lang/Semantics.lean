@@ -50,6 +50,14 @@ def Op.eval : Op → State → State
       s.set dst (if s.get src1 = s.get src2 then [1] else [0])
   | .nonEmpty   dst src, s      =>
       s.set dst (if (s.get src).isEmpty then [0] else [1])
+  | .takeAt     dst src lenReg, s =>
+      s.set dst ((s.get src).take ((s.get lenReg).headD 0))
+  | .dropAt     dst src lenReg, s =>
+      s.set dst ((s.get src).drop ((s.get lenReg).headD 0))
+  | .concat     dst src1 src2, s =>
+      s.set dst (s.get src1 ++ s.get src2)
+  | .consLen    dst lenSrc src, s =>
+      s.set dst ((s.get lenSrc).length :: s.get src)
 
 /-- Cost of an operation. Every primitive is unit cost in the
 intended semantics. -/

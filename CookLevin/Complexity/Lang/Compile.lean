@@ -250,6 +250,12 @@ def compileOp : Op → CompiledCmd
   | .head dst src              => Compile.opHead dst src
   | .eqBit dst src1 src2       => Compile.opEqBit dst src1 src2
   | .nonEmpty dst src          => Compile.opNonEmpty dst src
+  -- Length-as-value ops (C5a). Stubs, like the other non-bit ops: their physical
+  -- soundness folds into the (already assumed) `Compile_sound` gap.
+  | .takeAt _dst _src _lenReg  => compiledCmd_default
+  | .dropAt _dst _src _lenReg  => compiledCmd_default
+  | .concat _dst _src1 _src2   => compiledCmd_default
+  | .consLen _dst _lenSrc _src => compiledCmd_default
 
 /-- Compile `seq c1 c2` from already-compiled sub-machines.
 

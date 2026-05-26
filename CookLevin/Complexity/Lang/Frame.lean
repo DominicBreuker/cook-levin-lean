@@ -75,6 +75,10 @@ def Op.UsesBelow : Op → Nat → Prop
   | .head dst src,         k => dst < k ∧ src < k
   | .eqBit dst src1 src2,  k => dst < k ∧ src1 < k ∧ src2 < k
   | .nonEmpty dst src,     k => dst < k ∧ src < k
+  | .takeAt dst src lenReg, k => dst < k ∧ src < k ∧ lenReg < k
+  | .dropAt dst src lenReg, k => dst < k ∧ src < k ∧ lenReg < k
+  | .concat dst src1 src2, k => dst < k ∧ src1 < k ∧ src2 < k
+  | .consLen dst lenSrc src, k => dst < k ∧ lenSrc < k ∧ src < k
 
 /-- A command reads and writes only registers `< k`. -/
 def Cmd.UsesBelow : Cmd → Nat → Prop
@@ -98,6 +102,14 @@ theorem Op.UsesBelow_mono {o : Op} {k k' : Nat} (h : Op.UsesBelow o k) (hk : k �
   case eqBit dst a b  =>
       exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, Nat.lt_of_lt_of_le h.2.2 hk⟩
   case nonEmpty dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  case takeAt dst src lenReg =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, Nat.lt_of_lt_of_le h.2.2 hk⟩
+  case dropAt dst src lenReg =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, Nat.lt_of_lt_of_le h.2.2 hk⟩
+  case concat dst src1 src2 =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, Nat.lt_of_lt_of_le h.2.2 hk⟩
+  case consLen dst lenSrc src =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, Nat.lt_of_lt_of_le h.2.2 hk⟩
 
 theorem Cmd.UsesBelow_mono {k k' : Nat} (hk : k ≤ k') :
     ∀ {c : Cmd}, Cmd.UsesBelow c k → Cmd.UsesBelow c k' := by
@@ -131,6 +143,18 @@ theorem Cmd.UsesBelow_pos {k : Nat} : ∀ {c : Cmd}, Cmd.UsesBelow c k → 0 < k
           change dst < k ∧ a < k ∧ b < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
       | nonEmpty dst src =>
           change dst < k ∧ src < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | takeAt dst src lenReg =>
+          change dst < k ∧ src < k ∧ lenReg < k at h
+          exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | dropAt dst src lenReg =>
+          change dst < k ∧ src < k ∧ lenReg < k at h
+          exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | concat dst src1 src2 =>
+          change dst < k ∧ src1 < k ∧ src2 < k at h
+          exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | consLen dst lenSrc src =>
+          change dst < k ∧ lenSrc < k ∧ src < k at h
+          exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
   | seq c1 c2 ih1 _ => intro h; obtain ⟨h1, _⟩ := h; exact ih1 h1
   | ifBit t cT cE _ _ => intro h; obtain ⟨ht, _, _⟩ := h; exact Nat.lt_of_le_of_lt (Nat.zero_le t) ht
   | forBnd cnt bnd body _ =>
@@ -150,6 +174,10 @@ theorem Op.eval_get_frame (o : Op) (k : Nat) (h : Op.UsesBelow o k)
   | head dst src   => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
   | eqBit dst a b  => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
   | nonEmpty dst src => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
+  | takeAt dst src lenReg => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
+  | dropAt dst src lenReg => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
+  | concat dst src1 src2 => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
+  | consLen dst lenSrc src => exact State.get_set_ne s dst _ r (reg_ne h.1 hr)
 
 theorem Cmd.eval_get_frame (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
     (s : State) (r : Var) (hr : k ≤ r) :
@@ -234,6 +262,26 @@ theorem Op.eval_agree (o : Op) (k : Nat) (h : Op.UsesBelow o k)
       show AgreeBelow k (s₁.set dst (if (s₁.get src).isEmpty then [0] else [1]))
                         (s₂.set dst (if (s₂.get src).isEmpty then [0] else [1]))
       rw [hagree src hs]; exact hagree.set dst _
+  | takeAt dst src lenReg =>
+      obtain ⟨_, hs, hl⟩ := h
+      show AgreeBelow k (s₁.set dst ((s₁.get src).take ((s₁.get lenReg).headD 0)))
+                        (s₂.set dst ((s₂.get src).take ((s₂.get lenReg).headD 0)))
+      rw [hagree src hs, hagree lenReg hl]; exact hagree.set dst _
+  | dropAt dst src lenReg =>
+      obtain ⟨_, hs, hl⟩ := h
+      show AgreeBelow k (s₁.set dst ((s₁.get src).drop ((s₁.get lenReg).headD 0)))
+                        (s₂.set dst ((s₂.get src).drop ((s₂.get lenReg).headD 0)))
+      rw [hagree src hs, hagree lenReg hl]; exact hagree.set dst _
+  | concat dst src1 src2 =>
+      obtain ⟨_, h1, h2⟩ := h
+      show AgreeBelow k (s₁.set dst (s₁.get src1 ++ s₁.get src2))
+                        (s₂.set dst (s₂.get src1 ++ s₂.get src2))
+      rw [hagree src1 h1, hagree src2 h2]; exact hagree.set dst _
+  | consLen dst lenSrc src =>
+      obtain ⟨_, hl, hs⟩ := h
+      show AgreeBelow k (s₁.set dst ((s₁.get lenSrc).length :: s₁.get src))
+                        (s₂.set dst ((s₂.get lenSrc).length :: s₂.get src))
+      rw [hagree lenSrc hl, hagree src hs]; exact hagree.set dst _
 
 theorem Cmd.eval_agree (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
     {s₁ s₂ : State} (hagree : AgreeBelow k s₁ s₂) :
