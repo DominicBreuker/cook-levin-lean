@@ -711,4 +711,139 @@ both surfaced by assembling the engine above):**
    machine). This is a framework refinement, the deeper half of the S3
    migration. -/
 
+/-! ## C10: layer-native `inNP` and reduction closure (May 2026)
+
+`red_inNP` (`Complexity/NP.lean`) cannot currently route through the layer:
+`inNP Q` exposes only an abstract `inTimePoly` (a `FlatTM` decider), from which
+no `Cmd` is recoverable, so the layer engine `DecidesLang'.precompose` /
+`ofReduction` has nothing to consume. This block provides the layer-native
+analogue of `inNP` — an NP witness whose certificate-relation verifier **is** a
+canonical `Cmd` (`DecidesLang'`) rather than an opaque TM — and proves the
+layer-native NP class is **closed under reduction** (`red_inNPLang`). That
+closure theorem *is* the engine `red_inNP` wants; assembling it sorry-free
+confirms the only inputs missing are the two obligations spelled out at the end
+(C5a `map_fst` and the framework decider bridge).
+
+Everything here is sorry-free and independent of `Compile_sound`: it is pure
+layer algebra (the `Cmd`-level `decides`/`cost`), exactly mirroring the
+framework's `InNPWitness` / `red_inNP` with `inTimePoly` replaced by a
+`DecidesLang'`. -/
+
+/-- **Layer-native NP witness** — the analogue of the framework's `InNPWitness`
+with the abstract `inTimePoly` verifier replaced by a canonical layer verifier
+`DecidesLang'`. The certificate relation is decided by a `Cmd` in canonical
+normal form, so it can be *precomposed* with a canonical reduction (this is what
+an opaque TM decider cannot offer). -/
+structure InNPWitnessLang {X Cert : Type} [encodable X] [encodable Cert]
+    [LangEncodable X] [LangEncodable Cert] (P : X → Prop) where
+  /-- The certificate relation. -/
+  rel : X → Cert → Prop
+  /-- Verifier cost bound. -/
+  dBound : Nat → Nat
+  dBound_poly : inOPoly dBound
+  dBound_mono : monotonic dBound
+  /-- The verifier: a *canonical* layer decider for the certificate relation,
+  read as a predicate on the pair `(input, certificate)`. -/
+  verifier : DecidesLang' (fun xc : X × Cert => rel xc.1 xc.2) dBound
+  /-- The relation is a sound and complete, polynomially-bounded certificate
+  relation for `P` (the predicate-level NP content, identical to the framework). -/
+  rel_correct : polyCertRel P rel
+
+/-- `P` is in NP *at the layer level*: there is a certificate type with a
+canonical layer verifier (`DecidesLang'`) and a polynomial certificate relation.
+Mirrors `inNP`, existentially quantifying the certificate type and its encodings. -/
+def inNPLang {X : Type} [encodable X] [LangEncodable X] (P : X → Prop) : Prop :=
+  ∃ Cert : Type, ∃ eC : encodable Cert, ∃ lC : LangEncodable Cert,
+    Nonempty (@InNPWitnessLang X Cert _ eC _ lC P)
+
+/-- **C10 headline: the layer-native NP class is closed under reduction.** Given
+a layer reduction `f : X → Y` (with `Wf : PolyTimeComputableLang' f` for the
+size/cert bookkeeping and the C5a `map_fst` lift available for every certificate
+type), and `Q ∈ inNPLang`, then `P ∈ inNPLang`. The verifier for `P` is built by
+`DecidesLang'.ofReduction` (run `map_fst` then `Q`'s verifier); the certificate
+relation transports exactly as in the framework's `red_inNP`.
+
+The `map_fst` hypothesis is precisely the C5a obligation, here stated
+polymorphically in the certificate type `C` (which is existentially bound inside
+`hQ`, so it cannot be a fixed-type argument). When C5a lands as
+`PolyTimeComputableLang'.map_fst`, this hypothesis is discharged by applying it.
+This theorem is the layer analogue of `red_inNP`; bridging `inNPLang` to the
+framework's `inNP` is the remaining framework-side obligation (see below). -/
+theorem red_inNPLang {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y]
+    (P : X → Prop) (Q : Y → Prop)
+    (f : X → Y) (Wf : PolyTimeComputableLang' f)
+    (map_fst : ∀ (C : Type) [encodable C] [LangEncodable C],
+        PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)))
+    (hf_correct : ∀ x, P x ↔ Q (f x))
+    (hQ : inNPLang Q) :
+    inNPLang P := by
+  obtain ⟨Cert, eC, lC, hW⟩ := hQ
+  letI := eC
+  letI := lC
+  obtain ⟨W⟩ := hW
+  refine ⟨Cert, eC, lC, ⟨?_⟩⟩
+  refine {
+    rel := fun x c => W.rel (f x) c
+    dBound := fun n => 1 + (map_fst Cert).cost_bound n + W.dBound ((map_fst Cert).cost_bound n)
+    dBound_poly := ?_
+    dBound_mono := ?_
+    verifier := DecidesLang'.ofReduction (map_fst Cert) W.verifier W.dBound_mono
+    rel_correct := ?_ }
+  · -- dBound is polynomial
+    exact inOPoly_add (inOPoly_add (inOPoly_const 1) (map_fst Cert).cost_bound_poly)
+      (inOPoly_comp (map_fst Cert).cost_bound_poly W.dBound_poly)
+  · -- dBound is monotonic
+    intro a b hab
+    have h1 : (map_fst Cert).cost_bound a ≤ (map_fst Cert).cost_bound b :=
+      (map_fst Cert).cost_bound_mono a b hab
+    have h2 : W.dBound ((map_fst Cert).cost_bound a) ≤ W.dBound ((map_fst Cert).cost_bound b) :=
+      W.dBound_mono _ _ h1
+    show 1 + (map_fst Cert).cost_bound a + W.dBound ((map_fst Cert).cost_bound a)
+        ≤ 1 + (map_fst Cert).cost_bound b + W.dBound ((map_fst Cert).cost_bound b)
+    omega
+  · -- the certificate relation for P (verbatim from `red_inNP`'s cert half)
+    obtain ⟨cert_bound, hsound_R, hcomplete_R, hcert_poly_R, hcert_mono_R⟩ := W.rel_correct
+    refine ⟨⟨cert_bound ∘ Wf.cost_bound, ?_, ?_,
+      inOPoly_comp Wf.cost_bound_poly hcert_poly_R,
+      monotonic_comp Wf.cost_bound_mono hcert_mono_R⟩⟩
+    · intro x c hrel
+      exact (hf_correct x).mpr (hsound_R hrel)
+    · intro x hx
+      rcases hcomplete_R ((hf_correct x).mp hx) with ⟨c, hc, hsize⟩
+      refine ⟨c, hc, ?_⟩
+      calc encodable.size c
+          ≤ cert_bound (encodable.size (f x)) := hsize
+        _ ≤ cert_bound (Wf.cost_bound (encodable.size x)) :=
+            hcert_mono_R _ _ (Wf.output_size_le x)
+
+/-! **What remains to connect `red_inNPLang` to the framework's `red_inNP`**
+(both obligations now stated against concrete layer interfaces):
+
+1. **C5a — the polymorphic `map_fst`.** Discharge the `map_fst` hypothesis of
+   `red_inNPLang` by constructing, from `Wf : PolyTimeComputableLang' f`, a
+   `PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2))` for every
+   certificate type `C`. With the single-register length-prefixed product
+   encoding this is blocked twice over: (a) splitting/repacking the packed
+   register needs length-as-value `take`/`drop`/`concat`/`length` `Op`s the set
+   lacks (Risk **C5**), and (b) even with those, reusing `Wf.c` as a subroutine
+   on a sub-register needs a **frame-preservation guarantee** — `Wf.c`'s
+   `normalizes` law only constrains it on the *exact* single-register state
+   `[enc x]`, saying nothing about a state that also carries `enc c`. So the real
+   fix is a frame-preserving calling convention baked into the witness contract
+   (or a multi-register product encoding with the same discipline), not just new
+   `Op`s. Bounded but a contract-level design change.
+
+2. **The framework decider bridge `inNPLang Q → inNP Q`** (so a real `inNP Q`
+   can be *fed in* layer-natively, and a layer result exported). This needs
+   `DecidesLang' → inTimePoly`, i.e. `DecidesLang.toDecidesBy`. The obstruction
+   is concrete: `DecidesBy` reads its answer from the TM **state index**
+   (`cfg.state_idx = acceptState`), whereas `Compile` always halts in a single
+   `exit` state and writes the answer to the **tape** (register 0). Bridging
+   therefore needs a tape→state branch gadget (read register 0, halt in a
+   distinct accept/reject state) — the `compileIfBit` bit-test, Risk **C6** —
+   composed after `Compile c`; `Compile_sound` alone does not suffice. This is
+   why `DecidesLang.toDecidesBy` above remains a genuine `sorry` rather than a
+   `Compile_sound` corollary. -/
+
 end Complexity.Lang
