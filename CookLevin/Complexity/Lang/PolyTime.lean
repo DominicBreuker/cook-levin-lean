@@ -459,6 +459,26 @@ structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
   regBound : Nat
   usesBelow : Cmd.UsesBelow c regBound
 
+/-- **Frame application (C5a).** Running the witness program on *any* state `s`
+preserves every register `≥ regBound` — so a value stashed at register
+`regBound` survives the call. Direct from `Cmd.eval_get_frame` + `usesBelow`. -/
+theorem PolyTimeComputableLang'.eval_frame {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (W : PolyTimeComputableLang' f)
+    (s : State) {r : Var} (hr : W.regBound ≤ r) :
+    (W.c.eval s).get r = s.get r :=
+  Cmd.eval_get_frame W.c W.regBound W.usesBelow s r hr
+
+/-- **Locality application (C5a).** On any state `s` agreeing with the canonical
+input `encodeState x` on registers `< regBound`, the witness program's
+register-`r` (`r < regBound`) result is the canonical output's — in particular
+register `0` is `enc (f x)`. Direct from `Cmd.eval_agree` + `normalizes`. -/
+theorem PolyTimeComputableLang'.eval_get_of_agree {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (W : PolyTimeComputableLang' f)
+    (x : X) {s : State} (hagree : AgreeBelow W.regBound (LangEncodable.encodeState x) s)
+    {r : Var} (hr : r < W.regBound) :
+    (W.c.eval s).get r = (LangEncodable.encodeState (f x)).get r := by
+  rw [← Cmd.eval_agree W.c W.regBound W.usesBelow hagree r hr, W.normalizes]
+
 /-- **C9 headline: the layer composes.** Two canonical-form programs compose
 under `Cmd.seq`; the `normalizes` law follows **definitionally** from
 `Cmd.eval_seq` — no encoding bridge, no `sorry`. Cost and output size compose
