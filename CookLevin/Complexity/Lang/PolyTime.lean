@@ -829,7 +829,18 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     omega
   normalizes := sorry
   cost_le := sorry
-  output_size_le := sorry
+  output_size_le := by
+    intro xc
+    obtain ⟨x, c⟩ := xc
+    have h1 : encodable.size (f x) ≤ Wf.cost_bound (encodable.size x) := Wf.output_size_le x
+    have h2 : encodable.size x ≤ encodable.size ((x, c) : X × C) := by
+      show encodable.size x ≤ encodable.size x + encodable.size c + 1; omega
+    have h3 : Wf.cost_bound (encodable.size x) ≤ Wf.cost_bound (encodable.size ((x, c) : X × C)) :=
+      Wf.cost_bound_mono _ _ h2
+    show encodable.size (f x) + encodable.size c + 1
+        ≤ Wf.cost_bound (encodable.size ((x, c) : X × C))
+          + (encodable.size x + encodable.size c + 1) + 18
+    omega
   regBound := Wf.regBound + 3
   usesBelow := by
     have hwf : Cmd.UsesBelow Wf.c (Wf.regBound + 3) := Cmd.UsesBelow_mono (by omega) Wf.usesBelow
