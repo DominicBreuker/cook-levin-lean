@@ -1,5 +1,6 @@
 import Complexity.Lang.Syntax
 import Complexity.Lang.Semantics
+import Complexity.Lang.Frame
 import Complexity.Lang.ShiftTape
 import Complexity.Lang.Navigate
 import Complexity.Lang.ScanPast
@@ -16,6 +17,9 @@ A single import that brings in the entire layer skeleton:
 
 - `Lang.Syntax`     : `Op`, `Cmd`, `State`, output convention.
 - `Lang.Semantics`  : `Cmd.eval`, `Cmd.cost` (axiomatic), algebraic laws.
+- `Lang.Frame`      : `Cmd.UsesBelow` + the frame (`Cmd.eval_get_frame`) and
+                      locality (`Cmd.eval_agree`) lemmas — the register
+                      calling-convention foundation for C5a (`map_fst`).
 - `Lang.ShiftTape`  : `insertCarryTM` + `insertCarryTM_run`, the shared
                       single-tape "insert one symbol" gadget every
                       length-*increasing* `Op` builds on (Risk C1).
