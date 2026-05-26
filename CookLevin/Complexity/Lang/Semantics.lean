@@ -121,6 +121,16 @@ theorem Cmd.cost_op (o : Op) (s : State) :
 theorem Cmd.cost_seq (c1 c2 : Cmd) (s : State) :
     (c1 ;; c2).cost s = 1 + c1.cost s + c2.cost (c1.eval s) := rfl
 
+theorem Cmd.cost_ifBit_true (t : Var) (cT cE : Cmd) (s : State) (h : s.get t = [1]) :
+    (Cmd.ifBit t cT cE).cost s = 1 + cT.cost s := by
+  show (Cmd.run (.ifBit t cT cE) s).2 = 1 + (Cmd.run cT s).2
+  simp [Cmd.run, h]
+
+theorem Cmd.cost_ifBit_false (t : Var) (cT cE : Cmd) (s : State) (h : s.get t ≠ [1]) :
+    (Cmd.ifBit t cT cE).cost s = 1 + cE.cost s := by
+  show (Cmd.run (.ifBit t cT cE) s).2 = 1 + (Cmd.run cE s).2
+  simp [Cmd.run, h]
+
 /-! ## Output projection
 
 The Boolean output of running `c` on `s` is `(c.eval s).isAccept`. -/

@@ -435,6 +435,15 @@ theorem LangEncodable.size_encodeState {X : Type} [encodable X] [LangEncodable X
   show State.size [LangEncodable.enc x] = (LangEncodable.enc x).length
   simp [State.size]
 
+/-- The canonical state holds everything in register `0`; every register `r ≥ 1`
+reads back blank. Used to discharge the high-register cases of the (pointwise)
+composition proof. -/
+theorem LangEncodable.encodeState_get_pos {X : Type} [encodable X] [LangEncodable X]
+    (x : X) {r : Var} (hr : 0 < r) : State.get (LangEncodable.encodeState x) r = [] := by
+  unfold LangEncodable.encodeState State.get
+  rw [List.getElem?_eq_none (show ([LangEncodable.enc x] : List (List Nat)).length ≤ r from hr)]
+  rfl
+
 /-- A polynomial-time computable function **in canonical normal form**: the
 program maps `encodeState x` to `encodeState (f x)` exactly. This is the
 stronger contract that lets programs compose without a re-encoding bridge. -/
@@ -444,9 +453,16 @@ structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
   cost_bound : Nat → Nat
   cost_bound_poly : inOPoly cost_bound
   cost_bound_mono : monotonic cost_bound
-  /-- Canonical normal form: the output state *is* `encodeState (f x)`. -/
-  normalizes : ∀ x : X,
-    c.eval (LangEncodable.encodeState x) = LangEncodable.encodeState (f x)
+  /-- Canonical normal form, **register-wise**: every register of the output
+  state reads back as the canonical encoding of `f x`. This is the relaxation of
+  exact state-equality that admits scratch-using programs — a program may grow
+  the underlying register list (and must clear its scratch back to blank), since
+  `State.get` returns `[]` past the written registers. Composition still goes
+  through, now via the frame/locality lemmas (`Cmd.eval_agree`/`eval_get_frame`)
+  rather than definitionally. -/
+  normalizes : ∀ (x : X) (r : Var),
+    State.get (c.eval (LangEncodable.encodeState x)) r
+      = State.get (LangEncodable.encodeState (f x)) r
   cost_le : ∀ x : X,
     c.cost (LangEncodable.encodeState x) ≤ cost_bound (encodable.size x)
   output_size_le : ∀ x : X, encodable.size (f x) ≤ cost_bound (encodable.size x)
@@ -477,13 +493,16 @@ theorem PolyTimeComputableLang'.eval_get_of_agree {X Y : Type} [encodable X] [en
     (x : X) {s : State} (hagree : AgreeBelow W.regBound (LangEncodable.encodeState x) s)
     {r : Var} (hr : r < W.regBound) :
     (W.c.eval s).get r = (LangEncodable.encodeState (f x)).get r := by
-  rw [← Cmd.eval_agree W.c W.regBound W.usesBelow hagree r hr, W.normalizes]
+  rw [← Cmd.eval_agree W.c W.regBound W.usesBelow hagree r hr]
+  exact W.normalizes x r
 
 /-- **C9 headline: the layer composes.** Two canonical-form programs compose
-under `Cmd.seq`; the `normalizes` law follows **definitionally** from
-`Cmd.eval_seq` — no encoding bridge, no `sorry`. Cost and output size compose
-as `1 + cost_h + cost_g ∘ cost_h`, mirroring the intended (previously
-sorry-bodied) `PolyTimeComputableLang.comp`. -/
+under `Cmd.seq`. The (pointwise) `normalizes` law goes through via the
+frame/locality lemmas (`Cmd.eval_agree` on registers `< regBound`,
+`Cmd.eval_get_frame` above), and the cost bound via `Cmd.cost_agree` — `Wg` sees
+`Wh`'s output, which agrees register-wise with the clean canonical input, so it
+behaves and costs as on the clean input. Cost and output size compose as
+`1 + cost_h + cost_g ∘ cost_h`. -/
 def PolyTimeComputableLang'.comp
     {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
     [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
@@ -503,13 +522,25 @@ def PolyTimeComputableLang'.comp
     show 1 + Wh.cost_bound a + Wg.cost_bound (Wh.cost_bound a)
         ≤ 1 + Wh.cost_bound b + Wg.cost_bound (Wh.cost_bound b)
     omega
-  normalizes := fun x => by
-    show (Wh.c ;; Wg.c).eval (LangEncodable.encodeState x)
-        = LangEncodable.encodeState ((g ∘ h) x)
-    rw [Cmd.eval_seq, Wh.normalizes]
-    exact Wg.normalizes (h x)
+  normalizes := fun x r => by
+    show State.get ((Wh.c ;; Wg.c).eval (LangEncodable.encodeState x)) r
+        = State.get (LangEncodable.encodeState (g (h x))) r
+    rw [Cmd.eval_seq]
+    have hagree : AgreeBelow Wg.regBound (Wh.c.eval (LangEncodable.encodeState x))
+        (LangEncodable.encodeState (h x)) := fun r' _ => Wh.normalizes x r'
+    by_cases hr : r < Wg.regBound
+    · rw [Cmd.eval_agree Wg.c Wg.regBound Wg.usesBelow hagree r hr]
+      exact Wg.normalizes (h x) r
+    · have hrb : Wg.regBound ≤ r := Nat.le_of_not_lt hr
+      have hr1 : 0 < r := Nat.lt_of_lt_of_le (Cmd.UsesBelow_pos Wg.usesBelow) hrb
+      rw [Cmd.eval_get_frame Wg.c Wg.regBound Wg.usesBelow _ r hrb, Wh.normalizes x r,
+        LangEncodable.encodeState_get_pos (h x) hr1,
+        LangEncodable.encodeState_get_pos (g (h x)) hr1]
   cost_le := fun x => by
-    rw [Cmd.cost_seq, Wh.normalizes]
+    rw [Cmd.cost_seq]
+    have hagree : AgreeBelow Wg.regBound (Wh.c.eval (LangEncodable.encodeState x))
+        (LangEncodable.encodeState (h x)) := fun r' _ => Wh.normalizes x r'
+    rw [Cmd.cost_agree Wg.c Wg.regBound Wg.usesBelow hagree]
     -- 1 + Wh.cost (encState x) + Wg.cost (encState (h x)) ≤ cost_bound (size x)
     have hh : Wh.c.cost (LangEncodable.encodeState x) ≤ Wh.cost_bound (encodable.size x) :=
       Wh.cost_le x
@@ -556,8 +587,8 @@ def PolyTimeComputableLang'.toLang
   encodeIn_size := fun x => by
     rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
   computes := fun x => by
-    show LangEncodable.decodeState (W.c.eval (LangEncodable.encodeState x)) = f x
-    rw [W.normalizes]
+    show LangEncodable.dec ((W.c.eval (LangEncodable.encodeState x)).get 0) = f x
+    rw [W.normalizes x 0]
     exact LangEncodable.decodeState_encodeState (f x)
   cost_le := W.cost_le
   output_size_le := W.output_size_le
@@ -641,14 +672,17 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
   cost_bound := fun n => n + 1
   cost_bound_poly := inOPoly_add inOPoly_id (inOPoly_const 1)
   cost_bound_mono := by intro a b hab; show a + 1 ≤ b + 1; omega
-  normalizes := fun x => by
-    show (Cmd.op (Op.copy 0 0)).eval (LangEncodable.encodeState x)
-        = LangEncodable.encodeState (id x)
-    rw [Cmd.eval_op]
-    show ([LangEncodable.enc x] : State).set 0
-          (([LangEncodable.enc x] : State).get 0) = [LangEncodable.enc x]
-    rw [show (([LangEncodable.enc x] : State).get 0) = LangEncodable.enc x from rfl]
-    simp [State.set]
+  normalizes := fun x r => by
+    have he : (Cmd.op (Op.copy 0 0)).eval (LangEncodable.encodeState x)
+        = LangEncodable.encodeState x := by
+      rw [Cmd.eval_op]
+      show ([LangEncodable.enc x] : State).set 0
+            (([LangEncodable.enc x] : State).get 0) = [LangEncodable.enc x]
+      rw [show (([LangEncodable.enc x] : State).get 0) = LangEncodable.enc x from rfl]
+      simp [State.set]
+    show ((Cmd.op (Op.copy 0 0)).eval (LangEncodable.encodeState x)).get r
+        = (LangEncodable.encodeState x).get r
+    rw [he]
   cost_le := fun x => by
     show (Cmd.op (Op.copy 0 0)).cost (LangEncodable.encodeState x)
         ≤ encodable.size x + 1
@@ -673,12 +707,21 @@ structure DecidesLang' {X : Type} [encodable X] [LangEncodable X]
   decides : Cmd.decides c LangEncodable.encodeState P
   cost_le : ∀ x : X,
     c.cost (LangEncodable.encodeState x) ≤ costBound (encodable.size x)
+  /-- Register frame (cf. `PolyTimeComputableLang'`): the decider touches only
+  registers `< regBound`. Needed because `precompose` feeds it a state that only
+  *agrees register-wise* with the canonical input (the preceding map leaves
+  scratch), so its accept/reject — read off register `0` — must be frame-robust. -/
+  regBound : Nat
+  usesBelow : Cmd.UsesBelow c regBound
 
 /-- **Verifier composition.** Precomposing a canonical decider for `P` with a
-canonical computable map `g` yields a canonical decider for `P ∘ g`: run `g`
-(canonical normal form), then the decider. Correctness is **definitional**
-(`Cmd.eval_seq` + `normalizes`); cost composes as `1 + cost_g + dBound ∘ cost_g`.
-This is the engine that turns `P ⪯p Q` + a `Q`-verifier into a `P`-verifier. -/
+canonical computable map `g` yields a canonical decider for `P ∘ g`: run `g`,
+then the decider. Under the relaxed (pointwise) contract `g`'s output only
+*agrees register-wise* with `encodeState (g x)` (it may carry scratch), so
+correctness goes through `Cmd.eval_agree` at register `0` (where accept/reject is
+read) and the cost through `Cmd.cost_agree`. Cost composes as
+`1 + cost_g + dBound ∘ cost_g`. The engine turning `P ⪯p Q` + a `Q`-verifier
+into a `P`-verifier. -/
 def DecidesLang'.precompose
     {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
     {g : X → Y} {P : Y → Prop} {dBound : Nat → Nat}
@@ -688,12 +731,29 @@ def DecidesLang'.precompose
       (fun n => 1 + Wg.cost_bound n + dBound (Wg.cost_bound n)) where
   c := Wg.c ;; D.c
   decides := fun x => by
-    have hev : (Wg.c ;; D.c).eval (LangEncodable.encodeState x)
-        = D.c.eval (LangEncodable.encodeState (g x)) := by
-      rw [Cmd.eval_seq, Wg.normalizes]
-    rw [hev]; exact D.decides (g x)
+    have hagree : AgreeBelow D.regBound (Wg.c.eval (LangEncodable.encodeState x))
+        (LangEncodable.encodeState (g x)) := fun r' _ => Wg.normalizes x r'
+    have h0 : State.get ((Wg.c ;; D.c).eval (LangEncodable.encodeState x)) 0
+        = State.get (D.c.eval (LangEncodable.encodeState (g x))) 0 := by
+      rw [Cmd.eval_seq]
+      exact Cmd.eval_agree D.c D.regBound D.usesBelow hagree 0 (Cmd.UsesBelow_pos D.usesBelow)
+    have hacc : ((Wg.c ;; D.c).eval (LangEncodable.encodeState x)).isAccept
+        = (D.c.eval (LangEncodable.encodeState (g x))).isAccept := by
+      show (State.get ((Wg.c ;; D.c).eval (LangEncodable.encodeState x)) 0 == [1])
+          = (State.get (D.c.eval (LangEncodable.encodeState (g x))) 0 == [1])
+      rw [h0]
+    have hrej : ((Wg.c ;; D.c).eval (LangEncodable.encodeState x)).isReject
+        = (D.c.eval (LangEncodable.encodeState (g x))).isReject := by
+      show (State.get ((Wg.c ;; D.c).eval (LangEncodable.encodeState x)) 0 == [0])
+          = (State.get (D.c.eval (LangEncodable.encodeState (g x))) 0 == [0])
+      rw [h0]
+    rw [hacc, hrej]
+    exact D.decides (g x)
   cost_le := fun x => by
-    rw [Cmd.cost_seq, Wg.normalizes]
+    rw [Cmd.cost_seq]
+    have hagree : AgreeBelow D.regBound (Wg.c.eval (LangEncodable.encodeState x))
+        (LangEncodable.encodeState (g x)) := fun r' _ => Wg.normalizes x r'
+    rw [Cmd.cost_agree D.c D.regBound D.usesBelow hagree]
     have h1 : Wg.c.cost (LangEncodable.encodeState x) ≤ Wg.cost_bound (encodable.size x) :=
       Wg.cost_le x
     have h2 : D.c.cost (LangEncodable.encodeState (g x))
@@ -707,6 +767,9 @@ def DecidesLang'.precompose
         ≤ 1 + Wg.cost_bound (encodable.size x)
           + dBound (Wg.cost_bound (encodable.size x))
     omega
+  regBound := max Wg.regBound D.regBound
+  usesBelow := ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wg.usesBelow,
+    Cmd.UsesBelow_mono (Nat.le_max_right _ _) D.usesBelow⟩
 
 /-- **Assembling `red_inNP` at the layer.** From (a) the reduction lifted to
 the pair input — `Wf : PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` —

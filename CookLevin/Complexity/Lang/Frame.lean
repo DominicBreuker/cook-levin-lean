@@ -109,6 +109,33 @@ theorem Cmd.UsesBelow_mono {k k' : Nat} (hk : k ≤ k') :
   | forBnd cnt bnd body ihb =>
       intro h; exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, ihb h.2.2⟩
 
+/-- Any program touches *some* register, so a valid register bound is positive.
+(Every `Cmd` bottoms out in an `Op`, and every `Op` accesses a register `< k`,
+forcing `0 < k`.) Lets the frame argument treat register `0` specially. -/
+theorem Cmd.UsesBelow_pos {k : Nat} : ∀ {c : Cmd}, Cmd.UsesBelow c k → 0 < k := by
+  intro c
+  induction c with
+  | op o =>
+      intro h
+      cases o with
+      | clear dst      => change dst < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h
+      | appendOne dst  => change dst < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h
+      | appendZero dst => change dst < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h
+      | copy dst src   =>
+          change dst < k ∧ src < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | tail dst src   =>
+          change dst < k ∧ src < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | head dst src   =>
+          change dst < k ∧ src < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | eqBit dst a b  =>
+          change dst < k ∧ a < k ∧ b < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+      | nonEmpty dst src =>
+          change dst < k ∧ src < k at h; exact Nat.lt_of_le_of_lt (Nat.zero_le dst) h.1
+  | seq c1 c2 ih1 _ => intro h; obtain ⟨h1, _⟩ := h; exact ih1 h1
+  | ifBit t cT cE _ _ => intro h; obtain ⟨ht, _, _⟩ := h; exact Nat.lt_of_le_of_lt (Nat.zero_le t) ht
+  | forBnd cnt bnd body _ =>
+      intro h; obtain ⟨hc, _, _⟩ := h; exact Nat.lt_of_le_of_lt (Nat.zero_le cnt) hc
+
 /-! ## Frame: registers `≥ k` are preserved -/
 
 theorem Op.eval_get_frame (o : Op) (k : Nat) (h : Op.UsesBelow o k)
@@ -260,5 +287,63 @@ theorem Cmd.eval_agree (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
           (res.1, acc.2 + res.2)) (s₂, 0)).1)
       rw [hiters]
       exact fold_agree (List.range (s₂.get bnd).length) (s₁, 0) (s₂, 0) hagree
+
+/-! ## Cost locality: the cost depends only on registers `< k` -/
+
+/-- A program touching only registers `< k` runs at the same cost on any two
+states that agree on registers `< k`. Needed so composition can bound the cost
+of the second program on the first's (scratch-bearing) output. -/
+theorem Cmd.cost_agree (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
+    {s₁ s₂ : State} (hagree : AgreeBelow k s₁ s₂) :
+    c.cost s₁ = c.cost s₂ := by
+  induction c generalizing s₁ s₂ with
+  | op o => rfl
+  | seq c1 c2 ih1 ih2 =>
+      obtain ⟨h1, h2⟩ := h
+      rw [Cmd.cost_seq, Cmd.cost_seq, ih1 h1 hagree,
+        ih2 h2 (Cmd.eval_agree c1 k h1 hagree)]
+  | ifBit t cT cE ihT ihE =>
+      obtain ⟨ht, hT, hE⟩ := h
+      have htt : s₁.get t = s₂.get t := hagree t ht
+      by_cases hb : s₁.get t = [1]
+      · rw [Cmd.cost_ifBit_true t cT cE s₁ hb,
+          Cmd.cost_ifBit_true t cT cE s₂ (htt ▸ hb), ihT hT hagree]
+      · rw [Cmd.cost_ifBit_false t cT cE s₁ hb,
+          Cmd.cost_ifBit_false t cT cE s₂ (htt ▸ hb), ihE hE hagree]
+  | forBnd cnt bnd body ihbody =>
+      obtain ⟨_, hbnd, hbody⟩ := h
+      have hiters : (s₁.get bnd).length = (s₂.get bnd).length := by rw [hagree bnd hbnd]
+      have fold : ∀ (L : List Nat) (a1 a2 : State × Nat),
+          AgreeBelow k a1.1 a2.1 → a1.2 = a2.2 →
+          ((L.foldl (fun acc i =>
+              let s' := acc.1.set cnt (List.replicate i 1)
+              let res := Cmd.run body s'
+              (res.1, acc.2 + res.2)) a1).2
+            = (L.foldl (fun acc i =>
+              let s' := acc.1.set cnt (List.replicate i 1)
+              let res := Cmd.run body s'
+              (res.1, acc.2 + res.2)) a2).2) := by
+        intro L
+        induction L with
+        | nil => intro a1 a2 _ hc; exact hc
+        | cons i L ihL =>
+            intro a1 a2 hag hc
+            simp only [List.foldl_cons]
+            apply ihL
+            · show AgreeBelow k (Cmd.eval body (a1.1.set cnt (List.replicate i 1)))
+                                (Cmd.eval body (a2.1.set cnt (List.replicate i 1)))
+              exact Cmd.eval_agree body k hbody (hag.set cnt (List.replicate i 1))
+            · show a1.2 + body.cost (a1.1.set cnt (List.replicate i 1))
+                  = a2.2 + body.cost (a2.1.set cnt (List.replicate i 1))
+              rw [hc, ihbody hbody (hag.set cnt (List.replicate i 1))]
+      show 1 + ((List.range (s₁.get bnd).length).foldl (fun acc i =>
+          let s' := acc.1.set cnt (List.replicate i 1)
+          let res := Cmd.run body s'
+          (res.1, acc.2 + res.2)) (s₁, 0)).2
+        = 1 + ((List.range (s₂.get bnd).length).foldl (fun acc i =>
+          let s' := acc.1.set cnt (List.replicate i 1)
+          let res := Cmd.run body s'
+          (res.1, acc.2 + res.2)) (s₂, 0)).2
+      rw [hiters, fold (List.range (s₂.get bnd).length) (s₁, 0) (s₂, 0) hagree rfl]
 
 end Complexity.Lang
