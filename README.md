@@ -30,14 +30,17 @@ for direction.
   in `Lang/PolyTime.lean` (product encoding, `comp`, verifier-composition
   `precompose`/`ofReduction`, and the **layer-native NP class** `inNPLang` with
   its reduction-closure theorem `red_inNPLang` — the layer analogue of
-  `red_inNP`), all sorry-free and axiom-clean. Two obligations remain to route
-  the framework's `red_inNP` through the layer: **C5a** (`map_fst` — apply the
-  reduction to a pair's first component; now the single explicit hypothesis of
-  `red_inNPLang`, and a *contract-level* calling-convention task, not just new
-  DSL ops) and the **framework decider bridge** `inNPLang → inNP` (the
-  layer-native side of "C10" is now done; what remains is `DecidesLang' →
-  inTimePoly`, which needs a tape→state branch gadget, C6). Then `⪯p` is
-  migrated and the sound tail rippled. See the ROADMAP plan.
+  `red_inNP`), all sorry-free and axiom-clean. The **C5a frame-preservation
+  calling convention** is also landed (`Lang/Frame.lean`: `Cmd.UsesBelow` +
+  frame/locality lemmas; a `regBound`/`usesBelow` field on
+  `PolyTimeComputableLang'`; the `eval_frame`/`eval_get_of_agree` applications) —
+  so a witness program can run as a subroutine on register 0 while a stashed
+  pair component survives. Remaining to route the framework's `red_inNP` through
+  the layer: finish **C5a** (the length-as-value `Op`s + the `map_fst`
+  unpack/run/repack assembly — `map_fst` is the single explicit hypothesis of
+  `red_inNPLang`) and the **framework decider bridge** `inNPLang → inNP`
+  (`DecidesLang' → inTimePoly`, needs a tape→state branch gadget, C6). Then
+  `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
 
 ## What is sound vs. what is not
 
