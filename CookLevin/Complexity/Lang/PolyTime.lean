@@ -832,10 +832,15 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
   output_size_le := sorry
   regBound := Wf.regBound + 3
   usesBelow := by
-    show Cmd.UsesBelow Wf.mapFstCmd (Wf.regBound + 3)
     have hwf : Cmd.UsesBelow Wf.c (Wf.regBound + 3) := Cmd.UsesBelow_mono (by omega) Wf.usesBelow
-    refine ⟨?_, ?_, ?_, ?_, hwf, ?_, ?_, ?_, ?_, ?_⟩ <;>
-      simp only [Cmd.UsesBelow, Op.UsesBelow] <;> omega
+    have b0 : (0 : Nat) < Wf.regBound + 3 := by omega
+    have bk : Wf.regBound < Wf.regBound + 3 := by omega
+    have bk1 : Wf.regBound + 1 < Wf.regBound + 3 := by omega
+    have bk2 : Wf.regBound + 2 < Wf.regBound + 3 := by omega
+    show Cmd.UsesBelow Wf.mapFstCmd (Wf.regBound + 3)
+    unfold PolyTimeComputableLang'.mapFstCmd
+    exact ⟨⟨bk, b0⟩, ⟨bk1, b0⟩, ⟨bk2, bk1, bk⟩, ⟨b0, bk1, bk⟩, hwf,
+      ⟨bk1, b0, bk2⟩, ⟨b0, b0, bk1⟩, bk, bk1, bk2⟩
 
 /-! **What remains to fully discharge `red_inNP` (two distinct obligations,
 both surfaced by assembling the engine above):**
