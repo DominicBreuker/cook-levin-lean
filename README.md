@@ -18,7 +18,8 @@ for direction.
   `Classical.choice` / `Quot.sound`).
 - ~11K LOC on the proof path under `CookLevin/` (a further ~14K parked, not
   built).
-- ~29 `TODO`-tagged `sorry`s (completion gaps, Risk register Group C).
+- ~31 `sorry`s (completion gaps, Risk register Group C); the 2 newest are in the
+  C5a `map_fst` (`normalizes`/`cost_le`) — *off* the `CookLevin` proof path.
 - **≥ 4 `sorry`-free *vacuous* defs** on the proof path — the deepest gaps
   (Risks S1/S2/S3). They do **not** appear in the `sorry` count or under
   `#print axioms`, so the `sorry` count overstates how close the proof is.
@@ -28,10 +29,23 @@ for direction.
 - **Current work — the S3 migration (in progress).** Risk C9 (canonical layer
   encoding) is done, and the layer-side migration engine is built and proved
   in `Lang/PolyTime.lean` (product encoding, `comp`, verifier-composition
-  `precompose`/`ofReduction`), all sorry-free. Two obligations remain to
-  discharge `red_inNP`: **C5a** (`map_fst` — apply the reduction to a pair's
-  first component; a DSL pairing / calling-convention task) and **C10**
-  (layer-native `inNP`, so a verifier is a `Cmd` rather than an opaque TM).
+  `precompose`/`ofReduction`, and the **layer-native NP class** `inNPLang` with
+  its reduction-closure theorem `red_inNPLang` — the layer analogue of
+  `red_inNP`), all sorry-free and axiom-clean. The **C5a frame-preservation
+  calling convention** is also landed (`Lang/Frame.lean`: `Cmd.UsesBelow` +
+  frame/locality lemmas; a `regBound`/`usesBelow` field on
+  `PolyTimeComputableLang'`; the `eval_frame`/`eval_get_of_agree` applications) —
+  so a witness program can run as a subroutine on register 0 while a stashed
+  pair component survives. The contract was also **relaxed to register-wise
+  (pointwise) `normalizes`** — the exact-equality form silently forbade scratch
+  registers (so it was too weak for *every* real layer program, not just
+  `map_fst`); composition was re-validated for scratch-using programs via the
+  frame lemmas. The length-as-value `Op`s and the **`map_fst` program** are built
+  (`regBound`/`usesBelow`/`cost_bound`/`output_size_le` proved; `normalizes` +
+  `cost_le` remain as 2 bounded `sorry`s). Remaining to route the framework's
+  `red_inNP` through the layer: close those 2 `sorry`s + discharge
+  `red_inNPLang`'s hypothesis, and the **framework decider bridge** `inNPLang →
+  inNP` (`DecidesLang' → inTimePoly`, needs a tape→state branch gadget, C6).
   Then `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
 
 ## What is sound vs. what is not
@@ -90,9 +104,11 @@ layer→framework bridge is validated too (`toFrameworkWitness'`), and the desig
 item the S3 probe surfaced — **Risk C9**, a canonical per-type layer encoding
 (`LangEncodable` + `PolyTimeComputableLang'`) — is built with its composition
 proved. The S3 migration is now **in progress**: the layer-side engine
-(product encoding, `comp`, verifier-composition `precompose`/`ofReduction`) is
-done, leaving **C5a** (`map_fst`) and **C10** (layer-native `inNP`) before
-`⪯p` itself is migrated. See the ROADMAP plan.
+(product encoding, `comp`, verifier-composition `precompose`/`ofReduction`, and
+the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, leaving **C5a**
+(`map_fst`, a frame-preserving calling convention) and the **framework decider
+bridge** `inNPLang → inNP` (`DecidesLang' → inTimePoly`, gated on the C6 bit
+test) before `⪯p` itself is migrated. See the ROADMAP plan.
 
 ## Development methodology: skeleton-first, risk-driven
 

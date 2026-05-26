@@ -50,6 +50,14 @@ def Op.eval : Op → State → State
       s.set dst (if s.get src1 = s.get src2 then [1] else [0])
   | .nonEmpty   dst src, s      =>
       s.set dst (if (s.get src).isEmpty then [0] else [1])
+  | .takeAt     dst src lenReg, s =>
+      s.set dst ((s.get src).take ((s.get lenReg).headD 0))
+  | .dropAt     dst src lenReg, s =>
+      s.set dst ((s.get src).drop ((s.get lenReg).headD 0))
+  | .concat     dst src1 src2, s =>
+      s.set dst (s.get src1 ++ s.get src2)
+  | .consLen    dst lenSrc src, s =>
+      s.set dst ((s.get lenSrc).length :: s.get src)
 
 /-- Cost of an operation. Every primitive is unit cost in the
 intended semantics. -/
@@ -120,6 +128,16 @@ theorem Cmd.cost_op (o : Op) (s : State) :
 
 theorem Cmd.cost_seq (c1 c2 : Cmd) (s : State) :
     (c1 ;; c2).cost s = 1 + c1.cost s + c2.cost (c1.eval s) := rfl
+
+theorem Cmd.cost_ifBit_true (t : Var) (cT cE : Cmd) (s : State) (h : s.get t = [1]) :
+    (Cmd.ifBit t cT cE).cost s = 1 + cT.cost s := by
+  show (Cmd.run (.ifBit t cT cE) s).2 = 1 + (Cmd.run cT s).2
+  simp [Cmd.run, h]
+
+theorem Cmd.cost_ifBit_false (t : Var) (cT cE : Cmd) (s : State) (h : s.get t ≠ [1]) :
+    (Cmd.ifBit t cT cE).cost s = 1 + cE.cost s := by
+  show (Cmd.run (.ifBit t cT cE) s).2 = 1 + (Cmd.run cE s).2
+  simp [Cmd.run, h]
 
 /-! ## Output projection
 
