@@ -83,6 +83,32 @@ def Cmd.UsesBelow : Cmd → Nat → Prop
   | .ifBit t cT cE,       k => t < k ∧ Cmd.UsesBelow cT k ∧ Cmd.UsesBelow cE k
   | .forBnd cnt bnd body, k => cnt < k ∧ bnd < k ∧ Cmd.UsesBelow body k
 
+/-- `UsesBelow` is monotone in the bound: touching only registers `< k` implies
+touching only registers `< k'` for any `k ≤ k'`. Used to widen two witnesses'
+register bounds to a common one when sequencing them. -/
+theorem Op.UsesBelow_mono {o : Op} {k k' : Nat} (h : Op.UsesBelow o k) (hk : k ≤ k') :
+    Op.UsesBelow o k' := by
+  cases o
+  case clear dst      => exact Nat.lt_of_lt_of_le h hk
+  case appendOne dst  => exact Nat.lt_of_lt_of_le h hk
+  case appendZero dst => exact Nat.lt_of_lt_of_le h hk
+  case copy dst src   => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  case tail dst src   => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  case head dst src   => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  case eqBit dst a b  =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, Nat.lt_of_lt_of_le h.2.2 hk⟩
+  case nonEmpty dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+
+theorem Cmd.UsesBelow_mono {k k' : Nat} (hk : k ≤ k') :
+    ∀ {c : Cmd}, Cmd.UsesBelow c k → Cmd.UsesBelow c k' := by
+  intro c
+  induction c with
+  | op o => intro h; exact Op.UsesBelow_mono h hk
+  | seq c1 c2 ih1 ih2 => intro h; exact ⟨ih1 h.1, ih2 h.2⟩
+  | ifBit t cT cE ihT ihE => intro h; exact ⟨Nat.lt_of_lt_of_le h.1 hk, ihT h.2.1, ihE h.2.2⟩
+  | forBnd cnt bnd body ihb =>
+      intro h; exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk, ihb h.2.2⟩
+
 /-! ## Frame: registers `≥ k` are preserved -/
 
 theorem Op.eval_get_frame (o : Op) (k : Nat) (h : Op.UsesBelow o k)

@@ -1,4 +1,5 @@
 import Complexity.Lang.Compile
+import Complexity.Lang.Frame
 import Complexity.Complexity.NP
 
 set_option autoImplicit false
@@ -449,6 +450,14 @@ structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
   cost_le : ∀ x : X,
     c.cost (LangEncodable.encodeState x) ≤ cost_bound (encodable.size x)
   output_size_le : ∀ x : X, encodable.size (f x) ≤ cost_bound (encodable.size x)
+  /-- **Register frame (C5a calling convention).** The program touches only
+  registers `< regBound`. Together with `Cmd.eval_get_frame` / `Cmd.eval_agree`
+  this lets the program be run as a subroutine inside a larger state: it
+  preserves registers `≥ regBound` (where a second pair component can be
+  stashed) and its low-register results depend only on the canonical input.
+  Single-register witnesses set `regBound = 1`. -/
+  regBound : Nat
+  usesBelow : Cmd.UsesBelow c regBound
 
 /-- **C9 headline: the layer composes.** Two canonical-form programs compose
 under `Cmd.seq`; the `normalizes` law follows **definitionally** from
@@ -508,6 +517,9 @@ def PolyTimeComputableLang'.comp
         ≤ 1 + Wh.cost_bound (encodable.size x)
           + Wg.cost_bound (Wh.cost_bound (encodable.size x))
     omega
+  regBound := max Wh.regBound Wg.regBound
+  usesBelow := ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wh.usesBelow,
+    Cmd.UsesBelow_mono (Nat.le_max_right _ _) Wg.usesBelow⟩
 
 /-- A canonical witness is in particular a free-encoding
 `PolyTimeComputableLang` witness (using the canonical encode/decode). This
@@ -624,6 +636,8 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
     show Op.cost (Op.copy 0 0) (LangEncodable.encodeState x) ≤ encodable.size x + 1
     simp [Op.cost]
   output_size_le := fun x => by show encodable.size x ≤ encodable.size x + 1; omega
+  regBound := 1
+  usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
 
 /-! ### Verifier composition (toward `red_inNP`)
 
