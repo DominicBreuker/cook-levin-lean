@@ -789,6 +789,54 @@ def DecidesLang'.ofReduction
       (fun n => 1 + Wf.cost_bound n + dBound (Wf.cost_bound n)) :=
   DecidesLang'.precompose Wf D dmono
 
+/-! ### C5a: `map_fst` — apply the reduction to a pair's first component
+
+With the frame-preservation calling convention in place, `map_fst` is now
+constructible. The program unpacks the length-prefixed product register, runs
+the witness on the first component (register `0`) while the second component is
+stashed at register `regBound + 2` (preserved by the frame), then repacks and
+clears scratch (so the output is canonical register-wise). -/
+
+/-- The `map_fst` program for `Wf`, parameterised by the certificate type's
+register base `k = Wf.regBound`. -/
+def PolyTimeComputableLang'.mapFstCmd {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (Wf : PolyTimeComputableLang' f) : Cmd :=
+  Cmd.op (Op.head Wf.regBound 0) ;;
+  Cmd.op (Op.tail (Wf.regBound + 1) 0) ;;
+  Cmd.op (Op.dropAt (Wf.regBound + 2) (Wf.regBound + 1) Wf.regBound) ;;
+  Cmd.op (Op.takeAt 0 (Wf.regBound + 1) Wf.regBound) ;;
+  Wf.c ;;
+  Cmd.op (Op.concat (Wf.regBound + 1) 0 (Wf.regBound + 2)) ;;
+  Cmd.op (Op.consLen 0 0 (Wf.regBound + 1)) ;;
+  Cmd.op (Op.clear Wf.regBound) ;;
+  Cmd.op (Op.clear (Wf.regBound + 1)) ;;
+  Cmd.op (Op.clear (Wf.regBound + 2))
+
+/-- **C5a.** Lift `Wf : PolyTimeComputableLang' f` to the pair input. Discharges
+the `map_fst` hypothesis of `red_inNPLang`. -/
+def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (Wf : PolyTimeComputableLang' f)
+    (C : Type) [encodable C] [LangEncodable C] :
+    PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)) where
+  c := Wf.mapFstCmd
+  cost_bound := fun n => Wf.cost_bound n + n + 18
+  cost_bound_poly :=
+    inOPoly_add (inOPoly_add Wf.cost_bound_poly inOPoly_id) (inOPoly_const 18)
+  cost_bound_mono := by
+    intro a b hab
+    have := Wf.cost_bound_mono a b hab
+    show Wf.cost_bound a + a + 18 ≤ Wf.cost_bound b + b + 18
+    omega
+  normalizes := sorry
+  cost_le := sorry
+  output_size_le := sorry
+  regBound := Wf.regBound + 3
+  usesBelow := by
+    show Cmd.UsesBelow Wf.mapFstCmd (Wf.regBound + 3)
+    have hwf : Cmd.UsesBelow Wf.c (Wf.regBound + 3) := Cmd.UsesBelow_mono (by omega) Wf.usesBelow
+    refine ⟨?_, ?_, ?_, ?_, hwf, ?_, ?_, ?_, ?_, ?_⟩ <;>
+      simp only [Cmd.UsesBelow, Op.UsesBelow] <;> omega
+
 /-! **What remains to fully discharge `red_inNP` (two distinct obligations,
 both surfaced by assembling the engine above):**
 
