@@ -1343,4 +1343,44 @@ theorem inNPLang_to_inNP {Y : Type} [encodable Y] [LangEncodable Y]
   letI := lC
   exact inNP_intro Q W.rel (W.verifier.toInTimePoly W.dBound_poly W.dBound_mono) W.rel_correct
 
+/-! ## Routing the framework's `⪯p` / `red_inNP` through the layer
+
+These two corollaries are the **engine** the S3 migration targets, now assembled
+end-to-end. A *canonical layer reduction* (a `PolyTimeComputableLang'` map plus
+correctness) yields:
+
+* a genuine **framework** poly-time many-one reduction `P ⪯p Q`
+  (`reducesPolyMO_of_lang`) — the TM-backed witness via `toFrameworkWitness'` +
+  `polyTimeComputable'_to_polyTimeComputable`; and
+* the full **`red_inNP` step at the layer** (`red_inNP_of_lang`): from a layer
+  reduction and `inNPLang Q`, conclude the *framework's* `inNP P`, by composing
+  `red_inNPLang` (layer reduction closure) with `inNPLang_to_inNP`.
+
+The only residual dependency is the assumed `Compile_sound` / `Compile_run_physical`
+(the compiler contract). Migrating `⪯p` itself (swapping `ReductionWitness`'s
+`polyTimeComputable` for the TM-backed `polyTimeComputable'`) is then a mechanical
+re-typing of the chain — gated only on building *honest* layer reductions for the
+front (the S1 Cook tableau), which is where S1/S2 stop typechecking. -/
+
+/-- A canonical layer reduction is a genuine framework poly-time reduction
+`P ⪯p Q`: its TM-backed witness comes from `toFrameworkWitness'`, downgraded to
+the size-only `polyTimeComputable` (kept verbatim by `ReductionWitness`). -/
+theorem reducesPolyMO_of_lang {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y]
+    {P : X → Prop} {Q : Y → Prop} {f : X → Y}
+    (Wf : PolyTimeComputableLang' f) (hcorrect : ∀ x, P x ↔ Q (f x)) :
+    P ⪯p Q :=
+  ⟨⟨f, polyTimeComputable'_to_polyTimeComputable Wf.toFrameworkWitness',
+    fun {x} => hcorrect x⟩⟩
+
+/-- **The layer-routed `red_inNP`.** From a canonical layer reduction `f`
+(`P x ↔ Q (f x)`) and `inNPLang Q`, conclude the framework's `inNP P`. Composes
+`red_inNPLang` (layer closure under reduction) with the framework bridge
+`inNPLang_to_inNP`. -/
+theorem red_inNP_of_lang {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y]
+    (P : X → Prop) (Q : Y → Prop) (f : X → Y) (Wf : PolyTimeComputableLang' f)
+    (hcorrect : ∀ x, P x ↔ Q (f x)) (hQ : inNPLang Q) : inNP P :=
+  inNPLang_to_inNP (red_inNPLang P Q f Wf hcorrect hQ)
+
 end Complexity.Lang
