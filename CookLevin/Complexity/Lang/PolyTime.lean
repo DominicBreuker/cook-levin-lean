@@ -80,7 +80,14 @@ perspective. They are stated here with `sorry` bodies; the proofs
 follow mechanically from `Compile_sound` once that lands. -/
 
 /-- **Bridge 1 (Part 3.4):** a layer-level `DecidesLang` witness
-extends to a framework-level `DecidesBy` witness. -/
+extends to a framework-level `DecidesBy` witness.
+
+NOTE (C6): the **canonical** analogue `DecidesLang'.toDecidesBy` (below) is now
+realized `sorry`-free modulo the `Compile` physical run contract — that is the
+bridge `inNPLang` actually uses. This general, free-encoding version stays
+`sorry` because an arbitrary `encodeIn` need not bound its register *count*, so
+`DecidesBy.encode_size` is not derivable here (the canonical single-register
+layout supplies that bound for free). -/
 theorem DecidesLang.toDecidesBy {X : Type} [encodable X]
     {P : X → Prop} {costBound : Nat → Nat}
     (D : DecidesLang P costBound)
@@ -1181,8 +1188,8 @@ theorem red_inNPLang {X Y : Type} [encodable X] [encodable Y]
         _ ≤ cert_bound (Wf.cost_bound (encodable.size x)) :=
             hcert_mono_R _ _ (Wf.output_size_le x)
 
-/-! **What remains to connect `red_inNPLang` to the framework's `red_inNP`**
-(one obligation; the C5a `map_fst` lift is now done):
+/-! **Connecting `red_inNPLang` to the framework's `red_inNP`** — both
+obligations are now discharged:
 
 1. **C5a — the polymorphic `map_fst`.** ✅ **Done** (`PolyTimeComputableLang'.map_fst`,
    `sorry`-free). From `Wf : PolyTimeComputableLang' f` it builds a
@@ -1194,16 +1201,146 @@ theorem red_inNPLang {X Y : Type} [encodable X] [encodable Y]
    while `enc c` is stashed at register `k+2`. It now discharges `red_inNPLang`'s
    former `map_fst` hypothesis internally.
 
-2. **The framework decider bridge `inNPLang Q → inNP Q`** (so a real `inNP Q`
-   can be *fed in* layer-natively, and a layer result exported). This needs
-   `DecidesLang' → inTimePoly`, i.e. `DecidesLang.toDecidesBy`. The obstruction
-   is concrete: `DecidesBy` reads its answer from the TM **state index**
-   (`cfg.state_idx = acceptState`), whereas `Compile` always halts in a single
-   `exit` state and writes the answer to the **tape** (register 0). Bridging
-   therefore needs a tape→state branch gadget (read register 0, halt in a
-   distinct accept/reject state) — the `compileIfBit` bit-test, Risk **C6** —
-   composed after `Compile c`; `Compile_sound` alone does not suffice. This is
-   why `DecidesLang.toDecidesBy` above remains a genuine `sorry` rather than a
-   `Compile_sound` corollary. -/
+2. **The framework decider bridge `inNPLang Q → inNP Q`.** ✅ **Done**
+   (`inNPLang_to_inNP`, below), modulo the `Compile` physical run contract
+   (`Compile_run_physical`). `DecidesBy` reads its answer from the TM **state
+   index** whereas `Compile` writes it to the **tape** (register `0`); the gap is
+   closed by the **C6** tape→state bit-test gadget (`Compile.bitTestTM` +
+   `Compile.bitDecider_run`, `Compile.lean`, `sorry`-free), composed after
+   `Compile D.c` via `composeFlatTM_run`. The canonical decider's encoding is
+   linear (`≤ 2·size + 3`), now admitted by the relaxed `DecidesBy.encode_size`.
+   The realized bridge is the **canonical** `DecidesLang'.toDecidesBy` /
+   `DecidesLang'.toInTimePoly` (which is exactly what `inNPLang`'s verifier
+   provides); the general, free-encoding `DecidesLang.toDecidesBy` above is left
+   `sorry` (it needs an extra bound on the encoder's register count, which the
+   canonical single-register layout supplies automatically). -/
+
+/-! ## C6 / framework bridge: `DecidesLang' → inTimePoly` and `inNPLang → inNP`
+
+The canonical decider `DecidesLang'` (register `0` = `[1]`/`[0]`) bridges to the
+framework's `DecidesBy` (answer = TM **state index**) via the C6 bit-test gadget
+(`Compile.bitDeciderTM` + `Compile.bitDecider_run`, `Compile.lean`): run
+`Compile D.c`, then read register `0`'s tape symbol (`2`/`1`) into a distinct
+accept/reject *state*. The encoding length `(encodeTape ∘ encodeState)` is linear
+(`≤ 2·size + 3`), which the relaxed `DecidesBy.encode_size` now admits. This
+closes the framework decider bridge for the **canonical** layer (which is what
+`inNPLang` uses), and assembles `inNPLang → inNP`. Sorry-free modulo the
+`Compile` physical run contract (`Compile_run_physical`). -/
+
+/-- The padded TM-step budget bound: the bit-decider's actual run cost
+(`overhead (size (encodeState x) + cost) + 2`) is dominated by the canonical
+poly budget `overhead (size x + size x + 1 + dBound (size x)) + 2`. -/
+private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X]
+    {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (x : X) :
+    Compile.overhead (State.size (LangEncodable.encodeState x)
+        + D.c.cost (LangEncodable.encodeState x)) + 2
+      ≤ Compile.overhead (encodable.size x + encodable.size x + 1 + dBound (encodable.size x)) + 2 := by
+  have h1 : State.size (LangEncodable.encodeState x) ≤ 2 * encodable.size x + 1 := by
+    rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
+  have h2 : D.c.cost (LangEncodable.encodeState x) ≤ dBound (encodable.size x) := D.cost_le x
+  have hle : State.size (LangEncodable.encodeState x) + D.c.cost (LangEncodable.encodeState x)
+      ≤ encodable.size x + encodable.size x + 1 + dBound (encodable.size x) := by omega
+  exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 2
+
+/-- **C6 bridge:** a canonical layer decider `DecidesLang' P dBound` yields a
+framework-level `DecidesBy P` whose time budget is polynomial in `dBound`. The
+machine is `Compile.bitDeciderTM D.c`; correctness comes from `D.decides`
+(register `0` is `[1]`/`[0]`) carried through `Compile.bitDecider_run`. -/
+def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
+    {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) :
+    DecidesBy P (fun n => Compile.overhead (n + n + 1 + dBound n) + 2) where
+  encode := fun x => Compile.encodeTape (LangEncodable.encodeState x)
+  encode_size := fun x => by
+    have hlen : (Compile.encodeTape (LangEncodable.encodeState x)).length
+        = (LangEncodable.enc x).length + 2 :=
+      Compile.encodeTape_singleton_length (LangEncodable.enc x)
+    have := LangEncodable.enc_size x
+    omega
+  M := Compile.bitDeciderTM D.c
+  M_valid := Compile.bitDeciderTM_valid D.c
+  M_tapes_pos := by rw [Compile.bitDeciderTM_tapes]; exact Nat.one_pos
+  acceptState := 1 + (Compile D.c).states
+  rejectState := 2 + (Compile D.c).states
+  halting_acc := (Compile.bitDeciderTM_halt_shift D.c 1).trans Compile.bitTestTM_halt_one
+  halting_rej := (Compile.bitDeciderTM_halt_shift D.c 2).trans Compile.bitTestTM_halt_two
+  accept_ne_reject := by omega
+  decides_pos := fun x hPx => by
+    have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [1] :=
+      eq_of_beq ((D.decides x).1.mp hPx)
+    obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
+      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 1 (Or.inr rfl) hb
+    refine ⟨cfg, ?_, hhalt, ?_⟩
+    · have hinit : initialTapes (Compile.bitDeciderTM D.c)
+            (Compile.encodeTape (LangEncodable.encodeState x))
+          = [Compile.encodeTape (LangEncodable.encodeState x)] := by
+        show Compile.encodeTape (LangEncodable.encodeState x)
+              :: List.replicate ((Compile.bitDeciderTM D.c).tapes - 1) [] = _
+        rw [Compile.bitDeciderTM_tapes]
+        rfl
+      obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
+      show runFlatTM (Compile.overhead (encodable.size x + encodable.size x + 1
+              + dBound (encodable.size x)) + 2) (Compile.bitDeciderTM D.c)
+            (initFlatConfig (Compile.bitDeciderTM D.c)
+              (initialTapes (Compile.bitDeciderTM D.c)
+                (Compile.encodeTape (LangEncodable.encodeState x)))) = some cfg
+      rw [hinit, ← hk]
+      exact runFlatTM_extend hrun hhalt
+    · show cfg.state_idx = 1 + (Compile D.c).states
+      rw [hstate]; norm_num
+  decides_neg := fun x hnPx => by
+    have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [0] :=
+      eq_of_beq ((D.decides x).2.mp hnPx)
+    obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
+      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 0 (Or.inl rfl) hb
+    refine ⟨cfg, ?_, hhalt, ?_⟩
+    · have hinit : initialTapes (Compile.bitDeciderTM D.c)
+            (Compile.encodeTape (LangEncodable.encodeState x))
+          = [Compile.encodeTape (LangEncodable.encodeState x)] := by
+        show Compile.encodeTape (LangEncodable.encodeState x)
+              :: List.replicate ((Compile.bitDeciderTM D.c).tapes - 1) [] = _
+        rw [Compile.bitDeciderTM_tapes]
+        rfl
+      obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
+      show runFlatTM (Compile.overhead (encodable.size x + encodable.size x + 1
+              + dBound (encodable.size x)) + 2) (Compile.bitDeciderTM D.c)
+            (initFlatConfig (Compile.bitDeciderTM D.c)
+              (initialTapes (Compile.bitDeciderTM D.c)
+                (Compile.encodeTape (LangEncodable.encodeState x)))) = some cfg
+      rw [hinit, ← hk]
+      exact runFlatTM_extend hrun hhalt
+    · show cfg.state_idx = 2 + (Compile D.c).states
+      rw [hstate]; norm_num
+
+/-- `DecidesLang' P dBound` (with `dBound` polynomial & monotonic) puts `P` in
+`inTimePoly`. The headline framework bridge for the canonical layer. -/
+theorem DecidesLang'.toInTimePoly {X : Type} [encodable X] [LangEncodable X]
+    {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound)
+    (hpoly : inOPoly dBound) (hmono : monotonic dBound) :
+    inTimePoly P := by
+  refine ⟨fun n => Compile.overhead (n + n + 1 + dBound n) + 2, ⟨D.toDecidesBy⟩, ?_, ?_⟩
+  · have hinner : inOPoly (fun n => n + n + 1 + dBound n) :=
+      inOPoly_add (inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 1)) hpoly
+    have hcomp : inOPoly (Compile.overhead ∘ fun n => n + n + 1 + dBound n) :=
+      inOPoly_comp hinner Compile.overhead_poly
+    exact inOPoly_add hcomp (inOPoly_const 2)
+  · intro a b hab
+    have h1 : dBound a ≤ dBound b := hmono a b hab
+    have hle : a + a + 1 + dBound a ≤ b + b + 1 + dBound b := by omega
+    show Compile.overhead (a + a + 1 + dBound a) + 2
+        ≤ Compile.overhead (b + b + 1 + dBound b) + 2
+    exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 2
+
+/-- **Framework decider bridge — headline.** `inNPLang Q → inNP Q`: a
+layer-native NP witness (canonical `DecidesLang'` verifier) yields a
+framework-level NP witness. The verifier crosses via `DecidesLang'.toInTimePoly`;
+the certificate relation is carried verbatim. With this, `red_inNPLang` can both
+consume a framework `inNP` (after the converse, when available) and export to
+`inNP`, routing the framework's `red_inNP` through the computable layer. -/
+theorem inNPLang_to_inNP {Y : Type} [encodable Y] [LangEncodable Y]
+    {Q : Y → Prop} (h : inNPLang Q) : inNP Q := by
+  obtain ⟨Cert, eC, lC, ⟨W⟩⟩ := h
+  letI := eC
+  letI := lC
+  exact inNP_intro Q W.rel (W.verifier.toInTimePoly W.dBound_poly W.dBound_mono) W.rel_correct
 
 end Complexity.Lang

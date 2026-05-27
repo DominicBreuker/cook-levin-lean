@@ -52,8 +52,14 @@ structure DecidesBy {X : Type} [encodable X]
     (P : X → Prop) (timeBound : Nat → Nat) where
   /-- How to lay the input out on tape 0. -/
   encode      : X → List Nat
-  /-- The encoded input length is linearly bounded by `encodable.size x`. -/
-  encode_size : ∀ x, (encode x).length ≤ encodable.size x + 1
+  /-- The encoded input length is linearly bounded by `encodable.size x`.
+  The slack (`2 · size + 3` rather than `size + 1`) is what makes the
+  interface satisfiable by the computable layer's `encodeTape ∘ encodeState`:
+  the canonical single-register tape is `shiftReg (enc x) ++ [0, endMark]`, of
+  length `(enc x).length + 2 ≤ 2 · size x + 3` (the `2 · size + 1` is the
+  `LangEncodable.enc_size` bound, closed under products). Still linear, so every
+  downstream consumer (`proj_left`, …) survives the loosening. -/
+  encode_size : ∀ x, (encode x).length ≤ 2 * encodable.size x + 3
   /-- The underlying flat Turing machine. -/
   M           : FlatTM
   /-- It is a well-formed TM. -/
@@ -134,14 +140,10 @@ private def DecidesBy.proj_left {X : Type} [encodable X]
     DecidesBy (fun xy : X × Unit => P xy.1) f where
   encode xy := D.encode xy.1
   encode_size xy := by
-    -- (D.encode xy.1).length ≤ encodable.size xy.1 + 1
-    -- and encodable.size xy = encodable.size xy.1 + 0 + 1 = encodable.size xy.1 + 1
-    -- so the bound `≤ encodable.size xy + 1` is trivially loosened by +1.
-    have h1 : (D.encode xy.1).length ≤ encodable.size xy.1 + 1 := D.encode_size xy.1
-    have hsize : encodable.size xy.1 ≤ encodable.size xy := by
-      show encodable.size xy.1 ≤ encodable.size xy.1 + encodable.size xy.2 + 1
-      exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_succ _)
-    exact Nat.le_trans h1 (Nat.add_le_add_right hsize 1)
+    have h1 : (D.encode xy.1).length ≤ 2 * encodable.size xy.1 + 3 := D.encode_size xy.1
+    have he : encodable.size xy = encodable.size xy.1 + encodable.size xy.2 + 1 := rfl
+    show (D.encode xy.1).length ≤ 2 * encodable.size xy + 3
+    rw [he]; omega
   M := D.M
   M_valid := D.M_valid
   M_tapes_pos := D.M_tapes_pos

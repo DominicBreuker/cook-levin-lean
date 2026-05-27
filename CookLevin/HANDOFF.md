@@ -1,12 +1,63 @@
-# Handoff: S3 migration — after C5a `map_fst`
+# Handoff: S3 migration — after the framework decider bridge (Task 3)
 
 This continues the **S3 migration** (route the framework's `red_inNP`/`⪯p`
-through the computable "Lang" layer). The previous step — **C5a `map_fst`** — is
-now **closed, `sorry`-free, and axiom-clean**. This document tells you exactly
-where things stand and what the next agent should pick up.
+through the computable "Lang" layer). **Task 3 — the framework decider bridge
+`inNPLang → inNP`** — is now **assembled** (`inNPLang_to_inNP`), sorry-free
+modulo one focused obligation (`Compile_run_physical`, Risk C2). The earlier step
+**C5a `map_fst`** is closed, `sorry`-free, and axiom-clean.
 
 Read for direction first: `README.md`, `CookLevin/ROADMAP.md` (*The plan from
-here*, step 2, and the Risk register rows **C5a/C10/C6**).
+here*, step 2, and the Risk register rows **C5a/C10/C6/C2**).
+
+---
+
+## Update: Task 3 (the decider bridge) is now done — what landed
+
+In `CookLevin/Complexity/Lang/Compile.lean`:
+
+- **C6 bit-test gadget `Compile.bitTestTM`** — a 3-state, single-tape, sig-4
+  `FlatTM` that reads tape register `0`'s first symbol (`2` = shifted `1` =
+  accept, `1` = shifted `0` = reject) and halts in a *distinct* state (`1`/`2`).
+  Validity + run lemmas (`bitTestTM_run_two`/`_one`) are **`sorry`-free**
+  (encoding-only, independent of `Compile_sound`). `encodeTape_eq_cons_of_get_zero`
+  is the only encoding fact it needs.
+- **`Compile.bitDeciderTM c := composeFlatTM (Compile c) bitTestTM (Compile.exit c)`**
+  + `bitDecider_run`: composes `Compile c` with the gadget via `composeFlatTM_run`,
+  yielding accept state `1 + (Compile c).states` / reject `2 + …`. Sorry-free
+  *modulo* the new `Compile_run_physical`.
+- **`Compile_run_physical`** (the one new `sorry`): the compiler's **physical run
+  contract** (head rewound to `0`, tape `= encodeTape (c.eval s)`, explicit halt
+  step + no-early-halt trajectory, within `overhead`). This is what
+  `composeFlatTM_run` needs and what `compileSeq_compose_physical` already
+  validates per-fragment — the same gap `Compile_sound` sits behind (Risk **C2**).
+
+In `CookLevin/Complexity/Lang/PolyTime.lean`:
+
+- **`DecidesLang'.toDecidesBy`** / **`DecidesLang'.toInTimePoly`** — the canonical
+  decider → `DecidesBy`/`inTimePoly` bridge, via `bitDeciderTM`.
+- **`inNPLang_to_inNP`** — the headline: a layer-native NP witness becomes a
+  framework `inNP` witness (verifier via `toInTimePoly`, cert relation verbatim).
+
+Framework move in `Complexity/NP.lean`: **`DecidesBy.encode_size` relaxed** from
+`≤ size+1` to `≤ 2·size+3` — the layer's `encodeTape ∘ encodeState` is linear but
+~2× (from `LangEncodable.enc_size`'s `2·size+1`); all consumers (`proj_left`,
+the `verdictTM`/`AllFalse`/`ExistsTrue` deciders) survive. Build green; axioms
+clean (only `propext`/`Quot.sound`/`Classical.choice`, plus `sorryAx` from
+`Compile_run_physical` on the bridge results).
+
+### What the next agent should pick up
+
+1. **Discharge `Compile_run_physical`** as part of the C1/C2 compiler engineering
+   (per-`Op` gadgets + `compileSeq_compose_physical` composition), which also
+   discharges `Compile_sound`. This makes the whole decider bridge unconditional.
+2. **Migrate `⪯p` to `polyTimeComputable'`** (ROADMAP step 2): the expensive core
+   where S1/S2 stop typechecking. `inNPLang_to_inNP` + `red_inNPLang` are the
+   engine for routing `red_inNP` through the layer.
+3. (Optional) a converse `inNP → inNPLang` is **not** generally possible (an
+   opaque `FlatTM` verifier yields no `Cmd`); feed problems in layer-natively
+   instead.
+
+The original Task-3 material below is retained for context.
 
 ---
 
