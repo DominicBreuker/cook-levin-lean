@@ -62,8 +62,15 @@ In `CookLevin/Complexity/Lang/PolyTime.lean`:
      there (via `eval_get_of_agree`/`eval_frame`/`cost_agree`).
    - `normalizes` threads the 10-op straight-line program register-by-register;
      `cost_le` reduces the cost to `18 + Wf.c.cost mapFst_pre` then bounds it.
-   - `map_fst` carries `set_option maxHeartbeats 500000 in` (genuinely large
-     straight-line proof; consistent with `ShiftTape.lean`'s 1.6M).
+   - **Perf note / lesson:** an early version of `normalizes` named the five
+     suffix intermediate states with a `set s6 := …; set s7 := …; …` chain of
+     mutually-referencing `let`-bindings. This made `isDefEq`/`kabstract` blow up
+     **exponentially** down the chain (~×8 per `set`: 80ms → 660ms → 5.2s → 40s)
+     and needed `maxHeartbeats 500000`. The fix: flatten the suffix with a single
+     `simp only [Cmd.eval_op, Op.eval]` (keeping only the opaque core `s5` as a
+     `set`-local), which drops elaboration to ~0.26s and builds at the **default**
+     heartbeat limit. Avoid nested `set` chains over `State.set`/`State.get`
+     terms.
 
 2. **`red_inNPLang` no longer takes a `map_fst` hypothesis** (≈ line 1145). It is
    supplied internally by `Wf.map_fst` (a local `let`). Still axiom-clean.

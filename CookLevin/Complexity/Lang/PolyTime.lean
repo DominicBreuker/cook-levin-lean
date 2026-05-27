@@ -938,7 +938,6 @@ theorem PolyTimeComputableLang'.mapFst_pre_agree {X Y : Type} [encodable X] [enc
     rw [LangEncodable.encodeState_get_pos x hrpos,
       LangEncodable.encodeState_get_pos ((x, c) : X × C) hrpos]
 
-set_option maxHeartbeats 500000 in
 /-- **C5a.** Lift `Wf : PolyTimeComputableLang' f` to the pair input. Discharges
 the `map_fst` hypothesis of `red_inNPLang`. -/
 def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
@@ -971,31 +970,22 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
       rw [hs5, Wf.eval_frame (Wf.mapFst_pre x c) (show Wf.regBound ≤ Wf.regBound + 2 by omega)]
       unfold PolyTimeComputableLang'.mapFst_pre
       rw [State.get_set_ne _ _ _ _ (show (Wf.regBound + 2 : Var) ≠ 0 by omega), State.get_set_eq]
-    have d6 : (Cmd.op (Op.concat (Wf.regBound + 1) 0 (Wf.regBound + 2))).eval s5
-        = s5.set (Wf.regBound + 1) (s5.get 0 ++ s5.get (Wf.regBound + 2)) := rfl
-    rw [d6]
-    set s6 := s5.set (Wf.regBound + 1) (s5.get 0 ++ s5.get (Wf.regBound + 2)) with hs6
-    have d7 : (Cmd.op (Op.consLen 0 0 (Wf.regBound + 1))).eval s6
-        = s6.set 0 ((s6.get 0).length :: s6.get (Wf.regBound + 1)) := rfl
-    rw [d7]
-    set s7 := s6.set 0 ((s6.get 0).length :: s6.get (Wf.regBound + 1)) with hs7
-    have d8 : (Cmd.op (Op.clear Wf.regBound)).eval s7 = s7.set Wf.regBound [] := rfl
-    rw [d8]
-    set s8 := s7.set Wf.regBound [] with hs8
-    have d9 : (Cmd.op (Op.clear (Wf.regBound + 1))).eval s8 = s8.set (Wf.regBound + 1) [] := rfl
-    rw [d9]
-    set s9 := s8.set (Wf.regBound + 1) [] with hs9
-    have d10 : (Cmd.op (Op.clear (Wf.regBound + 2))).eval s9 = s9.set (Wf.regBound + 2) [] := rfl
-    rw [d10]
+    -- Flatten the five suffix ops into one explicit nested `State.set` term over
+    -- `s5` in a single pass. (A `set s6..s9` chain of mutually-referencing
+    -- `let`-bindings makes defeq/`kabstract` blow up exponentially across the
+    -- chain; one flat `simp only` keeps `s5` opaque and the term symbolic.)
+    simp only [Cmd.eval_op, Op.eval]
+    -- Post-state, with `A := s5.set (k+1) (s5.get 0 ++ s5.get (k+2))`:
+    --   (((A.set 0 ((A.get 0).length :: A.get (k+1))).set k []).set (k+1) []).set (k+2) []
     by_cases hr0 : r = 0
     · subst hr0
       rw [show State.get (LangEncodable.encodeState ((f x, c) : Y × C)) 0
           = (LangEncodable.enc (f x)).length
               :: (LangEncodable.enc (f x) ++ LangEncodable.enc c) from rfl]
-      rw [State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 2 by omega), hs9,
-        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 1 by omega), hs8,
-        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound by omega), hs7,
-        State.get_set_eq, hs6,
+      rw [State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 2 by omega),
+        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 1 by omega),
+        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound by omega),
+        State.get_set_eq,
         State.get_set_eq,
         State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 1 by omega),
         hs5_0, hs5_k2]
@@ -1003,14 +993,14 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
       rw [LangEncodable.encodeState_get_pos ((f x, c) : Y × C) hrpos]
       by_cases hrk2 : r = Wf.regBound + 2
       · subst hrk2; rw [State.get_set_eq]
-      · rw [State.get_set_ne _ _ _ _ hrk2, hs9]
+      · rw [State.get_set_ne _ _ _ _ hrk2]
         by_cases hrk1 : r = Wf.regBound + 1
         · subst hrk1; rw [State.get_set_eq]
-        · rw [State.get_set_ne _ _ _ _ hrk1, hs8]
+        · rw [State.get_set_ne _ _ _ _ hrk1]
           by_cases hrk : r = Wf.regBound
           · subst hrk; rw [State.get_set_eq]
-          · rw [State.get_set_ne _ _ _ _ hrk, hs7,
-              State.get_set_ne _ _ _ _ hr0, hs6,
+          · rw [State.get_set_ne _ _ _ _ hrk,
+              State.get_set_ne _ _ _ _ hr0,
               State.get_set_ne _ _ _ _ hrk1]
             rcases Nat.lt_or_ge r Wf.regBound with hlt | hge
             · rw [hs5, Wf.eval_get_of_agree x hagree hlt,
