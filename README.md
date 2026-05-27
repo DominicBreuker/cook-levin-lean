@@ -18,8 +18,8 @@ for direction.
   `Classical.choice` / `Quot.sound`).
 - ~11K LOC on the proof path under `CookLevin/` (a further ~14K parked, not
   built).
-- ~31 `sorry`s (completion gaps, Risk register Group C); the 2 newest are in the
-  C5a `map_fst` (`normalizes`/`cost_le`) — *off* the `CookLevin` proof path.
+- ~29 `sorry`s (completion gaps, Risk register Group C); the C5a `map_fst`
+  `sorry`s (`normalizes`/`cost_le`) are now **closed**.
 - **≥ 4 `sorry`-free *vacuous* defs** on the proof path — the deepest gaps
   (Risks S1/S2/S3). They do **not** appear in the `sorry` count or under
   `#print axioms`, so the `sorry` count overstates how close the proof is.
@@ -40,11 +40,12 @@ for direction.
   (pointwise) `normalizes`** — the exact-equality form silently forbade scratch
   registers (so it was too weak for *every* real layer program, not just
   `map_fst`); composition was re-validated for scratch-using programs via the
-  frame lemmas. The length-as-value `Op`s and the **`map_fst` program** are built
-  (`regBound`/`usesBelow`/`cost_bound`/`output_size_le` proved; `normalizes` +
-  `cost_le` remain as 2 bounded `sorry`s). Remaining to route the framework's
-  `red_inNP` through the layer: close those 2 `sorry`s + discharge
-  `red_inNPLang`'s hypothesis, and the **framework decider bridge** `inNPLang →
+  frame lemmas. The length-as-value `Op`s and the **`map_fst` program** are now
+  **complete and `sorry`-free** (all fields, including `normalizes`/`cost_le`,
+  proved via the shared `mapFst_pre_eval`/`mapFst_pre_agree` lemmas), and
+  `map_fst` is wired into `red_inNPLang` internally (so the closure theorem takes
+  no `map_fst` hypothesis). The **one remaining** step to route the framework's
+  `red_inNP` through the layer is the **framework decider bridge** `inNPLang →
   inNP` (`DecidesLang' → inTimePoly`, needs a tape→state branch gadget, C6).
   Then `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
 
@@ -105,10 +106,11 @@ item the S3 probe surfaced — **Risk C9**, a canonical per-type layer encoding
 (`LangEncodable` + `PolyTimeComputableLang'`) — is built with its composition
 proved. The S3 migration is now **in progress**: the layer-side engine
 (product encoding, `comp`, verifier-composition `precompose`/`ofReduction`, and
-the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, leaving **C5a**
-(`map_fst`, a frame-preserving calling convention) and the **framework decider
-bridge** `inNPLang → inNP` (`DecidesLang' → inTimePoly`, gated on the C6 bit
-test) before `⪯p` itself is migrated. See the ROADMAP plan.
+the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, and **C5a**
+(`map_fst`, a frame-preserving calling convention) is now **complete and
+`sorry`-free**, leaving only the **framework decider bridge** `inNPLang → inNP`
+(`DecidesLang' → inTimePoly`, gated on the C6 bit test) before `⪯p` itself is
+migrated. See the ROADMAP plan.
 
 ## Development methodology: skeleton-first, risk-driven
 
