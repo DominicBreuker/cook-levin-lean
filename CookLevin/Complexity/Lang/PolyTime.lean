@@ -812,6 +812,132 @@ def PolyTimeComputableLang'.mapFstCmd {X Y : Type} [encodable X] [encodable Y]
   Cmd.op (Op.clear (Wf.regBound + 1)) ;;
   Cmd.op (Op.clear (Wf.regBound + 2))
 
+/-- The state of `mapFstCmd` after its four unpacking ops, before `Wf.c` runs:
+register `0` holds `enc x`, the cert component `enc c` is stashed at register
+`k+2`, and scratch `[(enc x).length]` / `enc x ++ enc c` sit at `k` / `k+1`. -/
+def PolyTimeComputableLang'.mapFst_pre {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (Wf : PolyTimeComputableLang' f)
+    {C : Type} [encodable C] [LangEncodable C] (x : X) (c : C) : State :=
+  ((((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+        [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+        (LangEncodable.enc x ++ LangEncodable.enc c)).set (Wf.regBound + 2)
+        (LangEncodable.enc c)).set 0 (LangEncodable.enc x)
+
+/-- Evaluating the four unpacking ops of `mapFstCmd` on `encodeState (x, c)`
+yields `mapFst_pre`. -/
+theorem PolyTimeComputableLang'.mapFst_pre_eval {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (Wf : PolyTimeComputableLang' f)
+    {C : Type} [encodable C] [LangEncodable C] (x : X) (c : C) :
+    (Cmd.op (Op.takeAt 0 (Wf.regBound + 1) Wf.regBound)).eval
+      ((Cmd.op (Op.dropAt (Wf.regBound + 2) (Wf.regBound + 1) Wf.regBound)).eval
+        ((Cmd.op (Op.tail (Wf.regBound + 1) 0)).eval
+          ((Cmd.op (Op.head Wf.regBound 0)).eval
+            (LangEncodable.encodeState ((x, c) : X × C)))))
+    = Wf.mapFst_pre x c := by
+  have hk_pos : 0 < Wf.regBound := Cmd.UsesBelow_pos Wf.usesBelow
+  have hk0 : Wf.regBound ≠ 0 := Nat.pos_iff_ne_zero.mp hk_pos
+  have hg0 : (LangEncodable.encodeState ((x, c) : X × C)).get 0
+      = (LangEncodable.enc x).length :: (LangEncodable.enc x ++ LangEncodable.enc c) := rfl
+  -- step 1: head k 0
+  have e1 : (Cmd.op (Op.head Wf.regBound 0)).eval (LangEncodable.encodeState ((x, c) : X × C))
+      = (LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+          [(LangEncodable.enc x).length] := by
+    show (LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+          (match (LangEncodable.encodeState ((x, c) : X × C)).get 0 with
+            | [] => [] | a :: _ => [a])
+        = (LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]
+    rw [hg0]
+  rw [e1]
+  -- step 2: tail (k+1) 0
+  have hg0' : ((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+        [(LangEncodable.enc x).length]).get 0
+      = (LangEncodable.enc x).length :: (LangEncodable.enc x ++ LangEncodable.enc c) := by
+    rw [State.get_set_ne _ _ _ _ (Ne.symm hk0)]; exact hg0
+  have e2 : (Cmd.op (Op.tail (Wf.regBound + 1) 0)).eval
+        ((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+          [(LangEncodable.enc x).length])
+      = ((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c) := by
+    show ((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          ((((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).get 0).tail)
+        = ((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)
+    rw [hg0', List.tail_cons]
+  rw [e2]
+  -- step 3: dropAt (k+2) (k+1) k
+  have e3 : (Cmd.op (Op.dropAt (Wf.regBound + 2) (Wf.regBound + 1) Wf.regBound)).eval
+        (((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c))
+      = ((((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)).set (Wf.regBound + 2)
+          (LangEncodable.enc c)) := by
+    have ga : (((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)).get (Wf.regBound + 1)
+        = LangEncodable.enc x ++ LangEncodable.enc c := State.get_set_eq _ _ _
+    have gb : (((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)).get Wf.regBound
+        = [(LangEncodable.enc x).length] := by
+      rw [State.get_set_ne _ _ _ _ (show Wf.regBound ≠ Wf.regBound + 1 by omega),
+        State.get_set_eq]
+    simp only [Cmd.eval_op, Op.eval]
+    rw [ga, gb, List.headD_cons, List.drop_left]
+  rw [e3]
+  -- step 4: takeAt 0 (k+1) k
+  have e4 : (Cmd.op (Op.takeAt 0 (Wf.regBound + 1) Wf.regBound)).eval
+        (((((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)).set (Wf.regBound + 2)
+          (LangEncodable.enc c)))
+      = Wf.mapFst_pre x c := by
+    have ga : (((((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)).set (Wf.regBound + 2)
+          (LangEncodable.enc c))).get (Wf.regBound + 1)
+        = LangEncodable.enc x ++ LangEncodable.enc c := by
+      rw [State.get_set_ne _ _ _ _ (show Wf.regBound + 1 ≠ Wf.regBound + 2 by omega),
+        State.get_set_eq]
+    have gb : (((((LangEncodable.encodeState ((x, c) : X × C)).set Wf.regBound
+            [(LangEncodable.enc x).length]).set (Wf.regBound + 1)
+          (LangEncodable.enc x ++ LangEncodable.enc c)).set (Wf.regBound + 2)
+          (LangEncodable.enc c))).get Wf.regBound
+        = [(LangEncodable.enc x).length] := by
+      rw [State.get_set_ne _ _ _ _ (show Wf.regBound ≠ Wf.regBound + 2 by omega),
+        State.get_set_ne _ _ _ _ (show Wf.regBound ≠ Wf.regBound + 1 by omega),
+        State.get_set_eq]
+    unfold PolyTimeComputableLang'.mapFst_pre
+    simp only [Cmd.eval_op, Op.eval]
+    rw [ga, gb, List.headD_cons, List.take_left]
+  rw [e4]
+
+/-- `mapFst_pre` agrees with the canonical input `encodeState x` on all registers
+`< Wf.regBound`, so `Wf.c` behaves on it as on the clean canonical input. -/
+theorem PolyTimeComputableLang'.mapFst_pre_agree {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (Wf : PolyTimeComputableLang' f)
+    {C : Type} [encodable C] [LangEncodable C] (x : X) (c : C) :
+    AgreeBelow Wf.regBound (LangEncodable.encodeState x) (Wf.mapFst_pre x c) := by
+  intro r hr
+  unfold PolyTimeComputableLang'.mapFst_pre
+  by_cases hr0 : r = 0
+  · subst hr0
+    rw [State.get_set_eq]
+    rfl
+  · have hrpos : 0 < r := Nat.pos_of_ne_zero hr0
+    rw [State.get_set_ne _ _ _ _ hr0,
+      State.get_set_ne _ _ _ _ (Nat.ne_of_lt (Nat.lt_succ_of_lt (Nat.lt_succ_of_lt hr))),
+      State.get_set_ne _ _ _ _ (Nat.ne_of_lt (Nat.lt_succ_of_lt hr)),
+      State.get_set_ne _ _ _ _ (Nat.ne_of_lt hr)]
+    rw [LangEncodable.encodeState_get_pos x hrpos,
+      LangEncodable.encodeState_get_pos ((x, c) : X × C) hrpos]
+
 /-- **C5a.** Lift `Wf : PolyTimeComputableLang' f` to the pair input. Discharges
 the `map_fst` hypothesis of `red_inNPLang`. -/
 def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
@@ -827,8 +953,83 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     have := Wf.cost_bound_mono a b hab
     show Wf.cost_bound a + a + 18 ≤ Wf.cost_bound b + b + 18
     omega
-  normalizes := sorry
-  cost_le := sorry
+  normalizes := by
+    intro xc r
+    obtain ⟨x, c⟩ := xc
+    have hk_pos : 0 < Wf.regBound := Cmd.UsesBelow_pos Wf.usesBelow
+    have hagree := Wf.mapFst_pre_agree x c
+    show State.get (Wf.mapFstCmd.eval (LangEncodable.encodeState ((x, c) : X × C))) r
+        = State.get (LangEncodable.encodeState ((f x, c) : Y × C)) r
+    unfold PolyTimeComputableLang'.mapFstCmd
+    rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Wf.mapFst_pre_eval x c,
+      Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+    set s5 := Wf.c.eval (Wf.mapFst_pre x c) with hs5
+    have hs5_0 : s5.get 0 = LangEncodable.enc (f x) := by
+      rw [hs5]; exact Wf.eval_get_of_agree x hagree hk_pos
+    have hs5_k2 : s5.get (Wf.regBound + 2) = LangEncodable.enc c := by
+      rw [hs5, Wf.eval_frame (Wf.mapFst_pre x c) (show Wf.regBound ≤ Wf.regBound + 2 by omega)]
+      unfold PolyTimeComputableLang'.mapFst_pre
+      rw [State.get_set_ne _ _ _ _ (show (Wf.regBound + 2 : Var) ≠ 0 by omega), State.get_set_eq]
+    -- Flatten the five suffix ops into one explicit nested `State.set` term over
+    -- `s5` in a single pass. (A `set s6..s9` chain of mutually-referencing
+    -- `let`-bindings makes defeq/`kabstract` blow up exponentially across the
+    -- chain; one flat `simp only` keeps `s5` opaque and the term symbolic.)
+    simp only [Cmd.eval_op, Op.eval]
+    -- Post-state, with `A := s5.set (k+1) (s5.get 0 ++ s5.get (k+2))`:
+    --   (((A.set 0 ((A.get 0).length :: A.get (k+1))).set k []).set (k+1) []).set (k+2) []
+    by_cases hr0 : r = 0
+    · subst hr0
+      rw [show State.get (LangEncodable.encodeState ((f x, c) : Y × C)) 0
+          = (LangEncodable.enc (f x)).length
+              :: (LangEncodable.enc (f x) ++ LangEncodable.enc c) from rfl]
+      rw [State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 2 by omega),
+        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 1 by omega),
+        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound by omega),
+        State.get_set_eq,
+        State.get_set_eq,
+        State.get_set_ne _ _ _ _ (show (0 : Nat) ≠ Wf.regBound + 1 by omega),
+        hs5_0, hs5_k2]
+    · have hrpos : 0 < r := Nat.pos_of_ne_zero hr0
+      rw [LangEncodable.encodeState_get_pos ((f x, c) : Y × C) hrpos]
+      by_cases hrk2 : r = Wf.regBound + 2
+      · subst hrk2; rw [State.get_set_eq]
+      · rw [State.get_set_ne _ _ _ _ hrk2]
+        by_cases hrk1 : r = Wf.regBound + 1
+        · subst hrk1; rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ hrk1]
+          by_cases hrk : r = Wf.regBound
+          · subst hrk; rw [State.get_set_eq]
+          · rw [State.get_set_ne _ _ _ _ hrk,
+              State.get_set_ne _ _ _ _ hr0,
+              State.get_set_ne _ _ _ _ hrk1]
+            rcases Nat.lt_or_ge r Wf.regBound with hlt | hge
+            · rw [hs5, Wf.eval_get_of_agree x hagree hlt,
+                LangEncodable.encodeState_get_pos (f x) hrpos]
+            · rw [hs5, Wf.eval_frame (Wf.mapFst_pre x c) hge]
+              unfold PolyTimeComputableLang'.mapFst_pre
+              rw [State.get_set_ne _ _ _ _ hr0,
+                State.get_set_ne _ _ _ _ hrk2,
+                State.get_set_ne _ _ _ _ hrk1,
+                State.get_set_ne _ _ _ _ hrk,
+                LangEncodable.encodeState_get_pos ((x, c) : X × C) hrpos]
+  cost_le := by
+    intro xc
+    obtain ⟨x, c⟩ := xc
+    have hk_pos : 0 < Wf.regBound := Cmd.UsesBelow_pos Wf.usesBelow
+    have hagree := Wf.mapFst_pre_agree x c
+    show Wf.mapFstCmd.cost (LangEncodable.encodeState ((x, c) : X × C))
+        ≤ Wf.cost_bound (encodable.size ((x, c) : X × C))
+          + encodable.size ((x, c) : X × C) + 18
+    unfold PolyTimeComputableLang'.mapFstCmd
+    simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+    rw [Wf.mapFst_pre_eval x c, ← Cmd.cost_agree Wf.c Wf.regBound Wf.usesBelow hagree]
+    have hcle : Wf.c.cost (LangEncodable.encodeState x) ≤ Wf.cost_bound (encodable.size x) :=
+      Wf.cost_le x
+    have hmono : Wf.cost_bound (encodable.size x)
+        ≤ Wf.cost_bound (encodable.size ((x, c) : X × C)) :=
+      Wf.cost_bound_mono _ _ (by
+        show encodable.size x ≤ encodable.size x + encodable.size c + 1; omega)
+    omega
   output_size_le := by
     intro xc
     obtain ⟨x, c⟩ := xc
@@ -857,13 +1058,13 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
 both surfaced by assembling the engine above):**
 
 1. **The `map_fst` program** `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))`
-   from `PolyTimeComputableLang' f` — now **built** (`mapFstCmd` + `map_fst`
-   above), enabled by the frame-preservation calling convention. The program,
-   `regBound`, `usesBelow`, `cost_bound`(poly/mono) and `output_size_le` are
-   proved; the two remaining `sorry`s — `normalizes` and `cost_le` — are bounded
-   state-threading through the 10-op straight-line program (each `get_set` step
-   discharging a `Var`-typed register disequality), no structural unknown. Once
-   closed, `red_inNPLang`'s `map_fst` hypothesis is dischargeable by `map_fst`.
+   from `PolyTimeComputableLang' f` — now **complete and `sorry`-free**
+   (`mapFstCmd` + `map_fst` above), enabled by the frame-preservation calling
+   convention. All fields, including `normalizes` and `cost_le`, are proved: the
+   straight-line program is threaded through via the shared `mapFst_pre` lemmas
+   (`mapFst_pre_eval` for the four unpacking ops, `mapFst_pre_agree` for the
+   frame/locality of `Wf.c`). `red_inNPLang`'s former `map_fst` hypothesis is now
+   discharged internally by `Wf.map_fst`.
 
 2. **A *canonical* verifier `DecidesLang'` for `Q`** — `inNP Q` only provides an
    abstract `inTimePoly` (a `FlatTM` decider), and a `Cmd` cannot be recovered
@@ -919,24 +1120,22 @@ def inNPLang {X : Type} [encodable X] [LangEncodable X] (P : X → Prop) : Prop 
     Nonempty (@InNPWitnessLang X Cert _ eC _ lC P)
 
 /-- **C10 headline: the layer-native NP class is closed under reduction.** Given
-a layer reduction `f : X → Y` (with `Wf : PolyTimeComputableLang' f` for the
-size/cert bookkeeping and the C5a `map_fst` lift available for every certificate
-type), and `Q ∈ inNPLang`, then `P ∈ inNPLang`. The verifier for `P` is built by
-`DecidesLang'.ofReduction` (run `map_fst` then `Q`'s verifier); the certificate
-relation transports exactly as in the framework's `red_inNP`.
+a layer reduction `f : X → Y` (with `Wf : PolyTimeComputableLang' f`) and
+`Q ∈ inNPLang`, then `P ∈ inNPLang`. The verifier for `P` is built by
+`DecidesLang'.ofReduction` (run the C5a `map_fst` lift of `f` then `Q`'s
+verifier); the certificate relation transports exactly as in the framework's
+`red_inNP`.
 
-The `map_fst` hypothesis is precisely the C5a obligation, here stated
-polymorphically in the certificate type `C` (which is existentially bound inside
-`hQ`, so it cannot be a fixed-type argument). When C5a lands as
-`PolyTimeComputableLang'.map_fst`, this hypothesis is discharged by applying it.
-This theorem is the layer analogue of `red_inNP`; bridging `inNPLang` to the
-framework's `inNP` is the remaining framework-side obligation (see below). -/
+The C5a `map_fst` lift — which must hold for the certificate type `C`
+(existentially bound inside `hQ`, so it cannot be a fixed-type argument) — is now
+supplied internally by `Wf.map_fst` (`sorry`-free), so this theorem takes no
+`map_fst` hypothesis. It is the layer analogue of `red_inNP`; bridging `inNPLang`
+to the framework's `inNP` is the remaining framework-side obligation (see
+below). -/
 theorem red_inNPLang {X Y : Type} [encodable X] [encodable Y]
     [LangEncodable X] [LangEncodable Y]
     (P : X → Prop) (Q : Y → Prop)
     (f : X → Y) (Wf : PolyTimeComputableLang' f)
-    (map_fst : ∀ (C : Type) [encodable C] [LangEncodable C],
-        PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)))
     (hf_correct : ∀ x, P x ↔ Q (f x))
     (hQ : inNPLang Q) :
     inNPLang P := by
@@ -944,6 +1143,9 @@ theorem red_inNPLang {X Y : Type} [encodable X] [encodable Y]
   letI := eC
   letI := lC
   obtain ⟨W⟩ := hW
+  let map_fst : ∀ (C : Type) [encodable C] [LangEncodable C],
+      PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)) :=
+    fun C _ _ => Wf.map_fst C
   refine ⟨Cert, eC, lC, ⟨?_⟩⟩
   refine {
     rel := fun x c => W.rel (f x) c
@@ -980,21 +1182,17 @@ theorem red_inNPLang {X Y : Type} [encodable X] [encodable Y]
             hcert_mono_R _ _ (Wf.output_size_le x)
 
 /-! **What remains to connect `red_inNPLang` to the framework's `red_inNP`**
-(both obligations now stated against concrete layer interfaces):
+(one obligation; the C5a `map_fst` lift is now done):
 
-1. **C5a — the polymorphic `map_fst`.** Discharge the `map_fst` hypothesis of
-   `red_inNPLang` by constructing, from `Wf : PolyTimeComputableLang' f`, a
+1. **C5a — the polymorphic `map_fst`.** ✅ **Done** (`PolyTimeComputableLang'.map_fst`,
+   `sorry`-free). From `Wf : PolyTimeComputableLang' f` it builds a
    `PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2))` for every
-   certificate type `C`. With the single-register length-prefixed product
-   encoding this is blocked twice over: (a) splitting/repacking the packed
-   register needs length-as-value `take`/`drop`/`concat`/`length` `Op`s the set
-   lacks (Risk **C5**), and (b) even with those, reusing `Wf.c` as a subroutine
-   on a sub-register needs a **frame-preservation guarantee** — `Wf.c`'s
-   `normalizes` law only constrains it on the *exact* single-register state
-   `[enc x]`, saying nothing about a state that also carries `enc c`. So the real
-   fix is a frame-preserving calling convention baked into the witness contract
-   (or a multi-register product encoding with the same discipline), not just new
-   `Op`s. Bounded but a contract-level design change.
+   certificate type `C`, using the length-as-value `take`/`drop`/`concat`/`consLen`
+   `Op`s (Risk **C5**) to split/repack the packed product register and the
+   frame-preservation calling convention (`regBound`/`usesBelow` +
+   `eval_frame`/`eval_get_of_agree`) to run `Wf.c` as a subroutine on register `0`
+   while `enc c` is stashed at register `k+2`. It now discharges `red_inNPLang`'s
+   former `map_fst` hypothesis internally.
 
 2. **The framework decider bridge `inNPLang Q → inNP Q`** (so a real `inNP Q`
    can be *fed in* layer-natively, and a layer result exported). This needs
