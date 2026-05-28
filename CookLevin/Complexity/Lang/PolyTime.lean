@@ -1406,6 +1406,21 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     exact ⟨⟨bk, b0⟩, ⟨bk1, b0⟩, ⟨bk2, bk1, bk⟩, ⟨b0, bk1, bk⟩, hwf,
       ⟨bk1, b0, bk2⟩, ⟨b0, b0, bk1⟩, bk, bk1, bk2⟩
 
+/-- **`map_snd` (the mirror of `map_fst`).** Lift `Wf : PolyTimeComputableLang' f`
+to apply `f` to a pair's *second* component:
+`PolyTimeComputableLang' (fun cx : C × X => (cx.1, f cx.2))`. Built **definitionally
+from the combinator algebra** — `swap ∘ map_fst f ∘ swap` — with no new proof
+obligations: `swap` reorders so the target component sits first, `map_fst` runs
+the witness there, and `swap` restores the order. Demonstrates that the
+pair-plumbing combinators (`swap`, `map_fst`, `comp`) compose into the layout
+adapters the chain reductions need. Sorry-free; axiom-clean. -/
+def PolyTimeComputableLang'.map_snd {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] {f : X → Y} (Wf : PolyTimeComputableLang' f)
+    (C : Type) [encodable C] [LangEncodable C] :
+    PolyTimeComputableLang' (fun cx : C × X => (cx.1, f cx.2)) :=
+  (PolyTimeComputableLang'.swap (X := Y) (Y := C)).comp
+    ((Wf.map_fst C).comp (PolyTimeComputableLang'.swap (X := C) (Y := X)))
+
 /-! **What remains to fully discharge `red_inNP` (two distinct obligations,
 both surfaced by assembling the engine above):**
 

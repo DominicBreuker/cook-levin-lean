@@ -119,10 +119,14 @@ the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, **C5a**
 reducing the bridge to the single `Compile` physical run contract
 (`Compile_run_physical`, Risk C2). The `⪯p'` migration types are in place with a
 growing library of concrete sorry-free, axiom-clean witnesses — `id`, the
-constant `constTrueBool`, and **`swap`** (pair `(x,y)↦(y,x)`); `swap` yields the
-first **general, any-predicate** layer reduction `reducesPolyMO'_swap`. Next:
-migrate `⪯p` itself (cheap sound-tail items first) and ripple the sound tail. See
-the ROADMAP plan.
+constant `constTrueBool`, **`swap`** (pair `(x,y)↦(y,x)`) and its mirror
+**`map_snd`**; `swap` yields the first **general, any-predicate** layer reduction
+`reducesPolyMO'_swap`. The **`forBnd` loop toolkit** (`Lang/Frame.lean`:
+`Cmd.eval_forBnd`, the invariant principle `Cmd.foldlState_range_induct`,
+`Cmd.foldlState_frame`) is now in place — the keystone for `map`-over-lists (which
+gates the sound-tail reductions) and the verifier bodies. Next: build `map` over
+lists, then migrate the `⪯p` chain (cheap sound-tail items first). See the ROADMAP
+plan.
 
 ## Development methodology: skeleton-first, risk-driven
 

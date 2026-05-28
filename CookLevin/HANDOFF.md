@@ -1,6 +1,6 @@
-# Handoff: S3 migration — `swap` witness + first general layer reduction
+# Handoff: S3 migration — `swap`/`map_snd` witnesses + `forBnd` loop toolkit
 
-## Update (latest pass): `PolyTimeComputableLang'.swap` — a general reduction
+## Update (latest pass): general reduction + loop-reasoning infrastructure
 
 This pass lands the **second concrete non-identity canonical-layer witness** and
 the **first fully general (any-predicate) reduction** routed through the layer:
@@ -28,13 +28,48 @@ the **first fully general (any-predicate) reduction** routed through the layer:
 data-shuffling counterpart of `map_fst`'s *subroutine-call* template). The sound
 tail's reductions rebuild records by permuting/copying fields; `swap` is the
 worked example of the no-opaque-sub-witness repack shape, and it validates the
-frame toolkit on a program that rewrites register `0` from scratch. The next
-honest chain reduction (`flatTCC_to_flatCC`) still needs `LangEncodable` instances
-for the record types and a `map`-over-list (a `forBnd` loop, C3) — those remain
-the gating work; `swap`/`map_fst`/`comp` are the combinators to assemble from.
+frame toolkit on a program that rewrites register `0` from scratch.
 
-Build green; full project `lake build` ✅. The two new public names verified with
-`#print axioms`.
+### Also landed this pass: `map_snd` + the `forBnd` loop-reasoning toolkit
+
+- **`PolyTimeComputableLang'.map_snd`** (`Lang/PolyTime.lean`, after `map_fst`) —
+  the mirror of `map_fst`: applies `f` to a pair's *second* component. Built
+  **definitionally from the combinator algebra** (`swap ∘ map_fst f ∘ swap`), no
+  new proof obligations. Axiom-clean. Shows the pair-plumbing combinators
+  (`swap`/`map_fst`/`comp`) compose into the layout adapters the chain needs.
+- **`forBnd` loop lemmas** (`Lang/Frame.lean`, new "Counted-loop reasoning"
+  section) — **the keystone infrastructure that was entirely missing**: before
+  this, *no* lemma let you reason about a `forBnd` loop except by unfolding its
+  raw `foldl` by hand. Now:
+  - `Cmd.foldlState` — the pure-state loop fold (cost dropped).
+  - `Cmd.eval_forBnd` — `(forBnd c b body).eval s = foldlState …` (the loop runs
+    once per cell of the bound register, counter = unary index).
+  - **`Cmd.foldlState_range_induct`** — the loop **invariant principle** (motive
+    holds at start + preserved per iteration ⇒ holds at the end). This is the
+    workhorse for every future loop-based program.
+  - `Cmd.foldlState_frame` — a loop keeps registers `≥ k` if its body/counter
+    stay `< k` (the output register survives). All sorry-free, axiom-clean.
+
+**This directly unblocks `map`-over-lists**, which gates the whole sound tail
+(`flatTCC_to_flatCC` etc. map a transform over their cards/clauses). The
+structural recipe (now that the loop tools exist): the generic list encoding
+`encListGen` concatenates `[len_i] ++ enc x_i`, so the **register length is the
+total symbol count, not the element count**. `forBnd`'s iteration count is the
+bound register's length, so iterate `forBnd` over the encoding register itself
+(length ≥ element count) with the body **guarded by an `ifBit` on "remaining is
+non-empty"**: peel one element (length-prefix → `takeAt`/`dropAt`), apply the
+sub-witness, append to the output, advance the "remaining" register; extra
+(past-the-end) iterations are no-ops. The `_range_induct` invariant then carries
+"output = map f (first i elements) ; remaining = drop i". This is the next
+concrete build; `flatTCC_to_flatCC` additionally needs `LangEncodable` instances
+for the record types and constant-field injection (`offset:=1`, `width:=3` — note
+`appendOne/Zero` only emit 0/1, so a literal `3` is built as the length of a
+3-cell scratch list via `consLen`).
+
+Build green; full project `lake build` ✅. All new public names verified
+axiom-clean with `#print axioms` (`swap` / `map_snd` / the loop lemmas show only
+`propext` (/ `Quot.sound`); the `reducesPolyMO'_swap` demo matches the existing
+`trueBool` profile: `sorryAx` from the assumed `Compile_sound` + `Classical.choice`).
 
 ---
 
