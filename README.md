@@ -18,8 +18,9 @@ for direction.
   `Classical.choice` / `Quot.sound`).
 - ~11K LOC on the proof path under `CookLevin/` (a further ~14K parked, not
   built).
-- ~29 `sorry`s (completion gaps, Risk register Group C); the C5a `map_fst`
-  `sorry`s (`normalizes`/`cost_le`) are now **closed**.
+- ~30 `sorry`s (completion gaps, Risk register Group C); the C5a `map_fst`
+  `sorry`s and the **C6 bit-test gadget** (`Compile.bitTestTM`) are now
+  **closed** `sorry`-free.
 - **≥ 4 `sorry`-free *vacuous* defs** on the proof path — the deepest gaps
   (Risks S1/S2/S3). They do **not** appear in the `sorry` count or under
   `#print axioms`, so the `sorry` count overstates how close the proof is.
@@ -44,10 +45,14 @@ for direction.
   **complete and `sorry`-free** (all fields, including `normalizes`/`cost_le`,
   proved via the shared `mapFst_pre_eval`/`mapFst_pre_agree` lemmas), and
   `map_fst` is wired into `red_inNPLang` internally (so the closure theorem takes
-  no `map_fst` hypothesis). The **one remaining** step to route the framework's
-  `red_inNP` through the layer is the **framework decider bridge** `inNPLang →
-  inNP` (`DecidesLang' → inTimePoly`, needs a tape→state branch gadget, C6).
-  Then `⪯p` is migrated and the sound tail rippled. See the ROADMAP plan.
+  no `map_fst` hypothesis). The **framework decider bridge** `inNPLang → inNP` is
+  now also **assembled** (`inNPLang_to_inNP`): the **C6** tape→state bit-test
+  gadget (`Compile.bitTestTM`, `sorry`-free) turns a canonical `DecidesLang'`
+  answer (tape register `0`) into a `DecidesBy` accept/reject *state* via
+  `composeFlatTM_run`, and `DecidesBy.encode_size` was relaxed to admit the
+  layer's linear encoding. It reduces to a single focused obligation — the
+  `Compile` physical run contract (`Compile_run_physical`, Risk C2). Then `⪯p` is
+  migrated and the sound tail rippled. See the ROADMAP plan.
 
 ## What is sound vs. what is not
 
@@ -106,11 +111,14 @@ item the S3 probe surfaced — **Risk C9**, a canonical per-type layer encoding
 (`LangEncodable` + `PolyTimeComputableLang'`) — is built with its composition
 proved. The S3 migration is now **in progress**: the layer-side engine
 (product encoding, `comp`, verifier-composition `precompose`/`ofReduction`, and
-the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, and **C5a**
-(`map_fst`, a frame-preserving calling convention) is now **complete and
-`sorry`-free**, leaving only the **framework decider bridge** `inNPLang → inNP`
-(`DecidesLang' → inTimePoly`, gated on the C6 bit test) before `⪯p` itself is
-migrated. See the ROADMAP plan.
+the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, **C5a**
+(`map_fst`, a frame-preserving calling convention) is **complete and
+`sorry`-free**, and the **framework decider bridge** `inNPLang → inNP`
+(`inNPLang_to_inNP`) is now **assembled** — the C6 tape→state bit-test gadget
+(`Compile.bitTestTM`) is built `sorry`-free and composed after `Compile c`,
+reducing the bridge to the single `Compile` physical run contract
+(`Compile_run_physical`, Risk C2). Next: migrate `⪯p` itself and ripple the
+sound tail. See the ROADMAP plan.
 
 ## Development methodology: skeleton-first, risk-driven
 

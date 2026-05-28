@@ -24,12 +24,15 @@ theorem `red_inNPLang` (the layer analogue of `red_inNP`, sorry-free and
 axiom-clean). Assembling that closure isolated two obligations as concrete
 interfaces; **C5a** (`map_fst`) is now **closed** (`sorry`-free, axiom-clean),
 and it is wired into `red_inNPLang` internally (so the closure theorem no longer
-takes a `map_fst` hypothesis). The **one remaining** obligation is the
-**framework decider bridge** `inNPLang → inNP` (formerly "C10 — layer-native
-`inNP`"; the layer-native *side* is done, so what remains is
-`DecidesLang' → inTimePoly`, gated on the **C6** tape→state bit-test gadget).
-After it, `⪯p` itself is migrated and the sound tail rippled. See *The plan from
-here*, step 2.
+takes a `map_fst` hypothesis). The **framework decider bridge**
+`inNPLang → inNP` (formerly "C10") is now also **assembled** (`inNPLang_to_inNP`,
+sorry-free modulo the `Compile` physical run contract): the **C6** tape→state
+bit-test gadget (`Compile.bitTestTM`, sorry-free) converts a canonical
+`DecidesLang'` answer (tape register `0`) into a `DecidesBy` accept/reject
+*state*, via `composeFlatTM_run`. The next obligation is the **`Compile` physical
+run contract** (`Compile_run_physical`, Risk C2 — the same gap `Compile_sound`
+sits behind), then migrating `⪯p` itself and rippling the sound tail. See *The
+plan from here*, step 2.
 
 ---
 
@@ -40,10 +43,10 @@ here*, step 2.
 | `lake build` | ✅ green |
 | Project axioms | **0** (only `propext` / `Classical.choice` / `Quot.sound`) |
 | Proof-path size | ~11K LOC under `CookLevin/` (a further ~14K parked, not built) |
-| `sorry`s | ~29 (Group C); the 2 `map_fst` `sorry`s (`normalizes`/`cost_le`) are now **closed** |
+| `sorry`s | ~30 (Group C); the C6 bit-test gadget (`Compile.bitTestTM` + run lemmas) is now **closed** `sorry`-free; the decider bridge reduces to the one `Compile_run_physical` (C2) obligation |
 | `sorry`-**free** vacuous defs on the proof path | ≥ 4 (Risks S1/S2 — the deepest gaps; invisible to `#print axioms`) |
 | Structural unknowns remaining | **none** — all probed; C9 (composition) built & proved; what's left is bounded engineering |
-| S3 migration | **in progress.** Layer engine done (C9 + product encoding + `precompose`/`ofReduction` + **`inNPLang`/`red_inNPLang`**, sorry-free & axiom-clean). **C5a `map_fst` complete** (`sorry`-free, axiom-clean) and wired into `red_inNPLang` (no longer a hypothesis). Remaining: the **framework decider bridge** `inNPLang → inNP` (= `DecidesLang' → inTimePoly`, gated on the **C6** tape→state bit-test), then migrate `⪯p` + sound-tail ripple. |
+| S3 migration | **in progress.** Layer engine done (C9 + product encoding + `precompose`/`ofReduction` + **`inNPLang`/`red_inNPLang`**, sorry-free & axiom-clean). **C5a `map_fst` complete** and wired into `red_inNPLang`. **Framework decider bridge `inNPLang → inNP` assembled** (`inNPLang_to_inNP` via canonical `DecidesLang'.toDecidesBy`/`toInTimePoly` + the **C6** bit-test gadget `Compile.bitTestTM`, sorry-free); `DecidesBy.encode_size` relaxed to the linear layer bound. Reduces to the one `Compile_run_physical` (C2) `sorry`. Remaining: migrate `⪯p` + sound-tail ripple. |
 | Headline | `CookLevin : NPcomplete SAT` typechecks, **conditional** on Group C **and** S1/S2/S3 |
 
 > **The `sorry` count is not the soundness metric.** The deepest unsoundness
@@ -206,16 +209,22 @@ Ordered by dependency. Each step is bounded engineering except where noted.
      fold into the `Compile_sound` gap). *Program* `mapFstCmd` + all fields proved;
      `normalizes`/`cost_le` thread the 10-op straight-line program through two
      shared lemmas (`mapFst_pre_eval`, `mapFst_pre_agree`).
-   - **Framework decider bridge `inNPLang → inNP`** (was "C10"): the layer-native
-     side is done; what remains is `DecidesLang' → inTimePoly`
-     (`DecidesLang.toDecidesBy`). *Obstruction now precise:* `DecidesBy` reads
-     its answer from the TM **state index** (`cfg.state_idx = acceptState`),
-     whereas `Compile` always halts in one `exit` state and writes the answer to
-     the **tape** (register 0). So the bridge needs a tape→state branch gadget
-     (read register 0, halt in a distinct accept/reject state) — the
-     `compileIfBit` bit-test, Risk **C6** — composed after `Compile c`;
-     `Compile_sound` alone does **not** suffice (this corrects the earlier note
-     that `toDecidesBy` is a `Compile_sound` corollary). A framework re-basing.
+   - **Framework decider bridge `inNPLang → inNP`** (was "C10"): ✅ **assembled**
+     (`inNPLang_to_inNP`, sorry-free modulo `Compile_run_physical`). The
+     obstruction — `DecidesBy` reads its answer from the TM **state index**, while
+     `Compile` writes it to the **tape** (register 0) — is closed by the **C6**
+     tape→state bit-test gadget `Compile.bitTestTM` (read register 0's symbol
+     `2`/`1` → distinct halting state), built `sorry`-free and composed after
+     `Compile D.c` via `composeFlatTM_run`. The realized bridge is canonical:
+     `DecidesLang'.toDecidesBy` → `DecidesLang'.toInTimePoly` → `inNPLang_to_inNP`.
+     Two supporting framework moves: (a) `DecidesBy.encode_size` **relaxed** from
+     `≤ size+1` to `≤ 2·size+3` (the layer's `encodeTape ∘ encodeState` is linear
+     but ~2×, from `LangEncodable.enc_size`; all consumers survive); (b) a single
+     focused **`Compile_run_physical`** `sorry` — the compiler's physical run
+     contract (head rewound to `0`, tape `= encodeTape (c.eval s)`, explicit halt
+     step + no-early-halt trajectory), which `composeFlatTM_run` needs and which
+     `compileSeq_compose_physical` already validates per-fragment. This is the
+     same engineering gap `Compile_sound` sits behind (Risk **C2**).
 
    Then the **soundness gate**: migrating `⪯p` itself, which forces the **sound
    tail** to each gain a `Cmd` — `flatTCC_to_flatCC` cheap (its
@@ -275,14 +284,14 @@ instances on every chain intermediate. Plan step 5.
 | # | Gap | Status |
 |---|-----|--------|
 | **C9** | **canonical layer encoding** (surfaced by the S3 probe). `PolyTimeComputableLang.encodeIn`/`decodeOut` are free functions, so layer composition could not be stated. | ✅ **Done.** `LangEncodable` (incl. `Nat`/`List Nat`/product instances) + `PolyTimeComputableLang'` (canonical normal form) + `comp` + verifier-composition `DecidesLang'.precompose`/`ofReduction`, all proved definitionally (`Lang/PolyTime.lean`, sorry-free). |
-| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s bridges, `NP.lean`'s `red_inNP`). | **Bridge + composition done** (`toFrameworkWitness'` sorry-free modulo `Compile_sound`; `comp`/`precompose`/`ofReduction` sorry-free). **Layer-native NP closure done** (`inNPLang`/`red_inNPLang`, sorry-free & axiom-clean). `red_inNP` itself reduced to **C5a** + the **C10 bridge** (below). |
+| **C4** | **layer → framework bridge** (`Lang/PolyTime.lean`'s bridges, `NP.lean`'s `red_inNP`). | **✅ Engine done** (modulo the `Compile` contract). `toFrameworkWitness'`, `comp`/`precompose`/`ofReduction`, the layer-native NP closure `inNPLang`/`red_inNPLang` (sorry-free & axiom-clean), **C5a `map_fst`**, and the **C10 decider bridge** `inNPLang_to_inNP`. Capstone corollaries `reducesPolyMO_of_lang` (layer reduction → framework `⪯p`) and `red_inNP_of_lang` (layer reduction + `inNPLang Q` → framework `inNP P`) route `red_inNP`/`⪯p` through the layer end-to-end. Remaining: build *honest* layer reductions for the chain (S1 tableau) + discharge the compiler contract. |
 | **C5a** | **`map_fst`** — `PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` from a witness for `f` ("apply `f` to a pair's first component"). | ✅ **Done** (`sorry`-free, axiom-clean; wired into `red_inNPLang` internally). (a) Frame-preservation calling convention: `Lang/Frame.lean` (`Cmd.UsesBelow` + `eval_get_frame`/`eval_agree`/`cost_agree`/`UsesBelow_mono`/`UsesBelow_pos`) + `regBound`/`usesBelow` on `PolyTimeComputableLang'` + `eval_frame`/`eval_get_of_agree`. (b) `normalizes` contract **relaxed to register-wise** (pointwise) — admits scratch; `comp`/`precompose` re-validated via the frame lemmas. (c) Length-as-value `Op`s `takeAt`/`dropAt`/`concat`/`consLen` (unit-cost; `compileOp` defaults fold into the `Compile_sound` gap). (d) The `map_fst` program (`mapFstCmd`) + **all fields proved**: `normalizes`/`cost_le` thread the 10-op program via shared lemmas `mapFst_pre_eval` (4 unpacking ops → `mapFst_pre`) and `mapFst_pre_agree` (frame/locality of `Wf.c`). |
-| **C10** | **layer-native `inNP`** + **framework decider bridge.** `inNP`/`inTimePoly` carry an abstract `FlatTM` decider, from which no `Cmd` can be recovered. | **Layer-native side ✅ done** (`inNPLang`/`red_inNPLang`, no `map_fst` hypothesis). **Bridge open:** `inNPLang → inNP` needs `DecidesLang' → inTimePoly` (`DecidesLang.toDecidesBy`). Obstruction: `DecidesBy` reads the answer from the TM **state index**; `Compile` writes it to the **tape** → needs the **C6** bit-test-to-state gadget after `Compile c` (not just `Compile_sound`). Framework re-basing. |
+| **C10** | **layer-native `inNP`** + **framework decider bridge.** `inNP`/`inTimePoly` carry an abstract `FlatTM` decider, from which no `Cmd` can be recovered. | **✅ Done** (modulo C2). Layer-native side `inNPLang`/`red_inNPLang`; bridge `inNPLang_to_inNP` via `DecidesLang'.toDecidesBy`/`toInTimePoly`. The C6 bit-test-to-state gadget (`Compile.bitTestTM` + `bitDecider_run`) is built sorry-free and composed after `Compile c` via `composeFlatTM_run`; `DecidesBy.encode_size` relaxed (`≤ 2·size+3`) to admit the linear layer encoding. Reduces to `Compile_run_physical` (C2). |
 | **C1** | **per-`Op` compilation** (`compileOp` + `compileOp_sound`). | ✅ **validated.** Remaining: physical `compileOp_sound` per op + length-decreasing ops (use `endMark` sentinel). Bounded eng (~1.5–2.5K LOC for all 8 ops). |
 | **C2** | **composition** (`compileSeq_sound`). | ✅ **validated** (`compileSeq_compose_physical`). Bounded eng. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + `_sound`). | ✅ **validated** (`loopTM` + `loopTM_run`, sorry-free). Remaining: guard + marker-overwrite decrement gadget, wire `compileForBnd`, instantiate `loopTM_run`. Bounded eng. |
 | **C5** | **DSL expressiveness** — `evalCnfCmd` / the Tseytin-as-`Cmd` map (plan step 2) want a guarded loop and a constant-comparison primitive. | Add primitives only when one materially shortens a verifier/reduction (each new `Op` = another soundness proof). |
-| **C6** | **`compileIfBit` tester** — structure done (`branchComposeFlatTM` + `joinTwoHalts`); the real bit-test + `compileIfBit_sound` remain. | Same flavour as C1. |
+| **C6** | **`compileIfBit` tester** — structure done (`branchComposeFlatTM` + `joinTwoHalts`); the real bit-test + `compileIfBit_sound` remain. | **Partly done.** The decider-bridge bit-test `Compile.bitTestTM` (read tape register `0`'s symbol → distinct accept/reject *state*) + run lemmas are built `sorry`-free and used by `inNPLang_to_inNP`. The general `compileTestBit t` (arbitrary register) + `compileIfBit_sound` are still stubs — same flavour as C1. |
 | **C7** | **verifier bodies** — `evalCnfCmd` (SAT), `cliqueRelCmd` (`Deciders/`). | DSL engineering; gated on C3+C5, dead until C4 makes the layer→`DecidesBy` bridge real. Plan step 3. |
 | **C8** | **real `NPhard_GenNP`** (`hasDeciderClassical`, `GenNP_is_hard.lean`). | Last proof-path `sorry`; the universal-source decider, single-tape via `Lang.DecidesLang` (subsumes S2). Needs C4. Plan step 4. |
 

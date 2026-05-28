@@ -3708,7 +3708,7 @@ theorem exists_first_true (bs : List Bool)
 def decider : DecidesBy (fun bs : List Bool => ∀ b ∈ bs, b = false)
     (fun n => n + 2) where
   encode := encode
-  encode_size := encode_size_le
+  encode_size := fun bs => Nat.le_trans (encode_size_le bs) (by omega)
   M := scanRightUntilTM 2 1
   M_valid := scanRightUntilTM_valid 2 1 (by decide)
   M_tapes_pos := by decide
@@ -3855,7 +3855,7 @@ open AllFalse (encode encode_length encode_size_le encode_get_lt_two
 def decider : DecidesBy (fun bs : List Bool => ∃ b ∈ bs, b = true)
     (fun n => n + 2) where
   encode := encode
-  encode_size := encode_size_le
+  encode_size := fun bs => Nat.le_trans (encode_size_le bs) (by omega)
   M := scanRightUntilTM 2 1
   M_valid := scanRightUntilTM_valid 2 1 (by decide)
   M_tapes_pos := by decide

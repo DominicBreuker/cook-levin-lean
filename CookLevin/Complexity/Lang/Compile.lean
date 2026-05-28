@@ -951,6 +951,23 @@ theorem Compile.decodeTape_encodeTape (s : State) (h : Compile.BitState s) :
       Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
       Compile.map_unshift_shift]
 
+/-- The first symbol of the encoded tape is `shiftReg`-ed register `0`. When
+register `0` holds a single bit `b` (the decider answer convention — `[1]` for
+accept, `[0]` for reject), the encoded tape begins with `b + 1`. This is the
+only fact the tape→state bit-test gadget needs about the encoding. -/
+theorem Compile.encodeTape_eq_cons_of_get_zero (s : State) (b : Nat)
+    (h : s.get 0 = [b]) :
+    ∃ tl, Compile.encodeTape s = (b + 1) :: tl := by
+  cases s with
+  | nil => simp [State.get] at h
+  | cons r0 rest =>
+      have hr0 : r0 = [b] := by simpa [State.get] using h
+      refine ⟨[0] ++ Compile.encodeRegs rest ++ [Compile.endMark], ?_⟩
+      show Compile.encodeRegs (r0 :: rest) ++ [Compile.endMark]
+          = (b + 1) :: ([0] ++ Compile.encodeRegs rest ++ [Compile.endMark])
+      rw [Compile.encodeRegs_cons, hr0]
+      simp [Compile.shiftReg]
+
 /-! ## Cost / overhead
 
 **Shape change vs. pre-decomposition skeleton.** The previous
@@ -1173,5 +1190,200 @@ theorem Compile_polyBound (c : Cmd)
         Compile.decodeTape cfg = c.eval s := by
   sorry  -- TODO(Part3.4): follow from Compile_sound + inOPoly_comp.
          -- tmBound n := Compile.overhead (n + costBound n).
+
+/-- The exit state is a valid state of the compiled machine. -/
+theorem Compile_exit_lt (c : Cmd) : Compile.exit c < (Compile c).states :=
+  (compileCmd c).exit_lt
+
+/-! ## C6 — the tape→state bit-test gadget (`DecidesLang' → DecidesBy` bridge)
+
+`Compile c` always halts in its single `exit` state with the answer written on
+the **tape** (register `0` = `[1]` accept / `[0]` reject). `DecidesBy` instead
+reads its answer from the **state index** (`acceptState` / `rejectState`). The
+gap is closed by composing `Compile c` with a tiny gadget that reads the tape's
+first symbol — `2` (shifted `1`, accept) or `1` (shifted `0`, reject), per the
+`encodeTape` format — and halts in a *distinct* state for each.
+
+This gadget and its run lemmas depend **only** on the encoding format, not on
+`Compile_sound` / the physical run contract, so they are isolable and
+`sorry`-free. -/
+
+/-- The bit-test gadget: a single-tape, 4-symbol, 3-state `FlatTM`. From the
+(non-halting) start state `0`, reading tape symbol `2` jumps to the halting
+state `1` (accept); reading `1` jumps to the halting state `2` (reject). It does
+not move the head or write. -/
+def Compile.bitTestTM : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 3
+  trans :=
+    [ { src_state := 0, src_tape_vals := [some 2], dst_state := 1,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] },
+      { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] } ]
+  start := 0
+  halt := [false, true, true]
+
+theorem Compile.bitTestTM_valid : validFlatTM Compile.bitTestTM := by
+  refine ⟨by decide, rfl, ?_⟩
+  intro entry hentry
+  have hmem : entry ∈
+      [ ({ src_state := 0, src_tape_vals := [some 2], dst_state := 1,
+           dst_write_vals := [none], move_dirs := [TMMove.Nmove] } : FlatTMTransEntry),
+        { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } ] := hentry
+  have hbound2 : flatTMOptionSymbolsBounded 4 [some 2] := by
+    intro x hx; simp only [List.mem_singleton] at hx; subst hx; decide
+  have hbound1 : flatTMOptionSymbolsBounded 4 [some 1] := by
+    intro x hx; simp only [List.mem_singleton] at hx; subst hx; decide
+  have hboundNone : flatTMOptionSymbolsBounded 4 [none] := by
+    intro x hx; simp only [List.mem_singleton] at hx; subst hx; trivial
+  rcases List.mem_cons.mp hmem with h | hmem
+  · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound2, hboundNone⟩
+  · rcases List.mem_cons.mp hmem with h | h
+    · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound1, hboundNone⟩
+    · simp at h
+
+theorem Compile.bitTestTM_tapes : Compile.bitTestTM.tapes = 1 := rfl
+
+theorem Compile.bitTestTM_sig : Compile.bitTestTM.sig = 4 := rfl
+
+theorem Compile.bitTestTM_start : Compile.bitTestTM.start = 0 := rfl
+
+/-- Reading symbol `2` (accept) from the start state halts the gadget in
+state `1` in one step. -/
+theorem Compile.bitTestTM_run_two (left rest : List Nat) :
+    runFlatTM 1 Compile.bitTestTM { state_idx := 0, tapes := [(left, 0, 2 :: rest)] }
+      = some { state_idx := 1, tapes := [(left, 0, 2 :: rest)] } := rfl
+
+/-- Reading symbol `1` (reject) from the start state halts the gadget in
+state `2` in one step. -/
+theorem Compile.bitTestTM_run_one (left rest : List Nat) :
+    runFlatTM 1 Compile.bitTestTM { state_idx := 0, tapes := [(left, 0, 1 :: rest)] }
+      = some { state_idx := 2, tapes := [(left, 0, 1 :: rest)] } := rfl
+
+/-- State `1` (accept) and state `2` (reject) are both halting states. -/
+theorem Compile.bitTestTM_halt_one : Compile.bitTestTM.halt.getD 1 false = true := rfl
+theorem Compile.bitTestTM_halt_two : Compile.bitTestTM.halt.getD 2 false = true := rfl
+
+/-! ## The physical run contract of `Compile` (Risk C2)
+
+`Compile_sound` (above) only states `decodeTape cfg = c.eval s`: it pins down
+neither the head position nor the exact tape, nor the halt step / no-early-halt
+trajectory. None of that is enough to *compose* `Compile c` with the bit-test
+gadget via `composeFlatTM_run`, which needs the explicit exit configuration and
+the trajectory (`compileSeq_compose_physical` documents exactly this gap).
+
+The lemma below states the compiler's intended **physical contract** (ROADMAP
+Risk C2): `Compile c` reaches its `exit` state at an explicit step `t`, with the
+head rewound to `0` and the tape exactly `encodeTape (c.eval s)`, never halting
+or hitting `exit` earlier, within the `overhead` budget. It is the top-level
+restatement of the per-fragment physical contract whose composition
+`compileSeq_compose_physical` already validates; discharging it is the remaining
+C1/C2 compiler-engineering obligation (the same gap `Compile_sound` sits behind),
+so it is left as a single, focused `sorry`. -/
+theorem Compile_run_physical (c : Cmd) (s : State) :
+    ∃ t : Nat,
+      runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
+          = some { state_idx := Compile.exit c,
+                   tapes := [([], 0, Compile.encodeTape (c.eval s))] } ∧
+      (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile c)
+              (initFlatConfig (Compile c) [Compile.encodeTape s]) = some ck →
+          ck.state_idx ≠ Compile.exit c ∧
+          haltingStateReached (Compile c) ck = false) ∧
+      t ≤ Compile.overhead (State.size s + c.cost s) := by
+  sorry  -- TODO(C2): the physical compiler contract; composes per-fragment
+         -- via `compileSeq_compose_physical`, gated on the per-`Op` gadgets.
+
+/-- The compiled decider machine: run `Compile c`, then the bit-test gadget. The
+gadget converts register `0`'s answer (on the tape) into a distinct halting
+*state*, as `DecidesBy` requires. -/
+def Compile.bitDeciderTM (c : Cmd) : FlatTM :=
+  composeFlatTM (Compile c) Compile.bitTestTM (Compile.exit c)
+
+theorem Compile.bitDeciderTM_valid (c : Cmd) : validFlatTM (Compile.bitDeciderTM c) :=
+  composeFlatTM_valid (Compile c) Compile.bitTestTM (Compile.exit c)
+    (Compile_valid c) Compile.bitTestTM_valid (Compile_exit_lt c)
+    (Compile_tapes c) Compile.bitTestTM_tapes
+
+theorem Compile.bitDeciderTM_tapes (c : Cmd) : (Compile.bitDeciderTM c).tapes = 1 := by
+  show (composeFlatTM (Compile c) Compile.bitTestTM (Compile.exit c)).tapes = 1
+  rw [composeFlatTM_tapes, Compile_tapes]
+
+/-- The canonical single-register tape `encodeTape [r]` has length `r.length + 2`
+(the shifted register, the `0` delimiter, and the `endMark`). Used to bound the
+`DecidesBy.encode_size` of the canonical decider bridge. -/
+theorem Compile.encodeTape_singleton_length (r : List Nat) :
+    (Compile.encodeTape [r]).length = r.length + 2 := by
+  simp [Compile.encodeTape, Compile.encodeRegs, Compile.shiftReg]
+
+/-- **C6 headline.** Running `bitDeciderTM c` on `encodeTape s` halts, within
+`overhead (size s + cost s) + 2` steps, in state `1 + (Compile c).states` when
+register `0` of `c.eval s` is `[1]` (accept) and `2 + (Compile c).states` when
+it is `[0]` (reject). Combines the physical run contract of `Compile c` with the
+`sorry`-free gadget run lemma, via `composeFlatTM_run`. -/
+theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
+    (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
+    ∃ cfg,
+      runFlatTM (Compile.overhead (State.size s + c.cost s) + 2) (Compile.bitDeciderTM c)
+          (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = some cfg ∧
+      haltingStateReached (Compile.bitDeciderTM c) cfg = true ∧
+      cfg.state_idx = (if b = 1 then 1 else 2) + (Compile c).states := by
+  obtain ⟨tl, htl⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
+  obtain ⟨t1, hrun1, htraj1, ht1⟩ := Compile_run_physical c s
+  -- Rewrite the physical exit tape via the encoding lemma.
+  rw [htl] at hrun1
+  -- The gadget's exit state for this bit.
+  set dst : Nat := if b = 1 then 1 else 2 with hdst
+  -- Gadget run + halt (split on the bit).
+  have hrun2 : runFlatTM 1 Compile.bitTestTM
+      { state_idx := Compile.bitTestTM.start, tapes := [([], 0, (b + 1) :: tl)] }
+      = some { state_idx := dst, tapes := [([], 0, (b + 1) :: tl)] } := by
+    rcases hbit with hb | hb <;> subst hb <;>
+      simp only [Compile.bitTestTM_start, hdst] <;> rfl
+  have hhalt2 : haltingStateReached Compile.bitTestTM
+      { state_idx := dst, tapes := [([], 0, (b + 1) :: tl)] } = true := by
+    rcases hbit with hb | hb <;> subst hb <;> rfl
+  -- The first tape symbol is bounded by the alphabet.
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, (b + 1) :: tl) = some v →
+      v < max (Compile c).sig Compile.bitTestTM.sig := by
+    intro v hv
+    have : v = b + 1 := by simpa [currentTapeSymbol] using hv.symm
+    subst this
+    rw [Compile_sig, Compile.bitTestTM_sig]
+    rcases hbit with hb | hb <;> subst hb <;> decide
+  have hstate0 : (initFlatConfig (Compile c) [Compile.encodeTape s]).state_idx
+      < (Compile c).states := (Compile_valid c).1
+  -- Compose.
+  have hcomp := composeFlatTM_run (M₁ := Compile c) (M₂ := Compile.bitTestTM)
+    (exit := Compile.exit c) (Compile_valid c) Compile.bitTestTM_valid
+    (Compile_exit_lt c)
+    (initFlatConfig (Compile c) [Compile.encodeTape s]) hstate0
+    [] 0 ((b + 1) :: tl) hsym hrun1 htraj1 hrun2 hhalt2
+  obtain ⟨hcrun, hchalt⟩ := hcomp
+  -- Pad the run up to the stated budget.
+  obtain ⟨k, hk⟩ := Nat.le.dest ht1
+  refine ⟨{ state_idx := dst + (Compile c).states, tapes := [([], 0, (b + 1) :: tl)] }, ?_, ?_, ?_⟩
+  · show runFlatTM (Compile.overhead (State.size s + c.cost s) + 2) (Compile.bitDeciderTM c)
+        (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = _
+    have hbudget : Compile.overhead (State.size s + c.cost s) + 2 = (t1 + 1 + 1) + k := by omega
+    rw [hbudget]
+    exact runFlatTM_extend (M := Compile.bitDeciderTM c) hcrun hchalt
+  · exact hchalt
+  · show dst + (Compile c).states = (if b = 1 then 1 else 2) + (Compile c).states
+    rw [hdst]
+
+/-- Halt bits of `bitDeciderTM` past `(Compile c).states` are exactly the
+gadget's: the composed halt vector is `replicate (Compile c).states false ++
+bitTestTM.halt`. Gives the two accept/reject states' `halting_*` obligations. -/
+theorem Compile.bitDeciderTM_halt_shift (c : Cmd) (i : Nat) :
+    (Compile.bitDeciderTM c).halt.getD (i + (Compile c).states) false
+      = Compile.bitTestTM.halt.getD i false := by
+  show (composedHalt (Compile c) Compile.bitTestTM).getD (i + (Compile c).states) false
+      = Compile.bitTestTM.halt.getD i false
+  rw [composedHalt, List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+      List.getElem?_append_right (by rw [List.length_replicate]; exact Nat.le_add_left _ _),
+      List.length_replicate, Nat.add_sub_cancel]
 
 end Complexity.Lang
