@@ -471,4 +471,49 @@ theorem Cmd.foldlState_frame (body : Cmd) (counter : Var) (n : Nat) (s : State)
     State.get_set_ne _ _ _ _ (Nat.ne_of_gt (Nat.lt_of_lt_of_le hcnt hr))]
   exact hM
 
+/-- The cost-carrying loop fold (the `forBnd` accumulator: state and running
+cost). Its state component is `foldlState`; its cost component is what
+`Cmd.cost_forBnd_le` bounds. -/
+private def costFold (body : Cmd) (counter : Var) :
+    State × Nat → Nat → State × Nat :=
+  fun acc i => (body.eval (acc.1.set counter (List.replicate i 1)),
+    acc.2 + body.cost (acc.1.set counter (List.replicate i 1)))
+
+/-- **Loop cost bound.** If a motive `M` is a valid loop invariant (`hM`) and it
+implies a *uniform* per-iteration body-cost bound `B` (`hC`), then the whole loop
+costs at most `1 + iters · B`. The cost counterpart of the invariant principle:
+the standard way to bound a loop-based program's running time (pair it with
+`Cmd.eval_forBnd` + `Cmd.foldlState_range_induct` sharing the same `M`). -/
+theorem Cmd.cost_forBnd_le (counter bound : Var) (body : Cmd) (s : State) (B : Nat)
+    (M : Nat → State → Prop) (h0 : M 0 s)
+    (hM : ∀ i st, i < (s.get bound).length → M i st →
+        M (i + 1) (body.eval (st.set counter (List.replicate i 1))))
+    (hC : ∀ i st, i < (s.get bound).length → M i st →
+        body.cost (st.set counter (List.replicate i 1)) ≤ B) :
+    (Cmd.forBnd counter bound body).cost s ≤ 1 + (s.get bound).length * B := by
+  have key : ∀ n, n ≤ (s.get bound).length →
+      M n ((List.range n).foldl (costFold body counter) (s, 0)).1
+        ∧ ((List.range n).foldl (costFold body counter) (s, 0)).2 ≤ n * B := by
+    intro n
+    induction n with
+    | zero => intro _; exact ⟨h0, by simp⟩
+    | succ n ih =>
+        intro hn
+        have hnlt : n < (s.get bound).length := hn
+        obtain ⟨hMn, hcn⟩ := ih (Nat.le_of_succ_le hn)
+        rw [List.range_succ, List.foldl_append]
+        simp only [List.foldl_cons, List.foldl_nil]
+        refine ⟨hM n _ hnlt hMn, ?_⟩
+        have hb := hC n _ hnlt hMn
+        show ((List.range n).foldl (costFold body counter) (s, 0)).2
+            + body.cost (((List.range n).foldl (costFold body counter) (s, 0)).1.set counter
+                (List.replicate n 1)) ≤ (n + 1) * B
+        rw [Nat.succ_mul]
+        omega
+  have hcost : (Cmd.forBnd counter bound body).cost s
+      = 1 + ((List.range (s.get bound).length).foldl (costFold body counter) (s, 0)).2 := rfl
+  rw [hcost]
+  have := (key (s.get bound).length (Nat.le_refl _)).2
+  omega
+
 end Complexity.Lang
