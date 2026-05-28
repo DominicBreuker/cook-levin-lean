@@ -1,10 +1,31 @@
-# Handoff: S3 migration — after the framework decider bridge (Task 3)
+# Handoff: S3 migration — `⪯p'` infrastructure landed (Task 4 partial)
 
 This continues the **S3 migration** (route the framework's `red_inNP`/`⪯p`
 through the computable "Lang" layer). **Task 3 — the framework decider bridge
-`inNPLang → inNP`** — is now **assembled** (`inNPLang_to_inNP`), sorry-free
-modulo one focused obligation (`Compile_run_physical`, Risk C2). The earlier step
+`inNPLang → inNP`** — is **assembled** (`inNPLang_to_inNP`), sorry-free modulo
+one focused obligation (`Compile_run_physical`, Risk C2). The earlier step
 **C5a `map_fst`** is closed, `sorry`-free, and axiom-clean.
+
+**This pass (Task 4 — `⪯p` migration prep)** lands the additive infrastructure
+for the next step: `polyTimeComputable'_id` and `polyTimeComputable'_comp_lang`
+(framework-level helpers built on the canonical layer), the new
+**`ReductionWitness'`/`⪯p'`** additive types with reflexivity, transitivity,
+and the bridges `⪯p' → ⪯p` and `PolyTimeComputableLang' f → P ⪯p' Q`. Also
+landed: extra `LangEncodable` instances (`Bool`, `Unit`, `List Bool`), the
+**generic `LangEncodable (List α)`** (length-prefixed encoding, lower priority
+than the `List Nat = id` shortcut), and `Compile_polyBound` closed from
+`Compile_sound`. The generic list instance is **the migration unlock**: it
+makes chain types like `cnf = List (List (Bool × Nat))` and
+`cnf × assgn` *derive their canonical encoding automatically* — the inputs
+the canonical `DecidesLang'`/`PolyTimeComputableLang'` need.
+
+Additionally, **a first concrete non-identity witness landed**:
+`PolyTimeComputableLang'.constTrueBool` for `fun (_ : Bool) => true` — a real
+two-`Op` straight-line program (`clear 0 ;; appendOne 0`) with every field
+of the canonical-layer witness (cost, normalizes, frame, usesBelow) proved
+sorry-free and axiom-clean (no `sorryAx`). It serves as the **template** for
+migrating chain reductions: copy the structure, swap in the chain's `Cmd`,
+adjust the cost/correctness proofs.
 
 Read for direction first: `README.md`, `CookLevin/ROADMAP.md` (*The plan from
 here*, step 2, and the Risk register rows **C5a/C10/C6/C2**).
@@ -50,9 +71,34 @@ clean (only `propext`/`Quot.sound`/`Classical.choice`, plus `sorryAx` from
 1. **Discharge `Compile_run_physical`** as part of the C1/C2 compiler engineering
    (per-`Op` gadgets + `compileSeq_compose_physical` composition), which also
    discharges `Compile_sound`. This makes the whole decider bridge unconditional.
+   (Note: `Compile_polyBound` is now derived from `Compile_sound`, so closing
+   `Compile_sound` also closes its corollary.)
 2. **Migrate `⪯p` to `polyTimeComputable'`** (ROADMAP step 2): the expensive core
    where S1/S2 stop typechecking. `inNPLang_to_inNP` + `red_inNPLang` are the
    engine for routing `red_inNP` through the layer.
+   - **Building blocks landed this pass:** `polyTimeComputable'_id`,
+     `polyTimeComputable'_comp_lang` (framework-level helpers via the canonical
+     layer), `ReductionWitness'` / `⪯p'` (additive TM-backed reduction types),
+     `reducesPolyMO'_to_reducesPolyMO` (`⪯p' → ⪯p`),
+     `reducesPolyMO'_reflexive`, `reducesPolyMO'_transitive_lang`,
+     `reducesPolyMO'_of_lang`. **Generic `LangEncodable (List α)`** + extra
+     instances (`Bool`, `Unit`, `List Bool`) — together they make chain types
+     like `cnf = List (List (Bool × Nat))` and `cnf × assgn` derive their
+     canonical encoding automatically. Sorry-free modulo `Compile_run_physical`.
+   - **Honest TM composition only via the canonical layer.** The framework
+     wrapper `polyTimeComputable'_comp_lang` requires the inputs as
+     `PolyTimeComputableLang'` (not opaque `polyTimeComputable'`). A purely
+     opaque composition is not constructible: the composite's `ComputesBy`
+     needs a TM, and a re-encoder between two free-encoding `FlatTM`s does
+     not exist in general. This is the structural reason every honest chain
+     reduction must be built at the canonical layer first, then bridged.
+   - **Strategy** for migrating one reduction in the chain: (a) build the
+     canonical-layer witness `PolyTimeComputableLang' f`; (b) lift it to
+     `P ⪯p' Q` via `reducesPolyMO'_of_lang`; (c) for now, downgrade with
+     `reducesPolyMO'_to_reducesPolyMO` to keep the live `⪯p` chain green
+     while the migration progresses incrementally. The first reductions to
+     attempt are the **cheap items in the sound tail** (`flatTCC_to_flatCC`),
+     not the front of the chain (S1/S2).
 3. (Optional) a converse `inNP → inNPLang` is **not** generally possible (an
    opaque `FlatTM` verifier yields no `Cmd`); feed problems in layer-natively
    instead.

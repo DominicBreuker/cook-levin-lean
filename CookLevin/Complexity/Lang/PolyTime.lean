@@ -631,7 +631,7 @@ private theorem length_le_listNatSize :
       simp only [List.foldl_cons, List.length_cons]
       omega
 
-instance : LangEncodable (List Nat) where
+instance (priority := high) instLangEncodableListNat : LangEncodable (List Nat) where
   enc := id
   dec := id
   dec_enc := fun _ => rfl
@@ -641,6 +641,169 @@ instance : LangEncodable (List Nat) where
       simpa using length_le_listNatSize 0 xs
     show xs.length ≤ 2 * encodable.size xs + 1
     omega
+
+/-- `Bool`: `true ↦ [1]`, `false ↦ [0]`. -/
+instance : LangEncodable Bool where
+  enc := fun b => if b then [1] else [0]
+  dec := fun s => decide (s.headD 0 = 1)
+  dec_enc := fun b => by cases b <;> rfl
+  enc_size := fun b => by
+    show (if b then [1] else [0]).length ≤ 2 * encodable.size b + 1
+    cases b <;> simp [encodable.size]
+
+/-- `Unit`: the empty register. -/
+instance : LangEncodable Unit where
+  enc := fun _ => []
+  dec := fun _ => ()
+  dec_enc := fun _ => rfl
+  enc_size := fun _ => by show 0 ≤ 2 * 0 + 1; omega
+
+/-- Helper: a `List Bool`'s length is at most its `encodable.size` (each
+element contributes `≥ 1` to the foldl). -/
+private theorem length_le_listBoolSize :
+    ∀ (acc : Nat) (xs : List Bool),
+      acc + xs.length ≤ xs.foldl (fun (a : Nat) (x : Bool) => a + encodable.size x + 1) acc
+  | _,   []      => by simp
+  | acc, x :: xs => by
+      have ih := length_le_listBoolSize (acc + encodable.size x + 1) xs
+      simp only [List.foldl_cons, List.length_cons]
+      omega
+
+/-! ### Generic list encoding
+
+The product encoding lifted to lists: each element is preceded by its
+`enc`-length, so the decoder can split at the right boundary. The encoding
+is a single register (`List Nat`) holding the concatenation
+`[(enc x₀).length] ++ enc x₀ ++ [(enc x₁).length] ++ enc x₁ ++ …`.
+
+This is the foundational tool for migrating chain types: any structure
+type can be encoded by routing through a tuple/list-of-tuples
+representation, since `List (X × Y)`, `List (List X)`, etc. all become
+canonically encodable from a single `LangEncodable X`. The existing
+`LangEncodable (List Nat) = id` shortcut keeps priority `high` so the
+layer's native register type continues to use the identity encoding. -/
+
+/-- Encode a list element-by-element with length prefixes. -/
+private def encListGen {α : Type} [encodable α] [LangEncodable α] (xs : List α) : List Nat :=
+  xs.foldr (fun x acc => (LangEncodable.enc x).length :: LangEncodable.enc x ++ acc) []
+
+private theorem encListGen_nil {α : Type} [encodable α] [LangEncodable α] :
+    encListGen ([] : List α) = [] := rfl
+
+private theorem encListGen_cons {α : Type} [encodable α] [LangEncodable α] (x : α) (xs : List α) :
+    encListGen (x :: xs)
+      = (LangEncodable.enc x).length :: LangEncodable.enc x ++ encListGen xs := rfl
+
+/-- Decode helper: a budget-bounded structural recursion. Each iteration
+reads the length prefix `m`, takes the next `m` symbols, and decodes them
+to one element. The budget is the input length, which strictly decreases. -/
+private def decListGenAux {α : Type} [encodable α] [LangEncodable α] :
+    Nat → List Nat → List α
+  | 0,         _           => []
+  | _ + 1,     []          => []
+  | budget + 1, m :: rest  =>
+      LangEncodable.dec (rest.take m) :: decListGenAux budget (rest.drop m)
+
+private def decListGen {α : Type} [encodable α] [LangEncodable α] (xs : List Nat) : List α :=
+  decListGenAux xs.length xs
+
+/-- The decoder reproduces the list when given enough budget. -/
+private theorem decListGenAux_encListGen {α : Type} [encodable α] [LangEncodable α]
+    (xs : List α) (N : Nat) (h : xs.length ≤ N) :
+    decListGenAux N (encListGen xs) = xs := by
+  induction xs generalizing N with
+  | nil =>
+      cases N <;> rfl
+  | cons x xs' ih =>
+      cases N with
+      | zero =>
+          -- impossible: xs'.length + 1 ≤ 0
+          exact absurd h (by simp)
+      | succ N =>
+          have hN' : xs'.length ≤ N := by
+            have : xs'.length + 1 ≤ N + 1 := h
+            omega
+          show decListGenAux (N + 1)
+              ((LangEncodable.enc x).length :: LangEncodable.enc x ++ encListGen xs')
+            = x :: xs'
+          show LangEncodable.dec
+                ((LangEncodable.enc x ++ encListGen xs').take (LangEncodable.enc x).length)
+              :: decListGenAux N
+                ((LangEncodable.enc x ++ encListGen xs').drop (LangEncodable.enc x).length)
+            = x :: xs'
+          rw [List.take_left, List.drop_left, LangEncodable.dec_enc, ih N hN']
+
+/-- Round-trip: the decoder inverts the encoder. -/
+private theorem decListGen_encListGen {α : Type} [encodable α] [LangEncodable α] (xs : List α) :
+    decListGen (encListGen xs) = xs := by
+  -- The budget `(encListGen xs).length` is `≥ xs.length`: each element
+  -- contributes at least one cell (the length prefix).
+  have hbudget : xs.length ≤ (encListGen xs).length := by
+    induction xs with
+    | nil      => rfl
+    | cons x xs ih =>
+        rw [encListGen_cons]
+        simp only [List.length_cons, List.length_append]
+        omega
+  exact decListGenAux_encListGen xs _ hbudget
+
+/-- Length bound: the encoding is at most `2 · size xs + 1`. Each element
+contributes `(enc x).length + 1 ≤ 2 · size x + 2` to the encoding, and
+`size xs ≥ sum (size x_i + 1) = sum (size x_i) + len xs`, so the total
+`2 · sum (size x_i) + 2 · len xs ≤ 2 · size xs ≤ 2 · size xs + 1`. -/
+private theorem encListGen_length_bound {α : Type} [encodable α] [LangEncodable α]
+    (xs : List α) : (encListGen xs).length ≤ 2 * encodable.size xs + 1 := by
+  -- General helper: ∀ acc xs,
+  --   2·acc + (encListGen xs).length ≤ 2·foldl(acc + size x + 1, acc, xs) + 1.
+  have hgen : ∀ (acc : Nat) (xs : List α),
+      2 * acc + (encListGen xs).length
+        ≤ 2 * xs.foldl (fun a x => a + encodable.size x + 1) acc + 1 := by
+    intro acc xs
+    induction xs generalizing acc with
+    | nil      => simp [encListGen_nil]
+    | cons x xs ih =>
+        have hx := LangEncodable.enc_size x
+        have ih' := ih (acc + encodable.size x + 1)
+        rw [encListGen_cons]
+        simp only [List.length_cons, List.length_append, List.foldl_cons]
+        omega
+  have h := hgen 0 xs
+  -- `encodable.size xs` unfolds to the same foldl with `acc = 0`.
+  change (encListGen xs).length ≤ 2 * xs.foldl (fun a x => a + encodable.size x + 1) 0 + 1
+  omega
+
+/-- **Generic `LangEncodable (List α)`** (lower priority than the concrete
+`LangEncodable (List Nat) = id`). Each element is preceded by its
+`enc`-length so the decoder can split at the right boundary. Together with
+the product instance, this gives `LangEncodable (List (X × Y))` and chains
+through to encode any nested-list-of-products structure. -/
+instance (priority := low) instLangEncodableList {α : Type}
+    [encodable α] [LangEncodable α] : LangEncodable (List α) where
+  enc := encListGen
+  dec := decListGen
+  dec_enc := decListGen_encListGen
+  enc_size := encListGen_length_bound
+
+/-- `List Bool`: map booleans to bits and store in one register. The size
+bound rides on `(bs.map …).length = bs.length` and `bs.length ≤ size bs`
+(each element contributes `≥ 1` to `size`). -/
+instance : LangEncodable (List Bool) where
+  enc := fun bs => bs.map (fun b => if b then 1 else 0)
+  dec := fun xs => xs.map (· == 1)
+  dec_enc := fun bs => by
+    induction bs with
+    | nil => rfl
+    | cons b bs ih =>
+      simp only [List.map_cons]
+      cases b <;> simp [ih]
+  enc_size := fun bs => by
+    have hlen : (bs.map (fun b => if b then 1 else 0)).length = bs.length :=
+      List.length_map _
+    have hsize : bs.length ≤ encodable.size bs := by
+      change bs.length ≤ bs.foldl (fun a x => a + encodable.size x + 1) 0
+      simpa using length_le_listBoolSize 0 bs
+    show (bs.map (fun b => if b then 1 else 0)).length ≤ 2 * encodable.size bs + 1
+    rw [hlen]; omega
 
 /-- **Product encoding** (the pairing needed by `red_inNP`, where the verifier
 consumes `(x, cert)`). A pair is one register holding a unary-ish length prefix
@@ -697,6 +860,63 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
     show Op.cost (Op.copy 0 0) (LangEncodable.encodeState x) ≤ encodable.size x + 1
     simp [Op.cost]
   output_size_le := fun x => by show encodable.size x ≤ encodable.size x + 1; omega
+  regBound := 1
+  usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
+
+/-! ### A non-trivial concrete witness — template for chain reductions
+
+The chain migration needs `PolyTimeComputableLang' f` for actual reductions.
+Below is a complete, sorry-free worked example: the constant function
+`fun (_ : Bool) => true`. The `Cmd` clears register 0 then appends `[1]`,
+producing the canonical encoding of `true` regardless of input. It exercises
+every field of `PolyTimeComputableLang'` (cost, normalizes, frame, usesBelow)
+on a real two-Op straight-line program — the smallest non-identity witness
+the canonical layer admits. The next agent migrating chain reductions can
+take it as the template. -/
+
+/-- `clear 0 ;; appendOne 0` — sets register 0 to `[1]` regardless of the
+incoming state. -/
+private def constTrueBoolCmd : Cmd :=
+  Cmd.op (Op.clear 0) ;; Cmd.op (Op.appendOne 0)
+
+/-- The canonical-layer witness for the constant function
+`(fun (_ : Bool) => true)`. A concrete sorry-free `PolyTimeComputableLang'`
+exercising every field (cost ≤ 3, frame on register 0, normalizes via
+direct computation). -/
+def PolyTimeComputableLang'.constTrueBool :
+    PolyTimeComputableLang' (fun (_ : Bool) => true) where
+  c := constTrueBoolCmd
+  cost_bound _ := 3
+  cost_bound_poly := inOPoly_const 3
+  cost_bound_mono := fun _ _ _ => Nat.le_refl _
+  normalizes := fun b r => by
+    -- Compute `(constTrueBoolCmd.eval (encodeState b)).get r` and match it to
+    -- `(encodeState true).get r = [1]` at r = 0, `[]` elsewhere.
+    have heval : constTrueBoolCmd.eval (LangEncodable.encodeState b)
+        = ([[1]] : State) := by
+      show ((Cmd.op (Op.clear 0)) ;; (Cmd.op (Op.appendOne 0))).eval
+            (LangEncodable.encodeState b) = ([[1]] : State)
+      rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+      -- (appendOne 0).eval ((clear 0).eval [enc b]) = [[] ++ [1]] = [[1]]
+      cases b <;> rfl
+    show (constTrueBoolCmd.eval (LangEncodable.encodeState b)).get r
+        = (LangEncodable.encodeState (true : Bool)).get r
+    rw [heval]
+    -- `encodeState (true : Bool) = [enc true] = [[1]]`, so both sides equal
+    -- `[[1]].get r`.
+    rfl
+  cost_le := fun b => by
+    -- cost = 1 + cost(clear 0) + cost(appendOne 0) = 3.
+    show constTrueBoolCmd.cost (LangEncodable.encodeState b) ≤ 3
+    show ((Cmd.op (Op.clear 0)) ;; (Cmd.op (Op.appendOne 0))).cost
+          (LangEncodable.encodeState b) ≤ 3
+    rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+    show 1 + Op.cost (Op.clear 0) _ + Op.cost (Op.appendOne 0) _ ≤ 3
+    simp [Op.cost]
+  output_size_le := fun _ => by
+    -- encodable.size true = 1 ≤ 3.
+    show encodable.size (true : Bool) ≤ 3
+    show 1 ≤ 3; omega
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
 
@@ -1382,5 +1602,135 @@ theorem red_inNP_of_lang {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) (f : X → Y) (Wf : PolyTimeComputableLang' f)
     (hcorrect : ∀ x, P x ↔ Q (f x)) (hQ : inNPLang Q) : inNP P :=
   inNPLang_to_inNP (red_inNPLang P Q f Wf hcorrect hQ)
+
+/-! ## Framework-level helpers for `polyTimeComputable'` (S3 migration prep)
+
+The framework-level `polyTimeComputable'` (the TM-backed witness predicate
+defined above) needs analogues of the `polyTimeComputable` lemmas used by
+`reducesPolyMO_reflexive` / `_transitive`. These helpers route through the
+canonical layer: `id` via `PolyTimeComputableLang'.id_witness`, composition via
+`PolyTimeComputableLang'.comp`, both pushed through the framework bridge
+`PolyTimeComputableLang'.toFrameworkWitness'`.
+
+Sorry-free modulo the assumed `Compile_sound` (the framework bridge's only
+dependency). These are the building blocks the eventual `⪯p` migration needs:
+swapping `ReductionWitness.reduction_poly` from `polyTimeComputable` to
+`polyTimeComputable'` makes `reducesPolyMO_reflexive` need `polyTimeComputable'
+id` and `reducesPolyMO_transitive` need `polyTimeComputable' (g ∘ f)` from
+witnesses for `f` and `g`. -/
+
+/-- **Identity is TM-backed poly-time computable.** Provided the type has a
+canonical layer encoding. -/
+theorem polyTimeComputable'_id {X : Type} [encodable X] [LangEncodable X] :
+    polyTimeComputable' (id : X → X) :=
+  PolyTimeComputableLang'.id_witness.toFrameworkWitness'
+
+/-- **TM-backed poly-time is closed under composition (canonical-layer route).**
+A composite reduction from canonical-layer witnesses yields a real
+`polyTimeComputable'` whose `ComputesBy` actually computes `g ∘ h`. A
+purely-opaque (framework-only) `polyTimeComputable'_comp` is **not** honestly
+constructible: the `ComputesBy` field needs a TM for the composite, but the
+inputs' `FlatTM`s have free encodings and there is no general re-encoder
+between them. The canonical layer's shared single-register encoding is
+exactly the device that lets `g ∘ h` compose by `Cmd.seq` — which is what
+this lemma uses (via `PolyTimeComputableLang'.comp`).
+
+For the `⪯p` migration: every honest reduction in the chain must be built at
+the canonical layer first, then bridged here. The size-only
+`reducesPolyMO_transitive` lemma in `NP.lean` still composes size bounds the
+old way; this lemma is its honest TM-backed counterpart. -/
+theorem polyTimeComputable'_comp_lang {X Y Z : Type}
+    [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang' g) (Wh : PolyTimeComputableLang' h) :
+    polyTimeComputable' (g ∘ h) :=
+  (Wg.comp Wh).toFrameworkWitness'
+
+/-! ## `ReductionWitness'` / `⪯p'` — additive TM-backed reduction type
+
+The next step in the S3 migration: swap `ReductionWitness.reduction_poly`'s
+`polyTimeComputable` for `polyTimeComputable'`. We introduce the upgraded type
+**additively** so the live `⪯p` chain keeps compiling. Bridges and structural
+closure (reflexive / transitive) follow directly from the
+`polyTimeComputable'` helpers above; the bridge `⪯p' → ⪯p` is immediate from
+`polyTimeComputable'_to_polyTimeComputable`.
+
+This block is sorry-free modulo the assumed `Compile_sound` (only consumed by
+`PolyTimeComputableLang'.toFrameworkWitness'`). -/
+
+/-- A **TM-backed reduction witness**: the reduction is `polyTimeComputable'`
+(carries a real `FlatTM` computing it), not merely size-bounded. -/
+structure ReductionWitness' {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) where
+  reduction : X → Y
+  reduction_poly : polyTimeComputable' reduction
+  reduction_correct : ∀ ⦃x⦄, P x ↔ Q (reduction x)
+
+/-- The upgraded `⪯p`: a TM-backed reduction. -/
+abbrev reducesPolyMO' {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) : Prop :=
+  Nonempty (ReductionWitness' P Q)
+
+@[inherit_doc] infix:50 " ⪯p' " => reducesPolyMO'
+
+/-- `⪯p'` is a strengthening of `⪯p`: a TM-backed reduction is in
+particular a size-only reduction. The framework's reduction chain (every
+`⪯p` lemma in `NP.lean`) survives the migration verbatim through this
+bridge. -/
+theorem reducesPolyMO'_to_reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
+    {P : X → Prop} {Q : Y → Prop} : P ⪯p' Q → P ⪯p Q := by
+  rintro ⟨⟨f, hf_poly, hf_correct⟩⟩
+  exact ⟨⟨f, polyTimeComputable'_to_polyTimeComputable hf_poly, hf_correct⟩⟩
+
+/-- Reflexivity of `⪯p'` (needs `[LangEncodable X]` to construct the layer
+identity witness). -/
+theorem reducesPolyMO'_reflexive (X : Type) [encodable X] [LangEncodable X]
+    (P : X → Prop) : P ⪯p' P :=
+  ⟨⟨id, polyTimeComputable'_id, fun _ => Iff.rfl⟩⟩
+
+/-- Transitivity of `⪯p'`. The general form requires the intermediate type to
+have a `LangEncodable` instance — without it the composite TM cannot be built
+honestly (the framework-only `polyTimeComputable'_comp` carries the size half
+but not the TM-backed half). -/
+theorem reducesPolyMO'_transitive_lang {X Y Z : Type}
+    [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    (P : X → Prop) (Q : Y → Prop) (R : Z → Prop)
+    {Wf : X → Y} {Wg : Y → Z}
+    (hWf : PolyTimeComputableLang' Wf) (hWg : PolyTimeComputableLang' Wg)
+    (hf_correct : ∀ {x}, P x ↔ Q (Wf x))
+    (hg_correct : ∀ {y}, Q y ↔ R (Wg y)) :
+    P ⪯p' R :=
+  ⟨⟨Wg ∘ Wf, polyTimeComputable'_comp_lang hWg hWf,
+    fun {x} => Iff.trans (hf_correct (x := x)) (hg_correct (y := Wf x))⟩⟩
+
+/-- A canonical layer reduction lifts to a TM-backed `⪯p'` reduction. -/
+theorem reducesPolyMO'_of_lang {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y]
+    {P : X → Prop} {Q : Y → Prop} {f : X → Y}
+    (Wf : PolyTimeComputableLang' f) (hcorrect : ∀ x, P x ↔ Q (f x)) :
+    P ⪯p' Q :=
+  ⟨⟨f, Wf.toFrameworkWitness', fun {x} => hcorrect x⟩⟩
+
+/-! ### End-to-end demo: the constant-true Bool reduction through the pipeline
+
+A concrete sorry-free path from `PolyTimeComputableLang'.constTrueBool` to a
+framework `⪯p` / `⪯p'`. The constant-true function only preserves
+correctness for predicates that are themselves constant on `Bool` (since
+`f x = true` for both inputs collapses any non-constant predicate). The
+canonical such example is `(fun _ => True)`; the witness shows the pipeline
+goes through end-to-end after the new infrastructure. -/
+
+/-- The constant `True`-on-Bool predicate `⪯p'`-reduces to itself via the
+constant-true Bool function. -/
+theorem reducesPolyMO'_trueBool :
+    (fun (_ : Bool) => True) ⪯p' (fun (_ : Bool) => True) :=
+  reducesPolyMO'_of_lang PolyTimeComputableLang'.constTrueBool (fun _ => Iff.rfl)
+
+/-- Downgrade to size-only `⪯p`. -/
+theorem reducesPolyMO_trueBool :
+    (fun (_ : Bool) => True) ⪯p (fun (_ : Bool) => True) :=
+  reducesPolyMO'_to_reducesPolyMO reducesPolyMO'_trueBool
 
 end Complexity.Lang

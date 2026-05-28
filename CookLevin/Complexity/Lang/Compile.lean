@@ -1177,7 +1177,9 @@ theorem Compile_sound (c : Cmd) (s : State) :
          -- corresponding constructor's case in `Cmd.run`.
 
 /-- Corollary: a `Cmd` with polynomial cost compiles to a TM with
-polynomial step bound. -/
+polynomial step bound. Follows from `Compile_sound` by padding the
+per-state budget `overhead (size + cost)` up to the polynomial
+`overhead (size + costBound size)`. -/
 theorem Compile_polyBound (c : Cmd)
     (costBound : Nat → Nat) (h_poly : inOPoly costBound)
     (h_mono : monotonic costBound)
@@ -1188,8 +1190,27 @@ theorem Compile_polyBound (c : Cmd)
             (initFlatConfig (Compile c) [Compile.encodeTape s]) = some cfg ∧
         haltingStateReached (Compile c) cfg = true ∧
         Compile.decodeTape cfg = c.eval s := by
-  sorry  -- TODO(Part3.4): follow from Compile_sound + inOPoly_comp.
-         -- tmBound n := Compile.overhead (n + costBound n).
+  refine ⟨fun n => Compile.overhead (n + costBound n), ?_, ?_, ?_⟩
+  · -- `inOPoly`: composition of `(· + costBound ·)` with `overhead`.
+    have hinner : inOPoly (fun n => n + costBound n) := inOPoly_add inOPoly_id h_poly
+    show inOPoly (Compile.overhead ∘ fun n => n + costBound n)
+    exact inOPoly_comp hinner Compile.overhead_poly
+  · -- `monotonic`: composition.
+    intro a b hab
+    have h1 : costBound a ≤ costBound b := h_mono a b hab
+    exact Compile.overhead_mono _ _ (by omega)
+  · -- For each `s`, pad the `Compile_sound` budget up to the bound.
+    intro s
+    obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound c s
+    refine ⟨cfg, ?_, hhalt, hdec⟩
+    have hle : Compile.overhead (State.size s + c.cost s)
+        ≤ Compile.overhead (State.size s + costBound (State.size s)) :=
+      Compile.overhead_mono _ _ (by have := h_bound s; omega)
+    obtain ⟨k, hk⟩ := Nat.le.dest hle
+    show runFlatTM (Compile.overhead (State.size s + costBound (State.size s)))
+        (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s]) = some cfg
+    rw [← hk]
+    exact runFlatTM_extend hrun hhalt
 
 /-- The exit state is a valid state of the compiled machine. -/
 theorem Compile_exit_lt (c : Cmd) : Compile.exit c < (Compile c).states :=
