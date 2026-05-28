@@ -8,11 +8,16 @@ one focused obligation (`Compile_run_physical`, Risk C2). The earlier step
 
 **This pass (Task 4 — `⪯p` migration prep)** lands the additive infrastructure
 for the next step: `polyTimeComputable'_id` and `polyTimeComputable'_comp_lang`
-(framework-level helpers built on the canonical layer), and the new
+(framework-level helpers built on the canonical layer), the new
 **`ReductionWitness'`/`⪯p'`** additive types with reflexivity, transitivity,
 and the bridges `⪯p' → ⪯p` and `PolyTimeComputableLang' f → P ⪯p' Q`. Also
-landed: extra `LangEncodable` instances (`Bool`, `Unit`, `List Bool`), and
-`Compile_polyBound` closed from `Compile_sound`.
+landed: extra `LangEncodable` instances (`Bool`, `Unit`, `List Bool`), the
+**generic `LangEncodable (List α)`** (length-prefixed encoding, lower priority
+than the `List Nat = id` shortcut), and `Compile_polyBound` closed from
+`Compile_sound`. The generic list instance is **the migration unlock**: it
+makes chain types like `cnf = List (List (Bool × Nat))` and
+`cnf × assgn` *derive their canonical encoding automatically* — the inputs
+the canonical `DecidesLang'`/`PolyTimeComputableLang'` need.
 
 Read for direction first: `README.md`, `CookLevin/ROADMAP.md` (*The plan from
 here*, step 2, and the Risk register rows **C5a/C10/C6/C2**).
@@ -68,7 +73,10 @@ clean (only `propext`/`Quot.sound`/`Classical.choice`, plus `sorryAx` from
      layer), `ReductionWitness'` / `⪯p'` (additive TM-backed reduction types),
      `reducesPolyMO'_to_reducesPolyMO` (`⪯p' → ⪯p`),
      `reducesPolyMO'_reflexive`, `reducesPolyMO'_transitive_lang`,
-     `reducesPolyMO'_of_lang`. Sorry-free modulo `Compile_run_physical`.
+     `reducesPolyMO'_of_lang`. **Generic `LangEncodable (List α)`** + extra
+     instances (`Bool`, `Unit`, `List Bool`) — together they make chain types
+     like `cnf = List (List (Bool × Nat))` and `cnf × assgn` derive their
+     canonical encoding automatically. Sorry-free modulo `Compile_run_physical`.
    - **Honest TM composition only via the canonical layer.** The framework
      wrapper `polyTimeComputable'_comp_lang` requires the inputs as
      `PolyTimeComputableLang'` (not opaque `polyTimeComputable'`). A purely

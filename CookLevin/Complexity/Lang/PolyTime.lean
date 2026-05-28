@@ -631,7 +631,7 @@ private theorem length_le_listNatSize :
       simp only [List.foldl_cons, List.length_cons]
       omega
 
-instance : LangEncodable (List Nat) where
+instance (priority := high) instLangEncodableListNat : LangEncodable (List Nat) where
   enc := id
   dec := id
   dec_enc := fun _ => rfl
@@ -668,6 +668,121 @@ private theorem length_le_listBoolSize :
       have ih := length_le_listBoolSize (acc + encodable.size x + 1) xs
       simp only [List.foldl_cons, List.length_cons]
       omega
+
+/-! ### Generic list encoding
+
+The product encoding lifted to lists: each element is preceded by its
+`enc`-length, so the decoder can split at the right boundary. The encoding
+is a single register (`List Nat`) holding the concatenation
+`[(enc x₀).length] ++ enc x₀ ++ [(enc x₁).length] ++ enc x₁ ++ …`.
+
+This is the foundational tool for migrating chain types: any structure
+type can be encoded by routing through a tuple/list-of-tuples
+representation, since `List (X × Y)`, `List (List X)`, etc. all become
+canonically encodable from a single `LangEncodable X`. The existing
+`LangEncodable (List Nat) = id` shortcut keeps priority `high` so the
+layer's native register type continues to use the identity encoding. -/
+
+/-- Encode a list element-by-element with length prefixes. -/
+private def encListGen {α : Type} [encodable α] [LangEncodable α] (xs : List α) : List Nat :=
+  xs.foldr (fun x acc => (LangEncodable.enc x).length :: LangEncodable.enc x ++ acc) []
+
+private theorem encListGen_nil {α : Type} [encodable α] [LangEncodable α] :
+    encListGen ([] : List α) = [] := rfl
+
+private theorem encListGen_cons {α : Type} [encodable α] [LangEncodable α] (x : α) (xs : List α) :
+    encListGen (x :: xs)
+      = (LangEncodable.enc x).length :: LangEncodable.enc x ++ encListGen xs := rfl
+
+/-- Decode helper: a budget-bounded structural recursion. Each iteration
+reads the length prefix `m`, takes the next `m` symbols, and decodes them
+to one element. The budget is the input length, which strictly decreases. -/
+private def decListGenAux {α : Type} [encodable α] [LangEncodable α] :
+    Nat → List Nat → List α
+  | 0,         _           => []
+  | _ + 1,     []          => []
+  | budget + 1, m :: rest  =>
+      LangEncodable.dec (rest.take m) :: decListGenAux budget (rest.drop m)
+
+private def decListGen {α : Type} [encodable α] [LangEncodable α] (xs : List Nat) : List α :=
+  decListGenAux xs.length xs
+
+/-- The decoder reproduces the list when given enough budget. -/
+private theorem decListGenAux_encListGen {α : Type} [encodable α] [LangEncodable α]
+    (xs : List α) (N : Nat) (h : xs.length ≤ N) :
+    decListGenAux N (encListGen xs) = xs := by
+  induction xs generalizing N with
+  | nil =>
+      cases N <;> rfl
+  | cons x xs' ih =>
+      cases N with
+      | zero =>
+          -- impossible: xs'.length + 1 ≤ 0
+          exact absurd h (by simp)
+      | succ N =>
+          have hN' : xs'.length ≤ N := by
+            have : xs'.length + 1 ≤ N + 1 := h
+            omega
+          show decListGenAux (N + 1)
+              ((LangEncodable.enc x).length :: LangEncodable.enc x ++ encListGen xs')
+            = x :: xs'
+          show LangEncodable.dec
+                ((LangEncodable.enc x ++ encListGen xs').take (LangEncodable.enc x).length)
+              :: decListGenAux N
+                ((LangEncodable.enc x ++ encListGen xs').drop (LangEncodable.enc x).length)
+            = x :: xs'
+          rw [List.take_left, List.drop_left, LangEncodable.dec_enc, ih N hN']
+
+/-- Round-trip: the decoder inverts the encoder. -/
+private theorem decListGen_encListGen {α : Type} [encodable α] [LangEncodable α] (xs : List α) :
+    decListGen (encListGen xs) = xs := by
+  -- The budget `(encListGen xs).length` is `≥ xs.length`: each element
+  -- contributes at least one cell (the length prefix).
+  have hbudget : xs.length ≤ (encListGen xs).length := by
+    induction xs with
+    | nil      => rfl
+    | cons x xs ih =>
+        rw [encListGen_cons]
+        simp only [List.length_cons, List.length_append]
+        omega
+  exact decListGenAux_encListGen xs _ hbudget
+
+/-- Length bound: the encoding is at most `2 · size xs + 1`. Each element
+contributes `(enc x).length + 1 ≤ 2 · size x + 2` to the encoding, and
+`size xs ≥ sum (size x_i + 1) = sum (size x_i) + len xs`, so the total
+`2 · sum (size x_i) + 2 · len xs ≤ 2 · size xs ≤ 2 · size xs + 1`. -/
+private theorem encListGen_length_bound {α : Type} [encodable α] [LangEncodable α]
+    (xs : List α) : (encListGen xs).length ≤ 2 * encodable.size xs + 1 := by
+  -- General helper: ∀ acc xs,
+  --   2·acc + (encListGen xs).length ≤ 2·foldl(acc + size x + 1, acc, xs) + 1.
+  have hgen : ∀ (acc : Nat) (xs : List α),
+      2 * acc + (encListGen xs).length
+        ≤ 2 * xs.foldl (fun a x => a + encodable.size x + 1) acc + 1 := by
+    intro acc xs
+    induction xs generalizing acc with
+    | nil      => simp [encListGen_nil]
+    | cons x xs ih =>
+        have hx := LangEncodable.enc_size x
+        have ih' := ih (acc + encodable.size x + 1)
+        rw [encListGen_cons]
+        simp only [List.length_cons, List.length_append, List.foldl_cons]
+        omega
+  have h := hgen 0 xs
+  -- `encodable.size xs` unfolds to the same foldl with `acc = 0`.
+  change (encListGen xs).length ≤ 2 * xs.foldl (fun a x => a + encodable.size x + 1) 0 + 1
+  omega
+
+/-- **Generic `LangEncodable (List α)`** (lower priority than the concrete
+`LangEncodable (List Nat) = id`). Each element is preceded by its
+`enc`-length so the decoder can split at the right boundary. Together with
+the product instance, this gives `LangEncodable (List (X × Y))` and chains
+through to encode any nested-list-of-products structure. -/
+instance (priority := low) instLangEncodableList {α : Type}
+    [encodable α] [LangEncodable α] : LangEncodable (List α) where
+  enc := encListGen
+  dec := decListGen
+  dec_enc := decListGen_encListGen
+  enc_size := encListGen_length_bound
 
 /-- `List Bool`: map booleans to bits and store in one register. The size
 bound rides on `(bs.map …).length = bs.length` and `bs.length ≤ size bs`
