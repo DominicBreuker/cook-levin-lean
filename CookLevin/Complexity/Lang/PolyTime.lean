@@ -642,6 +642,54 @@ instance : LangEncodable (List Nat) where
     show xs.length ≤ 2 * encodable.size xs + 1
     omega
 
+/-- `Bool`: `true ↦ [1]`, `false ↦ [0]`. -/
+instance : LangEncodable Bool where
+  enc := fun b => if b then [1] else [0]
+  dec := fun s => decide (s.headD 0 = 1)
+  dec_enc := fun b => by cases b <;> rfl
+  enc_size := fun b => by
+    show (if b then [1] else [0]).length ≤ 2 * encodable.size b + 1
+    cases b <;> simp [encodable.size]
+
+/-- `Unit`: the empty register. -/
+instance : LangEncodable Unit where
+  enc := fun _ => []
+  dec := fun _ => ()
+  dec_enc := fun _ => rfl
+  enc_size := fun _ => by show 0 ≤ 2 * 0 + 1; omega
+
+/-- Helper: a `List Bool`'s length is at most its `encodable.size` (each
+element contributes `≥ 1` to the foldl). -/
+private theorem length_le_listBoolSize :
+    ∀ (acc : Nat) (xs : List Bool),
+      acc + xs.length ≤ xs.foldl (fun (a : Nat) (x : Bool) => a + encodable.size x + 1) acc
+  | _,   []      => by simp
+  | acc, x :: xs => by
+      have ih := length_le_listBoolSize (acc + encodable.size x + 1) xs
+      simp only [List.foldl_cons, List.length_cons]
+      omega
+
+/-- `List Bool`: map booleans to bits and store in one register. The size
+bound rides on `(bs.map …).length = bs.length` and `bs.length ≤ size bs`
+(each element contributes `≥ 1` to `size`). -/
+instance : LangEncodable (List Bool) where
+  enc := fun bs => bs.map (fun b => if b then 1 else 0)
+  dec := fun xs => xs.map (· == 1)
+  dec_enc := fun bs => by
+    induction bs with
+    | nil => rfl
+    | cons b bs ih =>
+      simp only [List.map_cons]
+      cases b <;> simp [ih]
+  enc_size := fun bs => by
+    have hlen : (bs.map (fun b => if b then 1 else 0)).length = bs.length :=
+      List.length_map _
+    have hsize : bs.length ≤ encodable.size bs := by
+      change bs.length ≤ bs.foldl (fun a x => a + encodable.size x + 1) 0
+      simpa using length_le_listBoolSize 0 bs
+    show (bs.map (fun b => if b then 1 else 0)).length ≤ 2 * encodable.size bs + 1
+    rw [hlen]; omega
+
 /-- **Product encoding** (the pairing needed by `red_inNP`, where the verifier
 consumes `(x, cert)`). A pair is one register holding a unary-ish length prefix
 `(enc x).length` followed by the two components concatenated; decoding splits at
@@ -1382,5 +1430,115 @@ theorem red_inNP_of_lang {X Y : Type} [encodable X] [encodable Y]
     (P : X → Prop) (Q : Y → Prop) (f : X → Y) (Wf : PolyTimeComputableLang' f)
     (hcorrect : ∀ x, P x ↔ Q (f x)) (hQ : inNPLang Q) : inNP P :=
   inNPLang_to_inNP (red_inNPLang P Q f Wf hcorrect hQ)
+
+/-! ## Framework-level helpers for `polyTimeComputable'` (S3 migration prep)
+
+The framework-level `polyTimeComputable'` (the TM-backed witness predicate
+defined above) needs analogues of the `polyTimeComputable` lemmas used by
+`reducesPolyMO_reflexive` / `_transitive`. These helpers route through the
+canonical layer: `id` via `PolyTimeComputableLang'.id_witness`, composition via
+`PolyTimeComputableLang'.comp`, both pushed through the framework bridge
+`PolyTimeComputableLang'.toFrameworkWitness'`.
+
+Sorry-free modulo the assumed `Compile_sound` (the framework bridge's only
+dependency). These are the building blocks the eventual `⪯p` migration needs:
+swapping `ReductionWitness.reduction_poly` from `polyTimeComputable` to
+`polyTimeComputable'` makes `reducesPolyMO_reflexive` need `polyTimeComputable'
+id` and `reducesPolyMO_transitive` need `polyTimeComputable' (g ∘ f)` from
+witnesses for `f` and `g`. -/
+
+/-- **Identity is TM-backed poly-time computable.** Provided the type has a
+canonical layer encoding. -/
+theorem polyTimeComputable'_id {X : Type} [encodable X] [LangEncodable X] :
+    polyTimeComputable' (id : X → X) :=
+  PolyTimeComputableLang'.id_witness.toFrameworkWitness'
+
+/-- **TM-backed poly-time is closed under composition (canonical-layer route).**
+A composite reduction from canonical-layer witnesses yields a real
+`polyTimeComputable'` whose `ComputesBy` actually computes `g ∘ h`. A
+purely-opaque (framework-only) `polyTimeComputable'_comp` is **not** honestly
+constructible: the `ComputesBy` field needs a TM for the composite, but the
+inputs' `FlatTM`s have free encodings and there is no general re-encoder
+between them. The canonical layer's shared single-register encoding is
+exactly the device that lets `g ∘ h` compose by `Cmd.seq` — which is what
+this lemma uses (via `PolyTimeComputableLang'.comp`).
+
+For the `⪯p` migration: every honest reduction in the chain must be built at
+the canonical layer first, then bridged here. The size-only
+`reducesPolyMO_transitive` lemma in `NP.lean` still composes size bounds the
+old way; this lemma is its honest TM-backed counterpart. -/
+theorem polyTimeComputable'_comp_lang {X Y Z : Type}
+    [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang' g) (Wh : PolyTimeComputableLang' h) :
+    polyTimeComputable' (g ∘ h) :=
+  (Wg.comp Wh).toFrameworkWitness'
+
+/-! ## `ReductionWitness'` / `⪯p'` — additive TM-backed reduction type
+
+The next step in the S3 migration: swap `ReductionWitness.reduction_poly`'s
+`polyTimeComputable` for `polyTimeComputable'`. We introduce the upgraded type
+**additively** so the live `⪯p` chain keeps compiling. Bridges and structural
+closure (reflexive / transitive) follow directly from the
+`polyTimeComputable'` helpers above; the bridge `⪯p' → ⪯p` is immediate from
+`polyTimeComputable'_to_polyTimeComputable`.
+
+This block is sorry-free modulo the assumed `Compile_sound` (only consumed by
+`PolyTimeComputableLang'.toFrameworkWitness'`). -/
+
+/-- A **TM-backed reduction witness**: the reduction is `polyTimeComputable'`
+(carries a real `FlatTM` computing it), not merely size-bounded. -/
+structure ReductionWitness' {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) where
+  reduction : X → Y
+  reduction_poly : polyTimeComputable' reduction
+  reduction_correct : ∀ ⦃x⦄, P x ↔ Q (reduction x)
+
+/-- The upgraded `⪯p`: a TM-backed reduction. -/
+abbrev reducesPolyMO' {X Y : Type} [encodable X] [encodable Y]
+    (P : X → Prop) (Q : Y → Prop) : Prop :=
+  Nonempty (ReductionWitness' P Q)
+
+@[inherit_doc] infix:50 " ⪯p' " => reducesPolyMO'
+
+/-- `⪯p'` is a strengthening of `⪯p`: a TM-backed reduction is in
+particular a size-only reduction. The framework's reduction chain (every
+`⪯p` lemma in `NP.lean`) survives the migration verbatim through this
+bridge. -/
+theorem reducesPolyMO'_to_reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
+    {P : X → Prop} {Q : Y → Prop} : P ⪯p' Q → P ⪯p Q := by
+  rintro ⟨⟨f, hf_poly, hf_correct⟩⟩
+  exact ⟨⟨f, polyTimeComputable'_to_polyTimeComputable hf_poly, hf_correct⟩⟩
+
+/-- Reflexivity of `⪯p'` (needs `[LangEncodable X]` to construct the layer
+identity witness). -/
+theorem reducesPolyMO'_reflexive (X : Type) [encodable X] [LangEncodable X]
+    (P : X → Prop) : P ⪯p' P :=
+  ⟨⟨id, polyTimeComputable'_id, fun _ => Iff.rfl⟩⟩
+
+/-- Transitivity of `⪯p'`. The general form requires the intermediate type to
+have a `LangEncodable` instance — without it the composite TM cannot be built
+honestly (the framework-only `polyTimeComputable'_comp` carries the size half
+but not the TM-backed half). -/
+theorem reducesPolyMO'_transitive_lang {X Y Z : Type}
+    [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    (P : X → Prop) (Q : Y → Prop) (R : Z → Prop)
+    {Wf : X → Y} {Wg : Y → Z}
+    (hWf : PolyTimeComputableLang' Wf) (hWg : PolyTimeComputableLang' Wg)
+    (hf_correct : ∀ {x}, P x ↔ Q (Wf x))
+    (hg_correct : ∀ {y}, Q y ↔ R (Wg y)) :
+    P ⪯p' R :=
+  ⟨⟨Wg ∘ Wf, polyTimeComputable'_comp_lang hWg hWf,
+    fun {x} => Iff.trans (hf_correct (x := x)) (hg_correct (y := Wf x))⟩⟩
+
+/-- A canonical layer reduction lifts to a TM-backed `⪯p'` reduction. -/
+theorem reducesPolyMO'_of_lang {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y]
+    {P : X → Prop} {Q : Y → Prop} {f : X → Y}
+    (Wf : PolyTimeComputableLang' f) (hcorrect : ∀ x, P x ↔ Q (f x)) :
+    P ⪯p' Q :=
+  ⟨⟨f, Wf.toFrameworkWitness', fun {x} => hcorrect x⟩⟩
 
 end Complexity.Lang
