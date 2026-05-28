@@ -19,6 +19,14 @@ makes chain types like `cnf = List (List (Bool × Nat))` and
 `cnf × assgn` *derive their canonical encoding automatically* — the inputs
 the canonical `DecidesLang'`/`PolyTimeComputableLang'` need.
 
+Additionally, **a first concrete non-identity witness landed**:
+`PolyTimeComputableLang'.constTrueBool` for `fun (_ : Bool) => true` — a real
+two-`Op` straight-line program (`clear 0 ;; appendOne 0`) with every field
+of the canonical-layer witness (cost, normalizes, frame, usesBelow) proved
+sorry-free and axiom-clean (no `sorryAx`). It serves as the **template** for
+migrating chain reductions: copy the structure, swap in the chain's `Cmd`,
+adjust the cost/correctness proofs.
+
 Read for direction first: `README.md`, `CookLevin/ROADMAP.md` (*The plan from
 here*, step 2, and the Risk register rows **C5a/C10/C6/C2**).
 

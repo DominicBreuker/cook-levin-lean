@@ -863,6 +863,63 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
 
+/-! ### A non-trivial concrete witness — template for chain reductions
+
+The chain migration needs `PolyTimeComputableLang' f` for actual reductions.
+Below is a complete, sorry-free worked example: the constant function
+`fun (_ : Bool) => true`. The `Cmd` clears register 0 then appends `[1]`,
+producing the canonical encoding of `true` regardless of input. It exercises
+every field of `PolyTimeComputableLang'` (cost, normalizes, frame, usesBelow)
+on a real two-Op straight-line program — the smallest non-identity witness
+the canonical layer admits. The next agent migrating chain reductions can
+take it as the template. -/
+
+/-- `clear 0 ;; appendOne 0` — sets register 0 to `[1]` regardless of the
+incoming state. -/
+private def constTrueBoolCmd : Cmd :=
+  Cmd.op (Op.clear 0) ;; Cmd.op (Op.appendOne 0)
+
+/-- The canonical-layer witness for the constant function
+`(fun (_ : Bool) => true)`. A concrete sorry-free `PolyTimeComputableLang'`
+exercising every field (cost ≤ 3, frame on register 0, normalizes via
+direct computation). -/
+def PolyTimeComputableLang'.constTrueBool :
+    PolyTimeComputableLang' (fun (_ : Bool) => true) where
+  c := constTrueBoolCmd
+  cost_bound _ := 3
+  cost_bound_poly := inOPoly_const 3
+  cost_bound_mono := fun _ _ _ => Nat.le_refl _
+  normalizes := fun b r => by
+    -- Compute `(constTrueBoolCmd.eval (encodeState b)).get r` and match it to
+    -- `(encodeState true).get r = [1]` at r = 0, `[]` elsewhere.
+    have heval : constTrueBoolCmd.eval (LangEncodable.encodeState b)
+        = ([[1]] : State) := by
+      show ((Cmd.op (Op.clear 0)) ;; (Cmd.op (Op.appendOne 0))).eval
+            (LangEncodable.encodeState b) = ([[1]] : State)
+      rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+      -- (appendOne 0).eval ((clear 0).eval [enc b]) = [[] ++ [1]] = [[1]]
+      cases b <;> rfl
+    show (constTrueBoolCmd.eval (LangEncodable.encodeState b)).get r
+        = (LangEncodable.encodeState (true : Bool)).get r
+    rw [heval]
+    -- `encodeState (true : Bool) = [enc true] = [[1]]`, so both sides equal
+    -- `[[1]].get r`.
+    rfl
+  cost_le := fun b => by
+    -- cost = 1 + cost(clear 0) + cost(appendOne 0) = 3.
+    show constTrueBoolCmd.cost (LangEncodable.encodeState b) ≤ 3
+    show ((Cmd.op (Op.clear 0)) ;; (Cmd.op (Op.appendOne 0))).cost
+          (LangEncodable.encodeState b) ≤ 3
+    rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+    show 1 + Op.cost (Op.clear 0) _ + Op.cost (Op.appendOne 0) _ ≤ 3
+    simp [Op.cost]
+  output_size_le := fun _ => by
+    -- encodable.size true = 1 ≤ 3.
+    show encodable.size (true : Bool) ≤ 3
+    show 1 ≤ 3; omega
+  regBound := 1
+  usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
+
 /-! ### Verifier composition (toward `red_inNP`)
 
 `red_inNP` needs: given a poly-time reduction `f` and a verifier for `Q`,
@@ -1655,5 +1712,25 @@ theorem reducesPolyMO'_of_lang {X Y : Type} [encodable X] [encodable Y]
     (Wf : PolyTimeComputableLang' f) (hcorrect : ∀ x, P x ↔ Q (f x)) :
     P ⪯p' Q :=
   ⟨⟨f, Wf.toFrameworkWitness', fun {x} => hcorrect x⟩⟩
+
+/-! ### End-to-end demo: the constant-true Bool reduction through the pipeline
+
+A concrete sorry-free path from `PolyTimeComputableLang'.constTrueBool` to a
+framework `⪯p` / `⪯p'`. The constant-true function only preserves
+correctness for predicates that are themselves constant on `Bool` (since
+`f x = true` for both inputs collapses any non-constant predicate). The
+canonical such example is `(fun _ => True)`; the witness shows the pipeline
+goes through end-to-end after the new infrastructure. -/
+
+/-- The constant `True`-on-Bool predicate `⪯p'`-reduces to itself via the
+constant-true Bool function. -/
+theorem reducesPolyMO'_trueBool :
+    (fun (_ : Bool) => True) ⪯p' (fun (_ : Bool) => True) :=
+  reducesPolyMO'_of_lang PolyTimeComputableLang'.constTrueBool (fun _ => Iff.rfl)
+
+/-- Downgrade to size-only `⪯p`. -/
+theorem reducesPolyMO_trueBool :
+    (fun (_ : Bool) => True) ⪯p (fun (_ : Bool) => True) :=
+  reducesPolyMO'_to_reducesPolyMO reducesPolyMO'_trueBool
 
 end Complexity.Lang
