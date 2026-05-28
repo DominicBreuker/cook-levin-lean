@@ -1,3 +1,179 @@
+# Handoff: S3 migration — loop toolkit complete; `map`-over-lists in progress
+
+## ▶ START HERE (latest pass): finish the `map`-over-lists witness
+
+**What is committed and green** (`lake build` ✅ 3356 jobs, all new names
+`#print axioms`-clean):
+
+- The **`forBnd` loop-reasoning toolkit is now complete** in `Lang/Frame.lean`:
+  `Cmd.eval_forBnd` (loop = pure state fold `Cmd.foldlState`),
+  `Cmd.foldlState_range_induct` (the **invariant principle**),
+  `Cmd.foldlState_frame` (registers `≥ k` survive), and
+  `Cmd.cost_forBnd_le` (the **cost bound**: invariant `M` + uniform per-iteration
+  body-cost `B` ⇒ loop cost `≤ 1 + iters·B`).
+- `inOPoly_mul` in `Complexity/Definitions.lean` (products of poly-bounded
+  functions are poly-bounded) — needed because an `n`-fold loop with poly
+  per-iteration cost has cost `≈ n · poly n`.
+- Pair-plumbing combinators `swap` / `map_fst` / `map_snd` (see next section).
+
+**The next concrete step — `map`-over-lists** (gates the whole sound tail: every
+chain reduction maps a transform over its cards/clauses). A near-complete draft
+is parked at **`parked/MapNatList_WIP.lean`** (NOT built). It targets
+`PolyTimeComputableLang' (List.map f : List Nat → List Nat)` from a witness for
+`f : Nat → Nat`. **Two hard parts are already proven sorry-free** there:
+`mapInv_step` (the loop eval invariant step — peel head element, run sub-witness,
+append) and `mapBody_cost_le` (per-iteration cost). What remains is the witness
+*assembly* (`normalizes`/`cost_le` wrapper plumbing), which was mid-debug.
+
+### Design (use the identity encoding `LangEncodable (List Nat) = id` first)
+
+Let `k := W.regBound` (the sub-witness's register bound). Registers:
+`REM = k` (remaining list), `OUT = k+1` (output accumulator), `counter = k+2`;
+result `regBound = k+3`. Element peeling is trivial in the id encoding (each
+element is one cell): `head 0 REM` puts `[xs[i]] = enc (xs[i])` in register `0`,
+then `W.c` runs there (registers `1..k-1` stay blank — the loop invariant — so
+`W.eval_get_of_agree` applies and leaves them blank). `iters = (REM).length =
+xs.length` exactly, so the loop needs **no over-iteration guard**.
+
+- **Body** `mapBody W := head 0 k ;; tail k k ;; W.c ;; concat (k+1) (k+1) 0`.
+- **Wrapper** `mapNatListCmd W := copy k 0 ;; clear (k+1) ;; forBnd (k+2) k (mapBody W)
+  ;; copy 0 (k+1) ;; clear k ;; clear (k+1) ;; clear (k+2)`.
+- **Invariant** `mapInv W xs i st := st.get k = xs.drop i ∧ st.get (k+1) =
+  (xs.take i).map f ∧ (∀ r, 1 ≤ r → r < k → st.get r = [])` (the last conjunct —
+  "low registers blank" — is what keeps `W.eval_get_of_agree` applicable each
+  iteration). Drive it with `foldlState_range_induct` (eval) and `cost_forBnd_le`
+  (cost), **sharing the same `mapInv`**.
+
+### What remains + the two gotchas you WILL hit
+
+1. **`normalizes` assembly.** Evaluate the wrapper: `copy/clear` give the pre-loop
+   state `s0` (with `s0.get k = xs`); `Cmd.eval_forBnd` + `foldlState_range_induct`
+   give `mapInv W xs xs.length sL`; then `copy 0 (k+1)` (= `xs.map f` via the
+   invariant's `OUT`) and the three `clear`s. Case-split `r`: `r = 0` →
+   `xs.map f = enc (List.map f xs)`; `1 ≤ r < k` → invariant's blank; `r ∈
+   {k,k+1,k+2}` → cleared; `r ≥ k+3` → `Cmd.foldlState_frame` (then `s0` is blank
+   there). The `mapBody` frame bound for `foldlState_frame` must be `k+3` (since
+   the counter `k+2` must be `< the bound`), via
+   `Cmd.UsesBelow_mono (k+2 ≤ k+3) (mapBody_usesBelow W)`.
+2. **`cost_le` assembly.** `mapNatListCmd.cost = 12 + (forBnd …).cost s0` (6 seq
+   nodes + 6 unit-cost ops; prove by `rw [Cmd.cost_seq ×6, …]; simp only
+   [Cmd.cost_op, Op.cost]; omega`). Bound `forBnd.cost s0` by `cost_forBnd_le`
+   with `B := 6 + W.cost_bound (size xs)`. Use `xs.length ≤ encodable.size xs`.
+   The remaining glue is `hmul : xs.length * (6 + cb) ≤ (size+1) * (cb+6)` —
+   prove via `rw [Nat.add_comm 6 cb]; exact Nat.mul_le_mul (by omega) (le_refl _)`
+   (NOT a bare `omega`: it cannot multiply two variables). `cost_bound n :=
+   13 + (n+1)*(W.cost_bound n + 6)`; its `inOPoly` uses `inOPoly_mul`, its
+   `monotonic` uses `Nat.mul_le_mul`.
+
+**Gotcha A — `omega` and `Var`.** Register indices have type `Var := Nat`, which
+`omega` treats as opaque (it reports "no usable constraints" or shows spurious
+`↑` coercions). Two safe idioms, both used in the parked file:
+  * For a goal like `0 < W.regBound + 2` (Var-typed literal): restate at `Nat`
+    (`have e0 : (0:Nat) < W.regBound + 2 := by omega`) and use `e0` by defeq.
+  * For a register *variable* `r : Var` with `hge : W.regBound ≤ r`, `hrk :
+    r ≠ W.regBound`, … : build `W.regBound + 3 ≤ r` by chaining
+    `Nat.lt_of_le_of_ne hge (Ne.symm hrk)` (each step bumps the bound by one),
+    and derive disequalities with `Nat.ne_of_gt (Nat.lt_of_lt_of_le _ hge3)`.
+  `≠`/`<` between two genuinely-`Nat` terms (e.g. `W.regBound ≠ W.regBound + 2`)
+  *do* work with `omega`.
+
+**Gotcha B — `set` only in `PolyTime.lean`, not `Frame.lean`.** `Frame.lean`'s
+import context lacks Mathlib's `set`/`ring` tactics (the loop lemmas there were
+written core-only). `PolyTime.lean` has them. (The parked file imports
+`PolyTime`, so `set` is fine there.)
+
+### After `List Nat`: generalize to the chain types
+
+The chain types (`cnf = List (List (Bool × Nat))`, `cnf × assgn`, the
+`FlatTCC`/`FlatCC` cards) use the **generic length-prefixed** encoding
+(`instLangEncodableList` / `encListGen`), not the id shortcut. The same loop
+structure works, but peeling an element is the `head`/`tail`/`takeAt`/`dropAt`
+length-prefix dance (cf. `swap`/`map_fst`), and the invariant uses
+`encListGen (xs.drop i)` / `encListGen ((xs.take i).map f)`; you will want a small
+`encListGen (L ++ [b]) = encListGen L ++ ((enc b).length :: enc b)` lemma. With a
+generic `map` over `LangEncodable α → LangEncodable β`, the cheap sound-tail
+reduction `flatTCC_to_flatCC` becomes buildable (it also needs `LangEncodable`
+instances for the record types and constant-field injection: `offset:=1` is
+`appendOne`, but `width:=3` must be built as the length of a 3-cell scratch list
+via `consLen`, since `appendOne/Zero` only emit 0/1).
+
+---
+
+# Handoff: S3 migration — `swap`/`map_snd` witnesses + `forBnd` loop toolkit
+
+## Update: general reduction + loop-reasoning infrastructure
+
+This pass lands the **second concrete non-identity canonical-layer witness** and
+the **first fully general (any-predicate) reduction** routed through the layer:
+
+- **`PolyTimeComputableLang'.swap`** (`Lang/PolyTime.lean`, after `constTrueBool`)
+  — the witness for pair swap `(x, y) ↦ (y, x)`. An 11-op straight-line program
+  (`swapCmd`) that unpacks the length-prefixed product register, rebuilds the
+  swapped pair (`enc (y,x) = (enc y).length :: (enc y ++ enc x)`), and clears
+  scratch. **All fields proved sorry-free; `#print axioms` = `[propext,
+  Quot.sound]`** (cleaner than `constTrueBool`, whose downgrade pulls in the
+  bridge). Two private helpers do the work: `swapCmd_eval` (the eval collapses to
+  an explicit final state via one `simp only` with the `get_set` + `take_left`/
+  `drop_left` set — *no* exponential `set`-chain) and `swapCmd_cost` (constant
+  `21`). `normalizes` is a flat register case-split; `usesBelow` is
+  `simp only [Cmd.UsesBelow, Op.UsesBelow]; decide`.
+- **`reducesPolyMO'_swap` / `reducesPolyMO_swap`** (end of file) — for *any*
+  `Q : Y × X → Prop`, `(fun p : X × Y => Q (p.2, p.1)) ⪯p' Q` (and its `⪯p`
+  downgrade), via `reducesPolyMO'_of_lang ... (fun _ => Iff.rfl)`. Unlike
+  `reducesPolyMO'_trueBool` (correct only for constant predicates), this is
+  correctness-preserving for **every** predicate — the first non-vacuous general
+  reduction through the canonical layer. Axiom profile matches the existing
+  `trueBool` demos (`sorryAx` from the assumed `Compile_sound`, `Classical.choice`).
+
+**Why it matters / how to reuse:** `swap` is the *repack* template (the
+data-shuffling counterpart of `map_fst`'s *subroutine-call* template). The sound
+tail's reductions rebuild records by permuting/copying fields; `swap` is the
+worked example of the no-opaque-sub-witness repack shape, and it validates the
+frame toolkit on a program that rewrites register `0` from scratch.
+
+### Also landed this pass: `map_snd` + the `forBnd` loop-reasoning toolkit
+
+- **`PolyTimeComputableLang'.map_snd`** (`Lang/PolyTime.lean`, after `map_fst`) —
+  the mirror of `map_fst`: applies `f` to a pair's *second* component. Built
+  **definitionally from the combinator algebra** (`swap ∘ map_fst f ∘ swap`), no
+  new proof obligations. Axiom-clean. Shows the pair-plumbing combinators
+  (`swap`/`map_fst`/`comp`) compose into the layout adapters the chain needs.
+- **`forBnd` loop lemmas** (`Lang/Frame.lean`, new "Counted-loop reasoning"
+  section) — **the keystone infrastructure that was entirely missing**: before
+  this, *no* lemma let you reason about a `forBnd` loop except by unfolding its
+  raw `foldl` by hand. Now:
+  - `Cmd.foldlState` — the pure-state loop fold (cost dropped).
+  - `Cmd.eval_forBnd` — `(forBnd c b body).eval s = foldlState …` (the loop runs
+    once per cell of the bound register, counter = unary index).
+  - **`Cmd.foldlState_range_induct`** — the loop **invariant principle** (motive
+    holds at start + preserved per iteration ⇒ holds at the end). This is the
+    workhorse for every future loop-based program.
+  - `Cmd.foldlState_frame` — a loop keeps registers `≥ k` if its body/counter
+    stay `< k` (the output register survives). All sorry-free, axiom-clean.
+
+**This directly unblocks `map`-over-lists**, which gates the whole sound tail
+(`flatTCC_to_flatCC` etc. map a transform over their cards/clauses). The
+structural recipe (now that the loop tools exist): the generic list encoding
+`encListGen` concatenates `[len_i] ++ enc x_i`, so the **register length is the
+total symbol count, not the element count**. `forBnd`'s iteration count is the
+bound register's length, so iterate `forBnd` over the encoding register itself
+(length ≥ element count) with the body **guarded by an `ifBit` on "remaining is
+non-empty"**: peel one element (length-prefix → `takeAt`/`dropAt`), apply the
+sub-witness, append to the output, advance the "remaining" register; extra
+(past-the-end) iterations are no-ops. The `_range_induct` invariant then carries
+"output = map f (first i elements) ; remaining = drop i". This is the next
+concrete build; `flatTCC_to_flatCC` additionally needs `LangEncodable` instances
+for the record types and constant-field injection (`offset:=1`, `width:=3` — note
+`appendOne/Zero` only emit 0/1, so a literal `3` is built as the length of a
+3-cell scratch list via `consLen`).
+
+Build green; full project `lake build` ✅. All new public names verified
+axiom-clean with `#print axioms` (`swap` / `map_snd` / the loop lemmas show only
+`propext` (/ `Quot.sound`); the `reducesPolyMO'_swap` demo matches the existing
+`trueBool` profile: `sorryAx` from the assumed `Compile_sound` + `Classical.choice`).
+
+---
+
 # Handoff: S3 migration — `⪯p'` infrastructure landed (Task 4 partial)
 
 This continues the **S3 migration** (route the framework's `red_inNP`/`⪯p`

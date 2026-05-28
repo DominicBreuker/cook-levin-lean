@@ -555,6 +555,25 @@ theorem inOPoly_comp {f g : Nat → Nat} : inOPoly f → inOPoly g → inOPoly (
       _ ≤ max (maxPrefix g n0g) (cg * cf ^ dg) * n ^ (df * dg + 1) := by
         exact Nat.mul_le_mul_right _ (Nat.le_max_right _ _)
 
+-- Polynomial product lemma: the product of two polynomially-bounded functions is
+-- polynomially bounded (degrees add, constants multiply). Needed for cost bounds
+-- of loop-based programs, where a `n`-fold loop with poly per-iteration cost has
+-- cost `≈ n · poly n`.
+theorem inOPoly_mul {f g : Nat → Nat} :
+    inOPoly f → inOPoly g → inOPoly (fun n => f n * g n) := by
+  rintro ⟨df, cf, n0f, hf⟩ ⟨dg, cg, n0g, hg⟩
+  refine ⟨df + dg, ⟨cf * cg, max n0f n0g, ?_⟩⟩
+  intro n hn
+  have hn0f : n0f ≤ n := Nat.le_trans (Nat.le_max_left _ _) hn
+  have hn0g : n0g ≤ n := Nat.le_trans (Nat.le_max_right _ _) hn
+  show f n * g n ≤ (cf * cg) * n ^ (df + dg)
+  calc f n * g n
+      ≤ (cf * n ^ df) * (cg * n ^ dg) := Nat.mul_le_mul (hf n hn0f) (hg n hn0g)
+    _ = (cf * cg) * (n ^ df * n ^ dg) := by
+        rw [Nat.mul_assoc cf (n ^ df) (cg * n ^ dg), Nat.mul_left_comm (n ^ df) cg (n ^ dg),
+          ← Nat.mul_assoc cf cg (n ^ df * n ^ dg)]
+    _ = (cf * cg) * n ^ (df + dg) := by rw [← Nat.pow_add]
+
 
 
 def projT1 {α : Type u} {β : α → Type v} (x : Sigma β) : α := x.1
