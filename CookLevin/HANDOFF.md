@@ -1,3 +1,43 @@
+# Handoff: S3 migration — `swap` witness + first general layer reduction
+
+## Update (latest pass): `PolyTimeComputableLang'.swap` — a general reduction
+
+This pass lands the **second concrete non-identity canonical-layer witness** and
+the **first fully general (any-predicate) reduction** routed through the layer:
+
+- **`PolyTimeComputableLang'.swap`** (`Lang/PolyTime.lean`, after `constTrueBool`)
+  — the witness for pair swap `(x, y) ↦ (y, x)`. An 11-op straight-line program
+  (`swapCmd`) that unpacks the length-prefixed product register, rebuilds the
+  swapped pair (`enc (y,x) = (enc y).length :: (enc y ++ enc x)`), and clears
+  scratch. **All fields proved sorry-free; `#print axioms` = `[propext,
+  Quot.sound]`** (cleaner than `constTrueBool`, whose downgrade pulls in the
+  bridge). Two private helpers do the work: `swapCmd_eval` (the eval collapses to
+  an explicit final state via one `simp only` with the `get_set` + `take_left`/
+  `drop_left` set — *no* exponential `set`-chain) and `swapCmd_cost` (constant
+  `21`). `normalizes` is a flat register case-split; `usesBelow` is
+  `simp only [Cmd.UsesBelow, Op.UsesBelow]; decide`.
+- **`reducesPolyMO'_swap` / `reducesPolyMO_swap`** (end of file) — for *any*
+  `Q : Y × X → Prop`, `(fun p : X × Y => Q (p.2, p.1)) ⪯p' Q` (and its `⪯p`
+  downgrade), via `reducesPolyMO'_of_lang ... (fun _ => Iff.rfl)`. Unlike
+  `reducesPolyMO'_trueBool` (correct only for constant predicates), this is
+  correctness-preserving for **every** predicate — the first non-vacuous general
+  reduction through the canonical layer. Axiom profile matches the existing
+  `trueBool` demos (`sorryAx` from the assumed `Compile_sound`, `Classical.choice`).
+
+**Why it matters / how to reuse:** `swap` is the *repack* template (the
+data-shuffling counterpart of `map_fst`'s *subroutine-call* template). The sound
+tail's reductions rebuild records by permuting/copying fields; `swap` is the
+worked example of the no-opaque-sub-witness repack shape, and it validates the
+frame toolkit on a program that rewrites register `0` from scratch. The next
+honest chain reduction (`flatTCC_to_flatCC`) still needs `LangEncodable` instances
+for the record types and a `map`-over-list (a `forBnd` loop, C3) — those remain
+the gating work; `swap`/`map_fst`/`comp` are the combinators to assemble from.
+
+Build green; full project `lake build` ✅. The two new public names verified with
+`#print axioms`.
+
+---
+
 # Handoff: S3 migration — `⪯p'` infrastructure landed (Task 4 partial)
 
 This continues the **S3 migration** (route the framework's `red_inNP`/`⪯p`

@@ -920,6 +920,131 @@ def PolyTimeComputableLang'.constTrueBool :
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
 
+/-! ### A non-identity *pair-rearranging* witness — `swap`
+
+The chain reductions repackage records; a recurring shape is reordering a pair's
+components. `swap : X × Y → Y × X` is the canonical building block. Unlike
+`constTrueBool`, it is **correctness-preserving for any predicate** (it only
+permutes data), so it yields a genuine, fully general `⪯p'`/`⪯p` reduction
+(`reducesPolyMO'_swap`, below) rather than one restricted to constant predicates.
+
+It also exercises the frame toolkit on a different program shape than `map_fst`:
+a full *repack* — unpack the length-prefixed product register, then rebuild the
+swapped pair (`enc (y,x) = (enc y).length :: (enc y ++ enc x)`) and clear scratch
+— with no opaque sub-witness. The whole witness is `sorry`-free and axiom-clean
+(`#print axioms` shows only `propext` / `Quot.sound`). -/
+
+/-- `swap`'s program: unpack `enc (x, y) = (enc x).length :: (enc x ++ enc y)`
+into its two components (registers `3`/`4`), reassemble in swapped order
+(`enc y ++ enc x` with the new length prefix `(enc y).length`) into register `0`,
+then clear the five scratch registers (`1`–`5`) so the output is canonical
+register-wise. -/
+private def swapCmd : Cmd :=
+  Cmd.op (Op.head 1 0) ;;
+  Cmd.op (Op.tail 2 0) ;;
+  Cmd.op (Op.takeAt 3 2 1) ;;
+  Cmd.op (Op.dropAt 4 2 1) ;;
+  Cmd.op (Op.concat 5 4 3) ;;
+  Cmd.op (Op.consLen 0 4 5) ;;
+  Cmd.op (Op.clear 1) ;;
+  Cmd.op (Op.clear 2) ;;
+  Cmd.op (Op.clear 3) ;;
+  Cmd.op (Op.clear 4) ;;
+  Cmd.op (Op.clear 5)
+
+/-- Evaluating `swapCmd` on `encodeState (x, y)` yields the explicit final state:
+register `0` holds `enc (y, x)` and the five scratch registers are blank. The
+take/drop steps collapse via `List.take_left`/`List.drop_left` (the length prefix
+is exactly `(enc x).length`); the per-op `State.get` reads are discharged by the
+`get_set` simp set. -/
+private theorem swapCmd_eval {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] (x : X) (y : Y) :
+    swapCmd.eval (LangEncodable.encodeState ((x, y) : X × Y))
+    = (((((((((((LangEncodable.encodeState ((x, y) : X × Y)).set 1
+        [(LangEncodable.enc x).length]).set 2 (LangEncodable.enc x ++ LangEncodable.enc y)).set 3
+        (LangEncodable.enc x)).set 4 (LangEncodable.enc y)).set 5
+        (LangEncodable.enc y ++ LangEncodable.enc x)).set 0
+        ((LangEncodable.enc y).length :: (LangEncodable.enc y ++ LangEncodable.enc x))).set 1 []).set
+        2 []).set 3 []).set 4 []).set 5 [] := by
+  have hg0 : (LangEncodable.encodeState ((x, y) : X × Y)).get 0
+      = (LangEncodable.enc x).length :: (LangEncodable.enc x ++ LangEncodable.enc y) := rfl
+  unfold swapCmd
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq,
+    Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  simp only [Cmd.eval_op, Op.eval, hg0, List.tail_cons, State.get_set_eq, State.get_set_ne,
+    List.headD_cons, List.take_left, List.drop_left, ne_eq, Nat.reduceEqDiff, not_false_eq_true]
+
+/-- `swapCmd` runs in constant cost (`21`): it is a straight-line program of 11
+unit-cost ops. -/
+private theorem swapCmd_cost (s : State) : swapCmd.cost s = 21 := by
+  simp [swapCmd, Cmd.cost_seq, Cmd.cost_op, Op.cost]
+
+/-- The canonical-layer witness for pair swap `(x, y) ↦ (y, x)`. Sorry-free and
+axiom-clean (`propext` / `Quot.sound` only). The companion to `map_fst`: where
+`map_fst` runs a sub-witness on a pair's first component, `swap` is a pure
+repack, so it serves as the template for the data-shuffling parts of the chain
+reductions (which reorder record fields). -/
+def PolyTimeComputableLang'.swap {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] :
+    PolyTimeComputableLang' (fun p : X × Y => (p.2, p.1)) where
+  c := swapCmd
+  cost_bound := fun n => n + 21
+  cost_bound_poly := inOPoly_add inOPoly_id (inOPoly_const 21)
+  cost_bound_mono := by intro a b hab; show a + 21 ≤ b + 21; omega
+  normalizes := fun p r => by
+    obtain ⟨x, y⟩ := p
+    show State.get (swapCmd.eval (LangEncodable.encodeState ((x, y) : X × Y))) r
+        = State.get (LangEncodable.encodeState (((y, x)) : Y × X)) r
+    rw [swapCmd_eval x y]
+    by_cases hr0 : r = 0
+    · subst hr0
+      rw [State.get_set_ne _ _ _ _ (show (0:Nat) ≠ 5 by decide),
+        State.get_set_ne _ _ _ _ (show (0:Nat) ≠ 4 by decide),
+        State.get_set_ne _ _ _ _ (show (0:Nat) ≠ 3 by decide),
+        State.get_set_ne _ _ _ _ (show (0:Nat) ≠ 2 by decide),
+        State.get_set_ne _ _ _ _ (show (0:Nat) ≠ 1 by decide),
+        State.get_set_eq]
+      rfl
+    · have hrpos : 0 < r := Nat.pos_of_ne_zero hr0
+      rw [LangEncodable.encodeState_get_pos ((y, x) : Y × X) hrpos]
+      by_cases hr5 : r = 5
+      · subst hr5; rw [State.get_set_eq]
+      · rw [State.get_set_ne _ _ _ _ hr5]
+        by_cases hr4 : r = 4
+        · subst hr4; rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ hr4]
+          by_cases hr3 : r = 3
+          · subst hr3; rw [State.get_set_eq]
+          · rw [State.get_set_ne _ _ _ _ hr3]
+            by_cases hr2 : r = 2
+            · subst hr2; rw [State.get_set_eq]
+            · rw [State.get_set_ne _ _ _ _ hr2]
+              by_cases hr1 : r = 1
+              · subst hr1; rw [State.get_set_eq]
+              · rw [State.get_set_ne _ _ _ _ hr1,
+                  State.get_set_ne _ _ _ _ hr0,
+                  State.get_set_ne _ _ _ _ hr5,
+                  State.get_set_ne _ _ _ _ hr4,
+                  State.get_set_ne _ _ _ _ hr3,
+                  State.get_set_ne _ _ _ _ hr2,
+                  State.get_set_ne _ _ _ _ hr1,
+                  LangEncodable.encodeState_get_pos ((x, y) : X × Y) hrpos]
+  cost_le := fun p => by
+    obtain ⟨x, y⟩ := p
+    rw [swapCmd_cost]
+    show 21 ≤ encodable.size ((x, y) : X × Y) + 21
+    omega
+  output_size_le := fun p => by
+    obtain ⟨x, y⟩ := p
+    show encodable.size ((y, x) : Y × X) ≤ encodable.size ((x, y) : X × Y) + 21
+    show encodable.size y + encodable.size x + 1 ≤ encodable.size x + encodable.size y + 1 + 21
+    omega
+  regBound := 6
+  usesBelow := by
+    unfold swapCmd
+    simp only [Cmd.UsesBelow, Op.UsesBelow]
+    decide
+
 /-! ### Verifier composition (toward `red_inNP`)
 
 `red_inNP` needs: given a poly-time reduction `f` and a verifier for `Q`,
@@ -1732,5 +1857,27 @@ theorem reducesPolyMO'_trueBool :
 theorem reducesPolyMO_trueBool :
     (fun (_ : Bool) => True) ⪯p (fun (_ : Bool) => True) :=
   reducesPolyMO'_to_reducesPolyMO reducesPolyMO'_trueBool
+
+/-! ### A *general* correctness-preserving reduction via `swap`
+
+Unlike the constant-true demo, `swap` permutes data without inspecting it, so it
+reduces *any* predicate on swapped pairs. For every `Q : Y × X → Prop`, the
+predicate `fun p : X × Y => Q (p.2, p.1)` `⪯p'`-reduces to `Q` — the layer
+witness is `PolyTimeComputableLang'.swap` and correctness is `Iff.rfl`. This is
+the first fully general (non-vacuous, any-predicate) reduction routed through the
+canonical layer. -/
+
+/-- Pair-swap is a general TM-backed reduction: for any `Q`,
+`(fun p : X × Y => Q (p.2, p.1)) ⪯p' Q`. -/
+theorem reducesPolyMO'_swap {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] (Q : Y × X → Prop) :
+    (fun p : X × Y => Q (p.2, p.1)) ⪯p' Q :=
+  reducesPolyMO'_of_lang PolyTimeComputableLang'.swap (fun _ => Iff.rfl)
+
+/-- Downgrade to the size-only `⪯p` that the live chain uses. -/
+theorem reducesPolyMO_swap {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] (Q : Y × X → Prop) :
+    (fun p : X × Y => Q (p.2, p.1)) ⪯p Q :=
+  reducesPolyMO'_to_reducesPolyMO (reducesPolyMO'_swap Q)
 
 end Complexity.Lang

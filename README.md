@@ -117,8 +117,12 @@ the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, **C5a**
 (`inNPLang_to_inNP`) is now **assembled** — the C6 tape→state bit-test gadget
 (`Compile.bitTestTM`) is built `sorry`-free and composed after `Compile c`,
 reducing the bridge to the single `Compile` physical run contract
-(`Compile_run_physical`, Risk C2). Next: migrate `⪯p` itself and ripple the
-sound tail. See the ROADMAP plan.
+(`Compile_run_physical`, Risk C2). The `⪯p'` migration types are in place with a
+growing library of concrete sorry-free, axiom-clean witnesses — `id`, the
+constant `constTrueBool`, and **`swap`** (pair `(x,y)↦(y,x)`); `swap` yields the
+first **general, any-predicate** layer reduction `reducesPolyMO'_swap`. Next:
+migrate `⪯p` itself (cheap sound-tail items first) and ripple the sound tail. See
+the ROADMAP plan.
 
 ## Development methodology: skeleton-first, risk-driven
 
