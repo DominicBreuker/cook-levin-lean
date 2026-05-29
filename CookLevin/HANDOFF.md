@@ -12,12 +12,14 @@ not a log.
   see ROADMAP risk register).
 - The **S3 migration engine** is built and sorry-free *modulo* the one compiler
   obligation `Compile_run_physical` / `Compile_sound` (Risk **C2**).
-- **The leading-sentinel encoding migration (step 1b-0) is DONE** (latest
-  session): `encodeTape s = endMark :: (encodeRegs s ++ [endMark])`, `sig` stays
-  `4`. The head-rewind primitive (`rewindToStart_run/_traj`) is now *applicable*.
-  All real consumers were re-proven green & axiom-clean. The next step is
-  rewind-bracketing each gadget into the physical contract (step 1b-1). See
-  "Recommended next step".
+- **Step 1b-0 (leading-sentinel encoding migration) is DONE**: `encodeTape s =
+  endMark :: (encodeRegs s ++ [endMark])`, `sig` stays `4`. All real consumers
+  re-proven green & axiom-clean.
+- **Step 1b-1 (gadget physical contracts) is underway**: the exit-state pin
+  (`AppendGadget.appendAt_run_exit`) and the now head-relative rewind tool
+  (`ScanLeft.rewindToStart_run/_traj`) are in place. **Remaining crux:** expose
+  the gadget's explicit exit head + build `appendAtTM`'s no-early-halt
+  trajectory (a composite-trajectory assembler). See "Recommended next step".
 
 ## Latest session (2026-05-29) — head-rewind primitive + the assembly blocker
 
@@ -145,22 +147,35 @@ step-right is needed**. Only a **tail rewind** is needed so the head returns to
 (scanLeftUntilTM 4 3) exit`, and the exit config (head back at `0`) feeds the
 next fragment / `bitTestTM`.
 
-⚠ **Rewind caveat (important, found this session):** the canonical tape is
-`endMark :: <interior, only {0,1,2}> :: endMark` — it has **two** `endMark = 3`
-cells (leading sentinel AND trailing terminator). So `rewindToStart_run`'s
-hypothesis `∀ x ∈ rest, x ≠ m` is **too strong** (the trailing `3` violates it).
-Scanning left from an interior head only ever reads cells `1 … head`, all of
-which are interior `{0,1,2}` (the trailing `3` is to the *right* of the head and
-never scanned). So **use `ScanLeft.scanLeft_run` / `scanLeft_no_early_halt`
-directly** (their hypothesis is head-relative: `∀ i, 0 < i → i ≤ head → …`), or
-first **relax `rewindToStart_run`/`_traj`** to a head-relative hypothesis
-(constrain only `rest.take head`, not all of `rest`). The wrapper as committed
-is only correct for single-sentinel tapes; fix it before use.
+**Ingredients now in place (latest session):**
+  - `AppendGadget.appendAt_run_exit` — the gadget reaches **exactly**
+    `appendAtTM_exit dst` (exit state pinned via `appendAtTM_halt_unique`), the
+    explicit-state input `composeFlatTM_run` needs. Head still existential (see
+    below).
+  - `ScanLeft.rewindToStart_run`/`_traj` — **now head-relative** (fixed this
+    session): the hypothesis constrains only the cells `rest[0 … head-1]` the
+    leftward scan actually reads, so the **trailing `endMark`** (to the right of
+    any interior head) is unconstrained. This is the rewind tool in the
+    `h_run1`/`h_traj1` shapes, directly usable on the two-sentinel canonical tape.
 
-The intermediate gadget exit head is existential in `appendAt_run_steps`, but
-the rewind works from *any* interior head, so the existential is fine — you only
-need that all cells strictly left of the exit head are `≠ 3`, which holds (they
-are the encoded interior).
+**Two pieces still needed to assemble the per-op physical contract:**
+  1. **Explicit exit head.** `appendAt_run_exit` leaves the head existential, but
+     to *apply* the rewind you must know the head is in the interior (so the
+     scanned cells `1…head` avoid the trailing `endMark`). The head is
+     `pre.length + (regBlocks skipped).length + body.length + (0::post).length`
+     — already explicit in `scanInsert_run` (the `dst=0` base) and threadable
+     through the `dst` recursion of `appendAt_run_steps`. Strengthen
+     `appendAt_run_steps`/`appendAt_run_exit` to expose it.
+  2. **⚠ The real crux — `appendAtTM`'s no-early-halt trajectory** (`h_traj1`
+     for the outer `gadget ; rewind` compose). `composeFlatTM_run` *consumes* a
+     trajectory but does not *emit* one for the composite, and `appendAtTM` is a
+     nest of `composeFlatTM`s. Build it via `runFlatTM_composeFlatTM_M1_phase`
+     (the composite run equals `M₁`'s during the `M₁` phase) +
+     `composeFlatTM_haltingStateReached_M1` + the components' trajectories
+     (`scanPastDelim_no_early_halt`/`scan_to_mark_traj` are available; an
+     `insertCarryTM` no-early-halt is likely still needed). This is the main
+     remaining work of 1b-1 — a composite-trajectory assembler, mirroring
+     `appendAt_run_steps`' recursion.
 
 **Step 1b-2 — per-fragment physical contract, LINEAR budget.** With the rewind
 bracket, each gadget's contract is: halts at its `exit` state, head back at the
