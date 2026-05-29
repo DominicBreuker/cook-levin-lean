@@ -96,15 +96,17 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 + `map_fst`/`swap`/`map_snd`/`forBnd` toolkit), all sorry-free **modulo one
 compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
 
-**Caveat surfaced this session (do not under-estimate C2):** the proven gadget
-run-lemmas establish the *tape transformation* but leave the **step count
-existential** — the polynomial step-bound accounting that `Compile.overhead`
-requires is largely **unbuilt**, and 10 of 12 `compileOp`s are still
-`compiledCmd_default` stubs. The new lemma `compileOp_appendOne_behavioural`
-(`Lang/Compile.lean`, sorry-free, axiom-clean) closes the *behavioural* half for
-`appendOne` end-to-end — the first proof that the `encodeTape`/`decodeTape`
-contract and the gadget library actually compose — isolating the residual per-op
-gap as **purely the step bound**.
+**Caveat surfaced (do not under-estimate C2):** 10 of 12 `compileOp`s are still
+`compiledCmd_default` stubs, and — sharper — **`compileOp_sound` is false as
+stated**: its budget `Compile.overhead (State.size s + cost)` ignores the
+register count, but `appendAtTM`'s cost grows with the tape length
+`State.size s + #registers + 1` (witness: `replicate 6 []` has `State.size 0`,
+budget `4`, but the op first halts at step 10). The fix is a tape-length budget
+plus threading the program's `regBound`. Two new sorry-free, axiom-clean lemmas
+(`Lang/Compile.lean`) de-risk this: `compileOp_appendOne_behavioural` (the
+`encodeTape`/`decodeTape` seam composes with the gadget library) and
+`compileOp_appendOne_zero_sound` (the corrected tape-length budget is
+achievable). See ROADMAP Risk C2.
 
 ## Development methodology: skeleton-first, risk-driven
 

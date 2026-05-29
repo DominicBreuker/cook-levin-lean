@@ -16,27 +16,35 @@ not a log.
   `inNPLang_to_inNP`, `bitTestTM`, `map_fst`/`swap`/`map_snd`, the `forBnd`
   toolkit, `⪯p'` + `reducesPolyMO'_of_lang`, generic `LangEncodable (List α)`.
 
-## This session's finding (recorded in ROADMAP)
+## This session's findings (recorded in ROADMAP)
 
-The **C2 compiler is the highest-risk completion item and is under-built**: the
-proven gadget run-lemmas give *behavioural* correctness but leave the **step
-count existential**, so the polynomial step-bound accounting `Compile.overhead`
-needs is largely unbuilt; 10 of 12 `compileOp`s are `compiledCmd_default` stubs.
+1. **`compileOp_sound` is FALSE as stated** — its budget
+   `Compile.overhead (State.size s + cost)` ignores the register count, but
+   `appendAtTM`'s step count grows with the tape length
+   `(encodeTape s).length = State.size s + s.length + 1`. Counterexample
+   (evaluated): `s = List.replicate 6 []` has `State.size 0`, budget `4`, but
+   `opAppendOne 0` first halts at step 10. **Fix the budget to tape length**
+   (`Compile.overhead ((encodeTape s).length + cost)`) and thread the register
+   count (≤ `regBound`) in the `Compile_sound` assembly.
+2. The gadget step counts are recoverable (the lower-level lemmas
+   `scanInsert_run`/`insertCarryTM_run` are explicit; only `appendAt_run`
+   existentializes).
 
-New, sorry-free, axiom-clean: **`compileOp_appendOne_behavioural`**
-(`Lang/Compile.lean`) — the first end-to-end proof that the
-`encodeTape`/`decodeTape` contract composes with the gadget library
-(`appendAt_run`) for a real op. It isolates the residual per-op gap to **purely
-the step bound**.
+New, sorry-free, axiom-clean (`Lang/Compile.lean`):
+- **`compileOp_appendOne_behavioural`** — behavioural soundness of `appendOne`
+  end-to-end (general `dst`): the `encodeTape`/`decodeTape` seam composes with
+  the gadget library.
+- **`compileOp_appendOne_zero_sound`** — the **corrected tape-length budget is
+  achievable** (`dst = 0`, from `scanInsert_run`'s explicit step count).
 
 ## Recommended next step
 
-Per ROADMAP plan step 1 (highest risk): **upgrade
-`compileOp_appendOne_behavioural` to the budgeted `compileOp_sound` shape** by
-adding a step count to `appendAt_run` and bounding it by
-`Compile.overhead (size + 1)`. That establishes the step-bound pattern; then
-concretise the 10 stub ops and assemble `Compile_sound`. (Alternatively, the
-cheaper-but-lower-risk `map`-over-lists witness — ROADMAP step 2,
+Per ROADMAP plan step 1: **(a) fix the per-op budget definition to tape length**
+and restate `Compile_sound` to carry `regBound`; **(b) upgrade
+`compileOp_appendOne_behavioural` to general-`dst` budgeted soundness** by
+re-proving `appendAt_run` with an explicit step count (lower-level lemmas
+already have them). Then concretise the 10 stub ops and assemble `Compile_sound`.
+(Alternatively, the cheaper `map`-over-lists witness — ROADMAP step 2,
 `parked/MapNatList_WIP.lean` — keeps the S3 migration moving while C2 is built.)
 
 ## Conventions

@@ -99,18 +99,31 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half needs a real SAT verifier
     `appendOne`/`appendZero` have real TM bodies.
   - All `compileOp_sound` / `compileSeq_sound` / `compileForBnd_sound` /
     `compileIfBit_sound` and the `Compile_sound` assembly are `sorry`.
-  - **The gadget run-lemmas leave the step count *existential*** ("a step bound
-    is a separate concern"). The polynomial step-bound accounting that
-    `Compile.overhead (size + cost)` needs is essentially **unbuilt** — this is
-    a distinct, sizeable obligation that prior estimates folded into "bounded
-    engineering".
-  - **Progress this session:** `compileOp_appendOne_behavioural`
-    (`Lang/Compile.lean`, sorry-free, axiom-clean) proves the *behavioural* half
-    of `compileOp_sound` for `appendOne` end-to-end — `Compile.opAppendOne dst`
-    on `encodeTape s` decodes to `Op.eval (appendOne dst) s`. This is the first
-    demonstration that the `encodeTape`/`decodeTape` contract and the gadget
-    library compose (the encoding seam is sound), and it isolates the residual
-    per-op gap to **purely the step bound**.
+  - The gadget run-lemmas *do* carry explicit step counts at the lower level
+    (`scanInsert_run`, `insertCarryTM_run`: `body.length + … + post.length + …`);
+    only the top-level `appendAt_run` existentializes them. So step counts are
+    recoverable — but they expose a **cost-model bug** (next bullet).
+  - **`compileOp_sound` is FALSE as stated** (this session's headline finding).
+    Its budget `Compile.overhead (State.size s + cost)` uses `State.size`, which
+    counts register *contents* but **ignores the register count**, whereas
+    `appendAtTM`'s step count grows with the **tape length**
+    `(encodeTape s).length = State.size s + s.length + 1`. Concrete witness
+    (evaluated): for `s = List.replicate 6 []`, `State.size s = 0` so the budget
+    is `overhead 1 = 4`, yet `opAppendOne 0` first halts at **step 10**. Fix: the
+    per-op budget must be over the **tape length**
+    `Compile.overhead ((encodeTape s).length + cost)`, and `Compile_sound`'s
+    assembly must thread the register count (bounded by the program's
+    `regBound`). `toFrameworkWitness'` currently "works" only because the
+    canonical *input* is single-register; intermediate states grow to `regBound`
+    registers, which the assembly must account for.
+  - **Progress this session** (`Lang/Compile.lean`, both sorry-free &
+    axiom-clean): `compileOp_appendOne_behavioural` proves the *behavioural* half
+    of `compileOp_sound` for `appendOne` end-to-end (encoding seam is sound), and
+    `compileOp_appendOne_zero_sound` proves the **corrected tape-length budget is
+    achievable** (base case `dst = 0`, from `scanInsert_run`'s explicit step
+    count). Together they isolate the residual per-op gap to: (a) an explicit
+    step count for general `dst` (re-prove `appendAt_run` with explicit steps),
+    and (b) fixing the budget definition.
 
 ---
 
@@ -125,14 +138,18 @@ Ordered by dependency. The two highest-risk items are **C2** (the compiler, now
 known to need step-bound machinery) and **S1** (the Cook tableau).
 
 1. **Finish the compiler `Compile_sound` (C2 — highest completion risk).**
-   a. Build a **step-bound** layer over the gadget library: give each gadget
-      run-lemma an explicit (or polynomial) step count, not just an existential.
-      This is the newly-recognised bulk of C2. Recommended: state a per-fragment
-      *physical contract* (head rewound to `0`, tape `= encodeTape output`,
-      explicit halt step `t`, no-early-halt trajectory, `t ≤ overhead(...)`),
-      and re-derive `appendOne`'s contract from `appendAt_run` + a step count —
-      i.e. upgrade `compileOp_appendOne_behavioural` to the budgeted
-      `compileOp_sound` shape.
+   a. **First fix the budget definition** (see finding above): change the per-op
+      budget from `Compile.overhead (State.size s + cost)` to the tape length
+      `Compile.overhead ((encodeTape s).length + cost)`, and restate
+      `Compile_sound` to thread the register count (≤ the program's `regBound`).
+      `compileOp_appendOne_zero_sound` already proves this budget is achievable.
+      Then build a **step-bound** layer over the gadget library: give each gadget
+      run-lemma an explicit step count (the lower-level lemmas already have them;
+      `appendAt_run` needs re-proving with explicit steps for general `dst`).
+      Recommended: state a per-fragment *physical contract* (head rewound to `0`,
+      tape `= encodeTape output`, explicit halt step `t`, no-early-halt
+      trajectory, `t ≤ overhead(tapeLen)`) and upgrade
+      `compileOp_appendOne_behavioural` to it for general `dst`.
    b. Concretise the 10 stub `compileOp`s from the gadget library (`opClear`,
       `opCopy`, `opTail`, `opHead`, `opEqBit`, `opNonEmpty`, and the four
       length-as-value ops), each with its budgeted `compileOp_sound`.
@@ -206,7 +223,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk, under-built.** Combinators proven; gadget library sorry-free; encoding seam validated this session (`compileOp_appendOne_behavioural`). **Open:** 10/12 `compileOp` stubs, all `compileOp_sound`, and — newly recognised — the **polynomial step-bound accounting** (gadget steps are existential). Plan step 1. |
+| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk, under-built + a stated-budget bug.** Combinators proven; gadget library sorry-free; encoding seam validated (`compileOp_appendOne_behavioural`) and corrected tape-length budget shown achievable (`compileOp_appendOne_zero_sound`). **`compileOp_sound` is false as stated** (budget ignores register count; counterexample `replicate 6 []`). **Open:** fix the budget to tape length; 10/12 `compileOp` stubs; explicit step counts for general `dst`; thread `regBound`. Plan step 1. |
 | **C1** | **per-`Op` compilation** (`compileOp` + soundness). | Only `appendOne`/`appendZero` have real TMs; behavioural soundness of `appendOne` proven. Rest stubbed. Part of C2. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + soundness). | `loopTM`/`loopTM_run` proven; behavioural `forBnd` toolkit (`Lang/Frame.lean`) proven. Wiring `compileForBnd` + its step bound is part of C2. |
 | **C4** | **layer → framework bridge.** | ✅ Engine done (`toFrameworkWitness'`, `inNPLang`/`red_inNPLang`, `inNPLang_to_inNP`, capstones `reducesPolyMO_of_lang`/`red_inNP_of_lang`), sorry-free modulo C2. Remaining: honest layer reductions (S1) + discharge C2. |

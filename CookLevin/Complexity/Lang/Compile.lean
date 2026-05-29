@@ -1236,6 +1236,88 @@ theorem compileOp_appendOne_behavioural (s : State) (dst : Var)
         from by rw [htape]]
     exact Compile.decodeTape_encodeTape' st' hd' _ (Compile.BitState_appendOne s dst hbit hdst)
 
+/-! ### C2 cost-model finding — `compileOp_sound`'s budget is too tight
+
+`compileOp_sound`'s budget is `Compile.overhead (State.size s + cost)`, but
+`State.size s` (the sum of register *contents*) **ignores the register count**,
+while `appendAtTM`'s step count grows with the **tape length**
+`(encodeTape s).length = State.size s + s.length + 1` — reaching register `dst`
+scans past every preceding register and `scanInsert` shifts the whole suffix.
+
+Concretely (verified by evaluation), for `s = List.replicate 6 []` we have
+`State.size s = 0`, so the stated budget is `overhead 1 = 4`, yet
+`opAppendOne 0` first reaches a halting state only at **step 10** and after 4
+steps decodes to the wrong state. So **`compileOp_sound` is false as stated.**
+
+Fix: the per-op budget must be over the tape length,
+`Compile.overhead ((encodeTape s).length + cost)`, and `Compile_sound`'s
+assembly must thread the register count (bounded by the program's `regBound`).
+The lemma below proves the corrected budget is provable (base case `dst = 0`,
+from `AppendGadget.scanInsert_run`'s explicit step count). -/
+theorem compileOp_appendOne_zero_sound (s : State) (hbit : Compile.BitState s)
+    (hlen : 0 < s.length) :
+    ∃ cfg,
+      runFlatTM (Compile.overhead (Compile.encodeTape s).length)
+          (Compile.opAppendOne 0).M
+          (initFlatConfig (Compile.opAppendOne 0).M [Compile.encodeTape s]) = some cfg ∧
+      haltingStateReached (Compile.opAppendOne 0).M cfg = true ∧
+      Compile.decodeTape cfg = Op.eval (Op.appendOne 0) s := by
+  set body : List Nat := Compile.shiftReg (s.get 0) with hbody
+  set post : List Nat := Compile.encodeRegs (s.drop 1) ++ [Compile.endMark] with hpost
+  have hget_mem : s.get 0 ∈ s := by
+    rw [State.get, List.getElem?_eq_getElem hlen]; exact List.getElem_mem hlen
+  have hbody_lt : ∀ x ∈ body, x < 4 := by
+    rw [hbody]; intro x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, hy, rfl⟩ := hx; have := hbit _ hget_mem y hy; omega
+  have hpost_lt : ∀ x ∈ post, x < 4 := by
+    rw [hpost]; intro x hx
+    rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeRegs_lt_four _
+        (fun b hb y hy => hbit b (List.mem_of_mem_drop hb) y hy) x hx
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
+  -- `encodeTape s` peels at register 0 as `body ++ 0 :: post`.
+  have henc : Compile.encodeTape s = body ++ 0 :: post := by
+    rw [hbody, hpost, ← Compile.encodeTape_split s 0 hlen]
+    simp [AppendGadget.regBlocks_nil]
+  -- The gadget run with its *explicit* step count.
+  obtain ⟨hrun, hhalt⟩ :=
+    AppendGadget.scanInsert_run 2 (by decide) [] body post
+      (by rw [hbody]; exact Compile.shiftReg_no_zero _) hbody_lt hpost_lt
+  rw [List.length_nil, List.nil_append] at hrun hhalt
+  rw [← henc] at hrun
+  have hinit : initFlatConfig (Compile.opAppendOne 0).M [Compile.encodeTape s]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := by
+    show initFlatConfig (AppendGadget.appendAtTM 2 0) [Compile.encodeTape s] = _
+    simp only [initFlatConfig, AppendGadget.appendAtTM_start, List.map_cons, List.map_nil]
+  -- Budget: the explicit step count is `≤ overhead (tape length)`.
+  have hstep_le : body.length + 1 + 1 + ((0 :: post).length + 1)
+      ≤ Compile.overhead (Compile.encodeTape s).length := by
+    have hcount : (Compile.encodeTape s).length = body.length + (0 :: post).length := by
+      rw [henc, List.length_append]
+    have hb1 : 1 ≤ (0 :: post).length := by rw [List.length_cons]; omega
+    rw [Compile.overhead, hcount]
+    nlinarith [hb1, Nat.zero_le body.length]
+  obtain ⟨k, hk⟩ := Nat.le.dest hstep_le
+  -- Output tape `body ++ 2 :: 0 :: post = encodeTape (eval (appendOne 0) s)`.
+  have htape : body ++ 2 :: 0 :: post
+      = Compile.encodeTape (Op.eval (Op.appendOne 0) s) := by
+    rw [hbody, hpost]
+    show _ = Compile.encodeTape (s.set 0 (s.get 0 ++ [1]))
+    rw [State.set, if_pos hlen, Compile.list_set_eq_take_cons_drop s 0 _ hlen,
+        Compile.encodeTape, List.take_zero, List.nil_append, Compile.encodeRegs_cons,
+        Compile.shiftReg_append_one]
+    simp [List.append_assoc]
+  refine ⟨{ state_idx := 5 + (scanRightUntilTM 4 0).states,
+            tapes := [([], 0 + body.length + (0 :: post).length, body ++ 2 :: 0 :: post)] },
+    ?_, ?_, ?_⟩
+  · rw [hinit, ← hk]; exact runFlatTM_extend hrun hhalt
+  · exact hhalt
+  · rw [htape]
+    exact Compile.decodeTape_encodeTape' _ _ _
+      (Compile.BitState_appendOne s 0 hbit hlen)
+
 /-- Soundness obligation for `compileSeq`, given the IHs for both
 sub-machines. -/
 theorem compileSeq_sound
