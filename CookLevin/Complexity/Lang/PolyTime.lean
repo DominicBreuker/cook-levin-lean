@@ -839,9 +839,10 @@ together with `comp` the canonical-computable functions form a category. -/
 def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X] :
     PolyTimeComputableLang' (id : X → X) where
   c := Cmd.op (Op.copy 0 0)
-  cost_bound := fun n => n + 1
-  cost_bound_poly := inOPoly_add inOPoly_id (inOPoly_const 1)
-  cost_bound_mono := by intro a b hab; show a + 1 ≤ b + 1; omega
+  -- Under the realistic cost model `copy 0 0` costs `|enc x| + 1 ≤ 2·size + 2`.
+  cost_bound := fun n => n + n + 2
+  cost_bound_poly := inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 2)
+  cost_bound_mono := by intro a b hab; show a + a + 2 ≤ b + b + 2; omega
   normalizes := fun x r => by
     have he : (Cmd.op (Op.copy 0 0)).eval (LangEncodable.encodeState x)
         = LangEncodable.encodeState x := by
@@ -855,11 +856,14 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
     rw [he]
   cost_le := fun x => by
     show (Cmd.op (Op.copy 0 0)).cost (LangEncodable.encodeState x)
-        ≤ encodable.size x + 1
+        ≤ encodable.size x + encodable.size x + 2
     rw [Cmd.cost_op]
-    show Op.cost (Op.copy 0 0) (LangEncodable.encodeState x) ≤ encodable.size x + 1
-    simp [Op.cost]
-  output_size_le := fun x => by show encodable.size x ≤ encodable.size x + 1; omega
+    show ((LangEncodable.encodeState x).get 0).length + 1
+        ≤ encodable.size x + encodable.size x + 2
+    rw [show ((LangEncodable.encodeState x).get 0) = LangEncodable.enc x from rfl]
+    have := LangEncodable.enc_size x
+    omega
+  output_size_le := fun x => by show encodable.size x ≤ encodable.size x + encodable.size x + 2; omega
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
 
@@ -974,10 +978,25 @@ private theorem swapCmd_eval {X Y : Type} [encodable X] [encodable Y]
   simp only [Cmd.eval_op, Op.eval, hg0, List.tail_cons, State.get_set_eq, State.get_set_ne,
     List.headD_cons, List.take_left, List.drop_left, ne_eq, Nat.reduceEqDiff, not_false_eq_true]
 
-/-- `swapCmd` runs in constant cost (`21`): it is a straight-line program of 11
-unit-cost ops. -/
-private theorem swapCmd_cost (s : State) : swapCmd.cost s = 21 := by
-  simp [swapCmd, Cmd.cost_seq, Cmd.cost_op, Op.cost]
+/-- Under the realistic cost model `swapCmd`'s cost on the canonical pair input
+is `5·(|enc x| + |enc y|) + 22` (the `tail`/`takeAt`/`dropAt`/`concat`/`consLen`
+ops each read `O(|enc x| + |enc y|)` data); this is `≤ 10·size + 22`, linear. -/
+private theorem swapCmd_cost_le {X Y : Type} [encodable X] [encodable Y]
+    [LangEncodable X] [LangEncodable Y] (x : X) (y : Y) :
+    swapCmd.cost (LangEncodable.encodeState ((x, y) : X × Y))
+      ≤ 10 * encodable.size ((x, y) : X × Y) + 22 := by
+  have hg0 : (LangEncodable.encodeState ((x, y) : X × Y)).get 0
+      = (LangEncodable.enc x).length :: (LangEncodable.enc x ++ LangEncodable.enc y) := rfl
+  have hsize : encodable.size ((x, y) : X × Y)
+      = encodable.size x + encodable.size y + 1 := rfl
+  have hx := LangEncodable.enc_size x
+  have hy := LangEncodable.enc_size y
+  unfold swapCmd
+  simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost, Cmd.eval_op, Op.eval, hg0,
+    List.tail_cons, List.headD_cons, State.get_set_eq, State.get_set_ne,
+    List.take_left, List.drop_left, List.length_append, List.length_cons,
+    ne_eq, Nat.reduceEqDiff, not_false_eq_true]
+  omega
 
 /-- The canonical-layer witness for pair swap `(x, y) ↦ (y, x)`. Sorry-free and
 axiom-clean (`propext` / `Quot.sound` only). The companion to `map_fst`: where
@@ -988,9 +1007,9 @@ def PolyTimeComputableLang'.swap {X Y : Type} [encodable X] [encodable Y]
     [LangEncodable X] [LangEncodable Y] :
     PolyTimeComputableLang' (fun p : X × Y => (p.2, p.1)) where
   c := swapCmd
-  cost_bound := fun n => n + 21
-  cost_bound_poly := inOPoly_add inOPoly_id (inOPoly_const 21)
-  cost_bound_mono := by intro a b hab; show a + 21 ≤ b + 21; omega
+  cost_bound := fun n => 10 * n + 22
+  cost_bound_poly := inOPoly_add (inOPoly_mul (inOPoly_const 10) inOPoly_id) (inOPoly_const 22)
+  cost_bound_mono := by intro a b hab; show 10 * a + 22 ≤ 10 * b + 22; omega
   normalizes := fun p r => by
     obtain ⟨x, y⟩ := p
     show State.get (swapCmd.eval (LangEncodable.encodeState ((x, y) : X × Y))) r
@@ -1031,13 +1050,12 @@ def PolyTimeComputableLang'.swap {X Y : Type} [encodable X] [encodable Y]
                   LangEncodable.encodeState_get_pos ((x, y) : X × Y) hrpos]
   cost_le := fun p => by
     obtain ⟨x, y⟩ := p
-    rw [swapCmd_cost]
-    show 21 ≤ encodable.size ((x, y) : X × Y) + 21
-    omega
+    exact swapCmd_cost_le x y
   output_size_le := fun p => by
     obtain ⟨x, y⟩ := p
-    show encodable.size ((y, x) : Y × X) ≤ encodable.size ((x, y) : X × Y) + 21
-    show encodable.size y + encodable.size x + 1 ≤ encodable.size x + encodable.size y + 1 + 21
+    show encodable.size ((y, x) : Y × X) ≤ 10 * encodable.size ((x, y) : X × Y) + 22
+    show encodable.size y + encodable.size x + 1
+        ≤ 10 * (encodable.size x + encodable.size y + 1) + 22
     omega
   regBound := 6
   usesBelow := by
@@ -1297,13 +1315,17 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     (C : Type) [encodable C] [LangEncodable C] :
     PolyTimeComputableLang' (fun xc : X × C => (f xc.1, xc.2)) where
   c := Wf.mapFstCmd
-  cost_bound := fun n => Wf.cost_bound n + n + 18
+  -- Under the realistic cost model the wrapper ops read `O(|enc x| + |enc c| +
+  -- |enc (f x)|)` data; total cost is `Wf.c.cost(mapFst_pre) + 3|ex| + 5|ec| +
+  -- 2|efx| + 19 ≤ 5·Wf.cost_bound n + 16 n + 29`.
+  cost_bound := fun n => 5 * Wf.cost_bound n + 16 * n + 29
   cost_bound_poly :=
-    inOPoly_add (inOPoly_add Wf.cost_bound_poly inOPoly_id) (inOPoly_const 18)
+    inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 5) Wf.cost_bound_poly)
+      (inOPoly_mul (inOPoly_const 16) inOPoly_id)) (inOPoly_const 29)
   cost_bound_mono := by
     intro a b hab
     have := Wf.cost_bound_mono a b hab
-    show Wf.cost_bound a + a + 18 ≤ Wf.cost_bound b + b + 18
+    show 5 * Wf.cost_bound a + 16 * a + 29 ≤ 5 * Wf.cost_bound b + 16 * b + 29
     omega
   normalizes := by
     intro xc r
@@ -1369,18 +1391,54 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     obtain ⟨x, c⟩ := xc
     have hk_pos : 0 < Wf.regBound := Cmd.UsesBelow_pos Wf.usesBelow
     have hagree := Wf.mapFst_pre_agree x c
-    show Wf.mapFstCmd.cost (LangEncodable.encodeState ((x, c) : X × C))
-        ≤ Wf.cost_bound (encodable.size ((x, c) : X × C))
-          + encodable.size ((x, c) : X × C) + 18
-    unfold PolyTimeComputableLang'.mapFstCmd
-    simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
-    rw [Wf.mapFst_pre_eval x c, ← Cmd.cost_agree Wf.c Wf.regBound Wf.usesBelow hagree]
+    have hg0 : (LangEncodable.encodeState ((x, c) : X × C)).get 0
+        = (LangEncodable.enc x).length :: (LangEncodable.enc x ++ LangEncodable.enc c) := rfl
+    -- gets of `W := Wf.c.eval (mapFst_pre x c)` that the suffix ops read
+    have hW0 : (Wf.c.eval (Wf.mapFst_pre x c)).get 0 = LangEncodable.enc (f x) :=
+      Wf.eval_get_of_agree x hagree hk_pos
+    have hWk2 : (Wf.c.eval (Wf.mapFst_pre x c)).get (Wf.regBound + 2) = LangEncodable.enc c := by
+      rw [Wf.eval_frame (Wf.mapFst_pre x c) (show Wf.regBound ≤ Wf.regBound + 2 by omega)]
+      unfold PolyTimeComputableLang'.mapFst_pre
+      rw [State.get_set_ne _ _ _ _ (show (Wf.regBound + 2 : Var) ≠ 0 by omega), State.get_set_eq]
+    -- register disequalities (symbolic; built without `omega`, which is opaque
+    -- to the `Var := Nat` coercion — see ROADMAP gotcha).
+    have d0k : (0 : Var) ≠ Wf.regBound := ne_of_lt hk_pos
+    have d0k1 : (0 : Var) ≠ Wf.regBound + 1 := ne_of_lt (Nat.succ_pos _)
+    have d0k2 : (0 : Var) ≠ Wf.regBound + 2 := ne_of_lt (Nat.succ_pos _)
+    have dkk1 : (Wf.regBound : Var) ≠ Wf.regBound + 1 := ne_of_lt (Nat.lt_succ_self _)
+    have dkk2 : (Wf.regBound : Var) ≠ Wf.regBound + 2 :=
+      ne_of_lt (Nat.lt_succ_of_lt (Nat.lt_succ_self _))
+    have dk1k2 : (Wf.regBound + 1 : Var) ≠ Wf.regBound + 2 := ne_of_lt (Nat.lt_succ_self _)
+    -- cost-relevant size facts
+    have hca : Wf.c.cost (Wf.mapFst_pre x c) = Wf.c.cost (LangEncodable.encodeState x) :=
+      (Cmd.cost_agree Wf.c Wf.regBound Wf.usesBelow hagree).symm
     have hcle : Wf.c.cost (LangEncodable.encodeState x) ≤ Wf.cost_bound (encodable.size x) :=
       Wf.cost_le x
+    have hofx : encodable.size (f x) ≤ Wf.cost_bound (encodable.size x) := Wf.output_size_le x
     have hmono : Wf.cost_bound (encodable.size x)
         ≤ Wf.cost_bound (encodable.size ((x, c) : X × C)) :=
       Wf.cost_bound_mono _ _ (by
         show encodable.size x ≤ encodable.size x + encodable.size c + 1; omega)
+    have hex := LangEncodable.enc_size x
+    have hec := LangEncodable.enc_size c
+    have hefx := LangEncodable.enc_size (f x)
+    have hsize : encodable.size ((x, c) : X × C)
+        = encodable.size x + encodable.size c + 1 := rfl
+    show Wf.mapFstCmd.cost (LangEncodable.encodeState ((x, c) : X × C))
+        ≤ 5 * Wf.cost_bound (encodable.size ((x, c) : X × C))
+          + 16 * encodable.size ((x, c) : X × C) + 29
+    unfold PolyTimeComputableLang'.mapFstCmd
+    -- Stage 1: expand the cost structure only (do NOT reduce the evals yet),
+    -- so the literal 4-fold prefix eval survives for `mapFst_pre_eval`.
+    simp only [Cmd.cost_seq, Cmd.cost_op]
+    -- Stage 2: collapse the prefix 4-fold to `mapFst_pre`, then reduce all op
+    -- costs (prefix via the encoded-input structure, suffix via the `W` gets).
+    rw [Wf.mapFst_pre_eval x c]
+    simp only [Op.cost, Cmd.eval_op, Op.eval, hg0, hW0, hWk2, hca, State.get_set_eq,
+      State.get_set_ne _ _ _ _ d0k, State.get_set_ne _ _ _ _ d0k1,
+      State.get_set_ne _ _ _ _ d0k2, State.get_set_ne _ _ _ _ dkk1,
+      State.get_set_ne _ _ _ _ dkk2, State.get_set_ne _ _ _ _ dk1k2,
+      List.tail_cons, List.headD_cons, List.length_append, List.length_cons]
     omega
   output_size_le := by
     intro xc
@@ -1390,9 +1448,11 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
       show encodable.size x ≤ encodable.size x + encodable.size c + 1; omega
     have h3 : Wf.cost_bound (encodable.size x) ≤ Wf.cost_bound (encodable.size ((x, c) : X × C)) :=
       Wf.cost_bound_mono _ _ h2
+    have hsize : encodable.size ((x, c) : X × C)
+        = encodable.size x + encodable.size c + 1 := rfl
     show encodable.size (f x) + encodable.size c + 1
-        ≤ Wf.cost_bound (encodable.size ((x, c) : X × C))
-          + (encodable.size x + encodable.size c + 1) + 18
+        ≤ 5 * Wf.cost_bound (encodable.size ((x, c) : X × C))
+          + 16 * encodable.size ((x, c) : X × C) + 29
     omega
   regBound := Wf.regBound + 3
   usesBelow := by

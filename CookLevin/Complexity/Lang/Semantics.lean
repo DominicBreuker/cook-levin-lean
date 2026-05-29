@@ -59,9 +59,161 @@ def Op.eval : Op → State → State
   | .consLen    dst lenSrc src, s =>
       s.set dst ((s.get lenSrc).length :: s.get src)
 
-/-- Cost of an operation. Every primitive is unit cost in the
-intended semantics. -/
-def Op.cost (_ : Op) (_ : State) : Nat := 1
+/-- Cost of an operation — a **realistic** (size-aware) cost model.
+
+Each op costs `1` for the control step plus the length of any **source data it
+must read and re-materialise**. The size-increasing ops (`copy`, `tail`,
+`takeAt`, `dropAt`, `concat`, `consLen`) therefore charge for their output, so
+that cost dominates the per-step size growth (`Op.size_eval_le`). This is the
+fix for the cost-model gap: under the previous unit-cost model `concat`/`copy`
+could grow `State.size` multiplicatively in one step, making the layer cost an
+unfaithful proxy for the compiled TM's running time (output size — hence TM
+steps — could be exponential in layer cost). With this cost the global invariant
+`State.size (Op.eval o s) ≤ State.size s + Op.cost o s` holds. The ops that only
+write `O(1)` cells (`clear`, `appendOne/Zero`, `head`, `eqBit`, `nonEmpty`)
+remain unit cost. This mirrors the L-calculus cost the Coq port extracts from. -/
+def Op.cost : Op → State → Nat
+  | .clear      _,            _ => 1
+  | .appendOne  _,            _ => 1
+  | .appendZero _,            _ => 1
+  | .copy       _ src,        s => (s.get src).length + 1
+  | .tail       _ src,        s => (s.get src).length + 1
+  | .head       _ _,          _ => 1
+  | .eqBit      _ _ _,        _ => 1
+  | .nonEmpty   _ _,          _ => 1
+  | .takeAt     _ src _,      s => (s.get src).length + 1
+  | .dropAt     _ src _,      s => (s.get src).length + 1
+  | .concat     _ src1 src2,  s => (s.get src1).length + (s.get src2).length + 1
+  | .consLen    _ _ src,      s => (s.get src).length + 1
+
+/-! ## Size accounting (the cost-model soundness invariant)
+
+`State.size_set_add` is the exact bookkeeping identity for `State.set`; from it
+`Op.size_eval_le` shows each op's realistic cost dominates its size growth.
+`Op.size_eval_le` is the invariant that was **false** under the old unit-cost
+model (e.g. `concat dst src src` with empty `dst` grew size by `2·|src|` at cost
+`1`); it now holds, validating the cost model. -/
+
+/-- `State.set` on an in-range index is exactly `List.set`; its size obeys the
+balance `size(set) + |old| = size + |new|`. -/
+private theorem State.size_set_lt :
+    ∀ (l : State) (i : Nat) (h : i < l.length) (v : List Nat),
+      State.size (List.set l i v) + (l[i]'h).length = State.size l + v.length
+  | [], _, h, _ => absurd h (by simp)
+  | a :: t, 0, _, v => by
+      simp only [List.set_cons_zero, List.getElem_cons_zero, State.size,
+        List.map_cons, List.foldr_cons]
+      omega
+  | a :: t, i + 1, h, v => by
+      have ih := State.size_set_lt t i (by simpa using h) v
+      simp only [List.set_cons_succ, List.getElem_cons_succ, State.size,
+        List.map_cons, List.foldr_cons]
+      simp only [State.size] at ih
+      omega
+
+private theorem State.size_append (a b : State) :
+    State.size (a ++ b) = State.size a + State.size b := by
+  induction a with
+  | nil => simp [State.size]
+  | cons x t ih =>
+      simp only [List.cons_append, State.size, List.map_cons, List.foldr_cons] at ih ⊢
+      omega
+
+private theorem State.size_replicate_nil (k : Nat) :
+    State.size (List.replicate k ([] : List Nat)) = 0 := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+      simp only [List.replicate_succ, State.size, List.map_cons, List.foldr_cons,
+        List.length_nil] at ih ⊢
+      omega
+
+/-- **Size balance for `State.set`.** Writing `v` to register `dst` changes the
+total size by `|v| − |old dst|`: `size(set) + |old| = size + |v|`. Holds in both
+the in-range and the padding branch (padding registers are `[]`, size `0`). -/
+theorem State.size_set_add (s : State) (dst : Var) (v : List Nat) :
+    State.size (s.set dst v) + (s.get dst).length = State.size s + v.length := by
+  by_cases h : dst < s.length
+  · have hget : (s.get dst).length = (s[dst]'h).length := by
+      unfold State.get; rw [List.getElem?_eq_getElem h]; rfl
+    rw [hget, show s.set dst v = List.set s dst v from by unfold State.set; rw [if_pos h]]
+    exact State.size_set_lt s dst h v
+  · have hge : s.length ≤ dst := Nat.le_of_not_lt h
+    have hget : (s.get dst).length = 0 := by
+      unfold State.get; rw [List.getElem?_eq_none hge]; rfl
+    have hlen_pad :
+        dst < (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)).length := by
+      rw [List.length_append, List.length_replicate,
+        Nat.add_sub_cancel' (Nat.le_succ_of_le hge)]
+      exact Nat.lt_succ_self dst
+    have hpad_elem :
+        (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat))[dst]'hlen_pad = [] := by
+      rw [List.getElem_append_right hge]
+      exact List.getElem_replicate _
+    have hbal :=
+      State.size_set_lt (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)) dst hlen_pad v
+    have hsize_pad :
+        State.size (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)) = State.size s := by
+      rw [State.size_append, State.size_replicate_nil, Nat.add_zero]
+    rw [hget, show s.set dst v
+          = List.set (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)) dst v from by
+          unfold State.set; rw [if_neg h]]
+    rw [hpad_elem, List.length_nil] at hbal
+    omega
+
+/-- Convenience: if `|v| ≤ c + |old dst|` then writing `v` costs at most `c` in
+size. The per-op specialisation of `State.size_set_add`. -/
+private theorem State.size_set_le_cost (s : State) (dst : Var) (v : List Nat) (c : Nat)
+    (hv : v.length ≤ c + (s.get dst).length) :
+    State.size (s.set dst v) ≤ State.size s + c := by
+  have h := State.size_set_add s dst v
+  omega
+
+/-- **Cost-model soundness (op level).** The realistic `Op.cost` dominates the
+per-op size growth: `size(Op.eval o s) ≤ size s + Op.cost o s`. This is the
+invariant the budget needs and the one the old unit-cost model violated. -/
+theorem Op.size_eval_le (o : Op) (s : State) :
+    State.size (Op.eval o s) ≤ State.size s + Op.cost o s := by
+  cases o with
+  | clear dst => exact State.size_set_le_cost s dst [] 1 (by simp)
+  | appendOne dst =>
+      exact State.size_set_le_cost s dst _ 1
+        (by simp only [List.length_append, List.length_cons, List.length_nil]; omega)
+  | appendZero dst =>
+      exact State.size_set_le_cost s dst _ 1
+        (by simp only [List.length_append, List.length_cons, List.length_nil]; omega)
+  | copy dst src =>
+      exact State.size_set_le_cost s dst _ ((s.get src).length + 1) (by omega)
+  | tail dst src =>
+      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
+      have : (s.get src).tail.length ≤ (s.get src).length := by
+        rw [List.length_tail]; omega
+      omega
+  | head dst src =>
+      refine State.size_set_le_cost s dst _ 1 ?_
+      rcases s.get src with _ | ⟨x, xs⟩ <;> simp
+  | eqBit dst s1 s2 =>
+      refine State.size_set_le_cost s dst _ 1 ?_
+      by_cases hh : s.get s1 = s.get s2 <;> simp [hh]
+  | nonEmpty dst src =>
+      refine State.size_set_le_cost s dst _ 1 ?_
+      by_cases hh : (s.get src).isEmpty <;> simp [hh]
+  | takeAt dst src len =>
+      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
+      have : ((s.get src).take ((s.get len).headD 0)).length ≤ (s.get src).length :=
+        by rw [List.length_take]; omega
+      omega
+  | dropAt dst src len =>
+      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
+      have : ((s.get src).drop ((s.get len).headD 0)).length ≤ (s.get src).length :=
+        by rw [List.length_drop]; omega
+      omega
+  | concat dst s1 s2 =>
+      refine State.size_set_le_cost s dst _ ((s.get s1).length + (s.get s2).length + 1) ?_
+      rw [List.length_append]; omega
+  | consLen dst lenSrc src =>
+      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
+      rw [List.length_cons]; omega
 
 /-! ## Command semantics (concrete, via `Cmd.run`)
 

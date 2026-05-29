@@ -338,6 +338,40 @@ theorem Cmd.eval_agree (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
 
 /-! ## Cost locality: the cost depends only on registers `< k` -/
 
+/-- An op's (now size-aware) cost agrees on states that agree on registers
+`< k`, provided it only reads registers `< k`. The unit-cost ops are
+state-independent (`rfl`); the size-aware ones read a source register whose
+length is fixed by the agreement. -/
+theorem Op.cost_agree (o : Op) (k : Nat) (h : Op.UsesBelow o k)
+    {s₁ s₂ : State} (hagree : AgreeBelow k s₁ s₂) :
+    Op.cost o s₁ = Op.cost o s₂ := by
+  cases o with
+  | clear _ => rfl
+  | appendOne _ => rfl
+  | appendZero _ => rfl
+  | head _ _ => rfl
+  | eqBit _ _ _ => rfl
+  | nonEmpty _ _ => rfl
+  | copy _ src =>
+      show (s₁.get src).length + 1 = (s₂.get src).length + 1
+      rw [hagree src h.2]
+  | tail _ src =>
+      show (s₁.get src).length + 1 = (s₂.get src).length + 1
+      rw [hagree src h.2]
+  | takeAt _ src _ =>
+      show (s₁.get src).length + 1 = (s₂.get src).length + 1
+      rw [hagree src h.2.1]
+  | dropAt _ src _ =>
+      show (s₁.get src).length + 1 = (s₂.get src).length + 1
+      rw [hagree src h.2.1]
+  | concat _ src1 src2 =>
+      show (s₁.get src1).length + (s₁.get src2).length + 1
+          = (s₂.get src1).length + (s₂.get src2).length + 1
+      rw [hagree src1 h.2.1, hagree src2 h.2.2]
+  | consLen _ _ src =>
+      show (s₁.get src).length + 1 = (s₂.get src).length + 1
+      rw [hagree src h.2.2]
+
 /-- A program touching only registers `< k` runs at the same cost on any two
 states that agree on registers `< k`. Needed so composition can bound the cost
 of the second program on the first's (scratch-bearing) output. -/
@@ -345,7 +379,7 @@ theorem Cmd.cost_agree (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
     {s₁ s₂ : State} (hagree : AgreeBelow k s₁ s₂) :
     c.cost s₁ = c.cost s₂ := by
   induction c generalizing s₁ s₂ with
-  | op o => rfl
+  | op o => rw [Cmd.cost_op, Cmd.cost_op]; exact Op.cost_agree o k h hagree
   | seq c1 c2 ih1 ih2 =>
       obtain ⟨h1, h2⟩ := h
       rw [Cmd.cost_seq, Cmd.cost_seq, ih1 h1 hagree,
