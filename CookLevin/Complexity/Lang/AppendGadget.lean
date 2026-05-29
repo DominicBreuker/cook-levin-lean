@@ -513,6 +513,41 @@ theorem appendAt_run (ins : Nat) (h_ins : ins < 4)
       h_no_zero h_body_lt h_post_lt
   exact ⟨_, _, _, hrun, hhalt⟩
 
+/-- **Exit state pinned (Risk C2, step 1b-1).** `appendAt_run_steps` reaches a
+*halting* state; since `appendAtTM ins dst`'s halt vector is unique
+(`appendAtTM_halt_unique`), that state is exactly `appendAtTM_exit dst`. This is
+the explicit exit-state fact `composeFlatTM_run` needs when bracketing the gadget
+with a tail rewind. (The exit head stays existential here — the rewind works from
+any interior head; the explicit head, when needed, is
+`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`,
+read off `scanInsert_run` through the `dst` recursion.) -/
+theorem appendAt_run_exit (ins : Nat) (h_ins : ins < 4)
+    (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
+    (hlen : skipped.length = dst)
+    (h_pre : ∀ x ∈ pre, x < 4)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
+    (h_post_lt : ∀ x ∈ post, x < 4) :
+    ∃ head' : Nat,
+      runFlatTM (appendAt_steps skipped body post) (appendAtTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+        = some { state_idx := appendAtTM_exit dst,
+                 tapes := [([], head',
+                   pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } := by
+  obtain ⟨state', head', hrun, hhalt⟩ :=
+    appendAt_run_steps ins h_ins dst pre skipped body post hlen h_pre h_skip
+      h_no_zero h_body_lt h_post_lt
+  have hmem : (appendAtTM ins dst).halt[state']? = some true := by
+    have hg : (appendAtTM ins dst).halt.getD state' false = true := hhalt
+    rw [List.getD_eq_getElem?_getD] at hg
+    rcases hopt : (appendAtTM ins dst).halt[state']? with _ | b
+    · rw [hopt] at hg; simp at hg
+    · rw [hopt] at hg; simp only [Option.getD_some] at hg; exact congrArg some hg
+  have hexit : state' = appendAtTM_exit dst := appendAtTM_halt_unique ins dst state' hmem
+  subst hexit
+  exact ⟨head', hrun⟩
+
 /-- **Tape-length step bound.** `appendAt_steps` is at most `2 · (tape length)
 + 3` — linear in the encoded tape, hence below `Compile.overhead` of it. Each
 skipped register `b` contributes `b.length + 2` to the steps but `b.length + 1`

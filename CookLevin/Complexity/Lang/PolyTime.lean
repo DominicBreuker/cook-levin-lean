@@ -41,7 +41,7 @@ bounds (`AppendGadget.appendAt_steps_le : ≤ 2·tapeLen+3`) compose against. -/
 theorem Cmd.encodeTape_eval_length_le (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
     (s : State) :
     (Compile.encodeTape (c.eval s)).length
-      ≤ State.size s + c.cost s + max s.length k + 1 := by
+      ≤ State.size s + c.cost s + max s.length k + 2 := by
   rw [Compile.encodeTape_length]
   have h1 := Cmd.size_eval_le c s
   have h2 := Cmd.eval_length_le c k h s
@@ -1679,14 +1679,14 @@ poly budget `overhead (size x + size x + 1 + dBound (size x)) + 2`. -/
 private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (x : X) :
     Compile.overhead (State.size (LangEncodable.encodeState x)
-        + D.c.cost (LangEncodable.encodeState x)) + 2
-      ≤ Compile.overhead (encodable.size x + encodable.size x + 1 + dBound (encodable.size x)) + 2 := by
+        + D.c.cost (LangEncodable.encodeState x)) + 3
+      ≤ Compile.overhead (encodable.size x + encodable.size x + 1 + dBound (encodable.size x)) + 3 := by
   have h1 : State.size (LangEncodable.encodeState x) ≤ 2 * encodable.size x + 1 := by
     rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
   have h2 : D.c.cost (LangEncodable.encodeState x) ≤ dBound (encodable.size x) := D.cost_le x
   have hle : State.size (LangEncodable.encodeState x) + D.c.cost (LangEncodable.encodeState x)
       ≤ encodable.size x + encodable.size x + 1 + dBound (encodable.size x) := by omega
-  exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 2
+  exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 3
 
 /-- **C6 bridge:** a canonical layer decider `DecidesLang' P dBound` yields a
 framework-level `DecidesBy P` whose time budget is polynomial in `dBound`. The
@@ -1694,11 +1694,11 @@ machine is `Compile.bitDeciderTM D.c`; correctness comes from `D.decides`
 (register `0` is `[1]`/`[0]`) carried through `Compile.bitDecider_run`. -/
 def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) :
-    DecidesBy P (fun n => Compile.overhead (n + n + 1 + dBound n) + 2) where
+    DecidesBy P (fun n => Compile.overhead (n + n + 1 + dBound n) + 3) where
   encode := fun x => Compile.encodeTape (LangEncodable.encodeState x)
   encode_size := fun x => by
     have hlen : (Compile.encodeTape (LangEncodable.encodeState x)).length
-        = (LangEncodable.enc x).length + 2 :=
+        = (LangEncodable.enc x).length + 3 :=
       Compile.encodeTape_singleton_length (LangEncodable.enc x)
     have := LangEncodable.enc_size x
     omega
@@ -1725,7 +1725,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
         rfl
       obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
       show runFlatTM (Compile.overhead (encodable.size x + encodable.size x + 1
-              + dBound (encodable.size x)) + 2) (Compile.bitDeciderTM D.c)
+              + dBound (encodable.size x)) + 3) (Compile.bitDeciderTM D.c)
             (initFlatConfig (Compile.bitDeciderTM D.c)
               (initialTapes (Compile.bitDeciderTM D.c)
                 (Compile.encodeTape (LangEncodable.encodeState x)))) = some cfg
@@ -1748,7 +1748,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
         rfl
       obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
       show runFlatTM (Compile.overhead (encodable.size x + encodable.size x + 1
-              + dBound (encodable.size x)) + 2) (Compile.bitDeciderTM D.c)
+              + dBound (encodable.size x)) + 3) (Compile.bitDeciderTM D.c)
             (initFlatConfig (Compile.bitDeciderTM D.c)
               (initialTapes (Compile.bitDeciderTM D.c)
                 (Compile.encodeTape (LangEncodable.encodeState x)))) = some cfg
@@ -1763,18 +1763,18 @@ theorem DecidesLang'.toInTimePoly {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound)
     (hpoly : inOPoly dBound) (hmono : monotonic dBound) :
     inTimePoly P := by
-  refine ⟨fun n => Compile.overhead (n + n + 1 + dBound n) + 2, ⟨D.toDecidesBy⟩, ?_, ?_⟩
+  refine ⟨fun n => Compile.overhead (n + n + 1 + dBound n) + 3, ⟨D.toDecidesBy⟩, ?_, ?_⟩
   · have hinner : inOPoly (fun n => n + n + 1 + dBound n) :=
       inOPoly_add (inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 1)) hpoly
     have hcomp : inOPoly (Compile.overhead ∘ fun n => n + n + 1 + dBound n) :=
       inOPoly_comp hinner Compile.overhead_poly
-    exact inOPoly_add hcomp (inOPoly_const 2)
+    exact inOPoly_add hcomp (inOPoly_const 3)
   · intro a b hab
     have h1 : dBound a ≤ dBound b := hmono a b hab
     have hle : a + a + 1 + dBound a ≤ b + b + 1 + dBound b := by omega
-    show Compile.overhead (a + a + 1 + dBound a) + 2
-        ≤ Compile.overhead (b + b + 1 + dBound b) + 2
-    exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 2
+    show Compile.overhead (a + a + 1 + dBound a) + 3
+        ≤ Compile.overhead (b + b + 1 + dBound b) + 3
+    exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 3
 
 /-- **Framework decider bridge — headline.** `inNPLang Q → inNP Q`: a
 layer-native NP witness (canonical `DecidesLang'` verifier) yields a

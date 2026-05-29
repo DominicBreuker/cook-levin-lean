@@ -766,10 +766,20 @@ theorem Compile.encodeRegs_cons (reg : List Nat) (s : State) :
     Compile.encodeRegs (reg :: s) =
       Compile.shiftReg reg ++ [0] ++ Compile.encodeRegs s := rfl
 
-/-- Encode a `State` as a flat tape: the registers (`encodeRegs`)
-followed by the end-of-tape terminator `endMark`. -/
+/-- Encode a `State` as a flat tape: a **leading sentinel** `endMark`, the
+registers (`encodeRegs`), and the end-of-tape terminator `endMark`.
+
+The leading sentinel (reusing `endMark = 3`, so the alphabet stays `sig = 4`) is
+the head-rewind anchor required to *compose* compiled fragments (Risk C2): a
+compiled `Op` halts with its head mid-tape, but `composeFlatTM` resumes the next
+machine on that exact head, while every per-`Op` soundness statement assumes the
+head starts at `0`. `scanLeftUntilTM 4 3` (`ScanLeft.rewindToStart_run`) scans
+left to this leading `3` at index `0`, since the interior carries only
+`{0, 1, 2}` (`encodeRegs` of a `BitState`). The head starts at index `0` on the
+sentinel; the scan/insert gadgets fold it into their first (marker-free) block,
+so no head-bridge is needed. -/
 def Compile.encodeTape (s : State) : List Nat :=
-  Compile.encodeRegs s ++ [Compile.endMark]
+  Compile.endMark :: (Compile.encodeRegs s ++ [Compile.endMark])
 
 /-- The encoded registers occupy `State.size s + s.length` cells: each register
 contributes its (shifted) contents plus one `0` delimiter. -/
@@ -783,15 +793,17 @@ theorem Compile.encodeRegs_length (s : State) :
         List.length_nil, ih, State.size, List.map_cons, List.foldr_cons]
       omega
 
-/-- **Tape length = contents + register count + 1.** The encoded tape is the
-registers (`State.size s + s.length` cells) plus the `endMark`. This is the link
+/-- **Tape length = contents + register count + 2.** The encoded tape is the
+registers (`State.size s + s.length` cells) plus the leading and trailing
+`endMark` sentinels. This is the link
 between the per-op gadget step bounds (which grow with the *tape length*) and the
 `State.size` / register-count bounds (`Cmd.size_eval_le` / `Cmd.eval_length_le`)
 — so the intermediate tape length during a `Compile` run is bounded linearly in
 `size + cost + regBound`. -/
 theorem Compile.encodeTape_length (s : State) :
-    (Compile.encodeTape s).length = State.size s + s.length + 1 := by
-  rw [Compile.encodeTape, List.length_append, Compile.encodeRegs_length]; rfl
+    (Compile.encodeTape s).length = State.size s + s.length + 2 := by
+  rw [Compile.encodeTape, List.length_cons, List.length_append,
+      Compile.encodeRegs_length]; rfl
 
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
 
@@ -834,7 +846,8 @@ def Compile.decodeTape (cfg : FlatTMConfig) : State :=
   | []           => []
   | tape :: _    =>
       let flat := Compile.flattenTape tape
-      let content := flat.takeWhile (· != Compile.endMark)
+      -- Drop the leading sentinel, then read up to the trailing terminator.
+      let content := flat.tail.takeWhile (· != Compile.endMark)
       let groups := Compile.splitOnZero content
       let trimmed := Compile.dropTrailingEmpty groups
       trimmed.map Compile.unshiftReg
@@ -964,29 +977,29 @@ theorem Compile.decodeTape_encodeTape (s : State) (h : Compile.BitState s) :
           state_idx := 0 } = s := by
   show (Compile.dropTrailingEmpty
         (Compile.splitOnZero
-          ((Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)).takeWhile
+          ((Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)).tail.takeWhile
             (· != Compile.endMark)))).map Compile.unshiftReg = s
-  rw [show Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)
-        = Compile.encodeTape s from rfl,
-      show Compile.encodeTape s = Compile.encodeRegs s ++ [Compile.endMark] from rfl,
+  rw [show (Compile.flattenTape (([] : List Nat), (0 : Nat), Compile.encodeTape s)).tail
+        = Compile.encodeRegs s ++ [Compile.endMark] from rfl,
       Compile.takeWhile_no_endMark _ (Compile.encodeRegs_no_endMark s h),
       Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
       Compile.map_unshift_shift]
 
-/-- The first symbol of the encoded tape is `shiftReg`-ed register `0`. When
-register `0` holds a single bit `b` (the decider answer convention — `[1]` for
-accept, `[0]` for reject), the encoded tape begins with `b + 1`. This is the
-only fact the tape→state bit-test gadget needs about the encoding. -/
+/-- After the leading sentinel, the encoded tape continues with `shiftReg`-ed
+register `0`. When register `0` holds a single bit `b` (the decider answer
+convention — `[1]` for accept, `[0]` for reject), the encoded tape is
+`endMark :: (b + 1) :: …`. This is the only fact the tape→state bit-test gadget
+needs about the encoding (it steps past the sentinel, then reads `b + 1`). -/
 theorem Compile.encodeTape_eq_cons_of_get_zero (s : State) (b : Nat)
     (h : s.get 0 = [b]) :
-    ∃ tl, Compile.encodeTape s = (b + 1) :: tl := by
+    ∃ tl, Compile.encodeTape s = Compile.endMark :: (b + 1) :: tl := by
   cases s with
   | nil => simp [State.get] at h
   | cons r0 rest =>
       have hr0 : r0 = [b] := by simpa [State.get] using h
       refine ⟨[0] ++ Compile.encodeRegs rest ++ [Compile.endMark], ?_⟩
-      show Compile.encodeRegs (r0 :: rest) ++ [Compile.endMark]
-          = (b + 1) :: ([0] ++ Compile.encodeRegs rest ++ [Compile.endMark])
+      show Compile.endMark :: (Compile.encodeRegs (r0 :: rest) ++ [Compile.endMark])
+          = Compile.endMark :: (b + 1) :: ([0] ++ Compile.encodeRegs rest ++ [Compile.endMark])
       rw [Compile.encodeRegs_cons, hr0]
       simp [Compile.shiftReg]
 
@@ -1056,23 +1069,21 @@ theorem compileOp_sound (o : Op) (s : State) :
       Compile.decodeTape cfg = Op.eval o s := by
   sorry  -- TODO(Part3.3:compileOp): implement per-Op TMs.
 
-/-! ### C1/C2 integration probe — behavioural soundness of `appendOne`
+/-! ### Encoding-seam helpers for the per-op soundness lemma
 
-`compileOp_sound` above is sorry-bodied for *all* ops and demands the
-**exact** budget `Compile.overhead (size + 1)`. The proven gadget library
-(`AppendGadget.appendAt_run`, …) establishes the *tape transformation* but
-deliberately leaves the step count **existential** ("a step bound is a
-separate concern").
+`compileOp_sound` above is sorry-bodied for *all* ops. The helpers below
+(`encodeTape_split`, the `shiftReg`/`regBlocks` algebra, the `BitState`
+preservation lemmas, and the `decodeTape`/`encodeTape` round trip) connect the
+compiler's single-tape `encodeTape`/`decodeTape` contract to the proven gadget
+library (`AppendGadget.appendAt_run_steps`, …). They feed the live per-op
+soundness lemma `Compile.appendBit_sound` (general `dst`, linear step budget)
+below, which discharges the behavioural + budget halves of `compileOp_sound`
+for the two real ops `appendOne`/`appendZero`.
 
-`compileOp_appendOne_behavioural` below closes the **behavioural** half
-end-to-end for `appendOne`: running `Compile.opAppendOne dst` on
-`Compile.encodeTape s` halts with a tape that `Compile.decodeTape`s back to
-`Op.eval (appendOne dst) s`. This is the first end-to-end demonstration that
-the compiler's single-tape `encodeTape`/`decodeTape` contract and the gadget
-library actually compose — the key untested seam of Risk C2. It shows the
-residual per-op obligation is **purely the step bound** (i.e. replacing the
-`∃ steps` here by the fixed `Compile.overhead (size + 1)` budget — the
-cost-accounting that the gadget run-lemmas do not yet provide). -/
+Note the **leading-sentinel encoding** (`encodeTape s = endMark :: encodeRegs s
+++ [endMark]`): the gadget starts at head `0` on the sentinel, which
+`appendBit_sound` folds into the first marker-free block so the scan still
+begins at head `0` (no head-bridge needed). -/
 
 private theorem Compile.encodeRegs_append (a b : State) :
     Compile.encodeRegs (a ++ b)
@@ -1119,15 +1130,17 @@ private theorem Compile.list_eq_take_getElem_drop {α : Type} :
       exact congrArg (a :: ·) (Compile.list_eq_take_getElem_drop l i (by simpa using h))
   | [], _, h => by simp at h
 
-/-- The encoded tape of `s` splits at register `dst` into the preceding
-register blocks, the target register's shifted contents, its delimiter, and
-the rest — exactly the shape `AppendGadget.appendAt_run` consumes (with empty
-prefix). -/
+/-- The **registers part** of the encoded tape (i.e. `encodeTape s` with its
+leading and trailing sentinels stripped — equivalently `encodeRegs s ++
+[endMark]`) splits at register `dst` into the preceding register blocks, the
+target register's shifted contents, its delimiter, and the rest — exactly the
+shape `AppendGadget.appendAt_run` consumes (with empty prefix). The leading
+sentinel of `encodeTape` is reattached by the caller (`appendBit_sound`). -/
 private theorem Compile.encodeTape_split (s : State) (dst : Var) (h : dst < s.length) :
     AppendGadget.regBlocks ((s.take dst).map Compile.shiftReg)
         ++ Compile.shiftReg (s.get dst)
         ++ 0 :: (Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark])
-      = Compile.encodeTape s := by
+      = Compile.encodeRegs s ++ [Compile.endMark] := by
   have hget : s.get dst = s[dst] := by
     rw [State.get, List.getElem?_eq_getElem h]; rfl
   have hs : Compile.encodeRegs s
@@ -1136,7 +1149,7 @@ private theorem Compile.encodeTape_split (s : State) (dst : Var) (h : dst < s.le
     conv_lhs => rw [Compile.list_eq_take_getElem_drop s dst h]
     rw [Compile.encodeRegs_append, Compile.encodeRegs_cons]
     simp [List.append_assoc]
-  rw [Compile.regBlocks_map_shiftReg, hget, Compile.encodeTape, hs]
+  rw [Compile.regBlocks_map_shiftReg, hget, hs]
   simp [List.append_assoc]
 
 /-- `appendOne` preserves bit-shape (it appends the bit `1`). -/
@@ -1201,169 +1214,6 @@ private theorem Compile.decodeTape_encodeTape' (q hd : Nat) (t : State)
     Compile.decodeTape { state_idx := q, tapes := [([], hd, Compile.encodeTape t)] } = t :=
   Compile.decodeTape_encodeTape t h
 
-/-- **Behavioural soundness of `appendOne` (Risk C2 seam validation).**
-`Compile.opAppendOne dst` run on `Compile.encodeTape s` halts and decodes to
-`Op.eval (appendOne dst) s`. The step count is existential — bounding it by
-`Compile.overhead (size + 1)` is the remaining cost-accounting obligation. -/
-theorem compileOp_appendOne_behavioural (s : State) (dst : Var)
-    (hbit : Compile.BitState s) (hdst : dst < s.length) :
-    ∃ (steps : Nat) (cfg : FlatTMConfig),
-      runFlatTM steps (Compile.opAppendOne dst).M
-          (initFlatConfig (Compile.opAppendOne dst).M [Compile.encodeTape s]) = some cfg ∧
-      haltingStateReached (Compile.opAppendOne dst).M cfg = true ∧
-      Compile.decodeTape cfg = Op.eval (Op.appendOne dst) s := by
-  -- Abbreviations matching `appendAt_run`'s `skipped`/`body`/`post`.
-  set post : List Nat := Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark] with hpost
-  set skipped : List (List Nat) := (s.take dst).map Compile.shiftReg with hskip
-  set body : List Nat := Compile.shiftReg (s.get dst) with hbody
-  have hget_mem : s.get dst ∈ s := by
-    rw [State.get, List.getElem?_eq_getElem hdst]; exact List.getElem_mem hdst
-  -- Side conditions for `appendAt_run`, all from bit-shape.
-  have hshift_lt : ∀ (r : List Nat), (∀ x ∈ r, x ≤ 1) → ∀ x ∈ Compile.shiftReg r, x < 4 := by
-    intro r hr x hx
-    rw [Compile.shiftReg, List.mem_map] at hx
-    obtain ⟨y, hy, rfl⟩ := hx
-    have := hr y hy; omega
-  have hshift_ne : ∀ (r : List Nat), ∀ x ∈ Compile.shiftReg r, x ≠ 0 := by
-    intro r x hx
-    rw [Compile.shiftReg, List.mem_map] at hx
-    obtain ⟨y, _, rfl⟩ := hx; omega
-  have hlen : skipped.length = dst := by
-    rw [hskip, List.length_map, List.length_take, Nat.min_eq_left (le_of_lt hdst)]
-  have h_pre : ∀ x ∈ ([] : List Nat), x < 4 := by intro x hx; cases hx
-  have h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4) := by
-    intro b hb
-    rw [hskip, List.mem_map] at hb
-    obtain ⟨r, hr, rfl⟩ := hb
-    exact ⟨hshift_ne r, hshift_lt r (fun x hx => hbit r (List.mem_of_mem_take hr) x hx)⟩
-  have hbody_ne : ∀ x ∈ body, x ≠ 0 := by rw [hbody]; exact hshift_ne _
-  have hbody_lt : ∀ x ∈ body, x < 4 := by
-    rw [hbody]; exact hshift_lt _ (fun x hx => hbit _ hget_mem x hx)
-  have hpost_lt : ∀ x ∈ post, x < 4 := by
-    rw [hpost]; intro x hx
-    rw [List.mem_append] at hx
-    rcases hx with hx | hx
-    · exact Compile.encodeRegs_lt_four _
-        (fun b hb y hy => hbit b (List.mem_of_mem_drop hb) y hy) x hx
-    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
-  -- The gadget run lemma (existential step count).
-  obtain ⟨steps, st', hd', hrun, hhalt⟩ :=
-    AppendGadget.appendAt_run 2 (by decide) dst [] skipped body post hlen
-      h_pre h_skip hbody_ne hbody_lt hpost_lt
-  -- Identify the input config with `initFlatConfig … [encodeTape s]`.
-  have hsplit : ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ 0 :: post
-      = Compile.encodeTape s := by
-    rw [List.nil_append, hskip, hbody, hpost]; exact Compile.encodeTape_split s dst hdst
-  rw [List.length_nil, hsplit] at hrun
-  have hinit : initFlatConfig (Compile.opAppendOne dst).M [Compile.encodeTape s]
-      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := by
-    show initFlatConfig (AppendGadget.appendAtTM 2 dst) [Compile.encodeTape s] = _
-    simp only [initFlatConfig, AppendGadget.appendAtTM_start, List.map_cons, List.map_nil]
-  -- The output tape decodes to the evaluated state.
-  have htape : ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ 2 :: 0 :: post
-      = Compile.encodeTape (Op.eval (Op.appendOne dst) s) := by
-    rw [List.nil_append, hskip, hbody, hpost, Compile.regBlocks_map_shiftReg]
-    show _ = Compile.encodeTape (s.set dst (s.get dst ++ [1]))
-    rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop s dst _ hdst,
-        Compile.encodeTape, Compile.encodeRegs_append, Compile.encodeRegs_cons,
-        Compile.shiftReg_append_one]
-    simp [List.append_assoc]
-  refine ⟨steps,
-    { state_idx := st',
-      tapes := [([], hd', ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ 2 :: 0 :: post)] },
-    ?_, ?_, ?_⟩
-  · rw [hinit]; exact hrun
-  · exact hhalt
-  · rw [show Compile.decodeTape
-          { state_idx := st',
-            tapes := [([], hd', ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ 2 :: 0 :: post)] }
-        = Compile.decodeTape
-          { state_idx := st', tapes := [([], hd', Compile.encodeTape (Op.eval (Op.appendOne dst) s))] }
-        from by rw [htape]]
-    exact Compile.decodeTape_encodeTape' st' hd' _ (Compile.BitState_appendOne s dst hbit hdst)
-
-/-! ### C2 cost-model finding — `compileOp_sound`'s budget is too tight
-
-`compileOp_sound`'s budget is `Compile.overhead (State.size s + cost)`, but
-`State.size s` (the sum of register *contents*) **ignores the register count**,
-while `appendAtTM`'s step count grows with the **tape length**
-`(encodeTape s).length = State.size s + s.length + 1` — reaching register `dst`
-scans past every preceding register and `scanInsert` shifts the whole suffix.
-
-Concretely (verified by evaluation), for `s = List.replicate 6 []` we have
-`State.size s = 0`, so the stated budget is `overhead 1 = 4`, yet
-`opAppendOne 0` first reaches a halting state only at **step 10** and after 4
-steps decodes to the wrong state. So **`compileOp_sound` is false as stated.**
-
-Fix: the per-op budget must be over the tape length,
-`Compile.overhead ((encodeTape s).length + cost)`, and `Compile_sound`'s
-assembly must thread the register count (bounded by the program's `regBound`).
-The lemma below proves the corrected budget is provable (base case `dst = 0`,
-from `AppendGadget.scanInsert_run`'s explicit step count). -/
-theorem compileOp_appendOne_zero_sound (s : State) (hbit : Compile.BitState s)
-    (hlen : 0 < s.length) :
-    ∃ cfg,
-      runFlatTM (Compile.overhead (Compile.encodeTape s).length)
-          (Compile.opAppendOne 0).M
-          (initFlatConfig (Compile.opAppendOne 0).M [Compile.encodeTape s]) = some cfg ∧
-      haltingStateReached (Compile.opAppendOne 0).M cfg = true ∧
-      Compile.decodeTape cfg = Op.eval (Op.appendOne 0) s := by
-  set body : List Nat := Compile.shiftReg (s.get 0) with hbody
-  set post : List Nat := Compile.encodeRegs (s.drop 1) ++ [Compile.endMark] with hpost
-  have hget_mem : s.get 0 ∈ s := by
-    rw [State.get, List.getElem?_eq_getElem hlen]; exact List.getElem_mem hlen
-  have hbody_lt : ∀ x ∈ body, x < 4 := by
-    rw [hbody]; intro x hx
-    rw [Compile.shiftReg, List.mem_map] at hx
-    obtain ⟨y, hy, rfl⟩ := hx; have := hbit _ hget_mem y hy; omega
-  have hpost_lt : ∀ x ∈ post, x < 4 := by
-    rw [hpost]; intro x hx
-    rw [List.mem_append] at hx
-    rcases hx with hx | hx
-    · exact Compile.encodeRegs_lt_four _
-        (fun b hb y hy => hbit b (List.mem_of_mem_drop hb) y hy) x hx
-    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
-  -- `encodeTape s` peels at register 0 as `body ++ 0 :: post`.
-  have henc : Compile.encodeTape s = body ++ 0 :: post := by
-    rw [hbody, hpost, ← Compile.encodeTape_split s 0 hlen]
-    simp [AppendGadget.regBlocks_nil]
-  -- The gadget run with its *explicit* step count.
-  obtain ⟨hrun, hhalt⟩ :=
-    AppendGadget.scanInsert_run 2 (by decide) [] body post
-      (by rw [hbody]; exact Compile.shiftReg_no_zero _) hbody_lt hpost_lt
-  rw [List.length_nil, List.nil_append] at hrun hhalt
-  rw [← henc] at hrun
-  have hinit : initFlatConfig (Compile.opAppendOne 0).M [Compile.encodeTape s]
-      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := by
-    show initFlatConfig (AppendGadget.appendAtTM 2 0) [Compile.encodeTape s] = _
-    simp only [initFlatConfig, AppendGadget.appendAtTM_start, List.map_cons, List.map_nil]
-  -- Budget: the explicit step count is `≤ overhead (tape length)`.
-  have hstep_le : body.length + 1 + 1 + ((0 :: post).length + 1)
-      ≤ Compile.overhead (Compile.encodeTape s).length := by
-    have hcount : (Compile.encodeTape s).length = body.length + (0 :: post).length := by
-      rw [henc, List.length_append]
-    have hb1 : 1 ≤ (0 :: post).length := by rw [List.length_cons]; omega
-    rw [Compile.overhead, hcount]
-    nlinarith [hb1, Nat.zero_le body.length]
-  obtain ⟨k, hk⟩ := Nat.le.dest hstep_le
-  -- Output tape `body ++ 2 :: 0 :: post = encodeTape (eval (appendOne 0) s)`.
-  have htape : body ++ 2 :: 0 :: post
-      = Compile.encodeTape (Op.eval (Op.appendOne 0) s) := by
-    rw [hbody, hpost]
-    show _ = Compile.encodeTape (s.set 0 (s.get 0 ++ [1]))
-    rw [State.set, if_pos hlen, Compile.list_set_eq_take_cons_drop s 0 _ hlen,
-        Compile.encodeTape, List.take_zero, List.nil_append, Compile.encodeRegs_cons,
-        Compile.shiftReg_append_one]
-    simp [List.append_assoc]
-  refine ⟨{ state_idx := 5 + (scanRightUntilTM 4 0).states,
-            tapes := [([], 0 + body.length + (0 :: post).length, body ++ 2 :: 0 :: post)] },
-    ?_, ?_, ?_⟩
-  · rw [hinit, ← hk]; exact runFlatTM_extend hrun hhalt
-  · exact hhalt
-  · rw [htape]
-    exact Compile.decodeTape_encodeTape' _ _ _
-      (Compile.BitState_appendOne s 0 hbit hlen)
-
 /-! ### Per-op soundness for `appendOne`/`appendZero` (general `dst`, LINEAR budget)
 
 The two append ops are the only `compileOp`s with real TM bodies. The lemma
@@ -1375,10 +1225,10 @@ quadratics → cubic; see the finding block below `compileSeq_sound`), whereas
 linear per-fragment bounds sum to a quadratic total.
 
 It composes `AppendGadget.appendAt_run_steps` (explicit step count) with
-`appendAt_steps_le` (the step count is exactly `≤ 2·tapeLen + 3`) and the
-encoding seam validated in `compileOp_appendOne_behavioural`. (Recovering the
-old quadratic budget, if ever needed, is just `Nat`-monotone padding:
-`2·tapeLen + 3 ≤ overhead (tapeLen + 1)`.) -/
+`appendAt_steps_le` (the step count is exactly `≤ 2·tapeLen + 3`). The leading
+sentinel of `encodeTape` is folded into the first marker-free block so the
+gadget runs from head `0`. (Recovering the old quadratic budget, if ever needed,
+is just `Nat`-monotone padding: `2·tapeLen + 3 ≤ overhead (tapeLen + 1)`.) -/
 private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
     (s : State) (dst : Var) (hbit : Compile.BitState s) (hdst : dst < s.length) :
     ∃ cfg,
@@ -1422,45 +1272,96 @@ private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
     · exact Compile.encodeRegs_lt_four _
         (fun b hbm y hy => hbit b (List.mem_of_mem_drop hbm) y hy) x hx
     · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
-  -- The gadget run lemma, with its explicit step count.
+  -- **Fold the leading sentinel into the first marker-free block.** The new
+  -- `encodeTape` is `endMark :: (encodeRegs s ++ [endMark])`, but the gadget
+  -- starts at head `0` (`initFlatConfig`). Rather than bridge head `0 → 1`, we
+  -- absorb the leading `endMark` into the first scanned block: into `body` when
+  -- `dst = 0` (no skipped registers), or into the first skipped register when
+  -- `dst ≥ 1`. Both keep the gadget's head at `0` over the *full* tape.
+  have key : ∃ (sk : List (List Nat)) (bd : List Nat),
+      sk.length = dst ∧
+      (∀ b ∈ sk, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) ∧
+      (∀ x ∈ bd, x ≠ 0) ∧ (∀ x ∈ bd, x < 4) ∧
+      AppendGadget.regBlocks sk ++ bd
+        = Compile.endMark :: (AppendGadget.regBlocks skipped ++ body) := by
+    cases hsk : skipped with
+    | nil =>
+        refine ⟨[], Compile.endMark :: body, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [← hlen, hsk]
+        · intro b hb; cases hb
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_ne x h
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_lt x h
+        · simp [AppendGadget.regBlocks_nil]
+    | cons hd tl =>
+        refine ⟨(Compile.endMark :: hd) :: tl, body, ?_, ?_, hbody_ne, hbody_lt, ?_⟩
+        · rw [hsk] at hlen; simpa using hlen
+        · intro b hb
+          rcases List.mem_cons.mp hb with h | h
+          · subst h
+            refine ⟨?_, ?_⟩
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).1 x h0
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).2 x h0
+          · exact h_skip b (by rw [hsk]; exact List.mem_cons_of_mem _ h)
+        · simp [AppendGadget.regBlocks_cons]
+  obtain ⟨sk, bd, hlen_sk, h_skip_sk, hbd_ne, hbd_lt, hsfold⟩ := key
+  -- The gadget run lemma, with its explicit step count, on the folded blocks.
   obtain ⟨st', hd', hrun, hhalt⟩ :=
-    AppendGadget.appendAt_run_steps (bit + 1) h_ins dst [] skipped body post hlen
-      h_pre h_skip hbody_ne hbody_lt hpost_lt
-  -- The input tape is exactly `encodeTape s`.
-  have hsplit : ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ 0 :: post
+    AppendGadget.appendAt_run_steps (bit + 1) h_ins dst [] sk bd post hlen_sk
+      h_pre h_skip_sk hbd_ne hbd_lt hpost_lt
+  -- The sentinel-free split: `regBlocks skipped ++ body ++ 0 :: post` is the
+  -- registers part of `encodeTape s` (= `encodeRegs s ++ [endMark]`).
+  have hsplit0 : AppendGadget.regBlocks skipped ++ body ++ 0 :: post
+      = Compile.encodeRegs s ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost]; exact Compile.encodeTape_split s dst hdst
+  -- Reattaching the leading sentinel recovers the full `encodeTape s`.
+  have hsplit : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post
       = Compile.encodeTape s := by
-    rw [List.nil_append, hskip, hbody, hpost]; exact Compile.encodeTape_split s dst hdst
+    rw [Compile.encodeTape, List.nil_append, hsfold, List.cons_append, hsplit0]
   rw [List.length_nil, hsplit] at hrun
   have hinit : initFlatConfig (AppendGadget.appendAtTM (bit + 1) dst) [Compile.encodeTape s]
       = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := by
     simp only [initFlatConfig, AppendGadget.appendAtTM_start, List.map_cons, List.map_nil]
   -- The explicit step count is **linear** in the tape length (`≤ 2·tapeLen + 3`,
   -- directly from `appendAt_steps_le`); this is the composable per-fragment bound.
-  have hstep_le : AppendGadget.appendAt_steps skipped body post
+  have hstep_le : AppendGadget.appendAt_steps sk bd post
       ≤ 2 * (Compile.encodeTape s).length + 3 := by
-    have hb' := AppendGadget.appendAt_steps_le skipped body post
-    have hL : (AppendGadget.regBlocks skipped ++ body ++ 0 :: post).length
+    have hb' := AppendGadget.appendAt_steps_le sk bd post
+    have hL : (AppendGadget.regBlocks sk ++ bd ++ 0 :: post).length
         = (Compile.encodeTape s).length := by rw [← hsplit]; simp
     rw [hL] at hb'; exact hb'
   obtain ⟨k, hk⟩ := Nat.le.dest hstep_le
   -- The output tape decodes to the evaluated state.
-  have htape : ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ (bit + 1) :: 0 :: post
-      = Compile.encodeTape (s.set dst (s.get dst ++ [bit])) := by
-    rw [List.nil_append, hskip, hbody, hpost, Compile.regBlocks_map_shiftReg]
+  have htape0 : AppendGadget.regBlocks skipped ++ body ++ (bit + 1) :: 0 :: post
+      = Compile.encodeRegs (s.set dst (s.get dst ++ [bit])) ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost, Compile.regBlocks_map_shiftReg]
     rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop s dst _ hdst,
-        Compile.encodeTape, Compile.encodeRegs_append, Compile.encodeRegs_cons,
-        Compile.shiftReg_append]
+        Compile.encodeRegs_append, Compile.encodeRegs_cons, Compile.shiftReg_append]
     simp [List.append_assoc]
+  have htape : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post
+      = Compile.encodeTape (s.set dst (s.get dst ++ [bit])) := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, List.cons_append, htape0]
   refine ⟨{ state_idx := st',
             tapes := [([], hd',
-              ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body
+              ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
                 ++ (bit + 1) :: 0 :: post)] }, ?_, ?_, ?_⟩
   · rw [hinit, ← hk]; exact runFlatTM_extend hrun hhalt
   · exact hhalt
   · rw [show Compile.decodeTape
           { state_idx := st',
             tapes := [([], hd',
-              ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body
+              ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
                 ++ (bit + 1) :: 0 :: post)] }
         = Compile.decodeTape
           { state_idx := st',
@@ -1727,30 +1628,38 @@ This gadget and its run lemmas depend **only** on the encoding format, not on
 `Compile_sound` / the physical run contract, so they are isolable and
 `sorry`-free. -/
 
-/-- The bit-test gadget: a single-tape, 4-symbol, 3-state `FlatTM`. From the
-(non-halting) start state `0`, reading tape symbol `2` jumps to the halting
-state `1` (accept); reading `1` jumps to the halting state `2` (reject). It does
-not move the head or write. -/
+/-- The bit-test gadget: a single-tape, 4-symbol, 4-state `FlatTM`. The encoded
+tape begins with the leading sentinel `endMark = 3`, so from the (non-halting)
+start state `0` the gadget reads `3` and **steps right** past the sentinel into
+state `3`; there, reading the answer bit `2` jumps to the halting state `1`
+(accept) and `1` jumps to the halting state `2` (reject), without further
+movement. -/
 def Compile.bitTestTM : FlatTM where
   sig := 4
   tapes := 1
-  states := 3
+  states := 4
   trans :=
-    [ { src_state := 0, src_tape_vals := [some 2], dst_state := 1,
+    [ { src_state := 0, src_tape_vals := [some 3], dst_state := 3,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] },
+      { src_state := 3, src_tape_vals := [some 2], dst_state := 1,
         dst_write_vals := [none], move_dirs := [TMMove.Nmove] },
-      { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+      { src_state := 3, src_tape_vals := [some 1], dst_state := 2,
         dst_write_vals := [none], move_dirs := [TMMove.Nmove] } ]
   start := 0
-  halt := [false, true, true]
+  halt := [false, true, true, false]
 
 theorem Compile.bitTestTM_valid : validFlatTM Compile.bitTestTM := by
   refine ⟨by decide, rfl, ?_⟩
   intro entry hentry
   have hmem : entry ∈
-      [ ({ src_state := 0, src_tape_vals := [some 2], dst_state := 1,
-           dst_write_vals := [none], move_dirs := [TMMove.Nmove] } : FlatTMTransEntry),
-        { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+      [ ({ src_state := 0, src_tape_vals := [some 3], dst_state := 3,
+           dst_write_vals := [none], move_dirs := [TMMove.Rmove] } : FlatTMTransEntry),
+        { src_state := 3, src_tape_vals := [some 2], dst_state := 1,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] },
+        { src_state := 3, src_tape_vals := [some 1], dst_state := 2,
           dst_write_vals := [none], move_dirs := [TMMove.Nmove] } ] := hentry
+  have hbound3 : flatTMOptionSymbolsBounded 4 [some 3] := by
+    intro x hx; simp only [List.mem_singleton] at hx; subst hx; decide
   have hbound2 : flatTMOptionSymbolsBounded 4 [some 2] := by
     intro x hx; simp only [List.mem_singleton] at hx; subst hx; decide
   have hbound1 : flatTMOptionSymbolsBounded 4 [some 1] := by
@@ -1758,10 +1667,12 @@ theorem Compile.bitTestTM_valid : validFlatTM Compile.bitTestTM := by
   have hboundNone : flatTMOptionSymbolsBounded 4 [none] := by
     intro x hx; simp only [List.mem_singleton] at hx; subst hx; trivial
   rcases List.mem_cons.mp hmem with h | hmem
-  · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound2, hboundNone⟩
-  · rcases List.mem_cons.mp hmem with h | h
-    · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound1, hboundNone⟩
-    · simp at h
+  · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound3, hboundNone⟩
+  · rcases List.mem_cons.mp hmem with h | hmem
+    · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound2, hboundNone⟩
+    · rcases List.mem_cons.mp hmem with h | h
+      · subst h; exact ⟨by decide, by decide, rfl, rfl, rfl, hbound1, hboundNone⟩
+      · simp at h
 
 theorem Compile.bitTestTM_tapes : Compile.bitTestTM.tapes = 1 := rfl
 
@@ -1769,17 +1680,17 @@ theorem Compile.bitTestTM_sig : Compile.bitTestTM.sig = 4 := rfl
 
 theorem Compile.bitTestTM_start : Compile.bitTestTM.start = 0 := rfl
 
-/-- Reading symbol `2` (accept) from the start state halts the gadget in
-state `1` in one step. -/
+/-- After the leading sentinel `3`, reading the answer `2` (accept) halts the
+gadget in state `1` in two steps (one to step past the sentinel). -/
 theorem Compile.bitTestTM_run_two (left rest : List Nat) :
-    runFlatTM 1 Compile.bitTestTM { state_idx := 0, tapes := [(left, 0, 2 :: rest)] }
-      = some { state_idx := 1, tapes := [(left, 0, 2 :: rest)] } := rfl
+    runFlatTM 2 Compile.bitTestTM { state_idx := 0, tapes := [(left, 0, 3 :: 2 :: rest)] }
+      = some { state_idx := 1, tapes := [(left, 1, 3 :: 2 :: rest)] } := rfl
 
-/-- Reading symbol `1` (reject) from the start state halts the gadget in
-state `2` in one step. -/
+/-- After the leading sentinel `3`, reading the answer `1` (reject) halts the
+gadget in state `2` in two steps. -/
 theorem Compile.bitTestTM_run_one (left rest : List Nat) :
-    runFlatTM 1 Compile.bitTestTM { state_idx := 0, tapes := [(left, 0, 1 :: rest)] }
-      = some { state_idx := 2, tapes := [(left, 0, 1 :: rest)] } := rfl
+    runFlatTM 2 Compile.bitTestTM { state_idx := 0, tapes := [(left, 0, 3 :: 1 :: rest)] }
+      = some { state_idx := 2, tapes := [(left, 1, 3 :: 1 :: rest)] } := rfl
 
 /-- State `1` (accept) and state `2` (reject) are both halting states. -/
 theorem Compile.bitTestTM_halt_one : Compile.bitTestTM.halt.getD 1 false = true := rfl
@@ -1800,7 +1711,18 @@ or hitting `exit` earlier, within the `overhead` budget. It is the top-level
 restatement of the per-fragment physical contract whose composition
 `compileSeq_compose_physical` already validates; discharging it is the remaining
 C1/C2 compiler-engineering obligation (the same gap `Compile_sound` sits behind),
-so it is left as a single, focused `sorry`. -/
+so it is left as a single, focused `sorry`.
+
+⚠ **Prerequisite (2026-05-29): the "head rewound to `0`" clause is not
+implementable on the current encoding.** `composeFlatTM_run` preserves the head
+across the seam (it does not reset it), so each fragment must rewind itself; but
+a TM head clamps at `0` under `Lmove` without being able to *detect* it, so
+rewinding needs a uniquely-detectable left sentinel at index `0` that
+`encodeTape` (= `encodeRegs s ++ [endMark]`) lacks. The rewind itself is ready
+(`ScanLeft.rewindToStart_run`/`_traj`). **Before discharging this `sorry`,
+migrate to the leading-sentinel encoding** `encodeTape s = endMark ::
+encodeRegs s ++ [endMark]` (reuse `3`, `sig` stays `4`) — full steps in
+HANDOFF.md "Recommended next step" (1b-0 … 1d). -/
 theorem Compile_run_physical (c : Cmd) (s : State) :
     ∃ t : Nat,
       runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
@@ -1830,48 +1752,51 @@ theorem Compile.bitDeciderTM_tapes (c : Cmd) : (Compile.bitDeciderTM c).tapes = 
   show (composeFlatTM (Compile c) Compile.bitTestTM (Compile.exit c)).tapes = 1
   rw [composeFlatTM_tapes, Compile_tapes]
 
-/-- The canonical single-register tape `encodeTape [r]` has length `r.length + 2`
-(the shifted register, the `0` delimiter, and the `endMark`). Used to bound the
-`DecidesBy.encode_size` of the canonical decider bridge. -/
+/-- The canonical single-register tape `encodeTape [r]` has length `r.length + 3`
+(the leading sentinel, the shifted register, the `0` delimiter, and the trailing
+`endMark`). Used to bound the `DecidesBy.encode_size` of the canonical decider
+bridge. -/
 theorem Compile.encodeTape_singleton_length (r : List Nat) :
-    (Compile.encodeTape [r]).length = r.length + 2 := by
+    (Compile.encodeTape [r]).length = r.length + 3 := by
   simp [Compile.encodeTape, Compile.encodeRegs, Compile.shiftReg]
 
 /-- **C6 headline.** Running `bitDeciderTM c` on `encodeTape s` halts, within
-`overhead (size s + cost s) + 2` steps, in state `1 + (Compile c).states` when
+`overhead (size s + cost s) + 3` steps, in state `1 + (Compile c).states` when
 register `0` of `c.eval s` is `[1]` (accept) and `2 + (Compile c).states` when
 it is `[0]` (reject). Combines the physical run contract of `Compile c` with the
-`sorry`-free gadget run lemma, via `composeFlatTM_run`. -/
+`sorry`-free gadget run lemma, via `composeFlatTM_run`. (The `+3` is one bridge
+step plus the two gadget steps — step past the leading sentinel, then read.) -/
 theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
     (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
     ∃ cfg,
-      runFlatTM (Compile.overhead (State.size s + c.cost s) + 2) (Compile.bitDeciderTM c)
+      runFlatTM (Compile.overhead (State.size s + c.cost s) + 3) (Compile.bitDeciderTM c)
           (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = some cfg ∧
       haltingStateReached (Compile.bitDeciderTM c) cfg = true ∧
       cfg.state_idx = (if b = 1 then 1 else 2) + (Compile c).states := by
   obtain ⟨tl, htl⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
   obtain ⟨t1, hrun1, htraj1, ht1⟩ := Compile_run_physical c s
-  -- Rewrite the physical exit tape via the encoding lemma.
+  -- Rewrite the physical exit tape via the encoding lemma (leading sentinel).
   rw [htl] at hrun1
   -- The gadget's exit state for this bit.
   set dst : Nat := if b = 1 then 1 else 2 with hdst
-  -- Gadget run + halt (split on the bit).
-  have hrun2 : runFlatTM 1 Compile.bitTestTM
-      { state_idx := Compile.bitTestTM.start, tapes := [([], 0, (b + 1) :: tl)] }
-      = some { state_idx := dst, tapes := [([], 0, (b + 1) :: tl)] } := by
+  -- Gadget run + halt (split on the bit): step past the sentinel `3`, then read.
+  have hrun2 : runFlatTM 2 Compile.bitTestTM
+      { state_idx := Compile.bitTestTM.start,
+        tapes := [([], 0, Compile.endMark :: (b + 1) :: tl)] }
+      = some { state_idx := dst, tapes := [([], 1, Compile.endMark :: (b + 1) :: tl)] } := by
     rcases hbit with hb | hb <;> subst hb <;>
       simp only [Compile.bitTestTM_start, hdst] <;> rfl
   have hhalt2 : haltingStateReached Compile.bitTestTM
-      { state_idx := dst, tapes := [([], 0, (b + 1) :: tl)] } = true := by
+      { state_idx := dst, tapes := [([], 1, Compile.endMark :: (b + 1) :: tl)] } = true := by
     rcases hbit with hb | hb <;> subst hb <;> rfl
-  -- The first tape symbol is bounded by the alphabet.
-  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, (b + 1) :: tl) = some v →
-      v < max (Compile c).sig Compile.bitTestTM.sig := by
+  -- The first tape symbol is the leading sentinel `endMark = 3 < 4`.
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.endMark :: (b + 1) :: tl)
+      = some v → v < max (Compile c).sig Compile.bitTestTM.sig := by
     intro v hv
-    have : v = b + 1 := by simpa [currentTapeSymbol] using hv.symm
+    have : v = Compile.endMark := by simpa [currentTapeSymbol] using hv.symm
     subst this
     rw [Compile_sig, Compile.bitTestTM_sig]
-    rcases hbit with hb | hb <;> subst hb <;> decide
+    decide
   have hstate0 : (initFlatConfig (Compile c) [Compile.encodeTape s]).state_idx
       < (Compile c).states := (Compile_valid c).1
   -- Compose.
@@ -1879,14 +1804,15 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
     (exit := Compile.exit c) (Compile_valid c) Compile.bitTestTM_valid
     (Compile_exit_lt c)
     (initFlatConfig (Compile c) [Compile.encodeTape s]) hstate0
-    [] 0 ((b + 1) :: tl) hsym hrun1 htraj1 hrun2 hhalt2
+    [] 0 (Compile.endMark :: (b + 1) :: tl) hsym hrun1 htraj1 hrun2 hhalt2
   obtain ⟨hcrun, hchalt⟩ := hcomp
   -- Pad the run up to the stated budget.
   obtain ⟨k, hk⟩ := Nat.le.dest ht1
-  refine ⟨{ state_idx := dst + (Compile c).states, tapes := [([], 0, (b + 1) :: tl)] }, ?_, ?_, ?_⟩
-  · show runFlatTM (Compile.overhead (State.size s + c.cost s) + 2) (Compile.bitDeciderTM c)
+  refine ⟨{ state_idx := dst + (Compile c).states,
+            tapes := [([], 1, Compile.endMark :: (b + 1) :: tl)] }, ?_, ?_, ?_⟩
+  · show runFlatTM (Compile.overhead (State.size s + c.cost s) + 3) (Compile.bitDeciderTM c)
         (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = _
-    have hbudget : Compile.overhead (State.size s + c.cost s) + 2 = (t1 + 1 + 1) + k := by omega
+    have hbudget : Compile.overhead (State.size s + c.cost s) + 3 = (t1 + 1 + 2) + k := by omega
     rw [hbudget]
     exact runFlatTM_extend (M := Compile.bitDeciderTM c) hcrun hchalt
   · exact hchalt

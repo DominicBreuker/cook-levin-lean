@@ -53,13 +53,14 @@ structure DecidesBy {X : Type} [encodable X]
   /-- How to lay the input out on tape 0. -/
   encode      : X → List Nat
   /-- The encoded input length is linearly bounded by `encodable.size x`.
-  The slack (`2 · size + 3` rather than `size + 1`) is what makes the
+  The slack (`2 · size + 4` rather than `size + 1`) is what makes the
   interface satisfiable by the computable layer's `encodeTape ∘ encodeState`:
-  the canonical single-register tape is `shiftReg (enc x) ++ [0, endMark]`, of
-  length `(enc x).length + 2 ≤ 2 · size x + 3` (the `2 · size + 1` is the
+  the canonical single-register tape is `endMark :: shiftReg (enc x) ++ [0,
+  endMark]` (a leading sentinel for head-rewind plus the trailing terminator), of
+  length `(enc x).length + 3 ≤ 2 · size x + 4` (the `2 · size + 1` is the
   `LangEncodable.enc_size` bound, closed under products). Still linear, so every
   downstream consumer (`proj_left`, …) survives the loosening. -/
-  encode_size : ∀ x, (encode x).length ≤ 2 * encodable.size x + 3
+  encode_size : ∀ x, (encode x).length ≤ 2 * encodable.size x + 4
   /-- The underlying flat Turing machine. -/
   M           : FlatTM
   /-- It is a well-formed TM. -/
@@ -140,9 +141,9 @@ private def DecidesBy.proj_left {X : Type} [encodable X]
     DecidesBy (fun xy : X × Unit => P xy.1) f where
   encode xy := D.encode xy.1
   encode_size xy := by
-    have h1 : (D.encode xy.1).length ≤ 2 * encodable.size xy.1 + 3 := D.encode_size xy.1
+    have h1 : (D.encode xy.1).length ≤ 2 * encodable.size xy.1 + 4 := D.encode_size xy.1
     have he : encodable.size xy = encodable.size xy.1 + encodable.size xy.2 + 1 := rfl
-    show (D.encode xy.1).length ≤ 2 * encodable.size xy + 3
+    show (D.encode xy.1).length ≤ 2 * encodable.size xy + 4
     rw [he]; omega
   M := D.M
   M_valid := D.M_valid

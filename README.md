@@ -109,9 +109,13 @@ and do not compose** (summing ~cost quadratics → cubic), so `compileSeq_sound`
 and siblings are unprovable as stated — the fix is **linear** per-fragment
 budgets (the gadgets prove `≤ 2·tapeLen+3`) composing to a quadratic total; the
 **linear tape-length ingredient is now proven** (`Cmd.encodeTape_eval_length_le`).
-**Remaining:** linear-budget restatement of the four `compile*_sound`, gadget
-head-rewind/trajectory lemmas, thread `regBound`, and assemble. See ROADMAP
-Risk C2.
+The **leading-sentinel encoding migration is now DONE** (`encodeTape s = endMark
+:: encodeRegs s ++ [endMark]`, `sig` stays `4`): the physical contract's "head
+rewound to `0`" needed a left sentinel the old `encodeTape` lacked (the rewind
+lemmas themselves already existed, `ScanLeft.rewindToStart_run/_traj`). All real
+consumers re-proven green & axiom-clean. **Remaining (next concrete step):**
+bracket each gadget with a tail rewind to head `0`, linear-budget restatement of
+the four `compile*_sound`, thread `regBound`, and assemble. See ROADMAP Risk C2.
 
 ## Development methodology: skeleton-first, risk-driven
 
