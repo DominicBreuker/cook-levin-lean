@@ -71,13 +71,17 @@ remains is the run-structure work — intricate but structural-unknown-free:
    per-fragment physical contract should be: halts at its `exit` state, head
    rewound to `0`, tape `= encodeTape output`, at an explicit step
    `t ≤ A·(encodeTape s).length + B·cost + C` (linear), with the no-early-halt
-   trajectory. The append ops already have the linear step count
-   (`appendAt_steps` / `appendAt_steps_le`); `compileOp_appendOne_sound` merely
-   *loosened* it to the quadratic `overhead` — restate it linear instead.
-   ⚠ **Gap to close first:** the gadgets (`appendAt_run_steps`) leave the exit
-   head position *existential* and do **not** rewind the head to `0` or expose a
-   no-early-halt trajectory — both are required by `compileSeq_compose_physical`.
-   Add head-rewind + trajectory lemmas to the gadget library before assembling.
+   trajectory. ✅ **Done for the append ops:** `compileOp_appendOne_sound` /
+   `compileOp_appendZero_sound` now carry the linear budget
+   `2·(encodeTape s).length + 3` (was the non-composable quadratic `overhead`),
+   straight from `appendAt_steps_le`. (This is the `decodeTape`-equality form;
+   the physical-contract form below still needs the head/trajectory work.)
+   ⚠ **Gap to close for assembly:** the gadgets (`appendAt_run_steps`) leave the
+   exit head position *existential* and do **not** rewind the head to `0` or
+   expose a no-early-halt trajectory — both required by
+   `compileSeq_compose_physical`. Add head-rewind + trajectory lemmas to the
+   gadget library, and lift them to the physical-contract form with the linear
+   step bound, before assembling.
 2. **Lift the per-fragment output bound to a max-over-fragments bound.**
    `Cmd.encodeTape_eval_length_le` (done) bounds each fragment boundary's tape;
    thread it through the run so every intermediate tape is `≤ size + cost +
