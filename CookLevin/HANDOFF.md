@@ -15,54 +15,92 @@ not a log.
 
 ## This session's work (recorded in ROADMAP)
 
-All sorry-free, axiom-clean. Two pieces:
+All sorry-free, `#print axioms`-clean (`propext`/`Quot.sound` only); `CookLevin`
+axiom profile unchanged.
 
-**(1) Explicit step counts + corrected per-op budget** (`Lang/AppendGadget.lean`,
-`Lang/Compile.lean`):
-- **`appendAt_run_steps`** / **`appendAt_steps`** — `appendAt_run` re-proved with
-  an explicit step count (no longer existential); **`appendAt_steps_le`** bounds it
-  by `2·tapeLen + 3 ≤ overhead(tapeLen+1)`.
-- **`compileOp_appendOne_sound` / `compileOp_appendZero_sound`** — discharge
-  `compileOp_sound` for the two ops with real TM bodies at **general `dst`** under
-  the corrected tape-length budget (closes the register-count budget bug for them).
+**(1) The Cmd-level size bound — plan step 1a, now PROVEN.**
+`Cmd.size_eval_le : State.size (c.eval s) ≤ State.size s + c.cost s`
+(`Lang/Semantics.lean`). This is the clean linear invariant the compiler's
+tape-length budget rests on (every intermediate tape in a `Compile c` run is
+`encodeTape` of a sub-evaluation, whose size this bounds).
+- The clean bound was **false for `forBnd`** (the unary loop counter
+  `set counter (replicate i 1)`, size `i`, is uncharged size). The handoff's
+  proposed *register-excluding* route gives a depth-dependent constant. Instead
+  I **charged the counter in the cost model** — the *same* faithfulness
+  principle as the prior size-aware `Op.cost` fix (writing `i` unary cells costs
+  Θ(i) TM steps). `Cmd.run`'s `forBnd` now adds `iters * iters` (a closed-form
+  lump ≥ Σ_{i<iters} i, kept **outside** the fold so every frame/locality lemma
+  is untouched). Result: clean, depth-constant-free, and cost stays polynomial.
+- Ripples were contained: `Cmd.cost_forBnd_le` gains `+ iters*iters` (no
+  external consumers) and `Cmd.cost_agree`'s `forBnd` case threads the
+  (agreement-stable) lump.
 
-**(2) The realistic (size-aware) cost model** — fixes the deeper cost-model gap
-(`Lang/Semantics.lean`, `Lang/Frame.lean`, `Lang/PolyTime.lean`):
-- Old ops were **unit cost**, but `concat`/`copy`/… grow `State.size`
-  multiplicatively, so output size (hence TM steps) could be **exponential in
-  layer cost** (`doubler` at n=10 → 1047 vs budget 676). **No** budget polynomial
-  could bound `Compile c`. **Fix (chosen option, Coq-L-calculus-aligned):**
-  `Op.cost` now charges size-increasing ops for their source data, so
-  **`Op.size_eval_le : State.size (Op.eval o s) ≤ State.size s + Op.cost o s`** —
-  the invariant that was *false* under unit cost, now proven (`State.size_set_add`
-  is the engine). `Op.cost_agree`/`Cmd.cost_agree` generalized; the concrete
-  witnesses (`id`/`swap`/`map_fst`) cost bounds re-derived.
-- *Options weighed (full text in ROADMAP C2):* a separate per-witness size/weight
-  bound and removing size-increasing ops were rejected — no global `weight ≤
-  poly(unitCost, size)` exists, so the single realistic cost notion is necessary
-  and lowest-complexity.
+**(2) ⚠ NEW FINDING — the per-fragment compiler budgets cannot compose.**
+While checking the next step (threading the budget), I found that the four
+sorried budget lemmas are **unprovable as stated**: `compileSeq_sound`,
+`compileIfBit_sound`, `compileForBnd_sound`, and the `Compile_sound` assembly
+take each sub-machine's budget as the **quadratic** `Compile.overhead =(·+1)²`
+and claim a quadratic-of-the-sum for the composite. But a quadratic is **not
+superadditive** — summing `~cost` per-op quadratics gives a **cubic**. Worst
+case `overhead(a) + 1 + overhead(a+c₂) ≤ overhead(a+1+c₂)` is **false for
+`a ≥ 2`** (`a=3, c₂=1` → `42 ≰ 36`; gap grows with `a`). The fix: per-fragment
+budgets must be **LINEAR** in tape length (the gadgets already prove
+`appendAt_steps_le : ≤ 2·tapeLen+3`), which *do* compose into a quadratic total.
+A prominent finding block now sits above `compileSeq_sound` in `Compile.lean`;
+full writeup in ROADMAP Risk C2 / plan step 1b.
 
-## Residual finding — the `forBnd` counter (next step)
+**(3) The linear tape-length bound — plan step 1b ingredient, now PROVEN.**
+The corrected per-fragment budget must be linear in the tape length; this
+supplies the analytic fact:
+`Cmd.encodeTape_eval_length_le : (Compile.encodeTape (c.eval s)).length ≤
+State.size s + c.cost s + max s.length k + 1` (`Lang/PolyTime.lean`), for any `c`
+with `Cmd.UsesBelow c k`. Built from three reusable pieces:
+- `Compile.encodeTape_length : (encodeTape s).length = State.size s + s.length +
+  1` (+ `encodeRegs_length`) — `Lang/Compile.lean`.
+- `Cmd.size_eval_le` (contents bound, prior session).
+- `Cmd.eval_length_le : (c.eval s).length ≤ max s.length k` (register count never
+  exceeds `regBound`), with helpers `State.set_length_le` /
+  `State.set_length_le_of_lt` / `Op.eval_length_le` — `Lang/Frame.lean`.
 
-The **Cmd-level** size invariant is subtler than `Op.size_eval_le`. The clean
-`State.size (c.eval s) ≤ State.size s + c.cost s` is **FALSE for `forBnd`**: the
-unary loop counter (`set counter (replicate i 1)`, size `i`) is *uncharged*
-size. Witness: `forBnd 0 1 (op (appendOne 2))` on `[[], replicate n 1, []]` gives
-output size `3n−1 > 2n+1 = size + cost`. The correct bound is still **linear** in
-`(size + cost)` (counter ≤ `iters ≤ cost`, a replace not a cumulative sum), with
-a constant that grows with loop-nesting depth.
+## Recommended next step (plan step 1b/1c/1d — the C2 budget restatement)
 
-## Recommended next step
+Steps 1a (size bound) and the linear tape-length ingredient are done. What
+remains is the run-structure work — intricate but structural-unknown-free:
 
-Per ROADMAP plan step 1:
-1. **Prove the Cmd-level size bound.** Recommended: a *register-excluding* size
-   (`size minus the loop counter`) is preserved by the counter-set and grows ≤
-   cost under the body (lift `Op.size_eval_le`); bound the output counter
-   separately (`iters ≤ |bound| ≤ size`). Gives `maxIntermediateTapeLen ≤
-   O(size + cost)`. Then restate `PolyTime.toFrameworkWitness'`'s time budget.
-2. **Then** restate `Compile_sound` over the tape-length budget threading
-   `regBound`, give explicit step counts to the remaining gadgets, concretise the
-   10 stub `compileOp`s, and assemble.
+1. **Restate the per-fragment contracts LINEAR.** For each gadget, the
+   per-fragment physical contract should be: halts at its `exit` state, head
+   rewound to `0`, tape `= encodeTape output`, at an explicit step
+   `t ≤ A·(encodeTape s).length + B·cost + C` (linear), with the no-early-halt
+   trajectory. ✅ **Done for the append ops:** `compileOp_appendOne_sound` /
+   `compileOp_appendZero_sound` now carry the linear budget
+   `2·(encodeTape s).length + 3` (was the non-composable quadratic `overhead`),
+   straight from `appendAt_steps_le`. (This is the `decodeTape`-equality form;
+   the physical-contract form below still needs the head/trajectory work.)
+   ⚠ **Gap to close for assembly:** the gadgets (`appendAt_run_steps`) leave the
+   exit head position *existential* and do **not** rewind the head to `0` or
+   expose a no-early-halt trajectory — both required by
+   `compileSeq_compose_physical`. Add head-rewind + trajectory lemmas to the
+   gadget library, and lift them to the physical-contract form with the linear
+   step bound, before assembling.
+2. **Lift the per-fragment output bound to a max-over-fragments bound.**
+   `Cmd.encodeTape_eval_length_le` (done) bounds each fragment boundary's tape;
+   thread it through the run so every intermediate tape is `≤ size + cost +
+   regBound + 1`.
+3. **Set the total budget with slack.** Define `Compile_run_physical`'s total as
+   a quadratic-with-constant — concretely `Q(size,cost) ≈ C·cost·(size+cost+
+   regBound+1)`, which I checked **composes** for `seq` (superadditive:
+   `Q(a,c1)+Q(a+c1,c2)+1 ≤ Q(a,1+c1+c2)`, the `-C·c1·c2` cross term gives the
+   slack) and for `forBnd` (the loop sums cost·tape over iterations ≤ total
+   cost × max tape). The tight `(size+cost+1)²` cannot absorb the per-fragment
+   constants. Safe: `toFrameworkWitness'` only needs `inOPoly`/`monotonic` — so
+   replace `Compile.overhead`'s use here with `Q` (or a cubic) and re-thread
+   `PolyTime.toFrameworkWitness'` / `Compile.bitDecider_run`.
+4. **Concretise the 10 stub `compileOp`s** from the gadget library, each with
+   its **linear-budget** `compileOp_sound`.
+5. **Assemble** `compileSeq_sound` from `compileSeq_compose_physical`,
+   `compileForBnd_sound` from `loopTM_run`, `compileIfBit_sound` from
+   `branchComposeFlatTM_run`; then `Compile_sound`/`Compile_run_physical` by
+   induction.
 
 (Alternatively, the cheaper `map`-over-lists witness — ROADMAP step 2,
 `parked/MapNatList_WIP.lean` — keeps the S3 migration moving while C2 is built.)
@@ -76,4 +114,7 @@ Per ROADMAP plan step 1:
   `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
   `#print axioms <name>`.
 - See ROADMAP "Hard-won gotchas" (the `omega`/`Var` trap, nested `set` blowup,
-  `State.get` literal mis-resolution).
+  `State.get` literal mis-resolution). **New gotcha this session:** `set` and
+  other Mathlib tactics are **unavailable in `Lang/Semantics.lean` and
+  `Lang/Frame.lean`** (core-only files); write folds out explicitly or factor a
+  helper lemma (see `Cmd.size_run_foldl_le`).

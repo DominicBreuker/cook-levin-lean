@@ -771,6 +771,28 @@ followed by the end-of-tape terminator `endMark`. -/
 def Compile.encodeTape (s : State) : List Nat :=
   Compile.encodeRegs s ++ [Compile.endMark]
 
+/-- The encoded registers occupy `State.size s + s.length` cells: each register
+contributes its (shifted) contents plus one `0` delimiter. -/
+theorem Compile.encodeRegs_length (s : State) :
+    (Compile.encodeRegs s).length = State.size s + s.length := by
+  induction s with
+  | nil => rfl
+  | cons reg s ih =>
+      rw [Compile.encodeRegs_cons]
+      simp only [List.length_append, Compile.shiftReg, List.length_map, List.length_cons,
+        List.length_nil, ih, State.size, List.map_cons, List.foldr_cons]
+      omega
+
+/-- **Tape length = contents + register count + 1.** The encoded tape is the
+registers (`State.size s + s.length` cells) plus the `endMark`. This is the link
+between the per-op gadget step bounds (which grow with the *tape length*) and the
+`State.size` / register-count bounds (`Cmd.size_eval_le` / `Cmd.eval_length_le`)
+— so the intermediate tape length during a `Compile` run is bounded linearly in
+`size + cost + regBound`. -/
+theorem Compile.encodeTape_length (s : State) :
+    (Compile.encodeTape s).length = State.size s + s.length + 1 := by
+  rw [Compile.encodeTape, List.length_append, Compile.encodeRegs_length]; rfl
+
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
 
 In this machine model (`MachineSemantics.lean`) the head is an *index*
@@ -1342,24 +1364,25 @@ theorem compileOp_appendOne_zero_sound (s : State) (hbit : Compile.BitState s)
     exact Compile.decodeTape_encodeTape' _ _ _
       (Compile.BitState_appendOne s 0 hbit hlen)
 
-/-! ### Budgeted per-op soundness for `appendOne`/`appendZero` (general `dst`)
+/-! ### Per-op soundness for `appendOne`/`appendZero` (general `dst`, LINEAR budget)
 
 The two append ops are the only `compileOp`s with real TM bodies. The lemma
 below discharges `compileOp_sound` for both — at **general `dst`** and with the
-**corrected tape-length budget** `Compile.overhead ((encodeTape s).length +
-Op.cost o s)` (the fix for the cost-model bug: the old `State.size`-based budget
-ignored the register count and was false; see `compileOp_appendOne_zero_sound`).
+**linear tape-length budget** `2 · (encodeTape s).length + 3`. This is the
+*composable* per-fragment budget (ROADMAP Risk C2 / plan step 1b): the quadratic
+`overhead` budget the earlier version used does **not** compose (summing `~cost`
+quadratics → cubic; see the finding block below `compileSeq_sound`), whereas
+linear per-fragment bounds sum to a quadratic total.
 
 It composes `AppendGadget.appendAt_run_steps` (explicit step count) with
-`appendAt_steps_le` (the step count is `≤ 2·tapeLen + 3`, hence below
-`overhead (tapeLen + 1) = (tapeLen + 2)²`) and the encoding seam already
-validated in `compileOp_appendOne_behavioural`. This converts last session's
-"`compileOp_sound` is false as stated, base case `dst = 0` only" into a proven
-result for the real ops at all `dst`. -/
+`appendAt_steps_le` (the step count is exactly `≤ 2·tapeLen + 3`) and the
+encoding seam validated in `compileOp_appendOne_behavioural`. (Recovering the
+old quadratic budget, if ever needed, is just `Nat`-monotone padding:
+`2·tapeLen + 3 ≤ overhead (tapeLen + 1)`.) -/
 private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
     (s : State) (dst : Var) (hbit : Compile.BitState s) (hdst : dst < s.length) :
     ∃ cfg,
-      runFlatTM (Compile.overhead ((Compile.encodeTape s).length + 1))
+      runFlatTM (2 * (Compile.encodeTape s).length + 3)
           (AppendGadget.appendAtTM (bit + 1) dst)
           (initFlatConfig (AppendGadget.appendAtTM (bit + 1) dst)
             [Compile.encodeTape s]) = some cfg ∧
@@ -1411,15 +1434,14 @@ private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
   have hinit : initFlatConfig (AppendGadget.appendAtTM (bit + 1) dst) [Compile.encodeTape s]
       = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := by
     simp only [initFlatConfig, AppendGadget.appendAtTM_start, List.map_cons, List.map_nil]
-  -- The explicit step count is `≤ overhead (tapeLen + 1)`.
+  -- The explicit step count is **linear** in the tape length (`≤ 2·tapeLen + 3`,
+  -- directly from `appendAt_steps_le`); this is the composable per-fragment bound.
   have hstep_le : AppendGadget.appendAt_steps skipped body post
-      ≤ Compile.overhead ((Compile.encodeTape s).length + 1) := by
+      ≤ 2 * (Compile.encodeTape s).length + 3 := by
     have hb' := AppendGadget.appendAt_steps_le skipped body post
     have hL : (AppendGadget.regBlocks skipped ++ body ++ 0 :: post).length
         = (Compile.encodeTape s).length := by rw [← hsplit]; simp
-    rw [hL] at hb'
-    rw [Compile.overhead]
-    nlinarith [hb', Nat.zero_le (Compile.encodeTape s).length]
+    rw [hL] at hb'; exact hb'
   obtain ⟨k, hk⟩ := Nat.le.dest hstep_le
   -- The output tape decodes to the evaluated state.
   have htape : ([] : List Nat) ++ AppendGadget.regBlocks skipped ++ body ++ (bit + 1) :: 0 :: post
@@ -1448,12 +1470,12 @@ private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
     exact Compile.decodeTape_encodeTape' st' hd' _
       (Compile.BitState_appendBit bit hb s dst hbit hdst)
 
-/-- **`compileOp_sound` for `appendOne`, general `dst`, corrected budget.** -/
+/-- **`compileOp_sound` for `appendOne`, general `dst`, LINEAR budget**
+(`2 · (encodeTape s).length + 3` — the composable per-fragment bound). -/
 theorem compileOp_appendOne_sound (s : State) (dst : Var)
     (hbit : Compile.BitState s) (hdst : dst < s.length) :
     ∃ cfg,
-      runFlatTM (Compile.overhead ((Compile.encodeTape s).length
-            + Op.cost (Op.appendOne dst) s))
+      runFlatTM (2 * (Compile.encodeTape s).length + 3)
           (compileOp (Op.appendOne dst)).M
           (initFlatConfig (compileOp (Op.appendOne dst)).M
             [Compile.encodeTape s]) = some cfg ∧
@@ -1461,12 +1483,12 @@ theorem compileOp_appendOne_sound (s : State) (dst : Var)
       Compile.decodeTape cfg = Op.eval (Op.appendOne dst) s :=
   Compile.appendBit_sound 1 (by omega) s dst hbit hdst
 
-/-- **`compileOp_sound` for `appendZero`, general `dst`, corrected budget.** -/
+/-- **`compileOp_sound` for `appendZero`, general `dst`, LINEAR budget**
+(`2 · (encodeTape s).length + 3` — the composable per-fragment bound). -/
 theorem compileOp_appendZero_sound (s : State) (dst : Var)
     (hbit : Compile.BitState s) (hdst : dst < s.length) :
     ∃ cfg,
-      runFlatTM (Compile.overhead ((Compile.encodeTape s).length
-            + Op.cost (Op.appendZero dst) s))
+      runFlatTM (2 * (Compile.encodeTape s).length + 3)
           (compileOp (Op.appendZero dst)).M
           (initFlatConfig (compileOp (Op.appendZero dst)).M
             [Compile.encodeTape s]) = some cfg ∧
@@ -1474,8 +1496,44 @@ theorem compileOp_appendZero_sound (s : State) (dst : Var)
       Compile.decodeTape cfg = Op.eval (Op.appendZero dst) s :=
   Compile.appendBit_sound 0 (by omega) s dst hbit hdst
 
+/-! ### ⚠ C2 budget-shape finding — the per-fragment `overhead` budgets are
+**too loose to compose** (do not try to prove the four `compile*_sound` lemmas
+below as stated).
+
+`compileSeq_sound` (and its `compileIfBit`/`compileForBnd` siblings, and the
+`Compile_sound` assembly) take each sub-machine's budget as the **quadratic**
+`Compile.overhead (size + cost) = (size + cost + 1)²` and claim the composite
+runs within `overhead (size + 1 + cost₁ + cost₂)`. But the composed machine runs
+in `t₁ + 1 + t₂` actual steps (`compileSeq_compose_physical`), and a sub-machine
+satisfying the hypothesis may take its full budget, so the worst case is
+
+  `overhead(a) + 1 + overhead(a + c₂) ≤ overhead(a + 1 + c₂)`,  `a = size + cost₁`,
+
+which is **false for `a ≥ 2`** (e.g. `a=3, c₂=1`: `42 ≰ 36`; the gap grows with
+`a`). A quadratic is not superadditive: summing `~cost` quadratic per-op budgets
+gives a **cubic**, not the claimed quadratic-of-the-sum. So these hypotheses are
+too weak to imply their conclusions — the lemmas are unprovable *as stated*.
+
+The actual gadgets are **linear** (`AppendGadget.appendAt_steps_le`:
+`steps ≤ 2·tapeLen + 3`), and linear per-fragment bounds *do* compose: summing
+`~cost` of them over a tape of length `≤ size + cost + regBound`
+(`Cmd.size_eval_le` bounds the intermediate sizes) gives
+`O(cost · (size + cost + regBound))`, which **is** `O((size+cost)²)` since
+`cost ≤ size + cost`. So the correct decomposition is:
+  1. per-fragment **linear** step bound `A·tapeLen + B·cost_frag + C` (the
+     gadgets prove this; `compileOp_appendOne_sound`/`compileOp_appendZero_sound`
+     now carry the linear `2·tapeLen + 3` budget — the four sorried lemmas below
+     should be restated to match, using `Cmd.encodeTape_eval_length_le` to cap
+     each fragment's tape length);
+  2. a **quadratic total** budget for `Compile_run_physical` — but with a
+     constant factor / `regBound` term of slack (e.g. `C·(size+cost+regBound)²`
+     or a cubic), since the tight `(size+cost+1)²` cannot cover the constants.
+     Safe: `toFrameworkWitness'` only needs the total to be `inOPoly`.
+The four lemmas below should be **restated with linear per-fragment budgets**
+before any proof attempt. See ROADMAP Risk C2 (plan step 1b). -/
+
 /-- Soundness obligation for `compileSeq`, given the IHs for both
-sub-machines. -/
+sub-machines. **Budget mis-stated** — see the finding block above. -/
 theorem compileSeq_sound
     (r1 r2 : CompiledCmd)
     (eval1 eval2 : State → State)
