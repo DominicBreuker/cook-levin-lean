@@ -327,4 +327,63 @@ theorem scanLeft_no_early_halt (sig target : Nat) (left right : List Nat)
     (Option.some.inj hck).symm
   exact ⟨Nat.zero_ne_one, rfl⟩
 
+/-! ### Head-rewind specialisation (the `compileSeq` composition primitive)
+
+The two lemmas above are the general scan-left run/trajectory. The two below
+specialise them to the **leading-sentinel** tape shape `m :: rest` where the
+sentinel `m` occurs *only* at index `0` (every cell of `rest` differs from `m`
+and is in range). This is exactly the canonical `Compile` tape under the
+planned leading-sentinel encoding `encodeTape s = endMark :: encodeRegs s ++
+[endMark]` (`m = endMark = 3`, `sig = 4`): the interior carries only the
+delimiter `0` and shifted bits `{1,2}`, none equal to `3`, so `scanLeftUntilTM
+4 3` from *any* interior head returns the head to index `0` (the `h_run1` /
+`h_traj1` shapes that `composeFlatTM_run` consumes). No new TM is needed — the
+rewind "gadget" is `scanLeftUntilTM` itself; these are the call-ready forms. -/
+
+/-- Helper: under the leading-sentinel shape, every scanned interior cell is
+in range and not the sentinel — the shared hypothesis of both rewind lemmas. -/
+private theorem rewind_scan_hyp (sig m : Nat) (rest : List Nat) (head : Nat)
+    (h_head : head ≤ rest.length)
+    (h_lt : ∀ x ∈ rest, x < sig) (h_ne : ∀ x ∈ rest, x ≠ m) :
+    ∀ i, 0 < i → i ≤ head → ∃ (h : i < (m :: rest).length),
+      (m :: rest).get ⟨i, h⟩ < sig ∧ (m :: rest).get ⟨i, h⟩ ≠ m := by
+  intro i hi hile
+  obtain ⟨j, rfl⟩ : ∃ j, i = j + 1 := ⟨i - 1, by omega⟩
+  have hi' : j + 1 < (m :: rest).length := by simp only [List.length_cons]; omega
+  have hmem : (m :: rest).get ⟨j + 1, hi'⟩ ∈ rest := by
+    rw [List.get_eq_getElem, List.getElem_cons_succ]
+    exact List.getElem_mem _
+  exact ⟨hi', h_lt _ hmem, h_ne _ hmem⟩
+
+/-- **Head-rewind run lemma.** On a tape `m :: rest` whose sentinel `m` occurs
+only at index `0`, `scanLeftUntilTM sig m` started from any interior head
+`head ≤ rest.length` halts in `head + 1` steps in the accept state `1` with the
+head rewound to `0`, leaving the tape unchanged. The `h_run1` shape of
+`composeFlatTM_run`. -/
+theorem rewindToStart_run (sig m : Nat) (left rest : List Nat) (head : Nat)
+    (h_head : head ≤ rest.length)
+    (h_lt : ∀ x ∈ rest, x < sig) (h_ne : ∀ x ∈ rest, x ≠ m) :
+    runFlatTM (head + 1) (scanLeftUntilTM sig m)
+        { state_idx := 0, tapes := [(left, head, m :: rest)] } =
+      some { state_idx := 1, tapes := [(left, 0, m :: rest)] } := by
+  have h0 : 0 < (m :: rest).length := by simp
+  have h_head_lt : head < (m :: rest).length := by simp only [List.length_cons]; omega
+  exact scanLeft_run sig m left (m :: rest) h0 rfl head h_head_lt
+    (rewind_scan_hyp sig m rest head h_head h_lt h_ne)
+
+/-- **Head-rewind trajectory.** Before the rewind completes (`k < head + 1`) the
+scanner is still in the scanning state, having neither reached the accept state
+`1` nor halted. The `h_traj1` shape of `composeFlatTM_run`. -/
+theorem rewindToStart_traj (sig m : Nat) (left rest : List Nat) (head : Nat)
+    (h_head : head ≤ rest.length)
+    (h_lt : ∀ x ∈ rest, x < sig) (h_ne : ∀ x ∈ rest, x ≠ m) :
+    ∀ k, k < head + 1 → ∀ ck,
+      runFlatTM k (scanLeftUntilTM sig m)
+          { state_idx := 0, tapes := [(left, head, m :: rest)] } = some ck →
+      ck.state_idx ≠ 1 ∧
+      haltingStateReached (scanLeftUntilTM sig m) ck = false := by
+  have h_head_lt : head < (m :: rest).length := by simp only [List.length_cons]; omega
+  exact scanLeft_no_early_halt sig m left (m :: rest) head h_head_lt
+    (rewind_scan_hyp sig m rest head h_head h_lt h_ne)
+
 end Complexity.Lang.ScanLeft

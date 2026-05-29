@@ -1800,7 +1800,18 @@ or hitting `exit` earlier, within the `overhead` budget. It is the top-level
 restatement of the per-fragment physical contract whose composition
 `compileSeq_compose_physical` already validates; discharging it is the remaining
 C1/C2 compiler-engineering obligation (the same gap `Compile_sound` sits behind),
-so it is left as a single, focused `sorry`. -/
+so it is left as a single, focused `sorry`.
+
+⚠ **Prerequisite (2026-05-29): the "head rewound to `0`" clause is not
+implementable on the current encoding.** `composeFlatTM_run` preserves the head
+across the seam (it does not reset it), so each fragment must rewind itself; but
+a TM head clamps at `0` under `Lmove` without being able to *detect* it, so
+rewinding needs a uniquely-detectable left sentinel at index `0` that
+`encodeTape` (= `encodeRegs s ++ [endMark]`) lacks. The rewind itself is ready
+(`ScanLeft.rewindToStart_run`/`_traj`). **Before discharging this `sorry`,
+migrate to the leading-sentinel encoding** `encodeTape s = endMark ::
+encodeRegs s ++ [endMark]` (reuse `3`, `sig` stays `4`) — full steps in
+HANDOFF.md "Recommended next step" (1b-0 … 1d). -/
 theorem Compile_run_physical (c : Cmd) (s : State) :
     ∃ t : Nat,
       runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
