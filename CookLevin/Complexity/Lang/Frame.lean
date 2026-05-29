@@ -63,7 +63,20 @@ theorem State.get_set_ne (s : State) (v : Var) (val : List Nat) (r : Var) (hr : 
           (show (List.replicate (v + 1 - s.length) ([] : List Nat)).length ≤ r - s.length by
             rw [List.length_replicate]; exact hge)]
 
-/-! ## `UsesBelow` — a static "touches only registers `< k`" predicate -/
+/-- Writing to register `v` extends the register *count* to at most `max
+s.length (v + 1)` — in range it is unchanged, out of range it grows to exactly
+`v + 1`. The register-count analogue of `State.get_set_*`; the basis for
+`Cmd.eval_length_le` (which bounds the encoded tape's register count, hence its
+length, during a `Compile` run). -/
+theorem State.set_length_le (s : State) (v : Var) (val : List Nat) :
+    (s.set v val).length ≤ max s.length (v + 1) := by
+  rcases Nat.lt_or_ge v s.length with h | h
+  · simp only [State.set, if_pos h, List.length_set]; exact Nat.le_max_left _ _
+  · simp only [State.set, if_neg (Nat.not_lt.mpr h), List.length_set, List.length_append,
+      List.length_replicate]
+    rw [Nat.add_sub_cancel' (Nat.le_succ_of_le h)]; exact Nat.le_max_right _ _
+
+
 
 /-- An operation reads and writes only registers `< k`. -/
 def Op.UsesBelow : Op → Nat → Prop
@@ -556,5 +569,69 @@ theorem Cmd.cost_forBnd_le (counter bound : Var) (body : Cmd) (s : State) (B : N
   rw [hcost]
   have := (key (s.get bound).length (Nat.le_refl _)).2
   omega
+
+/-! ## Register-count bound: `Cmd.eval` keeps the state width `≤ max start regBound`
+
+A program touching only registers `< k` never extends the state beyond `max
+s.length k` registers (every write is to some `dst < k`, padding to at most `k`).
+With `Cmd.size_eval_le` (the contents bound) this caps the encoded tape length
+`(encodeTape (c.eval s)).length = State.size + count + 1` during a `Compile`
+run — the missing linear ingredient for the corrected per-fragment budget
+(ROADMAP Risk C2, plan step 1b). -/
+
+/-- Writing to a register `dst < k` keeps the width `≤ max s.length k`. The
+`< k` form of `State.set_length_le` (proved with explicit `Nat` order lemmas:
+`omega` cannot see through the `Var := Nat` index `dst`). -/
+theorem State.set_length_le_of_lt (s : State) {dst k : Var} (hdst : dst < k)
+    (val : List Nat) : (s.set dst val).length ≤ max s.length k :=
+  Nat.le_trans (State.set_length_le s dst val)
+    (Nat.max_le.mpr ⟨Nat.le_max_left _ _, Nat.le_trans hdst (Nat.le_max_right _ _)⟩)
+
+/-- An op touching only registers `< k` keeps the state width `≤ max s.length k`.
+Every `Op.eval` is a single `State.set dst _` with `dst < k`. -/
+theorem Op.eval_length_le (o : Op) (k : Nat) (h : Op.UsesBelow o k) (s : State) :
+    (Op.eval o s).length ≤ max s.length k := by
+  cases o with
+  | clear dst      => exact State.set_length_le_of_lt s h _
+  | appendOne dst  => exact State.set_length_le_of_lt s h _
+  | appendZero dst => exact State.set_length_le_of_lt s h _
+  | copy dst src   => exact State.set_length_le_of_lt s h.1 _
+  | tail dst src   => exact State.set_length_le_of_lt s h.1 _
+  | head dst src   => exact State.set_length_le_of_lt s h.1 _
+  | eqBit dst a b  => exact State.set_length_le_of_lt s h.1 _
+  | nonEmpty dst src => exact State.set_length_le_of_lt s h.1 _
+  | takeAt dst src l => exact State.set_length_le_of_lt s h.1 _
+  | dropAt dst src l => exact State.set_length_le_of_lt s h.1 _
+  | concat dst a b => exact State.set_length_le_of_lt s h.1 _
+  | consLen dst l src => exact State.set_length_le_of_lt s h.1 _
+
+/-- A command touching only registers `< k` keeps the state width `≤ max s.length
+k`. Proved by induction on `c`; the `forBnd` case runs the loop-invariant
+principle with the width bound as motive (the counter `< k` and the body both
+preserve it). -/
+theorem Cmd.eval_length_le (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k) (s : State) :
+    (c.eval s).length ≤ max s.length k := by
+  induction c generalizing s with
+  | op o => exact Op.eval_length_le o k h s
+  | seq c1 c2 ih1 ih2 =>
+      rw [Cmd.eval_seq]
+      exact Nat.le_trans (ih2 h.2 (c1.eval s))
+        (by have := ih1 h.1 s; omega)
+  | ifBit t cT cE ihT ihE =>
+      by_cases hb : s.get t = [1]
+      · rw [Cmd.eval_ifBit_true t cT cE s hb]; exact ihT h.2.1 s
+      · rw [Cmd.eval_ifBit_false t cT cE s hb]; exact ihE h.2.2 s
+  | forBnd cnt bnd body ihbody =>
+      obtain ⟨hcnt, _, hbody⟩ := h
+      rw [Cmd.eval_forBnd]
+      refine Cmd.foldlState_range_induct body cnt (s.get bnd).length s
+        (fun _ st => st.length ≤ max s.length k) (Nat.le_max_left _ _) ?_
+      intro i st _ hM
+      -- counter set: width `≤ max st.length k ≤ max s.length k`; body preserves it.
+      have hset : (st.set cnt (List.replicate i 1)).length ≤ max s.length k :=
+        Nat.le_trans (State.set_length_le_of_lt st hcnt _)
+          (Nat.max_le.mpr ⟨hM, Nat.le_max_right _ _⟩)
+      exact Nat.le_trans (ihbody hbody (st.set cnt (List.replicate i 1)))
+        (Nat.max_le.mpr ⟨hset, Nat.le_max_right _ _⟩)
 
 end Complexity.Lang

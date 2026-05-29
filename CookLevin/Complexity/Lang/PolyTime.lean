@@ -21,6 +21,32 @@ Bridges are sorry-bodied at the skeleton stage; they all reduce to
 
 namespace Complexity.Lang
 
+/-! ## Linear tape-length bound (C2 budget ingredient)
+
+The corrected per-fragment compiler budget must be **linear** in the encoded
+tape length (ROADMAP Risk C2 / plan step 1b — the quadratic `overhead` per
+fragment does not compose). This lemma supplies the missing analytic fact: the
+output tape of any sub-program is linear in `size + cost + regBound`. It joins
+the three pieces that previously lived in separate files —
+`Compile.encodeTape_length` (tape = contents + count + 1), `Cmd.size_eval_le`
+(contents ≤ `size + cost`), and `Cmd.eval_length_le` (count ≤ `max start
+regBound`) — so it lives here (PolyTime imports both `Compile` and `Frame`). -/
+
+/-- **Linear output-tape bound.** For a program `c` touching only registers
+`< k`, the encoded tape of its result is bounded linearly:
+`(encodeTape (c.eval s)).length ≤ State.size s + c.cost s + max s.length k + 1`.
+Each fragment boundary in a `Compile c` run is `encodeTape` of such a
+sub-evaluation, so this is the per-fragment tape-length cap the linear step
+bounds (`AppendGadget.appendAt_steps_le : ≤ 2·tapeLen+3`) compose against. -/
+theorem Cmd.encodeTape_eval_length_le (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
+    (s : State) :
+    (Compile.encodeTape (c.eval s)).length
+      ≤ State.size s + c.cost s + max s.length k + 1 := by
+  rw [Compile.encodeTape_length]
+  have h1 := Cmd.size_eval_le c s
+  have h2 := Cmd.eval_length_le c k h s
+  omega
+
 /-- A program `c` *decides* a predicate `P` in cost bound `costBound`
 when run on the encoded input `encodeIn`.
 

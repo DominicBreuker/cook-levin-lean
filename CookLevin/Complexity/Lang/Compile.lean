@@ -771,6 +771,28 @@ followed by the end-of-tape terminator `endMark`. -/
 def Compile.encodeTape (s : State) : List Nat :=
   Compile.encodeRegs s ++ [Compile.endMark]
 
+/-- The encoded registers occupy `State.size s + s.length` cells: each register
+contributes its (shifted) contents plus one `0` delimiter. -/
+theorem Compile.encodeRegs_length (s : State) :
+    (Compile.encodeRegs s).length = State.size s + s.length := by
+  induction s with
+  | nil => rfl
+  | cons reg s ih =>
+      rw [Compile.encodeRegs_cons]
+      simp only [List.length_append, Compile.shiftReg, List.length_map, List.length_cons,
+        List.length_nil, ih, State.size, List.map_cons, List.foldr_cons]
+      omega
+
+/-- **Tape length = contents + register count + 1.** The encoded tape is the
+registers (`State.size s + s.length` cells) plus the `endMark`. This is the link
+between the per-op gadget step bounds (which grow with the *tape length*) and the
+`State.size` / register-count bounds (`Cmd.size_eval_le` / `Cmd.eval_length_le`)
+— so the intermediate tape length during a `Compile` run is bounded linearly in
+`size + cost + regBound`. -/
+theorem Compile.encodeTape_length (s : State) :
+    (Compile.encodeTape s).length = State.size s + s.length + 1 := by
+  rw [Compile.encodeTape, List.length_append, Compile.encodeRegs_length]; rfl
+
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
 
 In this machine model (`MachineSemantics.lean`) the head is an *index*
