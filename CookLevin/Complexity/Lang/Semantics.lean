@@ -243,7 +243,17 @@ def Cmd.run : Cmd → State → State × Nat
           let r := Cmd.run body s'
           (r.1, acc.2 + r.2))
         (s, 0)
-      (final.1, 1 + final.2)
+      -- `iters * iters` charges for materialising the unary loop counter
+      -- `replicate i 1` (size `i ≤ iters`) before each of the `iters`
+      -- iterations. This is uncharged in the fold accumulator above, yet
+      -- it is real size the loop writes (and real TM time: writing `i`
+      -- unary cells costs `Θ(i)` steps), so without it the cost model is
+      -- not a faithful proxy for output size — exactly the cost-model
+      -- faithfulness principle behind the size-aware `Op.cost`. With it,
+      -- `Cmd.size_eval_le` (`size (eval) ≤ size + cost`) holds for `forBnd`
+      -- too (the lump `iters*iters ≥ Σ_{i<iters} i` dominates the counter's
+      -- cumulative size growth). See `Cmd.size_eval_le`.
+      (final.1, 1 + final.2 + iters * iters)
 
 /-- Denotational semantics of a command. -/
 def Cmd.eval (c : Cmd) (s : State) : State := (Cmd.run c s).1
@@ -290,6 +300,126 @@ theorem Cmd.cost_ifBit_false (t : Var) (cT cE : Cmd) (s : State) (h : s.get t �
     (Cmd.ifBit t cT cE).cost s = 1 + cE.cost s := by
   show (Cmd.run (.ifBit t cT cE) s).2 = 1 + (Cmd.run cE s).2
   simp [Cmd.run, h]
+
+/-! ## Cost-model soundness (command level)
+
+`Op.size_eval_le` lifts to the whole command: the (realistic, size-aware) cost
+dominates the size growth of every command. The `forBnd` case is exactly why
+`Cmd.run` charges `iters * iters` for the loop counter — the bound is **false**
+without that charge (witness: `forBnd 0 1 (op (appendOne 2))` on
+`[[], replicate n 1, []]` has output size `3n−1`, but `size + (uncharged cost) =
+2n+1`). The clean linear bound below is the invariant the compiler's tape-length
+budget rests on (every intermediate tape in a `Compile c` run is `encodeTape` of
+a sub-evaluation, whose size this bounds by `size s + cost`). -/
+
+/-- **Loop-fold size invariant** (helper for `Cmd.size_eval_le`'s `forBnd` case).
+After `n ≤ iters` iterations of the cost-carrying loop fold, the state size is
+bounded by the input size, the accumulated body cost, and `n * iters` of counter
+headroom. The `n * iters` term absorbs the per-iteration counter set (which
+writes `replicate i 1`, size `i < iters`); at `n = iters` it matches the
+`iters * iters` lump that `Cmd.run` charges for the loop. Stated as a `private`
+helper because `set` is unavailable in this core-only file (so the fold is
+written out explicitly). -/
+private theorem Cmd.size_run_foldl_le (body : Cmd) (cnt : Var)
+    (hbody : ∀ t, State.size (body.eval t) ≤ State.size t + body.cost t)
+    (s : State) (iters : Nat) :
+    ∀ n, n ≤ iters →
+      State.size ((List.range n).foldl
+          (fun acc i =>
+            let s' := acc.1.set cnt (List.replicate i 1)
+            let r := Cmd.run body s'
+            (r.1, acc.2 + r.2)) (s, 0)).1
+        ≤ State.size s
+          + ((List.range n).foldl
+              (fun acc i =>
+                let s' := acc.1.set cnt (List.replicate i 1)
+                let r := Cmd.run body s'
+                (r.1, acc.2 + r.2)) (s, 0)).2
+          + n * iters := by
+  intro n
+  induction n with
+  | zero => intro _; simp
+  | succ n ih =>
+      intro hn
+      have hnlt : n < iters := hn
+      have ihn := ih (Nat.le_of_succ_le hn)
+      rw [List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+      -- The counter set adds at most `n` to the size (`State.size_set_add`).
+      have hset := State.size_set_add
+        (((List.range n).foldl
+          (fun acc i =>
+            let s' := acc.1.set cnt (List.replicate i 1)
+            let r := Cmd.run body s'
+            (r.1, acc.2 + r.2)) (s, 0)).1) cnt (List.replicate n 1)
+      rw [List.length_replicate] at hset
+      -- The body grows size by at most its cost (`hbody`).
+      have hb := hbody
+        (((List.range n).foldl
+          (fun acc i =>
+            let s' := acc.1.set cnt (List.replicate i 1)
+            let r := Cmd.run body s'
+            (r.1, acc.2 + r.2)) (s, 0)).1.set cnt (List.replicate n 1))
+      -- Expose the fold step's projections as `body.eval` / `body.cost` (defeq:
+      -- `(Cmd.run body s').1 = body.eval s'`, `.2 = body.cost s'`).
+      show State.size (body.eval
+              (((List.range n).foldl
+                (fun acc i =>
+                  let s' := acc.1.set cnt (List.replicate i 1)
+                  let r := Cmd.run body s'
+                  (r.1, acc.2 + r.2)) (s, 0)).1.set cnt (List.replicate n 1)))
+          ≤ State.size s
+            + (((List.range n).foldl
+                (fun acc i =>
+                  let s' := acc.1.set cnt (List.replicate i 1)
+                  let r := Cmd.run body s'
+                  (r.1, acc.2 + r.2)) (s, 0)).2
+              + body.cost
+                (((List.range n).foldl
+                  (fun acc i =>
+                    let s' := acc.1.set cnt (List.replicate i 1)
+                    let r := Cmd.run body s'
+                    (r.1, acc.2 + r.2)) (s, 0)).1.set cnt (List.replicate n 1)))
+            + (n + 1) * iters
+      rw [Nat.succ_mul]
+      omega
+
+/-- **Cost-model soundness (command level).** The size of `c.eval s` is bounded
+by the input size plus the running cost: `size (c.eval s) ≤ size s + c.cost s`.
+Proved by induction on `c`; the `forBnd` case uses the counter charge in
+`Cmd.run` (a per-iteration `+ iters` of size headroom, lumped as `iters*iters`)
+to absorb the unary counter the loop materialises. -/
+theorem Cmd.size_eval_le (c : Cmd) (s : State) :
+    State.size (c.eval s) ≤ State.size s + c.cost s := by
+  induction c generalizing s with
+  | op o => exact Op.size_eval_le o s
+  | seq c1 c2 ih1 ih2 =>
+      rw [Cmd.eval_seq, Cmd.cost_seq]
+      have h1 := ih1 s
+      have h2 := ih2 (c1.eval s)
+      omega
+  | ifBit t cT cE ihT ihE =>
+      by_cases hb : s.get t = [1]
+      · rw [Cmd.eval_ifBit_true t cT cE s hb, Cmd.cost_ifBit_true t cT cE s hb]
+        have := ihT s; omega
+      · rw [Cmd.eval_ifBit_false t cT cE s hb, Cmd.cost_ifBit_false t cT cE s hb]
+        have := ihE s; omega
+  | forBnd cnt bnd body ihbody =>
+      have key := Cmd.size_run_foldl_le body cnt ihbody s (s.get bnd).length
+        (s.get bnd).length (Nat.le_refl _)
+      -- `eval`/`cost` of `forBnd` are the fold's `.1` / `1 + .2 + iters*iters`.
+      show State.size ((List.range (s.get bnd).length).foldl
+              (fun acc i =>
+                let s' := acc.1.set cnt (List.replicate i 1)
+                let r := Cmd.run body s'
+                (r.1, acc.2 + r.2)) (s, 0)).1
+          ≤ State.size s
+            + (1 + ((List.range (s.get bnd).length).foldl
+                (fun acc i =>
+                  let s' := acc.1.set cnt (List.replicate i 1)
+                  let r := Cmd.run body s'
+                  (r.1, acc.2 + r.2)) (s, 0)).2
+              + (s.get bnd).length * (s.get bnd).length)
+      omega
 
 /-! ## Output projection
 

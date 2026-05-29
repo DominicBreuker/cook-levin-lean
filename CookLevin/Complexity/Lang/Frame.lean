@@ -422,10 +422,12 @@ theorem Cmd.cost_agree (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k)
           let s' := acc.1.set cnt (List.replicate i 1)
           let res := Cmd.run body s'
           (res.1, acc.2 + res.2)) (s₁, 0)).2
+          + (s₁.get bnd).length * (s₁.get bnd).length
         = 1 + ((List.range (s₂.get bnd).length).foldl (fun acc i =>
           let s' := acc.1.set cnt (List.replicate i 1)
           let res := Cmd.run body s'
           (res.1, acc.2 + res.2)) (s₂, 0)).2
+          + (s₂.get bnd).length * (s₂.get bnd).length
       rw [hiters, fold (List.range (s₂.get bnd).length) (s₁, 0) (s₂, 0) hagree rfl]
 
 /-! ## Counted-loop reasoning (`forBnd`)
@@ -515,16 +517,20 @@ private def costFold (body : Cmd) (counter : Var) :
 
 /-- **Loop cost bound.** If a motive `M` is a valid loop invariant (`hM`) and it
 implies a *uniform* per-iteration body-cost bound `B` (`hC`), then the whole loop
-costs at most `1 + iters · B`. The cost counterpart of the invariant principle:
-the standard way to bound a loop-based program's running time (pair it with
-`Cmd.eval_forBnd` + `Cmd.foldlState_range_induct` sharing the same `M`). -/
+costs at most `1 + iters · B + iters · iters`. The cost counterpart of the
+invariant principle: the standard way to bound a loop-based program's running
+time (pair it with `Cmd.eval_forBnd` + `Cmd.foldlState_range_induct` sharing the
+same `M`). The `iters · iters` summand is the loop counter charge `Cmd.run`
+adds (materialising `replicate i 1` before each iteration); it keeps the cost a
+faithful upper bound on output size (see `Cmd.size_eval_le`). -/
 theorem Cmd.cost_forBnd_le (counter bound : Var) (body : Cmd) (s : State) (B : Nat)
     (M : Nat → State → Prop) (h0 : M 0 s)
     (hM : ∀ i st, i < (s.get bound).length → M i st →
         M (i + 1) (body.eval (st.set counter (List.replicate i 1))))
     (hC : ∀ i st, i < (s.get bound).length → M i st →
         body.cost (st.set counter (List.replicate i 1)) ≤ B) :
-    (Cmd.forBnd counter bound body).cost s ≤ 1 + (s.get bound).length * B := by
+    (Cmd.forBnd counter bound body).cost s
+      ≤ 1 + (s.get bound).length * B + (s.get bound).length * (s.get bound).length := by
   have key : ∀ n, n ≤ (s.get bound).length →
       M n ((List.range n).foldl (costFold body counter) (s, 0)).1
         ∧ ((List.range n).foldl (costFold body counter) (s, 0)).2 ≤ n * B := by
@@ -545,7 +551,8 @@ theorem Cmd.cost_forBnd_le (counter bound : Var) (body : Cmd) (s : State) (B : N
         rw [Nat.succ_mul]
         omega
   have hcost : (Cmd.forBnd counter bound body).cost s
-      = 1 + ((List.range (s.get bound).length).foldl (costFold body counter) (s, 0)).2 := rfl
+      = 1 + ((List.range (s.get bound).length).foldl (costFold body counter) (s, 0)).2
+        + (s.get bound).length * (s.get bound).length := rfl
   rw [hcost]
   have := (key (s.get bound).length (Nat.le_refl _)).2
   omega
