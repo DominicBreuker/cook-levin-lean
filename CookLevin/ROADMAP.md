@@ -103,8 +103,9 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half needs a real SAT verifier
     (`scanInsert_run`, `insertCarryTM_run`: `body.length + … + post.length + …`);
     only the top-level `appendAt_run` existentializes them. So step counts are
     recoverable — but they expose a **cost-model bug** (next bullet).
-  - **`compileOp_sound` is FALSE as stated** — and there are now **two
-    independent reasons**, the second deeper than the first.
+  - **`compileOp_sound` is FALSE as stated** — and there are now **three
+    independent reasons** (reasons 1–2 below; the third, the *budget shape*, is
+    the May-2026 finding recorded after these).
     1. *(register-count bug, prior session)* Its budget `Compile.overhead
        (State.size s + cost)` uses `State.size`, which counts register *contents*
        but **ignores the register count**, whereas `appendAtTM`'s step count grows
@@ -132,24 +133,40 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half needs a real SAT verifier
        permanent complexity; (c) is mathematically identical but needs surgery on
        the `Op` inductive. The concrete witnesses' cost bounds were re-derived
        (`id`, `swap`, `map_fst`), since their unit-cost bounds certified the wrong
-       quantity. **Residual:** the **Cmd-level** size invariant is subtler than
-       `size(eval) ≤ size + cost` — the `forBnd` unary counter (`set counter
-       (replicate i 1)`, size `i ≤ iters`) is *uncharged* size, so the clean
-       invariant is *false for forBnd* (witness `forBnd 0 1 (op (appendOne 2))` on
-       `[[], rep n 1, []]`: output size `3n−1 > 2n+1 = size + cost`). The correct
-       bound is still linear in `(size + cost)` (the counter ≤ `iters ≤ cost`, a
-       single replace not cumulative), but its constant grows with loop-nesting
-       depth; this is the remaining Cmd-level/budget accounting (plan step 1).
+       quantity. The **Cmd-level** residual (the `forBnd` counter) is **now CLOSED**
+       — see reason 3 / Progress.
+    3. **(budget shape — NEW, May 2026; the per-fragment budgets cannot compose).**
+       The corrected per-op budget was loosened to the **quadratic** `overhead
+       (tapeLen + cost) = (·+1)²`. But a quadratic is **not superadditive**, so
+       summing `~cost` per-op quadratics gives a **cubic** — the per-fragment
+       budgets in `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound` (and
+       hence `Compile_sound`) are too weak to imply their composed conclusions:
+       worst case `overhead(a) + 1 + overhead(a + c₂) ≤ overhead(a + 1 + c₂)` is
+       **false for `a ≥ 2`** (`a = 3, c₂ = 1` → `42 ≰ 36`; gap grows with `a`). So
+       **these four lemmas are unprovable as stated.** Fix: per-fragment budgets
+       must be **LINEAR** in tape length — the gadgets prove it
+       (`appendAt_steps_le: ≤ 2·tapeLen+3`), and linear bounds *do* compose into a
+       quadratic total (`Σ_{~cost} O(tapeLen) ≤ O(cost·(size+cost+regBound)) =
+       O((size+cost)²)` as `cost ≤ size+cost`). The **total** `Compile_run_physical`
+       budget then needs a quadratic with constant/`regBound` slack (the tight
+       `(size+cost+1)²` cannot cover constants; safe — `toFrameworkWitness'` only
+       needs `inOPoly`). See the finding block above `compileSeq_sound` in
+       `Compile.lean`.
   - **Progress** (`Lang/AppendGadget.lean`, `Lang/Compile.lean`, `Lang/Semantics.lean`,
     `Lang/Frame.lean`, `Lang/PolyTime.lean`; all sorry-free & axiom-clean):
     `appendAt_run_steps` re-proves `appendAt_run` with an **explicit step count**
-    (`appendAt_steps`), `appendAt_steps_le` bounds it by `2·tapeLen + 3 ≤
-    overhead(tapeLen+1)`, and `compileOp_appendOne_sound`/`compileOp_appendZero_sound`
-    discharge `compileOp_sound` for the two real ops at **general `dst`** under the
-    corrected tape-length budget (reason #1 closed for them). The **realistic cost
-    model** (reason #2) is implemented: `Op.cost` size-aware, `State.size_set_add`
-    + `Op.size_eval_le` (the validating invariant), `Op.cost_agree`/`Cmd.cost_agree`
-    generalized, and the `id`/`swap`/`map_fst` witnesses re-derived.
+    (`appendAt_steps`), `appendAt_steps_le` bounds it by `2·tapeLen + 3`, and
+    `compileOp_appendOne_sound`/`compileOp_appendZero_sound` discharge the
+    behavioural part of `compileOp_sound` for the two real ops at **general `dst`**
+    (reason #1 closed for them, modulo the budget-shape restatement in reason #3).
+    The **realistic cost model** (reason #2) is implemented: `Op.cost` size-aware,
+    `State.size_set_add` + `Op.size_eval_le`, `Op.cost_agree`/`Cmd.cost_agree`
+    generalized, witnesses re-derived. **The Cmd-level size bound (reason #2
+    residual) is now PROVEN:** `Cmd.size_eval_le : State.size (c.eval s) ≤
+    State.size s + c.cost s`, by charging the `forBnd` counter (`Cmd.run` adds
+    `iters*iters`) — clean and depth-constant-free, replacing the proposed
+    register-exclusion route. **Surfaced reason #3** (budget shape) by checking the
+    arithmetic of the sorried per-fragment lemmas.
 
 ---
 
@@ -164,37 +181,51 @@ Ordered by dependency. The two highest-risk items are **C2** (the compiler, now
 known to need step-bound machinery) and **S1** (the Cook tableau).
 
 1. **Finish the compiler `Compile_sound` (C2 — highest completion risk).**
-   a. **Cost model — DONE.** `Op.cost` is now size-aware and `Op.size_eval_le`
-      (per-op size growth ≤ cost) is proven. **Remaining (the hard residual):** the
-      **Cmd-level** size bound. The clean `State.size (c.eval s) ≤ State.size s +
-      c.cost s` is **false for `forBnd`** (the unary loop counter is uncharged
-      size). Prove the correct linear bound instead — recommended via a
-      *register-excluding* size (`size minus the loop counter`), which is preserved
-      by the counter-set and grows ≤ cost under the body (`Op.size_eval_le` lifts to
-      it); the output counter is then bounded separately by `iters ≤ |bound| ≤
-      size`. This gives `maxIntermediateTapeLen ≤ O(size + cost)` (linear; constant
-      grows with loop-nesting depth, fine for a fixed witness). Then restate
-      `PolyTime.toFrameworkWitness'`'s time budget accordingly (it currently bakes
-      in `overhead(2·size+1 + cost_bound)`).
-   b. **The budget definition (reason #1, partly done):** the per-op budget
-      is the tape length `Compile.overhead ((encodeTape s).length + cost)` — now
-      **proven** for the append ops at general `dst` (`compileOp_appendOne_sound` /
-      `compileOp_appendZero_sound`), with explicit step counts (`appendAt_steps` /
-      `appendAt_run_steps`) and the bound `appendAt_steps_le`. Restate
-      `Compile_sound` to thread the register count (≤ the program's `regBound`).
-      For each remaining gadget, give an explicit step count (the lower-level
-      lemmas already carry them); state a per-fragment *physical contract* (head
-      rewound to `0`, tape `= encodeTape output`, explicit halt step `t`,
-      no-early-halt trajectory, `t ≤ overhead(tapeLen)`).
-   b. Concretise the 10 stub `compileOp`s from the gadget library (`opClear`,
+   a. **Cost model — DONE.** `Op.cost` is size-aware (`Op.size_eval_le`), and the
+      **Cmd-level size bound is now proven**: `Cmd.size_eval_le : State.size
+      (c.eval s) ≤ State.size s + c.cost s` (`Lang/Semantics.lean`), sorry-free and
+      axiom-clean. The clean bound *was* false for `forBnd` (the unary loop counter
+      is uncharged size); rather than the register-exclusion route (depth-dependent
+      constant), it was fixed by **charging the counter in the cost model** — the
+      same faithfulness principle as the size-aware `Op.cost` (materialising
+      `replicate i 1` costs Θ(i) TM steps). `Cmd.run`'s `forBnd` now adds
+      `iters*iters` (closed-form lump ≥ Σ_{i<iters} i, kept outside the fold so the
+      frame/locality lemmas are untouched). Ripples were contained:
+      `Cmd.cost_forBnd_le` (+ `iters*iters`, no external consumers) and
+      `Cmd.cost_agree`. This gives `maxIntermediateTapeLen ≤ O(size + cost +
+      regBound)` (linear, no depth constant). **Remaining (1a):** lift the
+      *final*-state bound to a **max-intermediate**-state bound (each fragment
+      boundary is `encodeTape` of a sub-evaluation; `Cmd.size_eval_le` bounds each),
+      then restate `PolyTime.toFrameworkWitness'`'s time budget.
+   b. **⚠ Budget shape — NEW FINDING (do not prove the `compile*_sound` lemmas as
+      stated).** The per-op budget was loosened to the **quadratic**
+      `Compile.overhead ((encodeTape s).length + cost) = (·+1)²`
+      (`compileOp_appendOne_sound`). That is the **wrong direction**: quadratics are
+      not superadditive, so summing `~cost` per-op quadratics gives a **cubic**, and
+      `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound`
+      are **unprovable as stated** — worst case `overhead(a)+1+overhead(a+c₂) ≤
+      overhead(a+1+c₂)` is false for `a≥2` (numerically: `a=3,c₂=1` → `42 ≰ 36`).
+      Fix: state each per-fragment budget **LINEAR** in tape length — the gadgets
+      already prove it (`AppendGadget.appendAt_steps_le: steps ≤ 2·tapeLen+3`) — so
+      they compose: `Σ_{~cost frags} O(tapeLen) ≤ O(cost·(size+cost+regBound)) =
+      O((size+cost)²)` since `cost ≤ size+cost`. Then the **total**
+      `Compile_run_physical` budget must be a quadratic **with constant/`regBound`
+      slack** (e.g. `C·(size+cost+regBound)²` or a cubic) — the tight
+      `(size+cost+1)²` cannot cover the constants; safe since `toFrameworkWitness'`
+      only needs `inOPoly`. Thread the register count (≤ `regBound`) and give each
+      gadget a per-fragment *physical contract* (head rewound to `0`, tape
+      `= encodeTape output`, explicit halt step `t`, no-early-halt trajectory,
+      `t ≤ linear(tapeLen)`). See the finding block above `compileSeq_sound`.
+   c. Concretise the 10 stub `compileOp`s from the gadget library (`opClear`,
       `opCopy`, `opTail`, `opHead`, `opEqBit`, `opNonEmpty`, and the four
-      length-as-value ops), each with its budgeted `compileOp_sound`.
-   c. Assemble `compileSeq_sound` from `compileSeq_compose_physical`,
+      length-as-value ops), each with its **linear-budget** `compileOp_sound`.
+   d. Assemble `compileSeq_sound` from `compileSeq_compose_physical`,
       `compileForBnd_sound` from `loopTM_run`, `compileIfBit_sound` from
       `branchComposeFlatTM_run`; then `Compile_sound` / `Compile_run_physical` by
       induction. This discharges the one obligation the whole S3 bridge sits on.
    *Estimate ~3–5K LOC. No remaining structural unknown — the encoding seam is
-   validated — but the step-bound accounting is real work.*
+   validated — but the (now linear-then-quadratic) step-bound accounting is real
+   work.*
 
 2. **Retire S3 — migrate `⪯p` to `polyTimeComputable'`.** Swap
    `ReductionWitness.reduction_poly` to the TM-backed witness (the strengthening
@@ -259,7 +290,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** under the corrected tape-length budget (`compileOp_appendOne_sound`, `appendAt_run_steps`). The **cost-model gap is FIXED**: `Op.cost` is size-aware and `Op.size_eval_le` (per-op size growth ≤ cost) is proven (it was false under unit cost — `concat` doubling). **Open:** the **Cmd-level** size bound (the `forBnd` unary counter is uncharged — clean `size ≤ size+cost` is false; correct bound is linear, via register-exclusion); then thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
+| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; behavioural per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** (`compileOp_appendOne_sound`, `appendAt_run_steps`). **Cost-model gap FIXED** (`Op.cost` size-aware, `Op.size_eval_le`) **and the Cmd-level size bound is now PROVEN** (`Cmd.size_eval_le : size (c.eval s) ≤ size s + c.cost s`, by charging the `forBnd` counter — depth-constant-free; replaced the register-exclusion route). ⚠ **NEW finding — budget shape:** the per-fragment `overhead` budgets are **quadratic and don't compose** (summing `~cost` quadratics → cubic), so `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` are **unprovable as stated** (`a=3,c₂=1` → `42 ≰ 36`). Must restate per-fragment budgets **LINEAR** (gadgets prove `≤ 2·tapeLen+3`) → quadratic total with slack. **Open:** linear-budget restatement; max-intermediate-size lift; thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
 | **C1** | **per-`Op` compilation** (`compileOp` + soundness). | Only `appendOne`/`appendZero` have real TMs; behavioural soundness of `appendOne` proven. Rest stubbed. Part of C2. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + soundness). | `loopTM`/`loopTM_run` proven; behavioural `forBnd` toolkit (`Lang/Frame.lean`) proven. Wiring `compileForBnd` + its step bound is part of C2. |
 | **C4** | **layer → framework bridge.** | ✅ Engine done (`toFrameworkWitness'`, `inNPLang`/`red_inNPLang`, `inNPLang_to_inNP`, capstones `reducesPolyMO_of_lang`/`red_inNP_of_lang`), sorry-free modulo C2. Remaining: honest layer reductions (S1) + discharge C2. |

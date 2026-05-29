@@ -1474,8 +1474,42 @@ theorem compileOp_appendZero_sound (s : State) (dst : Var)
       Compile.decodeTape cfg = Op.eval (Op.appendZero dst) s :=
   Compile.appendBit_sound 0 (by omega) s dst hbit hdst
 
+/-! ### ⚠ C2 budget-shape finding — the per-fragment `overhead` budgets are
+**too loose to compose** (do not try to prove the four `compile*_sound` lemmas
+below as stated).
+
+`compileSeq_sound` (and its `compileIfBit`/`compileForBnd` siblings, and the
+`Compile_sound` assembly) take each sub-machine's budget as the **quadratic**
+`Compile.overhead (size + cost) = (size + cost + 1)²` and claim the composite
+runs within `overhead (size + 1 + cost₁ + cost₂)`. But the composed machine runs
+in `t₁ + 1 + t₂` actual steps (`compileSeq_compose_physical`), and a sub-machine
+satisfying the hypothesis may take its full budget, so the worst case is
+
+  `overhead(a) + 1 + overhead(a + c₂) ≤ overhead(a + 1 + c₂)`,  `a = size + cost₁`,
+
+which is **false for `a ≥ 2`** (e.g. `a=3, c₂=1`: `42 ≰ 36`; the gap grows with
+`a`). A quadratic is not superadditive: summing `~cost` quadratic per-op budgets
+gives a **cubic**, not the claimed quadratic-of-the-sum. So these hypotheses are
+too weak to imply their conclusions — the lemmas are unprovable *as stated*.
+
+The actual gadgets are **linear** (`AppendGadget.appendAt_steps_le`:
+`steps ≤ 2·tapeLen + 3`), and linear per-fragment bounds *do* compose: summing
+`~cost` of them over a tape of length `≤ size + cost + regBound`
+(`Cmd.size_eval_le` bounds the intermediate sizes) gives
+`O(cost · (size + cost + regBound))`, which **is** `O((size+cost)²)` since
+`cost ≤ size + cost`. So the correct decomposition is:
+  1. per-fragment **linear** step bound `A·tapeLen + B·cost_frag + C` (the
+     gadgets already prove this; `compileOp_appendOne_sound` *loosened* it to the
+     quadratic `overhead`, which is the wrong direction for the assembly);
+  2. a **quadratic total** budget for `Compile_run_physical` — but with a
+     constant factor / `regBound` term of slack (e.g. `C·(size+cost+regBound)²`
+     or a cubic), since the tight `(size+cost+1)²` cannot cover the constants.
+     Safe: `toFrameworkWitness'` only needs the total to be `inOPoly`.
+The four lemmas below should be **restated with linear per-fragment budgets**
+before any proof attempt. See ROADMAP Risk C2 (plan step 1b). -/
+
 /-- Soundness obligation for `compileSeq`, given the IHs for both
-sub-machines. -/
+sub-machines. **Budget mis-stated** — see the finding block above. -/
 theorem compileSeq_sound
     (r1 r2 : CompiledCmd)
     (eval1 eval2 : State → State)
