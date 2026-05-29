@@ -4,142 +4,121 @@ A Lean 4 formalisation targeting the **Cook–Levin theorem** (SAT is
 NP-complete), structured as a port of the Coq development by Forster, Kunze,
 Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
 
-**Work in progress.** `CookLevin/Complexity/NP/SAT/CookLevin.lean` declares
-`theorem CookLevin : NPcomplete SAT` and Lean accepts it, but the term is **not
-yet a faithful proof**: the combinatorial heart is rigorous, but the front of
-the proof is a *compiling skeleton* (`sorry`s) plus a few `sorry`-free but
-*vacuous* reductions. The strategy and the ordered plan to make it
-unconditional live in [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) — read it
-for direction.
+**Work in progress — the theorem typechecks but is NOT yet a faithful proof.**
+`CookLevin/Complexity/NP/SAT/CookLevin.lean` declares `theorem CookLevin :
+NPcomplete SAT` and `lake build` accepts it, but the term is **conditional** on
+both `sorry`-backed gaps and `sorry`-free *vacuous* definitions. Read
+[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the plan and the full risk
+register before working.
 
-## Status at a glance
+## Honest status (verified 2026-05)
 
-- `lake build` ✅ green; **0 project axioms** (only `propext` /
-  `Classical.choice` / `Quot.sound`).
-- ~11K LOC on the proof path under `CookLevin/` (a further ~14K parked, not
-  built).
-- ~30 `sorry`s (completion gaps, Risk register Group C); the C5a `map_fst`
-  `sorry`s and the **C6 bit-test gadget** (`Compile.bitTestTM`) are now
-  **closed** `sorry`-free.
-- **≥ 4 `sorry`-free *vacuous* defs** on the proof path — the deepest gaps
-  (Risks S1/S2/S3). They do **not** appear in the `sorry` count or under
-  `#print axioms`, so the `sorry` count overstates how close the proof is.
-- `CookLevin : NPcomplete SAT` typechecks but is **conditional** on all of the
-  above. **No unprobed structural unknown remains**: every gap is now bounded
-  engineering.
-- **Current work — the S3 migration (in progress).** Risk C9 (canonical layer
-  encoding) is done, and the layer-side migration engine is built and proved
-  in `Lang/PolyTime.lean` (product encoding, `comp`, verifier-composition
-  `precompose`/`ofReduction`, and the **layer-native NP class** `inNPLang` with
-  its reduction-closure theorem `red_inNPLang` — the layer analogue of
-  `red_inNP`), all sorry-free and axiom-clean. The **C5a frame-preservation
-  calling convention** is also landed (`Lang/Frame.lean`: `Cmd.UsesBelow` +
-  frame/locality lemmas; a `regBound`/`usesBelow` field on
-  `PolyTimeComputableLang'`; the `eval_frame`/`eval_get_of_agree` applications) —
-  so a witness program can run as a subroutine on register 0 while a stashed
-  pair component survives. The contract was also **relaxed to register-wise
-  (pointwise) `normalizes`** — the exact-equality form silently forbade scratch
-  registers (so it was too weak for *every* real layer program, not just
-  `map_fst`); composition was re-validated for scratch-using programs via the
-  frame lemmas. The length-as-value `Op`s and the **`map_fst` program** are now
-  **complete and `sorry`-free** (all fields, including `normalizes`/`cost_le`,
-  proved via the shared `mapFst_pre_eval`/`mapFst_pre_agree` lemmas), and
-  `map_fst` is wired into `red_inNPLang` internally (so the closure theorem takes
-  no `map_fst` hypothesis). The **framework decider bridge** `inNPLang → inNP` is
-  now also **assembled** (`inNPLang_to_inNP`): the **C6** tape→state bit-test
-  gadget (`Compile.bitTestTM`, `sorry`-free) turns a canonical `DecidesLang'`
-  answer (tape register `0`) into a `DecidesBy` accept/reject *state* via
-  `composeFlatTM_run`, and `DecidesBy.encode_size` was relaxed to admit the
-  layer's linear encoding. It reduces to a single focused obligation — the
-  `Compile` physical run contract (`Compile_run_physical`, Risk C2). Then `⪯p` is
-  migrated and the sound tail rippled. See the ROADMAP plan.
+| | |
+|---|---|
+| `lake build` | ✅ green (3356 jobs) |
+| `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`** (both the hardness and the in-NP halves reach a `sorry`). |
+| `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
+| Genuine `sorry`s on the proof path | ~31 (Group C — completion) |
+| `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |
+| Proof-path size | ~18K LOC under `CookLevin/` (a further ~15K parked, not built) |
+| Estimated work remaining to a real, unconditional proof | **~15–25K LOC** (see ROADMAP) |
+
+> **The `sorry` count is not the soundness metric.** The deepest unsoundness
+> (S1/S2, and the size-only `⪯p`) is `sorry`-free and invisible to
+> `#print axioms`. Closing every `sorry` would **not** by itself make
+> `CookLevin` faithful. Track **Group S** (soundness) and **Group C**
+> (completion) separately.
 
 ## What is sound vs. what is not
 
-The proof follows the standard recipe; NP-hardness is transported from a
-universal NP source down to SAT along a chain of `⪯p` reductions:
+NP-hardness is transported from a universal NP source down to SAT along a chain
+of `⪯p` (poly-time many-one) reductions:
 
 ```
 GenNP ⪯p … ⪯p FlatSingleTMGenNP ⪯p FlatTCC ⪯p FlatCC ⪯p BinaryCC ⪯p FSAT ⪯p SAT
 └──────────── front: NOT sound ────────────┘└──────────── tail: SOUND ───────────┘
 ```
 
-**Sound (real mathematics, ~3K LOC, do not touch):** the tail
+**Sound (genuine mathematics, ~3K LOC, `sorry`-free, do not touch):** the tail
 `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` (window/cover equivalence, unary
 block encoding, tableau CNF, a full Tseytin transform), plus `kSAT_to_SAT` and
-`kSAT_to_FlatClique`. The `FlatTM` model, the `encodable`/`inOPoly` machinery,
-the `DecidesBy`/`inTimePoly` interface, and the `composeFlatTM` combinator
-family (~3.5K LOC) are also sound. Cook–Levin *after* a TM run is encoded as a
-`FlatTCC` is essentially in place.
+`kSAT_to_FlatClique`. These reductions are real constructions; their
+input-guarded `if isValidFlattening …` branches test a *decidable property of
+the input* (legitimate), not the answer. The `FlatTM` model, the
+`encodable`/`inOPoly` machinery, the `DecidesBy`/`inTimePoly` interface, and the
+`composeFlatTM`/`loopTM` combinator family are also sound. Cook–Levin *after* a
+TM run is encoded as a `FlatTCC` is essentially in place.
 
-**Not sound (the front, `GenNP → FlatTCC`)** — three gaps, all probed:
+**Not sound — three independent reasons the theorem is currently vacuous:**
 
-- **S3** — these reductions typecheck only because `polyTimeComputable` bounds
-  *output size*, not runtime. It is the enabling weakness. *Probed feasible but
-  expensive:* the honest TM-backed witness `PolyTimeComputableWitness'` and the
-  real bridge `toFrameworkWitness'` are built additively in `Lang/PolyTime.lean`
-  (sorry-free modulo the assumed `Compile_sound`), and the probe confirms the
-  upgrade *forces* S1/S2 to become real. Executing it needs a canonical layer
-  encoding (Risk C9) and then ripples to every reduction.
-- **S1** — `FlatSingleTMGenNP ⪯p FlatTCC` is `if (source is yes-instance) then
-  yesInst else noInst`; its output depends on the *answer*. Deepest gap.
-  *Probed feasible but expensive (~6–11K LOC):* real fix = the Cook 2D tableau
-  (`Simulators/CookTableau.lean`).
-- **S2** — the `LM→mTM→singleTape` bridges use a 1-state `bridgeMachine` that
-  discards the source TM. *Probed:* the multi-tape→single-tape simulator
-  (`Simulators/MultiToSingle.lean`) is **not needed** — it is a Coq-porting
-  artifact (`TM σ n` erases the tape count; the predicates ignore the machine;
-  the layer is single-tape-native). Real fix = collapse the phantom bridges and
-  bind the predicates to the single-tape layer decider — this folds into the
-  universal-source work (C8).
+- **S3 (the enabling weakness, definitional).** `⪯p` (`reducesPolyMO`) is
+  licensed only by `polyTimeComputable`, which bounds **output size**, not
+  runtime (`NP.lean`, `PolyTimeComputableWitness.bound_valid`). The reduction
+  function may even be noncomputable. So `NPhard`/`NPcomplete` as currently
+  *defined* are too weak: the headline statement, even with every `sorry`
+  closed, would assert a vacuous notion of NP-completeness. The honest target
+  `polyTimeComputable'` (`Lang/PolyTime.lean`, `ComputesBy`: a real TM halting
+  within a polynomial *time* bound) **is faithful** — confirmed — and extends
+  the old witness, so retiring S3 is a strengthening, not a rewrite. But it
+  forces every reduction to carry a real program (S1/S2 then *stop
+  typechecking*).
+- **S1 (front reduction).** `FlatSingleTMGenNP ⪯p FlatTCC`
+  (`Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`) is literally
+  `if (source is yes-instance) then yesInst else noInst`, where `yesInst` is an
+  all-zeros 1-symbol tableau that **never simulates the source machine `M`**.
+  Sorry-free but vacuous; licensed by S3. Real fix = the Cook 2D tableau.
+- **S2 (bridges).** `LM_to_mTM` / `mTM_to_singleTapeTM` use a 1-state
+  `bridgeMachine` with empty transitions that **accepts everything**; the
+  TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
+- **Hardness foundation also reaches a `sorry`.** `NPhard_GenNP`
+  (`GenNP_is_hard.lean`) builds its reduction with output-size bound `fun _ =>
+  0` (vacuous over the size-0 `instEncodableDefault`) **and** relies on
+  `hasDeciderClassical`, a flat `sorry` asserting a `DecidesBy` for *any*
+  predicate. The in-NP half is conditional too: `SAT_inNP` routes through the
+  layer verifier `evalCnfCmd`, whose `decides`/`cost_bound` are `sorry`.
 
 ## The strategy: a higher-level computable layer
 
 Building verifiers/reductions directly as `FlatTM`s overran budget ~10× and was
-abandoned (parked under `parked/`). The pivot: a small structured while-language
-`Cmd`/`Op` with explicit **cost** semantics, compiled **once** to `FlatTM`
-(`Compile`). Every downstream verifier/reduction is then a short DSL program.
-This is the Lean analogue of the L-calculus the Coq port uses — and, being
-single-tape by construction, it is also why the S2 multi-tape detour is
+abandoned (parked under `parked/`, ~15K LOC). The pivot: a small structured
+while-language `Cmd`/`Op` with explicit **cost** semantics, compiled **once** to
+`FlatTM` (`Compile`). Every downstream verifier/reduction is then a short DSL
+program. This is the Lean analogue of the L-calculus the Coq port uses — and,
+being single-tape by construction, it is also why the S2 multi-tape detour is
 unnecessary.
 
-The layer's three make-or-break structural unknowns are **validated**:
-per-primitive compilation (C1), composition (C2, `compileSeq_compose_physical`),
-and the counted loop (C3, `loopTM` + `loopTM_run`, sorry-free). The S3
-layer→framework bridge is validated too (`toFrameworkWitness'`), and the design
-item the S3 probe surfaced — **Risk C9**, a canonical per-type layer encoding
-(`LangEncodable` + `PolyTimeComputableLang'`) — is built with its composition
-proved. The S3 migration is now **in progress**: the layer-side engine
-(product encoding, `comp`, verifier-composition `precompose`/`ofReduction`, and
-the layer-native NP closure `inNPLang`/`red_inNPLang`) is done, **C5a**
-(`map_fst`, a frame-preserving calling convention) is **complete and
-`sorry`-free**, and the **framework decider bridge** `inNPLang → inNP`
-(`inNPLang_to_inNP`) is now **assembled** — the C6 tape→state bit-test gadget
-(`Compile.bitTestTM`) is built `sorry`-free and composed after `Compile c`,
-reducing the bridge to the single `Compile` physical run contract
-(`Compile_run_physical`, Risk C2). The `⪯p'` migration types are in place with a
-growing library of concrete sorry-free, axiom-clean witnesses — `id`, the
-constant `constTrueBool`, **`swap`** (pair `(x,y)↦(y,x)`) and its mirror
-**`map_snd`**; `swap` yields the first **general, any-predicate** layer reduction
-`reducesPolyMO'_swap`. The **`forBnd` loop toolkit** (`Lang/Frame.lean`:
-`Cmd.eval_forBnd`, the invariant principle `Cmd.foldlState_range_induct`,
-`Cmd.foldlState_frame`) is now in place — the keystone for `map`-over-lists (which
-gates the sound-tail reductions) and the verifier bodies. Next: build `map` over
-lists, then migrate the `⪯p` chain (cheap sound-tail items first). See the ROADMAP
-plan.
+The layer's structural unknowns are **probed**: per-primitive compilation (C1),
+composition (C2), and the counted loop (C3) all have proven *combinators*
+(`compileSeq_compose_physical`, `loopTM_run`, `bitTestTM`, and a ~1.6K-LOC
+sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
+…). The S3 layer→framework bridge is built (`toFrameworkWitness'`,
+`inNPLang`/`red_inNPLang`, the decider bridge `inNPLang_to_inNP`, `LangEncodable`
++ `map_fst`/`swap`/`map_snd`/`forBnd` toolkit), all sorry-free **modulo one
+compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
+
+**Caveat surfaced this session (do not under-estimate C2):** the proven gadget
+run-lemmas establish the *tape transformation* but leave the **step count
+existential** — the polynomial step-bound accounting that `Compile.overhead`
+requires is largely **unbuilt**, and 10 of 12 `compileOp`s are still
+`compiledCmd_default` stubs. The new lemma `compileOp_appendOne_behavioural`
+(`Lang/Compile.lean`, sorry-free, axiom-clean) closes the *behavioural* half for
+`appendOne` end-to-end — the first proof that the `encodeTape`/`decodeTape`
+contract and the gadget library actually compose — isolating the residual per-op
+gap as **purely the step bound**.
 
 ## Development methodology: skeleton-first, risk-driven
 
 (do not deviate without reason — full rationale in the ROADMAP)
 
 1. **Skeleton first** — the whole proof path compiles with `sorry`s before any
-   single proof is closed.
+   single proof is closed; this exposes every downstream obligation.
 2. **Refine the highest-risk gap next** (per the Risk register), not in phase
    order.
 3. **Decompose `sorry`s, don't elaborate them** — each split is a structural
-   decision.
+   decision that typechecks (right shape) or fails (gap found).
 4. **Prefer `def` + `sorry` over `axiom`** (axiom count is a metric to minimise;
-   currently 0).
+   currently 0). New results must be `#print axioms`-clean (only `propext` /
+   `Quot.sound` / `Classical.choice`).
 5. **Probe before committing engineering** — for a big unknown, run a time-boxed
    go/no-go probe and give a verdict (feasible / feasible-but-expensive /
    trigger-fallback).
@@ -149,27 +128,26 @@ plan.
 
 ```
 CookLevin/
-├── ROADMAP.md                    -- strategy + ordered plan + Risk register (read for direction)
-├── S3_RETIREMENT_EXPLORATION.md  -- completed probe brief (S3), archived
+├── ROADMAP.md                       -- strategy + ordered plan + Risk register (read first)
 ├── Complexity/
 │   ├── Complexity/
-│   │   ├── Definitions.lean      -- encodable, inOPoly, monotonic
-│   │   ├── MachineSemantics.lean -- FlatTM, stepFlatTM, runFlatTM
-│   │   ├── NP.lean               -- DecidesBy, inTimePoly, ⪯p, NPhard (S3 lives here)
-│   │   ├── TMPrimitives.lean     -- composeFlatTM/branchComposeFlatTM/loopTM (~4K LOC)
-│   │   └── Deciders/             -- SAT / FlatClique verifier interfaces (C7)
-│   ├── Lang/                     -- the layer: Syntax, Semantics, Compile,
-│   │   │                            PolyTime (the S3/C4 bridges), gadgets
+│   │   ├── Definitions.lean         -- encodable, inOPoly, monotonic, instEncodableDefault (Part 0.1)
+│   │   ├── MachineSemantics.lean    -- FlatTM, stepFlatTM, runFlatTM
+│   │   ├── NP.lean                  -- DecidesBy, inTimePoly, ⪯p, NPhard, red_inNP (S3 lives here)
+│   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
+│   │   └── Deciders/                -- SAT / FlatClique verifier interfaces (C7, sorry bodies)
+│   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6),
+│   │   │                               Frame, PolyTime (S3/C4 bridges), gadgets (sound)
 │   │   └── …
-│   ├── Simulators/               -- CookTableau (S1, real, orphan/S4); MultiToSingle (S2: dead code, not needed)
-│   ├── GenNP_is_hard.lean        -- NPhard_GenNP (C8)
-│   ├── L_to_LM / LM_to_mTM / mTM_to_singleTapeTM.lean  -- bridges (S2)
+│   ├── Simulators/                  -- CookTableau (S1, real, 2 sorries); MultiToSingle (dead code)
+│   ├── GenNP_is_hard.lean           -- NPhard_GenNP via hasDeciderClassical (C8 sorry)
+│   ├── L_to_LM / LM_to_mTM / mTM_to_singleTapeTM.lean  -- bridges (S2, vacuous)
 │   └── NP/
 │       ├── SAT.lean / kSAT.lean / FSAT.lean / FlatClique.lean
-│       ├── FSAT_to_SAT.lean      -- Tseytin (~700 LOC, sound)
+│       ├── FSAT_to_SAT.lean         -- Tseytin (~700 LOC, sound)
 │       └── SAT/CookLevin.lean + CookLevin/Reductions/ + Subproblems/
-parked/                           -- paused hand-rolled work (~14K LOC, not built)
-coqdoc/                           -- local mirror of the Coq port
+parked/                              -- paused hand-rolled work (~15K LOC, not built)
+coqdoc/                              -- local mirror of the Coq port
 ```
 
 ## Building
@@ -182,18 +160,21 @@ lake build
 ```
 
 First build from a clean checkout is slow (mathlib cache). Lake's `lean_lib`
-root is `CookLevin/`, so `parked/` is not built.
+root is `CookLevin/`, so `parked/` is not built. Axiom check (lean-lsp's LSP
+cannot find `lake`, so use a scratch file):
+
+```
+env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axioms <name>`
+```
 
 ## Where to look first
 
-- **The plan:** [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) — *The plan from
-  here* (next topic: the S3 migration) and the Risk register.
+- **The plan and risks:** [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
   `NP/FSAT_to_SAT.lean`.
-- **The framework:** `Complexity/NP.lean` (`DecidesBy`, `inTimePoly`, `⪯p`) and
-  `Complexity/TMPrimitives.lean` (`composeFlatTM`/`loopTM`).
-- **The layer:** `Complexity/Lang/` (`Compile.lean`, `PolyTime.lean`).
+- **The framework:** `Complexity/NP.lean` (`⪯p`, `DecidesBy`, `red_inNP`).
+- **The layer:** `Complexity/Lang/Compile.lean`, `Complexity/Lang/PolyTime.lean`.
 - **What must be replaced:** the S1/S2/S3 entries in the ROADMAP Risk register.
 
 ## References
