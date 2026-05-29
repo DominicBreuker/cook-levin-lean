@@ -97,19 +97,21 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
 
 **Caveat surfaced (do not under-estimate C2):** 10 of 12 `compileOp`s are still
-`compiledCmd_default` stubs. `Compile_sound` was false as stated for two reasons,
-both now addressed at the per-op level. (1) its budget `Compile.overhead
-(State.size s + cost)` ignored the register count; the tape-length fix is now
-**proven** for the two real ops (`appendOne`/`appendZero`) at general `dst`
-(`compileOp_appendOne_sound`, via explicit step counts `appendAt_run_steps`).
-(2) ops were **unit cost** but `concat`/`copy` grow the state
-**multiplicatively**, so output size could be **exponential in layer cost**
-(evaluated: `forBnd 2 1 (op (concat 0 0 0))` at n=10 → output 1047 vs budget
-676). **Fixed** by a realistic size-aware `Op.cost` (Coq-L-calculus-aligned),
-validated by `Op.size_eval_le` (per-op size growth ≤ cost — false under unit
-cost). **Remaining:** the Cmd-level size bound (the `forBnd` unary counter is
-uncharged size, so `size ≤ size + cost` is false for `forBnd`; the correct bound
-is linear), then thread `regBound` and assemble. See ROADMAP Risk C2.
+`compiledCmd_default` stubs. `Compile_sound` was false as stated for *three*
+reasons. (1) its budget ignored the register count; fixed by a tape-length
+budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
+**unit cost** but `concat`/`copy` grow the state **multiplicatively** (output
+size exponential in layer cost); **fixed** by a size-aware `Op.cost`, validated
+by `Op.size_eval_le`, and the **Cmd-level size bound is now PROVEN**
+(`Cmd.size_eval_le : size (c.eval s) ≤ size s + c.cost s`, by charging the
+`forBnd` loop counter). (3) **the per-fragment `overhead` budgets are quadratic
+and do not compose** (summing ~cost quadratics → cubic), so `compileSeq_sound`
+and siblings are unprovable as stated — the fix is **linear** per-fragment
+budgets (the gadgets prove `≤ 2·tapeLen+3`) composing to a quadratic total; the
+**linear tape-length ingredient is now proven** (`Cmd.encodeTape_eval_length_le`).
+**Remaining:** linear-budget restatement of the four `compile*_sound`, gadget
+head-rewind/trajectory lemmas, thread `regBound`, and assemble. See ROADMAP
+Risk C2.
 
 ## Development methodology: skeleton-first, risk-driven
 

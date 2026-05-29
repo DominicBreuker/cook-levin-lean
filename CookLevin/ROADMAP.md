@@ -193,10 +193,15 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
       frame/locality lemmas are untouched). Ripples were contained:
       `Cmd.cost_forBnd_le` (+ `iters*iters`, no external consumers) and
       `Cmd.cost_agree`. This gives `maxIntermediateTapeLen ≤ O(size + cost +
-      regBound)` (linear, no depth constant). **Remaining (1a):** lift the
-      *final*-state bound to a **max-intermediate**-state bound (each fragment
-      boundary is `encodeTape` of a sub-evaluation; `Cmd.size_eval_le` bounds each),
-      then restate `PolyTime.toFrameworkWitness'`'s time budget.
+      regBound)` (linear, no depth constant). **The linear tape-length bound is
+      now PROVEN:** `Cmd.encodeTape_eval_length_le : (encodeTape (c.eval s)).length
+      ≤ State.size s + c.cost s + max s.length k + 1` (`Lang/PolyTime.lean`), built
+      from `Compile.encodeTape_length` (tape = contents + count + 1),
+      `Cmd.size_eval_le` (contents), and `Cmd.eval_length_le` (register count ≤
+      `max start regBound`, `Lang/Frame.lean`). **Remaining (1a):** thread this
+      *per-fragment output* bound through the actual run as a **max over fragment
+      boundaries** (needs the physical run structure from 1b/1d), then restate
+      `PolyTime.toFrameworkWitness'`'s time budget.
    b. **⚠ Budget shape — NEW FINDING (do not prove the `compile*_sound` lemmas as
       stated).** The per-op budget was loosened to the **quadratic**
       `Compile.overhead ((encodeTape s).length + cost) = (·+1)²`
@@ -290,7 +295,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; behavioural per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** (`compileOp_appendOne_sound`, `appendAt_run_steps`). **Cost-model gap FIXED** (`Op.cost` size-aware, `Op.size_eval_le`) **and the Cmd-level size bound is now PROVEN** (`Cmd.size_eval_le : size (c.eval s) ≤ size s + c.cost s`, by charging the `forBnd` counter — depth-constant-free; replaced the register-exclusion route). ⚠ **NEW finding — budget shape:** the per-fragment `overhead` budgets are **quadratic and don't compose** (summing `~cost` quadratics → cubic), so `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` are **unprovable as stated** (`a=3,c₂=1` → `42 ≰ 36`). Must restate per-fragment budgets **LINEAR** (gadgets prove `≤ 2·tapeLen+3`) → quadratic total with slack. **Open:** linear-budget restatement; max-intermediate-size lift; thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
+| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; behavioural per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** (`compileOp_appendOne_sound`, `appendAt_run_steps`). **Cost-model gap FIXED** (`Op.cost` size-aware, `Op.size_eval_le`) **and the Cmd-level size bound is now PROVEN** (`Cmd.size_eval_le : size (c.eval s) ≤ size s + c.cost s`, by charging the `forBnd` counter — depth-constant-free; replaced the register-exclusion route). ⚠ **NEW finding — budget shape:** the per-fragment `overhead` budgets are **quadratic and don't compose** (summing `~cost` quadratics → cubic), so `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` are **unprovable as stated** (`a=3,c₂=1` → `42 ≰ 36`). Must restate per-fragment budgets **LINEAR** (gadgets prove `≤ 2·tapeLen+3`) → quadratic total with slack. The **linear tape-length bound is now PROVEN** (`Cmd.encodeTape_eval_length_le`, via `Compile.encodeTape_length` + `Cmd.eval_length_le`) — the analytic ingredient the linear per-fragment budgets compose against. **Open:** linear-budget *restatement* of the four `compile*_sound`; max-over-fragments lift through the run; thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
 | **C1** | **per-`Op` compilation** (`compileOp` + soundness). | Only `appendOne`/`appendZero` have real TMs; behavioural soundness of `appendOne` proven. Rest stubbed. Part of C2. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + soundness). | `loopTM`/`loopTM_run` proven; behavioural `forBnd` toolkit (`Lang/Frame.lean`) proven. Wiring `compileForBnd` + its step bound is part of C2. |
 | **C4** | **layer → framework bridge.** | ✅ Engine done (`toFrameworkWitness'`, `inNPLang`/`red_inNPLang`, `inNPLang_to_inNP`, capstones `reducesPolyMO_of_lang`/`red_inNP_of_lang`), sorry-free modulo C2. Remaining: honest layer reductions (S1) + discharge C2. |

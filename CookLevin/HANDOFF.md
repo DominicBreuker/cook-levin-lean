@@ -49,10 +49,23 @@ budgets must be **LINEAR** in tape length (the gadgets already prove
 A prominent finding block now sits above `compileSeq_sound` in `Compile.lean`;
 full writeup in ROADMAP Risk C2 / plan step 1b.
 
+**(3) The linear tape-length bound — plan step 1b ingredient, now PROVEN.**
+The corrected per-fragment budget must be linear in the tape length; this
+supplies the analytic fact:
+`Cmd.encodeTape_eval_length_le : (Compile.encodeTape (c.eval s)).length ≤
+State.size s + c.cost s + max s.length k + 1` (`Lang/PolyTime.lean`), for any `c`
+with `Cmd.UsesBelow c k`. Built from three reusable pieces:
+- `Compile.encodeTape_length : (encodeTape s).length = State.size s + s.length +
+  1` (+ `encodeRegs_length`) — `Lang/Compile.lean`.
+- `Cmd.size_eval_le` (contents bound, prior session).
+- `Cmd.eval_length_le : (c.eval s).length ≤ max s.length k` (register count never
+  exceeds `regBound`), with helpers `State.set_length_le` /
+  `State.set_length_le_of_lt` / `Op.eval_length_le` — `Lang/Frame.lean`.
+
 ## Recommended next step (plan step 1b/1c/1d — the C2 budget restatement)
 
-The size bound (1a) is done. The path is now clear and structural-unknown-free,
-but the budget *accounting* must be re-done in the correct shape:
+Steps 1a (size bound) and the linear tape-length ingredient are done. What
+remains is the run-structure work — intricate but structural-unknown-free:
 
 1. **Restate the per-fragment contracts LINEAR.** For each gadget, the
    per-fragment physical contract should be: halts at its `exit` state, head
@@ -61,17 +74,23 @@ but the budget *accounting* must be re-done in the correct shape:
    trajectory. The append ops already have the linear step count
    (`appendAt_steps` / `appendAt_steps_le`); `compileOp_appendOne_sound` merely
    *loosened* it to the quadratic `overhead` — restate it linear instead.
-2. **Lift `Cmd.size_eval_le` to a max-intermediate-size bound.** `Compile c`'s
-   run visits fragment boundaries, each `encodeTape` of a sub-evaluation;
-   `Cmd.size_eval_le` bounds each by `size s + cost`. Bundle this into a
-   `maxIntermediateTapeLen ≤ size s + c.cost s + regBound + 1` lemma (the
-   register count is static, ≤ `regBound`).
+   ⚠ **Gap to close first:** the gadgets (`appendAt_run_steps`) leave the exit
+   head position *existential* and do **not** rewind the head to `0` or expose a
+   no-early-halt trajectory — both are required by `compileSeq_compose_physical`.
+   Add head-rewind + trajectory lemmas to the gadget library before assembling.
+2. **Lift the per-fragment output bound to a max-over-fragments bound.**
+   `Cmd.encodeTape_eval_length_le` (done) bounds each fragment boundary's tape;
+   thread it through the run so every intermediate tape is `≤ size + cost +
+   regBound + 1`.
 3. **Set the total budget with slack.** Define `Compile_run_physical`'s total as
-   a quadratic-with-constant (e.g. `C·(size+cost+regBound)²`) — the tight
-   `(size+cost+1)²` cannot absorb the per-fragment constants. Safe:
-   `toFrameworkWitness'` only needs `inOPoly`/`monotonic` (so adjust
-   `Compile.overhead` or introduce a dedicated total-budget polynomial; then
-   re-thread `PolyTime.toFrameworkWitness'`).
+   a quadratic-with-constant — concretely `Q(size,cost) ≈ C·cost·(size+cost+
+   regBound+1)`, which I checked **composes** for `seq` (superadditive:
+   `Q(a,c1)+Q(a+c1,c2)+1 ≤ Q(a,1+c1+c2)`, the `-C·c1·c2` cross term gives the
+   slack) and for `forBnd` (the loop sums cost·tape over iterations ≤ total
+   cost × max tape). The tight `(size+cost+1)²` cannot absorb the per-fragment
+   constants. Safe: `toFrameworkWitness'` only needs `inOPoly`/`monotonic` — so
+   replace `Compile.overhead`'s use here with `Q` (or a cubic) and re-thread
+   `PolyTime.toFrameworkWitness'` / `Compile.bitDecider_run`.
 4. **Concretise the 10 stub `compileOp`s** from the gadget library, each with
    its **linear-budget** `compileOp_sound`.
 5. **Assemble** `compileSeq_sound` from `compileSeq_compose_physical`,
