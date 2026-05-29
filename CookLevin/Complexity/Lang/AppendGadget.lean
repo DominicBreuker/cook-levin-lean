@@ -350,24 +350,34 @@ theorem regBlocks_lt (s : List (List Nat)) (h : ∀ b ∈ s, ∀ x ∈ b, x < 4)
       · subst h0; decide
       · exact ih (fun bb hbb => h bb (List.mem_cons.mpr (Or.inr hbb))) x hrest
 
-/-- **Append-at-register run lemma.** For the machine `appendAtTM ins dst`,
-on the encoded tape `pre ++ regBlocks skipped ++ body ++ 0 :: post` — where
-`skipped` are the `dst` registers preceding the target, `body` is the target
-register's (shifted) contents, and `0 :: post` is its delimiter plus the
-rest — the machine halts having inserted `ins` just before the target
-register's delimiter, leaving `pre ++ regBlocks skipped ++ body ++ ins :: 0
-:: post`. The step count, exit state and final head are existential (their
-exact values are immaterial to the tape transformation; a step bound is a
-separate concern). -/
-theorem appendAt_run (ins : Nat) (h_ins : ins < 4) :
+/-- **Explicit step count** for `appendAt_run_steps`. The scanner+inserter
+base (register `dst`'s own block) costs `body.length + 1 + 1 + (post.length +
+1 + 1)`; each *skipped* register `b` adds `(b.length + 1)` for the scan-past
+plus `1` for the `composeFlatTM` bridge step. Independent of `pre` (scanning
+and inserting depend only on the lengths to the right of the head). -/
+def appendAt_steps : List (List Nat) → List Nat → List Nat → Nat
+  | [],      body, post => body.length + 1 + 1 + ((0 :: post).length + 1)
+  | b :: s', body, post => (b.length + 1) + 1 + appendAt_steps s' body post
+
+/-- **Append-at-register run lemma, with explicit step count.** For the
+machine `appendAtTM ins dst`, on the encoded tape `pre ++ regBlocks skipped ++
+body ++ 0 :: post` — where `skipped` are the `dst` registers preceding the
+target, `body` is the target register's (shifted) contents, and `0 :: post`
+is its delimiter plus the rest — the machine halts in **exactly**
+`appendAt_steps skipped body post` steps having inserted `ins` just before the
+target register's delimiter, leaving `pre ++ regBlocks skipped ++ body ++ ins
+:: 0 :: post`. The exit state and final head are immaterial to the tape
+transformation, so they stay existential; the step count is now explicit (the
+ingredient `compileOp_sound`'s tape-length budget needs). -/
+theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
     ∀ (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat),
       skipped.length = dst →
       (∀ x ∈ pre, x < 4) →
       (∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) →
       (∀ x ∈ body, x ≠ 0) → (∀ x ∈ body, x < 4) →
       (∀ x ∈ post, x < 4) →
-      ∃ (steps state' head' : Nat),
-        runFlatTM steps (appendAtTM ins dst)
+      ∃ (state' head' : Nat),
+        runFlatTM (appendAt_steps skipped body post) (appendAtTM ins dst)
             { state_idx := 0,
               tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
           = some { state_idx := state',
@@ -383,7 +393,7 @@ theorem appendAt_run (ins : Nat) (h_ins : ins < 4) :
       | nil =>
         have h := scanInsert_run ins h_ins pre body post h_no_zero h_body_lt h_post_lt
         simp only [regBlocks_nil, List.append_nil]
-        exact ⟨_, _, _, h.1, h.2⟩
+        exact ⟨_, _, h.1, h.2⟩
   | d + 1, pre, skipped, body, post, hlen, h_pre_lt, h_skip, h_no_zero, h_body_lt, h_post_lt => by
       cases skipped with
       | nil => simp at hlen
@@ -399,8 +409,8 @@ theorem appendAt_run (ins : Nat) (h_ins : ins < 4) :
           · exact h_pre_lt x hp
           · exact hb.2 x hbb
           · subst h0; decide
-        obtain ⟨steps_d, state_d, head_d, hrun_d, hhalt_d⟩ :=
-          appendAt_run ins h_ins d (pre ++ b ++ [0]) s' body post hlen' h_pre'_lt hs'
+        obtain ⟨state_d, head_d, hrun_d, hhalt_d⟩ :=
+          appendAt_run_steps ins h_ins d (pre ++ b ++ [0]) s' body post hlen' h_pre'_lt hs'
             h_no_zero h_body_lt h_post_lt
         -- Canonical tape form (peel register `b` to the left).
         have hcanon0 :
@@ -430,7 +440,7 @@ theorem appendAt_run (ins : Nat) (h_ins : ins < 4) :
               = (pre ++ b ++ [0]) ++ regBlocks s' ++ body ++ ins :: 0 :: post := by
           simp [List.append_assoc]
         have h_run2 :
-            runFlatTM steps_d (appendAtTM ins d)
+            runFlatTM (appendAt_steps s' body post) (appendAtTM ins d)
                 { state_idx := (appendAtTM ins d).start,
                   tapes := [([], pre.length + b.length + 1,
                     pre ++ b ++ 0 :: (regBlocks s' ++ body ++ 0 :: post))] }
@@ -477,6 +487,53 @@ theorem appendAt_run (ins : Nat) (h_ins : ins < 4) :
           (show (0 : Nat) < 3 from by decide)
           [] (pre.length + b.length + 1) (pre ++ b ++ 0 :: (regBlocks s' ++ body ++ 0 :: post))
           h_sym_bound h_run1 h_traj1 h_run2 hhalt_d
-        exact ⟨_, _, _, hcomp.1, hcomp.2⟩
+        exact ⟨_, _, hcomp.1, hcomp.2⟩
+
+/-- The original existential-step form, recovered from `appendAt_run_steps`. -/
+theorem appendAt_run (ins : Nat) (h_ins : ins < 4)
+    (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
+    (hlen : skipped.length = dst)
+    (h_pre : ∀ x ∈ pre, x < 4)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
+    (h_post_lt : ∀ x ∈ post, x < 4) :
+    ∃ (steps state' head' : Nat),
+      runFlatTM steps (appendAtTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+        = some { state_idx := state',
+                 tapes := [([], head',
+                   pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] }
+      ∧ haltingStateReached (appendAtTM ins dst)
+          { state_idx := state',
+            tapes := [([], head',
+              pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } = true := by
+  obtain ⟨state', head', hrun, hhalt⟩ :=
+    appendAt_run_steps ins h_ins dst pre skipped body post hlen h_pre h_skip
+      h_no_zero h_body_lt h_post_lt
+  exact ⟨_, _, _, hrun, hhalt⟩
+
+/-- **Tape-length step bound.** `appendAt_steps` is at most `2 · (tape length)
++ 3` — linear in the encoded tape, hence below `Compile.overhead` of it. Each
+skipped register `b` contributes `b.length + 2` to the steps but `b.length + 1`
+to the tape, so the gap grows by at most `1` per register; the base leaves
+slack `1`. -/
+theorem appendAt_steps_le (skipped : List (List Nat)) (body post : List Nat) :
+    appendAt_steps skipped body post
+      ≤ 2 * (regBlocks skipped ++ body ++ 0 :: post).length + 3 := by
+  induction skipped with
+  | nil =>
+      show body.length + 1 + 1 + ((0 :: post).length + 1) ≤ _
+      simp only [regBlocks_nil, List.nil_append, List.length_append, List.length_cons]
+      omega
+  | cons b s' ih =>
+      show (b.length + 1) + 1 + appendAt_steps s' body post ≤ _
+      have hlen : (regBlocks (b :: s') ++ body ++ 0 :: post).length
+          = b.length + 1 + (regBlocks s' ++ body ++ 0 :: post).length := by
+        rw [regBlocks_cons]
+        simp only [List.cons_append, List.append_assoc, List.length_append,
+          List.length_cons]
+        omega
+      rw [hlen]; omega
 
 end Complexity.Lang.AppendGadget
