@@ -114,41 +114,42 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half needs a real SAT verifier
        fix: the per-op budget over the **tape length**
        `Compile.overhead ((encodeTape s).length + cost)`. **This is now PROVEN for
        the real ops** — see "Progress this session".
-    2. **(cost-model gap, THIS session's headline — fix #1 is necessary but NOT
-       sufficient).** Ops are **unit cost** (`Op.cost _ _ = 1`), but
-       `concat`/`copy`/`consLen` can grow `State.size` **multiplicatively** in one
-       step (`concat dst dst dst` doubles register `dst`). So a unit-cost-per-op
-       program can have **output size exponential in its layer cost**, and the TM
-       must at least *write* that output. Concrete, evaluated witness
-       (`doubler := forBnd 2 1 (op (concat 0 0 0))` on `[[1], replicate n 1]`):
-       at `n = 10` the output tape length is **1047** while even the corrected
-       budget `overhead ((encodeTape s).length + cost) = 676`; at `n = 19` it is
-       **524329 vs 1936**. So **no fixed-degree budget polynomial in
-       `(inputSize + cost)` can bound `Compile c`'s step count** — `Compile_sound`
-       (∀ `Cmd`) is unprovable as stated. Root cause: the unit-cost model is **not
-       a faithful proxy for TM time** for size-increasing ops. The invariant the
-       budget silently assumes — `maxIntermediateTapeLen ≤ inputLen + cost` — fails
-       exactly when an op grows size by more than `O(1)` per unit cost.
-       **Recommended fix (a design fork — defaulting to the Coq-aligned option):**
-       charge cost proportional to work, i.e. make `Op.cost o s` dominate
-       `State.size (Op.eval o s) - State.size s` (the L-calculus the port mirrors
-       does exactly this). That restores `maxSize ≤ inputSize + cost`, after which
-       the corrected (tape-length, register-count-threaded) budget becomes
-       provable. *Ripples:* every `cost_le`/`cost_bound` proof and the `forBnd`
-       cost toolkit must re-derive under the realistic cost; `PolyTime.toFrame-
-       workWitness'` already bakes in the false budget (`overhead(2·size+1 +
-       cost_bound)`), so it must be restated too. Alternative (heavier per
-       witness): carry an explicit `Cmd.maxSize`/output-size bound and state the
-       budget as `cost × overhead(maxSize)`.
-  - **Progress this session** (`Lang/AppendGadget.lean`, `Lang/Compile.lean`, all
-    sorry-free & axiom-clean): `appendAt_run_steps` re-proves `appendAt_run` with
-    an **explicit step count** (`appendAt_steps`), `appendAt_steps_le` bounds it by
-    `2·tapeLen + 3 ≤ overhead(tapeLen+1)`, and `compileOp_appendOne_sound` /
-    `compileOp_appendZero_sound` (via private `Compile.appendBit_sound`) discharge
-    `compileOp_sound` for the two real ops at **general `dst`** under the corrected
-    tape-length budget. So reason #1 is closed for the append ops; reason #2 (the
-    cost-model gap) is now the gating C2 issue. Prior probes
-    `compileOp_appendOne_behavioural` / `compileOp_appendOne_zero_sound` retained.
+    2. **(cost-model gap — now FIXED).** The original ops were **unit cost**
+       (`Op.cost _ _ = 1`), but `concat`/`copy`/`tail`/`takeAt`/`dropAt`/`consLen`
+       can grow `State.size` **multiplicatively** in one step. So a unit-cost
+       program could have **output size exponential in its layer cost** (evaluated:
+       `doubler := forBnd 2 1 (op (concat 0 0 0))` at `n = 10` → output length 1047
+       vs even the corrected budget 676; at `n = 19`, 524329 vs 1936). **No
+       fixed-degree budget polynomial could bound `Compile c`** — the unit-cost
+       model was not a faithful proxy for TM time. **Fix implemented (the chosen
+       option, Coq-L-calculus-aligned):** `Op.cost` now charges the size-increasing
+       ops for their source data, so `State.size (Op.eval o s) ≤ State.size s +
+       Op.cost o s` (`Op.size_eval_le`, proven; it was *false* under unit cost).
+       *Options weighed:* (a) a separate per-witness size/weight bound and (c)
+       removing size-increasing ops were both rejected — there is **no global
+       `weight ≤ poly(unitCost, size)`** (size-doubling has weight exponential in
+       op count), so the realistic single cost notion is necessary and lowest in
+       permanent complexity; (c) is mathematically identical but needs surgery on
+       the `Op` inductive. The concrete witnesses' cost bounds were re-derived
+       (`id`, `swap`, `map_fst`), since their unit-cost bounds certified the wrong
+       quantity. **Residual:** the **Cmd-level** size invariant is subtler than
+       `size(eval) ≤ size + cost` — the `forBnd` unary counter (`set counter
+       (replicate i 1)`, size `i ≤ iters`) is *uncharged* size, so the clean
+       invariant is *false for forBnd* (witness `forBnd 0 1 (op (appendOne 2))` on
+       `[[], rep n 1, []]`: output size `3n−1 > 2n+1 = size + cost`). The correct
+       bound is still linear in `(size + cost)` (the counter ≤ `iters ≤ cost`, a
+       single replace not cumulative), but its constant grows with loop-nesting
+       depth; this is the remaining Cmd-level/budget accounting (plan step 1).
+  - **Progress** (`Lang/AppendGadget.lean`, `Lang/Compile.lean`, `Lang/Semantics.lean`,
+    `Lang/Frame.lean`, `Lang/PolyTime.lean`; all sorry-free & axiom-clean):
+    `appendAt_run_steps` re-proves `appendAt_run` with an **explicit step count**
+    (`appendAt_steps`), `appendAt_steps_le` bounds it by `2·tapeLen + 3 ≤
+    overhead(tapeLen+1)`, and `compileOp_appendOne_sound`/`compileOp_appendZero_sound`
+    discharge `compileOp_sound` for the two real ops at **general `dst`** under the
+    corrected tape-length budget (reason #1 closed for them). The **realistic cost
+    model** (reason #2) is implemented: `Op.cost` size-aware, `State.size_set_add`
+    + `Op.size_eval_le` (the validating invariant), `Op.cost_agree`/`Cmd.cost_agree`
+    generalized, and the `id`/`swap`/`map_fst` witnesses re-derived.
 
 ---
 
@@ -163,19 +164,19 @@ Ordered by dependency. The two highest-risk items are **C2** (the compiler, now
 known to need step-bound machinery) and **S1** (the Cook tableau).
 
 1. **Finish the compiler `Compile_sound` (C2 — highest completion risk).**
-   a. **FIRST resolve the cost-model gap (reason #2 above) — this is now the
-      gating decision.** The unit-cost model makes `Compile_sound` unprovable for
-      size-increasing ops (`concat`/`copy`/`consLen`); no budget polynomial fixes
-      it. Decide the cost model: *(recommended, Coq-aligned)* redefine `Op.cost`
-      so it dominates per-op size growth (`State.size (Op.eval o s) - State.size s
-      ≤ Op.cost o s`), then prove the invariant `State.size (c.eval s) ≤
-      State.size s + c.cost s` (and the same for every intermediate state) by
-      induction on `Cmd`. With that invariant, `maxIntermediateTapeLen ≤ inputLen
-      + cost`, and the corrected budget below is provable. Re-derive the affected
-      `cost_le`/`forBnd`-cost lemmas and restate `PolyTime.toFrameworkWitness'`'s
-      time budget. *(Alternative: a per-`Cmd` `maxSize` bound + a `cost ×
-      overhead(maxSize)` budget.)*
-   b. **Then the budget definition (reason #1, partly done):** the per-op budget
+   a. **Cost model — DONE.** `Op.cost` is now size-aware and `Op.size_eval_le`
+      (per-op size growth ≤ cost) is proven. **Remaining (the hard residual):** the
+      **Cmd-level** size bound. The clean `State.size (c.eval s) ≤ State.size s +
+      c.cost s` is **false for `forBnd`** (the unary loop counter is uncharged
+      size). Prove the correct linear bound instead — recommended via a
+      *register-excluding* size (`size minus the loop counter`), which is preserved
+      by the counter-set and grows ≤ cost under the body (`Op.size_eval_le` lifts to
+      it); the output counter is then bounded separately by `iters ≤ |bound| ≤
+      size`. This gives `maxIntermediateTapeLen ≤ O(size + cost)` (linear; constant
+      grows with loop-nesting depth, fine for a fixed witness). Then restate
+      `PolyTime.toFrameworkWitness'`'s time budget accordingly (it currently bakes
+      in `overhead(2·size+1 + cost_bound)`).
+   b. **The budget definition (reason #1, partly done):** the per-op budget
       is the tape length `Compile.overhead ((encodeTape s).length + cost)` — now
       **proven** for the append ops at general `dst` (`compileOp_appendOne_sound` /
       `compileOp_appendZero_sound`), with explicit step counts (`appendAt_steps` /
@@ -258,7 +259,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk; a cost-model gap now gates it.** Combinators proven; gadget library sorry-free; per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** under the corrected tape-length budget (`compileOp_appendOne_sound`, `compileOp_appendZero_sound`, `appendAt_run_steps`). **But `Compile_sound` (∀ `Cmd`) is unprovable** under the unit-cost model: size-increasing ops (`concat`/`copy`) make output size exponential in layer cost (evaluated: `doubler` at n=10 → outLen 1047 vs budget 676), so no fixed-degree budget works. **Open (gating):** fix the cost model (charge for size growth; recommended Coq-aligned), then thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
+| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** under the corrected tape-length budget (`compileOp_appendOne_sound`, `appendAt_run_steps`). The **cost-model gap is FIXED**: `Op.cost` is size-aware and `Op.size_eval_le` (per-op size growth ≤ cost) is proven (it was false under unit cost — `concat` doubling). **Open:** the **Cmd-level** size bound (the `forBnd` unary counter is uncharged — clean `size ≤ size+cost` is false; correct bound is linear, via register-exclusion); then thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
 | **C1** | **per-`Op` compilation** (`compileOp` + soundness). | Only `appendOne`/`appendZero` have real TMs; behavioural soundness of `appendOne` proven. Rest stubbed. Part of C2. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + soundness). | `loopTM`/`loopTM_run` proven; behavioural `forBnd` toolkit (`Lang/Frame.lean`) proven. Wiring `compileForBnd` + its step bound is part of C2. |
 | **C4** | **layer → framework bridge.** | ✅ Engine done (`toFrameworkWitness'`, `inNPLang`/`red_inNPLang`, `inNPLang_to_inNP`, capstones `reducesPolyMO_of_lang`/`red_inNP_of_lang`), sorry-free modulo C2. Remaining: honest layer reductions (S1) + discharge C2. |

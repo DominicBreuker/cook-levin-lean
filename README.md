@@ -97,19 +97,19 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
 
 **Caveat surfaced (do not under-estimate C2):** 10 of 12 `compileOp`s are still
-`compiledCmd_default` stubs, and **`Compile_sound` is false as stated for two
-independent reasons.** (1, prior session) its budget `Compile.overhead
-(State.size s + cost)` ignored the register count; the per-op fix is a
-tape-length budget — now **proven** for the two real ops (`appendOne`/
-`appendZero`) at general `dst` (`compileOp_appendOne_sound` /
-`compileOp_appendZero_sound`, via explicit step counts `appendAt_run_steps`).
-(2, this session — deeper) ops are **unit cost** but `concat`/`copy` grow the
-state **multiplicatively**, so output size can be **exponential in layer cost**
-(evaluated: `forBnd 2 1 (op (concat 0 0 0))` at n=10 → output length 1047 vs
-corrected budget 676) — so **no fixed-degree budget polynomial** in
-`(inputSize + cost)` can bound `Compile c`. The gating fix is the **cost model**
-(charge for size growth, Coq-aligned), then thread `regBound`. See ROADMAP Risk
-C2.
+`compiledCmd_default` stubs. `Compile_sound` was false as stated for two reasons,
+both now addressed at the per-op level. (1) its budget `Compile.overhead
+(State.size s + cost)` ignored the register count; the tape-length fix is now
+**proven** for the two real ops (`appendOne`/`appendZero`) at general `dst`
+(`compileOp_appendOne_sound`, via explicit step counts `appendAt_run_steps`).
+(2) ops were **unit cost** but `concat`/`copy` grow the state
+**multiplicatively**, so output size could be **exponential in layer cost**
+(evaluated: `forBnd 2 1 (op (concat 0 0 0))` at n=10 → output 1047 vs budget
+676). **Fixed** by a realistic size-aware `Op.cost` (Coq-L-calculus-aligned),
+validated by `Op.size_eval_le` (per-op size growth ≤ cost — false under unit
+cost). **Remaining:** the Cmd-level size bound (the `forBnd` unary counter is
+uncharged size, so `size ≤ size + cost` is false for `forBnd`; the correct bound
+is linear), then thread `regBound` and assemble. See ROADMAP Risk C2.
 
 ## Development methodology: skeleton-first, risk-driven
 
