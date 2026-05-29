@@ -97,16 +97,19 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
 
 **Caveat surfaced (do not under-estimate C2):** 10 of 12 `compileOp`s are still
-`compiledCmd_default` stubs, and — sharper — **`compileOp_sound` is false as
-stated**: its budget `Compile.overhead (State.size s + cost)` ignores the
-register count, but `appendAtTM`'s cost grows with the tape length
-`State.size s + #registers + 1` (witness: `replicate 6 []` has `State.size 0`,
-budget `4`, but the op first halts at step 10). The fix is a tape-length budget
-plus threading the program's `regBound`. Two new sorry-free, axiom-clean lemmas
-(`Lang/Compile.lean`) de-risk this: `compileOp_appendOne_behavioural` (the
-`encodeTape`/`decodeTape` seam composes with the gadget library) and
-`compileOp_appendOne_zero_sound` (the corrected tape-length budget is
-achievable). See ROADMAP Risk C2.
+`compiledCmd_default` stubs, and **`Compile_sound` is false as stated for two
+independent reasons.** (1, prior session) its budget `Compile.overhead
+(State.size s + cost)` ignored the register count; the per-op fix is a
+tape-length budget — now **proven** for the two real ops (`appendOne`/
+`appendZero`) at general `dst` (`compileOp_appendOne_sound` /
+`compileOp_appendZero_sound`, via explicit step counts `appendAt_run_steps`).
+(2, this session — deeper) ops are **unit cost** but `concat`/`copy` grow the
+state **multiplicatively**, so output size can be **exponential in layer cost**
+(evaluated: `forBnd 2 1 (op (concat 0 0 0))` at n=10 → output length 1047 vs
+corrected budget 676) — so **no fixed-degree budget polynomial** in
+`(inputSize + cost)` can bound `Compile c`. The gating fix is the **cost model**
+(charge for size growth, Coq-aligned), then thread `regBound`. See ROADMAP Risk
+C2.
 
 ## Development methodology: skeleton-first, risk-driven
 
