@@ -12,10 +12,12 @@ not a log.
   see ROADMAP risk register).
 - The **S3 migration engine** is built and sorry-free *modulo* the one compiler
   obligation `Compile_run_physical` / `Compile_sound` (Risk **C2**).
-- **The immediate C2 blocker is now precisely scoped** (latest session): the
-  head-rewind primitive is ready (`rewindToStart_run/_traj`), but the encoding
-  has no left sentinel, so assembling the physical contract needs the
-  **leading-sentinel encoding migration** first. See "Recommended next step".
+- **The leading-sentinel encoding migration (step 1b-0) is DONE** (latest
+  session): `encodeTape s = endMark :: (encodeRegs s ++ [endMark])`, `sig` stays
+  `4`. The head-rewind primitive (`rewindToStart_run/_traj`) is now *applicable*.
+  All real consumers were re-proven green & axiom-clean. The next step is
+  rewind-bracketing each gadget into the physical contract (step 1b-1). See
+  "Recommended next step".
 
 ## Latest session (2026-05-29) — head-rewind primitive + the assembly blocker
 
@@ -51,8 +53,31 @@ physical contract is **structural, not a missing lemma**:
     **leading-sentinel encoding** `encodeTape s = endMark :: encodeRegs s ++
     [endMark]` (reuse `3`; `sig` stays `4`). Then `scanLeftUntilTM 4 3`
     (= `rewindToStart_run` with `m = 3`) rewinds, since the interior carries
-    only `{0,1,2}`. This is an encoding+contract migration (scoped below), **not
-    just a lemma to add**. See ROADMAP Risk C2 plan step 1b.
+    only `{0,1,2}`. This is an encoding+contract migration, **not just a lemma to
+    add**.
+
+**(0c) ✅ STEP 1b-0 DONE — the leading-sentinel encoding migration landed.**
+`Compile.encodeTape s = Compile.endMark :: (Compile.encodeRegs s ++
+[Compile.endMark])` (`Lang/Compile.lean`), `sig` stays `4`. All real consumers
+re-proven, `lake build` green (3356 jobs), `#print axioms`-clean (no `sorryAx`
+except the pre-existing `Compile_run_physical` stub), `CookLevin` profile
+unchanged. Concretely:
+  - `encodeTape_length` → `size + regCount + 2`; `decodeTape` drops the leading
+    sentinel (`flat.tail.takeWhile …`); round trip `decodeTape_encodeTape`
+    re-proven; `encodeTape_eq_cons_of_get_zero` now `endMark :: (b+1) :: …`.
+  - `appendBit_sound` (the real per-op lemma): the leading sentinel is **folded
+    into the first marker-free block** (into `body` when `dst=0`, into the first
+    skipped register when `dst≥1`) via a `key` existential, so the gadget still
+    runs from head `0` — **no head-bridge needed**. `encodeTape_split` restated
+    to give the sentinel-free registers part.
+  - `bitTestTM` reworked: 4 states, **steps right past the leading sentinel**
+    (state `0` reads `3` → R → state `3`) then reads the answer (`2`→accept,
+    `1`→reject). `bitDecider_run` budget `+2 → +3` (one bridge + two gadget
+    steps). The framework `DecidesBy.encode_size` bound loosened `2·size+3 →
+    2·size+4` (`NP.lean`; the sentinel adds one cell), `budget_ge`/`toDecidesBy`/
+    `toInTimePoly` constants bumped to match.
+  - Removed two superseded probe lemmas (`compileOp_appendOne_behavioural`,
+    `compileOp_appendOne_zero_sound`) — unused, replaced by `appendBit_sound`.
 
 ## Earlier session's work (recorded in ROADMAP)
 
@@ -97,55 +122,45 @@ supplies the analytic fact:
 State.size s + c.cost s + max s.length k + 1` (`Lang/PolyTime.lean`), for any `c`
 with `Cmd.UsesBelow c k`. Built from three reusable pieces:
 - `Compile.encodeTape_length : (encodeTape s).length = State.size s + s.length +
-  1` (+ `encodeRegs_length`) — `Lang/Compile.lean`.
+  2` (+ `encodeRegs_length`; the `+2` is the two sentinels post-migration) —
+  `Lang/Compile.lean`.
 - `Cmd.size_eval_le` (contents bound, prior session).
 - `Cmd.eval_length_le : (c.eval s).length ≤ max s.length k` (register count never
   exceeds `regBound`), with helpers `State.set_length_le` /
   `State.set_length_le_of_lt` / `Op.eval_length_le` — `Lang/Frame.lean`.
 
-## Recommended next step — the **leading-sentinel encoding migration** (C2)
+## Recommended next step — bracket each gadget into the physical contract (1b-1)
 
-This is the prerequisite for all the per-fragment physical contracts. Do it
-**first**, as one focused, green-buildable migration, before touching the four
-`compile*_sound` lemmas. The head-rewind primitive (`rewindToStart_run/_traj`)
-is ready; the remaining work is making the encoding *support* it and threading
-the rewind through each gadget's exit.
+**Step 1b-0 (the leading-sentinel encoding migration) is DONE** — see (0c)
+above. The encoding now supports head-rewind. What remains is to thread the
+rewind through each gadget's exit and assemble `Compile_run_physical` /
+`Compile_sound`.
 
-**Step 1b-0 — migrate the encoding (the new prerequisite).** Change
-`Compile.encodeTape` (`Lang/Compile.lean:771`) from
-`encodeRegs s ++ [endMark]` to `endMark :: encodeRegs s ++ [endMark]`
-(reuse `3`; **`sig` stays `4`** — do *not* introduce a new symbol, the alphabet
-ripple across every gadget TM is far worse than the small decode change below).
-Coordinated changes, each a self-contained green commit if possible:
-   - `Compile.encodeTape_length`: now `State.size s + s.length + 2`. Re-thread
-     its one consumer `Cmd.encodeTape_eval_length_le` (`Lang/PolyTime.lean`) and
-     the `+ 1` it carries.
-   - `Compile.decodeTape` (`:832`): drop the leading sentinel before
-     `takeWhile (· != endMark)` (e.g. operate on `flat.tail`, or `match flat
-     with | _ :: rest => …`). Re-prove the round-trip
-     `decodeTape_encodeTape'` and friends (`:842`+) — the proofs change only by
-     a leading `cons`.
-   - `Compile.encodeTape_split` (`:1126`): the split prefix becomes
-     `pre = [endMark]` (head index `1`) instead of `[]` (head `0`). The append
-     gadget lemmas are **already parametric in `pre`** and only need
-     `∀ x ∈ pre, x < 4` (`3 < 4` ✓), so `compileOp_appendOne_sound` /
-     `compileOp_appendZero_sound` (`:1475`,`:1488`) re-derive with `pre = [3]`.
-   - `Compile.encodeTape_eq_cons_of_get_zero` (used by `bitDecider_run`): the
-     answer bit is now at **index 1**, not 0. So `bitTestTM` must read index 1.
-     Simplest: compose a one-cell right-step before `bitTestTM`, or have
-     `Compile_run_physical` leave the head at index `1` (just past the sentinel)
-     rather than `0` — pick one canonical-head convention and use it uniformly
-     (see Step 1b-1).
+**Step 1b-1 — bracket each gadget with a tail rewind (canonical head `0`).**
+Canonical input/exit head = **index `0` (on the leading sentinel)**. The append
+op's *behavioural* run already starts at head `0` (the sentinel is folded into
+the first marker-free block — see `appendBit_sound`'s `key`), so **no leading
+step-right is needed**. Only a **tail rewind** is needed so the head returns to
+`0`: each compiled fragment's TM becomes `composeFlatTM gadget
+(scanLeftUntilTM 4 3) exit`, and the exit config (head back at `0`) feeds the
+next fragment / `bitTestTM`.
 
-**Step 1b-1 — pick the canonical head convention and bracket each gadget.**
-Recommended: canonical input/exit head = **index `0` (on the sentinel)**. Then
-every compiled fragment is `[step right past sentinel] ; gadget ; [rewind to
-sentinel]`, i.e. its TM is `composeFlatTM (composeFlatTM stepRight gadget …)
-(scanLeftUntilTM 4 3) …`. `rewindToStart_run`/`_traj` (with `m = 3`,
-`rest = encodeRegs(output) ++ [3]`, all interior `< 4` and `≠ 3`) supply the
-final `composeFlatTM_run` arguments. The intermediate exit head is existential
-in `appendAt_run_steps`, but the rewind's hypotheses don't need it — the rewind
-works from *any* interior head — so the existential is fine.
+⚠ **Rewind caveat (important, found this session):** the canonical tape is
+`endMark :: <interior, only {0,1,2}> :: endMark` — it has **two** `endMark = 3`
+cells (leading sentinel AND trailing terminator). So `rewindToStart_run`'s
+hypothesis `∀ x ∈ rest, x ≠ m` is **too strong** (the trailing `3` violates it).
+Scanning left from an interior head only ever reads cells `1 … head`, all of
+which are interior `{0,1,2}` (the trailing `3` is to the *right* of the head and
+never scanned). So **use `ScanLeft.scanLeft_run` / `scanLeft_no_early_halt`
+directly** (their hypothesis is head-relative: `∀ i, 0 < i → i ≤ head → …`), or
+first **relax `rewindToStart_run`/`_traj`** to a head-relative hypothesis
+(constrain only `rest.take head`, not all of `rest`). The wrapper as committed
+is only correct for single-sentinel tapes; fix it before use.
+
+The intermediate gadget exit head is existential in `appendAt_run_steps`, but
+the rewind works from *any* interior head, so the existential is fine — you only
+need that all cells strictly left of the exit head are `≠ 3`, which holds (they
+are the encoded interior).
 
 **Step 1b-2 — per-fragment physical contract, LINEAR budget.** With the rewind
 bracket, each gadget's contract is: halts at its `exit` state, head back at the

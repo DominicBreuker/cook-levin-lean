@@ -224,25 +224,26 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
       `= encodeTape output`, explicit halt step `t`, no-early-halt trajectory,
       `t ≤ linear(tapeLen)`). See the finding block above `compileSeq_sound`.
 
-      **⚠ 2026-05-29 — the physical contract needs a LEFT SENTINEL first
-      (the real next blocker).** Re-checking the assembly route surfaced that
-      "head rewound to `0`" is **not implementable on the current encoding**:
-      `composeFlatTM_run` (verified) *preserves* the head across the seam (does
-      not reset it), so each fragment must itself rewind to a canonical head; but
-      a TM head clamps at `0` under `Lmove` *without being able to detect it*, so
-      rewinding requires a **uniquely-detectable left sentinel** at index `0`,
-      which `encodeTape s = encodeRegs s ++ [endMark]` lacks (index `0` is a
-      delimiter `0` or a shifted bit `{1,2}`). The head-rewind *lemmas already
-      existed* (`scanLeft_run`/`scanLeft_no_early_halt`); they are now packaged
-      as `ScanLeft.rewindToStart_run`/`_traj` (sorry-free, axiom-clean). **The
-      missing piece is the encoding, not a lemma.** Fix: migrate to the
-      **leading-sentinel encoding** `encodeTape s = endMark :: encodeRegs s ++
-      [endMark]` (reuse `3`, `sig` stays `4`), then `scanLeftUntilTM 4 3` rewinds
-      to index `0`. This is an encoding+contract migration (decodeTape drops the
-      leading sentinel; `encodeTape_split` gets `pre = [3]`; `bitTestTM` reads
-      index `1`; each gadget brackets itself `[step-right] ; gadget ; [rewind]`).
-      **Do this migration before restating the four `compile*_sound`.** Full
-      step-by-step in HANDOFF "Recommended next step" (steps 1b-0 … 1d).
+      **2026-05-29 — left-sentinel finding + migration (DONE).** The physical
+      contract's "head rewound to `0`" was **not implementable on the old
+      encoding**: `composeFlatTM_run` (verified) *preserves* the head across the
+      seam, so each fragment must rewind itself; but a TM head clamps at `0`
+      under `Lmove` *without detecting it*, so rewinding needs a
+      uniquely-detectable left sentinel at index `0`, which `encodeRegs s ++
+      [endMark]` lacked. The rewind *lemmas* already existed (`scanLeft_run`,
+      packaged as `ScanLeft.rewindToStart_run`/`_traj`). **✅ The leading-sentinel
+      encoding migration (step 1b-0) is now DONE:** `encodeTape s = endMark ::
+      (encodeRegs s ++ [endMark])` (reuse `3`, `sig` stays `4`); `decodeTape`
+      drops the leading sentinel; `appendBit_sound` folds the sentinel into the
+      first marker-free block (so the append op still runs from head `0`, no
+      head-bridge); `bitTestTM` reworked to step past the sentinel then read;
+      `bitDecider_run` budget `+2→+3`; framework `DecidesBy.encode_size` loosened
+      `2·size+3→2·size+4`. `lake build` green (3356), axiom-clean. **Next (1b-1):**
+      bracket each gadget with a *tail rewind* to head `0` (scanLeft to the
+      leading `3`) → per-fragment physical contract → assemble. ⚠ The canonical
+      tape has *two* `3`s (leading + trailing `endMark`), so use the
+      head-relative `scanLeft_run` (not the over-strong `rewindToStart_run`
+      wrapper). See HANDOFF "Recommended next step" (1b-1 … 1d).
    c. Concretise the 10 stub `compileOp`s from the gadget library (`opClear`,
       `opCopy`, `opTail`, `opHead`, `opEqBit`, `opNonEmpty`, and the four
       length-as-value ops), each with its **linear-budget** `compileOp_sound`.
@@ -318,7 +319,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Status |
 |---|-----|--------|
-| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; behavioural per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** (`compileOp_appendOne_sound`, `appendAt_run_steps`). **Cost-model gap FIXED** (`Op.cost` size-aware, `Op.size_eval_le`) **and the Cmd-level size bound is now PROVEN** (`Cmd.size_eval_le : size (c.eval s) ≤ size s + c.cost s`, by charging the `forBnd` counter — depth-constant-free; replaced the register-exclusion route). ⚠ **NEW finding — budget shape:** the per-fragment `overhead` budgets are **quadratic and don't compose** (summing `~cost` quadratics → cubic), so `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` are **unprovable as stated** (`a=3,c₂=1` → `42 ≰ 36`). Must restate per-fragment budgets **LINEAR** (gadgets prove `≤ 2·tapeLen+3`) → quadratic total with slack. The **linear tape-length bound is now PROVEN** (`Cmd.encodeTape_eval_length_le`, via `Compile.encodeTape_length` + `Cmd.eval_length_le`), and the **append ops now carry the linear budget** `2·tapeLen+3` (`compileOp_appendOne_sound`/`appendZero`, was quadratic `overhead`). ⚠ **NEW finding (2026-05-29) — left sentinel required:** the physical contract's "head rewound to `0`" is **not implementable on the current encoding** (`composeFlatTM_run` preserves head across the seam; a TM head clamps at `0` but can't *detect* it, so rewind needs a unique left sentinel that `encodeTape` lacks). The rewind *lemmas* already existed (`scanLeft_run`, now packaged as `ScanLeft.rewindToStart_run/_traj`). **Next concrete step = the leading-sentinel encoding migration** `encodeTape s = 3 :: encodeRegs s ++ [3]` (sig stays 4) — see HANDOFF steps 1b-0…1d. **Open after that:** linear-budget restatement of the four `compileSeq/IfBit/ForBnd_sound` + `Compile_sound`; rewind-bracket each gadget; max-over-fragments lift; thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
+| **C2** | **compiler soundness** `Compile_sound` / `Compile_run_physical`. | ⚠ **Highest completion risk.** Combinators proven; gadget library sorry-free; behavioural per-op soundness **proven for `appendOne`/`appendZero` at general `dst`** (`compileOp_appendOne_sound`, `appendAt_run_steps`). **Cost-model gap FIXED** (`Op.cost` size-aware, `Op.size_eval_le`) **and the Cmd-level size bound is now PROVEN** (`Cmd.size_eval_le : size (c.eval s) ≤ size s + c.cost s`, by charging the `forBnd` counter — depth-constant-free; replaced the register-exclusion route). ⚠ **NEW finding — budget shape:** the per-fragment `overhead` budgets are **quadratic and don't compose** (summing `~cost` quadratics → cubic), so `compileSeq_sound`/`compileIfBit_sound`/`compileForBnd_sound`/`Compile_sound` are **unprovable as stated** (`a=3,c₂=1` → `42 ≰ 36`). Must restate per-fragment budgets **LINEAR** (gadgets prove `≤ 2·tapeLen+3`) → quadratic total with slack. The **linear tape-length bound is now PROVEN** (`Cmd.encodeTape_eval_length_le`, via `Compile.encodeTape_length` + `Cmd.eval_length_le`), and the **append ops now carry the linear budget** `2·tapeLen+3` (`compileOp_appendOne_sound`/`appendZero`, was quadratic `overhead`). **2026-05-29 — left-sentinel finding + migration DONE:** the physical contract's "head rewound to `0`" was **not implementable on the old encoding** (`composeFlatTM_run` preserves head across the seam; a TM head clamps at `0` but can't *detect* it, so rewind needs a unique left sentinel that the old `encodeTape` lacked). Rewind *lemmas* already existed (`scanLeft_run`/`ScanLeft.rewindToStart_run/_traj`). **✅ Leading-sentinel encoding migrated** (`encodeTape s = endMark :: encodeRegs s ++ [endMark]`, sig stays 4): `decodeTape` drops the leading sentinel; `appendBit_sound` folds it into the first block (append still runs from head `0`); `bitTestTM` steps past it then reads; `bitDecider_run` `+2→+3`; framework `encode_size` `2·size+3→2·size+4`. Green (3356), axiom-clean. **Open (next):** rewind-bracket each gadget to head `0` (use head-relative `scanLeft_run` — the canonical tape has *two* `3`s); per-fragment physical contract; linear-budget restatement of the four `compileSeq/IfBit/ForBnd_sound` + `Compile_sound`; max-over-fragments lift; thread `regBound`; 10/12 `compileOp` stubs; assemble. Plan step 1. |
 | **C1** | **per-`Op` compilation** (`compileOp` + soundness). | Only `appendOne`/`appendZero` have real TMs; behavioural soundness of `appendOne` proven. Rest stubbed. Part of C2. |
 | **C3** | **`loopTM` counted loop** (`compileForBnd` + soundness). | `loopTM`/`loopTM_run` proven; behavioural `forBnd` toolkit (`Lang/Frame.lean`) proven. Wiring `compileForBnd` + its step bound is part of C2. |
 | **C4** | **layer → framework bridge.** | ✅ Engine done (`toFrameworkWitness'`, `inNPLang`/`red_inNPLang`, `inNPLang_to_inNP`, capstones `reducesPolyMO_of_lang`/`red_inNP_of_lang`), sorry-free modulo C2. Remaining: honest layer reductions (S1) + discharge C2. |
