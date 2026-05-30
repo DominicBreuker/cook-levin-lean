@@ -1,6 +1,7 @@
 import Complexity.Lang.Navigate
 import Complexity.Lang.ShiftTape
 import Complexity.Lang.ScanPast
+import Complexity.Lang.ScanLeft
 
 set_option autoImplicit false
 
@@ -25,6 +26,7 @@ base case and the exercise that validates the composition spine. -/
 namespace Complexity.Lang.AppendGadget
 
 open TMPrimitives Complexity.Lang.Navigate Complexity.Lang.ShiftTape Complexity.Lang.ScanPast
+  Complexity.Lang.ScanLeft
 
 /-- **Scan-then-insert run (register 0).** From the start state, head at the
 left end of the encoded tape `body ++ 0 :: post`, the composed machine
@@ -367,12 +369,13 @@ is its delimiter plus the rest — the machine halts in **exactly**
 `appendAt_steps skipped body post` steps having inserted `ins` just before the
 target register's delimiter, leaving `pre ++ regBlocks skipped ++ body ++ ins
 :: 0 :: post`. The exit **head** is now explicit too —
-`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`,
-i.e. the head sits on the inserted symbol's old delimiter (interior of the tape,
-to the *left* of the trailing terminator) — so the tail rewind can be applied.
-Only the exit *state* stays existential here (it is pinned in
-`appendAt_run_exit`). The step count is explicit (the ingredient
-`compileOp_sound`'s tape-length budget needs). -/
+`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`.
+⚠ **Verified (2026-05-30): this head is the *last* tape cell** (i.e. *on* the
+trailing terminator, since `insertCarryTM_run` ends on the last cell), **not**
+"to the left of" it. So the tail rewind must be `ScanLeft.rewindFromEndTM` (step
+off the terminator first), not a bare `scanLeftUntilTM`. Only the exit *state*
+stays existential here (it is pinned in `appendAt_run_exit`). The step count is
+explicit (the ingredient `compileOp_sound`'s tape-length budget needs). -/
 theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
     ∀ (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat),
       skipped.length = dst →
@@ -535,8 +538,8 @@ reaches a *halting* state; since `appendAtTM ins dst`'s halt vector is unique
 (`appendAtTM_halt_unique`), that state is exactly `appendAtTM_exit dst`. The exit
 **head** is also explicit —
 `pre.length + (regBlocks skipped).length + body.length + (0 :: post).length` —
-sitting on the interior delimiter to the *left* of the trailing terminator, so
-the tail rewind (`ScanLeft.rewindToStart_run`) applies. This is the
+which is the *last* tape cell (on the trailing terminator), so the tail rewind
+must be `ScanLeft.rewindFromEndTM` (see `appendAt_rewind_run`). This is the
 explicit exit-configuration fact `composeFlatTM_run` needs when bracketing the
 gadget with a tail rewind. -/
 theorem appendAt_run_exit (ins : Nat) (h_ins : ins < 4)
@@ -756,5 +759,208 @@ theorem appendAt_no_early_halt (ins : Nat) (h_ins : ins < 4) :
           [] (pre.length + b.length + 1)
           (pre ++ b ++ 0 :: (regBlocks s' ++ body ++ 0 :: post))
           h_sym_bound h_run1 h_traj1 h_traj2
+
+/-! ### Bracketing the gadget with a tail rewind (Risk C2, step 1b-2)
+
+The per-fragment **physical contract** needs the gadget to halt with its head
+back at the leading sentinel (index `0`), so the next fragment resumes from the
+canonical start config. `composeFlatTM` *preserves* the head across the seam, so
+the gadget must rewind itself.
+
+⚠ The gadget exits with its head on the **trailing terminator** (the last tape
+cell — see `ScanLeft.rewindFromEndTM`'s docstring and the verified finding), not
+"just left of" it. So the rewind is `rewindFromEndTM 4 3` (step off the
+terminator, then scan left to the leading sentinel), **not** a bare
+`scanLeftUntilTM 4 3`. `appendAt_rewind_run` is the resulting bracket: it
+composes `appendAt_run_exit` + `appendAt_no_early_halt` (the gadget) with
+`rewindFromEndTM_run` (the rewind) via `composeFlatTM_run`. -/
+
+/-- The append gadget bracketed with the tail rewind: run the insert, then
+rewind the head from the trailing terminator back to the leading sentinel. -/
+def appendAtThenRewindTM (ins dst : Nat) : FlatTM :=
+  composeFlatTM (appendAtTM ins dst) (rewindFromEndTM 4 3) (appendAtTM_exit dst)
+
+/-- **Bracketed append run (Risk C2, step 1b-2).** On the encoded tape
+`pre ++ regBlocks skipped ++ body ++ 0 :: post`, the bracketed machine
+`appendAtThenRewindTM ins dst` inserts `ins` before register `dst`'s delimiter
+**and** rewinds the head to index `0`, leaving the head exactly on the leading
+sentinel and the tape `pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post`.
+
+The three rewind side-conditions are about the *exit* tape `TP` (the gadget's
+output): its cell `0` is the leading sentinel `3` (`h_t0`), every cell is in
+range (`h_tp_lt`), and the interior cells `1 … HD-1` are not the sentinel
+(`h_interior_ne`). The `Compile`-level consumer discharges these from the
+`encodeTape` structure (`encodeRegs` is sentinel-free and `< 4`). -/
+theorem appendAt_rewind_run (ins : Nat) (h_ins : ins < 4)
+    (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
+    (hlen : skipped.length = dst)
+    (h_pre : ∀ x ∈ pre, x < 4)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
+    (h_post_lt : ∀ x ∈ post, x < 4)
+    (h_tp_lt : ∀ x ∈ pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post, x < 4)
+    (h_t0 : ∀ (h : 0 < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+      (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨0, h⟩ = 3)
+    (h_interior_ne : ∀ i, 0 < i →
+      i < pre.length + (regBlocks skipped).length + body.length + (0 :: post).length →
+      ∃ (h : i < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+        (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨i, h⟩ ≠ 3) :
+    runFlatTM (appendAt_steps skipped body post + 1
+        + (1 + 1 + (pre.length + (regBlocks skipped).length + body.length
+            + (0 :: post).length)))
+        (appendAtThenRewindTM ins dst)
+        { state_idx := 0,
+          tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+      = some { state_idx := 3 + (appendAtTM ins dst).states,
+               tapes := [([], 0, pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] }
+    ∧ haltingStateReached (appendAtThenRewindTM ins dst)
+        { state_idx := 3 + (appendAtTM ins dst).states,
+          tapes := [([], 0, pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } = true := by
+  set TP : List Nat := pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post with hTP
+  set HD : Nat := pre.length + (regBlocks skipped).length + body.length
+    + (0 :: post).length with hHD
+  -- The exit tape length and head-position facts.
+  have hTPlen : TP.length = pre.length + (regBlocks skipped).length + body.length
+      + (0 :: post).length + 1 := by
+    rw [hTP]; simp only [List.length_append, List.length_cons]; omega
+  have h0 : 0 < TP.length := by rw [hTPlen]; omega
+  have hHDpos : 0 < HD := by rw [hHD]; simp only [List.length_cons]; omega
+  have hHDlt : HD < TP.length := by rw [hTPlen]; omega
+  -- Gadget exit (state + head pinned).
+  have h_run1 := appendAt_run_exit ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj0 := appendAt_no_early_halt ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  -- `composeFlatTM_run` needs the stronger trajectory `state ≠ exit ∧ not-halting`;
+  -- the `≠ exit` part follows because `exit` is itself a halting state.
+  have h_traj1 : ∀ k, k < appendAt_steps skipped body post → ∀ ck,
+      runFlatTM k (appendAtTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] } = some ck →
+      ck.state_idx ≠ appendAtTM_exit dst ∧
+      haltingStateReached (appendAtTM ins dst) ck = false := by
+    intro k hk ck hck
+    have hnh := h_traj0 k hk ck hck
+    refine ⟨fun hstate => ?_, hnh⟩
+    have hhalt_exit : haltingStateReached (appendAtTM ins dst) ck = true := by
+      show (appendAtTM ins dst).halt.getD ck.state_idx false = true
+      rw [hstate, List.getD_eq_getElem?_getD, appendAtTM_exit_is_halt ins dst]; rfl
+    rw [hhalt_exit] at hnh; exact Bool.noConfusion hnh
+  -- Bridge symbol bound at the seam (the exit head cell).
+  have h_start_lt : TP.get ⟨HD, hHDlt⟩ < 4 := h_tp_lt _ (List.getElem_mem hHDlt)
+  have h_sym_bound :
+      ∀ v, currentTapeSymbol (([] : List Nat), HD, TP) = some v →
+        v < max (appendAtTM ins dst).sig (rewindFromEndTM 4 3).sig := by
+    intro v hv
+    have hmax : max (appendAtTM ins dst).sig (rewindFromEndTM 4 3).sig = 4 := by
+      rw [appendAtTM_sig ins dst, rewindFromEndTM_sig]; rfl
+    rw [hmax]
+    rw [currentTapeSymbol_in_range hHDlt] at hv
+    injection hv with hv'; rw [← hv']; exact h_start_lt
+  -- The rewind run on the exit tape.
+  have h_cells : ∀ i, 0 < i → i < HD → ∃ (h : i < TP.length),
+      TP.get ⟨i, h⟩ < 4 ∧ TP.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi hilt
+    obtain ⟨h, hne⟩ := h_interior_ne i hi hilt
+    exact ⟨h, h_tp_lt _ (List.getElem_mem h), hne⟩
+  have h_run2 : runFlatTM (1 + 1 + HD) (rewindFromEndTM 4 3)
+      { state_idx := (rewindFromEndTM 4 3).start, tapes := [([], HD, TP)] }
+        = some { state_idx := 3, tapes := [([], 0, TP)] } := by
+    rw [rewindFromEndTM_start]
+    exact rewindFromEndTM_run 4 3 (by decide) [] TP HD h0 (h_t0 h0) hHDpos hHDlt
+      h_start_lt h_cells
+  have h_halt2 : haltingStateReached (rewindFromEndTM 4 3)
+      { state_idx := 3, tapes := [([], 0, TP)] } = true := rfl
+  have hcomp := composeFlatTM_run
+    (appendAtTM_valid ins h_ins dst) (rewindFromEndTM_valid 4 3 (by decide))
+    (appendAtTM_exit_lt ins dst)
+    { state_idx := 0,
+      tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+    (by have h := (appendAtTM_valid ins h_ins dst).1; rwa [appendAtTM_start] at h)
+    [] HD TP h_sym_bound h_run1 h_traj1 h_run2 h_halt2
+  exact hcomp
+
+/-- **Bracketed append no-early-halt trajectory (Risk C2, step 1b-2).** Before
+the bracketed machine completes its `appendAt_steps + 1 + (1 + 1 + HD)` steps it
+has not reached a halting state. Together with `appendAt_rewind_run` this is the
+gadget-level **physical contract** (run to exit, head `0`, plus trajectory) that
+`Compile.compileSeq_compose_physical` consumes when composing fragments. -/
+theorem appendAt_rewind_no_early_halt (ins : Nat) (h_ins : ins < 4)
+    (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
+    (hlen : skipped.length = dst)
+    (h_pre : ∀ x ∈ pre, x < 4)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
+    (h_post_lt : ∀ x ∈ post, x < 4)
+    (h_tp_lt : ∀ x ∈ pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post, x < 4)
+    (h_t0 : ∀ (h : 0 < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+      (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨0, h⟩ = 3)
+    (h_interior_ne : ∀ i, 0 < i →
+      i < pre.length + (regBlocks skipped).length + body.length + (0 :: post).length →
+      ∃ (h : i < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+        (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨i, h⟩ ≠ 3) :
+    ∀ k, k < appendAt_steps skipped body post + 1
+        + (1 + 1 + (pre.length + (regBlocks skipped).length + body.length
+            + (0 :: post).length)) → ∀ ck,
+      runFlatTM k (appendAtThenRewindTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] } = some ck →
+      haltingStateReached (appendAtThenRewindTM ins dst) ck = false := by
+  set TP : List Nat := pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post with hTP
+  set HD : Nat := pre.length + (regBlocks skipped).length + body.length
+    + (0 :: post).length with hHD
+  have hTPlen : TP.length = pre.length + (regBlocks skipped).length + body.length
+      + (0 :: post).length + 1 := by
+    rw [hTP]; simp only [List.length_append, List.length_cons]; omega
+  have h0 : 0 < TP.length := by rw [hTPlen]; omega
+  have hHDpos : 0 < HD := by rw [hHD]; simp only [List.length_cons]; omega
+  have hHDlt : HD < TP.length := by rw [hTPlen]; omega
+  have h_run1 := appendAt_run_exit ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj0 := appendAt_no_early_halt ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj1 : ∀ k, k < appendAt_steps skipped body post → ∀ ck,
+      runFlatTM k (appendAtTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] } = some ck →
+      ck.state_idx ≠ appendAtTM_exit dst ∧
+      haltingStateReached (appendAtTM ins dst) ck = false := by
+    intro k hk ck hck
+    have hnh := h_traj0 k hk ck hck
+    refine ⟨fun hstate => ?_, hnh⟩
+    have hhalt_exit : haltingStateReached (appendAtTM ins dst) ck = true := by
+      show (appendAtTM ins dst).halt.getD ck.state_idx false = true
+      rw [hstate, List.getD_eq_getElem?_getD, appendAtTM_exit_is_halt ins dst]; rfl
+    rw [hhalt_exit] at hnh; exact Bool.noConfusion hnh
+  have h_start_lt : TP.get ⟨HD, hHDlt⟩ < 4 := h_tp_lt _ (List.getElem_mem hHDlt)
+  have h_sym_bound :
+      ∀ v, currentTapeSymbol (([] : List Nat), HD, TP) = some v →
+        v < max (appendAtTM ins dst).sig (rewindFromEndTM 4 3).sig := by
+    intro v hv
+    have hmax : max (appendAtTM ins dst).sig (rewindFromEndTM 4 3).sig = 4 := by
+      rw [appendAtTM_sig ins dst, rewindFromEndTM_sig]; rfl
+    rw [hmax]
+    rw [currentTapeSymbol_in_range hHDlt] at hv
+    injection hv with hv'; rw [← hv']; exact h_start_lt
+  have h_cells : ∀ i, 0 < i → i < HD → ∃ (h : i < TP.length),
+      TP.get ⟨i, h⟩ < 4 ∧ TP.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi hilt
+    obtain ⟨h, hne⟩ := h_interior_ne i hi hilt
+    exact ⟨h, h_tp_lt _ (List.getElem_mem h), hne⟩
+  -- The rewind trajectory on the exit tape.
+  have h_traj2 : ∀ k, k < 1 + 1 + HD → ∀ ck,
+      runFlatTM k (rewindFromEndTM 4 3)
+          { state_idx := (rewindFromEndTM 4 3).start, tapes := [([], HD, TP)] } = some ck →
+      haltingStateReached (rewindFromEndTM 4 3) ck = false := by
+    rw [rewindFromEndTM_start]
+    exact rewindFromEndTM_no_early_halt 4 3 (by decide) [] TP HD h0 (h_t0 h0) hHDpos hHDlt
+      h_start_lt h_cells
+  exact composeFlatTM_no_early_halt
+    (appendAtTM_valid ins h_ins dst) (rewindFromEndTM_valid 4 3 (by decide))
+    (appendAtTM_exit_lt ins dst)
+    { state_idx := 0,
+      tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+    (by have h := (appendAtTM_valid ins h_ins dst).1; rwa [appendAtTM_start] at h)
+    [] HD TP h_sym_bound h_run1 h_traj1 h_traj2
 
 end Complexity.Lang.AppendGadget

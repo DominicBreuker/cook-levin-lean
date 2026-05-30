@@ -391,4 +391,322 @@ theorem rewindToStart_traj (sig m : Nat) (left rest : List Nat) (head : Nat)
   exact scanLeft_no_early_halt sig m left (m :: rest) head h_head_lt
     (rewind_scan_hyp sig m rest head h_cells)
 
+/-! ### Rewind from the *trailing* terminator (`rewindFromEndTM`)
+
+⚠ **Risk-C2 finding (verified 2026-05-30).** The append/insert gadget
+(`AppendGadget.appendAtTM`) does **not** exit with its head "just left of the
+trailing terminator" (as earlier docstrings claimed): `insertCarryTM_run` leaves
+the head on the **last** tape cell — i.e. *on* the trailing terminator
+`endMark = 3`. Empirically, `appendAtTM 2 0` on `[3,2,1,0,1,2,0,3]` exits at
+`head = 8` of the 9-cell output `[3,2,1,2,0,1,2,0,3]` — the trailing `3`.
+
+Therefore `scanLeftUntilTM 4 3` started there **halts immediately** (it reads
+its target `3` on the very first cell) instead of rewinding to index `0`. The
+canonical tape has *two* `3`s, and the head sits on the *wrong* one.
+
+`rewindFromEndTM` fixes this: an unconditional one-step left move (`stepLeftTM`)
+slides the head off the trailing terminator onto the marker-free interior, after
+which `scanLeftUntilTM sig target` scans left to the **leading** sentinel at
+index `0`. This is the rewind the per-fragment physical contract actually needs.
+
+The starting cell (the terminator) is therefore *unconstrained* — only the
+interior cells `1 … head-1` (the ones the leftward scan reads) must be in range
+and `≠ target`. -/
+
+/-- Unconditional left-move entry for a concrete in-range symbol `v`. -/
+def stepLeftEntry (v : Nat) : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [some v]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Lmove] }
+
+/-- Unconditional left-move entry for a blank cell (off the right end). -/
+def stepLeftNoneEntry : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [none]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Lmove] }
+
+/-- A two-state machine that moves the head left exactly once (for any current
+symbol), then halts in state `1`. Used to step off the trailing terminator
+before a leftward rewind scan. -/
+def stepLeftTM (sig : Nat) : FlatTM where
+  sig := sig
+  tapes := 1
+  states := 2
+  trans := stepLeftNoneEntry :: (List.range sig).map stepLeftEntry
+  start := 0
+  halt := [false, true]
+
+theorem stepLeftTM_trans_eq (sig : Nat) :
+    (stepLeftTM sig).trans = stepLeftNoneEntry :: (List.range sig).map stepLeftEntry := rfl
+
+theorem stepLeftTM_valid (sig : Nat) : validFlatTM (stepLeftTM sig) := by
+  refine ⟨show (0 : Nat) < 2 from by decide, rfl, ?_⟩
+  intro entry hentry
+  have hentry' : entry ∈ stepLeftNoneEntry :: (List.range sig).map stepLeftEntry := hentry
+  rcases List.mem_cons.mp hentry' with hNone | hCont
+  · subst hNone
+    refine ⟨show (0 : Nat) < 2 from by decide, show (1 : Nat) < 2 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [stepLeftNoneEntry] at hx; subst hx; trivial
+    · intro x hx; simp [stepLeftNoneEntry] at hx; subst hx; trivial
+  · rcases List.mem_map.mp hCont with ⟨v, hv, hmk⟩
+    subst hmk
+    have hvlt : v < sig := List.mem_range.mp hv
+    refine ⟨show (0 : Nat) < 2 from by decide, show (1 : Nat) < 2 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [stepLeftEntry] at hx; subst hx; exact hvlt
+    · intro x hx; simp [stepLeftEntry] at hx; subst hx; trivial
+
+/-- `find?` over the step-left entry list returns `stepLeftEntry v` when the head
+reads the in-range symbol `v`. -/
+private theorem find_stepLeft_match
+    (cfg : FlatTMConfig) (v : Nat) (L : List Nat)
+    (h_cfg_state : cfg.state_idx = 0)
+    (h_cfg_tape : cfg.tapes.map currentTapeSymbol = [some v])
+    (h_mem : v ∈ L) :
+    (L.map stepLeftEntry).find?
+        (fun entry => entryMatchesConfig entry cfg) =
+      some (stepLeftEntry v) := by
+  induction L with
+  | nil => cases h_mem
+  | cons w ws ih =>
+      show List.find? _ (stepLeftEntry w :: ws.map stepLeftEntry) = _
+      rw [List.find?_cons]
+      by_cases hwv : w = v
+      · subst hwv
+        have hMatch : entryMatchesConfig (stepLeftEntry w) cfg = true := by
+          show ((0 : Nat) == cfg.state_idx &&
+                  decide (([some w] : List (Option Nat)) =
+                    cfg.tapes.map currentTapeSymbol)) = true
+          rw [h_cfg_state, h_cfg_tape]; simp
+        rw [hMatch]
+      · have hNot : entryMatchesConfig (stepLeftEntry w) cfg = false := by
+          show ((0 : Nat) == cfg.state_idx &&
+                  decide (([some w] : List (Option Nat)) =
+                    cfg.tapes.map currentTapeSymbol)) = false
+          rw [h_cfg_state, h_cfg_tape]
+          have h_ne' : ([some w] : List (Option Nat)) ≠ [some v] := by
+            intro h; injection h with h1 _; injection h1 with h2; exact hwv h2
+          simp [h_ne']
+        rw [hNot]
+        rcases List.mem_cons.mp h_mem with hvw | hvws
+        · exact absurd hvw.symm hwv
+        · exact ih hvws
+
+/-- One unconditional left step on an in-range cell: head `head → head - 1`,
+state `0 → 1`. -/
+theorem stepLeftTM_step (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length) (h_sym_lt : right.get ⟨head, h_head_lt⟩ < sig) :
+    stepFlatTM (stepLeftTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head - 1, right)] } := by
+  set v := right.get ⟨head, h_head_lt⟩ with hv
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] } with hcfg
+  have hSym0 : currentTapeSymbol (left, head, right) = some v := by
+    rw [currentTapeSymbol_in_range h_head_lt]
+  have hSym : cfg.tapes.map currentTapeSymbol = [some v] := by
+    show [currentTapeSymbol (left, head, right)] = [some v]; rw [hSym0]
+  have hNotNone : entryMatchesConfig stepLeftNoneEntry cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne' : ([none] : List (Option Nat)) ≠ [some v] := by
+      intro h; injection h with h1 _; cases h1
+    simp [h_ne']
+  have hvInRange : v ∈ List.range sig := List.mem_range.mpr h_sym_lt
+  have hFind :
+      (((List.range sig).map stepLeftEntry).find?
+          (fun entry => entryMatchesConfig entry cfg)) = some (stepLeftEntry v) :=
+    find_stepLeft_match cfg v _ rfl hSym hvInRange
+  show Option.bind ((stepLeftTM sig).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [stepLeftTM_trans_eq, List.find?_cons, hNotNone, hFind]
+  show applyTransitionEntry cfg (stepLeftEntry v) = _
+  exact applyEntry_single 0 1 left right head (some v) TMMove.Lmove
+
+/-- `stepLeftTM` run for one step (its full computation). -/
+theorem stepLeftTM_run (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length) (h_sym_lt : right.get ⟨head, h_head_lt⟩ < sig) :
+    runFlatTM 1 (stepLeftTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head - 1, right)] } := by
+  show (if haltingStateReached (stepLeftTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM (stepLeftTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _
+          | some cfg' => runFlatTM 0 (stepLeftTM sig) cfg') = _
+  rw [show haltingStateReached (stepLeftTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      stepLeftTM_step sig left right head h_head_lt h_sym_lt]
+  rfl
+
+/-- The corrected rewind: step off the trailing terminator, then scan left to the
+leading sentinel. -/
+def rewindFromEndTM (sig target : Nat) : FlatTM :=
+  composeFlatTM (stepLeftTM sig) (scanLeftUntilTM sig target) 1
+
+theorem rewindFromEndTM_sig (sig target : Nat) :
+    (rewindFromEndTM sig target).sig = sig := by
+  show max (stepLeftTM sig).sig (scanLeftUntilTM sig target).sig = sig
+  show max sig sig = sig; omega
+
+theorem rewindFromEndTM_tapes (sig target : Nat) :
+    (rewindFromEndTM sig target).tapes = 1 := rfl
+
+theorem rewindFromEndTM_start (sig target : Nat) :
+    (rewindFromEndTM sig target).start = 0 := rfl
+
+theorem rewindFromEndTM_valid (sig target : Nat) (h_target : target < sig) :
+    validFlatTM (rewindFromEndTM sig target) :=
+  composeFlatTM_valid (stepLeftTM sig) (scanLeftUntilTM sig target) 1
+    (stepLeftTM_valid sig) (scanLeftUntilTM_valid sig target h_target)
+    (show (1 : Nat) < 2 from by decide) rfl rfl
+
+/-- Helper: the seam symbol (cell `head - 1`) is in range, used for the bridge
+symbol bound. From `h_cells` (interior cells `< sig`) and `h_target0` (the
+sentinel `= target < sig`). -/
+private theorem rewind_seam_sym_lt (sig target : Nat) (tp : List Nat) (head : Nat)
+    (h_target : target < sig)
+    (h0 : 0 < tp.length) (h_target0 : tp.get ⟨0, h0⟩ = target)
+    (h_head_pos : 0 < head) (h_head_lt : head < tp.length)
+    (h_cells : ∀ i, 0 < i → i < head → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target) :
+    ∀ v, currentTapeSymbol (([] : List Nat), head - 1, tp) = some v →
+      v < max (stepLeftTM sig).sig (scanLeftUntilTM sig target).sig := by
+  intro v hv
+  have hmax : max (stepLeftTM sig).sig (scanLeftUntilTM sig target).sig = sig := by
+    show max sig sig = sig; omega
+  rw [hmax]
+  have hlt : head - 1 < tp.length := by omega
+  rw [currentTapeSymbol_in_range hlt] at hv
+  injection hv with hv'
+  by_cases hz : head - 1 = 0
+  · have he : (⟨head - 1, hlt⟩ : Fin tp.length) = ⟨0, h0⟩ := Fin.ext hz
+    rw [he, h_target0] at hv'
+    rw [← hv']; exact h_target
+  · have hpos : 0 < head - 1 := by omega
+    have hlt' : head - 1 < head := by omega
+    obtain ⟨h, hsym_lt, _⟩ := h_cells (head - 1) hpos hlt'
+    have he : tp.get ⟨head - 1, hlt⟩ = tp.get ⟨head - 1, h⟩ := rfl
+    rw [he] at hv'; rw [← hv']; exact hsym_lt
+
+/-- **Rewind-from-end run lemma.** From an interior head `head ≥ 1` on a tape
+`tp` whose cell `0` is the `target` sentinel and whose interior cells
+`1 … head-1` are in range and `≠ target`, `rewindFromEndTM sig target` halts in
+`head + 2` steps in state `3` with the head rewound to `0`, leaving the tape
+unchanged. The starting cell `tp[head]` (the trailing terminator) need only be
+**in range** — its *value* (it may be the `target`) is irrelevant. -/
+theorem rewindFromEndTM_run (sig target : Nat) (h_target : target < sig)
+    (left tp : List Nat) (head : Nat)
+    (h0 : 0 < tp.length) (h_target0 : tp.get ⟨0, h0⟩ = target)
+    (h_head_pos : 0 < head) (h_head_lt : head < tp.length)
+    (h_start_lt : tp.get ⟨head, h_head_lt⟩ < sig)
+    (h_cells : ∀ i, 0 < i → i < head → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target) :
+    runFlatTM (1 + 1 + head) (rewindFromEndTM sig target)
+        { state_idx := 0, tapes := [(left, head, tp)] } =
+      some { state_idx := 3, tapes := [(left, 0, tp)] } := by
+  -- M₁ (stepLeftTM) run: one left step off the start cell.
+  have h_run1 : runFlatTM 1 (stepLeftTM sig)
+      { state_idx := 0, tapes := [(left, head, tp)] }
+        = some { state_idx := 1, tapes := [(left, head - 1, tp)] } :=
+    stepLeftTM_run sig left tp head h_head_lt h_start_lt
+  -- M₁ trajectory: one step only, start state `0 ≠ exit = 1`, non-halting.
+  have h_traj1 : ∀ k, k < 1 → ∀ ck,
+      runFlatTM k (stepLeftTM sig)
+          { state_idx := 0, tapes := [(left, head, tp)] } = some ck →
+      ck.state_idx ≠ 1 ∧ haltingStateReached (stepLeftTM sig) ck = false := by
+    intro k hk ck hck
+    interval_cases k
+    · obtain rfl : ck = { state_idx := 0, tapes := [(left, head, tp)] } :=
+        (Option.some.inj hck).symm
+      exact ⟨Nat.zero_ne_one, rfl⟩
+  -- M₂ (scanLeftUntilTM) run: scan left from head-1 to the sentinel at 0.
+  have h_head1_lt : head - 1 < tp.length := by omega
+  have hb : ∀ i, 0 < i → i ≤ head - 1 → ∃ (h : i < tp.length),
+      tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target :=
+    fun i hi hile => h_cells i hi (by omega)
+  have h_run2 : runFlatTM ((head - 1) + 1) (scanLeftUntilTM sig target)
+      { state_idx := 0, tapes := [(left, head - 1, tp)] }
+        = some { state_idx := 1, tapes := [(left, 0, tp)] } :=
+    scanLeft_run sig target left tp h0 h_target0 (head - 1) h_head1_lt hb
+  have h_run2' : runFlatTM head (scanLeftUntilTM sig target)
+      { state_idx := (scanLeftUntilTM sig target).start, tapes := [(left, head - 1, tp)] }
+        = some { state_idx := 1, tapes := [(left, 0, tp)] } := by
+    rw [show (scanLeftUntilTM sig target).start = 0 from rfl,
+        show head = (head - 1) + 1 from by omega]
+    exact h_run2
+  have h_halt2 : haltingStateReached (scanLeftUntilTM sig target)
+      { state_idx := 1, tapes := [(left, 0, tp)] } = true := rfl
+  have h_sym_bound := rewind_seam_sym_lt sig target tp head h_target h0 h_target0
+    h_head_pos h_head_lt h_cells
+  have hcomp := composeFlatTM_run
+    (stepLeftTM_valid sig) (scanLeftUntilTM_valid sig target h_target)
+    (show (1 : Nat) < 2 from by decide)
+    { state_idx := 0, tapes := [(left, head, tp)] }
+    (show (0 : Nat) < 2 from by decide)
+    left (head - 1) tp h_sym_bound h_run1 h_traj1 h_run2' h_halt2
+  -- The composite halts at state `1 + 2 = 3` with head `0`.
+  have : runFlatTM (1 + 1 + head) (rewindFromEndTM sig target)
+      { state_idx := 0, tapes := [(left, head, tp)] }
+        = some { state_idx := 1 + (stepLeftTM sig).states, tapes := [(left, 0, tp)] } :=
+    hcomp.1
+  rw [this]; rfl
+
+/-- **Rewind-from-end trajectory.** Before completing (`k < head + 2`),
+`rewindFromEndTM` has not yet reached a halting state. The `h_traj1`/`h_traj2`
+shape needed when bracketing a gadget with the rewind. -/
+theorem rewindFromEndTM_no_early_halt (sig target : Nat) (h_target : target < sig)
+    (left tp : List Nat) (head : Nat)
+    (h0 : 0 < tp.length) (h_target0 : tp.get ⟨0, h0⟩ = target)
+    (h_head_pos : 0 < head) (h_head_lt : head < tp.length)
+    (h_start_lt : tp.get ⟨head, h_head_lt⟩ < sig)
+    (h_cells : ∀ i, 0 < i → i < head → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target) :
+    ∀ k, k < 1 + 1 + head → ∀ ck,
+      runFlatTM k (rewindFromEndTM sig target)
+          { state_idx := 0, tapes := [(left, head, tp)] } = some ck →
+      haltingStateReached (rewindFromEndTM sig target) ck = false := by
+  have h_run1 : runFlatTM 1 (stepLeftTM sig)
+      { state_idx := 0, tapes := [(left, head, tp)] }
+        = some { state_idx := 1, tapes := [(left, head - 1, tp)] } :=
+    stepLeftTM_run sig left tp head h_head_lt h_start_lt
+  have h_traj1 : ∀ k, k < 1 → ∀ ck,
+      runFlatTM k (stepLeftTM sig)
+          { state_idx := 0, tapes := [(left, head, tp)] } = some ck →
+      ck.state_idx ≠ 1 ∧ haltingStateReached (stepLeftTM sig) ck = false := by
+    intro k hk ck hck
+    interval_cases k
+    · obtain rfl : ck = { state_idx := 0, tapes := [(left, head, tp)] } :=
+        (Option.some.inj hck).symm
+      exact ⟨Nat.zero_ne_one, rfl⟩
+  have h_head1_lt : head - 1 < tp.length := by omega
+  have hb : ∀ i, 0 < i → i ≤ head - 1 → ∃ (h : i < tp.length),
+      tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target :=
+    fun i hi hile => h_cells i hi (by omega)
+  have h_traj2 : ∀ k, k < head → ∀ ck,
+      runFlatTM k (scanLeftUntilTM sig target)
+          { state_idx := (scanLeftUntilTM sig target).start,
+            tapes := [(left, head - 1, tp)] } = some ck →
+      haltingStateReached (scanLeftUntilTM sig target) ck = false := by
+    intro k hk ck hck
+    rw [show (scanLeftUntilTM sig target).start = 0 from rfl] at hck
+    have hk' : k < (head - 1) + 1 := by omega
+    exact (scanLeft_no_early_halt sig target left tp (head - 1) h_head1_lt hb k hk' ck hck).2
+  have h_sym_bound := rewind_seam_sym_lt sig target tp head h_target h0 h_target0
+    h_head_pos h_head_lt h_cells
+  exact composeFlatTM_no_early_halt
+    (stepLeftTM_valid sig) (scanLeftUntilTM_valid sig target h_target)
+    (show (1 : Nat) < 2 from by decide)
+    { state_idx := 0, tapes := [(left, head, tp)] }
+    (show (0 : Nat) < 2 from by decide)
+    left (head - 1) tp h_sym_bound h_run1 h_traj1 h_traj2
+
 end Complexity.Lang.ScanLeft
