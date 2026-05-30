@@ -1214,6 +1214,48 @@ private theorem Compile.decodeTape_encodeTape' (q hd : Nat) (t : State)
     Compile.decodeTape { state_idx := q, tapes := [([], hd, Compile.encodeTape t)] } = t :=
   Compile.decodeTape_encodeTape t h
 
+/-! ### Structure of `encodeTape` (for the rewind side-conditions, step 1b-2)
+
+The `appendAt_rewind_run` bracket needs three facts about the gadget's *exit*
+tape (which is `encodeTape output`): its cell `0` is the leading sentinel `3`,
+every cell is `< 4`, and the interior (everything but the trailing terminator)
+is sentinel-free. -/
+
+/-- Cell `0` of any `encodeTape` is the leading sentinel `endMark = 3`. -/
+theorem Compile.encodeTape_get_zero (t : State)
+    (h : 0 < (Compile.encodeTape t).length) :
+    (Compile.encodeTape t).get ⟨0, h⟩ = 3 := rfl
+
+/-- Every symbol of `encodeTape t` is `< 4` for a bit-shaped `t`. -/
+theorem Compile.encodeTape_lt_four (t : State) (h : Compile.BitState t) :
+    ∀ x ∈ Compile.encodeTape t, x < 4 := by
+  intro x hx
+  rw [Compile.encodeTape, List.mem_cons, List.mem_append, List.mem_singleton] at hx
+  rcases hx with hx | hx | hx
+  · subst hx; decide
+  · exact Compile.encodeRegs_lt_four t h x hx
+  · subst hx; decide
+
+/-- Every interior cell of `encodeTape t` (i.e. every cell *except* the trailing
+terminator) is `≠ endMark = 3`: cell `0` is the leading sentinel `3` but cell
+`i ≥ 1` with `i + 1 < length` lands inside `encodeRegs t`, which is
+sentinel-free. The leading sentinel at `0` is the rewind *target*, so the
+interior-non-sentinel claim is restricted to `0 < i`. -/
+theorem Compile.encodeTape_interior_ne_endMark (t : State) (h : Compile.BitState t) :
+    ∀ i, 0 < i → i + 1 < (Compile.encodeTape t).length →
+      ∃ (hi : i < (Compile.encodeTape t).length),
+        (Compile.encodeTape t).get ⟨i, hi⟩ ≠ 3 := by
+  intro i hi_pos hi_lt
+  refine ⟨by omega, ?_⟩
+  obtain ⟨j, rfl⟩ : ∃ j, i = j + 1 := ⟨i - 1, by omega⟩
+  -- encodeTape t = 3 :: (encodeRegs t ++ [3]); cell j+1 = (encodeRegs t ++ [3])[j].
+  have hlen : (Compile.encodeTape t).length = (Compile.encodeRegs t).length + 2 := by
+    rw [Compile.encodeTape]; simp [List.length_append]
+  have hj : j < (Compile.encodeRegs t).length := by omega
+  simp only [List.get_eq_getElem, Compile.encodeTape, List.getElem_cons_succ]
+  rw [List.getElem_append_left hj]
+  exact Compile.encodeRegs_no_endMark t h _ (List.getElem_mem hj)
+
 /-! ### Per-op soundness for `appendOne`/`appendZero` (general `dst`, LINEAR budget)
 
 The two append ops are the only `compileOp`s with real TM bodies. The lemma
@@ -1399,6 +1441,196 @@ theorem compileOp_appendZero_sound (s : State) (dst : Var)
       haltingStateReached (compileOp (Op.appendZero dst)).M cfg = true ∧
       Compile.decodeTape cfg = Op.eval (Op.appendZero dst) s :=
   Compile.appendBit_sound 0 (by omega) s dst hbit hdst
+
+/-- **Per-fragment physical contract for the append op (Risk C2, step 1b-2).**
+The bracketed machine `appendAtThenRewindTM (bit+1) dst` run on `encodeTape s`
+halts at the composite exit `3 + appendAtTM.states` with the **head rewound to
+`0`** and the tape exactly `encodeTape (output)` — never halting earlier — in a
+**linear** number of steps `≤ 3·(encodeTape s).length + 6`. This is the
+`encodeTape`-level instance of `AppendGadget.appendAt_rewind_run`, and the form
+`compileSeq_compose_physical` consumes when composing fragments (head `0` makes
+the exit config equal `initFlatConfig` of the next fragment). The three rewind
+side-conditions are discharged from the `encodeTape` structure. -/
+theorem Compile.appendBit_physical (bit : Nat) (hb : bit ≤ 1)
+    (s : State) (dst : Var) (hbit : Compile.BitState s) (hdst : dst < s.length) :
+    ∃ t : Nat,
+      runFlatTM t (AppendGadget.appendAtThenRewindTM (bit + 1) dst)
+          (initFlatConfig (AppendGadget.appendAtThenRewindTM (bit + 1) dst)
+            [Compile.encodeTape s])
+        = some { state_idx := 3 + (AppendGadget.appendAtTM (bit + 1) dst).states,
+                 tapes := [([], 0,
+                   Compile.encodeTape (s.set dst (s.get dst ++ [bit])))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (AppendGadget.appendAtThenRewindTM (bit + 1) dst)
+              (initFlatConfig (AppendGadget.appendAtThenRewindTM (bit + 1) dst)
+                [Compile.encodeTape s]) = some ck →
+          haltingStateReached (AppendGadget.appendAtThenRewindTM (bit + 1) dst) ck = false)
+      ∧ t ≤ 3 * (Compile.encodeTape s).length + 6 := by
+  have h_ins : bit + 1 < 4 := by omega
+  set post : List Nat := Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark] with hpost
+  set skipped : List (List Nat) := (s.take dst).map Compile.shiftReg with hskip
+  set body : List Nat := Compile.shiftReg (s.get dst) with hbody
+  have hget_mem : s.get dst ∈ s := by
+    rw [State.get, List.getElem?_eq_getElem hdst]; exact List.getElem_mem hdst
+  have hshift_lt : ∀ (r : List Nat), (∀ x ∈ r, x ≤ 1) → ∀ x ∈ Compile.shiftReg r, x < 4 := by
+    intro r hr x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, hy, rfl⟩ := hx
+    have := hr y hy; omega
+  have hshift_ne : ∀ (r : List Nat), ∀ x ∈ Compile.shiftReg r, x ≠ 0 := by
+    intro r x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, _, rfl⟩ := hx; omega
+  have hlen : skipped.length = dst := by
+    rw [hskip, List.length_map, List.length_take, Nat.min_eq_left (le_of_lt hdst)]
+  have h_pre : ∀ x ∈ ([] : List Nat), x < 4 := by intro x hx; cases hx
+  have h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4) := by
+    intro b hbm
+    rw [hskip, List.mem_map] at hbm
+    obtain ⟨r, hr, rfl⟩ := hbm
+    exact ⟨hshift_ne r, hshift_lt r (fun x hx => hbit r (List.mem_of_mem_take hr) x hx)⟩
+  have hbody_ne : ∀ x ∈ body, x ≠ 0 := by rw [hbody]; exact hshift_ne _
+  have hbody_lt : ∀ x ∈ body, x < 4 := by
+    rw [hbody]; exact hshift_lt _ (fun x hx => hbit _ hget_mem x hx)
+  have hpost_lt : ∀ x ∈ post, x < 4 := by
+    rw [hpost]; intro x hx
+    rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeRegs_lt_four _
+        (fun b hbm y hy => hbit b (List.mem_of_mem_drop hbm) y hy) x hx
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
+  have key : ∃ (sk : List (List Nat)) (bd : List Nat),
+      sk.length = dst ∧
+      (∀ b ∈ sk, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) ∧
+      (∀ x ∈ bd, x ≠ 0) ∧ (∀ x ∈ bd, x < 4) ∧
+      AppendGadget.regBlocks sk ++ bd
+        = Compile.endMark :: (AppendGadget.regBlocks skipped ++ body) := by
+    cases hsk : skipped with
+    | nil =>
+        refine ⟨[], Compile.endMark :: body, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [← hlen, hsk]
+        · intro b hb; cases hb
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_ne x h
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_lt x h
+        · simp [AppendGadget.regBlocks_nil]
+    | cons hd tl =>
+        refine ⟨(Compile.endMark :: hd) :: tl, body, ?_, ?_, hbody_ne, hbody_lt, ?_⟩
+        · rw [hsk] at hlen; simpa using hlen
+        · intro b hb
+          rcases List.mem_cons.mp hb with h | h
+          · subst h
+            refine ⟨?_, ?_⟩
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).1 x h0
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).2 x h0
+          · exact h_skip b (by rw [hsk]; exact List.mem_cons_of_mem _ h)
+        · simp [AppendGadget.regBlocks_cons]
+  obtain ⟨sk, bd, hlen_sk, h_skip_sk, hbd_ne, hbd_lt, hsfold⟩ := key
+  have hsplit0 : AppendGadget.regBlocks skipped ++ body ++ 0 :: post
+      = Compile.encodeRegs s ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost]; exact Compile.encodeTape_split s dst hdst
+  have hsplit : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post
+      = Compile.encodeTape s := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, List.cons_append, hsplit0]
+  have htape0 : AppendGadget.regBlocks skipped ++ body ++ (bit + 1) :: 0 :: post
+      = Compile.encodeRegs (s.set dst (s.get dst ++ [bit])) ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost, Compile.regBlocks_map_shiftReg]
+    rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop s dst _ hdst,
+        Compile.encodeRegs_append, Compile.encodeRegs_cons, Compile.shiftReg_append]
+    simp [List.append_assoc]
+  have htape : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post
+      = Compile.encodeTape (s.set dst (s.get dst ++ [bit])) := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, List.cons_append, htape0]
+  set output : State := s.set dst (s.get dst ++ [bit]) with houtput
+  have hbit_out : Compile.BitState output :=
+    Compile.BitState_appendBit bit hb s dst hbit hdst
+  -- `htape : LT = encodeTape output`, where `LT` is the gadget's exit tape.
+  -- Head/length relations (`HD = L`, `|encodeTape output| = HD + 1`).
+  have hHD_L : ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+        + (0 :: post).length = (Compile.encodeTape s).length := by
+    rw [← hsplit]; simp only [List.length_append, List.length_cons, List.length_nil]
+  have hEO_HD : (Compile.encodeTape output).length
+      = ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+        + (0 :: post).length + 1 := by
+    rw [← htape]; simp only [List.length_append, List.length_cons, List.length_nil]; omega
+  -- `get`-equality across `htape` (no dependent rewrite: route through `getElem?`).
+  have hget_eq : ∀ (i : Nat)
+      (h : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post).length)
+      (h' : i < (Compile.encodeTape output).length),
+      (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post).get ⟨i, h⟩
+        = (Compile.encodeTape output).get ⟨i, h'⟩ := by
+    intro i h h'
+    rw [List.get_eq_getElem, List.get_eq_getElem]
+    have hopt := congrArg (fun l => l[i]?) htape
+    simp only at hopt
+    rw [List.getElem?_eq_getElem h, List.getElem?_eq_getElem h'] at hopt
+    exact Option.some.inj hopt
+  -- The three rewind side-conditions, from the `encodeTape output` structure.
+  have h_tp_lt : ∀ x ∈ ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+      ++ (bit + 1) :: 0 :: post, x < 4 := by
+    intro x hx; rw [htape] at hx; exact Compile.encodeTape_lt_four output hbit_out x hx
+  have h_t0 : ∀ (h : 0 < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post).length),
+      (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post).get ⟨0, h⟩
+        = 3 := by
+    intro h
+    have h' : 0 < (Compile.encodeTape output).length := by rw [← htape]; exact h
+    rw [hget_eq 0 h h']; exact Compile.encodeTape_get_zero output h'
+  have h_interior_ne : ∀ i, 0 < i →
+      i < ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+        + (0 :: post).length →
+      ∃ (h : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+          ++ (bit + 1) :: 0 :: post).length),
+        (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post).get ⟨i, h⟩
+          ≠ 3 := by
+    intro i hi hilt
+    have hi1 : i + 1 < (Compile.encodeTape output).length := by rw [hEO_HD]; omega
+    obtain ⟨hEO, hne⟩ := Compile.encodeTape_interior_ne_endMark output hbit_out i hi hi1
+    have hlt : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post).length := by rw [htape]; exact hEO
+    exact ⟨hlt, by rw [hget_eq i hlt hEO]; exact hne⟩
+  -- The bracketed run and trajectory (over the *folded* blocks `sk`/`bd`).
+  have hrun := AppendGadget.appendAt_rewind_run (bit + 1) h_ins dst [] sk bd post
+    hlen_sk h_pre h_skip_sk hbd_ne hbd_lt hpost_lt h_tp_lt h_t0 h_interior_ne
+  have htraj := AppendGadget.appendAt_rewind_no_early_halt (bit + 1) h_ins dst [] sk bd post
+    hlen_sk h_pre h_skip_sk hbd_ne hbd_lt hpost_lt h_tp_lt h_t0 h_interior_ne
+  -- Rewrite the gadget's count (`HD → L`), start tape (`→ encodeTape s`) and exit
+  -- tape (`→ encodeTape output`) into the contract's canonical form.
+  rw [hHD_L, hsplit, htape] at hrun
+  rw [hHD_L, hsplit] at htraj
+  -- The start config = initFlatConfig on `encodeTape s`.
+  have hstart0 : (AppendGadget.appendAtThenRewindTM (bit + 1) dst).start = 0 := by
+    show (composeFlatTM (AppendGadget.appendAtTM (bit + 1) dst) _ _).start = 0
+    rw [composeFlatTM_start, AppendGadget.appendAtTM_start]
+  have hinit : initFlatConfig (AppendGadget.appendAtThenRewindTM (bit + 1) dst)
+        [Compile.encodeTape s]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := by
+    simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
+  refine ⟨AppendGadget.appendAt_steps sk bd post + 1
+      + (1 + 1 + (Compile.encodeTape s).length), ?_, ?_, ?_⟩
+  · rw [hinit]; exact hrun.1
+  · intro k hk ck hck
+    rw [hinit] at hck
+    exact htraj k hk ck hck
+  · -- budget: appendAt_steps + 1 + (1 + 1 + L) ≤ 3·L + 6, via `appendAt_steps_le`.
+    have hstep_le : AppendGadget.appendAt_steps sk bd post
+        ≤ 2 * (Compile.encodeTape s).length + 3 := by
+      have hb' := AppendGadget.appendAt_steps_le sk bd post
+      have hL : (AppendGadget.regBlocks sk ++ bd ++ 0 :: post).length
+          = (Compile.encodeTape s).length := by rw [← hsplit]; simp
+      rw [hL] at hb'; exact hb'
+    omega
 
 /-! ### ⚠ C2 budget-shape finding — the per-fragment `overhead` budgets are
 **too loose to compose** (do not try to prove the four `compile*_sound` lemmas
