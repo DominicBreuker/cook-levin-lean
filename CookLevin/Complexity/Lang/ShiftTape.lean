@@ -248,4 +248,101 @@ theorem insertCarryTM_run (ins : Nat) (suf pre : List Nat)
       simp; omega
     rw [hlen, show (pre ++ [ins]) ++ y :: suf' = pre ++ ins :: y :: suf' by simp]
 
+/-- **Carry-phase no-early-halt trajectory.** During the first `suf.length + 1`
+steps of the carry loop (starting from state `1 + v`), the machine never enters
+the halting state `5`. Mirrors `insertCarryTM_carry_run`'s induction. -/
+theorem insertCarryTM_carry_no_early_halt (ins : Nat) (suf : List Nat) :
+    ∀ (pre : List Nat) (v : Nat), v < 4 → (∀ x ∈ suf, x < 4) →
+      ∀ k, k < suf.length + 1 → ∀ ck,
+        runFlatTM k (insertCarryTM ins)
+            { state_idx := 1 + v, tapes := [([], pre.length, pre ++ suf)] } = some ck →
+        haltingStateReached (insertCarryTM ins) ck = false := by
+  induction suf with
+  | nil =>
+    intro pre v hv _ k hk ck hck
+    simp only [List.length_nil] at hk
+    have hk0 : k = 0 := by omega
+    subst hk0
+    have : ck = { state_idx := 1 + v, tapes := [([], pre.length, pre ++ [])] } :=
+      (Option.some.inj hck).symm
+    subst this
+    exact not_halt_lt5 ins (1 + v) (by omega) _ rfl
+  | cons y suf' ih =>
+    intro pre v hv hall k hk ck hck
+    have hy : y < 4 := hall y (by simp)
+    have hall' : ∀ x ∈ suf', x < 4 := fun x hx => hall x (by simp [hx])
+    cases k with
+    | zero =>
+      have : ck = { state_idx := 1 + v, tapes := [([], pre.length, pre ++ y :: suf')] } :=
+        (Option.some.inj hck).symm
+      subst this
+      exact not_halt_lt5 ins (1 + v) (by omega) _ rfl
+    | succ n =>
+      simp only [List.length_cons] at hk
+      have hn_lt : n < suf'.length + 1 := by omega
+      have hlt : pre.length < (pre ++ y :: suf').length := by simp
+      have hget : (pre ++ y :: suf').get ⟨pre.length, hlt⟩ = y := by
+        simp [List.getElem_append_right]
+      have ho : owed ins (1 + v) = v := by simp [owed]
+      have hd : (pre ++ y :: suf').drop (pre.length + 1) = suf' := by
+        rw [show pre.length + 1 = (pre ++ [y]).length by simp,
+            show pre ++ y :: suf' = (pre ++ [y]) ++ suf' by simp, List.drop_left]
+      have hstep := insertCarryTM_step_nonblank ins (1 + v) y (by omega) hy []
+        (pre ++ y :: suf') pre.length hlt hget
+      rw [ho, List.take_left, hd] at hstep
+      rw [run_succ_of_step _ _ _ n
+          (not_halt_lt5 ins (1 + v) (by omega) _ rfl) hstep] at hck
+      rw [show pre.length + 1 = (pre ++ [v]).length by simp,
+          show pre ++ v :: suf' = (pre ++ [v]) ++ suf' by simp] at hck
+      exact ih (pre ++ [v]) y hy hall' n hn_lt ck hck
+
+/-- **`insertCarryTM` no-early-halt trajectory.** For `k < suf.length + 1`,
+the insert-carry machine has not yet halted. This is the `h_traj2` input
+needed by `composeFlatTM_no_early_halt` when `insertCarryTM` sits in the M₂
+slot (base case of the `appendAtTM` trajectory assembler). -/
+theorem insertCarryTM_no_early_halt (ins : Nat) (suf pre : List Nat)
+    (hall : ∀ x ∈ suf, x < 4) :
+    ∀ k, k < suf.length + 1 → ∀ ck,
+      runFlatTM k (insertCarryTM ins)
+          { state_idx := 0, tapes := [([], pre.length, pre ++ suf)] } = some ck →
+      haltingStateReached (insertCarryTM ins) ck = false := by
+  cases suf with
+  | nil =>
+    intro k hk ck hck
+    simp only [List.length_nil] at hk
+    have hk0 : k = 0 := by omega
+    subst hk0
+    have : ck = { state_idx := 0, tapes := [([], pre.length, pre ++ [])] } :=
+      (Option.some.inj hck).symm
+    subst this
+    exact not_halt_lt5 ins 0 (by omega) _ rfl
+  | cons y suf' =>
+    intro k hk ck hck
+    have hy : y < 4 := hall y (by simp)
+    have hall' : ∀ x ∈ suf', x < 4 := fun x hx => hall x (by simp [hx])
+    cases k with
+    | zero =>
+      have : ck = { state_idx := 0, tapes := [([], pre.length, pre ++ y :: suf')] } :=
+        (Option.some.inj hck).symm
+      subst this
+      exact not_halt_lt5 ins 0 (by omega) _ rfl
+    | succ n =>
+      simp only [List.length_cons] at hk
+      have hn_lt : n < suf'.length + 1 := by omega
+      have hlt : pre.length < (pre ++ y :: suf').length := by simp
+      have hget : (pre ++ y :: suf').get ⟨pre.length, hlt⟩ = y := by
+        simp [List.getElem_append_right]
+      have ho : owed ins 0 = ins := by simp [owed]
+      have hd : (pre ++ y :: suf').drop (pre.length + 1) = suf' := by
+        rw [show pre.length + 1 = (pre ++ [y]).length by simp,
+            show pre ++ y :: suf' = (pre ++ [y]) ++ suf' by simp, List.drop_left]
+      have hstep := insertCarryTM_step_nonblank ins 0 y (by omega) hy []
+        (pre ++ y :: suf') pre.length hlt hget
+      rw [ho, List.take_left, hd] at hstep
+      rw [run_succ_of_step _ _ _ n
+          (not_halt_lt5 ins 0 (by omega) _ rfl) hstep] at hck
+      rw [show pre.length + 1 = (pre ++ [ins]).length by simp,
+          show pre ++ ins :: suf' = (pre ++ [ins]) ++ suf' by simp] at hck
+      exact insertCarryTM_carry_no_early_halt ins suf' (pre ++ [ins]) y hy hall' n hn_lt ck hck
+
 end Complexity.Lang.ShiftTape

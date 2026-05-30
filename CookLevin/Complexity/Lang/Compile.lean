@@ -1317,9 +1317,12 @@ private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
         · simp [AppendGadget.regBlocks_cons]
   obtain ⟨sk, bd, hlen_sk, h_skip_sk, hbd_ne, hbd_lt, hsfold⟩ := key
   -- The gadget run lemma, with its explicit step count, on the folded blocks.
-  obtain ⟨st', hd', hrun, hhalt⟩ :=
+  obtain ⟨st', hrun, hhalt⟩ :=
     AppendGadget.appendAt_run_steps (bit + 1) h_ins dst [] sk bd post hlen_sk
       h_pre h_skip_sk hbd_ne hbd_lt hpost_lt
+  -- Name the explicit exit head for convenience.
+  set hd' : Nat := [].length + (AppendGadget.regBlocks sk).length + bd.length
+      + (0 :: post).length with hd'_def
   -- The sentinel-free split: `regBlocks skipped ++ body ++ 0 :: post` is the
   -- registers part of `encodeTape s` (= `encodeRegs s ++ [endMark]`).
   have hsplit0 : AppendGadget.regBlocks skipped ++ body ++ 0 :: post

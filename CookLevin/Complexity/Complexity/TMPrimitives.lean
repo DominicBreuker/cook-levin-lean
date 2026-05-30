@@ -1158,7 +1158,7 @@ private theorem composeFlatTM_state_lt_of_M1_phase
           show ck.state_idx < M₁.states
           have : ck = c' := (Option.some.inj hck).symm
           subst this
-          exact state_idx_lt_states_of_step M₁ h_validM1 cn c' hsc
+          exact state_idx_lt_states_of_step M₁ h_validM1 cn ck hsc
 
 /-- **No-early-halt trajectory of `composeFlatTM`.** Same hypotheses as
 `composeFlatTM_run`: from `M₁`'s run-to-`exit` + trajectory and `M₂`'s run-to-
@@ -1214,29 +1214,34 @@ theorem composeFlatTM_no_early_halt
     have h_phase12 :
         runFlatTM (t₁ + 1) (composeFlatTM M₁ M₂ exit) cfg0 =
           some { state_idx := M₁.states + M₂.start, tapes := [(left₁, head₁, right₁)] } := by
-      apply runFlatTM_extend_by_step _ t₁ cfg0 _ h_run1' ?_ h_bridge
+      apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1' ?_ h_bridge
       exact composeFlatTM_haltingStateReached_M1 M₁ M₂ exit _ h_exit_lt
     -- runFlatTM ((t₁+1)+j) composite cfg0 = runFlatTM j composite (shifted start).
     rw [runFlatTM_compose _ (t₁ + 1) j cfg0 _ h_phase12] at hck
-    -- shifted start = { state_idx := M₂.start + M₁.states, tapes } via add comm.
-    set cfg2_start : FlatTMConfig := { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
+    -- Phase 3: lift M₂'s run.
+    set cfg2_start : FlatTMConfig :=
+      { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
     have h_M2_start_lt : M₂.start < M₂.states := h_validM2.1
     have h_phase_j :=
       runFlatTM_composeFlatTM_M2_phase M₁ M₂ exit h_validM1 h_validM2 h_exit_lt j cfg2_start
         h_M2_start_lt
-    have h_swap : ({ state_idx := M₁.states + M₂.start,
-        tapes := [(left₁, head₁, right₁)] } : FlatTMConfig)
-        = { state_idx := cfg2_start.state_idx + M₁.states, tapes := cfg2_start.tapes } := by
-      show _ = { state_idx := M₂.start + M₁.states, tapes := [(left₁, head₁, right₁)] }
-      rw [Nat.add_comm]
-    rw [h_swap, h_phase_j] at hck
+    -- Rewrite: M₁.states + M₂.start ↔ M₂.start + M₁.states.
+    have h_state_swap : M₂.start + M₁.states = M₁.states + M₂.start := Nat.add_comm _ _
+    have h_cfg_eq :
+        ({ state_idx := M₂.start + M₁.states,
+           tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) =
+        { state_idx := M₁.states + M₂.start,
+          tapes := [(left₁, head₁, right₁)] } := by
+      rw [h_state_swap]
+    rw [← h_cfg_eq, h_phase_j] at hck
     -- hck : (runFlatTM j M₂ cfg2_start).map (shift) = some ck.
     cases hjm : runFlatTM j M₂ cfg2_start with
     | none => rw [hjm] at hck; simp at hck
     | some cj =>
         rw [hjm] at hck
-        simp only [Option.map_some'] at hck
-        have hck_eq : ck = { state_idx := cj.state_idx + M₁.states, tapes := cj.tapes } :=
+        simp only [Option.map_some] at hck
+        have hck_eq : ck =
+            { state_idx := cj.state_idx + M₁.states, tapes := cj.tapes } :=
           (Option.some.inj hck).symm
         have hcj_nothalt : haltingStateReached M₂ cj = false := h_traj2 j hj_lt cj hjm
         rw [hck_eq]
