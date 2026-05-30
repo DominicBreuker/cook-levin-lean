@@ -238,12 +238,25 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
       first marker-free block (so the append op still runs from head `0`, no
       head-bridge); `bitTestTM` reworked to step past the sentinel then read;
       `bitDecider_run` budget `+2→+3`; framework `DecidesBy.encode_size` loosened
-      `2·size+3→2·size+4`. `lake build` green (3356), axiom-clean. **Next (1b-1):**
-      bracket each gadget with a *tail rewind* to head `0` (scanLeft to the
-      leading `3`) → per-fragment physical contract → assemble. ⚠ The canonical
-      tape has *two* `3`s (leading + trailing `endMark`), so use the
-      head-relative `scanLeft_run` (not the over-strong `rewindToStart_run`
-      wrapper). See HANDOFF "Recommended next step" (1b-1 … 1d).
+      `2·size+3→2·size+4`. `lake build` green (3356), axiom-clean.
+
+      **2026-05-30 — rewind finding + per-op physical contract (1b-2 DONE for the
+      append op).** ⚠ The gadget exits with its head **on the trailing
+      terminator** (`endMark = 3`, the *last* tape cell — `insertCarryTM_run`
+      ends there), **not** "left of" it. Verified by `#eval`. So a bare
+      `scanLeftUntilTM 4 3`/`rewindToStart_run` started there **halts immediately**
+      (reads its target on the first cell) and never rewinds. Fix shipped (all
+      sorry-free, axiom-clean): `ScanLeft.rewindFromEndTM = composeFlatTM
+      stepLeftTM scanLeftUntilTM` (one unconditional `Lmove` off the terminator,
+      then scan left to the leading sentinel; `rewindFromEndTM_run`/
+      `_no_early_halt`); `AppendGadget.appendAtThenRewindTM` +
+      `appendAt_rewind_run`/`_no_early_halt` (gadget-level physical contract,
+      head→`0`); and `Compile.appendBit_physical` (the `encodeTape`-level
+      contract: head-`0` exit, tape = `encodeTape output`, trajectory, **linear**
+      budget `t ≤ 3·tapeLen + 6`) with reusable `encodeTape` structure lemmas
+      (`encodeTape_get_zero`/`_lt_four`/`_interior_ne_endMark`). **Next:** repeat
+      the pattern for the 10 stub ops (1c), then assemble (1b-3/1b-4/1d). See
+      HANDOFF "Latest session" + "Recommended next step".
    c. Concretise the 10 stub `compileOp`s from the gadget library (`opClear`,
       `opCopy`, `opTail`, `opHead`, `opEqBit`, `opNonEmpty`, and the four
       length-as-value ops), each with its **linear-budget** `compileOp_sound`.

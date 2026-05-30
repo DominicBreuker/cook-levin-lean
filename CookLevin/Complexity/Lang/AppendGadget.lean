@@ -369,12 +369,13 @@ is its delimiter plus the rest — the machine halts in **exactly**
 `appendAt_steps skipped body post` steps having inserted `ins` just before the
 target register's delimiter, leaving `pre ++ regBlocks skipped ++ body ++ ins
 :: 0 :: post`. The exit **head** is now explicit too —
-`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`,
-i.e. the head sits on the inserted symbol's old delimiter (interior of the tape,
-to the *left* of the trailing terminator) — so the tail rewind can be applied.
-Only the exit *state* stays existential here (it is pinned in
-`appendAt_run_exit`). The step count is explicit (the ingredient
-`compileOp_sound`'s tape-length budget needs). -/
+`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`.
+⚠ **Verified (2026-05-30): this head is the *last* tape cell** (i.e. *on* the
+trailing terminator, since `insertCarryTM_run` ends on the last cell), **not**
+"to the left of" it. So the tail rewind must be `ScanLeft.rewindFromEndTM` (step
+off the terminator first), not a bare `scanLeftUntilTM`. Only the exit *state*
+stays existential here (it is pinned in `appendAt_run_exit`). The step count is
+explicit (the ingredient `compileOp_sound`'s tape-length budget needs). -/
 theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
     ∀ (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat),
       skipped.length = dst →
@@ -537,8 +538,8 @@ reaches a *halting* state; since `appendAtTM ins dst`'s halt vector is unique
 (`appendAtTM_halt_unique`), that state is exactly `appendAtTM_exit dst`. The exit
 **head** is also explicit —
 `pre.length + (regBlocks skipped).length + body.length + (0 :: post).length` —
-sitting on the interior delimiter to the *left* of the trailing terminator, so
-the tail rewind (`ScanLeft.rewindToStart_run`) applies. This is the
+which is the *last* tape cell (on the trailing terminator), so the tail rewind
+must be `ScanLeft.rewindFromEndTM` (see `appendAt_rewind_run`). This is the
 explicit exit-configuration fact `composeFlatTM_run` needs when bracketing the
 gadget with a tail rewind. -/
 theorem appendAt_run_exit (ins : Nat) (h_ins : ins < 4)
