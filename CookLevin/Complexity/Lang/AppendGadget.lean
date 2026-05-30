@@ -359,16 +359,20 @@ def appendAt_steps : List (List Nat) → List Nat → List Nat → Nat
   | [],      body, post => body.length + 1 + 1 + ((0 :: post).length + 1)
   | b :: s', body, post => (b.length + 1) + 1 + appendAt_steps s' body post
 
-/-- **Append-at-register run lemma, with explicit step count.** For the
-machine `appendAtTM ins dst`, on the encoded tape `pre ++ regBlocks skipped ++
-body ++ 0 :: post` — where `skipped` are the `dst` registers preceding the
-target, `body` is the target register's (shifted) contents, and `0 :: post`
+/-- **Append-at-register run lemma, with explicit step count and exit head.**
+For the machine `appendAtTM ins dst`, on the encoded tape `pre ++ regBlocks
+skipped ++ body ++ 0 :: post` — where `skipped` are the `dst` registers preceding
+the target, `body` is the target register's (shifted) contents, and `0 :: post`
 is its delimiter plus the rest — the machine halts in **exactly**
 `appendAt_steps skipped body post` steps having inserted `ins` just before the
 target register's delimiter, leaving `pre ++ regBlocks skipped ++ body ++ ins
-:: 0 :: post`. The exit state and final head are immaterial to the tape
-transformation, so they stay existential; the step count is now explicit (the
-ingredient `compileOp_sound`'s tape-length budget needs). -/
+:: 0 :: post`. The exit **head** is now explicit too —
+`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`,
+i.e. the head sits on the inserted symbol's old delimiter (interior of the tape,
+to the *left* of the trailing terminator) — so the tail rewind can be applied.
+Only the exit *state* stays existential here (it is pinned in
+`appendAt_run_exit`). The step count is explicit (the ingredient
+`compileOp_sound`'s tape-length budget needs). -/
 theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
     ∀ (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat),
       skipped.length = dst →
@@ -376,24 +380,28 @@ theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
       (∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) →
       (∀ x ∈ body, x ≠ 0) → (∀ x ∈ body, x < 4) →
       (∀ x ∈ post, x < 4) →
-      ∃ (state' head' : Nat),
+      ∃ (state' : Nat),
         runFlatTM (appendAt_steps skipped body post) (appendAtTM ins dst)
             { state_idx := 0,
               tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
           = some { state_idx := state',
-                   tapes := [([], head',
+                   tapes := [([],
+                     pre.length + (regBlocks skipped).length + body.length
+                       + (0 :: post).length,
                      pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] }
         ∧ haltingStateReached (appendAtTM ins dst)
             { state_idx := state',
-              tapes := [([], head',
+              tapes := [([],
+                pre.length + (regBlocks skipped).length + body.length
+                  + (0 :: post).length,
                 pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } = true
   | 0, pre, skipped, body, post, hlen, _, _, h_no_zero, h_body_lt, h_post_lt => by
       cases skipped with
       | cons _ _ => simp at hlen
       | nil =>
         have h := scanInsert_run ins h_ins pre body post h_no_zero h_body_lt h_post_lt
-        simp only [regBlocks_nil, List.append_nil]
-        exact ⟨_, _, h.1, h.2⟩
+        simp only [regBlocks_nil, List.append_nil, List.length_nil, Nat.add_zero]
+        exact ⟨_, h.1, h.2⟩
   | d + 1, pre, skipped, body, post, hlen, h_pre_lt, h_skip, h_no_zero, h_body_lt, h_post_lt => by
       cases skipped with
       | nil => simp at hlen
@@ -409,9 +417,17 @@ theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
           · exact h_pre_lt x hp
           · exact hb.2 x hbb
           · subst h0; decide
-        obtain ⟨state_d, head_d, hrun_d, hhalt_d⟩ :=
+        obtain ⟨state_d, hrun_d, hhalt_d⟩ :=
           appendAt_run_steps ins h_ins d (pre ++ b ++ [0]) s' body post hlen' h_pre'_lt hs'
             h_no_zero h_body_lt h_post_lt
+        -- The recursive exit head, made explicit, equals the goal's exit head.
+        set head_d : Nat := (pre ++ b ++ [0]).length + (regBlocks s').length + body.length
+          + (0 :: post).length with hhead_d
+        have hhead_eq : head_d = pre.length + (regBlocks (b :: s')).length + body.length
+            + (0 :: post).length := by
+          rw [hhead_d, regBlocks_cons]
+          simp only [List.length_append, List.length_cons, List.length_nil]
+          omega
         -- Canonical tape form (peel register `b` to the left).
         have hcanon0 :
             pre ++ regBlocks (b :: s') ++ body ++ 0 :: post
@@ -487,7 +503,8 @@ theorem appendAt_run_steps (ins : Nat) (h_ins : ins < 4) :
           (show (0 : Nat) < 3 from by decide)
           [] (pre.length + b.length + 1) (pre ++ b ++ 0 :: (regBlocks s' ++ body ++ 0 :: post))
           h_sym_bound h_run1 h_traj1 h_run2 hhalt_d
-        exact ⟨_, _, hcomp.1, hcomp.2⟩
+        rw [← hhead_eq]
+        exact ⟨_, hcomp.1, hcomp.2⟩
 
 /-- The original existential-step form, recovered from `appendAt_run_steps`. -/
 theorem appendAt_run (ins : Nat) (h_ins : ins < 4)
@@ -508,19 +525,20 @@ theorem appendAt_run (ins : Nat) (h_ins : ins < 4)
           { state_idx := state',
             tapes := [([], head',
               pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } = true := by
-  obtain ⟨state', head', hrun, hhalt⟩ :=
+  obtain ⟨state', hrun, hhalt⟩ :=
     appendAt_run_steps ins h_ins dst pre skipped body post hlen h_pre h_skip
       h_no_zero h_body_lt h_post_lt
   exact ⟨_, _, _, hrun, hhalt⟩
 
-/-- **Exit state pinned (Risk C2, step 1b-1).** `appendAt_run_steps` reaches a
-*halting* state; since `appendAtTM ins dst`'s halt vector is unique
-(`appendAtTM_halt_unique`), that state is exactly `appendAtTM_exit dst`. This is
-the explicit exit-state fact `composeFlatTM_run` needs when bracketing the gadget
-with a tail rewind. (The exit head stays existential here — the rewind works from
-any interior head; the explicit head, when needed, is
-`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length`,
-read off `scanInsert_run` through the `dst` recursion.) -/
+/-- **Exit state and head pinned (Risk C2, step 1b-1).** `appendAt_run_steps`
+reaches a *halting* state; since `appendAtTM ins dst`'s halt vector is unique
+(`appendAtTM_halt_unique`), that state is exactly `appendAtTM_exit dst`. The exit
+**head** is also explicit —
+`pre.length + (regBlocks skipped).length + body.length + (0 :: post).length` —
+sitting on the interior delimiter to the *left* of the trailing terminator, so
+the tail rewind (`ScanLeft.rewindToStart_run`) applies. This is the
+explicit exit-configuration fact `composeFlatTM_run` needs when bracketing the
+gadget with a tail rewind. -/
 theorem appendAt_run_exit (ins : Nat) (h_ins : ins < 4)
     (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
     (hlen : skipped.length = dst)
@@ -528,14 +546,15 @@ theorem appendAt_run_exit (ins : Nat) (h_ins : ins < 4)
     (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
     (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
     (h_post_lt : ∀ x ∈ post, x < 4) :
-    ∃ head' : Nat,
-      runFlatTM (appendAt_steps skipped body post) (appendAtTM ins dst)
-          { state_idx := 0,
-            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
-        = some { state_idx := appendAtTM_exit dst,
-                 tapes := [([], head',
-                   pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } := by
-  obtain ⟨state', head', hrun, hhalt⟩ :=
+    runFlatTM (appendAt_steps skipped body post) (appendAtTM ins dst)
+        { state_idx := 0,
+          tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+      = some { state_idx := appendAtTM_exit dst,
+               tapes := [([],
+                 pre.length + (regBlocks skipped).length + body.length
+                   + (0 :: post).length,
+                 pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } := by
+  obtain ⟨state', hrun, hhalt⟩ :=
     appendAt_run_steps ins h_ins dst pre skipped body post hlen h_pre h_skip
       h_no_zero h_body_lt h_post_lt
   have hmem : (appendAtTM ins dst).halt[state']? = some true := by
@@ -546,7 +565,7 @@ theorem appendAt_run_exit (ins : Nat) (h_ins : ins < 4)
     · rw [hopt] at hg; simp only [Option.getD_some] at hg; exact congrArg some hg
   have hexit : state' = appendAtTM_exit dst := appendAtTM_halt_unique ins dst state' hmem
   subst hexit
-  exact ⟨head', hrun⟩
+  exact hrun
 
 /-- **Tape-length step bound.** `appendAt_steps` is at most `2 · (tape length)
 + 3` — linear in the encoded tape, hence below `Compile.overhead` of it. Each
