@@ -1069,6 +1069,186 @@ theorem composeFlatTM_run
     rfl
   exact h_target
 
+/-! ### No-early-halt trajectory of `composeFlatTM`
+
+`composeFlatTM_run` proves the composite halts at the shifted `c₂` in
+`t₁ + 1 + t₂` steps but *consumes* — rather than *emits* — a no-early-halt
+trajectory. `composeFlatTM_no_early_halt` supplies the missing emitter: from the
+two component trajectories it shows the composite never halts during any of the
+first `t₁ + 1 + t₂` steps. This is exactly the `h_traj1` an *outer*
+`composeFlatTM (composeFlatTM …) M exit` needs, so nests of `composeFlatTM`
+(e.g. `AppendGadget.appendAtTM`) can be bracketed with a tail rewind. -/
+
+/-- `runFlatTM` is total: it always returns some config (it idles on halt /
+stuck states rather than failing). -/
+private theorem runFlatTM_isSome (M : FlatTM) :
+    ∀ (n : Nat) (cfg : FlatTMConfig), ∃ c, runFlatTM n M cfg = some c := by
+  intro n
+  induction n with
+  | zero => intro cfg; exact ⟨cfg, rfl⟩
+  | succ m ih =>
+      intro cfg
+      by_cases hh : haltingStateReached M cfg = true
+      · refine ⟨cfg, ?_⟩
+        show (if haltingStateReached M cfg = true then some cfg
+              else match stepFlatTM M cfg with
+                | none => some cfg
+                | some c' => runFlatTM m M c') = some cfg
+        rw [if_pos hh]
+      · cases hs : stepFlatTM M cfg with
+        | none =>
+            refine ⟨cfg, ?_⟩
+            show (if haltingStateReached M cfg = true then some cfg
+                  else match stepFlatTM M cfg with
+                    | none => some cfg
+                    | some c' => runFlatTM m M c') = some cfg
+            rw [if_neg hh, hs]
+        | some c' =>
+            obtain ⟨c, hc⟩ := ih c'
+            refine ⟨c, ?_⟩
+            show (if haltingStateReached M cfg = true then some cfg
+                  else match stepFlatTM M cfg with
+                    | none => some cfg
+                    | some c'' => runFlatTM m M c'') = some c
+            rw [if_neg hh, hs]; exact hc
+
+/-- During the M₁ phase, the composite run coincides with `M₁`'s run, hence its
+config's state stays `< M₁.states`. -/
+private theorem composeFlatTM_state_lt_of_M1_phase
+    (M₁ M₂ : FlatTM) (exit : Nat) (h_validM1 : validFlatTM M₁)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    {t₁ : Nat}
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit ∧ haltingStateReached M₁ ck = false) :
+    ∀ k, k ≤ t₁ → ∀ ck,
+      runFlatTM k M₁ cfg0 = some ck → ck.state_idx < M₁.states := by
+  intro k
+  induction k with
+  | zero =>
+      intro _ ck hck
+      have : ck = cfg0 := (Option.some.inj hck).symm
+      subst this; exact h_cfg0_state_lt
+  | succ n ih =>
+      intro hk ck hck
+      have hn_le : n ≤ t₁ := Nat.le_of_succ_le hk
+      have hn_lt : n < t₁ := hk
+      -- The n-step config exists (runFlatTM is total).
+      obtain ⟨cn, hcn⟩ : ∃ cn, runFlatTM n M₁ cfg0 = some cn := runFlatTM_isSome M₁ n cfg0
+      have hcn_lt : cn.state_idx < M₁.states := ih hn_le cn hcn
+      have hcn_nothalt : haltingStateReached M₁ cn = false :=
+        (h_traj1 n hn_lt cn hcn).2
+      -- One more step from cn gives ck.
+      have hstep : runFlatTM (n + 1) M₁ cfg0 =
+          match stepFlatTM M₁ cn with
+          | none => some cn
+          | some c' => runFlatTM 0 M₁ c' := by
+        rw [runFlatTM_compose M₁ n 1 cfg0 cn hcn]
+        show (if haltingStateReached M₁ cn = true then some cn
+              else match stepFlatTM M₁ cn with
+                | none => some cn
+                | some c' => runFlatTM 0 M₁ c') = _
+        rw [if_neg (by rw [hcn_nothalt]; decide)]
+      rw [hstep] at hck
+      cases hsc : stepFlatTM M₁ cn with
+      | none => rw [hsc] at hck; simp only at hck;
+                have : ck = cn := (Option.some.inj hck).symm
+                subst this; exact hcn_lt
+      | some c' =>
+          rw [hsc] at hck
+          show ck.state_idx < M₁.states
+          have : ck = c' := (Option.some.inj hck).symm
+          subst this
+          exact state_idx_lt_states_of_step M₁ h_validM1 cn ck hsc
+
+/-- **No-early-halt trajectory of `composeFlatTM`.** Same hypotheses as
+`composeFlatTM_run`: from `M₁`'s run-to-`exit` + trajectory and `M₂`'s run-to-
+halt + trajectory, the composite never reaches a halting state in any of the
+first `t₁ + 1 + t₂` steps. -/
+theorem composeFlatTM_no_early_halt
+    {M₁ M₂ : FlatTM} {exit : Nat}
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂)
+    (h_exit_lt : exit < M₁.states)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (left₁ : List Nat) (head₁ : Nat) (right₁ : List Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left₁, head₁, right₁) = some v →
+                          v < max M₁.sig M₂.sig)
+    {t₁ t₂ : Nat}
+    (h_run1 : runFlatTM t₁ M₁ cfg0 =
+              some { state_idx := exit, tapes := [(left₁, head₁, right₁)] })
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit ∧
+       haltingStateReached M₁ ck = false)
+    (h_traj2 : ∀ k, k < t₂ → ∀ ck,
+       runFlatTM k M₂ { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
+         = some ck →
+       haltingStateReached M₂ ck = false) :
+    ∀ k, k < t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (composeFlatTM M₁ M₂ exit) cfg0 = some ck →
+      haltingStateReached (composeFlatTM M₁ M₂ exit) ck = false := by
+  intro k hk ck hck
+  by_cases hkle : k ≤ t₁
+  · -- M₁ phase: composite run = M₁ run.
+    have h_traj1' : ∀ j, j < k → ∀ cj, runFlatTM j M₁ cfg0 = some cj →
+        cj.state_idx ≠ exit ∧ haltingStateReached M₁ cj = false :=
+      fun j hj cj hcj => h_traj1 j (Nat.lt_of_lt_of_le hj hkle) cj hcj
+    have h_eq := runFlatTM_composeFlatTM_M1_phase M₁ M₂ exit h_validM1 k cfg0
+      h_cfg0_state_lt h_traj1'
+    rw [h_eq] at hck
+    have hck_lt : ck.state_idx < M₁.states :=
+      composeFlatTM_state_lt_of_M1_phase M₁ M₂ exit h_validM1 cfg0 h_cfg0_state_lt
+        h_traj1 k hkle ck hck
+    exact composeFlatTM_haltingStateReached_M1 M₁ M₂ exit ck hck_lt
+  · -- M₂ phase: k = t₁ + 1 + j with j < t₂.
+    push_neg at hkle
+    -- k ≥ t₁ + 1, write k = (t₁ + 1) + j.
+    obtain ⟨j, rfl⟩ : ∃ j, k = (t₁ + 1) + j := ⟨k - (t₁ + 1), by omega⟩
+    have hj_lt : j < t₂ := by omega
+    -- The composite reaches the shifted M₂ start in t₁+1 steps (from composeFlatTM_run's phase12).
+    have h_phase1 :=
+      runFlatTM_composeFlatTM_M1_phase M₁ M₂ exit h_validM1 t₁ cfg0 h_cfg0_state_lt h_traj1
+    have h_run1' : runFlatTM t₁ (composeFlatTM M₁ M₂ exit) cfg0 =
+        some { state_idx := exit, tapes := [(left₁, head₁, right₁)] } := by
+      rw [h_phase1]; exact h_run1
+    have h_bridge :=
+      stepFlatTM_composeFlatTM_bridge M₁ M₂ exit left₁ right₁ head₁ h_sym_bound
+    have h_phase12 :
+        runFlatTM (t₁ + 1) (composeFlatTM M₁ M₂ exit) cfg0 =
+          some { state_idx := M₁.states + M₂.start, tapes := [(left₁, head₁, right₁)] } := by
+      apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1' ?_ h_bridge
+      exact composeFlatTM_haltingStateReached_M1 M₁ M₂ exit _ h_exit_lt
+    -- runFlatTM ((t₁+1)+j) composite cfg0 = runFlatTM j composite (shifted start).
+    rw [runFlatTM_compose _ (t₁ + 1) j cfg0 _ h_phase12] at hck
+    -- Phase 3: lift M₂'s run.
+    set cfg2_start : FlatTMConfig :=
+      { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
+    have h_M2_start_lt : M₂.start < M₂.states := h_validM2.1
+    have h_phase_j :=
+      runFlatTM_composeFlatTM_M2_phase M₁ M₂ exit h_validM1 h_validM2 h_exit_lt j cfg2_start
+        h_M2_start_lt
+    -- Rewrite: M₁.states + M₂.start ↔ M₂.start + M₁.states.
+    have h_state_swap : M₂.start + M₁.states = M₁.states + M₂.start := Nat.add_comm _ _
+    have h_cfg_eq :
+        ({ state_idx := M₂.start + M₁.states,
+           tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) =
+        { state_idx := M₁.states + M₂.start,
+          tapes := [(left₁, head₁, right₁)] } := by
+      rw [h_state_swap]
+    rw [← h_cfg_eq, h_phase_j] at hck
+    -- hck : (runFlatTM j M₂ cfg2_start).map (shift) = some ck.
+    cases hjm : runFlatTM j M₂ cfg2_start with
+    | none => rw [hjm] at hck; simp at hck
+    | some cj =>
+        rw [hjm] at hck
+        simp only [Option.map_some] at hck
+        have hck_eq : ck =
+            { state_idx := cj.state_idx + M₁.states, tapes := cj.tapes } :=
+          (Option.some.inj hck).symm
+        have hcj_nothalt : haltingStateReached M₂ cj = false := h_traj2 j hj_lt cj hjm
+        rw [hck_eq]
+        rw [composeFlatTM_haltingStateReached_M2 M₁ M₂ exit cj.state_idx cj.tapes]
+        exact hcj_nothalt
+
+
 /-! ## Step 11.5b — branching composition `branchComposeFlatTM`
 
 A two-exit generalisation of `composeFlatTM`. Given three single-tape
