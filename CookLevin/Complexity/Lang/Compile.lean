@@ -1,6 +1,7 @@
 import Complexity.Lang.Semantics
 import Complexity.Lang.AppendGadget
 import Complexity.Complexity.TMPrimitives
+import Complexity.Complexity.TapeMono
 
 set_option autoImplicit false
 
@@ -1763,6 +1764,37 @@ def Op.inBounds (o : Op) (s : State) : Prop :=
   | .takeAt dst src lenReg | .dropAt dst src lenReg | .consLen dst lenReg src =>
       dst < s.length ∧ src < s.length ∧ lenReg < s.length
   | .concat dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
+
+/-- **Risk C2 finding (machine-checked): the exact-tape physical contract is
+unsatisfiable for length-decreasing ops.** No `FlatTM`, in any number of steps,
+can run from `encodeTape s` to a configuration whose tape is *exactly*
+`encodeTape (Op.eval (.clear dst) s)` when register `dst` is non-empty — because
+the physical tape never shrinks (`runFlatTM_initFlatConfig_no_shrink`) yet
+clearing a non-empty register *shortens* the encoded tape. Concrete witness
+`s = [[1]]`, `dst = 0`: `encodeTape [[1]]` has length `4`, but
+`encodeTape (clear 0 ↦ [[]])` has length `3`.
+
+This is the obstruction behind `compileOp_sound_physical` (below): it **cannot**
+be proved for `clear` / `tail` / shrinking `copy` / `head` / `eqBit` /
+`nonEmpty` / the length ops as stated, since each can shorten the tape. Only
+`appendOne` / `appendZero` (which purely grow it) fit the exact-tape contract.
+See `Complexity/Complexity/TapeMono.lean` and ROADMAP Risk C2 for the resolution
+(a residue-tolerant contract `encodeTape output ++ filler` + a left-shift delete
+gadget). -/
+theorem Compile.clear_physical_unsatisfiable (M : FlatTM) (n q : Nat) :
+    runFlatTM n M (initFlatConfig M [Compile.encodeTape [[1]]])
+      ≠ some { state_idx := q,
+               tapes := [([], 0, Compile.encodeTape (Op.eval (Op.clear 0) [[1]]))] } := by
+  intro h
+  have hno : (Compile.encodeTape [[1]]).length
+      ≤ (Compile.encodeTape (Op.eval (Op.clear 0) [[1]])).length :=
+    runFlatTM_initFlatConfig_no_shrink M n (Compile.encodeTape [[1]]) _ _ h rfl
+  have hin : (Compile.encodeTape [[1]]).length = 4 := by
+    rw [Compile.encodeTape_length]; decide
+  have hout : (Compile.encodeTape (Op.eval (Op.clear 0) [[1]])).length = 3 := by
+    rw [Compile.encodeTape_length]; decide
+  rw [hin, hout] at hno
+  omega
 
 theorem compileOp_sound_physical (o : Op) (s : State)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s) :
