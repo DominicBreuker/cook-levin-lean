@@ -484,6 +484,85 @@ theorem joinTwoHalts_valid (M : FlatTM) (h1 h2 : Nat)
       · rw [h_sig_eq]; exact hsymSrc
       · rw [h_sig_eq]; exact hsymDst
 
+/-- `joinTwoHalts` re-keys only transitions out of `h2`: at any state `≠ h2` the
+step function is unchanged. The prepended `bridgeEntries` all have source `h2`,
+so `find?` skips them and falls through to `M.trans`. -/
+theorem joinTwoHalts_step_eq (M : FlatTM) (h1 h2 : Nat) (cfg : FlatTMConfig)
+    (h : cfg.state_idx ≠ h2) :
+    stepFlatTM (joinTwoHalts M h1 h2) cfg = stepFlatTM M cfg := by
+  have hnone : (bridgeEntries M.sig h2 h1).find?
+      (fun entry => entryMatchesConfig entry cfg) = none := by
+    rw [List.find?_eq_none]
+    intro e he
+    have hsrc : e.src_state = h2 := (bridgeEntries_mem he).1
+    simp only [entryMatchesConfig, Bool.not_eq_true, Bool.and_eq_false_imp]
+    intro hbeq
+    rw [hsrc, beq_iff_eq] at hbeq
+    exact absurd hbeq.symm h
+  show ((bridgeEntries M.sig h2 h1 ++ M.trans).find?
+      (fun entry => entryMatchesConfig entry cfg)).bind (applyTransitionEntry cfg)
+    = (M.trans.find? (fun entry => entryMatchesConfig entry cfg)).bind (applyTransitionEntry cfg)
+  rw [List.find?_append, hnone]
+  rfl
+
+/-- `joinTwoHalts` flips only `h2`'s halt bit: `haltingStateReached` is unchanged
+at any state `≠ h2`. -/
+theorem joinTwoHalts_halting_eq (M : FlatTM) (h1 h2 : Nat) (cfg : FlatTMConfig)
+    (h : cfg.state_idx ≠ h2) :
+    haltingStateReached (joinTwoHalts M h1 h2) cfg = haltingStateReached M cfg := by
+  show (M.halt.set h2 false).getD cfg.state_idx false = M.halt.getD cfg.state_idx false
+  rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+      List.getElem?_set_ne (fun heq => h heq.symm)]
+
+/-- **Run-preservation under `joinTwoHalts` (the foundational unblock).** If the
+`M`-run from `cfg0` never visits the demoted state `h2` within `t` steps, the
+joined machine produces the identical run. This is what lets a gadget whose only
+extra halt state (`h2`, e.g. a left-scan's unreachable "boundary" state) is
+demoted inherit the gadget's proven run/trajectory. The "never visits `h2`"
+premise is discharged from a no-early-halt trajectory when `h2` is a halt state
+of `M`: a run that never halts before `t` never sits on any halt state. -/
+theorem joinTwoHalts_run_eq (M : FlatTM) (h1 h2 : Nat) :
+    ∀ (t : Nat) (cfg0 : FlatTMConfig),
+      (∀ k, k ≤ t → ∀ ck, runFlatTM k M cfg0 = some ck → ck.state_idx ≠ h2) →
+      runFlatTM t (joinTwoHalts M h1 h2) cfg0 = runFlatTM t M cfg0 := by
+  intro t
+  induction t with
+  | zero => intro cfg0 _; rfl
+  | succ n ih =>
+      intro cfg0 hstate
+      have h0 : cfg0.state_idx ≠ h2 := hstate 0 (Nat.zero_le _) cfg0 rfl
+      have hhaltj : haltingStateReached (joinTwoHalts M h1 h2) cfg0 = haltingStateReached M cfg0 :=
+        joinTwoHalts_halting_eq M h1 h2 cfg0 h0
+      have hstepj : stepFlatTM (joinTwoHalts M h1 h2) cfg0 = stepFlatTM M cfg0 :=
+        joinTwoHalts_step_eq M h1 h2 cfg0 h0
+      by_cases hhalt : haltingStateReached M cfg0 = true
+      · rw [runFlatTM_of_halting (joinTwoHalts M h1 h2) cfg0 (n + 1) (by rw [hhaltj]; exact hhalt),
+            runFlatTM_of_halting M cfg0 (n + 1) hhalt]
+      · cases hstep : stepFlatTM M cfg0 with
+        | none =>
+            rw [runFlatTM_stuck (joinTwoHalts M h1 h2) cfg0
+                  (by rw [hhaltj]; exact Bool.not_eq_true _ ▸ hhalt) (by rw [hstepj]; exact hstep),
+                runFlatTM_stuck M cfg0 (Bool.not_eq_true _ ▸ hhalt) hstep]
+        | some cfg' =>
+            -- unfold one step on both machines (not halting, step = some cfg')
+            have hL : runFlatTM (n + 1) (joinTwoHalts M h1 h2) cfg0
+                = runFlatTM n (joinTwoHalts M h1 h2) cfg' := by
+              show (if haltingStateReached (joinTwoHalts M h1 h2) cfg0 = true then some cfg0
+                    else match stepFlatTM (joinTwoHalts M h1 h2) cfg0 with
+                      | none => some cfg0
+                      | some c => runFlatTM n (joinTwoHalts M h1 h2) c) = _
+              rw [if_neg (by rw [hhaltj]; exact hhalt), hstepj, hstep]
+            have hunfold : ∀ k, runFlatTM (k + 1) M cfg0 = runFlatTM k M cfg' := by
+              intro k
+              show (if haltingStateReached M cfg0 = true then some cfg0
+                    else match stepFlatTM M cfg0 with
+                      | none => some cfg0
+                      | some c => runFlatTM k M c) = _
+              rw [if_neg hhalt, hstep]
+            rw [hL, hunfold n]
+            exact ih cfg' (fun k hk ck hck =>
+              hstate (k + 1) (Nat.succ_le_succ hk) ck (by rw [hunfold k]; exact hck))
+
 end Compile
 
 /-- A two-exit "tester" TM bundling a `FlatTM` with two distinct
