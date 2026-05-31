@@ -56,25 +56,30 @@ concretising any deletion op. The design (validated this session — see
    because `decodeTape`'s `takeWhile (· ≠ endMark)` stops at the first real
    terminator and `encodeRegs` of a `BitState` is terminator-free.
 
-3. **Two-phase rewind.** With residue present the head no longer ends on *the*
-   trailing terminator. Rewind in two scans: `scanLeftUntil 3` (lands on the
-   real terminator — residue is terminator-free, so it's the first `3` from the
-   right), `stepLeft`, `scanLeftUntil 3` (lands on the leading sentinel at index
-   `0` — the interior `encodeRegs` is terminator-free). Build this from
-   `ScanLeft.scanLeftUntilTM` + `stepLeftTM` (both exist), generalising
-   `rewindFromEndTM`. **Invariant each gadget must keep:** after its main work,
-   the head is at-or-left of the real terminator (so the first left-scan finds
-   it). Both append and delete naturally satisfy this.
+3. **Two-phase rewind — ✅ DONE** (`ScanLeft.rewindTwoPhaseTM` +
+   `rewindTwoPhase_run` / `_no_early_halt` / `_valid`, axiom-clean). With residue
+   the head ends in the residue, so the rewind is two scans: `scanLeftToMark`
+   (lands on the real terminator — the first `3` past the terminator-free
+   residue) then `rewindFromEndTM` (step off it, scan to the leading sentinel at
+   `0` past the terminator-free interior). Halts at state `6`, head `0`.
+   **Invariant each gadget must hand it:** the head at-or-right-of the real
+   terminator, the interior and residue both terminator-free (`ValidResidue` +
+   `BitState`). The new primitive `scanLeftToMark_run` (scan left to a mark at an
+   arbitrary interior position) is the reusable generalisation of `scanLeft_run`.
 
-4. **The deletion primitive `deleteCarryTM`** — the genuinely missing gadget
-   (mirror of `ShiftTape.insertCarryTM`). Left-shifts a suffix by one, deleting
-   the cell at the head and writing a `0` filler into the vacated trailing cell
-   (keeping `right.length` fixed, residue terminator-free). Sketch (3 non-halt
-   states): from head `p+1` read `cell[p+1]`, move left, write it at `p`, move
-   right twice; repeat; halt on the blank past the end. Prove its `_run` +
-   `_no_early_halt` lemmas like `insertCarryTM`. **This is the first concrete
-   coding step** and unblocks `clear`/`tail`/`copy`/… (each is navigate-to-`dst`
-   + delete-old-content + insert-new-content + rewind).
+4. **The deletion primitive `deleteCarryTM` — NEXT CONCRETE STEP** — the
+   genuinely missing gadget (mirror of `ShiftTape.insertCarryTM`). Left-shifts a
+   suffix by one, deleting the cell at the head and writing a `0` filler into
+   each vacated cell so the residue stays `ValidResidue`. **Validated sketch (3
+   non-halt states + halt; trace it before coding):** start in `read` at head
+   `p+1`; `read` reads `v`, moves **left**, goes to `write(v)`; `write(v)` writes
+   `v` (filling cell `i-1`), moves **right**, goes to `skip`; `skip` writes `0`
+   (clearing the stale cell), moves **right**, goes to `read`; `read` on the
+   blank past the end halts. This converts `A ++ [d] ++ B` (delete `d` at head
+   `p+1=|A|+1`) into `A ++ B ++ [0]` — verified by hand on `[a,b,c,3]→[b,c,3,0]`
+   and `[a,b,c,3,0,0]→[b,c,3,0,0,0]`, residue stays `{0,…}`. Prove `_run` +
+   `_no_early_halt` like `insertCarryTM`. Unblocks `clear`/`tail`/`copy`/… (each
+   = navigate-to-`dst` + delete-old + insert-new + two-phase rewind).
 
 5. **Restate the four `compile*_sound_physical` lemmas** with `TapeOK` instead
    of the exact tape. `compileSeq_sound_physical`/`compileSeq_traj_physical` are
@@ -95,6 +100,8 @@ concretising any deletion op. The design (validated this session — see
 | `Compile.clear_physical_unsatisfiable` | `Lang/Compile.lean` | concrete proof the exact contract fails for `clear` |
 | `Compile.decodeTape_encodeTape_append` | `Lang/Compile.lean` | residue-tolerant decode — foundation of step 2 |
 | `Compile.ValidResidue` + `compileSeq_sound_physical_residue` / `compileSeq_traj_physical_residue` | `Lang/Compile.lean` | **design validation: the residue-tolerant contract composes** (step 5, `compileSeq` case, done) |
+| `ScanLeft.scanLeftToMark_run` / `_no_early_halt` | `Lang/ScanLeft.lean` | scan left to a mark at an arbitrary interior position (generalises `scanLeft_run`) |
+| `ScanLeft.rewindTwoPhaseTM` + `rewindTwoPhase_run` / `_no_early_halt` / `_valid` | `Lang/ScanLeft.lean` | **step 3 done: the residue-tolerant two-phase rewind** (head → `0`, exit state `6`) |
 
 ### Design probe — does the residue-tolerant redesign blow up later? (risk register)
 
@@ -124,13 +131,12 @@ soundness.
   `{0,1,2}`, i.e. terminator-free). Append preserves it (carries interior
   symbols); delete must write `0` filler, never duplicate the terminator `3`.
   Provable, but it's a real per-gadget obligation — state it in the contract.
-- ⚠ **Two-phase rewind is unbuilt and is the trickiest navigation.** Find the
-  *real* terminator (first `3` from the right, past the terminator-free residue),
-  step left, find the leading sentinel (first `3` past the terminator-free
-  interior). Both targets are `3`; correctness relies on `ValidResidue` +
-  `BitState`-interior being terminator-free. Each gadget must leave the head
-  at-or-right-of the real terminator so phase 1 finds it. **Build + prove this
-  before any deletion op.**
+- ✅ **Two-phase rewind is BUILT** (`rewindTwoPhaseTM`, axiom-clean) — the
+  trickiest navigation, now proved. Find the *real* terminator (first `3` past
+  the terminator-free residue), step off, find the leading sentinel (first `3`
+  past the terminator-free interior). Each gadget must hand it a head
+  at-or-right-of the real terminator (`ValidResidue` + `BitState` make the
+  interior/residue terminator-free).
 - ⚠ **`deleteCarryTM` correctness is the one genuinely new proof.** Left-shift +
   `0`-fill, preserving content `= encodeTape output` and `ValidResidue` residue.
   Sketch in step 4; mirror `insertCarryTM`'s run/no-early-halt structure.
