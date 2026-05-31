@@ -850,6 +850,74 @@ theorem rewindTwoPhaseTM_sig (sig target : Nat) :
   show max (scanLeftUntilTM sig target).sig (rewindFromEndTM sig target).sig = sig
   rw [rewindFromEndTM_sig]; exact Nat.max_self sig
 
+/-! ### Halt-state characterization of the rewind machines
+
+The two-phase rewind ends in a left scan (`scanLeftUntilTM`), whose halt vector
+`[false, true, true]` has *two* halt states (1 = "found target", 2 = "hit the
+left boundary without finding"). Through `composeFlatTM` (which zeroes the first
+machine's halts) the composite keeps both, shifted. These lemmas pin the exact
+two halt states of `rewindTwoPhaseTM sig target` so a caller can demote the
+unreachable boundary one with `Compile.joinTwoHalts` and recover a unique halt.
+-/
+
+/-- A halt state of `composeFlatTM M₁ M₂ exit` lives in the `M₂` segment: it is
+`M₁.states + j` for some halt state `j` of `M₂`. -/
+theorem composeFlatTM_halt_some_imp (M₁ M₂ : FlatTM) (exit i : Nat)
+    (hi : (composeFlatTM M₁ M₂ exit).halt[i]? = some true) :
+    M₁.states ≤ i ∧ M₂.halt[i - M₁.states]? = some true := by
+  change (composedHalt M₁ M₂)[i]? = some true at hi
+  unfold composedHalt at hi
+  by_cases hlt : i < M₁.states
+  · exfalso
+    rw [List.getElem?_append_left (by rw [List.length_replicate]; exact hlt),
+        List.getElem?_replicate] at hi
+    simp [hlt] at hi
+  · rw [Nat.not_lt] at hlt
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact hlt),
+        List.length_replicate] at hi
+    exact ⟨hlt, hi⟩
+
+/-- The converse: a halt state `j` of `M₂` shifts to halt state `M₁.states + j`
+of `composeFlatTM M₁ M₂ exit`. -/
+theorem composeFlatTM_halt_some_intro (M₁ M₂ : FlatTM) (exit j : Nat)
+    (hj : M₂.halt[j]? = some true) :
+    (composeFlatTM M₁ M₂ exit).halt[M₁.states + j]? = some true := by
+  change (composedHalt M₁ M₂)[M₁.states + j]? = some true
+  unfold composedHalt
+  rw [List.getElem?_append_right (by rw [List.length_replicate]; exact Nat.le_add_right _ _),
+      List.length_replicate, Nat.add_sub_cancel_left]
+  exact hj
+
+theorem scanLeftUntilTM_halt_only (sig target i : Nat)
+    (hi : (scanLeftUntilTM sig target).halt[i]? = some true) : i = 1 ∨ i = 2 := by
+  change ([false, true, true] : List Bool)[i]? = some true at hi
+  rcases i with _ | _ | _ | i <;> simp_all
+
+theorem rewindFromEndTM_halt_only (sig target i : Nat)
+    (hi : (rewindFromEndTM sig target).halt[i]? = some true) : i = 3 ∨ i = 4 := by
+  obtain ⟨hge, hj⟩ :=
+    composeFlatTM_halt_some_imp (stepLeftTM sig) (scanLeftUntilTM sig target) 1 i hi
+  have hst : (stepLeftTM sig).states = 2 := rfl
+  rw [hst] at hge hj
+  rcases scanLeftUntilTM_halt_only sig target _ hj with h | h <;> omega
+
+theorem rewindTwoPhaseTM_halt_only (sig target i : Nat)
+    (hi : (rewindTwoPhaseTM sig target).halt[i]? = some true) : i = 6 ∨ i = 7 := by
+  obtain ⟨hge, hj⟩ :=
+    composeFlatTM_halt_some_imp (scanLeftUntilTM sig target) (rewindFromEndTM sig target) 1 i hi
+  have hst : (scanLeftUntilTM sig target).states = 3 := rfl
+  rw [hst] at hge hj
+  rcases rewindFromEndTM_halt_only sig target _ hj with h | h <;> omega
+
+/-- The surviving exit (the "found" halt) of `rewindTwoPhaseTM sig target` is
+state `6`. -/
+theorem rewindTwoPhaseTM_halt_six (sig target : Nat) :
+    (rewindTwoPhaseTM sig target).halt[6]? = some true := by
+  have h1 : (scanLeftUntilTM sig target).halt[1]? = some true := rfl
+  have h3 : (rewindFromEndTM sig target).halt[3]? = some true :=
+    composeFlatTM_halt_some_intro (stepLeftTM sig) (scanLeftUntilTM sig target) 1 1 h1
+  exact composeFlatTM_halt_some_intro (scanLeftUntilTM sig target) (rewindFromEndTM sig target) 1 3 h3
+
 /-- **Two-phase rewind run lemma.** On a tape `tp` with the leading sentinel
 `target` at `0`, the real terminator `target` at an interior `p > 0`, a
 terminator-free in-range interior `1 … p-1`, and a terminator-free in-range

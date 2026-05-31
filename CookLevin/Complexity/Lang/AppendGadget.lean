@@ -976,6 +976,45 @@ This bracketed machine is the residue-tolerant analogue used by the
 def appendAtThenTwoPhaseRewindTM (ins dst : Nat) : FlatTM :=
   composeFlatTM (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst)
 
+theorem appendAtThenTwoPhaseRewindTM_tapes (ins dst : Nat) :
+    (appendAtThenTwoPhaseRewindTM ins dst).tapes = 1 := by
+  show (composeFlatTM (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst)).tapes = 1
+  rw [composeFlatTM_tapes]; exact appendAtTM_tapes ins dst
+
+theorem appendAtThenTwoPhaseRewindTM_sig (ins dst : Nat) :
+    (appendAtThenTwoPhaseRewindTM ins dst).sig = 4 := by
+  show (composeFlatTM (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst)).sig = 4
+  rw [composeFlatTM_sig, appendAtTM_sig, rewindTwoPhaseTM_sig]; rfl
+
+theorem appendAtThenTwoPhaseRewindTM_states (ins dst : Nat) :
+    (appendAtThenTwoPhaseRewindTM ins dst).states
+      = (appendAtTM ins dst).states + (rewindTwoPhaseTM 4 3).states := by
+  show (composeFlatTM (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst)).states = _
+  rw [composeFlatTM_states]
+
+theorem appendAtThenTwoPhaseRewindTM_valid (ins : Nat) (h_ins : ins < 4) (dst : Nat) :
+    validFlatTM (appendAtThenTwoPhaseRewindTM ins dst) :=
+  composeFlatTM_valid (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst)
+    (appendAtTM_valid ins h_ins dst) (rewindTwoPhaseTM_valid 4 3 (by decide))
+    (appendAtTM_exit_lt ins dst) (appendAtTM_tapes ins dst) (rewindTwoPhaseTM_tapes 4 3)
+
+/-- The surviving exit (found-state) of the residue-tolerant append bracket. -/
+theorem appendAtThenTwoPhaseRewindTM_exit_is_halt (ins dst : Nat) :
+    (appendAtThenTwoPhaseRewindTM ins dst).halt[(appendAtTM ins dst).states + 6]? = some true :=
+  composeFlatTM_halt_some_intro (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst) 6
+    (rewindTwoPhaseTM_halt_six 4 3)
+
+/-- The append bracket halts at exactly two states: the found-state
+`appendAtTM.states + 6` (the real exit) and the unreachable boundary-state
+`appendAtTM.states + 7` (to be demoted by `joinTwoHalts`). -/
+theorem appendAtThenTwoPhaseRewindTM_halt_only (ins dst i : Nat)
+    (hi : (appendAtThenTwoPhaseRewindTM ins dst).halt[i]? = some true) :
+    i = (appendAtTM ins dst).states + 6 ∨ i = (appendAtTM ins dst).states + 7 := by
+  obtain ⟨hge, hj⟩ :=
+    composeFlatTM_halt_some_imp (appendAtTM ins dst) (rewindTwoPhaseTM 4 3)
+      (appendAtTM_exit dst) i hi
+  rcases rewindTwoPhaseTM_halt_only 4 3 _ hj with h | h <;> omega
+
 /-- **Residue-tolerant bracketed append run.** Like `appendAt_rewind_run`, but
 the exit tape carries a terminator-free residue after the real terminator (at
 position `p`): the head exits at the last cell `HD` (in the residue) and the
