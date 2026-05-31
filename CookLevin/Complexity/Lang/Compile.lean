@@ -2535,6 +2535,42 @@ theorem Compile_run_physical (c : Cmd) (s : State) :
       t ≤ Compile.overhead (State.size s + c.cost s) := by
   sorry  -- TODO(C2): the physical compiler contract; composes per-fragment
          -- via `compileSeq_compose_physical`, gated on the per-`Op` gadgets.
+         -- ⚠ THIS EXACT-TAPE CONTRACT IS UNSATISFIABLE for commands that use
+         -- length-decreasing ops. Use `Compile_run_physical_residue` below.
+
+/-- **Residue-tolerant physical compiler contract (Risk C2).** The replacement
+for `Compile_run_physical` that accounts for the tape never shrinking: the exit
+tape is `encodeTape (c.eval s) ++ res` for some `ValidResidue` residue `res`,
+head rewound to `0`. This is provable for ALL ops (including deletion ops like
+`clear`/`tail`) because the residue absorbs the cells vacated by left-shifting.
+
+Composes per-fragment via `compileSeq_sound_physical_residue` (proven), using
+`compileOp_sound_physical_residue` for each `Op` fragment. The budget is
+quadratic (`overhead`) in `size + cost`, covering the linear per-fragment
+budgets summed over `~cost` fragments.
+
+The decider bridge (`bitDeciderTM`) reads the answer from register `0` via
+`decodeTape`, which ignores the residue (`decodeTape_encodeTape_append`),
+so the residue is invisible to the decider. -/
+theorem Compile_run_physical_residue (c : Cmd) (s : State) :
+    ∃ (t : Nat) (res : List Nat),
+      Compile.ValidResidue res ∧
+      runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
+          = some { state_idx := Compile.exit c,
+                   tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] } ∧
+      (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile c)
+              (initFlatConfig (Compile c) [Compile.encodeTape s]) = some ck →
+          ck.state_idx ≠ Compile.exit c ∧
+          haltingStateReached (Compile c) ck = false) ∧
+      t ≤ Compile.overhead (State.size s + c.cost s) := by
+  sorry  -- TODO(C2): compose per-fragment via `compileSeq_sound_physical_residue`.
+         -- Induction on `Cmd`; each `Op` case from `compileOp_sound_physical_residue`,
+         -- `seq` from `compileSeq_sound_physical_residue`, `ifBit` and `forBnd`
+         -- from their residue-tolerant siblings (to be stated).
+         -- The quadratic budget comes from summing linear per-fragment budgets
+         -- (`3·tapeLen + 6`) over `~cost` fragments, where each fragment's tape
+         -- length is bounded by `size + cost + regBound` (`Cmd.encodeTape_eval_length_le`).
 
 /-- The compiled decider machine: run `Compile c`, then the bit-test gadget. The
 gadget converts register `0`'s answer (on the tape) into a distinct halting
