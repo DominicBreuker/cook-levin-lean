@@ -1859,12 +1859,50 @@ theorem compileSeq_traj_physical
           (initFlatConfig (compileSeq r1 r2).M [Compile.encodeTape s]) = some ck →
       ck.state_idx ≠ (compileSeq r1 r2).exit ∧
       haltingStateReached (compileSeq r1 r2).M ck = false := by
-  sorry  -- TODO(C2, step 1b-3): use `composeFlatTM_no_early_halt` with the
-         -- sub-trajectories. The exit of `compileSeq` is `r1.M.states + r2.exit`,
-         -- so any `ck` in the M₁ phase has `state_idx < r1.M.states` (from
-         -- `h_traj1`'s `haltingStateReached = false`) and in the M₂ phase has
-         -- `state_idx = r2_state + r1.M.states ≠ r1.M.states + r2.exit` (from
-         -- `h_traj2`).
+  -- Use `composeFlatTM_no_early_halt` for `haltingStateReached = false`,
+  -- then derive `state_idx ≠ exit` from `exit_is_halt` + `halt_unique`.
+  have h_sym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape mid)
+      = some v → v < max r1.M.sig r2.M.sig := by
+    intro v hv
+    rw [r1.M_sig, r2.M_sig]
+    simp only [currentTapeSymbol] at hv
+    split at hv
+    case isTrue h =>
+      rw [Option.some.injEq] at hv; subst hv
+      exact Compile.encodeTape_lt_four mid hbit_mid _
+        (List.getElem_mem h)
+    case isFalse => exact absurd hv (by simp)
+  have h_traj2' : ∀ k, k < t2 → ∀ ck,
+      runFlatTM k r2.M { state_idx := r2.M.start, tapes := [([], 0, Compile.encodeTape mid)] }
+        = some ck → haltingStateReached r2.M ck = false := by
+    intro k hk ck hck
+    exact (h_traj2 k hk ck hck).2
+  have h_nohalt := composeFlatTM_no_early_halt r1.M_valid r2.M_valid r1.exit_lt
+    (initFlatConfig r1.M [Compile.encodeTape s]) r1.M_valid.1
+    [] 0 (Compile.encodeTape mid) h_sym h_run1 h_traj1 h_traj2'
+  -- h_nohalt : ∀ k < …, … haltingStateReached (composeFlatTM r1.M r2.M r1.exit) ck = false
+  -- The goal's `(compileSeq r1 r2).M` = `composeFlatTM r1.M r2.M r1.exit` by definition,
+  -- and `(compileSeq r1 r2).exit` = `r1.M.states + r2.exit`. Both unfold by `dsimp [compileSeq]`.
+  intro k hk ck hck
+  constructor
+  · -- `state_idx ≠ exit`: if equal, `exit_is_halt` makes `haltingStateReached = true`.
+    intro heq
+    have hnh : haltingStateReached (compileSeq r1 r2).M ck = false :=
+      h_nohalt k hk ck hck
+    -- `exit_is_halt : M.halt[exit]? = some true`
+    -- `haltingStateReached M ck = M.halt.getD ck.state_idx false`
+    -- With heq, getD exit false = (some true).getD false = true.
+    have hh : haltingStateReached (compileSeq r1 r2).M ck = true := by
+      show (compileSeq r1 r2).M.halt.getD ck.state_idx false = true
+      rw [heq]
+      -- Now: (compileSeq r1 r2).M.halt.getD (compileSeq r1 r2).exit false = true
+      -- This follows from exit_is_halt.
+      have := (compileSeq r1 r2).exit_is_halt
+      -- this : (compileSeq r1 r2).M.halt[(compileSeq r1 r2).exit]? = some true
+      simp only [List.getD, this, Option.getD]
+    rw [hh] at hnh
+    exact absurd hnh Bool.noConfusion
+  · exact h_nohalt k hk ck hck
 
 /-- Soundness obligation for `compileIfBit`. The two branches are
 mutually exclusive on the value of `s.get t`, so the IH for the
