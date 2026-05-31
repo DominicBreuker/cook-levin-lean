@@ -74,25 +74,34 @@ concretising any deletion op. The design (validated this session — see
    head `pre.length+1` of `pre ++ d :: t :: suf` yields `pre ++ t :: suf ++ [0]`
    in `3·(t::suf).length + 1` steps — `d` removed, suffix shifted left, a `0`
    filler appended (keeps `right.length` fixed, residue `ValidResidue`).
-   **Remaining on the primitive:** `deleteCarryTM_no_early_halt` (the trajectory,
-   needed to bracket it via `composeFlatTM_no_early_halt`) — mirror
-   `insertCarryTM_no_early_halt`, same 3-step-per-cons induction.
+   **Remaining on the primitive — NEXT CONCRETE STEP:**
+   `deleteCarryTM_no_early_halt` (the trajectory, needed to bracket it via
+   `composeFlatTM_no_early_halt`) — mirror `insertCarryTM_no_early_halt`, same
+   3-step-per-cons induction (induct on `suf`; in the `cons` case
+   `rcases k with _ | _ | _ | k'` and peel the read/write/skip steps, recursing
+   into the IH on `k'`). A near-complete attempt was written and reverted; the
+   only snag was a **numeral-form mismatch** — after `rcases k with _ | _ | _ | k'`
+   the step counts in `hck` are `Nat.succ …`, but `run_succ_of_step` rewrites
+   `runFlatTM (n + 1)`, so `rw` fails to match. Fix: normalise first with
+   `simp only [Nat.succ_eq_add_one] at hck` (or `omega`-rewrite the count to
+   `… + 1` form) before each `run_succ_of_step` rewrite. Everything else
+   (`hget*`/`htk*`/`hdr*`/`delete_not_halt`) carries over verbatim from
+   `deleteCarryTM_loop_run`.
 
-5. **Per-op gadgets — NEXT CONCRETE STEP.** Assemble `opClear`/`opTail`/… from
-   the now-available primitives: navigate to register `dst` (`Navigate`/
-   `ScanPast`), `deleteCarryTM` the old content, `insertCarryTM` the new content,
+5. **Per-op gadgets.** Assemble `opClear`/`opTail`/… from the now-available
+   primitives: navigate to register `dst` (`Navigate`/`ScanPast`),
+   `deleteCarryTM` the old content, `insertCarryTM` the new content,
    `rewindTwoPhaseTM` back to head `0`. Then the `encodeTape`-level physical
-   contract per op (mirror `Compile.appendBit_physical`), now in the residue-
-   tolerant `TapeOK` form, and `compileOp_sound_physical`'s case split.
+   contract per op (mirror `Compile.appendBit_physical`), in the residue-tolerant
+   `TapeOK` form, and `compileOp_sound_physical`'s case split.
 
-5. **Restate the four `compile*_sound_physical` lemmas** with `TapeOK` instead
-   of the exact tape. `compileSeq_sound_physical`/`compileSeq_traj_physical` are
-   already proved for the exact form (`Compile.lean`); re-derive them for
-   `TapeOK` (the head-`0` exit still makes `r1`'s config the `initFlatConfig` of
-   `r2`, now modulo residue). Keep the **linear** per-fragment budgets (see
-   ROADMAP Risk C2 budget-shape finding — quadratics do **not** compose).
+6. **Restate the four `compile*_sound_physical` lemmas** with `TapeOK` instead
+   of the exact tape. `compileSeq_*_physical_residue` is **already done**
+   (`Compile.lean`); do the same for `compileIfBit`/`compileForBnd`/the per-op
+   contract. Keep the **linear** per-fragment budgets (ROADMAP Risk C2 budget-
+   shape finding — quadratics do **not** compose).
 
-6. **Then** concretise the 10 stub `compileOp`s (4) and assemble
+7. **Then** concretise the 10 stub `compileOp`s and assemble
    `Compile_run_physical` by induction on `Cmd` (`compileIfBit`/`compileForBnd`
    via `branchComposeFlatTM_run`/`loopTM_run`).
 
