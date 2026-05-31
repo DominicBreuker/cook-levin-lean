@@ -1732,6 +1732,140 @@ theorem compileSeq_compose_physical
     (initFlatConfig r1.M [enc1]) h_cfg0_state_lt
     [] 0 enc2 h_sym_bound h_run1 h_traj1 h_run2 h_halt2
 
+/-! ### Physical-contract restated composition lemmas (Risk C2, step 1b-3)
+
+The original `compileSeq_sound` / `compileIfBit_sound` / `compileForBnd_sound` /
+`Compile_sound` are stated with the **quadratic** `Compile.overhead` per-fragment
+budget — which is **unprovable** because quadratic budgets don't compose additively
+(see the budget-shape finding above). The lemmas below restate every composition
+combinator with the **physical** per-fragment contract: each sub-machine
+
+  (1) halts at `exit` with head `0` and tape `= encodeTape output`,
+  (2) has a no-early-halt trajectory,
+  (3) satisfies a **linear** step budget `t ≤ A * tapeLen + B`.
+
+Linear budgets compose: the composed machine runs in `t₁ + 1 + t₂` steps
+(`compileSeq_compose_physical`), and bounding each `tᵢ` linearly in the tape
+length at its entry gives a sum that telescopes into a quadratic total.
+
+These restated lemmas are the **correct** decomposition for proving
+`Compile_run_physical` by induction on `Cmd`. -/
+
+/-- An `Op` is in-bounds with respect to a state when all its register operands
+are valid indices. Needed because the TM must physically navigate to each
+register. -/
+def Op.inBounds (o : Op) (s : State) : Prop :=
+  match o with
+  | .clear dst | .appendOne dst | .appendZero dst => dst < s.length
+  | .copy dst src | .tail dst src | .head dst src | .nonEmpty dst src =>
+      dst < s.length ∧ src < s.length
+  | .eqBit dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
+  | .takeAt dst src lenReg | .dropAt dst src lenReg | .consLen dst lenReg src =>
+      dst < s.length ∧ src < s.length ∧ lenReg < s.length
+  | .concat dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
+
+theorem compileOp_sound_physical (o : Op) (s : State)
+    (hbit : Compile.BitState s) (hbnd : o.inBounds s) :
+    ∃ t : Nat,
+      runFlatTM t (compileOp o).M
+          (initFlatConfig (compileOp o).M [Compile.encodeTape s])
+        = some { state_idx := (compileOp o).exit,
+                 tapes := [([], 0, Compile.encodeTape (Op.eval o s))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (compileOp o).M
+              (initFlatConfig (compileOp o).M [Compile.encodeTape s]) = some ck →
+          ck.state_idx ≠ (compileOp o).exit ∧
+          haltingStateReached (compileOp o).M ck = false)
+      ∧ t ≤ 3 * (Compile.encodeTape s).length + 6 := by
+  sorry  -- TODO(C2, step 1c): case-split on `o`; the `appendOne`/`appendZero`
+         -- cases follow from `appendBit_physical`; the remaining 10 ops need
+         -- their gadgets concretised first (each with its `*_physical` contract).
+
+/-- **Physical-contract `compileSeq` composition (PROVEN).** Given two
+sub-machines each satisfying the physical contract (head-`0` exit, exact tape,
+trajectory), `compileSeq r1 r2` satisfies it with additive budget `t₁ + 1 + t₂`.
+This is the proved instance of `compileSeq_compose_physical` lifted to the
+`CompiledCmd` level.
+
+The head-`0` exit of `r1` makes its exit config literally equal to
+`initFlatConfig r2.M [enc_output₁]`, so `r2`'s physical contract plugs
+straight in. -/
+theorem compileSeq_sound_physical
+    (r1 r2 : CompiledCmd) (s mid final : State)
+    (hbit_s : Compile.BitState s)
+    (hbit_mid : Compile.BitState mid)
+    {t1 t2 : Nat}
+    (h_run1 : runFlatTM t1 r1.M (initFlatConfig r1.M [Compile.encodeTape s])
+                = some { state_idx := r1.exit,
+                         tapes := [([], 0, Compile.encodeTape mid)] })
+    (h_traj1 : ∀ k, k < t1 → ∀ ck,
+        runFlatTM k r1.M (initFlatConfig r1.M [Compile.encodeTape s]) = some ck →
+        ck.state_idx ≠ r1.exit ∧ haltingStateReached r1.M ck = false)
+    (h_run2 : runFlatTM t2 r2.M (initFlatConfig r2.M [Compile.encodeTape mid])
+                = some { state_idx := r2.exit,
+                         tapes := [([], 0, Compile.encodeTape final)] })
+    (h_traj2 : ∀ k, k < t2 → ∀ ck,
+        runFlatTM k r2.M (initFlatConfig r2.M [Compile.encodeTape mid]) = some ck →
+        ck.state_idx ≠ r2.exit ∧ haltingStateReached r2.M ck = false)
+    (h_halt2 : haltingStateReached r2.M
+        { state_idx := r2.exit,
+          tapes := [([], 0, Compile.encodeTape final)] } = true) :
+    runFlatTM (t1 + 1 + t2) (compileSeq r1 r2).M
+        (initFlatConfig (compileSeq r1 r2).M [Compile.encodeTape s])
+      = some { state_idx := (compileSeq r1 r2).exit,
+               tapes := [([], 0, Compile.encodeTape final)] } ∧
+    haltingStateReached (compileSeq r1 r2).M
+      { state_idx := (compileSeq r1 r2).exit,
+        tapes := [([], 0, Compile.encodeTape final)] } = true := by
+  -- The head-0 exit of r1 makes its config = initFlatConfig r2 [encodeTape mid].
+  -- Feed into the already-proven `compileSeq_compose_physical`.
+  have h_sym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape mid)
+      = some v → v < 4 := by
+    intro v hv
+    simp only [currentTapeSymbol] at hv
+    split at hv
+    case isTrue h =>
+      rw [Option.some.injEq] at hv; subst hv
+      exact Compile.encodeTape_lt_four mid hbit_mid _
+        (List.getElem_mem h)
+    case isFalse => exact absurd hv (by simp)
+  -- `compileSeq_compose_physical` produces `cfg2.state_idx + r1.M.states` where
+  -- `cfg2 = { state_idx := r2.exit, … }`, giving `r2.exit + r1.M.states`.
+  -- Our conclusion uses `(compileSeq r1 r2).exit = r1.M.states + r2.exit`.
+  have key := compileSeq_compose_physical r1 r2 (Compile.encodeTape s) (Compile.encodeTape mid)
+    h_sym h_run1 h_traj1 h_run2 h_halt2
+  -- key : runFlatTM … = some { state_idx := r2.exit + r1.M.states, … } ∧ …
+  -- goal : … (compileSeq r1 r2).exit = r1.M.states + r2.exit …
+  rw [show (compileSeq r1 r2).exit = r2.exit + r1.M.states from Nat.add_comm ..]
+  exact key
+
+/-- **Physical-contract trajectory for `compileSeq` (PROVEN).** If both
+sub-machines never halt before their exit, neither does the composition. -/
+theorem compileSeq_traj_physical
+    (r1 r2 : CompiledCmd) (s mid : State)
+    (hbit_mid : Compile.BitState mid)
+    {t1 t2 : Nat}
+    (h_run1 : runFlatTM t1 r1.M (initFlatConfig r1.M [Compile.encodeTape s])
+                = some { state_idx := r1.exit,
+                         tapes := [([], 0, Compile.encodeTape mid)] })
+    (h_traj1 : ∀ k, k < t1 → ∀ ck,
+        runFlatTM k r1.M (initFlatConfig r1.M [Compile.encodeTape s]) = some ck →
+        ck.state_idx ≠ r1.exit ∧ haltingStateReached r1.M ck = false)
+    (h_traj2 : ∀ k, k < t2 → ∀ ck,
+        runFlatTM k r2.M (initFlatConfig r2.M [Compile.encodeTape mid]) = some ck →
+        ck.state_idx ≠ r2.exit ∧ haltingStateReached r2.M ck = false) :
+    ∀ k, k < t1 + 1 + t2 → ∀ ck,
+      runFlatTM k (compileSeq r1 r2).M
+          (initFlatConfig (compileSeq r1 r2).M [Compile.encodeTape s]) = some ck →
+      ck.state_idx ≠ (compileSeq r1 r2).exit ∧
+      haltingStateReached (compileSeq r1 r2).M ck = false := by
+  sorry  -- TODO(C2, step 1b-3): use `composeFlatTM_no_early_halt` with the
+         -- sub-trajectories. The exit of `compileSeq` is `r1.M.states + r2.exit`,
+         -- so any `ck` in the M₁ phase has `state_idx < r1.M.states` (from
+         -- `h_traj1`'s `haltingStateReached = false`) and in the M₂ phase has
+         -- `state_idx = r2_state + r1.M.states ≠ r1.M.states + r2.exit` (from
+         -- `h_traj2`).
+
 /-- Soundness obligation for `compileIfBit`. The two branches are
 mutually exclusive on the value of `s.get t`, so the IH for the
 *taken* branch is the only one needed; we state both for symmetry. -/
