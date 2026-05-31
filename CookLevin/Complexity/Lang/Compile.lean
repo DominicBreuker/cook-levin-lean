@@ -1904,6 +1904,103 @@ theorem compileSeq_traj_physical
     exact absurd hnh Bool.noConfusion
   · exact h_nohalt k hk ck hck
 
+/-- **Physical-contract `compileIfBit` (sorry'd, step 1b-3).** Given two
+branches each satisfying the physical contract, `compileIfBit t rT rE` satisfies
+it for the taken branch, with the tester's overhead `+1` steps added.
+
+The tester (`bitTestTM`-derived) reads register `t`'s first symbol (2 steps past
+the leading sentinel), then bridges to the chosen branch. The branch's physical
+contract starts from head `0` (the tester exits at head `1`, but
+`joinTwoHalts` + the rewind bracket brings the head back). -/
+theorem compileIfBit_sound_physical
+    (t : Var) (rT rE : CompiledCmd)
+    (evalT evalE : State → State)
+    (hbit : ∀ s : State, Compile.BitState s → Compile.BitState (evalT s))
+    (hbit' : ∀ s : State, Compile.BitState s → Compile.BitState (evalE s))
+    {budgetT budgetE : State → Nat}
+    (hT : ∀ s, Compile.BitState s →
+      ∃ t : Nat,
+        runFlatTM t rT.M (initFlatConfig rT.M [Compile.encodeTape s])
+          = some { state_idx := rT.exit,
+                   tapes := [([], 0, Compile.encodeTape (evalT s))] }
+        ∧ (∀ k, k < t → ∀ ck,
+            runFlatTM k rT.M (initFlatConfig rT.M [Compile.encodeTape s]) = some ck →
+            ck.state_idx ≠ rT.exit ∧ haltingStateReached rT.M ck = false)
+        ∧ t ≤ budgetT s)
+    (hE : ∀ s, Compile.BitState s →
+      ∃ t : Nat,
+        runFlatTM t rE.M (initFlatConfig rE.M [Compile.encodeTape s])
+          = some { state_idx := rE.exit,
+                   tapes := [([], 0, Compile.encodeTape (evalE s))] }
+        ∧ (∀ k, k < t → ∀ ck,
+            runFlatTM k rE.M (initFlatConfig rE.M [Compile.encodeTape s]) = some ck →
+            ck.state_idx ≠ rE.exit ∧ haltingStateReached rE.M ck = false)
+        ∧ t ≤ budgetE s)
+    (s : State) (hbs : Compile.BitState s) :
+    let chosen := if s.get t = [1] then evalT s else evalE s
+    let chosenBudget := if s.get t = [1] then budgetT s else budgetE s
+    ∃ t : Nat,
+      runFlatTM t (compileIfBit t rT rE).M
+          (initFlatConfig (compileIfBit t rT rE).M [Compile.encodeTape s])
+        = some { state_idx := (compileIfBit t rT rE).exit,
+                 tapes := [([], 0, Compile.encodeTape chosen)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (compileIfBit t rT rE).M
+              (initFlatConfig (compileIfBit t rT rE).M [Compile.encodeTape s]) = some ck →
+          ck.state_idx ≠ (compileIfBit t rT rE).exit ∧
+          haltingStateReached (compileIfBit t rT rE).M ck = false)
+      ∧ t ≤ chosenBudget + 3 := by
+  sorry  -- TODO(C2, step 1b-3): use `branchComposeFlatTM_run` + `joinTwoHalts`.
+         -- The tester reads 2 steps (past sentinel + answer bit), bridges 1 step,
+         -- then the branch's physical contract runs. The +3 covers tester + bridge.
+
+/-- **Physical-contract `compileForBnd` (sorry'd, step 1b-3).** Given a loop body
+satisfying the physical contract, `compileForBnd counter bound rbody` satisfies
+it with the iterated body's budget summed over iterations.
+
+The construction uses `loopTM` (already proven in `TMPrimitives.lean`). Each
+iteration: (1) write the counter value to register `counter`, (2) run the body,
+(3) decrement/check the bound. The bound-length read is `O(bound_len)` steps;
+counter-write is `O(counter_val)` per iteration. The total budget is the sum
+of per-iteration budgets plus the loop overhead. -/
+theorem compileForBnd_sound_physical
+    (counter bound : Var)
+    (rbody : CompiledCmd)
+    (evalBody : State → State)
+    (hbit_body : ∀ s : State, Compile.BitState s → Compile.BitState (evalBody s))
+    {budgetBody : State → Nat}
+    (hb : ∀ s, Compile.BitState s →
+      ∃ t : Nat,
+        runFlatTM t rbody.M (initFlatConfig rbody.M [Compile.encodeTape s])
+          = some { state_idx := rbody.exit,
+                   tapes := [([], 0, Compile.encodeTape (evalBody s))] }
+        ∧ (∀ k, k < t → ∀ ck,
+            runFlatTM k rbody.M (initFlatConfig rbody.M [Compile.encodeTape s]) = some ck →
+            ck.state_idx ≠ rbody.exit ∧ haltingStateReached rbody.M ck = false)
+        ∧ t ≤ budgetBody s)
+    (s : State) (hbs : Compile.BitState s) :
+    let iters := (s.get bound).length
+    let folded := (List.range iters).foldl
+      (fun acc i =>
+        let s' := acc.1.set counter (List.replicate i 1)
+        (evalBody s', acc.2 + budgetBody s'))
+      (s, 0)
+    ∃ t : Nat,
+      runFlatTM t (compileForBnd counter bound rbody).M
+          (initFlatConfig (compileForBnd counter bound rbody).M [Compile.encodeTape s])
+        = some { state_idx := (compileForBnd counter bound rbody).exit,
+                 tapes := [([], 0, Compile.encodeTape folded.1)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (compileForBnd counter bound rbody).M
+              (initFlatConfig (compileForBnd counter bound rbody).M
+                [Compile.encodeTape s]) = some ck →
+          ck.state_idx ≠ (compileForBnd counter bound rbody).exit ∧
+          haltingStateReached (compileForBnd counter bound rbody).M ck = false)
+      ∧ t ≤ folded.2 + 3 * iters + 3 := by
+  sorry  -- TODO(C2, step 1b-3): use `loopTM_run` with the body's physical contract.
+         -- Each iteration: counter-write (O(i) steps) + body run (budgetBody steps).
+         -- Total: Σ budgetBody_i + loop overhead.
+
 /-- Soundness obligation for `compileIfBit`. The two branches are
 mutually exclusive on the value of `s.get t`, so the IH for the
 *taken* branch is the only one needed; we state both for symmetry. -/
