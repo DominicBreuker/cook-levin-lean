@@ -345,4 +345,227 @@ theorem insertCarryTM_no_early_halt (ins : Nat) (suf pre : List Nat)
           show pre ++ ins :: suf' = (pre ++ [ins]) ++ suf' by simp] at hck
       exact insertCarryTM_carry_no_early_halt ins suf' (pre ++ [ins]) y hy hall' n hn_lt ck hck
 
+/-! # `deleteCarryTM` — the shared single-tape "delete one cell" (left-shift) gadget
+(Risk C2 of `ROADMAP.md`)
+
+The mirror of `insertCarryTM`: the overwrite/length-decreasing ops
+(`clear`/`tail`/shrinking `copy`/…) must **remove** a cell and shift the rest of
+the tape one place left. The physical tape cannot shrink (`TapeMono.lean`), so
+the gadget keeps `right.length` fixed and writes a `0` filler into the vacated
+trailing cell — the residue stays terminator-free (`< 4`, `≠ 3`), exactly the
+`Compile.ValidResidue` invariant the residue-tolerant physical contract needs.
+
+Deleting the cell at position `p` runs from the head at `p + 1` (one past the
+deleted cell). One "carry" per remaining cell, three steps each:
+`read` (read `y`, move **left**, carry `y`), `write` (write `y` at `p`-side,
+move **right**), `skip` (write `0` clearing the stale cell, move **right**),
+then `read` the next cell; halt on the blank past the end. States: `0` read,
+`1+v` write the carried value `v∈{0,1,2,3}`, `5` skip, `6` halt.
+
+`deleteCarryTM_run`: from head `pre.length + 1` on `pre ++ d :: suf` (delete `d`),
+after `3·suf.length + 1` steps the machine halts with tape `pre ++ suf ++ [0]`
+(`d` removed, `suf` shifted left, one `0` filler appended). -/
+
+/-- Transition table for the delete-carry (left-shift) machine. -/
+def deleteCarryTrans : List FlatTMTransEntry :=
+  [ -- read (0): carry the read symbol leftward
+    mkE 0 (some 0) 1 none .Lmove,
+    mkE 0 (some 1) 2 none .Lmove,
+    mkE 0 (some 2) 3 none .Lmove,
+    mkE 0 (some 3) 4 none .Lmove,
+    mkE 0 none      6 none .Nmove,
+    -- write v (state 1+v): write v at the current (stale) cell, move right, skip
+    mkE 1 (some 0) 5 (some 0) .Rmove, mkE 1 (some 1) 5 (some 0) .Rmove,
+    mkE 1 (some 2) 5 (some 0) .Rmove, mkE 1 (some 3) 5 (some 0) .Rmove,
+    mkE 1 none      5 (some 0) .Rmove,
+    mkE 2 (some 0) 5 (some 1) .Rmove, mkE 2 (some 1) 5 (some 1) .Rmove,
+    mkE 2 (some 2) 5 (some 1) .Rmove, mkE 2 (some 3) 5 (some 1) .Rmove,
+    mkE 2 none      5 (some 1) .Rmove,
+    mkE 3 (some 0) 5 (some 2) .Rmove, mkE 3 (some 1) 5 (some 2) .Rmove,
+    mkE 3 (some 2) 5 (some 2) .Rmove, mkE 3 (some 3) 5 (some 2) .Rmove,
+    mkE 3 none      5 (some 2) .Rmove,
+    mkE 4 (some 0) 5 (some 3) .Rmove, mkE 4 (some 1) 5 (some 3) .Rmove,
+    mkE 4 (some 2) 5 (some 3) .Rmove, mkE 4 (some 3) 5 (some 3) .Rmove,
+    mkE 4 none      5 (some 3) .Rmove,
+    -- skip (5): clear the stale cell to 0, move right, read the next cell
+    mkE 5 (some 0) 0 (some 0) .Rmove, mkE 5 (some 1) 0 (some 0) .Rmove,
+    mkE 5 (some 2) 0 (some 0) .Rmove, mkE 5 (some 3) 0 (some 0) .Rmove,
+    mkE 5 none      6 none .Nmove ]
+
+/-- The delete-carry machine (sig = 4). -/
+def deleteCarryTM : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 7
+  trans := deleteCarryTrans
+  start := 0
+  halt := [false, false, false, false, false, false, true]
+
+theorem deleteCarryTM_valid : validFlatTM deleteCarryTM := by
+  refine ⟨?_, ?_, ?_⟩
+  · show (0 : Nat) < 7; decide
+  · show ([false, false, false, false, false, false, true] : List Bool).length = 7; decide
+  · intro e he
+    simp only [deleteCarryTM, deleteCarryTrans, mkE, List.mem_cons, List.not_mem_nil,
+      or_false] at he
+    rcases he with h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h|h <;>
+      subst h <;>
+      refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩ <;>
+      simp only [deleteCarryTM] <;>
+      first
+      | rfl
+      | decide
+      | exact optBounded_none
+      | (apply optBounded_some; omega)
+
+/-- **read step (nonblank).** From state `0` reading an in-range cell `y`, carry
+`y` leftward: move left, switch to the write state `1 + y`. Tape unchanged. -/
+theorem deleteCarryTM_read_nonblank (y : Nat) (hy : y < 4)
+    (left right : List Nat) (head : Nat) (hlt : head < right.length)
+    (hget : right.get ⟨head, hlt⟩ = y) :
+    stepFlatTM deleteCarryTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 1 + y, tapes := [(left, head - 1, right)] } := by
+  have hsym : currentTapeSymbol (left, head, right) = some y := by
+    rw [currentTapeSymbol_in_range hlt, hget]
+  interval_cases y <;>
+    simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
+      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+
+/-- **read step (blank).** From state `0` on the blank past the end, halt. -/
+theorem deleteCarryTM_read_blank (left right : List Nat) (head : Nat)
+    (hge : ¬ head < right.length) :
+    stepFlatTM deleteCarryTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 6, tapes := [(left, head, right)] } := by
+  have hsym : currentTapeSymbol (left, head, right) = none :=
+    currentTapeSymbol_out_of_range hge
+  simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
+    applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+
+/-- **write step.** From the write state `1 + v` (carrying `v`), reading an
+in-range cell, write `v` at the head (overwriting the stale cell), move right,
+switch to skip. -/
+theorem deleteCarryTM_write (v y : Nat) (hv : v < 4) (hy : y < 4)
+    (left right : List Nat) (head : Nat) (hlt : head < right.length)
+    (hget : right.get ⟨head, hlt⟩ = y) :
+    stepFlatTM deleteCarryTM { state_idx := 1 + v, tapes := [(left, head, right)] }
+      = some { state_idx := 5,
+               tapes := [(left, head + 1, right.take head ++ v :: right.drop (head + 1))] } := by
+  have hsym : currentTapeSymbol (left, head, right) = some y := by
+    rw [currentTapeSymbol_in_range hlt, hget]
+  interval_cases v <;> interval_cases y <;>
+    simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
+      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+
+/-- **skip step.** From skip state `5`, reading an in-range cell, write `0`
+(clearing the stale cell), move right, switch back to read. -/
+theorem deleteCarryTM_skip (y : Nat) (hy : y < 4)
+    (left right : List Nat) (head : Nat) (hlt : head < right.length)
+    (hget : right.get ⟨head, hlt⟩ = y) :
+    stepFlatTM deleteCarryTM { state_idx := 5, tapes := [(left, head, right)] }
+      = some { state_idx := 0,
+               tapes := [(left, head + 1, right.take head ++ 0 :: right.drop (head + 1))] } := by
+  have hsym : currentTapeSymbol (left, head, right) = some y := by
+    rw [currentTapeSymbol_in_range hlt, hget]
+  interval_cases y <;>
+    simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
+      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+
+/-- Non-halt states `0 … 5` of the delete-carry machine. -/
+private theorem delete_not_halt (s : Nat) (hs : s < 6) (cfg : FlatTMConfig)
+    (h : cfg.state_idx = s) : haltingStateReached deleteCarryTM cfg = false := by
+  show deleteCarryTM.halt.getD cfg.state_idx false = false
+  rw [h]; simp only [deleteCarryTM]; interval_cases s <;> rfl
+
+/-- **Delete loop.** From the read state at head `pre.length + 1` on tape
+`pre ++ c :: suf` (with `c < 4` the deleted cell), after `3·suf.length + 1` steps
+the machine halts (state `6`) having deleted `c` and shifted `suf` left by one,
+with a `0` filler in the vacated trailing cell: tape `pre ++ suf ++ [0]` (when
+`suf ≠ []`; the degenerate empty-suffix case leaves the stale `c` untouched). -/
+theorem deleteCarryTM_loop_run (suf : List Nat) :
+    ∀ (pre : List Nat) (c : Nat), c < 4 → (∀ x ∈ suf, x < 4) →
+      runFlatTM (3 * suf.length + 1) deleteCarryTM
+        { state_idx := 0, tapes := [([], pre.length + 1, pre ++ c :: suf)] }
+      = some { state_idx := 6,
+               tapes := [([], pre.length + 1 + suf.length,
+                          pre ++ (if suf = [] then [c] else suf ++ [0]))] } := by
+  induction suf with
+  | nil =>
+      intro pre c _ _
+      have hge : ¬ pre.length + 1 < (pre ++ [c]).length := by
+        simp only [List.length_append, List.length_singleton]; omega
+      rw [List.length_nil, Nat.mul_zero, Nat.zero_add,
+          run_succ_of_step _ _ _ 0 (delete_not_halt 0 (by omega) _ rfl)
+            (deleteCarryTM_read_blank [] (pre ++ [c]) (pre.length + 1) hge)]
+      simp [runFlatTM]
+  | cons y suf' ih =>
+      intro pre c hc hall
+      have hy : y < 4 := hall y (by simp)
+      have hall' : ∀ x ∈ suf', x < 4 := fun x hx => hall x (by simp [hx])
+      -- The three single-step `get` facts and tape rewrites.
+      have hlt1 : pre.length + 1 < (pre ++ c :: y :: suf').length := by
+        simp only [List.length_append, List.length_cons]; omega
+      have hget1 : (pre ++ c :: y :: suf').get ⟨pre.length + 1, hlt1⟩ = y := by
+        simp [List.getElem_append_right]
+      have hlt2 : pre.length < (pre ++ c :: y :: suf').length := by
+        simp only [List.length_append, List.length_cons]; omega
+      have hget2 : (pre ++ c :: y :: suf').get ⟨pre.length, hlt2⟩ = c := by
+        simp [List.getElem_append_right]
+      have hlt3 : pre.length + 1 < (pre ++ y :: y :: suf').length := by
+        simp only [List.length_append, List.length_cons]; omega
+      have hget3 : (pre ++ y :: y :: suf').get ⟨pre.length + 1, hlt3⟩ = y := by
+        simp [List.getElem_append_right]
+      have htk2 : (pre ++ c :: y :: suf').take pre.length = pre := by simp
+      have hdr2 : (pre ++ c :: y :: suf').drop (pre.length + 1) = y :: suf' := by
+        rw [show pre ++ c :: y :: suf' = (pre ++ [c]) ++ y :: suf' from by simp,
+            show pre.length + 1 = (pre ++ [c]).length from by simp, List.drop_left]
+      have htk3 : (pre ++ y :: y :: suf').take (pre.length + 1) = pre ++ [y] := by
+        rw [show pre ++ y :: y :: suf' = (pre ++ [y]) ++ y :: suf' from by simp,
+            show pre.length + 1 = (pre ++ [y]).length from by simp, List.take_left]
+      have hdr3 : (pre ++ y :: y :: suf').drop (pre.length + 1 + 1) = suf' := by
+        rw [show pre ++ y :: y :: suf' = (pre ++ [y, y]) ++ suf' from by simp,
+            show pre.length + 1 + 1 = (pre ++ [y, y]).length from by simp, List.drop_left]
+      -- Peel the count to `… + 1 + 1 + 1 + 1` and unfold the three steps.
+      rw [show 3 * (y :: suf').length + 1 = 3 * suf'.length + 1 + 1 + 1 + 1 from by
+        simp only [List.length_cons]; omega]
+      rw [run_succ_of_step _ _ _ (3 * suf'.length + 1 + 1 + 1)
+        (delete_not_halt 0 (by omega) _ rfl)
+        (deleteCarryTM_read_nonblank y hy [] _ _ hlt1 hget1), Nat.add_sub_cancel]
+      rw [run_succ_of_step _ _ _ (3 * suf'.length + 1 + 1)
+        (delete_not_halt (1 + y) (by omega) _ rfl)
+        (deleteCarryTM_write y c hy hc [] _ _ hlt2 hget2), htk2, hdr2]
+      rw [run_succ_of_step _ _ _ (3 * suf'.length + 1)
+        (delete_not_halt 5 (by omega) _ rfl)
+        (deleteCarryTM_skip y hy [] _ _ hlt3 hget3), htk3, hdr3]
+      -- Apply the IH on `pre ++ [y]`, stale cell `0`, suffix `suf'`.
+      have key := ih (pre ++ [y]) 0 (by omega) hall'
+      rw [show pre.length + 1 + 1 = (pre ++ [y]).length + 1 from by simp]
+      rw [key]
+      -- Reconcile the two result configs (head + tape).
+      have hhead : (pre ++ [y]).length + 1 + suf'.length
+          = pre.length + 1 + (y :: suf').length := by
+        simp only [List.length_append, List.length_cons, List.length_nil]; omega
+      have htape : (pre ++ [y]) ++ (if suf' = [] then [0] else suf' ++ [0])
+          = pre ++ (if (y :: suf') = [] then [c] else (y :: suf') ++ [0]) := by
+        rcases eq_or_ne suf' [] with he | he
+        · subst he; simp
+        · rw [if_neg he, if_neg (by simp)]; simp [List.append_assoc]
+      rw [hhead, htape]
+
+/-- **`deleteCarryTM` run lemma.** Deleting the cell `d` at head `pre.length + 1`
+of `pre ++ d :: t :: suf` (a non-empty suffix `t :: suf`, e.g. the terminator and
+the rest): after `3·(t::suf).length + 1` steps the machine halts with tape
+`pre ++ t :: suf ++ [0]` (`d` removed, the suffix shifted left, a `0` filler
+appended — `ValidResidue`-preserving). -/
+theorem deleteCarryTM_run (pre : List Nat) (d t : Nat) (suf : List Nat)
+    (hd : d < 4) (ht : t < 4) (hsuf : ∀ x ∈ suf, x < 4) :
+    runFlatTM (3 * (t :: suf).length + 1) deleteCarryTM
+        { state_idx := 0, tapes := [([], pre.length + 1, pre ++ d :: t :: suf)] }
+      = some { state_idx := 6,
+               tapes := [([], pre.length + 1 + (t :: suf).length,
+                          pre ++ t :: suf ++ [0])] } := by
+  have h := deleteCarryTM_loop_run (t :: suf) pre d hd
+    (by intro x hx; rcases List.mem_cons.mp hx with rfl | h; exacts [ht, hsuf x h])
+  rw [if_neg (by simp)] at h
+  simpa using h
+
 end Complexity.Lang.ShiftTape

@@ -709,4 +709,226 @@ theorem rewindFromEndTM_no_early_halt (sig target : Nat) (h_target : target < si
     (show (0 : Nat) < 2 from by decide)
     left (head - 1) tp h_sym_bound h_run1 h_traj1 h_traj2
 
+/-! ### Scan left to an *interior* mark — the residue-tolerant rewind primitive
+(Risk C2, two-phase rewind)
+
+`scanLeft_run` lands on the `target` at index `0`. Under the residue-tolerant
+physical contract the tape is
+`sentinel(3) :: interior(3-free) ++ [terminator(3)] ++ residue(3-free)`, and a
+gadget exits with its head in the residue (or on the terminator). The first `3`
+to the *left* is the **real terminator** at an interior position `p`, not the
+sentinel at `0`. `scanLeftToMark_run` lands on that interior `p` in `head − p`
+steps (`+1` for the accept step), reading only the `target`-free cells
+`p+1 … head` on the way. Composing it with `rewindFromEndTM` (step off the
+terminator, then scan to the sentinel) yields the full two-phase rewind. -/
+
+/-- **Scan-left-to-interior-mark run lemma.** From head `head = p + n`, scanning
+left over the `target`-free in-range cells `p+1 … head`, `scanLeftUntilTM` halts
+in `n + 1` steps in the accept state `1` with the head on the mark at `p`
+(`right[p] = target`), leaving the tape unchanged. Generalises `scanLeft_run`
+(the `p = 0` case). -/
+theorem scanLeftToMark_run (sig target : Nat) (left right : List Nat) (p : Nat)
+    (hp : p < right.length) (h_target_p : right.get ⟨p, hp⟩ = target) :
+    ∀ (n head : Nat), head = p + n → head < right.length →
+      (∀ i, p < i → i ≤ head → ∃ (h : i < right.length),
+        right.get ⟨i, h⟩ < sig ∧ right.get ⟨i, h⟩ ≠ target) →
+      runFlatTM (n + 1) (scanLeftUntilTM sig target)
+          { state_idx := 0, tapes := [(left, head, right)] } =
+        some { state_idx := 1, tapes := [(left, p, right)] } := by
+  intro n
+  induction n with
+  | zero =>
+      intro head hhead h_head_lt _
+      have hhp : head = p := by omega
+      subst hhp
+      have h_get : right.get ⟨head, h_head_lt⟩ = target := h_target_p
+      rw [run0_unfold sig target 0 _ _
+        (scanLeftUntilTM_step_found sig target left right head h_head_lt h_get)]
+      rfl
+  | succ m ih =>
+      intro head hhead h_head_lt hb
+      have h_head_gt : p < head := by omega
+      rcases hb head h_head_gt (Nat.le_refl _) with ⟨h_lt, h_sym_lt, h_sym_ne⟩
+      have heq : (⟨head, h_head_lt⟩ : Fin right.length) = ⟨head, h_lt⟩ := rfl
+      have h_get_lt : right.get ⟨head, h_head_lt⟩ < sig := by rw [heq]; exact h_sym_lt
+      have h_get_ne : right.get ⟨head, h_head_lt⟩ ≠ target := by rw [heq]; exact h_sym_ne
+      have h_head_lt' : head - 1 < right.length := by omega
+      have hhead' : head - 1 = p + m := by omega
+      have hb' : ∀ i, p < i → i ≤ head - 1 → ∃ (h : i < right.length),
+          right.get ⟨i, h⟩ < sig ∧ right.get ⟨i, h⟩ ≠ target :=
+        fun i hi hle => hb i hi (by omega)
+      have hih := ih (head - 1) hhead' h_head_lt' hb'
+      rw [run0_unfold sig target (m + 1) _ _
+        (scanLeftUntilTM_step_advance sig target left right head h_head_lt
+          h_get_lt h_get_ne)]
+      exact hih
+
+/-- **Scan-left-to-interior-mark trajectory.** For `k < n + 1` the scan is still
+in state `0` (head at `head − k ≥ p`), so it has neither accepted nor halted.
+The `h_traj1` shape of `composeFlatTM_run`. Generalises `scanLeft_no_early_halt`.
+-/
+theorem scanLeftToMark_no_early_halt (sig target : Nat) (left right : List Nat) (p : Nat)
+    (hp : p < right.length) (h_target_p : right.get ⟨p, hp⟩ = target)
+    (n head : Nat) (hhead : head = p + n) (h_head_lt : head < right.length)
+    (hb : ∀ i, p < i → i ≤ head → ∃ (h : i < right.length),
+      right.get ⟨i, h⟩ < sig ∧ right.get ⟨i, h⟩ ≠ target) :
+    ∀ k, k < n + 1 → ∀ ck,
+      runFlatTM k (scanLeftUntilTM sig target)
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      ck.state_idx ≠ 1 ∧
+      haltingStateReached (scanLeftUntilTM sig target) ck = false := by
+  intro k hk ck hck
+  have hk' : k ≤ n := Nat.lt_succ_iff.mp hk
+  have htraj : ∀ (m : Nat), m ≤ n →
+      runFlatTM m (scanLeftUntilTM sig target)
+          { state_idx := 0, tapes := [(left, head, right)] } =
+        some { state_idx := 0, tapes := [(left, head - m, right)] } := by
+    intro m
+    induction m with
+    | zero => intro _; rw [Nat.sub_zero]; rfl
+    | succ j ih =>
+        intro hj
+        have hj' : j ≤ n := Nat.le_of_succ_le hj
+        have ihj := ih hj'
+        have h_pos : p < head - j := by omega
+        have h_idx_lt : head - j < right.length := by omega
+        have h_idx_le : head - j ≤ head := Nat.sub_le head j
+        rcases hb (head - j) h_pos h_idx_le with ⟨h_lt, h_sym_lt, h_sym_ne⟩
+        have heq : (⟨head - j, h_idx_lt⟩ : Fin right.length) = ⟨head - j, h_lt⟩ := rfl
+        have h_step := scanLeftUntilTM_step_advance sig target left right (head - j)
+          h_idx_lt (by rw [heq]; exact h_sym_lt) (by rw [heq]; exact h_sym_ne)
+        have h_nothalt :
+            haltingStateReached (scanLeftUntilTM sig target)
+              { state_idx := 0, tapes := [(left, head - j, right)] } = false := rfl
+        have h := runFlatTM_extend_by_step (scanLeftUntilTM sig target) j _ _ _
+          ihj h_nothalt h_step
+        rw [show head - (j + 1) = head - j - 1 from by omega]
+        exact h
+  rw [htraj k hk'] at hck
+  obtain rfl : ck = { state_idx := 0, tapes := [(left, head - k, right)] } :=
+    (Option.some.inj hck).symm
+  exact ⟨Nat.zero_ne_one, rfl⟩
+
+/-! ### The two-phase rewind (`rewindTwoPhaseTM`) — Risk C2 residue-tolerant rewind
+
+`rewindFromEndTM` rewinds to the leading sentinel *only when the head sits on the
+trailing terminator* (no residue): it steps off one cell, then the leftward scan
+runs through the terminator-free interior to the sentinel. Under the residue-
+tolerant contract the head exits in the **residue** (or on the terminator), with
+the real terminator at an interior position; a single `rewindFromEndTM` would
+stop the inner scan on the real terminator, not the sentinel.
+
+`rewindTwoPhaseTM = scanLeftUntilTM ⨾ rewindFromEndTM`:
+* **phase 1** (`scanLeftToMark`): scan left through the terminator-free residue to
+  the **real terminator** at position `p`;
+* **phase 2** (`rewindFromEndTM`): step off the terminator, scan left through the
+  terminator-free interior to the **leading sentinel** at `0`.
+
+Both targets are `target = endMark = 3`; they are distinguished purely by the
+terminator-free residue/interior between them. The composite halts at state `6`
+with the head rewound to `0`. -/
+
+/-- The two-phase rewind machine. -/
+def rewindTwoPhaseTM (sig target : Nat) : FlatTM :=
+  composeFlatTM (scanLeftUntilTM sig target) (rewindFromEndTM sig target) 1
+
+theorem rewindTwoPhaseTM_valid (sig target : Nat) (h_target : target < sig) :
+    validFlatTM (rewindTwoPhaseTM sig target) :=
+  composeFlatTM_valid _ _ 1
+    (scanLeftUntilTM_valid sig target h_target)
+    (rewindFromEndTM_valid sig target h_target)
+    (show (1 : Nat) < 3 from by decide) rfl (rewindFromEndTM_tapes sig target)
+
+/-- **Two-phase rewind run lemma.** On a tape `tp` with the leading sentinel
+`target` at `0`, the real terminator `target` at an interior `p > 0`, a
+terminator-free in-range interior `1 … p-1`, and a terminator-free in-range
+residue `p+1 … head` (head `≥ p`, e.g. the head a gadget leaves in the residue),
+`rewindTwoPhaseTM` halts at state `6` with the head rewound to `0`, leaving the
+tape unchanged. -/
+theorem rewindTwoPhase_run (sig target : Nat) (h_target : target < sig)
+    (left tp : List Nat) (p head : Nat)
+    (h0 : 0 < tp.length) (h_sentinel : tp.get ⟨0, h0⟩ = target)
+    (hp : p < tp.length) (h_term : tp.get ⟨p, hp⟩ = target) (h_p_pos : 0 < p)
+    (h_head_lt : head < tp.length) (h_p_le_head : p ≤ head)
+    (h_interior : ∀ i, 0 < i → i < p → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target)
+    (h_residue : ∀ i, p < i → i ≤ head → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target) :
+    runFlatTM ((head - p + 1) + 1 + (1 + 1 + p)) (rewindTwoPhaseTM sig target)
+        { state_idx := 0, tapes := [(left, head, tp)] } =
+      some { state_idx := 6, tapes := [(left, 0, tp)] } := by
+  have hhead : head = p + (head - p) := by omega
+  have h_run1 := scanLeftToMark_run sig target left tp p hp h_term (head - p) head hhead
+    h_head_lt h_residue
+  have h_traj1 := scanLeftToMark_no_early_halt sig target left tp p hp h_term (head - p) head
+    hhead h_head_lt h_residue
+  have h_start_sym : tp.get ⟨p, hp⟩ < sig := by rw [h_term]; exact h_target
+  have h_run2 : runFlatTM (1 + 1 + p) (rewindFromEndTM sig target)
+      { state_idx := (rewindFromEndTM sig target).start, tapes := [(left, p, tp)] }
+        = some { state_idx := 3, tapes := [(left, 0, tp)] } := by
+    rw [rewindFromEndTM_start]
+    exact rewindFromEndTM_run sig target h_target left tp p h0 h_sentinel h_p_pos hp
+      h_start_sym h_interior
+  have h_halt2 : haltingStateReached (rewindFromEndTM sig target)
+      { state_idx := 3, tapes := [(left, 0, tp)] } = true := rfl
+  have h_sym_bound : ∀ v, currentTapeSymbol (left, p, tp) = some v →
+      v < max (scanLeftUntilTM sig target).sig (rewindFromEndTM sig target).sig := by
+    intro v hv
+    rw [currentTapeSymbol_in_range hp, h_term] at hv
+    injection hv with hv'
+    have hmax : max (scanLeftUntilTM sig target).sig (rewindFromEndTM sig target).sig = sig := by
+      rw [rewindFromEndTM_sig]; exact Nat.max_self sig
+    rw [hmax, ← hv']; exact h_target
+  have hcomp := composeFlatTM_run
+    (scanLeftUntilTM_valid sig target h_target) (rewindFromEndTM_valid sig target h_target)
+    (by decide : (1 : Nat) < 3)
+    { state_idx := 0, tapes := [(left, head, tp)] }
+    (by decide : (0 : Nat) < 3)
+    left p tp h_sym_bound h_run1 h_traj1 h_run2 h_halt2
+  exact hcomp.1
+
+/-- **Two-phase rewind trajectory.** Before completing, `rewindTwoPhaseTM` has not
+reached a halting state — the `h_traj` input for bracketing a gadget with it. -/
+theorem rewindTwoPhase_no_early_halt (sig target : Nat) (h_target : target < sig)
+    (left tp : List Nat) (p head : Nat)
+    (h0 : 0 < tp.length) (h_sentinel : tp.get ⟨0, h0⟩ = target)
+    (hp : p < tp.length) (h_term : tp.get ⟨p, hp⟩ = target) (h_p_pos : 0 < p)
+    (h_head_lt : head < tp.length) (h_p_le_head : p ≤ head)
+    (h_interior : ∀ i, 0 < i → i < p → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target)
+    (h_residue : ∀ i, p < i → i ≤ head → ∃ (h : i < tp.length),
+        tp.get ⟨i, h⟩ < sig ∧ tp.get ⟨i, h⟩ ≠ target) :
+    ∀ k, k < (head - p + 1) + 1 + (1 + 1 + p) → ∀ ck,
+      runFlatTM k (rewindTwoPhaseTM sig target)
+          { state_idx := 0, tapes := [(left, head, tp)] } = some ck →
+      haltingStateReached (rewindTwoPhaseTM sig target) ck = false := by
+  have hhead : head = p + (head - p) := by omega
+  have h_run1 := scanLeftToMark_run sig target left tp p hp h_term (head - p) head hhead
+    h_head_lt h_residue
+  have h_traj1 := scanLeftToMark_no_early_halt sig target left tp p hp h_term (head - p) head
+    hhead h_head_lt h_residue
+  have h_start_sym : tp.get ⟨p, hp⟩ < sig := by rw [h_term]; exact h_target
+  have h_traj2 : ∀ k, k < 1 + 1 + p → ∀ ck,
+      runFlatTM k (rewindFromEndTM sig target)
+          { state_idx := (rewindFromEndTM sig target).start, tapes := [(left, p, tp)] }
+        = some ck → haltingStateReached (rewindFromEndTM sig target) ck = false := by
+    intro k hk ck hck
+    rw [rewindFromEndTM_start] at hck
+    exact rewindFromEndTM_no_early_halt sig target h_target left tp p h0 h_sentinel h_p_pos hp
+      h_start_sym h_interior k hk ck hck
+  have h_sym_bound : ∀ v, currentTapeSymbol (left, p, tp) = some v →
+      v < max (scanLeftUntilTM sig target).sig (rewindFromEndTM sig target).sig := by
+    intro v hv
+    rw [currentTapeSymbol_in_range hp, h_term] at hv
+    injection hv with hv'
+    have hmax : max (scanLeftUntilTM sig target).sig (rewindFromEndTM sig target).sig = sig := by
+      rw [rewindFromEndTM_sig]; exact Nat.max_self sig
+    rw [hmax, ← hv']; exact h_target
+  exact composeFlatTM_no_early_halt
+    (scanLeftUntilTM_valid sig target h_target) (rewindFromEndTM_valid sig target h_target)
+    (by decide : (1 : Nat) < 3)
+    { state_idx := 0, tapes := [(left, head, tp)] }
+    (by decide : (0 : Nat) < 3)
+    left p tp h_sym_bound h_run1 h_traj1 h_traj2
+
 end Complexity.Lang.ScanLeft

@@ -1,6 +1,7 @@
 import Complexity.Lang.Semantics
 import Complexity.Lang.AppendGadget
 import Complexity.Complexity.TMPrimitives
+import Complexity.Complexity.TapeMono
 
 set_option autoImplicit false
 
@@ -985,6 +986,45 @@ theorem Compile.decodeTape_encodeTape (s : State) (h : Compile.BitState s) :
       Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
       Compile.map_unshift_shift]
 
+/-- Generalisation of `takeWhile_no_endMark`: taking the prefix before the first
+terminator recovers `l`, even when arbitrary `rest` follows the terminator. -/
+private theorem Compile.takeWhile_no_endMark_append :
+    ∀ (l rest : List Nat), (∀ x ∈ l, x ≠ Compile.endMark) →
+      (l ++ Compile.endMark :: rest).takeWhile (· != Compile.endMark) = l
+  | [],     rest, _ => by
+      rw [List.nil_append, List.takeWhile_cons, if_neg (by simp [bne_iff_ne])]
+  | a :: t, rest, h => by
+      have ha : a ≠ Compile.endMark := h a (by simp)
+      have ht : ∀ x ∈ t, x ≠ Compile.endMark := fun x hx => h x (by simp [hx])
+      rw [List.cons_append, List.takeWhile_cons,
+          if_pos (by simp [bne_iff_ne, ha]), Compile.takeWhile_no_endMark_append t rest ht]
+
+/-- **Residue-tolerant decode (Risk C2 resolution foundation).** `decodeTape`
+ignores both the head position and any trailing residue after the encoded tape:
+decoding `encodeTape s ++ residue` recovers `s` for *any* `residue` and *any*
+head `hd`. This holds because `decodeTape` reads `takeWhile (· ≠ endMark)` of the
+tail, which stops at the **first** (real) terminator — and `encodeRegs s` of a
+`BitState` contains no terminator. This is the key lemma that makes the
+recommended residue-tolerant physical contract decode correctly: a length-
+decreasing op may leave `encodeTape (output) ++ residue` on the (non-shrinking)
+tape (see `Complexity/Complexity/TapeMono.lean`), yet still decode to `output`.
+-/
+theorem Compile.decodeTape_encodeTape_append (s : State) (residue : List Nat)
+    (q hd : Nat) (h : Compile.BitState s) :
+    Compile.decodeTape
+        { state_idx := q, tapes := [([], hd, Compile.encodeTape s ++ residue)] } = s := by
+  show (Compile.dropTrailingEmpty (Compile.splitOnZero
+        ((Compile.flattenTape (([] : List Nat), hd, Compile.encodeTape s ++ residue)).tail.takeWhile
+          (· != Compile.endMark)))).map Compile.unshiftReg = s
+  have htail : (Compile.flattenTape (([] : List Nat), hd, Compile.encodeTape s ++ residue)).tail
+      = Compile.encodeRegs s ++ Compile.endMark :: residue := by
+    show (Compile.encodeTape s ++ residue).tail = Compile.encodeRegs s ++ Compile.endMark :: residue
+    rw [Compile.encodeTape, List.cons_append, List.tail_cons, List.append_assoc, List.cons_append,
+        List.nil_append]
+  rw [htail, Compile.takeWhile_no_endMark_append _ residue (Compile.encodeRegs_no_endMark s h),
+      Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
+      Compile.map_unshift_shift]
+
 /-- After the leading sentinel, the encoded tape continues with `shiftReg`-ed
 register `0`. When register `0` holds a single bit `b` (the decider answer
 convention — `[1]` for accept, `[0]` for reject), the encoded tape is
@@ -1764,6 +1804,37 @@ def Op.inBounds (o : Op) (s : State) : Prop :=
       dst < s.length ∧ src < s.length ∧ lenReg < s.length
   | .concat dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
 
+/-- **Risk C2 finding (machine-checked): the exact-tape physical contract is
+unsatisfiable for length-decreasing ops.** No `FlatTM`, in any number of steps,
+can run from `encodeTape s` to a configuration whose tape is *exactly*
+`encodeTape (Op.eval (.clear dst) s)` when register `dst` is non-empty — because
+the physical tape never shrinks (`runFlatTM_initFlatConfig_no_shrink`) yet
+clearing a non-empty register *shortens* the encoded tape. Concrete witness
+`s = [[1]]`, `dst = 0`: `encodeTape [[1]]` has length `4`, but
+`encodeTape (clear 0 ↦ [[]])` has length `3`.
+
+This is the obstruction behind `compileOp_sound_physical` (below): it **cannot**
+be proved for `clear` / `tail` / shrinking `copy` / `head` / `eqBit` /
+`nonEmpty` / the length ops as stated, since each can shorten the tape. Only
+`appendOne` / `appendZero` (which purely grow it) fit the exact-tape contract.
+See `Complexity/Complexity/TapeMono.lean` and ROADMAP Risk C2 for the resolution
+(a residue-tolerant contract `encodeTape output ++ filler` + a left-shift delete
+gadget). -/
+theorem Compile.clear_physical_unsatisfiable (M : FlatTM) (n q : Nat) :
+    runFlatTM n M (initFlatConfig M [Compile.encodeTape [[1]]])
+      ≠ some { state_idx := q,
+               tapes := [([], 0, Compile.encodeTape (Op.eval (Op.clear 0) [[1]]))] } := by
+  intro h
+  have hno : (Compile.encodeTape [[1]]).length
+      ≤ (Compile.encodeTape (Op.eval (Op.clear 0) [[1]])).length :=
+    runFlatTM_initFlatConfig_no_shrink M n (Compile.encodeTape [[1]]) _ _ h rfl
+  have hin : (Compile.encodeTape [[1]]).length = 4 := by
+    rw [Compile.encodeTape_length]; decide
+  have hout : (Compile.encodeTape (Op.eval (Op.clear 0) [[1]])).length = 3 := by
+    rw [Compile.encodeTape_length]; decide
+  rw [hin, hout] at hno
+  omega
+
 theorem compileOp_sound_physical (o : Op) (s : State)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s) :
     ∃ t : Nat,
@@ -1903,6 +1974,147 @@ theorem compileSeq_traj_physical
     rw [hh] at hnh
     exact absurd hnh Bool.noConfusion
   · exact h_nohalt k hk ck hck
+
+/-! ### C2 design validation: the RESIDUE-TOLERANT contract composes
+
+The exact-tape contract is unsatisfiable for length-decreasing ops (the tape
+never shrinks — `Complexity/Complexity/TapeMono.lean`,
+`Compile.clear_physical_unsatisfiable`). The recommended fix is a *residue-
+tolerant* contract: a gadget run on `encodeTape s ++ residue` halts (head `0`)
+with tape `encodeTape output ++ residue'`, where every residue is a
+`Compile.ValidResidue` (only interior symbols `{0,1,2}` — `< 4` and `≠ endMark`,
+the `0`-filler left-shifting writes and the interior cells append carries out).
+
+Before anyone builds the delete gadget / two-phase rewind on this design, the
+two lemmas below **validate that it composes** — i.e. that residue threads
+mechanically through the one combinator the whole `Cmd` induction rests on
+(`compileSeq`). They are the residue-tolerant generalisations of
+`compileSeq_sound_physical` / `compileSeq_traj_physical`, and they go through by
+the *same* proof: `compileSeq_compose_physical` is already polymorphic in the
+inter-fragment tape, so the only new obligation is that the intermediate tape's
+symbols stay `< 4` — discharged by `ValidResidue` on the residue and
+`encodeTape_lt_four` on the content. This de-risks the redesign: composition
+does **not** blow up. (The residue stays `ValidResidue` and polynomially bounded
+— `|residue| ≤ physical tape length ≤ size + cost` — but those are per-gadget
+obligations, not composition obligations.) -/
+
+/-- A residue block carries only **interior** symbols `{0, 1, 2}`: below the
+alphabet bound (`< 4`) and free of the terminator `endMark = 3`. The left-shift
+delete gadgets fill vacated cells with `0`; append carries interior symbols; so
+the trailing residue on every physical tape stays `ValidResidue`. This is exactly
+what the composition lemmas need to bound the inter-fragment tape symbols. -/
+def Compile.ValidResidue (res : List Nat) : Prop :=
+  ∀ x ∈ res, x < 4 ∧ x ≠ Compile.endMark
+
+/-- **Residue-tolerant `compileSeq` composition (PROVEN — design validation).**
+The residue-tolerant generalisation of `compileSeq_sound_physical`: given two
+fragments satisfying the residue-tolerant contract (head-`0` exit, tape
+`encodeTape output ++ residue`), `compileSeq r1 r2` satisfies it with additive
+budget `t₁ + 1 + t₂`. The input residue `res0` is unconstrained; only the
+*inter-fragment* residue `res1` must be `ValidResidue` (so the seam tape's
+symbols stay `< 4`). -/
+theorem compileSeq_sound_physical_residue
+    (r1 r2 : CompiledCmd) (s mid final : State)
+    (res0 res1 res2 : List Nat)
+    (hbit_mid : Compile.BitState mid)
+    (hres1 : Compile.ValidResidue res1)
+    {t1 t2 : Nat}
+    (h_run1 : runFlatTM t1 r1.M (initFlatConfig r1.M [Compile.encodeTape s ++ res0])
+                = some { state_idx := r1.exit,
+                         tapes := [([], 0, Compile.encodeTape mid ++ res1)] })
+    (h_traj1 : ∀ k, k < t1 → ∀ ck,
+        runFlatTM k r1.M (initFlatConfig r1.M [Compile.encodeTape s ++ res0]) = some ck →
+        ck.state_idx ≠ r1.exit ∧ haltingStateReached r1.M ck = false)
+    (h_run2 : runFlatTM t2 r2.M (initFlatConfig r2.M [Compile.encodeTape mid ++ res1])
+                = some { state_idx := r2.exit,
+                         tapes := [([], 0, Compile.encodeTape final ++ res2)] })
+    (h_halt2 : haltingStateReached r2.M
+        { state_idx := r2.exit,
+          tapes := [([], 0, Compile.encodeTape final ++ res2)] } = true) :
+    runFlatTM (t1 + 1 + t2) (compileSeq r1 r2).M
+        (initFlatConfig (compileSeq r1 r2).M [Compile.encodeTape s ++ res0])
+      = some { state_idx := (compileSeq r1 r2).exit,
+               tapes := [([], 0, Compile.encodeTape final ++ res2)] } ∧
+    haltingStateReached (compileSeq r1 r2).M
+      { state_idx := (compileSeq r1 r2).exit,
+        tapes := [([], 0, Compile.encodeTape final ++ res2)] } = true := by
+  have h_sym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape mid ++ res1)
+      = some v → v < 4 := by
+    intro v hv
+    simp only [currentTapeSymbol] at hv
+    split at hv
+    case isTrue h =>
+      rw [Option.some.injEq] at hv; subst hv
+      have hmem := List.getElem_mem h
+      rw [List.mem_append] at hmem
+      rcases hmem with hm | hr
+      · exact Compile.encodeTape_lt_four mid hbit_mid _ hm
+      · exact (hres1 _ hr).1
+    case isFalse => exact absurd hv (by simp)
+  have key := compileSeq_compose_physical r1 r2
+    (Compile.encodeTape s ++ res0) (Compile.encodeTape mid ++ res1)
+    h_sym h_run1 h_traj1 h_run2 h_halt2
+  rw [show (compileSeq r1 r2).exit = r2.exit + r1.M.states from Nat.add_comm ..]
+  exact key
+
+/-- **Residue-tolerant `compileSeq` trajectory (PROVEN — design validation).**
+The residue-tolerant generalisation of `compileSeq_traj_physical`: if both
+fragments never halt before their exit on the residue-carrying tapes, neither
+does the composition. -/
+theorem compileSeq_traj_physical_residue
+    (r1 r2 : CompiledCmd) (s mid : State)
+    (res0 res1 : List Nat)
+    (hbit_mid : Compile.BitState mid)
+    (hres1 : Compile.ValidResidue res1)
+    {t1 t2 : Nat}
+    (h_run1 : runFlatTM t1 r1.M (initFlatConfig r1.M [Compile.encodeTape s ++ res0])
+                = some { state_idx := r1.exit,
+                         tapes := [([], 0, Compile.encodeTape mid ++ res1)] })
+    (h_traj1 : ∀ k, k < t1 → ∀ ck,
+        runFlatTM k r1.M (initFlatConfig r1.M [Compile.encodeTape s ++ res0]) = some ck →
+        ck.state_idx ≠ r1.exit ∧ haltingStateReached r1.M ck = false)
+    (h_traj2 : ∀ k, k < t2 → ∀ ck,
+        runFlatTM k r2.M (initFlatConfig r2.M [Compile.encodeTape mid ++ res1]) = some ck →
+        ck.state_idx ≠ r2.exit ∧ haltingStateReached r2.M ck = false) :
+    ∀ k, k < t1 + 1 + t2 → ∀ ck,
+      runFlatTM k (compileSeq r1 r2).M
+          (initFlatConfig (compileSeq r1 r2).M [Compile.encodeTape s ++ res0]) = some ck →
+      ck.state_idx ≠ (compileSeq r1 r2).exit ∧
+      haltingStateReached (compileSeq r1 r2).M ck = false := by
+  have h_sym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape mid ++ res1)
+      = some v → v < max r1.M.sig r2.M.sig := by
+    intro v hv
+    rw [r1.M_sig, r2.M_sig]
+    simp only [currentTapeSymbol] at hv
+    split at hv
+    case isTrue h =>
+      rw [Option.some.injEq] at hv; subst hv
+      have hmem := List.getElem_mem h
+      rw [List.mem_append] at hmem
+      rcases hmem with hm | hr
+      · exact Compile.encodeTape_lt_four mid hbit_mid _ hm
+      · exact (hres1 _ hr).1
+    case isFalse => exact absurd hv (by simp)
+  have h_traj2' : ∀ k, k < t2 → ∀ ck,
+      runFlatTM k r2.M
+          { state_idx := r2.M.start, tapes := [([], 0, Compile.encodeTape mid ++ res1)] }
+        = some ck → haltingStateReached r2.M ck = false := by
+    intro k hk ck hck
+    exact (h_traj2 k hk ck hck).2
+  have h_nohalt := composeFlatTM_no_early_halt r1.M_valid r2.M_valid r1.exit_lt
+    (initFlatConfig r1.M [Compile.encodeTape s ++ res0]) r1.M_valid.1
+    [] 0 (Compile.encodeTape mid ++ res1) h_sym h_run1 h_traj1 h_traj2'
+  intro k hk ck hck
+  refine ⟨?_, h_nohalt k hk ck hck⟩
+  intro heq
+  have hnh : haltingStateReached (compileSeq r1 r2).M ck = false := h_nohalt k hk ck hck
+  have hh : haltingStateReached (compileSeq r1 r2).M ck = true := by
+    show (compileSeq r1 r2).M.halt.getD ck.state_idx false = true
+    rw [heq]
+    have := (compileSeq r1 r2).exit_is_halt
+    simp only [List.getD, this, Option.getD]
+  rw [hh] at hnh
+  exact absurd hnh Bool.noConfusion
 
 /-- **Physical-contract `compileIfBit` (sorry'd, step 1b-3).** Given two
 branches each satisfying the physical contract, `compileIfBit t rT rE` satisfies
