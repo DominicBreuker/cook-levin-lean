@@ -563,6 +563,136 @@ theorem joinTwoHalts_run_eq (M : FlatTM) (h1 h2 : Nat) :
             exact ih cfg' (fun k hk ck hck =>
               hstate (k + 1) (Nat.succ_le_succ hk) ck (by rw [hunfold k]; exact hck))
 
+/-! ### General rewinding-op `CompiledCmd` builder (`rewindBracket`)
+
+Every rewinding op (the append ops, and every deletion op
+`navigate ⨾ shift ⨾ rewind`) has the same shape: a "compute" machine followed by
+the two-phase rewind. That composite has **two** halt states (the left scan's
+found-state `compute.states + 6` and its unreachable boundary-state
+`compute.states + 7`), which violates `CompiledCmd.halt_unique`. `rewindBracket`
+packages the fix once: demote the boundary state via `joinTwoHalts`, leaving the
+found-state as the unique exit. Its transport lemma turns the gadget's proven
+run/trajectory into the `CompiledCmd`'s. Deletion ops reuse both verbatim by
+supplying their own `compute` machine. -/
+
+/-- The two-phase rewind composite (`compute ⨾ rewindTwoPhase`) has exactly two
+halt states: the found-state `compute.states + 6` and the boundary-state
+`compute.states + 7`. -/
+theorem rewindComposite_halt_only (compute : FlatTM) (exit i : Nat)
+    (hi : (composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit).halt[i]? = some true) :
+    i = compute.states + 6 ∨ i = compute.states + 7 := by
+  obtain ⟨hge, hj⟩ :=
+    ScanLeft.composeFlatTM_halt_some_imp compute (ScanLeft.rewindTwoPhaseTM 4 3) exit i hi
+  rcases ScanLeft.rewindTwoPhaseTM_halt_only 4 3 _ hj with h | h <;> omega
+
+/-- Build a rewinding op as a `CompiledCmd` from its `compute` machine: compose
+with the two-phase rewind, then demote the boundary halt. The found-state
+`compute.states + 6` is the unique exit. -/
+def rewindBracket (compute : FlatTM) (exit : Nat)
+    (h_valid : validFlatTM compute) (h_exit : exit < compute.states)
+    (h_tapes : compute.tapes = 1) (h_sig : compute.sig = 4) : CompiledCmd where
+  M := joinTwoHalts (composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit)
+        (compute.states + 6) (compute.states + 7)
+  exit := compute.states + 6
+  exit_lt := by
+    rw [joinTwoHalts_states, composeFlatTM_states]
+    have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
+    omega
+  exit_is_halt :=
+    joinTwoHalts_h1_is_halt _ _ _ (by omega)
+      (ScanLeft.composeFlatTM_halt_some_intro compute (ScanLeft.rewindTwoPhaseTM 4 3) exit 6
+        (ScanLeft.rewindTwoPhaseTM_halt_six 4 3))
+  halt_unique := joinTwoHalts_halt_unique _ _ _ (rewindComposite_halt_only compute exit)
+  M_valid :=
+    joinTwoHalts_valid _ _ _
+      (composeFlatTM_valid compute (ScanLeft.rewindTwoPhaseTM 4 3) exit h_valid
+        (ScanLeft.rewindTwoPhaseTM_valid 4 3 (by decide)) h_exit h_tapes
+        (ScanLeft.rewindTwoPhaseTM_tapes 4 3))
+      (by rw [composeFlatTM_states]
+          have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
+          omega)
+      (by rw [composeFlatTM_states]
+          have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
+          omega)
+      (by rw [composeFlatTM_tapes]; exact h_tapes)
+  M_tapes := by rw [joinTwoHalts_tapes, composeFlatTM_tapes]; exact h_tapes
+  M_sig := by rw [joinTwoHalts_sig, composeFlatTM_sig, h_sig, ScanLeft.rewindTwoPhaseTM_sig]; rfl
+
+theorem rewindBracket_M (compute : FlatTM) (exit : Nat)
+    (h_valid : validFlatTM compute) (h_exit : exit < compute.states)
+    (h_tapes : compute.tapes = 1) (h_sig : compute.sig = 4) :
+    (rewindBracket compute exit h_valid h_exit h_tapes h_sig).M
+      = joinTwoHalts (composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit)
+          (compute.states + 6) (compute.states + 7) := rfl
+
+theorem rewindBracket_exit (compute : FlatTM) (exit : Nat)
+    (h_valid : validFlatTM compute) (h_exit : exit < compute.states)
+    (h_tapes : compute.tapes = 1) (h_sig : compute.sig = 4) :
+    (rewindBracket compute exit h_valid h_exit h_tapes h_sig).exit = compute.states + 6 := rfl
+
+/-- **Run/trajectory transport for `rewindBracket` (the mechanism, reusable for
+every rewinding op).** Given the raw composite's run to its found-state
+`compute.states + 6` and its no-early-halt trajectory, the `joinTwoHalts`-wrapped
+`CompiledCmd` produces the same run to its `exit`, plus its no-early-exit/
+no-early-halt trajectory. Proof via `joinTwoHalts_run_eq`: the raw run never
+visits the demoted boundary `+7` (a halt state, forbidden before `t` by
+no-early-halt; the run ends at `+6` at `t`). -/
+theorem rewindBracket_transport (compute : FlatTM) (exit : Nat)
+    (h_valid : validFlatTM compute) (h_exit : exit < compute.states)
+    (h_tapes : compute.tapes = 1) (h_sig : compute.sig = 4)
+    {t : Nat} {cfg0 : FlatTMConfig} {tapeOut : List Nat × Nat × List Nat}
+    (hrun : runFlatTM t (composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit) cfg0
+        = some { state_idx := compute.states + 6, tapes := [tapeOut] })
+    (htraj : ∀ k, k < t → ∀ ck,
+        runFlatTM k (composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit) cfg0 = some ck →
+        haltingStateReached (composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit) ck = false) :
+    runFlatTM t (rewindBracket compute exit h_valid h_exit h_tapes h_sig).M cfg0
+        = some { state_idx := (rewindBracket compute exit h_valid h_exit h_tapes h_sig).exit,
+                 tapes := [tapeOut] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (rewindBracket compute exit h_valid h_exit h_tapes h_sig).M cfg0 = some ck →
+        ck.state_idx ≠ (rewindBracket compute exit h_valid h_exit h_tapes h_sig).exit ∧
+        haltingStateReached (rewindBracket compute exit h_valid h_exit h_tapes h_sig).M ck
+          = false) := by
+  set raw : FlatTM := composeFlatTM compute (ScanLeft.rewindTwoPhaseTM 4 3) exit with hraw
+  set h1 : Nat := compute.states + 6 with hh1
+  set h2 : Nat := compute.states + 7 with hh2
+  rw [rewindBracket_M, rewindBracket_exit]
+  have hhalt_h1 : raw.halt[h1]? = some true := by
+    rw [hraw, hh1]
+    exact ScanLeft.composeFlatTM_halt_some_intro compute (ScanLeft.rewindTwoPhaseTM 4 3) exit 6
+      (ScanLeft.rewindTwoPhaseTM_halt_six 4 3)
+  have hhalt_h2 : raw.halt[h2]? = some true := by
+    rw [hraw, hh2]
+    exact ScanLeft.composeFlatTM_halt_some_intro compute (ScanLeft.rewindTwoPhaseTM 4 3) exit 7
+      (ScanLeft.rewindTwoPhaseTM_halt_seven 4 3)
+  have hhalt_imp : ∀ (ck : FlatTMConfig), raw.halt[ck.state_idx]? = some true →
+      haltingStateReached raw ck = true := by
+    intro ck hx
+    show raw.halt.getD ck.state_idx false = true
+    rw [List.getD_eq_getElem?_getD, hx]; rfl
+  have hnv : ∀ k, k ≤ t → ∀ ck, runFlatTM k raw cfg0 = some ck → ck.state_idx ≠ h2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · intro hcontra
+      have hnh : haltingStateReached raw ck = false := htraj k hlt ck hck
+      rw [hhalt_imp ck (by rw [hcontra]; exact hhalt_h2)] at hnh
+      exact Bool.noConfusion hnh
+    · have hck2 : ck = { state_idx := h1, tapes := [tapeOut] } :=
+        Option.some.inj (hck.symm.trans hrun)
+      rw [hck2]; show h1 ≠ h2; omega
+  refine ⟨?_, ?_⟩
+  · rw [joinTwoHalts_run_eq raw h1 h2 t cfg0 hnv, hrun]
+  · intro k hk ck hck
+    rw [joinTwoHalts_run_eq raw h1 h2 k cfg0
+          (fun j hj => hnv j (Nat.le_trans hj (Nat.le_of_lt hk)))] at hck
+    have hnh : haltingStateReached raw ck = false := htraj k hk ck hck
+    have hne_h2 : ck.state_idx ≠ h2 := hnv k (Nat.le_of_lt hk) ck hck
+    refine ⟨fun hcontra => ?_, ?_⟩
+    · rw [hhalt_imp ck (by rw [hcontra]; exact hhalt_h1)] at hnh
+      exact Bool.noConfusion hnh
+    · rw [joinTwoHalts_halting_eq raw h1 h2 ck hne_h2]; exact hnh
+
 end Compile
 
 /-- A two-exit "tester" TM bundling a `FlatTM` with two distinct
@@ -1983,117 +2113,17 @@ theorem Compile.TapeOK_append_residue (out : State) (res : List Nat)
     Compile.TapeOK out (Compile.encodeTape out ++ res) :=
   ⟨res, hres, rfl⟩
 
-/-- **Rewinding append op as a `CompiledCmd` (resolves the halt-uniqueness
-obstacle).** The residue-tolerant per-op contract demands the head exit at `0`,
-which needs a left-scan rewind — but a left scan has *two* halt states (found +
-boundary), so the bare rewinding machine violates `CompiledCmd.halt_unique`. The
-fix: take `appendAtThenTwoPhaseRewindTM ins dst` and demote its unreachable
-boundary halt (`appendAtTM.states + 7`) via `Compile.joinTwoHalts`, leaving the
-found-state (`+ 6`) as the unique halt. All seven `CompiledCmd` invariants then
-discharge from the `joinTwoHalts_*` lemmas and the bracket's halt
-characterization. This is the machine `compileOp` dispatches the append ops to
-(`ins = 2` for `appendOne`, `ins = 1` for `appendZero`). -/
-def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : CompiledCmd where
-  M := Compile.joinTwoHalts (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst)
-        ((AppendGadget.appendAtTM ins dst).states + 6)
-        ((AppendGadget.appendAtTM ins dst).states + 7)
-  exit := (AppendGadget.appendAtTM ins dst).states + 6
-  exit_lt := by
-    rw [Compile.joinTwoHalts_states, AppendGadget.appendAtThenTwoPhaseRewindTM_states]
-    have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
-    omega
-  exit_is_halt :=
-    Compile.joinTwoHalts_h1_is_halt _ _ _ (by omega)
-      (AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt ins dst)
-  halt_unique :=
-    Compile.joinTwoHalts_halt_unique _ _ _
-      (AppendGadget.appendAtThenTwoPhaseRewindTM_halt_only ins dst)
-  M_valid :=
-    Compile.joinTwoHalts_valid _ _ _
-      (AppendGadget.appendAtThenTwoPhaseRewindTM_valid ins h_ins dst)
-      (by rw [AppendGadget.appendAtThenTwoPhaseRewindTM_states]
-          have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
-          omega)
-      (by rw [AppendGadget.appendAtThenTwoPhaseRewindTM_states]
-          have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
-          omega)
-      (AppendGadget.appendAtThenTwoPhaseRewindTM_tapes ins dst)
-  M_tapes := by
-    rw [Compile.joinTwoHalts_tapes]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_tapes ins dst
-  M_sig := by
-    rw [Compile.joinTwoHalts_sig]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_sig ins dst
-
-theorem Compile.opAppendBitRewind_M (ins : Nat) (h_ins : ins < 4) (dst : Var) :
-    (Compile.opAppendBitRewind ins h_ins dst).M
-      = Compile.joinTwoHalts (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst)
-          ((AppendGadget.appendAtTM ins dst).states + 6)
-          ((AppendGadget.appendAtTM ins dst).states + 7) := rfl
-
-theorem Compile.opAppendBitRewind_exit (ins : Nat) (h_ins : ins < 4) (dst : Var) :
-    (Compile.opAppendBitRewind ins h_ins dst).exit
-      = (AppendGadget.appendAtTM ins dst).states + 6 := rfl
-
-/-- **Run/trajectory transport for the rewinding append op (the mechanism, end
-to end).** Given the *raw* bracket's run to its found-state and its no-early-halt
-trajectory (both proven: `appendAt_twoPhaseRewind_run`/`_no_early_halt`), the
-`joinTwoHalts`-wrapped `CompiledCmd` `opAppendBitRewind` produces the **same**
-run to its `exit`, and its own no-early-halt-and-no-early-exit trajectory. The
-proof goes through `joinTwoHalts_run_eq`: the raw run never visits the demoted
-boundary state `+7` (a halt state, so the no-early-halt trajectory forbids it
-before `t`, and the run ends at `+6` at `t`). This is the reusable bridge from a
-two-phase-rewind gadget lemma to its `CompiledCmd` contract — the same shape
-every deletion op will reuse. -/
-theorem Compile.opAppendBitRewind_transport (ins : Nat) (h_ins : ins < 4) (dst : Var)
-    {t : Nat} {cfg0 : FlatTMConfig} {tapeOut : List Nat × Nat × List Nat}
-    (hrun : runFlatTM t (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst) cfg0
-        = some { state_idx := (AppendGadget.appendAtTM ins dst).states + 6,
-                 tapes := [tapeOut] })
-    (htraj : ∀ k, k < t → ∀ ck,
-        runFlatTM k (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst) cfg0 = some ck →
-        haltingStateReached (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst) ck = false) :
-    runFlatTM t (Compile.opAppendBitRewind ins h_ins dst).M cfg0
-        = some { state_idx := (Compile.opAppendBitRewind ins h_ins dst).exit,
-                 tapes := [tapeOut] }
-    ∧ (∀ k, k < t → ∀ ck,
-        runFlatTM k (Compile.opAppendBitRewind ins h_ins dst).M cfg0 = some ck →
-        ck.state_idx ≠ (Compile.opAppendBitRewind ins h_ins dst).exit ∧
-        haltingStateReached (Compile.opAppendBitRewind ins h_ins dst).M ck = false) := by
-  set raw : FlatTM := AppendGadget.appendAtThenTwoPhaseRewindTM ins dst with hraw
-  set h1 : Nat := (AppendGadget.appendAtTM ins dst).states + 6 with hh1
-  set h2 : Nat := (AppendGadget.appendAtTM ins dst).states + 7 with hh2
-  rw [Compile.opAppendBitRewind_M, Compile.opAppendBitRewind_exit]
-  have hhalt_h1 : raw.halt[h1]? = some true := by
-    rw [hraw, hh1]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt ins dst
-  have hhalt_h2 : raw.halt[h2]? = some true := by
-    rw [hraw, hh2]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_halt_seven ins dst
-  -- A state whose halt bit is `some true` cannot occur on a non-halting config.
-  have hhalt_imp : ∀ (ck : FlatTMConfig) (hx : raw.halt[ck.state_idx]? = some true),
-      haltingStateReached raw ck = true := by
-    intro ck hx
-    show raw.halt.getD ck.state_idx false = true
-    rw [List.getD_eq_getElem?_getD, hx]; rfl
-  -- The raw run never visits the demoted boundary state `h2` within `t` steps.
-  have hnv : ∀ k, k ≤ t → ∀ ck, runFlatTM k raw cfg0 = some ck → ck.state_idx ≠ h2 := by
-    intro k hk ck hck
-    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
-    · intro hcontra
-      have hnh : haltingStateReached raw ck = false := htraj k hlt ck hck
-      rw [hhalt_imp ck (by rw [hcontra]; exact hhalt_h2)] at hnh
-      exact Bool.noConfusion hnh
-    · have hck2 : ck = { state_idx := h1, tapes := [tapeOut] } :=
-        Option.some.inj (hck.symm.trans hrun)
-      rw [hck2]; show h1 ≠ h2; omega
-  refine ⟨?_, ?_⟩
-  · rw [Compile.joinTwoHalts_run_eq raw h1 h2 t cfg0 hnv, hrun]
-  · intro k hk ck hck
-    rw [Compile.joinTwoHalts_run_eq raw h1 h2 k cfg0
-          (fun j hj => hnv j (Nat.le_trans hj (Nat.le_of_lt hk)))] at hck
-    have hnh : haltingStateReached raw ck = false := htraj k hk ck hck
-    have hne_h2 : ck.state_idx ≠ h2 := hnv k (Nat.le_of_lt hk) ck hck
-    refine ⟨fun hcontra => ?_, ?_⟩
-    · rw [hhalt_imp ck (by rw [hcontra]; exact hhalt_h1)] at hnh
-      exact Bool.noConfusion hnh
-    · rw [Compile.joinTwoHalts_halting_eq raw h1 h2 ck hne_h2]; exact hnh
+/-- **Rewinding append op as a `CompiledCmd`** — the `rewindBracket` instance for
+the append `compute` machine `appendAtTM ins dst`. Demoting the left-scan boundary
+halt makes the head-`0`-rewinding append op a genuine `CompiledCmd` (`ins = 2`
+for `appendOne`, `ins = 1` for `appendZero`). Its run/trajectory contract comes
+from `rewindBracket_transport` (general) fed by `appendAt_twoPhaseRewind_run`/
+`_no_early_halt` (`appendAtThenTwoPhaseRewindTM` is defeq to the bracket's
+`compute ⨾ rewindTwoPhase`). -/
+def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : CompiledCmd :=
+  Compile.rewindBracket (AppendGadget.appendAtTM ins dst) (AppendGadget.appendAtTM_exit dst)
+    (AppendGadget.appendAtTM_valid ins h_ins dst) (AppendGadget.appendAtTM_exit_lt ins dst)
+    (AppendGadget.appendAtTM_tapes ins dst) (AppendGadget.appendAtTM_sig ins dst)
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
