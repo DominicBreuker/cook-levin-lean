@@ -1983,6 +1983,46 @@ theorem Compile.TapeOK_append_residue (out : State) (res : List Nat)
     Compile.TapeOK out (Compile.encodeTape out ++ res) :=
   ⟨res, hres, rfl⟩
 
+/-- **Rewinding append op as a `CompiledCmd` (resolves the halt-uniqueness
+obstacle).** The residue-tolerant per-op contract demands the head exit at `0`,
+which needs a left-scan rewind — but a left scan has *two* halt states (found +
+boundary), so the bare rewinding machine violates `CompiledCmd.halt_unique`. The
+fix: take `appendAtThenTwoPhaseRewindTM ins dst` and demote its unreachable
+boundary halt (`appendAtTM.states + 7`) via `Compile.joinTwoHalts`, leaving the
+found-state (`+ 6`) as the unique halt. All seven `CompiledCmd` invariants then
+discharge from the `joinTwoHalts_*` lemmas and the bracket's halt
+characterization. This is the machine `compileOp` dispatches the append ops to
+(`ins = 2` for `appendOne`, `ins = 1` for `appendZero`). -/
+def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : CompiledCmd where
+  M := Compile.joinTwoHalts (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst)
+        ((AppendGadget.appendAtTM ins dst).states + 6)
+        ((AppendGadget.appendAtTM ins dst).states + 7)
+  exit := (AppendGadget.appendAtTM ins dst).states + 6
+  exit_lt := by
+    rw [Compile.joinTwoHalts_states, AppendGadget.appendAtThenTwoPhaseRewindTM_states]
+    have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
+    omega
+  exit_is_halt :=
+    Compile.joinTwoHalts_h1_is_halt _ _ _ (by omega)
+      (AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt ins dst)
+  halt_unique :=
+    Compile.joinTwoHalts_halt_unique _ _ _
+      (AppendGadget.appendAtThenTwoPhaseRewindTM_halt_only ins dst)
+  M_valid :=
+    Compile.joinTwoHalts_valid _ _ _
+      (AppendGadget.appendAtThenTwoPhaseRewindTM_valid ins h_ins dst)
+      (by rw [AppendGadget.appendAtThenTwoPhaseRewindTM_states]
+          have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
+          omega)
+      (by rw [AppendGadget.appendAtThenTwoPhaseRewindTM_states]
+          have : (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 := rfl
+          omega)
+      (AppendGadget.appendAtThenTwoPhaseRewindTM_tapes ins dst)
+  M_tapes := by
+    rw [Compile.joinTwoHalts_tapes]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_tapes ins dst
+  M_sig := by
+    rw [Compile.joinTwoHalts_sig]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_sig ins dst
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
