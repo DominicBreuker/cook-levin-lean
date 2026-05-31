@@ -94,6 +94,49 @@ concretising any deletion op. The design (validated this session — see
 | `runFlatTM_single_length_le`, `runFlatTM_initFlatConfig_no_shrink` | `Complexity/TapeMono.lean` | the non-shrink finding; reuse for any tape-length bound |
 | `Compile.clear_physical_unsatisfiable` | `Lang/Compile.lean` | concrete proof the exact contract fails for `clear` |
 | `Compile.decodeTape_encodeTape_append` | `Lang/Compile.lean` | residue-tolerant decode — foundation of step 2 |
+| `Compile.ValidResidue` + `compileSeq_sound_physical_residue` / `compileSeq_traj_physical_residue` | `Lang/Compile.lean` | **design validation: the residue-tolerant contract composes** (step 5, `compileSeq` case, done) |
+
+### Design probe — does the residue-tolerant redesign blow up later? (risk register)
+
+Pressure-tested before building the gadgets. **It does not blow up at the
+design/composition level**, and several existing lemmas turn out to already be
+residue-polymorphic. Residual risks are all *gadget-level proof effort*, not
+soundness.
+
+- ✅ **Composition threads residue mechanically.** `compileSeq_*_physical_residue`
+  are proved by the *same* script as the exact versions — `compileSeq_compose_physical`
+  is already polymorphic in the inter-fragment tape; the only new obligation is
+  "seam symbols `< 4`", discharged by `ValidResidue`. The `Cmd` induction's
+  spine is sound under residue.
+- ✅ **Append generalises for free.** `ShiftTape.insertCarryTM_run` is stated for
+  an arbitrary suffix with all symbols `< 4`, so trailing residue is just "more
+  suffix" — no re-proof needed. Append on `encodeTape s ++ res` yields
+  `encodeTape output ++ (res ++ [carried])`, residue grown by one interior cell.
+- ✅ **Decode ignores residue** (`decodeTape_encodeTape_append`), so the decider
+  bridge (`bitTestTM` reads register `0` at the front; `decodeTape` for output)
+  is unaffected.
+- ✅ **Budget stays quadratic.** Physical tape length is non-decreasing and
+  bounded by the high-water content `≤ size + cost + regBound` (each insertion
+  is charged in `Op.cost`; `Cmd.size_eval_le`). So `|residue| ≤ size + cost`,
+  every per-fragment linear budget is `O(size+cost)`, and the `O(cost)` fragments
+  sum to `O((size+cost)²)`. Residue does not inflate the degree.
+- ⚠ **`ValidResidue` is an invariant each gadget must preserve** (residue ⊆
+  `{0,1,2}`, i.e. terminator-free). Append preserves it (carries interior
+  symbols); delete must write `0` filler, never duplicate the terminator `3`.
+  Provable, but it's a real per-gadget obligation — state it in the contract.
+- ⚠ **Two-phase rewind is unbuilt and is the trickiest navigation.** Find the
+  *real* terminator (first `3` from the right, past the terminator-free residue),
+  step left, find the leading sentinel (first `3` past the terminator-free
+  interior). Both targets are `3`; correctness relies on `ValidResidue` +
+  `BitState`-interior being terminator-free. Each gadget must leave the head
+  at-or-right-of the real terminator so phase 1 finds it. **Build + prove this
+  before any deletion op.**
+- ⚠ **`deleteCarryTM` correctness is the one genuinely new proof.** Left-shift +
+  `0`-fill, preserving content `= encodeTape output` and `ValidResidue` residue.
+  Sketch in step 4; mirror `insertCarryTM`'s run/no-early-halt structure.
+- ◻ **Not yet probed:** `compileIfBit`/`compileForBnd` under residue. Expected
+  to generalise like `compileSeq` (their combinators `branchComposeFlatTM_run` /
+  `loopTM_run` are likewise tape-polymorphic), but confirm when wiring them.
 
 ## Key files
 
