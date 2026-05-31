@@ -986,6 +986,45 @@ theorem Compile.decodeTape_encodeTape (s : State) (h : Compile.BitState s) :
       Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
       Compile.map_unshift_shift]
 
+/-- Generalisation of `takeWhile_no_endMark`: taking the prefix before the first
+terminator recovers `l`, even when arbitrary `rest` follows the terminator. -/
+private theorem Compile.takeWhile_no_endMark_append :
+    ∀ (l rest : List Nat), (∀ x ∈ l, x ≠ Compile.endMark) →
+      (l ++ Compile.endMark :: rest).takeWhile (· != Compile.endMark) = l
+  | [],     rest, _ => by
+      rw [List.nil_append, List.takeWhile_cons, if_neg (by simp [bne_iff_ne])]
+  | a :: t, rest, h => by
+      have ha : a ≠ Compile.endMark := h a (by simp)
+      have ht : ∀ x ∈ t, x ≠ Compile.endMark := fun x hx => h x (by simp [hx])
+      rw [List.cons_append, List.takeWhile_cons,
+          if_pos (by simp [bne_iff_ne, ha]), Compile.takeWhile_no_endMark_append t rest ht]
+
+/-- **Residue-tolerant decode (Risk C2 resolution foundation).** `decodeTape`
+ignores both the head position and any trailing residue after the encoded tape:
+decoding `encodeTape s ++ residue` recovers `s` for *any* `residue` and *any*
+head `hd`. This holds because `decodeTape` reads `takeWhile (· ≠ endMark)` of the
+tail, which stops at the **first** (real) terminator — and `encodeRegs s` of a
+`BitState` contains no terminator. This is the key lemma that makes the
+recommended residue-tolerant physical contract decode correctly: a length-
+decreasing op may leave `encodeTape (output) ++ residue` on the (non-shrinking)
+tape (see `Complexity/Complexity/TapeMono.lean`), yet still decode to `output`.
+-/
+theorem Compile.decodeTape_encodeTape_append (s : State) (residue : List Nat)
+    (q hd : Nat) (h : Compile.BitState s) :
+    Compile.decodeTape
+        { state_idx := q, tapes := [([], hd, Compile.encodeTape s ++ residue)] } = s := by
+  show (Compile.dropTrailingEmpty (Compile.splitOnZero
+        ((Compile.flattenTape (([] : List Nat), hd, Compile.encodeTape s ++ residue)).tail.takeWhile
+          (· != Compile.endMark)))).map Compile.unshiftReg = s
+  have htail : (Compile.flattenTape (([] : List Nat), hd, Compile.encodeTape s ++ residue)).tail
+      = Compile.encodeRegs s ++ Compile.endMark :: residue := by
+    show (Compile.encodeTape s ++ residue).tail = Compile.encodeRegs s ++ Compile.endMark :: residue
+    rw [Compile.encodeTape, List.cons_append, List.tail_cons, List.append_assoc, List.cons_append,
+        List.nil_append]
+  rw [htail, Compile.takeWhile_no_endMark_append _ residue (Compile.encodeRegs_no_endMark s h),
+      Compile.splitOnZero_encodeRegs, Compile.dropTrailingEmpty_append_nil,
+      Compile.map_unshift_shift]
+
 /-- After the leading sentinel, the encoded tape continues with `shiftReg`-ed
 register `0`. When register `0` holds a single bit `b` (the decider answer
 convention — `[1]` for accept, `[0]` for reject), the encoded tape is

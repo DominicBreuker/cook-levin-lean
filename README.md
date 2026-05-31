@@ -15,7 +15,7 @@ register before working.
 
 | | |
 |---|---|
-| `lake build` | ✅ green (3356 jobs) |
+| `lake build` | ✅ green (3357 jobs) |
 | `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`** (both the hardness and the in-NP halves reach a `sorry`). |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
 | Genuine `sorry`s on the proof path | ~31 (Group C — completion) |
@@ -113,9 +113,17 @@ The **leading-sentinel encoding migration is now DONE** (`encodeTape s = endMark
 :: encodeRegs s ++ [endMark]`, `sig` stays `4`): the physical contract's "head
 rewound to `0`" needed a left sentinel the old `encodeTape` lacked (the rewind
 lemmas themselves already existed, `ScanLeft.rewindToStart_run/_traj`). All real
-consumers re-proven green & axiom-clean. **Remaining (next concrete step):**
-bracket each gadget with a tail rewind to head `0`, linear-budget restatement of
-the four `compile*_sound`, thread `regBound`, and assemble. See ROADMAP Risk C2.
+consumers re-proven green & axiom-clean. **⚠ 2026-05 BLOCKING FINDING (machine-
+checked, `Complexity/Complexity/TapeMono.lean`):** the physical TM tape **never
+shrinks**, so the exact-tape physical contract (`exit tape = encodeTape output`)
+is **unsatisfiable for every length-decreasing op** (`clear`/`tail`/shrinking
+`copy`/…) — only the growth ops `appendOne`/`appendZero` fit. The fix is a
+**residue-tolerant** contract (`encodeTape output ++ terminator-free residue`;
+decode-correctness proved, `Compile.decodeTape_encodeTape_append`) plus a
+left-shift `deleteCarryTM` gadget and a two-phase rewind. **Remaining (next
+concrete step):** build those, restate the four `compile*_sound_physical` with
+the residue-tolerant `TapeOK` relation, then the 10 stub ops + assemble. See
+ROADMAP Risk C2 and `CookLevin/HANDOFF.md` "THE FINDING".
 
 ## Development methodology: skeleton-first, risk-driven
 
