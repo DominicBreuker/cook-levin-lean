@@ -67,19 +67,23 @@ concretising any deletion op. The design (validated this session — see
    `BitState`). The new primitive `scanLeftToMark_run` (scan left to a mark at an
    arbitrary interior position) is the reusable generalisation of `scanLeft_run`.
 
-4. **The deletion primitive `deleteCarryTM` — NEXT CONCRETE STEP** — the
-   genuinely missing gadget (mirror of `ShiftTape.insertCarryTM`). Left-shifts a
-   suffix by one, deleting the cell at the head and writing a `0` filler into
-   each vacated cell so the residue stays `ValidResidue`. **Validated sketch (3
-   non-halt states + halt; trace it before coding):** start in `read` at head
-   `p+1`; `read` reads `v`, moves **left**, goes to `write(v)`; `write(v)` writes
-   `v` (filling cell `i-1`), moves **right**, goes to `skip`; `skip` writes `0`
-   (clearing the stale cell), moves **right**, goes to `read`; `read` on the
-   blank past the end halts. This converts `A ++ [d] ++ B` (delete `d` at head
-   `p+1=|A|+1`) into `A ++ B ++ [0]` — verified by hand on `[a,b,c,3]→[b,c,3,0]`
-   and `[a,b,c,3,0,0]→[b,c,3,0,0,0]`, residue stays `{0,…}`. Prove `_run` +
-   `_no_early_halt` like `insertCarryTM`. Unblocks `clear`/`tail`/`copy`/… (each
-   = navigate-to-`dst` + delete-old + insert-new + two-phase rewind).
+4. **The deletion primitive `deleteCarryTM` — ✅ run lemma DONE**
+   (`ShiftTape.deleteCarryTM` + `deleteCarryTM_run` / `deleteCarryTM_loop_run` +
+   the four single-step lemmas + `_valid`, all axiom-clean). 7-state left-shift
+   machine (`0` read / `1+v` write-carry / `5` skip / `6` halt): deleting `d` at
+   head `pre.length+1` of `pre ++ d :: t :: suf` yields `pre ++ t :: suf ++ [0]`
+   in `3·(t::suf).length + 1` steps — `d` removed, suffix shifted left, a `0`
+   filler appended (keeps `right.length` fixed, residue `ValidResidue`).
+   **Remaining on the primitive:** `deleteCarryTM_no_early_halt` (the trajectory,
+   needed to bracket it via `composeFlatTM_no_early_halt`) — mirror
+   `insertCarryTM_no_early_halt`, same 3-step-per-cons induction.
+
+5. **Per-op gadgets — NEXT CONCRETE STEP.** Assemble `opClear`/`opTail`/… from
+   the now-available primitives: navigate to register `dst` (`Navigate`/
+   `ScanPast`), `deleteCarryTM` the old content, `insertCarryTM` the new content,
+   `rewindTwoPhaseTM` back to head `0`. Then the `encodeTape`-level physical
+   contract per op (mirror `Compile.appendBit_physical`), now in the residue-
+   tolerant `TapeOK` form, and `compileOp_sound_physical`'s case split.
 
 5. **Restate the four `compile*_sound_physical` lemmas** with `TapeOK` instead
    of the exact tape. `compileSeq_sound_physical`/`compileSeq_traj_physical` are
@@ -102,6 +106,7 @@ concretising any deletion op. The design (validated this session — see
 | `Compile.ValidResidue` + `compileSeq_sound_physical_residue` / `compileSeq_traj_physical_residue` | `Lang/Compile.lean` | **design validation: the residue-tolerant contract composes** (step 5, `compileSeq` case, done) |
 | `ScanLeft.scanLeftToMark_run` / `_no_early_halt` | `Lang/ScanLeft.lean` | scan left to a mark at an arbitrary interior position (generalises `scanLeft_run`) |
 | `ScanLeft.rewindTwoPhaseTM` + `rewindTwoPhase_run` / `_no_early_halt` / `_valid` | `Lang/ScanLeft.lean` | **step 3 done: the residue-tolerant two-phase rewind** (head → `0`, exit state `6`) |
+| `ShiftTape.deleteCarryTM` + `deleteCarryTM_run` / `_loop_run` / step lemmas / `_valid` | `Lang/ShiftTape.lean` | **step 4 done: the left-shift delete primitive** (residue stays `ValidResidue`) |
 
 ### Design probe — does the residue-tolerant redesign blow up later? (risk register)
 
@@ -137,9 +142,9 @@ soundness.
   past the terminator-free interior). Each gadget must hand it a head
   at-or-right-of the real terminator (`ValidResidue` + `BitState` make the
   interior/residue terminator-free).
-- ⚠ **`deleteCarryTM` correctness is the one genuinely new proof.** Left-shift +
-  `0`-fill, preserving content `= encodeTape output` and `ValidResidue` residue.
-  Sketch in step 4; mirror `insertCarryTM`'s run/no-early-halt structure.
+- ✅ **`deleteCarryTM` run lemma is PROVED** (`deleteCarryTM_run`, axiom-clean):
+  left-shift + `0`-fill, residue stays `ValidResidue`. Only its `_no_early_halt`
+  trajectory remains (mechanical, mirror `insertCarryTM_no_early_halt`).
 - ◻ **Not yet probed:** `compileIfBit`/`compileForBnd` under residue. Expected
   to generalise like `compileSeq` (their combinators `branchComposeFlatTM_run` /
   `loopTM_run` are likewise tape-polymorphic), but confirm when wiring them.
