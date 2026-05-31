@@ -1791,6 +1791,33 @@ length at its entry gives a sum that telescopes into a quadratic total.
 These restated lemmas are the **correct** decomposition for proving
 `Compile_run_physical` by induction on `Cmd`. -/
 
+/-- A residue block carries only **interior** symbols `{0, 1, 2}`: below the
+alphabet bound (`< 4`) and free of the terminator `endMark = 3`. The left-shift
+delete gadgets fill vacated cells with `0`; append carries interior symbols; so
+the trailing residue on every physical tape stays `ValidResidue`. This is exactly
+what the composition lemmas need to bound the inter-fragment tape symbols. -/
+def Compile.ValidResidue (res : List Nat) : Prop :=
+  ∀ x ∈ res, x < 4 ∧ x ≠ Compile.endMark
+
+theorem Compile.ValidResidue_nil : Compile.ValidResidue [] := by
+  intro x hx; simp at hx
+
+theorem Compile.ValidResidue_append (a b : List Nat)
+    (ha : Compile.ValidResidue a) (hb : Compile.ValidResidue b) :
+    Compile.ValidResidue (a ++ b) := by
+  intro x hx
+  rw [List.mem_append] at hx
+  rcases hx with h | h
+  · exact ha x h
+  · exact hb x h
+
+theorem Compile.ValidResidue_replicate_zero (n : Nat) :
+    Compile.ValidResidue (List.replicate n 0) := by
+  intro x hx
+  rw [List.mem_replicate] at hx
+  obtain ⟨_, rfl⟩ := hx
+  exact ⟨by omega, by decide⟩
+
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
 register. -/
@@ -1851,6 +1878,70 @@ theorem compileOp_sound_physical (o : Op) (s : State)
   sorry  -- TODO(C2, step 1c): case-split on `o`; the `appendOne`/`appendZero`
          -- cases follow from `appendBit_physical`; the remaining 10 ops need
          -- their gadgets concretised first (each with its `*_physical` contract).
+         -- ⚠ THIS LEMMA IS UNSATISFIABLE for deletion ops (see
+         -- `clear_physical_unsatisfiable`); use `compileOp_sound_physical_residue`.
+
+/-- The **residue-tolerant** tape relation (Risk C2, the finding fix). A tape
+satisfies `TapeOK out tp` when the `right` component is `encodeTape out ++ res`
+for some terminator-free residue `res` (`ValidResidue`), and the head is rewound
+to `0`. This replaces the exact-tape contract `tp = encodeTape out` which is
+**unsatisfiable for length-decreasing ops** (the physical tape never shrinks,
+`TapeMono.lean`).
+
+Composition hides the residue existentially: the `compileSeq_sound_physical_residue`
+combinator takes `TapeOK` inputs and produces a `TapeOK` output. Decode is
+unaffected (`decodeTape_encodeTape_append`: `decodeTape` stops at the first
+`endMark` terminator, so the trailing residue is invisible). -/
+def Compile.TapeOK (out : State) (tp : List Nat) : Prop :=
+  ∃ res : List Nat, Compile.ValidResidue res ∧ tp = Compile.encodeTape out ++ res
+
+theorem Compile.TapeOK_exact (out : State) :
+    Compile.TapeOK out (Compile.encodeTape out) :=
+  ⟨[], Compile.ValidResidue_nil, (List.append_nil _).symm⟩
+
+theorem Compile.TapeOK_append_residue (out : State) (res : List Nat)
+    (hres : Compile.ValidResidue res) :
+    Compile.TapeOK out (Compile.encodeTape out ++ res) :=
+  ⟨res, hres, rfl⟩
+
+/-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
+for the unsatisfiable exact-tape contract: the exit tape is
+`encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
+hiding the residue existentially. For growth ops (`appendOne`/`appendZero`)
+`res_out = res_in` (the residue passes through unchanged); for deletion ops
+`res_out = res_in ++ [0, …]` (filler cells appended by `deleteCarryTM`).
+The residue stays terminator-free across composition (each gadget preserves
+`ValidResidue`), and `decodeTape` ignores it (`decodeTape_encodeTape_append`).
+
+Input: the start tape may carry residue (`res_in`), since the previous
+fragment's exit tape may have residue. The contract is:
+  exit tape = `encodeTape (Op.eval o s) ++ res_out` (where `res_out` is
+  `ValidResidue`), head rewound to `0`, in ≤ `3·inputTapeLen + 6` steps.
+
+This is the replacement for `compileOp_sound_physical` (which demanded
+exact tape `encodeTape output` and was **unsatisfiable** for deletion ops).
+The `compileSeq_sound_physical_residue` combinator composes these directly. -/
+theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat)
+    (hbit : Compile.BitState s) (hbnd : o.inBounds s)
+    (hres_in : Compile.ValidResidue res_in) :
+    ∃ (t : Nat) (res_out : List Nat),
+      Compile.ValidResidue res_out ∧
+      runFlatTM t (compileOp o).M
+          (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in])
+        = some { state_idx := (compileOp o).exit,
+                 tapes := [([], 0, Compile.encodeTape (Op.eval o s) ++ res_out)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (compileOp o).M
+              (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
+          ck.state_idx ≠ (compileOp o).exit ∧
+          haltingStateReached (compileOp o).M ck = false)
+      ∧ t ≤ 3 * (Compile.encodeTape s ++ res_in).length + 6 := by
+  sorry  -- TODO(C2, step 1c): case-split on `o`.
+         -- For `appendOne`/`appendZero`: `res_out = res_in` (gadget is
+         -- residue-polymorphic, `insertCarryTM_run` works on arbitrary suffix
+         -- with all symbols < 4).
+         -- For deletion ops: `res_out = res_in ++ List.replicate n 0` where
+         -- `n` = cells deleted (each `deleteCarryTM` appends one `0` filler).
 
 /-- **Physical-contract `compileSeq` composition (PROVEN).** Given two
 sub-machines each satisfying the physical contract (head-`0` exit, exact tape,
@@ -1997,14 +2088,6 @@ symbols stay `< 4` — discharged by `ValidResidue` on the residue and
 does **not** blow up. (The residue stays `ValidResidue` and polynomially bounded
 — `|residue| ≤ physical tape length ≤ size + cost` — but those are per-gadget
 obligations, not composition obligations.) -/
-
-/-- A residue block carries only **interior** symbols `{0, 1, 2}`: below the
-alphabet bound (`< 4`) and free of the terminator `endMark = 3`. The left-shift
-delete gadgets fill vacated cells with `0`; append carries interior symbols; so
-the trailing residue on every physical tape stays `ValidResidue`. This is exactly
-what the composition lemmas need to bound the inter-fragment tape symbols. -/
-def Compile.ValidResidue (res : List Nat) : Prop :=
-  ∀ x ∈ res, x < 4 ∧ x ≠ Compile.endMark
 
 /-- **Residue-tolerant `compileSeq` composition (PROVEN — design validation).**
 The residue-tolerant generalisation of `compileSeq_sound_physical`: given two
