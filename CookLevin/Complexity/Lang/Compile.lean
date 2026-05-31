@@ -2608,10 +2608,13 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
           (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = some cfg ∧
       haltingStateReached (Compile.bitDeciderTM c) cfg = true ∧
       cfg.state_idx = (if b = 1 then 1 else 2) + (Compile c).states := by
-  obtain ⟨tl, htl⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
-  obtain ⟨t1, hrun1, htraj1, ht1⟩ := Compile_run_physical c s
+  obtain ⟨tl0, htl0⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
+  obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ := Compile_run_physical_residue c s
   -- Rewrite the physical exit tape via the encoding lemma (leading sentinel).
-  rw [htl] at hrun1
+  -- The residue trails the encoded output; the gadget reads only positions 0–1,
+  -- so fold the residue into the tail `tl := tl0 ++ res`.
+  rw [htl0, List.cons_append, List.cons_append] at hrun1
+  set tl : List Nat := tl0 ++ res with htl
   -- The gadget's exit state for this bit.
   set dst : Nat := if b = 1 then 1 else 2 with hdst
   -- Gadget run + halt (split on the bit): step past the sentinel `3`, then read.
