@@ -551,6 +551,104 @@ theorem deleteCarryTM_loop_run (suf : List Nat) :
         · rw [if_neg he, if_neg (by simp)]; simp [List.append_assoc]
       rw [hhead, htape]
 
+/-- **`deleteCarryTM` no-early-halt (loop version).** For `k < 3·suf.length + 1`,
+the delete-carry machine starting in state `0` at head `pre.length + 1` on tape
+`pre ++ c :: suf` has not yet halted. Mirrors `deleteCarryTM_loop_run`'s
+induction: nil case is `k = 0`; cons case peels the read/write/skip triple
+(`rcases k with _ | _ | _ | k'`) and recurses. -/
+theorem deleteCarryTM_loop_no_early_halt (suf : List Nat) :
+    ∀ (pre : List Nat) (c : Nat), c < 4 → (∀ x ∈ suf, x < 4) →
+      ∀ k, k < 3 * suf.length + 1 → ∀ ck,
+        runFlatTM k deleteCarryTM
+            { state_idx := 0, tapes := [([], pre.length + 1, pre ++ c :: suf)] }
+          = some ck →
+        haltingStateReached deleteCarryTM ck = false := by
+  induction suf with
+  | nil =>
+      intro pre c _ _ k hk ck hck
+      simp only [List.length_nil, Nat.mul_zero, Nat.zero_add] at hk
+      have hk0 : k = 0 := by omega
+      subst hk0
+      have : ck = { state_idx := 0, tapes := [([], pre.length + 1, pre ++ [c])] } :=
+        (Option.some.inj hck).symm
+      subst this
+      exact delete_not_halt 0 (by omega) _ rfl
+  | cons y suf' ih =>
+      intro pre c hc hall k hk ck hck
+      have hy : y < 4 := hall y (by simp)
+      have hall' : ∀ x ∈ suf', x < 4 := fun x hx => hall x (by simp [hx])
+      -- The three single-step facts (same as `deleteCarryTM_loop_run`).
+      have hlt1 : pre.length + 1 < (pre ++ c :: y :: suf').length := by
+        simp only [List.length_append, List.length_cons]; omega
+      have hget1 : (pre ++ c :: y :: suf').get ⟨pre.length + 1, hlt1⟩ = y := by
+        simp [List.getElem_append_right]
+      have hlt2 : pre.length < (pre ++ c :: y :: suf').length := by
+        simp only [List.length_append, List.length_cons]; omega
+      have hget2 : (pre ++ c :: y :: suf').get ⟨pre.length, hlt2⟩ = c := by
+        simp [List.getElem_append_right]
+      have hlt3 : pre.length + 1 < (pre ++ y :: y :: suf').length := by
+        simp only [List.length_append, List.length_cons]; omega
+      have hget3 : (pre ++ y :: y :: suf').get ⟨pre.length + 1, hlt3⟩ = y := by
+        simp [List.getElem_append_right]
+      have htk2 : (pre ++ c :: y :: suf').take pre.length = pre := by simp
+      have hdr2 : (pre ++ c :: y :: suf').drop (pre.length + 1) = y :: suf' := by
+        rw [show pre ++ c :: y :: suf' = (pre ++ [c]) ++ y :: suf' from by simp,
+            show pre.length + 1 = (pre ++ [c]).length from by simp, List.drop_left]
+      have htk3 : (pre ++ y :: y :: suf').take (pre.length + 1) = pre ++ [y] := by
+        rw [show pre ++ y :: y :: suf' = (pre ++ [y]) ++ y :: suf' from by simp,
+            show pre.length + 1 = (pre ++ [y]).length from by simp, List.take_left]
+      have hdr3 : (pre ++ y :: y :: suf').drop (pre.length + 1 + 1) = suf' := by
+        rw [show pre ++ y :: y :: suf' = (pre ++ [y, y]) ++ suf' from by simp,
+            show pre.length + 1 + 1 = (pre ++ [y, y]).length from by simp, List.drop_left]
+      simp only [List.length_cons] at hk
+      -- Case split: k = 0, 1, 2, or 3 + k'.
+      rcases k with _ | _ | _ | k'
+      -- k = 0: initial config, state 0.
+      · have : ck = { state_idx := 0, tapes := [([], pre.length + 1, pre ++ c :: y :: suf')] } :=
+          (Option.some.inj hck).symm
+        subst this
+        exact delete_not_halt 0 (by omega) _ rfl
+      -- k = 1: after read step, state 1 + y.
+      · rw [run_succ_of_step _ _ _ 0 (delete_not_halt 0 (by omega) _ rfl)
+            (deleteCarryTM_read_nonblank y hy [] _ _ hlt1 hget1), Nat.add_sub_cancel] at hck
+        have : ck = { state_idx := 1 + y, tapes := [([], pre.length, pre ++ c :: y :: suf')] } :=
+          (Option.some.inj hck).symm
+        subst this
+        exact delete_not_halt (1 + y) (by omega) _ rfl
+      -- k = 2: after read + write steps, state 5.
+      · rw [run_succ_of_step _ _ _ 1 (delete_not_halt 0 (by omega) _ rfl)
+            (deleteCarryTM_read_nonblank y hy [] _ _ hlt1 hget1), Nat.add_sub_cancel,
+            run_succ_of_step _ _ _ 0 (delete_not_halt (1 + y) (by omega) _ rfl)
+            (deleteCarryTM_write y c hy hc [] _ _ hlt2 hget2), htk2, hdr2] at hck
+        have : ck = { state_idx := 5,
+                      tapes := [([], pre.length + 1, pre ++ y :: y :: suf')] } :=
+          (Option.some.inj hck).symm
+        subst this
+        exact delete_not_halt 5 (by omega) _ rfl
+      -- k = 3 + k': peel all three steps, recurse into IH.
+      · have hk' : k' < 3 * suf'.length + 1 := by omega
+        rw [run_succ_of_step _ _ _ (k' + 1 + 1) (delete_not_halt 0 (by omega) _ rfl)
+            (deleteCarryTM_read_nonblank y hy [] _ _ hlt1 hget1), Nat.add_sub_cancel] at hck
+        rw [run_succ_of_step _ _ _ (k' + 1) (delete_not_halt (1 + y) (by omega) _ rfl)
+            (deleteCarryTM_write y c hy hc [] _ _ hlt2 hget2), htk2, hdr2] at hck
+        rw [run_succ_of_step _ _ _ k' (delete_not_halt 5 (by omega) _ rfl)
+            (deleteCarryTM_skip y hy [] _ _ hlt3 hget3), htk3, hdr3] at hck
+        rw [show pre.length + 1 + 1 = (pre ++ [y]).length + 1 from by simp] at hck
+        exact ih (pre ++ [y]) 0 (by omega) hall' k' hk' ck hck
+
+/-- **`deleteCarryTM` no-early-halt trajectory.** For `k < 3·(t::suf).length + 1`,
+the delete-carry machine has not yet halted. This is the `h_traj2` input needed
+by `composeFlatTM_no_early_halt` when `deleteCarryTM` sits in the M₂ slot. -/
+theorem deleteCarryTM_no_early_halt (pre : List Nat) (d t : Nat) (suf : List Nat)
+    (hd : d < 4) (ht : t < 4) (hsuf : ∀ x ∈ suf, x < 4) :
+    ∀ k, k < 3 * (t :: suf).length + 1 → ∀ ck,
+      runFlatTM k deleteCarryTM
+          { state_idx := 0, tapes := [([], pre.length + 1, pre ++ d :: t :: suf)] }
+        = some ck →
+      haltingStateReached deleteCarryTM ck = false := by
+  exact deleteCarryTM_loop_no_early_halt (t :: suf) pre d hd
+    (by intro x hx; rcases List.mem_cons.mp hx with rfl | h; exacts [ht, hsuf x h])
+
 /-- **`deleteCarryTM` run lemma.** Deleting the cell `d` at head `pre.length + 1`
 of `pre ++ d :: t :: suf` (a non-empty suffix `t :: suf`, e.g. the terminator and
 the rest): after `3·(t::suf).length + 1` steps the machine halts with tape
