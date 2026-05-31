@@ -963,4 +963,216 @@ theorem appendAt_rewind_no_early_halt (ins : Nat) (h_ins : ins < 4)
     (by have h := (appendAtTM_valid ins h_ins dst).1; rwa [appendAtTM_start] at h)
     [] HD TP h_sym_bound h_run1 h_traj1 h_traj2
 
+/-! ### Residue-tolerant bracketed append (`appendAtThenTwoPhaseRewindTM`)
+
+The single-phase `appendAtThenRewindTM` rewinds correctly only when the head
+exits **on** the trailing terminator (no residue after it). In a composed
+`Cmd` every fragment after the first runs on `encodeTape s ++ residue`, so the
+head exits **inside the residue**, past the real terminator. The two-phase
+rewind (`rewindTwoPhaseTM`: scan-left through the residue to the real
+terminator, then step off and scan-left to the leading sentinel) handles that.
+This bracketed machine is the residue-tolerant analogue used by the
+`compileOp` append op. -/
+def appendAtThenTwoPhaseRewindTM (ins dst : Nat) : FlatTM :=
+  composeFlatTM (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst)
+
+/-- **Residue-tolerant bracketed append run.** Like `appendAt_rewind_run`, but
+the exit tape carries a terminator-free residue after the real terminator (at
+position `p`): the head exits at the last cell `HD` (in the residue) and the
+two-phase rewind returns it to the leading sentinel `0`. The exit state is
+`6 + (appendAtTM ins dst).states` (the two-phase rewind halts at its state `6`).
+The conditions on the exit tape `TP = pre ++ regBlocks skipped ++ body ++ ins ::
+0 :: post` are: cell `0` is the sentinel `3`, cell `p` is the real terminator
+`3`, the interior `1 … p-1` and the residue `p+1 … HD` are both `≠ 3`. -/
+theorem appendAt_twoPhaseRewind_run (ins : Nat) (h_ins : ins < 4)
+    (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
+    (p : Nat)
+    (hlen : skipped.length = dst)
+    (h_pre : ∀ x ∈ pre, x < 4)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
+    (h_post_lt : ∀ x ∈ post, x < 4)
+    (h_tp_lt : ∀ x ∈ pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post, x < 4)
+    (h_p_pos : 0 < p)
+    (h_p_lt : p < pre.length + (regBlocks skipped).length + body.length + (0 :: post).length)
+    (h_t0 : ∀ (h : 0 < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+      (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨0, h⟩ = 3)
+    (h_term : ∀ (h : p < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+      (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨p, h⟩ = 3)
+    (h_interior_ne : ∀ i, 0 < i → i < p →
+      ∃ (h : i < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+        (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨i, h⟩ ≠ 3)
+    (h_residue_ne : ∀ i, p < i →
+      i ≤ pre.length + (regBlocks skipped).length + body.length + (0 :: post).length →
+      ∃ (h : i < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+        (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨i, h⟩ ≠ 3) :
+    runFlatTM (appendAt_steps skipped body post + 1
+        + (((pre.length + (regBlocks skipped).length + body.length
+            + (0 :: post).length) - p + 1) + 1 + (1 + 1 + p)))
+        (appendAtThenTwoPhaseRewindTM ins dst)
+        { state_idx := 0,
+          tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+      = some { state_idx := 6 + (appendAtTM ins dst).states,
+               tapes := [([], 0, pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] }
+    ∧ haltingStateReached (appendAtThenTwoPhaseRewindTM ins dst)
+        { state_idx := 6 + (appendAtTM ins dst).states,
+          tapes := [([], 0, pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post)] } = true := by
+  set TP : List Nat := pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post with hTP
+  set HD : Nat := pre.length + (regBlocks skipped).length + body.length
+    + (0 :: post).length with hHD
+  have hTPlen : TP.length = HD + 1 := by
+    rw [hTP, hHD]; simp only [List.length_append, List.length_cons]; omega
+  have h0 : 0 < TP.length := by rw [hTPlen]; omega
+  have hHDlt : HD < TP.length := by rw [hTPlen]; omega
+  have hp_lt : p < TP.length := by rw [hTPlen]; omega
+  -- Gadget exit (state + head pinned at HD).
+  have h_run1 := appendAt_run_exit ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj0 := appendAt_no_early_halt ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj1 : ∀ k, k < appendAt_steps skipped body post → ∀ ck,
+      runFlatTM k (appendAtTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] } = some ck →
+      ck.state_idx ≠ appendAtTM_exit dst ∧
+      haltingStateReached (appendAtTM ins dst) ck = false := by
+    intro k hk ck hck
+    have hnh := h_traj0 k hk ck hck
+    refine ⟨fun hstate => ?_, hnh⟩
+    have hhalt_exit : haltingStateReached (appendAtTM ins dst) ck = true := by
+      show (appendAtTM ins dst).halt.getD ck.state_idx false = true
+      rw [hstate, List.getD_eq_getElem?_getD, appendAtTM_exit_is_halt ins dst]; rfl
+    rw [hhalt_exit] at hnh; exact Bool.noConfusion hnh
+  -- Bridge symbol bound at the seam (the exit head cell).
+  have h_start_lt : TP.get ⟨HD, hHDlt⟩ < 4 := h_tp_lt _ (List.getElem_mem hHDlt)
+  have h_sym_bound :
+      ∀ v, currentTapeSymbol (([] : List Nat), HD, TP) = some v →
+        v < max (appendAtTM ins dst).sig (rewindTwoPhaseTM 4 3).sig := by
+    intro v hv
+    have hmax : max (appendAtTM ins dst).sig (rewindTwoPhaseTM 4 3).sig = 4 := by
+      rw [appendAtTM_sig ins dst, rewindTwoPhaseTM_sig]; rfl
+    rw [hmax]
+    rw [currentTapeSymbol_in_range hHDlt] at hv
+    injection hv with hv'; rw [← hv']; exact h_start_lt
+  -- Interior/residue ∃-conditions for `rewindTwoPhase_run` (add the `< 4` part).
+  have h_int : ∀ i, 0 < i → i < p → ∃ (h : i < TP.length),
+      TP.get ⟨i, h⟩ < 4 ∧ TP.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi hilt
+    obtain ⟨h, hne⟩ := h_interior_ne i hi hilt
+    exact ⟨h, h_tp_lt _ (List.getElem_mem h), hne⟩
+  have h_res : ∀ i, p < i → i ≤ HD → ∃ (h : i < TP.length),
+      TP.get ⟨i, h⟩ < 4 ∧ TP.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi hile
+    obtain ⟨h, hne⟩ := h_residue_ne i hi hile
+    exact ⟨h, h_tp_lt _ (List.getElem_mem h), hne⟩
+  -- The two-phase rewind run on the exit tape.
+  have h_run2 : runFlatTM ((HD - p + 1) + 1 + (1 + 1 + p)) (rewindTwoPhaseTM 4 3)
+      { state_idx := (rewindTwoPhaseTM 4 3).start, tapes := [([], HD, TP)] }
+        = some { state_idx := 6, tapes := [([], 0, TP)] } := by
+    rw [rewindTwoPhaseTM_start]
+    exact rewindTwoPhase_run 4 3 (by decide) [] TP p HD h0 (h_t0 h0) hp_lt (h_term hp_lt)
+      h_p_pos hHDlt (by omega) h_int h_res
+  have h_halt2 : haltingStateReached (rewindTwoPhaseTM 4 3)
+      { state_idx := 6, tapes := [([], 0, TP)] } = true := rfl
+  exact composeFlatTM_run
+    (appendAtTM_valid ins h_ins dst) (rewindTwoPhaseTM_valid 4 3 (by decide))
+    (appendAtTM_exit_lt ins dst)
+    { state_idx := 0,
+      tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+    (by have h := (appendAtTM_valid ins h_ins dst).1; rwa [appendAtTM_start] at h)
+    [] HD TP h_sym_bound h_run1 h_traj1 h_run2 h_halt2
+
+/-- **Residue-tolerant bracketed append no-early-halt trajectory.** The two-phase
+analogue of `appendAt_rewind_no_early_halt`: before completing its
+`appendAt_steps + 1 + ((HD - p + 1) + 1 + (1 + 1 + p))` steps the bracketed
+machine has not reached a halting state. -/
+theorem appendAt_twoPhaseRewind_no_early_halt (ins : Nat) (h_ins : ins < 4)
+    (dst : Nat) (pre : List Nat) (skipped : List (List Nat)) (body post : List Nat)
+    (p : Nat)
+    (hlen : skipped.length = dst)
+    (h_pre : ∀ x ∈ pre, x < 4)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (h_no_zero : ∀ x ∈ body, x ≠ 0) (h_body_lt : ∀ x ∈ body, x < 4)
+    (h_post_lt : ∀ x ∈ post, x < 4)
+    (h_tp_lt : ∀ x ∈ pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post, x < 4)
+    (h_p_pos : 0 < p)
+    (h_p_lt : p < pre.length + (regBlocks skipped).length + body.length + (0 :: post).length)
+    (h_t0 : ∀ (h : 0 < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+      (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨0, h⟩ = 3)
+    (h_term : ∀ (h : p < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+      (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨p, h⟩ = 3)
+    (h_interior_ne : ∀ i, 0 < i → i < p →
+      ∃ (h : i < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+        (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨i, h⟩ ≠ 3)
+    (h_residue_ne : ∀ i, p < i →
+      i ≤ pre.length + (regBlocks skipped).length + body.length + (0 :: post).length →
+      ∃ (h : i < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
+        (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨i, h⟩ ≠ 3) :
+    ∀ k, k < appendAt_steps skipped body post + 1
+        + (((pre.length + (regBlocks skipped).length + body.length
+            + (0 :: post).length) - p + 1) + 1 + (1 + 1 + p)) → ∀ ck,
+      runFlatTM k (appendAtThenTwoPhaseRewindTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] } = some ck →
+      haltingStateReached (appendAtThenTwoPhaseRewindTM ins dst) ck = false := by
+  set TP : List Nat := pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post with hTP
+  set HD : Nat := pre.length + (regBlocks skipped).length + body.length
+    + (0 :: post).length with hHD
+  have hTPlen : TP.length = HD + 1 := by
+    rw [hTP, hHD]; simp only [List.length_append, List.length_cons]; omega
+  have h0 : 0 < TP.length := by rw [hTPlen]; omega
+  have hHDlt : HD < TP.length := by rw [hTPlen]; omega
+  have hp_lt : p < TP.length := by rw [hTPlen]; omega
+  have h_run1 := appendAt_run_exit ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj0 := appendAt_no_early_halt ins h_ins dst pre skipped body post hlen h_pre h_skip
+    h_no_zero h_body_lt h_post_lt
+  have h_traj1 : ∀ k, k < appendAt_steps skipped body post → ∀ ck,
+      runFlatTM k (appendAtTM ins dst)
+          { state_idx := 0,
+            tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] } = some ck →
+      ck.state_idx ≠ appendAtTM_exit dst ∧
+      haltingStateReached (appendAtTM ins dst) ck = false := by
+    intro k hk ck hck
+    have hnh := h_traj0 k hk ck hck
+    refine ⟨fun hstate => ?_, hnh⟩
+    have hhalt_exit : haltingStateReached (appendAtTM ins dst) ck = true := by
+      show (appendAtTM ins dst).halt.getD ck.state_idx false = true
+      rw [hstate, List.getD_eq_getElem?_getD, appendAtTM_exit_is_halt ins dst]; rfl
+    rw [hhalt_exit] at hnh; exact Bool.noConfusion hnh
+  have h_start_lt : TP.get ⟨HD, hHDlt⟩ < 4 := h_tp_lt _ (List.getElem_mem hHDlt)
+  have h_sym_bound :
+      ∀ v, currentTapeSymbol (([] : List Nat), HD, TP) = some v →
+        v < max (appendAtTM ins dst).sig (rewindTwoPhaseTM 4 3).sig := by
+    intro v hv
+    have hmax : max (appendAtTM ins dst).sig (rewindTwoPhaseTM 4 3).sig = 4 := by
+      rw [appendAtTM_sig ins dst, rewindTwoPhaseTM_sig]; rfl
+    rw [hmax]
+    rw [currentTapeSymbol_in_range hHDlt] at hv
+    injection hv with hv'; rw [← hv']; exact h_start_lt
+  have h_int : ∀ i, 0 < i → i < p → ∃ (h : i < TP.length),
+      TP.get ⟨i, h⟩ < 4 ∧ TP.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi hilt
+    obtain ⟨h, hne⟩ := h_interior_ne i hi hilt
+    exact ⟨h, h_tp_lt _ (List.getElem_mem h), hne⟩
+  have h_res : ∀ i, p < i → i ≤ HD → ∃ (h : i < TP.length),
+      TP.get ⟨i, h⟩ < 4 ∧ TP.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi hile
+    obtain ⟨h, hne⟩ := h_residue_ne i hi hile
+    exact ⟨h, h_tp_lt _ (List.getElem_mem h), hne⟩
+  have h_traj2 : ∀ k, k < (HD - p + 1) + 1 + (1 + 1 + p) → ∀ ck,
+      runFlatTM k (rewindTwoPhaseTM 4 3)
+          { state_idx := (rewindTwoPhaseTM 4 3).start, tapes := [([], HD, TP)] } = some ck →
+      haltingStateReached (rewindTwoPhaseTM 4 3) ck = false := by
+    rw [rewindTwoPhaseTM_start]
+    exact rewindTwoPhase_no_early_halt 4 3 (by decide) [] TP p HD h0 (h_t0 h0) hp_lt
+      (h_term hp_lt) h_p_pos hHDlt (by omega) h_int h_res
+  exact composeFlatTM_no_early_halt
+    (appendAtTM_valid ins h_ins dst) (rewindTwoPhaseTM_valid 4 3 (by decide))
+    (appendAtTM_exit_lt ins dst)
+    { state_idx := 0,
+      tapes := [([], pre.length, pre ++ regBlocks skipped ++ body ++ 0 :: post)] }
+    (by have h := (appendAtTM_valid ins h_ins dst).1; rwa [appendAtTM_start] at h)
+    [] HD TP h_sym_bound h_run1 h_traj1 h_traj2
+
 end Complexity.Lang.AppendGadget

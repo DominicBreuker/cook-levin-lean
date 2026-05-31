@@ -839,6 +839,17 @@ theorem rewindTwoPhaseTM_valid (sig target : Nat) (h_target : target < sig) :
     (rewindFromEndTM_valid sig target h_target)
     (show (1 : Nat) < 3 from by decide) rfl (rewindFromEndTM_tapes sig target)
 
+theorem rewindTwoPhaseTM_start (sig target : Nat) :
+    (rewindTwoPhaseTM sig target).start = 0 := rfl
+
+theorem rewindTwoPhaseTM_tapes (sig target : Nat) :
+    (rewindTwoPhaseTM sig target).tapes = 1 := rfl
+
+theorem rewindTwoPhaseTM_sig (sig target : Nat) :
+    (rewindTwoPhaseTM sig target).sig = sig := by
+  show max (scanLeftUntilTM sig target).sig (rewindFromEndTM sig target).sig = sig
+  rw [rewindFromEndTM_sig]; exact Nat.max_self sig
+
 /-- **Two-phase rewind run lemma.** On a tape `tp` with the leading sentinel
 `target` at `0`, the real terminator `target` at an interior `p > 0`, a
 terminator-free in-range interior `1 … p-1`, and a terminator-free in-range
