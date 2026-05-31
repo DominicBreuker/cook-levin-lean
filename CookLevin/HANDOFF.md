@@ -86,10 +86,11 @@ navigate-delete-rewind pattern; `opClear` needs a loop (delete until delimiter).
 
 **Key design question for `opClear`:** the register length is not known
 statically. Options: (a) use a loop TM (`loopTM`) that counts deletes until
-hitting the delimiter `0`, or (b) use `deleteCarryTM` in a `loopTM` wrapper.
+hitting the register delimiter (`0` — the separator between encoded registers
+in `encodeRegs`), or (b) use `deleteCarryTM` in a `loopTM` wrapper.
 Option (b) is cleaner since `loopTM_run` is already proved. The loop body
 deletes one cell; the loop condition checks if the current cell is the
-delimiter.
+register delimiter `0`.
 
 ### 5. Restate `compileIfBit`/`compileForBnd` with residue
 
