@@ -6,33 +6,64 @@ what to do next and what to watch out for.
 
 ## Where things stand
 
-- `lake build` ✅ green (3357 jobs).
+- `lake build` ✅ green (3357 jobs). First build is slow (mathlib); after that,
+  one module rebuilds in ~5–10s. `lake` is **not on PATH** — prefix with
+  `export PATH="$HOME/.elan/bin:$PATH"`.
 - `#print axioms CookLevin` = `[propext, sorryAx, Classical.choice, Quot.sound]`
   — conditional on `sorryAx`; also vacuous due to S1/S2/S3 (see ROADMAP).
-- **Risk C2 (compiler soundness) is the current focus.** The infrastructure
-  layer for the residue-tolerant physical contract is complete. The next phase
-  is proving per-op gadgets against this contract.
+- **Risk C2 (compiler soundness) is the current focus.** The residue-tolerant
+  contract composes (proven), the decider bridge now uses it, and the
+  residue-tolerant **append rewind gadget** is proven. The next phase is
+  resolving the halt-uniqueness obstacle (below) and turning the rewinding ops
+  into `CompiledCmd`s.
+
+## ⚠⚠ THE CURRENT BLOCKER (verified this session — read before building any op)
+
+**Rewinding op machines have TWO halt states, so they cannot be `CompiledCmd`s
+as-is.** Every per-op physical contract (`compileOp_sound_physical_residue`)
+demands the head exit at `0`. Rewinding to `0` uses a **left scan**
+(`scanLeftUntilTM`, `halt = [false, true, true]`), which has *two* halt states:
+state 1 = "found target", state 2 = "hit left boundary without finding". Through
+`composeFlatTM` (which zeroes the *first* machine's halts but keeps the *last*
+machine's), any rewinding composite inherits both. Verified by `#eval`:
+`appendAtThenTwoPhaseRewindTM 2 0` halts at states `{15, 16}` (15 = found = the
+real exit; 16 = the unreachable boundary state). So `CompiledCmd.halt_unique` is
+**statically false** for it — you cannot fill that field.
+
+This is why `compileOp` for the append ops still wraps the **non-rewinding**
+`appendAtTM` (a genuine `CompiledCmd`): the previous design never reconciled
+"per-op rewind to head 0" with `halt_unique`. The handoff used to call step 2
+"straightforward" — **it is not**; it needs the halt-demotion step below.
+
+**Resolution (precedent already exists).** `Compile.joinTwoHalts M h1 h2`
+(built for `compileIfBit`'s two-branch-exit problem, lines ~387–470 of
+`Compile.lean`) demotes halt state `h2` to a non-halt and bridges it to `h1`,
+leaving `h1` the unique halt. It already has `_states/_start/_sig/_tapes/
+_h1_is_halt/_halt_unique/_valid`. **The one missing piece is a run-preservation
+lemma:** if a run of `M` never visits `h2`, then `joinTwoHalts M h1 h2` produces
+the *same* run (the only `trans` change is bridge entries *out of* `h2`, and the
+only `halt` change is at `h2`). This lemma does **not exist yet** — even
+`compileIfBit_sound` is still sorry'd partly for this reason (line ~2248). It is
+the foundational unblock for **all** rewinding ops (append and every deletion
+op). Prove it first.
 
 ## Architecture: the residue-tolerant contract
 
-**The physical TM tape never shrinks** (machine-checked in `TapeMono.lean`).
-This makes the old exact-tape contract (`exit tape = encodeTape output`)
-unsatisfiable for any op that shortens registers. The replacement:
+**The physical TM tape never shrinks** (machine-checked in `TapeMono.lean`), so
+the exit tape is `encodeTape output ++ residue` with `ValidResidue residue`
+(every cell `< 4 ∧ ≠ endMark`, i.e. `∈ {0,1,2}`), hidden existentially in
+`TapeOK`. Decode ignores residue (`decodeTape_encodeTape_append`, proven);
+composition threads residue mechanically (`compileSeq_sound_physical_residue`,
+proven).
 
-- **Exit tape** = `encodeTape output ++ residue`, where `residue` satisfies
-  `ValidResidue` (all cells `< endMark = 3`, i.e. terminator-free).
-- **Decoding works** — `decodeTape_encodeTape_append` (proved) shows `decodeTape`
-  ignores the residue since it stops at the first `3`.
-- **Composition works** — `compileSeq_sound_physical_residue` (proved); residue
-  threads mechanically through `compileSeq_compose_physical`.
-- **Two-phase rewind** — `rewindTwoPhaseTM` (proved) handles the `head→0` reset
-  when residue follows the trailing terminator.
-
-Key types/lemmas (all in `Lang/Compile.lean`):
-- `ValidResidue res` := `∀ x ∈ res, x ≠ Compile.endMark`
-- `TapeOK out tp` := `∃ res, ValidResidue res ∧ tp = encodeTape out ++ res`
-- `compileOp_sound_physical_residue` — the per-op contract (sorry'd, correctly stated)
-- `Compile_run_physical_residue` — the top-level contract (sorry'd, correctly stated)
+**Residue lives *after* the trailing terminator.** In `compileSeq`, fragment N+1
+runs on `encodeTape mid ++ res`, i.e. `endMark :: encodeRegs mid ++ [endMark] ++
+res`. So a rewinding gadget's head exits *inside the residue*, past the real
+terminator — a single-phase `rewindFromEndTM` would stop the left-scan on the
+real (interior) terminator, not the leading sentinel. Use the **two-phase
+rewind** `rewindTwoPhaseTM` (scan-left through residue to the real terminator,
+step off, scan-left to the sentinel). It works whether or not residue is present
+(`head = p` is the no-residue case).
 
 ## What's proved (all axiom-clean)
 
@@ -40,108 +71,99 @@ Key types/lemmas (all in `Lang/Compile.lean`):
 |-------|----------|------|--------|
 | Tape non-shrink | `runFlatTM_single_length_le` | `Complexity/TapeMono.lean` | ✅ |
 | Residue decode | `decodeTape_encodeTape_append` | `Lang/Compile.lean` | ✅ |
-| Residue helpers | `ValidResidue_nil/append/replicate_zero`, `TapeOK_exact/append_residue` | `Lang/Compile.lean` | ✅ |
-| Seq composition | `compileSeq_sound_physical_residue` | `Lang/Compile.lean` | ✅ |
-| Two-phase rewind | `rewindTwoPhaseTM` + `_run/_no_early_halt/_valid` | `Lang/ScanLeft.lean` | ✅ |
-| Interior scan | `scanLeftToMark_run/_no_early_halt` | `Lang/ScanLeft.lean` | ✅ |
-| Insert primitive | `insertCarryTM_run/_no_early_halt/_valid` | `Lang/ShiftTape.lean` | ✅ |
-| Delete primitive | `deleteCarryTM_run/_loop_run/_no_early_halt/_valid` | `Lang/ShiftTape.lean` | ✅ |
-| Append ops | `appendBit_physical` (appendOne/appendZero) | `Lang/Compile.lean` | ✅ |
-| Unsatisfiability | `clear_physical_unsatisfiable` | `Lang/Compile.lean` | ✅ |
+| Residue helpers | `ValidResidue_*`, `TapeOK_*` | `Lang/Compile.lean` | ✅ |
+| Seq composition (residue) | `compileSeq_sound_physical_residue`, `compileSeq_traj_physical_residue` | `Lang/Compile.lean` | ✅ |
+| Two-phase rewind | `rewindTwoPhase_run/_no_early_halt`, `rewindTwoPhaseTM_start/_sig/_tapes` | `Lang/ScanLeft.lean` | ✅ |
+| **Two-phase append gadget** | `appendAt_twoPhaseRewind_run/_no_early_halt` (machine `appendAtThenTwoPhaseRewindTM`) | `Lang/AppendGadget.lean` | ✅ **(new)** |
+| Insert/delete primitives | `insertCarryTM_*`, `deleteCarryTM_*` | `Lang/ShiftTape.lean` | ✅ |
+| Decider bridge (residue) | `bitDecider_run` now uses `Compile_run_physical_residue` | `Lang/Compile.lean` | ✅ **(new)** |
+| Single halt merge | `joinTwoHalts` + `_halt_unique/_valid/_h1_is_halt` | `Lang/Compile.lean` | ✅ (no run lemma) |
 
-## Next steps (ordered by priority)
+## Next steps (ordered — the halt-uniqueness fix gates everything)
 
-### 1. Wire `bitDecider_run` to use `Compile_run_physical_residue`
+### 1. Prove `joinTwoHalts` run-preservation (the unblock)
 
-`Compile.bitDecider_run` (line ~2610) currently uses the exact-tape
-`Compile_run_physical`. Update it to use the residue version. This is
-mechanical: the tape becomes `3 :: (b+1) :: (tl ++ res)` instead of
-`3 :: (b+1) :: tl`; the `bitTestTM` gadget only reads positions 0–1 so the
-residue is irrelevant. The `composeFlatTM_run` seam-symbol obligation is
-discharged by `ValidResidue` (all residue cells `< 4`).
+State and prove: if `runFlatTM k M cfg0` never has `state_idx = h2` for any
+`k' ≤ k` (and `cfg0.state_idx ≠ h2`), then `runFlatTM k (joinTwoHalts M h1 h2)
+cfg0 = runFlatTM k M cfg0`, and likewise `haltingStateReached` agrees off `h2`.
+Proof: induction on `k`; `stepFlatTM` agrees because the prepended bridge
+`trans` entries key on state `h2` only, and `halt` differs only at `h2`. Look at
+`stepFlatTM`/the trans-lookup in `MachineSemantics.lean` for the exact lookup
+mechanism. This is ~50–100 LOC and unblocks both `compileIfBit_sound` and all
+rewinding ops.
 
-### 2. Prove `compileOp_sound_physical_residue` for append ops
+### 2. Make the rewinding append op a `CompiledCmd`, prove its residue contract
 
-The append ops (`appendOne`/`appendZero`) already have `appendBit_physical`
-proved with exact tapes. Lifting to the residue contract should be
-straightforward: `insertCarryTM_run` is suffix-polymorphic (it treats residue
-as "more suffix"), so `res_out = res_in ++ [carried_symbol]`.
+- Define `opAppendOne dst` (and `opAppendZero`) as
+  `joinTwoHalts (appendAtThenTwoPhaseRewindTM 2 dst) <found-exit> <boundary-state>`,
+  with the found-exit `= 6 + (appendAtTM 2 dst).states` (state 15 for `dst=0`)
+  and the boundary state to demote `= 7 + (appendAtTM 2 dst).states` (state 16).
+  Confirm the two halt indices via `#eval (…).halt.zipIdx.filter (·.1) |>.map (·.2)`.
+  All seven `CompiledCmd` fields then discharge from the `joinTwoHalts_*` lemmas.
+- Prove `compileOp_sound_physical_residue` for the append cases: feed
+  `appendAt_twoPhaseRewind_run`/`_no_early_halt` (already proven) through the
+  step-1 run-preservation lemma. **`res_out = res_in`** (the insert grows
+  `encodeTape output` by one cell at the carry's end; the residue passes through
+  unchanged — *not* `res_in ++ [carried]` as an older note claimed). The exit
+  tape is `encodeTape (s.set dst (s.get dst ++ [bit])) ++ res_in`. The terminator
+  position is `p = (encodeTape output).length - 1`; discharge the gadget's
+  `h_t0`/`h_term`/`h_interior_ne`/`h_residue_ne` from `encodeTape_get_zero`,
+  `encodeTape_interior_ne_endMark`, and `ValidResidue res_in` (mirror the
+  structure plumbing in the older `appendBit_physical`, which is the no-residue
+  single-phase analogue and a good template).
+- ⚠ The old `opAppendOne`/`opAppendZero` use the **non-rewinding** `appendAtTM`;
+  the only consumers of the old behavioural lemmas (`compileOp_appendOne_sound`,
+  `appendBit_physical`) are docs — safe to repurpose/delete. The exact-tape
+  `Compile_run_physical` is now also unused in proof terms (only `*_residue` is).
 
-### 3. Build the first deletion-op gadget: `opTail`
+### 3. First deletion op `opTail` (validates the deletion pattern)
 
-`opTail` is the simplest deletion op (removes one cell from a register).
-The gadget pattern for deletion ops:
-1. Navigate to register `dst` (`Navigate`/`ScanPast`)
-2. `deleteCarryTM` the cell to remove (left-shifts suffix, appends `0` filler)
-3. `rewindTwoPhaseTM` back to head `0`
+Same shape: navigate to register `dst` → `deleteCarryTM` (left-shifts suffix,
+appends a `0` filler, so **`res_out = res_in ++ [0]`** and stays `ValidResidue`)
+→ two-phase rewind → `joinTwoHalts` demotion. The deletion primitives
+(`deleteCarryTM_run/_no_early_halt`) are proven; the new work is the navigate +
+the `encodeTape`-level contract and the same halt-demotion wrapper as step 2.
 
-Prove the `encodeTape`-level physical contract (in `TapeOK` form), then slot
-it into `compileOp_sound_physical_residue`'s case split.
-
-### 4. Remaining deletion ops
-
-After `opTail` validates the pattern, extend to `opClear`, `opHead`, `opCopy`
-(shrinking case), `opEqBit`, `opNonEmpty`, `opLength`. Most follow the same
-navigate-delete-rewind pattern; `opClear` needs a loop (delete until delimiter).
-
-**Key design question for `opClear`:** the register length is not known
-statically. Options: (a) use a loop TM (`loopTM`) that counts deletes until
-hitting the register delimiter (`0` — the separator between encoded registers
-in `encodeRegs`), or (b) use `deleteCarryTM` in a `loopTM` wrapper.
-Option (b) is cleaner since `loopTM_run` is already proved. The loop body
-deletes one cell; the loop condition checks if the current cell is the
-register delimiter `0`.
-
-### 5. Restate `compileIfBit`/`compileForBnd` with residue
-
-Expected to generalise like `compileSeq` (their combinators
-`branchComposeFlatTM_run`/`loopTM_run` are tape-polymorphic), but confirm when
-wiring. Keep **linear** per-fragment budgets.
-
-### 6. Assemble `Compile_run_physical_residue` proof
-
-By induction on `Cmd`, using the per-op residue contracts and the residue
-versions of `compileSeq`/`compileIfBit`/`compileForBnd`.
+### 4. Remaining deletion ops, then `compileIfBit`/`compileForBnd` residue, then
+assemble `Compile_run_physical_residue` by induction on `Cmd`. `opClear` needs a
+`loopTM` (delete until the register delimiter `0`). Keep **linear** per-fragment
+budgets (quadratics don't compose — see the finding block above `compileSeq_sound`).
 
 ## Key files
 
 | File | Contents |
 |------|----------|
-| `Complexity/TapeMono.lean` | tape non-shrink finding |
-| `Lang/Compile.lean` | compiler, physical contracts, residue infrastructure, ~2580 lines |
-| `Lang/ShiftTape.lean` | `insertCarryTM` + `deleteCarryTM` (insert/delete primitives) |
-| `Lang/AppendGadget.lean` | `appendAtTM`, `appendAtThenRewindTM`, `appendBit_physical` |
-| `Lang/ScanLeft.lean` | `scanLeftUntilTM`, `rewindTwoPhaseTM` (two-phase rewind) |
+| `Lang/Compile.lean` | compiler, physical contracts, residue infra, `joinTwoHalts`, ~2670 lines |
+| `Lang/AppendGadget.lean` | `appendAtTM`, `appendAtThenRewindTM` (single-phase), `appendAtThenTwoPhaseRewindTM` (residue), `appendBit_physical` |
+| `Lang/ScanLeft.lean` | `scanLeftUntilTM`, `rewindFromEndTM`, `rewindTwoPhaseTM` |
+| `Lang/ShiftTape.lean` | `insertCarryTM` + `deleteCarryTM` |
 | `Lang/Navigate.lean` / `ScanPast.lean` | register navigation atoms |
-| `Lang/Syntax.lean` / `Semantics.lean` | `Op`/`Cmd`, `Op.eval`, `Op.cost` |
-| `Lang/Frame.lean` / `PolyTime.lean` | register bound, S3 bridge, tape-length bound |
-| `Complexity/TMPrimitives.lean` | `composeFlatTM_run/no_early_halt`, `loopTM_run` |
+| `Complexity/TMPrimitives.lean` | `composeFlatTM_run/_no_early_halt`, `loopTM_run` |
+| `Complexity/TapeMono.lean` | tape non-shrink finding |
 
 ## Gotchas
 
-- **Tape can't shrink**: never state an op's exit tape as exactly a shorter
-  `encodeTape`. Use the `TapeOK` form with `ValidResidue`.
-- **Rewind with residue**: use `rewindTwoPhaseTM` (two left-scans: first to the
-  real terminator past the residue, then to the leading sentinel). Never start
-  `scanLeftUntilTM` on a `3` — it halts immediately.
+- **`halt_unique` for rewinds**: see THE BLOCKER. Any machine ending in a
+  left-scan has ≥2 halt states; wrap with `joinTwoHalts` (needs the step-1 run
+  lemma). Same was already done for `compileIfBit` (two branch exits).
+- **Tape can't shrink**: never state an op's exit tape as a shorter `encodeTape`.
+  Use `TapeOK`/`ValidResidue`.
+- **Residue follows the terminator** → always two-phase rewind. Never start
+  `scanLeftUntilTM` on a `3` (it halts immediately).
+- **`set` then `appendAt_run_exit`**: introduce `set TP`/`set HD` *before* the
+  `appendAt_run_exit`/`appendAt_no_early_halt` haves so `composeFlatTM_run`
+  unifies the let-defs against the explicit expressions (see
+  `appendAt_twoPhaseRewind_run` for the working pattern).
 - **`omega` vs `Var`**: `Var := Nat` is opaque to `omega`; restate at `Nat`.
-- **`omega` vs list lengths**: `simp only [List.length_*]` first.
-- **`get`-congruence across list equality**: route through `getElem?`; don't
-  `rw` a length-carrying index (ill-typed motive).
-- **Core-only files** (`Semantics.lean`, `Frame.lean`): no Mathlib tactics.
-- **`haltingStateReached` vs `exit_is_halt`**: bridge via
-  `unfold haltingStateReached List.getD; simp only [...]`.
-- **`rcases` numeral form**: after `rcases k with _ | _ | _ | k'`, step counts
-  are already in `k' + 1` form (not `Nat.succ`). Don't add unnecessary
-  `simp only [Nat.succ_eq_add_one]`.
-- **`List.not_mem_nil`**: in this Lean 4 version it returns `False` when applied,
-  not `¬ x ∈ []`. Use `simp at hx` instead of `absurd`.
+- **`get`-congruence across list equality**: route through `getElem?`.
+- **`#print axioms`** needs the full name `Complexity.Lang.Compile.<x>` and the
+  import `Complexity.Lang.Compile` (not `CookLevin.…`). Use a scratch file:
+  `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean`.
 
 ## Conventions
 
-- Build: `lake build` from repo root. `lake build Complexity.Lang.X` for one
-  module.
+- Build: `lake build` (or `lake build Complexity.Lang.X` for one module).
 - Commit per logical step with a **green build**.
-- Axioms: only `propext`/`Quot.sound`/`Classical.choice`. Check with:
-  `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean`
+- New results must be `#print axioms`-clean (only `propext`/`Quot.sound`/
+  `Classical.choice`; **no `sorryAx`** for a finished lemma).
 - See ROADMAP "Hard-won gotchas" and "How we work" for full methodology.
