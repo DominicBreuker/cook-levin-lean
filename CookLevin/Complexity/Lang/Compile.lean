@@ -2023,6 +2023,78 @@ def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : Compil
   M_sig := by
     rw [Compile.joinTwoHalts_sig]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_sig ins dst
 
+theorem Compile.opAppendBitRewind_M (ins : Nat) (h_ins : ins < 4) (dst : Var) :
+    (Compile.opAppendBitRewind ins h_ins dst).M
+      = Compile.joinTwoHalts (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst)
+          ((AppendGadget.appendAtTM ins dst).states + 6)
+          ((AppendGadget.appendAtTM ins dst).states + 7) := rfl
+
+theorem Compile.opAppendBitRewind_exit (ins : Nat) (h_ins : ins < 4) (dst : Var) :
+    (Compile.opAppendBitRewind ins h_ins dst).exit
+      = (AppendGadget.appendAtTM ins dst).states + 6 := rfl
+
+/-- **Run/trajectory transport for the rewinding append op (the mechanism, end
+to end).** Given the *raw* bracket's run to its found-state and its no-early-halt
+trajectory (both proven: `appendAt_twoPhaseRewind_run`/`_no_early_halt`), the
+`joinTwoHalts`-wrapped `CompiledCmd` `opAppendBitRewind` produces the **same**
+run to its `exit`, and its own no-early-halt-and-no-early-exit trajectory. The
+proof goes through `joinTwoHalts_run_eq`: the raw run never visits the demoted
+boundary state `+7` (a halt state, so the no-early-halt trajectory forbids it
+before `t`, and the run ends at `+6` at `t`). This is the reusable bridge from a
+two-phase-rewind gadget lemma to its `CompiledCmd` contract — the same shape
+every deletion op will reuse. -/
+theorem Compile.opAppendBitRewind_transport (ins : Nat) (h_ins : ins < 4) (dst : Var)
+    {t : Nat} {cfg0 : FlatTMConfig} {tapeOut : List Nat × Nat × List Nat}
+    (hrun : runFlatTM t (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst) cfg0
+        = some { state_idx := (AppendGadget.appendAtTM ins dst).states + 6,
+                 tapes := [tapeOut] })
+    (htraj : ∀ k, k < t → ∀ ck,
+        runFlatTM k (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst) cfg0 = some ck →
+        haltingStateReached (AppendGadget.appendAtThenTwoPhaseRewindTM ins dst) ck = false) :
+    runFlatTM t (Compile.opAppendBitRewind ins h_ins dst).M cfg0
+        = some { state_idx := (Compile.opAppendBitRewind ins h_ins dst).exit,
+                 tapes := [tapeOut] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.opAppendBitRewind ins h_ins dst).M cfg0 = some ck →
+        ck.state_idx ≠ (Compile.opAppendBitRewind ins h_ins dst).exit ∧
+        haltingStateReached (Compile.opAppendBitRewind ins h_ins dst).M ck = false) := by
+  set raw : FlatTM := AppendGadget.appendAtThenTwoPhaseRewindTM ins dst with hraw
+  set h1 : Nat := (AppendGadget.appendAtTM ins dst).states + 6 with hh1
+  set h2 : Nat := (AppendGadget.appendAtTM ins dst).states + 7 with hh2
+  rw [Compile.opAppendBitRewind_M, Compile.opAppendBitRewind_exit]
+  have hhalt_h1 : raw.halt[h1]? = some true := by
+    rw [hraw, hh1]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt ins dst
+  have hhalt_h2 : raw.halt[h2]? = some true := by
+    rw [hraw, hh2]; exact AppendGadget.appendAtThenTwoPhaseRewindTM_halt_seven ins dst
+  -- A state whose halt bit is `some true` cannot occur on a non-halting config.
+  have hhalt_imp : ∀ (ck : FlatTMConfig) (hx : raw.halt[ck.state_idx]? = some true),
+      haltingStateReached raw ck = true := by
+    intro ck hx
+    show raw.halt.getD ck.state_idx false = true
+    rw [List.getD_eq_getElem?_getD, hx]; rfl
+  -- The raw run never visits the demoted boundary state `h2` within `t` steps.
+  have hnv : ∀ k, k ≤ t → ∀ ck, runFlatTM k raw cfg0 = some ck → ck.state_idx ≠ h2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · intro hcontra
+      have hnh : haltingStateReached raw ck = false := htraj k hlt ck hck
+      rw [hhalt_imp ck (by rw [hcontra]; exact hhalt_h2)] at hnh
+      exact Bool.noConfusion hnh
+    · have hck2 : ck = { state_idx := h1, tapes := [tapeOut] } :=
+        Option.some.inj (hck.symm.trans hrun)
+      rw [hck2]; show h1 ≠ h2; omega
+  refine ⟨?_, ?_⟩
+  · rw [Compile.joinTwoHalts_run_eq raw h1 h2 t cfg0 hnv, hrun]
+  · intro k hk ck hck
+    rw [Compile.joinTwoHalts_run_eq raw h1 h2 k cfg0
+          (fun j hj => hnv j (Nat.le_trans hj (Nat.le_of_lt hk)))] at hck
+    have hnh : haltingStateReached raw ck = false := htraj k hk ck hck
+    have hne_h2 : ck.state_idx ≠ h2 := hnv k (Nat.le_of_lt hk) ck hck
+    refine ⟨fun hcontra => ?_, ?_⟩
+    · rw [hhalt_imp ck (by rw [hcontra]; exact hhalt_h1)] at hnh
+      exact Bool.noConfusion hnh
+    · rw [Compile.joinTwoHalts_halting_eq raw h1 h2 ck hne_h2]; exact hnh
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,

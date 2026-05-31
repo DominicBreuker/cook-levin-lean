@@ -918,6 +918,16 @@ theorem rewindTwoPhaseTM_halt_six (sig target : Nat) :
     composeFlatTM_halt_some_intro (stepLeftTM sig) (scanLeftUntilTM sig target) 1 1 h1
   exact composeFlatTM_halt_some_intro (scanLeftUntilTM sig target) (rewindFromEndTM sig target) 1 3 h3
 
+/-- The (unreachable) boundary halt of `rewindTwoPhaseTM sig target` is state `7`
+— the one demoted by `Compile.joinTwoHalts`. Used to derive "the run never sits
+on state `7`" from a no-early-halt trajectory. -/
+theorem rewindTwoPhaseTM_halt_seven (sig target : Nat) :
+    (rewindTwoPhaseTM sig target).halt[7]? = some true := by
+  have h2 : (scanLeftUntilTM sig target).halt[2]? = some true := rfl
+  have h4 : (rewindFromEndTM sig target).halt[4]? = some true :=
+    composeFlatTM_halt_some_intro (stepLeftTM sig) (scanLeftUntilTM sig target) 1 2 h2
+  exact composeFlatTM_halt_some_intro (scanLeftUntilTM sig target) (rewindFromEndTM sig target) 1 4 h4
+
 /-- **Two-phase rewind run lemma.** On a tape `tp` with the leading sentinel
 `target` at `0`, the real terminator `target` at an interior `p > 0`, a
 terminator-free in-range interior `1 … p-1`, and a terminator-free in-range

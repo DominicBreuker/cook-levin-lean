@@ -1004,6 +1004,13 @@ theorem appendAtThenTwoPhaseRewindTM_exit_is_halt (ins dst : Nat) :
   composeFlatTM_halt_some_intro (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst) 6
     (rewindTwoPhaseTM_halt_six 4 3)
 
+/-- The boundary halt (`appendAtTM.states + 7`) of the append bracket — the one
+demoted by `joinTwoHalts`. -/
+theorem appendAtThenTwoPhaseRewindTM_halt_seven (ins dst : Nat) :
+    (appendAtThenTwoPhaseRewindTM ins dst).halt[(appendAtTM ins dst).states + 7]? = some true :=
+  composeFlatTM_halt_some_intro (appendAtTM ins dst) (rewindTwoPhaseTM 4 3) (appendAtTM_exit dst) 7
+    (rewindTwoPhaseTM_halt_seven 4 3)
+
 /-- The append bracket halts at exactly two states: the found-state
 `appendAtTM.states + 6` (the real exit) and the unreachable boundary-state
 `appendAtTM.states + 7` (to be demoted by `joinTwoHalts`). -/
