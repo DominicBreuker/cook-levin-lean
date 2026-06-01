@@ -121,10 +121,16 @@ first; the length ops are copy + in-place truncate.
      head: `pre ++ (c0+1)::M → pre ++ M ++ [0]` (from `deleteCarryTM_loop_run`).
    - `Compile.deleteCarry_tail_step` — **one deletion = the in-place `tail` step**
      on the encoded tape: deleting register `dst`'s first content cell yields
-     `encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])`. Iterating this
-     `|s.get dst|` times is exactly `clear` (state-level: `(set dst ·.tail)^[n] =
-     set dst (·.drop n)`, and `drop |content| = []`). **This lemma is also the core
-     of the in-place `tail` op** (`tail dst dst`).
+     `encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])`. **Also the core of
+     the in-place `tail` op** (`tail dst dst`).
+   - `Compile.set_tail_iterate` — the loop's **state-level invariant**:
+     `(fun t => t.set dst t.tail)^[n] s = s.set dst ((s.get dst).drop n)`; at
+     `n = |s.get dst|` this is `clear`. (Plus the supporting `State` algebra
+     `set_eq_list_set`/`get_set_eq`/`set_get_self`/`set_set`.)
+
+   So **both halves of the loop's correctness are proven** — the per-iteration tape
+   effect (`deleteCarry_tail_step`) and the iterated state effect
+   (`set_tail_iterate`). What remains is purely the autonomous-machine packaging.
 
    **Remaining (the loopTM plumbing — large but mechanical, no unknowns):**
    1. Body machine `B` (two exits): from head 0, `NAV` (scan past `dst` delimiters
