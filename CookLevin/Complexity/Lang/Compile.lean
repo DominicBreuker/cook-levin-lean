@@ -2741,7 +2741,16 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
         le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
   -- The 10 stub ops still need their gadgets (deletion: `res_out = res_in ++ replicate n 0`
   -- via `deleteCarryTM`; reuse `rewindBracket` for the head rewind). See HANDOFF.
-  | clear dst => sorry
+  | clear dst =>
+      -- The run lemma for clearRegionTM is structured but not yet fully discharged.
+      -- Key proven facts:
+      -- 1. `clear_block_decomp`: clearing dst deletes exactly the `shiftReg (s.get dst)` block
+      -- 2. `deleteCarry_tail_step`: one deleteCarryTM pass = one tail step on the encoded tape
+      -- 3. `set_tail_iterate` / `iterate_tail_clear`: n iterations clear n cells
+      -- 4. `ValidResidue_append_replicate_zero`: residue grows by `replicate |old| 0`
+      -- The remaining work: run/trajectory for the composed clearRegionTM (loopTM plumbing).
+      -- res_out = res_in ++ replicate |s.get dst| 0 (the freed cells become 0 residue)
+      sorry
   | copy dst src => sorry
   | tail dst src => sorry
   | head dst src => sorry
