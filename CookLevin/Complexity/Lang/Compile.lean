@@ -193,186 +193,6 @@ indices and return a `CompiledCmd`. Soundness obligations are
 collected by `compileOp_sound` (currently one sorry; can be
 decomposed per-`Op` when those helpers are concretized). -/
 
-/-- Compile `Op.clear dst`. **Stub.** -/
-def Compile.opClear (_dst : Var) : CompiledCmd := compiledCmd_default
-
-/-- Compile `Op.appendOne dst`: navigate past the `dst` preceding
-register-delimiters, then insert symbol `2` (the shifted bit `1`) just
-before register `dst`'s delimiter. Realized by `AppendGadget.appendAtTM`
-with `ins = 2`; all `CompiledCmd` invariants come from that gadget's
-exit/halt lemmas. -/
-def Compile.opAppendOne (dst : Var) : CompiledCmd where
-  M := AppendGadget.appendAtTM 2 dst
-  exit := AppendGadget.appendAtTM_exit dst
-  exit_lt := AppendGadget.appendAtTM_exit_lt 2 dst
-  exit_is_halt := AppendGadget.appendAtTM_exit_is_halt 2 dst
-  halt_unique := AppendGadget.appendAtTM_halt_unique 2 dst
-  M_valid := AppendGadget.appendAtTM_valid 2 (by decide) dst
-  M_tapes := AppendGadget.appendAtTM_tapes 2 dst
-  M_sig := AppendGadget.appendAtTM_sig 2 dst
-
-/-- Compile `Op.appendZero dst`: as `opAppendOne`, but inserts symbol `1`
-(the shifted bit `0`). Realized by `AppendGadget.appendAtTM` with
-`ins = 1`. -/
-def Compile.opAppendZero (dst : Var) : CompiledCmd where
-  M := AppendGadget.appendAtTM 1 dst
-  exit := AppendGadget.appendAtTM_exit dst
-  exit_lt := AppendGadget.appendAtTM_exit_lt 1 dst
-  exit_is_halt := AppendGadget.appendAtTM_exit_is_halt 1 dst
-  halt_unique := AppendGadget.appendAtTM_halt_unique 1 dst
-  M_valid := AppendGadget.appendAtTM_valid 1 (by decide) dst
-  M_tapes := AppendGadget.appendAtTM_tapes 1 dst
-  M_sig := AppendGadget.appendAtTM_sig 1 dst
-
-/-- Compile `Op.copy dst src`. **Stub.** -/
-def Compile.opCopy (_dst _src : Var) : CompiledCmd := compiledCmd_default
-
-/-- Compile `Op.tail dst src`. **Stub.** -/
-def Compile.opTail (_dst _src : Var) : CompiledCmd := compiledCmd_default
-
-/-- Compile `Op.head dst src`. **Stub.** -/
-def Compile.opHead (_dst _src : Var) : CompiledCmd := compiledCmd_default
-
-/-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
-def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
-
-/-- Compile `Op.nonEmpty dst src`. **Stub.** -/
-def Compile.opNonEmpty (_dst _src : Var) : CompiledCmd := compiledCmd_default
-
-/-- Compile a single primitive operation `Op` to a `CompiledCmd`
-by dispatching on the constructor. The actual TM construction
-lives in the per-`Op` helpers above. -/
-def compileOp : Op → CompiledCmd
-  | .clear dst                 => Compile.opClear dst
-  | .appendOne dst             => Compile.opAppendOne dst
-  | .appendZero dst            => Compile.opAppendZero dst
-  | .copy dst src              => Compile.opCopy dst src
-  | .tail dst src              => Compile.opTail dst src
-  | .head dst src              => Compile.opHead dst src
-  | .eqBit dst src1 src2       => Compile.opEqBit dst src1 src2
-  | .nonEmpty dst src          => Compile.opNonEmpty dst src
-  -- Length-as-value ops (C5a). Stubs, like the other non-bit ops: their physical
-  -- soundness folds into the (already assumed) `Compile_sound` gap.
-  | .takeAt _dst _src _lenReg  => compiledCmd_default
-  | .dropAt _dst _src _lenReg  => compiledCmd_default
-  | .concat _dst _src1 _src2   => compiledCmd_default
-  | .consLen _dst _lenSrc _src => compiledCmd_default
-
-/-- Compile `seq c1 c2` from already-compiled sub-machines.
-
-Concrete implementation via `composeFlatTM`:
-- The composed TM is `composeFlatTM r1.M r2.M r1.exit` (M₁'s exit
-  state triggers the bridge into M₂).
-- The composed exit state is `r1.M.states + r2.exit` (r2's exit,
-  shifted into the composed state space).
-- All `CompiledCmd` invariants discharge via the existing
-  `composeFlatTM_*` lemmas, given that both sub-machines satisfy
-  the invariants.
-
-**Gap surfaced.** `composeFlatTM_run`'s `h_traj1` precondition
-requires M₁ not to reach a halt state before `exit`. The current
-`CompiledCmd` invariants guarantee `exit` IS a halt state of M₁
-(via `exit_is_halt`) but do NOT guarantee it is the *unique* halt
-state. With a non-unique halt vector, a sub-machine could halt at
-some other state, violating `h_traj1`. The eventual
-`compileSeq_sound` proof will therefore need either:
-- a strengthened `CompiledCmd.halt_unique : ∀ i, M.halt[i]? =
-  some true → i = exit` invariant (forces every helper to produce
-  a single-halt-state machine), or
-- a separate operational invariant proved per-helper.
-
-For now we keep the structural invariants minimal; the gap is
-recorded in the ROADMAP risk register as part of risk #1a. -/
-def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
-  M := composeFlatTM r1.M r2.M r1.exit
-  exit := r1.M.states + r2.exit
-  exit_lt := by
-    show r1.M.states + r2.exit < (composeFlatTM r1.M r2.M r1.exit).states
-    rw [composeFlatTM_states]
-    exact Nat.add_lt_add_left r2.exit_lt r1.M.states
-  exit_is_halt := by
-    -- composeFlatTM's halt vector is `composedHalt r1.M r2.M`
-    -- = `replicate r1.M.states false ++ r2.M.halt`. Index
-    -- `r1.M.states + r2.exit` falls into the r2.M.halt segment.
-    show (composeFlatTM r1.M r2.M r1.exit).halt[r1.M.states + r2.exit]?
-        = some true
-    show (composedHalt r1.M r2.M)[r1.M.states + r2.exit]? = some true
-    unfold composedHalt
-    have h_len : (List.replicate r1.M.states false).length ≤
-        r1.M.states + r2.exit := by
-      rw [List.length_replicate]; exact Nat.le_add_right _ _
-    rw [List.getElem?_append_right h_len]
-    -- Goal: r2.M.halt[r1.M.states + r2.exit - (replicate _ _).length]? = some true
-    have h_idx : r1.M.states + r2.exit - (List.replicate r1.M.states false).length
-        = r2.exit := by
-      rw [List.length_replicate]; omega
-    rw [h_idx]
-    exact r2.exit_is_halt
-  halt_unique := by
-    -- composedHalt = replicate r1.M.states false ++ r2.M.halt.
-    -- For i < r1.M.states, the value is `some false`; for
-    -- i ≥ r1.M.states, the value is `r2.M.halt[i - r1.M.states]?`
-    -- and equality with `some true` forces (by r2.halt_unique)
-    -- i - r1.M.states = r2.exit, hence i = r1.M.states + r2.exit.
-    intro i hi
-    change (composedHalt r1.M r2.M)[i]? = some true at hi
-    unfold composedHalt at hi
-    -- hi : (List.replicate r1.M.states false ++ r2.M.halt)[i]? = some true
-    by_cases hlt : i < r1.M.states
-    · -- left segment: value is `some false`, contradiction
-      exfalso
-      have h_lt' : i < (List.replicate r1.M.states false).length := by
-        rw [List.length_replicate]; exact hlt
-      rw [List.getElem?_append_left h_lt'] at hi
-      -- hi : (List.replicate r1.M.states false)[i]? = some true
-      rw [List.getElem?_replicate] at hi
-      -- hi : (if i < r1.M.states then some false else none) = some true
-      simp [hlt] at hi
-    · -- right segment: i ≥ r1.M.states
-      push_neg at hlt
-      have h_ge : (List.replicate r1.M.states false).length ≤ i := by
-        rw [List.length_replicate]; exact hlt
-      rw [List.getElem?_append_right h_ge, List.length_replicate] at hi
-      -- hi : r2.M.halt[i - r1.M.states]? = some true
-      have h_idx : i - r1.M.states = r2.exit := r2.halt_unique _ hi
-      show i = r1.M.states + r2.exit
-      omega
-  M_valid :=
-    composeFlatTM_valid r1.M r2.M r1.exit r1.M_valid r2.M_valid
-      r1.exit_lt r1.M_tapes r2.M_tapes
-  M_tapes := by
-    show (composeFlatTM r1.M r2.M r1.exit).tapes = 1
-    rw [composeFlatTM_tapes]; exact r1.M_tapes
-  M_sig := by
-    show (composeFlatTM r1.M r2.M r1.exit).sig = 4
-    rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
-    rfl
-
-/-! ### `compileIfBit`: two-exit tester + branch composition + join
-
-The construction is `branchComposeFlatTM tester rT rE exit_pos
-exit_neg` composed with `Compile.joinTwoHalts` to merge the two
-branches' halt states into a single surviving halt. `tester` is a
-small TM that reads register `t`'s first symbol and reaches one
-of two designated states (`exitPos`, `exitNeg`) before the bridge
-fires into the appropriate branch.
-
-**Risk #1d resolution (May 2026).** The previous iteration
-documented a structural gap: `branchComposeFlatTM`'s halt vector
-is `replicate _ false ++ M₂.halt ++ M₃.halt`, so with two
-`CompiledCmd` branches (each with a unique halt) the composed TM
-has TWO halt states, violating `CompiledCmd.halt_unique`. The
-resolution implemented here is the recommended option (a): a
-local `Compile.joinTwoHalts M h1 h2` combinator that demotes `h2`
-from halt to non-halt and adds bridge entries from `h2` to `h1`.
-The combinator's correctness is proved in the `Compile`
-namespace; all seven `CompiledCmd` invariants discharge for
-`compileIfBit` without any sorrys.
-
-The choice of `h1` (surviving halt) vs `h2` (absorbed halt) is
-symmetric; this implementation picks `haltE = tester.states +
-rT.states + rE.exit` as the surviving exit. -/
-
 /-! ### Local TM combinator: merge two halt states (risk #1d resolution)
 
 `branchComposeFlatTM`'s halt vector has up to two `true` entries
@@ -694,6 +514,186 @@ theorem rewindBracket_transport (compute : FlatTM) (exit : Nat)
     · rw [joinTwoHalts_halting_eq raw h1 h2 ck hne_h2]; exact hnh
 
 end Compile
+
+/-- **Rewinding append op as a `CompiledCmd`** — the `rewindBracket` instance for
+the append `compute` machine `appendAtTM ins dst`. Demoting the left-scan boundary
+halt makes the head-`0`-rewinding append op a genuine `CompiledCmd` (`ins = 2`
+for `appendOne`, `ins = 1` for `appendZero`). Its run/trajectory contract comes
+from `rewindBracket_transport` (general) fed by `appendAt_twoPhaseRewind_run`/
+`_no_early_halt` (`appendAtThenTwoPhaseRewindTM` is defeq to the bracket's
+`compute ⨾ rewindTwoPhase`). -/
+def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : CompiledCmd :=
+  Compile.rewindBracket (AppendGadget.appendAtTM ins dst) (AppendGadget.appendAtTM_exit dst)
+    (AppendGadget.appendAtTM_valid ins h_ins dst) (AppendGadget.appendAtTM_exit_lt ins dst)
+    (AppendGadget.appendAtTM_tapes ins dst) (AppendGadget.appendAtTM_sig ins dst)
+
+/-- Compile `Op.clear dst`. **Stub.** -/
+def Compile.opClear (_dst : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.appendOne dst`: navigate past the `dst` preceding
+register-delimiters, insert symbol `2` (the shifted bit `1`) just before register
+`dst`'s delimiter, then **two-phase rewind the head back to `0`** (so the fragment
+composes — `compileSeq` needs each fragment's head at the leading sentinel). The
+unique-halt `CompiledCmd` comes from `opAppendBitRewind` (the `rewindBracket`
+instance that demotes the left-scan's boundary halt). Its residue-tolerant
+physical contract is `opAppendBit_physical_residue`. -/
+def Compile.opAppendOne (dst : Var) : CompiledCmd :=
+  Compile.opAppendBitRewind 2 (by decide) dst
+
+/-- Compile `Op.appendZero dst`: as `opAppendOne`, but inserts symbol `1`
+(the shifted bit `0`). -/
+def Compile.opAppendZero (dst : Var) : CompiledCmd :=
+  Compile.opAppendBitRewind 1 (by decide) dst
+
+/-- Compile `Op.copy dst src`. **Stub.** -/
+def Compile.opCopy (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.tail dst src`. **Stub.** -/
+def Compile.opTail (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.head dst src`. **Stub.** -/
+def Compile.opHead (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
+def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.nonEmpty dst src`. **Stub.** -/
+def Compile.opNonEmpty (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile a single primitive operation `Op` to a `CompiledCmd`
+by dispatching on the constructor. The actual TM construction
+lives in the per-`Op` helpers above. -/
+def compileOp : Op → CompiledCmd
+  | .clear dst                 => Compile.opClear dst
+  | .appendOne dst             => Compile.opAppendOne dst
+  | .appendZero dst            => Compile.opAppendZero dst
+  | .copy dst src              => Compile.opCopy dst src
+  | .tail dst src              => Compile.opTail dst src
+  | .head dst src              => Compile.opHead dst src
+  | .eqBit dst src1 src2       => Compile.opEqBit dst src1 src2
+  | .nonEmpty dst src          => Compile.opNonEmpty dst src
+  -- Length-as-value ops (C5a). Stubs, like the other non-bit ops: their physical
+  -- soundness folds into the (already assumed) `Compile_sound` gap.
+  | .takeAt _dst _src _lenReg  => compiledCmd_default
+  | .dropAt _dst _src _lenReg  => compiledCmd_default
+  | .concat _dst _src1 _src2   => compiledCmd_default
+  | .consLen _dst _lenSrc _src => compiledCmd_default
+
+/-- Compile `seq c1 c2` from already-compiled sub-machines.
+
+Concrete implementation via `composeFlatTM`:
+- The composed TM is `composeFlatTM r1.M r2.M r1.exit` (M₁'s exit
+  state triggers the bridge into M₂).
+- The composed exit state is `r1.M.states + r2.exit` (r2's exit,
+  shifted into the composed state space).
+- All `CompiledCmd` invariants discharge via the existing
+  `composeFlatTM_*` lemmas, given that both sub-machines satisfy
+  the invariants.
+
+**Gap surfaced.** `composeFlatTM_run`'s `h_traj1` precondition
+requires M₁ not to reach a halt state before `exit`. The current
+`CompiledCmd` invariants guarantee `exit` IS a halt state of M₁
+(via `exit_is_halt`) but do NOT guarantee it is the *unique* halt
+state. With a non-unique halt vector, a sub-machine could halt at
+some other state, violating `h_traj1`. The eventual
+`compileSeq_sound` proof will therefore need either:
+- a strengthened `CompiledCmd.halt_unique : ∀ i, M.halt[i]? =
+  some true → i = exit` invariant (forces every helper to produce
+  a single-halt-state machine), or
+- a separate operational invariant proved per-helper.
+
+For now we keep the structural invariants minimal; the gap is
+recorded in the ROADMAP risk register as part of risk #1a. -/
+def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
+  M := composeFlatTM r1.M r2.M r1.exit
+  exit := r1.M.states + r2.exit
+  exit_lt := by
+    show r1.M.states + r2.exit < (composeFlatTM r1.M r2.M r1.exit).states
+    rw [composeFlatTM_states]
+    exact Nat.add_lt_add_left r2.exit_lt r1.M.states
+  exit_is_halt := by
+    -- composeFlatTM's halt vector is `composedHalt r1.M r2.M`
+    -- = `replicate r1.M.states false ++ r2.M.halt`. Index
+    -- `r1.M.states + r2.exit` falls into the r2.M.halt segment.
+    show (composeFlatTM r1.M r2.M r1.exit).halt[r1.M.states + r2.exit]?
+        = some true
+    show (composedHalt r1.M r2.M)[r1.M.states + r2.exit]? = some true
+    unfold composedHalt
+    have h_len : (List.replicate r1.M.states false).length ≤
+        r1.M.states + r2.exit := by
+      rw [List.length_replicate]; exact Nat.le_add_right _ _
+    rw [List.getElem?_append_right h_len]
+    -- Goal: r2.M.halt[r1.M.states + r2.exit - (replicate _ _).length]? = some true
+    have h_idx : r1.M.states + r2.exit - (List.replicate r1.M.states false).length
+        = r2.exit := by
+      rw [List.length_replicate]; omega
+    rw [h_idx]
+    exact r2.exit_is_halt
+  halt_unique := by
+    -- composedHalt = replicate r1.M.states false ++ r2.M.halt.
+    -- For i < r1.M.states, the value is `some false`; for
+    -- i ≥ r1.M.states, the value is `r2.M.halt[i - r1.M.states]?`
+    -- and equality with `some true` forces (by r2.halt_unique)
+    -- i - r1.M.states = r2.exit, hence i = r1.M.states + r2.exit.
+    intro i hi
+    change (composedHalt r1.M r2.M)[i]? = some true at hi
+    unfold composedHalt at hi
+    -- hi : (List.replicate r1.M.states false ++ r2.M.halt)[i]? = some true
+    by_cases hlt : i < r1.M.states
+    · -- left segment: value is `some false`, contradiction
+      exfalso
+      have h_lt' : i < (List.replicate r1.M.states false).length := by
+        rw [List.length_replicate]; exact hlt
+      rw [List.getElem?_append_left h_lt'] at hi
+      -- hi : (List.replicate r1.M.states false)[i]? = some true
+      rw [List.getElem?_replicate] at hi
+      -- hi : (if i < r1.M.states then some false else none) = some true
+      simp [hlt] at hi
+    · -- right segment: i ≥ r1.M.states
+      push_neg at hlt
+      have h_ge : (List.replicate r1.M.states false).length ≤ i := by
+        rw [List.length_replicate]; exact hlt
+      rw [List.getElem?_append_right h_ge, List.length_replicate] at hi
+      -- hi : r2.M.halt[i - r1.M.states]? = some true
+      have h_idx : i - r1.M.states = r2.exit := r2.halt_unique _ hi
+      show i = r1.M.states + r2.exit
+      omega
+  M_valid :=
+    composeFlatTM_valid r1.M r2.M r1.exit r1.M_valid r2.M_valid
+      r1.exit_lt r1.M_tapes r2.M_tapes
+  M_tapes := by
+    show (composeFlatTM r1.M r2.M r1.exit).tapes = 1
+    rw [composeFlatTM_tapes]; exact r1.M_tapes
+  M_sig := by
+    show (composeFlatTM r1.M r2.M r1.exit).sig = 4
+    rw [composeFlatTM_sig, r1.M_sig, r2.M_sig]
+    rfl
+
+/-! ### `compileIfBit`: two-exit tester + branch composition + join
+
+The construction is `branchComposeFlatTM tester rT rE exit_pos
+exit_neg` composed with `Compile.joinTwoHalts` to merge the two
+branches' halt states into a single surviving halt. `tester` is a
+small TM that reads register `t`'s first symbol and reaches one
+of two designated states (`exitPos`, `exitNeg`) before the bridge
+fires into the appropriate branch.
+
+**Risk #1d resolution (May 2026).** The previous iteration
+documented a structural gap: `branchComposeFlatTM`'s halt vector
+is `replicate _ false ++ M₂.halt ++ M₃.halt`, so with two
+`CompiledCmd` branches (each with a unique halt) the composed TM
+has TWO halt states, violating `CompiledCmd.halt_unique`. The
+resolution implemented here is the recommended option (a): a
+local `Compile.joinTwoHalts M h1 h2` combinator that demotes `h2`
+from halt to non-halt and adds bridge entries from `h2` to `h1`.
+The combinator's correctness is proved in the `Compile`
+namespace; all seven `CompiledCmd` invariants discharge for
+`compileIfBit` without any sorrys.
+
+The choice of `h1` (surviving halt) vs `h2` (absorbed halt) is
+symmetric; this implementation picks `haltE = tester.states +
+rT.states + rE.exit` as the surviving exit. -/
+
 
 /-- A two-exit "tester" TM bundling a `FlatTM` with two distinct
 designated exit states. The contract: after running on the input
@@ -1475,6 +1475,23 @@ theorem Compile.encodeTape_get_zero (t : State)
     (h : 0 < (Compile.encodeTape t).length) :
     (Compile.encodeTape t).get ⟨0, h⟩ = 3 := rfl
 
+/-- The **trailing terminator**: the last cell of `encodeTape t` is the `endMark`
+`3`. This pins the real-terminator position for the residue-tolerant two-phase
+rewind (`p = (encodeTape output).length - 1`). -/
+theorem Compile.encodeTape_get_last (t : State)
+    (h : (Compile.encodeTape t).length - 1 < (Compile.encodeTape t).length) :
+    (Compile.encodeTape t).get ⟨(Compile.encodeTape t).length - 1, h⟩ = 3 := by
+  rw [List.get_eq_getElem]
+  -- Work at the proof-free `getElem?` level to avoid a dependent-index rewrite.
+  have key : (Compile.encodeTape t)[(Compile.encodeTape t).length - 1]? = some 3 := by
+    rw [Compile.encodeTape]
+    rw [show (Compile.endMark :: (Compile.encodeRegs t ++ [Compile.endMark])).length - 1
+          = (Compile.encodeRegs t).length + 1 by
+        simp only [List.length_cons, List.length_append, List.length_nil]; omega]
+    rw [List.getElem?_cons_succ, List.getElem?_append_right (Nat.le_refl _)]
+    simp [Compile.endMark]
+  exact (Option.some.inj (key.symm.trans (List.getElem?_eq_getElem h))).symm
+
 /-- Every symbol of `encodeTape t` is `< 4` for a bit-shaped `t`. -/
 theorem Compile.encodeTape_lt_four (t : State) (h : Compile.BitState t) :
     ∀ x ∈ Compile.encodeTape t, x < 4 := by
@@ -1665,31 +1682,12 @@ private theorem Compile.appendBit_sound (bit : Nat) (hb : bit ≤ 1)
     exact Compile.decodeTape_encodeTape' st' hd' _
       (Compile.BitState_appendBit bit hb s dst hbit hdst)
 
-/-- **`compileOp_sound` for `appendOne`, general `dst`, LINEAR budget**
-(`2 · (encodeTape s).length + 3` — the composable per-fragment bound). -/
-theorem compileOp_appendOne_sound (s : State) (dst : Var)
-    (hbit : Compile.BitState s) (hdst : dst < s.length) :
-    ∃ cfg,
-      runFlatTM (2 * (Compile.encodeTape s).length + 3)
-          (compileOp (Op.appendOne dst)).M
-          (initFlatConfig (compileOp (Op.appendOne dst)).M
-            [Compile.encodeTape s]) = some cfg ∧
-      haltingStateReached (compileOp (Op.appendOne dst)).M cfg = true ∧
-      Compile.decodeTape cfg = Op.eval (Op.appendOne dst) s :=
-  Compile.appendBit_sound 1 (by omega) s dst hbit hdst
-
-/-- **`compileOp_sound` for `appendZero`, general `dst`, LINEAR budget**
-(`2 · (encodeTape s).length + 3` — the composable per-fragment bound). -/
-theorem compileOp_appendZero_sound (s : State) (dst : Var)
-    (hbit : Compile.BitState s) (hdst : dst < s.length) :
-    ∃ cfg,
-      runFlatTM (2 * (Compile.encodeTape s).length + 3)
-          (compileOp (Op.appendZero dst)).M
-          (initFlatConfig (compileOp (Op.appendZero dst)).M
-            [Compile.encodeTape s]) = some cfg ∧
-      haltingStateReached (compileOp (Op.appendZero dst)).M cfg = true ∧
-      Compile.decodeTape cfg = Op.eval (Op.appendZero dst) s :=
-  Compile.appendBit_sound 0 (by omega) s dst hbit hdst
+-- (The old `compileOp_appendOne_sound`/`_appendZero_sound` asserted the *exact-tape*,
+-- non-rewinding contract about the bare `appendAtTM`. Since `compileOp` now dispatches
+-- the append ops to the head-rewinding `opAppendBitRewind`, the live per-op contract is
+-- the residue-tolerant `compileOp_sound_physical_residue` (append cases discharged by
+-- `Compile.opAppendBit_physical_residue`). The single-phase `appendBit_sound` /
+-- `appendBit_physical` remain as gadget-level lemmas about `appendAtTM`/`appendAtThenRewindTM`.)
 
 /-- **Per-fragment physical contract for the append op (Risk C2, step 1b-2).**
 The bracketed machine `appendAtThenRewindTM (bit+1) dst` run on `encodeTape s`
@@ -2113,17 +2111,300 @@ theorem Compile.TapeOK_append_residue (out : State) (res : List Nat)
     Compile.TapeOK out (Compile.encodeTape out ++ res) :=
   ⟨res, hres, rfl⟩
 
-/-- **Rewinding append op as a `CompiledCmd`** — the `rewindBracket` instance for
-the append `compute` machine `appendAtTM ins dst`. Demoting the left-scan boundary
-halt makes the head-`0`-rewinding append op a genuine `CompiledCmd` (`ins = 2`
-for `appendOne`, `ins = 1` for `appendZero`). Its run/trajectory contract comes
-from `rewindBracket_transport` (general) fed by `appendAt_twoPhaseRewind_run`/
-`_no_early_halt` (`appendAtThenTwoPhaseRewindTM` is defeq to the bracket's
-`compute ⨾ rewindTwoPhase`). -/
-def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : CompiledCmd :=
-  Compile.rewindBracket (AppendGadget.appendAtTM ins dst) (AppendGadget.appendAtTM_exit dst)
-    (AppendGadget.appendAtTM_valid ins h_ins dst) (AppendGadget.appendAtTM_exit_lt ins dst)
-    (AppendGadget.appendAtTM_tapes ins dst) (AppendGadget.appendAtTM_sig ins dst)
+
+/-- **Residue-tolerant per-op physical contract for the append op (Risk C2, step
+1c — the substantive per-op proof).** The rewinding append op `opAppendBitRewind
+(bit+1) … dst` run on `encodeTape s ++ res_in` (the previous fragment may leave a
+`ValidResidue res_in`) halts at the unique exit with the **head rewound to `0`**
+and the tape `encodeTape (output) ++ res_in` — the residue **passes through
+unchanged** (`res_out = res_in`) since the insert grows `encodeTape s` by exactly
+one cell — never halting earlier, in `≤ 3·inputTapeLen + 8` steps.
+
+Mechanism: `rewindBracket_transport` (the general halt-demotion run transport) fed
+by the proven two-phase append gadget run `appendAt_twoPhaseRewind_run`/
+`_no_early_halt`. The `encodeTape` decomposition (sentinel-folded blocks `sk`/`bd`,
+the real-terminator position `p = (encodeTape output).length − 1`, the residue
+sitting past `p`) discharges the gadget's tape side-conditions from
+`encodeTape_get_zero`/`_get_last`/`_interior_ne_endMark` and `ValidResidue res_in`.
+
+The budget is `+8` (not the single-phase `appendBit_physical`'s `+6`): the
+two-phase rewind costs two extra `Lmove`s — one to step off the residue side of
+the real terminator, plus the boundary-phase setup. Still linear, so it composes
+into the quadratic `Compile_run_physical_residue` total with constant slack. -/
+theorem Compile.opAppendBit_physical_residue (bit : Nat) (hb : bit ≤ 1)
+    (s : State) (dst : Var) (hbit : Compile.BitState s) (hdst : dst < s.length)
+    (res_in : List Nat) (hres_in : Compile.ValidResidue res_in) :
+    ∃ t : Nat,
+      runFlatTM t (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M
+          (initFlatConfig (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M
+            [Compile.encodeTape s ++ res_in])
+        = some { state_idx := (Compile.opAppendBitRewind (bit + 1) (by omega) dst).exit,
+                 tapes := [([], 0,
+                   Compile.encodeTape (s.set dst (s.get dst ++ [bit])) ++ res_in)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M
+              (initFlatConfig (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M
+                [Compile.encodeTape s ++ res_in]) = some ck →
+          ck.state_idx ≠ (Compile.opAppendBitRewind (bit + 1) (by omega) dst).exit ∧
+          haltingStateReached (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M ck = false)
+      ∧ t ≤ 3 * (Compile.encodeTape s ++ res_in).length + 8 := by
+  have h_ins : bit + 1 < 4 := by omega
+  -- === encodeTape decomposition (mirrors `appendBit_physical`) ===
+  set post : List Nat := Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark] with hpost
+  set skipped : List (List Nat) := (s.take dst).map Compile.shiftReg with hskip
+  set body : List Nat := Compile.shiftReg (s.get dst) with hbody
+  have hget_mem : s.get dst ∈ s := by
+    rw [State.get, List.getElem?_eq_getElem hdst]; exact List.getElem_mem hdst
+  have hshift_lt : ∀ (r : List Nat), (∀ x ∈ r, x ≤ 1) → ∀ x ∈ Compile.shiftReg r, x < 4 := by
+    intro r hr x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, hy, rfl⟩ := hx
+    have := hr y hy; omega
+  have hshift_ne : ∀ (r : List Nat), ∀ x ∈ Compile.shiftReg r, x ≠ 0 := by
+    intro r x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, _, rfl⟩ := hx; omega
+  have hlen : skipped.length = dst := by
+    rw [hskip, List.length_map, List.length_take, Nat.min_eq_left (le_of_lt hdst)]
+  have h_pre : ∀ x ∈ ([] : List Nat), x < 4 := by intro x hx; cases hx
+  have h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4) := by
+    intro b hbm
+    rw [hskip, List.mem_map] at hbm
+    obtain ⟨r, hr, rfl⟩ := hbm
+    exact ⟨hshift_ne r, hshift_lt r (fun x hx => hbit r (List.mem_of_mem_take hr) x hx)⟩
+  have hbody_ne : ∀ x ∈ body, x ≠ 0 := by rw [hbody]; exact hshift_ne _
+  have hbody_lt : ∀ x ∈ body, x < 4 := by
+    rw [hbody]; exact hshift_lt _ (fun x hx => hbit _ hget_mem x hx)
+  have hpost_lt : ∀ x ∈ post, x < 4 := by
+    rw [hpost]; intro x hx
+    rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeRegs_lt_four _
+        (fun b hbm y hy => hbit b (List.mem_of_mem_drop hbm) y hy) x hx
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
+  have key : ∃ (sk : List (List Nat)) (bd : List Nat),
+      sk.length = dst ∧
+      (∀ b ∈ sk, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) ∧
+      (∀ x ∈ bd, x ≠ 0) ∧ (∀ x ∈ bd, x < 4) ∧
+      AppendGadget.regBlocks sk ++ bd
+        = Compile.endMark :: (AppendGadget.regBlocks skipped ++ body) := by
+    cases hsk : skipped with
+    | nil =>
+        refine ⟨[], Compile.endMark :: body, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [← hlen, hsk]
+        · intro b hb; cases hb
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_ne x h
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_lt x h
+        · simp [AppendGadget.regBlocks_nil]
+    | cons hd tl =>
+        refine ⟨(Compile.endMark :: hd) :: tl, body, ?_, ?_, hbody_ne, hbody_lt, ?_⟩
+        · rw [hsk] at hlen; simpa using hlen
+        · intro b hb
+          rcases List.mem_cons.mp hb with h | h
+          · subst h
+            refine ⟨?_, ?_⟩
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).1 x h0
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).2 x h0
+          · exact h_skip b (by rw [hsk]; exact List.mem_cons_of_mem _ h)
+        · simp [AppendGadget.regBlocks_cons]
+  obtain ⟨sk, bd, hlen_sk, h_skip_sk, hbd_ne, hbd_lt, hsfold⟩ := key
+  have hsplit0 : AppendGadget.regBlocks skipped ++ body ++ 0 :: post
+      = Compile.encodeRegs s ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost]; exact Compile.encodeTape_split s dst hdst
+  have hsplit : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post
+      = Compile.encodeTape s := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, List.cons_append, hsplit0]
+  have htape0 : AppendGadget.regBlocks skipped ++ body ++ (bit + 1) :: 0 :: post
+      = Compile.encodeRegs (s.set dst (s.get dst ++ [bit])) ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost, Compile.regBlocks_map_shiftReg]
+    rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop s dst _ hdst,
+        Compile.encodeRegs_append, Compile.encodeRegs_cons, Compile.shiftReg_append]
+    simp [List.append_assoc]
+  have htape : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post
+      = Compile.encodeTape (s.set dst (s.get dst ++ [bit])) := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, List.cons_append, htape0]
+  set output : State := s.set dst (s.get dst ++ [bit]) with houtput
+  have hbit_out : Compile.BitState output :=
+    Compile.BitState_appendBit bit hb s dst hbit hdst
+  -- === residue extension: post' = post ++ res_in, terminator at p = |encodeTape output| - 1 ===
+  set post' : List Nat := post ++ res_in with hpost'
+  set p : Nat := (Compile.encodeTape output).length - 1 with hpdef
+  -- start/exit tape equalities with the residue appended.
+  have hsplitr : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post'
+      = Compile.encodeTape s ++ res_in := by
+    rw [hpost', show (0 : Nat) :: (post ++ res_in) = (0 :: post) ++ res_in from rfl,
+        ← List.append_assoc, hsplit]
+  have hTPr : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post'
+      = Compile.encodeTape output ++ res_in := by
+    rw [hpost', show (bit + 1 : Nat) :: 0 :: (post ++ res_in)
+          = ((bit + 1) :: 0 :: post) ++ res_in from rfl,
+        ← List.append_assoc, htape]
+  -- length facts.
+  have hEO_succ : (Compile.encodeTape output).length = (Compile.encodeTape s).length + 1 := by
+    have hl1 := congrArg List.length htape
+    have hl2 := congrArg List.length hsplit
+    simp only [List.length_append, List.length_cons, List.length_nil] at hl1 hl2
+    omega
+  have hEO_pos : 0 < (Compile.encodeTape output).length := by omega
+  have hEs_ge : 2 ≤ (Compile.encodeTape s).length := by rw [Compile.encodeTape_length]; omega
+  -- `HD` (the head position = exit-tape length − 1) equals the input tape length.
+  have hHDlen : ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+      + (0 :: post').length = (Compile.encodeTape s ++ res_in).length := by
+    have h := congrArg List.length hsplitr
+    simp only [List.length_append, List.length_cons, List.length_nil] at h ⊢
+    omega
+  -- `get` transfer across `hTPr`, split into the `encodeTape output` part and the
+  -- residue part (avoids a `Fin.val`-coercion mismatch in `getElem_append_*`).
+  have hleft : ∀ i (hiL : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post').length)
+      (hi_lt : i < (Compile.encodeTape output).length),
+      (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post').get ⟨i, hiL⟩
+        = (Compile.encodeTape output).get ⟨i, hi_lt⟩ := by
+    intro i hiL hi_lt
+    rw [List.get_eq_getElem, List.get_eq_getElem]
+    have hc := congrArg (fun l => l[i]?) hTPr
+    simp only [] at hc
+    rw [List.getElem?_eq_getElem hiL, List.getElem?_append_left hi_lt,
+        List.getElem?_eq_getElem hi_lt] at hc
+    exact Option.some.inj hc
+  have hright : ∀ i (hiL : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post').length)
+      (hi_ge : (Compile.encodeTape output).length ≤ i)
+      (hir : i - (Compile.encodeTape output).length < res_in.length),
+      (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post').get ⟨i, hiL⟩
+        = res_in.get ⟨i - (Compile.encodeTape output).length, hir⟩ := by
+    intro i hiL hi_ge hir
+    rw [List.get_eq_getElem, List.get_eq_getElem]
+    have hc := congrArg (fun l => l[i]?) hTPr
+    simp only [] at hc
+    rw [List.getElem?_eq_getElem hiL, List.getElem?_append_right hi_ge,
+        List.getElem?_eq_getElem hir] at hc
+    exact Option.some.inj hc
+  -- === the gadget side-conditions, via the `encodeTape output ++ res_in` structure ===
+  have h_tp_lt : ∀ x ∈ ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+      ++ (bit + 1) :: 0 :: post', x < 4 := by
+    intro x hx; rw [hTPr, List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeTape_lt_four output hbit_out x hx
+    · exact (hres_in x hx).1
+  have h_t0 : ∀ (h : 0 < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post').length),
+      (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post').get ⟨0, h⟩
+        = 3 := by
+    intro h
+    rw [hleft 0 h hEO_pos]
+    exact Compile.encodeTape_get_zero output hEO_pos
+  have h_term : ∀ (h : p < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post').length),
+      (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post').get ⟨p, h⟩
+        = 3 := by
+    intro h
+    have hpEO : p < (Compile.encodeTape output).length := by rw [hpdef]; omega
+    rw [hleft p h hpEO]
+    exact Compile.encodeTape_get_last output hpEO
+  have h_interior_ne : ∀ i, 0 < i → i < p →
+      ∃ (h : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+          ++ (bit + 1) :: 0 :: post').length),
+        (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post').get ⟨i, h⟩
+          ≠ 3 := by
+    intro i hi hip
+    have hiEO : i + 1 < (Compile.encodeTape output).length := by rw [hpdef] at hip; omega
+    obtain ⟨hi_lt, hne⟩ := Compile.encodeTape_interior_ne_endMark output hbit_out i hi hiEO
+    have hi_TPr : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post').length := by
+      rw [hTPr, List.length_append]; omega
+    refine ⟨hi_TPr, ?_⟩
+    rw [hleft i hi_TPr hi_lt]
+    exact hne
+  have h_residue_ne : ∀ i, p < i →
+      i ≤ ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+        + (0 :: post').length →
+      ∃ (h : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+          ++ (bit + 1) :: 0 :: post').length),
+        (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (bit + 1) :: 0 :: post').get ⟨i, h⟩
+          ≠ 3 := by
+    intro i hip hiHD
+    -- HD = |encodeTape s ++ res_in|; i ≤ HD < |encodeTape output ++ res_in|.
+    have hiEO : (Compile.encodeTape output).length ≤ i := by rw [hpdef] at hip; omega
+    have hir : i - (Compile.encodeTape output).length < res_in.length := by
+      rw [hHDlen, List.length_append] at hiHD; omega
+    have hi_TPr : i < (([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd
+        ++ (bit + 1) :: 0 :: post').length := by
+      rw [hTPr, List.length_append]; omega
+    refine ⟨hi_TPr, ?_⟩
+    rw [hright i hi_TPr hiEO hir]
+    exact (hres_in _ (List.getElem_mem _)).2
+  -- positivity/range for the gadget's terminator position.
+  have hp_pos : 0 < p := by rw [hpdef]; omega
+  have hp_le : p ≤ ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+      + (0 :: post').length := by
+    rw [hHDlen, List.length_append, hpdef, hEO_succ]; omega
+  -- === run the two-phase append gadget ===
+  have hrun_g := AppendGadget.appendAt_twoPhaseRewind_run (bit + 1) h_ins dst [] sk bd post' p
+    hlen_sk h_pre h_skip_sk hbd_ne hbd_lt
+    (by intro x hx; rw [hpost', List.mem_append] at hx
+        rcases hx with hx | hx
+        · exact hpost_lt x hx
+        · exact (hres_in x hx).1)
+    h_tp_lt hp_pos hp_le h_t0 h_term h_interior_ne h_residue_ne
+  have htraj_g := AppendGadget.appendAt_twoPhaseRewind_no_early_halt (bit + 1) h_ins dst [] sk bd
+    post' p hlen_sk h_pre h_skip_sk hbd_ne hbd_lt
+    (by intro x hx; rw [hpost', List.mem_append] at hx
+        rcases hx with hx | hx
+        · exact hpost_lt x hx
+        · exact (hres_in x hx).1)
+    h_tp_lt hp_pos hp_le h_t0 h_term h_interior_ne h_residue_ne
+  -- the gadget machine is defeq to the rewindBracket composite; rewrite tapes/state.
+  simp only [AppendGadget.appendAtThenTwoPhaseRewindTM] at hrun_g htraj_g
+  rw [hsplitr, hTPr, show (6 : Nat) + (AppendGadget.appendAtTM (bit + 1) dst).states
+        = (AppendGadget.appendAtTM (bit + 1) dst).states + 6 from Nat.add_comm ..] at hrun_g
+  rw [hsplitr] at htraj_g
+  -- feed through the general transport lemma.
+  have htrans := Compile.rewindBracket_transport (AppendGadget.appendAtTM (bit + 1) dst)
+    (AppendGadget.appendAtTM_exit dst)
+    (AppendGadget.appendAtTM_valid (bit + 1) (by omega) dst)
+    (AppendGadget.appendAtTM_exit_lt (bit + 1) dst)
+    (AppendGadget.appendAtTM_tapes (bit + 1) dst) (AppendGadget.appendAtTM_sig (bit + 1) dst)
+    hrun_g.1 htraj_g
+  -- align the start config with `initFlatConfig`.
+  have hstart0 : (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M.start = 0 := by
+    show (Compile.rewindBracket (AppendGadget.appendAtTM (bit + 1) dst) _ _ _ _ _).M.start = 0
+    rw [Compile.rewindBracket_M, Compile.joinTwoHalts_start, composeFlatTM_start,
+        AppendGadget.appendAtTM_start]
+  have hinit : initFlatConfig (Compile.opAppendBitRewind (bit + 1) (by omega) dst).M
+        [Compile.encodeTape s ++ res_in]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } := by
+    simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
+  refine ⟨AppendGadget.appendAt_steps sk bd post' + 1
+      + (((([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+          + (0 :: post').length) - p + 1) + 1 + (1 + 1 + p)), ?_, ?_, ?_⟩
+  · -- `opAppendBitRewind` is defeq to the `rewindBracket` of `htrans`; normalise the
+    -- start config with `hinit` (head `[].length` is defeq `0`), then close by defeq.
+    rw [hinit]; exact htrans.1
+  · intro k hk ck hck
+    rw [hinit] at hck
+    exact htrans.2 k hk ck hck
+  · -- budget: ≤ 3·L_in + 8.
+    have hstep_le : AppendGadget.appendAt_steps sk bd post'
+        ≤ 2 * (Compile.encodeTape s ++ res_in).length + 3 := by
+      have hb' := AppendGadget.appendAt_steps_le sk bd post'
+      have hL : (AppendGadget.regBlocks sk ++ bd ++ 0 :: post').length
+          = (Compile.encodeTape s ++ res_in).length := by rw [← hsplitr]; simp
+      rw [hL] at hb'; exact hb'
+    have hp_le' : p ≤ (Compile.encodeTape s ++ res_in).length := by rw [← hHDlen]; exact hp_le
+    omega
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
@@ -2137,7 +2418,7 @@ The residue stays terminator-free across composition (each gadget preserves
 Input: the start tape may carry residue (`res_in`), since the previous
 fragment's exit tape may have residue. The contract is:
   exit tape = `encodeTape (Op.eval o s) ++ res_out` (where `res_out` is
-  `ValidResidue`), head rewound to `0`, in ≤ `3·inputTapeLen + 6` steps.
+  `ValidResidue`), head rewound to `0`, in ≤ `3·inputTapeLen + 8` steps.
 
 This is the replacement for `compileOp_sound_physical` (which demanded
 exact tape `encodeTape output` and was **unsatisfiable** for deletion ops).
@@ -2156,13 +2437,29 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
-      ∧ t ≤ 3 * (Compile.encodeTape s ++ res_in).length + 6 := by
-  sorry  -- TODO(C2, step 1c): case-split on `o`.
-         -- For `appendOne`/`appendZero`: `res_out = res_in` (gadget is
-         -- residue-polymorphic, `insertCarryTM_run` works on arbitrary suffix
-         -- with all symbols < 4).
-         -- For deletion ops: `res_out = res_in ++ List.replicate n 0` where
-         -- `n` = cells deleted (each `deleteCarryTM` appends one `0` filler).
+      ∧ t ≤ 3 * (Compile.encodeTape s ++ res_in).length + 8 := by
+  cases o with
+  | appendOne dst =>
+      -- `res_out = res_in`: the append grows `encodeTape s` by one cell; residue passes through.
+      obtain ⟨t, hrun, htraj, hbudget⟩ :=
+        Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
+      exact ⟨t, res_in, hres_in, hrun, htraj, hbudget⟩
+  | appendZero dst =>
+      obtain ⟨t, hrun, htraj, hbudget⟩ :=
+        Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
+      exact ⟨t, res_in, hres_in, hrun, htraj, hbudget⟩
+  -- The 10 stub ops still need their gadgets (deletion: `res_out = res_in ++ replicate n 0`
+  -- via `deleteCarryTM`; reuse `rewindBracket` for the head rewind). See HANDOFF.
+  | clear dst => sorry
+  | copy dst src => sorry
+  | tail dst src => sorry
+  | head dst src => sorry
+  | eqBit dst src1 src2 => sorry
+  | nonEmpty dst src => sorry
+  | takeAt dst src lenReg => sorry
+  | dropAt dst src lenReg => sorry
+  | concat dst src1 src2 => sorry
+  | consLen dst lenSrc src => sorry
 
 /-- **Physical-contract `compileSeq` composition (PROVEN).** Given two
 sub-machines each satisfying the physical contract (head-`0` exit, exact tape,
