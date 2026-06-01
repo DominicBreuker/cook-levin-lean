@@ -1,5 +1,6 @@
 import Complexity.Lang.Semantics
 import Complexity.Lang.AppendGadget
+import Complexity.Lang.ClearGadget
 import Complexity.Complexity.TMPrimitives
 import Complexity.Complexity.TapeMono
 
@@ -527,8 +528,45 @@ def Compile.opAppendBitRewind (ins : Nat) (h_ins : ins < 4) (dst : Var) : Compil
     (AppendGadget.appendAtTM_valid ins h_ins dst) (AppendGadget.appendAtTM_exit_lt ins dst)
     (AppendGadget.appendAtTM_tapes ins dst) (AppendGadget.appendAtTM_sig ins dst)
 
-/-- Compile `Op.clear dst`. **Stub.** -/
-def Compile.opClear (_dst : Var) : CompiledCmd := compiledCmd_default
+/-- Compile `Op.clear dst`. The real machine: `clearRegionTM dst` from
+`ClearGadget.lean` — a `loopTM` that navigates to register `dst`, tests if
+it's empty, and if not, deletes the first content cell and rewinds, repeating
+until the register is cleared. The loop's single halt state (at `B.states`)
+is the unique exit. -/
+def Compile.opClear (dst : Var) : CompiledCmd where
+  M := ClearGadget.clearRegionTM dst
+  exit := ClearGadget.clearRegionTM_exit dst
+  exit_lt := by
+    show ClearGadget.clearRegionTM_exit dst < (ClearGadget.clearRegionTM dst).states
+    rw [ClearGadget.clearRegionTM_states]
+    show (ClearGadget.clearBodyRawTM dst).states < (ClearGadget.clearBodyRawTM dst).states + 1
+    omega
+  exit_is_halt := by
+    show (ClearGadget.clearRegionTM dst).halt[ClearGadget.clearRegionTM_exit dst]? = some true
+    -- loopHalt B has a single `true` at B.states.
+    change (loopHalt (ClearGadget.clearBodyRawTM dst))[(ClearGadget.clearBodyRawTM dst).states]? = some true
+    show (List.replicate (ClearGadget.clearBodyRawTM dst).states false ++ [true])[(ClearGadget.clearBodyRawTM dst).states]? = some true
+    rw [List.getElem?_append_right (by rw [List.length_replicate]),
+        List.length_replicate, Nat.sub_self]
+    rfl
+  halt_unique := by
+    intro i hi
+    show i = (ClearGadget.clearBodyRawTM dst).states
+    change (loopHalt (ClearGadget.clearBodyRawTM dst))[i]? = some true at hi
+    change (List.replicate (ClearGadget.clearBodyRawTM dst).states false ++ [true])[i]? = some true at hi
+    by_cases hlt : i < (ClearGadget.clearBodyRawTM dst).states
+    · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact hlt),
+          List.getElem?_replicate] at hi
+      split at hi <;> simp_all
+    · rw [Nat.not_lt] at hlt
+      rw [List.getElem?_append_right (by rw [List.length_replicate]; exact hlt),
+          List.length_replicate] at hi
+      rcases hi' : i - (ClearGadget.clearBodyRawTM dst).states with _ | n
+      · omega
+      · rw [hi'] at hi; simp at hi
+  M_valid := sorry -- TODO: thread validity through the full composition
+  M_tapes := ClearGadget.clearRegionTM_tapes dst
+  M_sig := ClearGadget.clearRegionTM_sig dst
 
 /-- Compile `Op.appendOne dst`: navigate past the `dst` preceding
 register-delimiters, insert symbol `2` (the shifted bit `1`) just before register
