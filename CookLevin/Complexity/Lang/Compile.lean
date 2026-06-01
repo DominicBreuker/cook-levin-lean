@@ -564,7 +564,7 @@ def Compile.opClear (dst : Var) : CompiledCmd where
       rcases hi' : i - (ClearGadget.clearBodyRawTM dst).states with _ | n
       · omega
       · rw [hi'] at hi; simp at hi
-  M_valid := sorry -- TODO: thread validity through the full composition
+  M_valid := ClearGadget.clearRegionTM_valid dst
   M_tapes := ClearGadget.clearRegionTM_tapes dst
   M_sig := ClearGadget.clearRegionTM_sig dst
 

@@ -451,8 +451,67 @@ def clearRegionTM (dst : Nat) : FlatTM :=
 
 /-! ## 8. Validity -/
 
--- TODO: prove validity and halt-state properties once the intermediate
--- lemmas for `branchComposeFlatTM` are threaded through.
+theorem deleteRewindRawTM_valid : validFlatTM deleteRewindRawTM :=
+  composeFlatTM_valid deleteCarryTM (rewindTwoPhaseTM 4 3) 6
+    deleteCarryTM_valid (rewindTwoPhaseTM_valid 4 3 (by decide))
+    (show (6 : Nat) < 7 from by decide) rfl (rewindTwoPhaseTM_tapes 4 3)
+
+theorem deleteRewindRawTM_tapes : deleteRewindRawTM.tapes = 1 := rfl
+
+theorem stepDeleteRewindRawTM_valid : validFlatTM stepDeleteRewindRawTM :=
+  composeFlatTM_valid (stepRightTM 4) deleteRewindRawTM 1
+    (stepRightTM_valid 4) deleteRewindRawTM_valid
+    (show (1 : Nat) < 2 from by decide) rfl deleteRewindRawTM_tapes
+
+theorem stepDeleteRewindRawTM_tapes : stepDeleteRewindRawTM.tapes = 1 := rfl
+
+theorem justRewindTM_valid : validFlatTM justRewindTM :=
+  scanLeftUntilTM_valid 4 3 (by decide)
+
+theorem justRewindTM_tapes : justRewindTM.tapes = 1 := rfl
+
+theorem navigateAndTestTM_exit_content_lt (dst : Nat) :
+    navigateAndTestTM_exit_content dst < (navigateAndTestTM dst).states := by
+  show (navigateToRegTM dst).states + delimTestTM_exit_content <
+    (navigateToRegTM dst).states + (delimTestTM 4).states
+  show (navigateToRegTM dst).states + 1 < (navigateToRegTM dst).states + 3
+  omega
+
+theorem navigateAndTestTM_exit_delim_lt (dst : Nat) :
+    navigateAndTestTM_exit_delim dst < (navigateAndTestTM dst).states := by
+  show (navigateToRegTM dst).states + delimTestTM_exit_delim <
+    (navigateToRegTM dst).states + (delimTestTM 4).states
+  show (navigateToRegTM dst).states + 2 < (navigateToRegTM dst).states + 3
+  omega
+
+theorem clearBodyRawTM_valid (dst : Nat) : validFlatTM (clearBodyRawTM dst) :=
+  branchComposeFlatTM_valid (navigateAndTestTM dst) stepDeleteRewindRawTM justRewindTM
+    (navigateAndTestTM_exit_content dst) (navigateAndTestTM_exit_delim dst)
+    (navigateAndTestTM_valid dst) stepDeleteRewindRawTM_valid justRewindTM_valid
+    (navigateAndTestTM_exit_content_lt dst) (navigateAndTestTM_exit_delim_lt dst)
+    (navigateAndTestTM_tapes dst) stepDeleteRewindRawTM_tapes justRewindTM_tapes
+
+theorem clearBodyTM_exitDone_lt (dst : Nat) :
+    clearBodyTM_exitDone dst < (clearBodyRawTM dst).states := by
+  show (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM_exit <
+    (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM.states
+  show _ + 1 < _ + 3
+  omega
+
+theorem clearBodyTM_exitLoop_lt (dst : Nat) :
+    clearBodyTM_exitLoop dst < (clearBodyRawTM dst).states := by
+  show (navigateAndTestTM dst).states + stepDeleteRewindTM_exit <
+    (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM.states
+  show _ + 15 < _ + 17 + 3
+  omega
+
+theorem clearRegionTM_valid (dst : Nat) : validFlatTM (clearRegionTM dst) :=
+  loopTM_valid (clearBodyRawTM dst) (clearBodyTM_exitDone dst) (clearBodyTM_exitLoop dst)
+    (clearBodyRawTM_valid dst)
+    (clearBodyTM_exitDone_lt dst) (clearBodyTM_exitLoop_lt dst)
+    (show (clearBodyRawTM dst).tapes = 1 from by
+        show (branchComposeFlatTM _ _ _ _ _).tapes = 1
+        rw [branchComposeFlatTM_tapes]; exact navigateAndTestTM_tapes dst)
 
 theorem clearRegionTM_tapes (dst : Nat) : (clearRegionTM dst).tapes = 1 := by
   show (clearBodyRawTM dst).tapes = 1
