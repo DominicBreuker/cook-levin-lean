@@ -2237,6 +2237,14 @@ theorem Compile.set_tail_iterate (s : State) (dst : Var) (h : dst < s.length) :
       rw [Function.iterate_succ', Function.comp_apply, ih,
           Compile.get_set_eq s dst _ h, Compile.set_set s dst _ _ h, List.tail_drop]
 
+/-- **`clear` = iterating the `tail` body exactly `|s.get dst|` times.** The loop
+count the clear gadget's `loopTM` runs: dropping every symbol of register `dst`
+empties it (`Op.eval (clear dst) s = s.set dst []`). -/
+theorem Compile.iterate_tail_clear (s : State) (dst : Var) (h : dst < s.length) :
+    (fun t : State => t.set dst (t.get dst).tail)^[(s.get dst).length] s
+      = Op.eval (Op.clear dst) s := by
+  rw [Compile.set_tail_iterate s dst h, List.drop_length]; rfl
+
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
 register. -/
