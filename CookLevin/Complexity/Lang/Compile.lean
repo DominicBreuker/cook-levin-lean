@@ -1422,23 +1422,60 @@ private theorem Compile.encodeTape_split (s : State) (dst : Var) (h : dst < s.le
   rw [Compile.regBlocks_map_shiftReg, hget, hs]
   simp [List.append_assoc]
 
+/-- **Master register-slot decomposition.** The encoded tape splits at register
+`dst` into a prefix `pre`, that register's shifted content, its `0` delimiter, and
+a suffix `rest` — and **`pre`/`rest` do not depend on the register's content**, so
+writing any value `v` to register `dst` only swaps the middle block:
+`encodeTape (s.set dst v) = pre ++ shiftReg v ++ 0 :: rest` for every `v`.
+(`pre = endMark :: encodeRegs (s.take dst)`, `rest = encodeRegs (s.drop (dst+1)) ++
+[endMark]`.) This is the workhorse every register-writing op uses: with `v = s.get
+dst` it gives `encodeTape s` itself (`set` is the identity there), and varying `v`
+gives the op's output tape with the same surrounding cells — so a gadget that edits
+only the middle block discharges its `encodeTape`-level contract. -/
+theorem Compile.encodeTape_reg_decomp (s : State) (dst : Var) (h : dst < s.length) :
+    ∃ pre rest : List Nat,
+      (∀ v : List Nat,
+        Compile.encodeTape (s.set dst v) = pre ++ (Compile.shiftReg v ++ (0 :: rest))) ∧
+      Compile.encodeTape s = pre ++ (Compile.shiftReg (s.get dst) ++ (0 :: rest)) := by
+  refine ⟨Compile.endMark :: Compile.encodeRegs (s.take dst),
+          Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark], ?_, ?_⟩
+  · intro v
+    have hset : s.set dst v = s.take dst ++ v :: s.drop (dst + 1) := by
+      rw [State.set, if_pos h]; exact Compile.list_set_eq_take_cons_drop s dst v h
+    have hs : Compile.encodeRegs (s.set dst v)
+        = Compile.encodeRegs (s.take dst)
+            ++ (Compile.shiftReg v ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1)))) := by
+      rw [hset, Compile.encodeRegs_append, Compile.encodeRegs_cons]
+      simp [List.append_assoc]
+    rw [Compile.encodeTape, hs]
+    simp [List.append_assoc]
+  · have hget : s.get dst = s[dst] := by
+      rw [State.get, List.getElem?_eq_getElem h]; rfl
+    have hs : Compile.encodeRegs s
+        = Compile.encodeRegs (s.take dst)
+            ++ (Compile.shiftReg (s.get dst)
+                ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1)))) := by
+      conv_lhs => rw [Compile.list_eq_take_getElem_drop s dst h]
+      rw [Compile.encodeRegs_append, Compile.encodeRegs_cons, ← hget]
+      simp [List.append_assoc]
+    rw [Compile.encodeTape, hs]
+    simp [List.append_assoc]
+
 /-- **Spec bridge for `clear` (the deletion gadget's input/output contract).**
-Clearing register `dst` removes exactly the contiguous `shiftReg (s.get dst)`
-block that sits just before that register's `0` delimiter. There is a common
-prefix `pre` and suffix `0 :: rest` such that, with any incoming residue `res_in`:
+Specialises `encodeTape_reg_decomp`: clearing register `dst` removes exactly the
+contiguous `shiftReg (s.get dst)` block before that register's `0` delimiter. With
+any incoming residue `res_in`:
 
 1. the gadget's **input** tape `encodeTape s ++ res_in` is
-   `pre ++ shiftReg (s.get dst) ++ (0 :: rest ++ res_in)` — i.e. the block to
-   delete is `shiftReg (s.get dst)`, of length `|s.get dst|` (conjunct 3); and
-2. after a left-shift that deletes those `|s.get dst|` cells (the gadget repeats
-   `deleteCarryTM`, each pushing one `0` filler to the far end), the tape is
-   exactly `encodeTape (Op.eval (clear dst) s) ++ (res_in ++ replicate |s.get dst| 0)`.
+   `pre ++ shiftReg (s.get dst) ++ (0 :: rest ++ res_in)` — block to delete is
+   `shiftReg (s.get dst)`, of length `|s.get dst|` (conjunct 3); and
+2. after deleting those `|s.get dst|` cells (each `deleteCarryTM` pushes one `0`
+   filler to the far end), the tape is
+   `encodeTape (Op.eval (clear dst) s) ++ (res_in ++ replicate |s.get dst| 0)`.
 
-So the residue-tolerant `clear` contract is `res_out = res_in ++ replicate |old| 0`
-(`ValidResidue` by `ValidResidue_append_replicate_zero`); the freed cells become
-terminator-free `0` residue past the real terminator, so the **two-phase rewind**
-applies (head ends in the residue). This is the `clear` analogue of
-`encodeTape_split` and the target a future `clearRegionTM_run` discharges. -/
+So `res_out = res_in ++ replicate |old| 0` (`ValidResidue` by
+`ValidResidue_append_replicate_zero`); the freed cells become terminator-free `0`
+residue past the real terminator, so the **two-phase rewind** applies. -/
 theorem Compile.clear_block_decomp (s : State) (dst : Var) (res_in : List Nat)
     (h : dst < s.length) :
     ∃ pre rest : List Nat,
@@ -1448,29 +1485,30 @@ theorem Compile.clear_block_decomp (s : State) (dst : Var) (res_in : List Nat)
           = Compile.encodeTape (Op.eval (Op.clear dst) s)
               ++ (res_in ++ List.replicate (s.get dst).length 0) ∧
       (Compile.shiftReg (s.get dst)).length = (s.get dst).length := by
-  have hget : s.get dst = s[dst] := by
-    rw [State.get, List.getElem?_eq_getElem h]; rfl
-  refine ⟨Compile.endMark :: Compile.encodeRegs (s.take dst),
-          Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark], ?_, ?_, ?_⟩
-  · have hs : Compile.encodeRegs s
-        = Compile.encodeRegs (s.take dst)
-            ++ (Compile.shiftReg (s.get dst)
-                ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1)))) := by
-      conv_lhs => rw [Compile.list_eq_take_getElem_drop s dst h]
-      rw [Compile.encodeRegs_append, Compile.encodeRegs_cons, ← hget]
-      simp [List.append_assoc]
-    rw [Compile.encodeTape, hs]
-    simp [List.append_assoc]
-  · have hset : s.set dst [] = s.take dst ++ ([] : List Nat) :: s.drop (dst + 1) := by
-      rw [State.set, if_pos h]; exact Compile.list_set_eq_take_cons_drop s dst [] h
-    have hs : Compile.encodeRegs (s.set dst [])
-        = Compile.encodeRegs (s.take dst) ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1))) := by
-      rw [hset, Compile.encodeRegs_append, Compile.encodeRegs_cons]
-      simp [Compile.shiftReg]
-    show _ = Compile.encodeTape (s.set dst []) ++ _
-    rw [Compile.encodeTape, hs]
-    simp [List.append_assoc]
+  obtain ⟨pre, rest, hv, hs⟩ := Compile.encodeTape_reg_decomp s dst h
+  refine ⟨pre, rest, ?_, ?_, ?_⟩
+  · rw [hs]; simp [List.append_assoc]
+  · -- `Op.eval (clear dst) s = s.set dst []`, and `shiftReg [] = []`.
+    have hcl : Compile.encodeTape (Op.eval (Op.clear dst) s) = pre ++ (0 :: rest) := by
+      show Compile.encodeTape (s.set dst []) = _
+      rw [hv []]; simp [Compile.shiftReg]
+    rw [hcl]; simp [List.append_assoc]
   · rw [Compile.shiftReg, List.length_map]
+
+/-- **One `deleteCarryTM` pass deletes the head of a marker-free block.** From the
+read state at head `pre.length + 1` on `pre ++ (c0+1) :: M` (a nonempty,
+in-range `M`), after `3·|M| + 1` steps the machine halts having deleted the cell
+`c0+1` and shifted `M` left by one with a `0` filler: tape `pre ++ M ++ [0]`. The
+degenerate-suffix branch of `deleteCarryTM_loop_run` is ruled out by `M ≠ []`. -/
+theorem Compile.deleteCarry_drop_head (pre M : List Nat) (c0 : Nat)
+    (hc0 : c0 + 1 < 4) (hM : M ≠ []) (hMb : ∀ x ∈ M, x < 4) :
+    runFlatTM (3 * M.length + 1) Complexity.Lang.ShiftTape.deleteCarryTM
+        { state_idx := 0, tapes := [([], pre.length + 1, pre ++ (c0 + 1) :: M)] }
+      = some { state_idx := 6,
+               tapes := [([], pre.length + 1 + M.length, pre ++ M ++ [0])] } := by
+  have h := Complexity.Lang.ShiftTape.deleteCarryTM_loop_run M pre (c0 + 1) hc0 hMb
+  rw [if_neg hM, ← List.append_assoc] at h
+  exact h
 
 /-- `appendOne` preserves bit-shape (it appends the bit `1`). -/
 private theorem Compile.BitState_appendOne (s : State) (dst : Var)
@@ -2105,6 +2143,58 @@ theorem Compile.ValidResidue_append_replicate_zero (res : List Nat) (n : Nat)
     (hres : Compile.ValidResidue res) :
     Compile.ValidResidue (res ++ List.replicate n 0) :=
   Compile.ValidResidue_append res _ hres (Compile.ValidResidue_replicate_zero n)
+
+/-- **One deletion = the in-place `tail` step (the loop's inductive heart).**
+Running `deleteCarryTM` from one past register `dst`'s content-start on
+`encodeTape s ++ res` (register `dst` nonempty) deletes that register's first
+content cell, yielding `encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])`:
+it drops one symbol from register `dst`, the incoming residue gaining one `0`
+filler. Iterating this `|s.get dst|` times clears the register (the clear gadget's
+loop body); a single application is the `tail`-in-place op. The content-start
+position `p` and the shifted-suffix length `L` are existential (the caller's
+navigation supplies the head position). Built from `deleteCarry_drop_head` +
+`encodeTape_reg_decomp`. -/
+theorem Compile.deleteCarry_tail_step (s : State) (dst : Var) (res : List Nat)
+    (h : dst < s.length) (hbit : Compile.BitState s) (hne : s.get dst ≠ [])
+    (hres : Compile.ValidResidue res) :
+    ∃ p L : Nat,
+      runFlatTM (3 * L + 1) Complexity.Lang.ShiftTape.deleteCarryTM
+          { state_idx := 0, tapes := [([], p + 1, Compile.encodeTape s ++ res)] }
+        = some { state_idx := 6,
+                 tapes := [([], p + 1 + L,
+                   Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))] } := by
+  obtain ⟨pre, rest, hv, hs⟩ := Compile.encodeTape_reg_decomp s dst h
+  obtain ⟨c0, cs, hcons⟩ : ∃ c0 cs, s.get dst = c0 :: cs := by
+    cases hg : s.get dst with
+    | nil => exact absurd hg hne
+    | cons c0 cs => exact ⟨c0, cs, rfl⟩
+  have hshift : Compile.shiftReg (c0 :: cs) = (c0 + 1) :: Compile.shiftReg cs := by
+    simp [Compile.shiftReg]
+  set M : List Nat := Compile.shiftReg cs ++ 0 :: rest ++ res with hMdef
+  have htape : Compile.encodeTape s ++ res = pre ++ (c0 + 1) :: M := by
+    rw [hs, hcons, hshift, hMdef]; simp [List.append_assoc]
+  have hc0le : c0 ≤ 1 := by
+    have hmem : s.get dst ∈ s := by
+      rw [State.get, List.getElem?_eq_getElem h]; exact List.getElem_mem h
+    exact hbit _ hmem c0 (by rw [hcons]; exact List.mem_cons_self ..)
+  have hM : M ≠ [] := by
+    rw [hMdef]; intro hc
+    have := congrArg List.length hc; simp [List.append_assoc] at this
+  have hMb : ∀ x ∈ M, x < 4 := by
+    intro x hx
+    have hxin : x ∈ Compile.encodeTape s ++ res := by
+      rw [htape]; exact List.mem_append_right pre (List.mem_cons_of_mem _ hx)
+    rw [List.mem_append] at hxin
+    rcases hxin with hx' | hx'
+    · exact Compile.encodeTape_lt_four s hbit x hx'
+    · exact (hres x hx').1
+  have hout : Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])
+      = pre ++ M ++ [0] := by
+    rw [hcons]; show Compile.encodeTape (s.set dst cs) ++ (res ++ [0]) = _
+    rw [hv cs, hMdef]; simp [List.append_assoc]
+  refine ⟨pre.length, M.length, ?_⟩
+  rw [htape, hout]
+  exact Compile.deleteCarry_drop_head pre M c0 (by omega) hM hMb
 
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
