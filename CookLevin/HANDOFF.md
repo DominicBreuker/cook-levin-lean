@@ -89,8 +89,24 @@ first; the length ops are copy + in-place truncate.
    `opAppendBit_physical_residue` template. ⚠ The `loopTM` body must return the
    head to a fixed position each pass — the fiddly part; `#eval` the body first.
 
+### ⚠ The per-op budget is now QUADRATIC (was linear — a blocking finding)
+
+`compileOp_sound_physical_residue`'s budget was `3·tapeLen + 8` (linear). That is
+**unsatisfiable for every multi-cell op**: on a single-tape machine `clear`/`tail`/
+`copy`/… must delete or move `Θ(tapeLen)` cells, and each delete/insert shifts the
+suffix in its own O(tapeLen) pass (one head can't shift a block by a data-dependent
+distance in one pass), so they are inherently **Θ(tapeLen²)**. The budget is now
+`9·tapeLen² + 9` (constant generous, tunable). This composes: `compileSeq_sound_physical`
+uses the *additive* `t₁+1+t₂` (no linearity baked in), so summing per-op quadratics
+over `≤ cost` fragments stays polynomial (`toFrameworkWitness'` only needs `inOPoly`).
+The append cases now relax their linear bound via `Compile.linear_le_quadratic_tapeLen`.
+**When building `clear`/`copy` gadgets, target `9·tapeLen²+9`** (e.g. the rewind-to-0
+loop design for `clear` costs ≈ `6·tapeLen²`); bump the constant if a gadget needs it.
+
 ### New this session (axiom-clean, ready to use)
 
+- `Compile.linear_le_quadratic_tapeLen`: `3·L+8 ≤ 9·L²+9` (the append→contract
+  budget relaxation; `L = tapeLen ≥ 2`).
 - `Compile.clear_block_decomp` (Compile.lean, after `encodeTape_split`): the
   **`clear` gadget's input/output spec bridge** (see step 4 below) — clearing
   `dst` deletes exactly the `shiftReg (s.get dst)` block; the proven target a

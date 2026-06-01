@@ -303,8 +303,15 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
       (clearing `dst` deletes exactly the `shiftReg (s.get dst)` block; gives the
       input/output target for a future `clearRegionTM_run`). Note clearing `dst`'s
       old slot is a shared prerequisite for *every* cross-register op, so the
-      `clear`/delete-region machinery is foundational. See HANDOFF.md "the
-      previous plan was wrong".
+      `clear`/delete-region machinery is foundational. **2026-06-01(b) — budget
+      finding:** `compileOp_sound_physical_residue`'s budget was loosened from the
+      linear `3·tapeLen+8` to the **quadratic `9·tapeLen²+9`**: multi-cell ops are
+      inherently Θ(tapeLen²) on a single-tape machine (deleting/moving Θ(tapeLen)
+      cells, each its own O(tapeLen) shift pass), so the linear bound was
+      unsatisfiable for them. This composes — `compileSeq_sound_physical` is
+      additive (`t₁+1+t₂`), so per-op quadratics sum to a polynomial total
+      (`inOPoly` suffices). Append cases relax via `linear_le_quadratic_tapeLen`.
+      See HANDOFF.md "the previous plan was wrong" + "budget is now QUADRATIC".
    d. Assemble `compileSeq_sound` from `compileSeq_compose_physical`,
       `compileForBnd_sound` from `loopTM_run`, `compileIfBit_sound` from
       `branchComposeFlatTM_run`; then `Compile_sound` / `Compile_run_physical` by

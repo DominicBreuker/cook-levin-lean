@@ -2487,6 +2487,22 @@ theorem Compile.opAppendBit_physical_residue (bit : Nat) (hb : bit ≤ 1)
     have hp_le' : p ≤ (Compile.encodeTape s ++ res_in).length := by rw [← hHDlen]; exact hp_le
     omega
 
+/-- The append ops' linear budget `3·tapeLen + 8` implies the per-op contract's
+quadratic budget `9·tapeLen² + 9` (every encoded tape has `tapeLen ≥ 2`). Lets
+the linear append cases discharge the (necessarily quadratic, for multi-cell ops)
+`compileOp_sound_physical_residue` budget. -/
+theorem Compile.linear_le_quadratic_tapeLen (s : State) (res_in : List Nat) :
+    3 * (Compile.encodeTape s ++ res_in).length + 8
+      ≤ 9 * (Compile.encodeTape s ++ res_in).length
+          * (Compile.encodeTape s ++ res_in).length + 9 := by
+  have hL : 2 ≤ (Compile.encodeTape s ++ res_in).length := by
+    rw [List.length_append, Compile.encodeTape_length]; omega
+  set L := (Compile.encodeTape s ++ res_in).length with hLdef
+  have h1 : 9 * L ≤ 9 * L * L := by
+    calc 9 * L = 9 * L * 1 := by rw [Nat.mul_one]
+      _ ≤ 9 * L * L := Nat.mul_le_mul_left _ (by omega)
+  omega
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
@@ -2499,11 +2515,24 @@ The residue stays terminator-free across composition (each gadget preserves
 Input: the start tape may carry residue (`res_in`), since the previous
 fragment's exit tape may have residue. The contract is:
   exit tape = `encodeTape (Op.eval o s) ++ res_out` (where `res_out` is
-  `ValidResidue`), head rewound to `0`, in ≤ `3·inputTapeLen + 8` steps.
+  `ValidResidue`), head rewound to `0`, in ≤ `9·inputTapeLen² + 9` steps.
 
 This is the replacement for `compileOp_sound_physical` (which demanded
 exact tape `encodeTape output` and was **unsatisfiable** for deletion ops).
-The `compileSeq_sound_physical_residue` combinator composes these directly. -/
+The `compileSeq_sound_physical_residue` combinator composes these directly.
+
+**⚠ 2026-06-01 — budget is QUADRATIC, not linear.** The per-op budget was
+`3·tapeLen + 8` (linear), which the append ops meet (one insert = one O(tapeLen)
+pass). But every **multi-cell** op is inherently **Θ(tapeLen²)** on a single-tape
+machine: `clear`/`tail`/`copy`/… must delete or move `Θ(tapeLen)` cells, and each
+deletion/insertion shifts the suffix in a separate O(tapeLen) pass (a single head
+cannot shift a block by a data-dependent distance in one pass — it would have to
+carry that distance in finite state). So the linear bound is **unsatisfiable** for
+them; the budget is loosened to the quadratic `9·tapeLen² + 9` (constant generous,
+tunable when the gadgets land). This composes fine: `compileSeq_sound_physical`
+uses the *additive* budget `t₁+1+t₂` (no linearity assumed), so summing per-op
+quadratics over `≤ cost` fragments (each tape `≤` the global max) gives a
+polynomial total — `toFrameworkWitness'` only needs `inOPoly`. -/
 theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s)
     (hres_in : Compile.ValidResidue res_in) :
@@ -2518,17 +2547,21 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
-      ∧ t ≤ 3 * (Compile.encodeTape s ++ res_in).length + 8 := by
+      ∧ t ≤ 9 * (Compile.encodeTape s ++ res_in).length
+              * (Compile.encodeTape s ++ res_in).length + 9 := by
   cases o with
   | appendOne dst =>
       -- `res_out = res_in`: the append grows `encodeTape s` by one cell; residue passes through.
+      -- The append op meets the *linear* `3·L+8`; relax to the contract's quadratic.
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
-      exact ⟨t, res_in, hres_in, hrun, htraj, hbudget⟩
+      exact ⟨t, res_in, hres_in, hrun, htraj,
+        le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
   | appendZero dst =>
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
-      exact ⟨t, res_in, hres_in, hrun, htraj, hbudget⟩
+      exact ⟨t, res_in, hres_in, hrun, htraj,
+        le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
   -- The 10 stub ops still need their gadgets (deletion: `res_out = res_in ++ replicate n 0`
   -- via `deleteCarryTM`; reuse `rewindBracket` for the head rewind). See HANDOFF.
   | clear dst => sorry
