@@ -1015,6 +1015,27 @@ theorem Compile.encodeTape_length (s : State) :
   rw [Compile.encodeTape, List.length_cons, List.length_append,
       Compile.encodeRegs_length]; rfl
 
+/-- **Encoded-tape length balance for a register write (cross-register op
+bookkeeping).** Writing `v` to an in-range register `dst` changes the encoded
+tape length by `|v| − |old dst|`, stated in balance form to avoid ℕ subtraction:
+`|encodeTape (s.set dst v)| + |old dst| = |encodeTape s| + |v|`.
+
+Every cross-register op `dst := f (s.get src)` needs exactly this to express its
+residue length (`res_out`) and bound its budget: a `set` in range preserves the
+register count (`s.length`), so only the contents term moves — by
+`State.size_set_add`. (Length-growing writes — `v` longer than the old register
+— extend the tape; length-shrinking writes leave the freed cells as `0` residue,
+which is why the deletion-op residue is `res_in ++ replicate (|old| − |v|) 0`.) -/
+theorem Compile.encodeTape_set_length (s : State) (dst : Var) (v : List Nat)
+    (h : dst < s.length) :
+    (Compile.encodeTape (s.set dst v)).length + (s.get dst).length
+      = (Compile.encodeTape s).length + v.length := by
+  have hlen : (s.set dst v).length = s.length := by
+    simp only [State.set, if_pos h, List.length_set]
+  rw [Compile.encodeTape_length, Compile.encodeTape_length, hlen]
+  have hbal := State.size_set_add s dst v
+  omega
+
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
 
 In this machine model (`MachineSemantics.lean`) the head is an *index*
@@ -1400,6 +1421,94 @@ private theorem Compile.encodeTape_split (s : State) (dst : Var) (h : dst < s.le
     simp [List.append_assoc]
   rw [Compile.regBlocks_map_shiftReg, hget, hs]
   simp [List.append_assoc]
+
+/-- **Master register-slot decomposition.** The encoded tape splits at register
+`dst` into a prefix `pre`, that register's shifted content, its `0` delimiter, and
+a suffix `rest` — and **`pre`/`rest` do not depend on the register's content**, so
+writing any value `v` to register `dst` only swaps the middle block:
+`encodeTape (s.set dst v) = pre ++ shiftReg v ++ 0 :: rest` for every `v`.
+(`pre = endMark :: encodeRegs (s.take dst)`, `rest = encodeRegs (s.drop (dst+1)) ++
+[endMark]`.) This is the workhorse every register-writing op uses: with `v = s.get
+dst` it gives `encodeTape s` itself (`set` is the identity there), and varying `v`
+gives the op's output tape with the same surrounding cells — so a gadget that edits
+only the middle block discharges its `encodeTape`-level contract. -/
+theorem Compile.encodeTape_reg_decomp (s : State) (dst : Var) (h : dst < s.length) :
+    ∃ pre rest : List Nat,
+      (∀ v : List Nat,
+        Compile.encodeTape (s.set dst v) = pre ++ (Compile.shiftReg v ++ (0 :: rest))) ∧
+      Compile.encodeTape s = pre ++ (Compile.shiftReg (s.get dst) ++ (0 :: rest)) := by
+  refine ⟨Compile.endMark :: Compile.encodeRegs (s.take dst),
+          Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark], ?_, ?_⟩
+  · intro v
+    have hset : s.set dst v = s.take dst ++ v :: s.drop (dst + 1) := by
+      rw [State.set, if_pos h]; exact Compile.list_set_eq_take_cons_drop s dst v h
+    have hs : Compile.encodeRegs (s.set dst v)
+        = Compile.encodeRegs (s.take dst)
+            ++ (Compile.shiftReg v ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1)))) := by
+      rw [hset, Compile.encodeRegs_append, Compile.encodeRegs_cons]
+      simp [List.append_assoc]
+    rw [Compile.encodeTape, hs]
+    simp [List.append_assoc]
+  · have hget : s.get dst = s[dst] := by
+      rw [State.get, List.getElem?_eq_getElem h]; rfl
+    have hs : Compile.encodeRegs s
+        = Compile.encodeRegs (s.take dst)
+            ++ (Compile.shiftReg (s.get dst)
+                ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1)))) := by
+      conv_lhs => rw [Compile.list_eq_take_getElem_drop s dst h]
+      rw [Compile.encodeRegs_append, Compile.encodeRegs_cons, ← hget]
+      simp [List.append_assoc]
+    rw [Compile.encodeTape, hs]
+    simp [List.append_assoc]
+
+/-- **Spec bridge for `clear` (the deletion gadget's input/output contract).**
+Specialises `encodeTape_reg_decomp`: clearing register `dst` removes exactly the
+contiguous `shiftReg (s.get dst)` block before that register's `0` delimiter. With
+any incoming residue `res_in`:
+
+1. the gadget's **input** tape `encodeTape s ++ res_in` is
+   `pre ++ shiftReg (s.get dst) ++ (0 :: rest ++ res_in)` — block to delete is
+   `shiftReg (s.get dst)`, of length `|s.get dst|` (conjunct 3); and
+2. after deleting those `|s.get dst|` cells (each `deleteCarryTM` pushes one `0`
+   filler to the far end), the tape is
+   `encodeTape (Op.eval (clear dst) s) ++ (res_in ++ replicate |s.get dst| 0)`.
+
+So `res_out = res_in ++ replicate |old| 0` (`ValidResidue` by
+`ValidResidue_append_replicate_zero`); the freed cells become terminator-free `0`
+residue past the real terminator, so the **two-phase rewind** applies. -/
+theorem Compile.clear_block_decomp (s : State) (dst : Var) (res_in : List Nat)
+    (h : dst < s.length) :
+    ∃ pre rest : List Nat,
+      Compile.encodeTape s ++ res_in
+          = pre ++ (Compile.shiftReg (s.get dst) ++ (0 :: rest ++ res_in)) ∧
+      pre ++ ((0 :: rest ++ res_in) ++ List.replicate (s.get dst).length 0)
+          = Compile.encodeTape (Op.eval (Op.clear dst) s)
+              ++ (res_in ++ List.replicate (s.get dst).length 0) ∧
+      (Compile.shiftReg (s.get dst)).length = (s.get dst).length := by
+  obtain ⟨pre, rest, hv, hs⟩ := Compile.encodeTape_reg_decomp s dst h
+  refine ⟨pre, rest, ?_, ?_, ?_⟩
+  · rw [hs]; simp [List.append_assoc]
+  · -- `Op.eval (clear dst) s = s.set dst []`, and `shiftReg [] = []`.
+    have hcl : Compile.encodeTape (Op.eval (Op.clear dst) s) = pre ++ (0 :: rest) := by
+      show Compile.encodeTape (s.set dst []) = _
+      rw [hv []]; simp [Compile.shiftReg]
+    rw [hcl]; simp [List.append_assoc]
+  · rw [Compile.shiftReg, List.length_map]
+
+/-- **One `deleteCarryTM` pass deletes the head of a marker-free block.** From the
+read state at head `pre.length + 1` on `pre ++ (c0+1) :: M` (a nonempty,
+in-range `M`), after `3·|M| + 1` steps the machine halts having deleted the cell
+`c0+1` and shifted `M` left by one with a `0` filler: tape `pre ++ M ++ [0]`. The
+degenerate-suffix branch of `deleteCarryTM_loop_run` is ruled out by `M ≠ []`. -/
+theorem Compile.deleteCarry_drop_head (pre M : List Nat) (c0 : Nat)
+    (hc0 : c0 + 1 < 4) (hM : M ≠ []) (hMb : ∀ x ∈ M, x < 4) :
+    runFlatTM (3 * M.length + 1) Complexity.Lang.ShiftTape.deleteCarryTM
+        { state_idx := 0, tapes := [([], pre.length + 1, pre ++ (c0 + 1) :: M)] }
+      = some { state_idx := 6,
+               tapes := [([], pre.length + 1 + M.length, pre ++ M ++ [0])] } := by
+  have h := Complexity.Lang.ShiftTape.deleteCarryTM_loop_run M pre (c0 + 1) hc0 hMb
+  rw [if_neg hM, ← List.append_assoc] at h
+  exact h
 
 /-- `appendOne` preserves bit-shape (it appends the bit `1`). -/
 private theorem Compile.BitState_appendOne (s : State) (dst : Var)
@@ -2025,6 +2134,117 @@ theorem Compile.ValidResidue_replicate_zero (n : Nat) :
   obtain ⟨_, rfl⟩ := hx
   exact ⟨by omega, by decide⟩
 
+/-- The residue a length-decreasing op produces: the incoming residue with `n`
+zero filler cells appended (the cells freed by a left-shift `deleteCarryTM`).
+Stays `ValidResidue` — the convenience form of `ValidResidue_append` +
+`ValidResidue_replicate_zero` that every deletion / shrinking-write op's residue
+contract (`res_out = res_in ++ replicate n 0`) discharges with. -/
+theorem Compile.ValidResidue_append_replicate_zero (res : List Nat) (n : Nat)
+    (hres : Compile.ValidResidue res) :
+    Compile.ValidResidue (res ++ List.replicate n 0) :=
+  Compile.ValidResidue_append res _ hres (Compile.ValidResidue_replicate_zero n)
+
+/-- **One deletion = the in-place `tail` step (the loop's inductive heart).**
+Running `deleteCarryTM` from one past register `dst`'s content-start on
+`encodeTape s ++ res` (register `dst` nonempty) deletes that register's first
+content cell, yielding `encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])`:
+it drops one symbol from register `dst`, the incoming residue gaining one `0`
+filler. Iterating this `|s.get dst|` times clears the register (the clear gadget's
+loop body); a single application is the `tail`-in-place op. The content-start
+position `p` and the shifted-suffix length `L` are existential (the caller's
+navigation supplies the head position). Built from `deleteCarry_drop_head` +
+`encodeTape_reg_decomp`. -/
+theorem Compile.deleteCarry_tail_step (s : State) (dst : Var) (res : List Nat)
+    (h : dst < s.length) (hbit : Compile.BitState s) (hne : s.get dst ≠ [])
+    (hres : Compile.ValidResidue res) :
+    ∃ p L : Nat,
+      runFlatTM (3 * L + 1) Complexity.Lang.ShiftTape.deleteCarryTM
+          { state_idx := 0, tapes := [([], p + 1, Compile.encodeTape s ++ res)] }
+        = some { state_idx := 6,
+                 tapes := [([], p + 1 + L,
+                   Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))] } := by
+  obtain ⟨pre, rest, hv, hs⟩ := Compile.encodeTape_reg_decomp s dst h
+  obtain ⟨c0, cs, hcons⟩ : ∃ c0 cs, s.get dst = c0 :: cs := by
+    cases hg : s.get dst with
+    | nil => exact absurd hg hne
+    | cons c0 cs => exact ⟨c0, cs, rfl⟩
+  have hshift : Compile.shiftReg (c0 :: cs) = (c0 + 1) :: Compile.shiftReg cs := by
+    simp [Compile.shiftReg]
+  set M : List Nat := Compile.shiftReg cs ++ 0 :: rest ++ res with hMdef
+  have htape : Compile.encodeTape s ++ res = pre ++ (c0 + 1) :: M := by
+    rw [hs, hcons, hshift, hMdef]; simp [List.append_assoc]
+  have hc0le : c0 ≤ 1 := by
+    have hmem : s.get dst ∈ s := by
+      rw [State.get, List.getElem?_eq_getElem h]; exact List.getElem_mem h
+    exact hbit _ hmem c0 (by rw [hcons]; exact List.mem_cons_self ..)
+  have hM : M ≠ [] := by
+    rw [hMdef]; intro hc
+    have := congrArg List.length hc; simp [List.append_assoc] at this
+  have hMb : ∀ x ∈ M, x < 4 := by
+    intro x hx
+    have hxin : x ∈ Compile.encodeTape s ++ res := by
+      rw [htape]; exact List.mem_append_right pre (List.mem_cons_of_mem _ hx)
+    rw [List.mem_append] at hxin
+    rcases hxin with hx' | hx'
+    · exact Compile.encodeTape_lt_four s hbit x hx'
+    · exact (hres x hx').1
+  have hout : Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])
+      = pre ++ M ++ [0] := by
+    rw [hcons]; show Compile.encodeTape (s.set dst cs) ++ (res ++ [0]) = _
+    rw [hv cs, hMdef]; simp [List.append_assoc]
+  refine ⟨pre.length, M.length, ?_⟩
+  rw [htape, hout]
+  exact Compile.deleteCarry_drop_head pre M c0 (by omega) hM hMb
+
+/-- In-range, `State.set` is `List.set`. -/
+theorem Compile.set_eq_list_set (s : State) (dst : Var) (w : List Nat) (h : dst < s.length) :
+    s.set dst w = List.set s dst w := by rw [State.set, if_pos h]
+
+/-- Reading back a just-written register (in range). (Local — `Frame`'s
+`State.get_set_eq` is not imported here.) -/
+theorem Compile.get_set_eq (s : State) (dst : Var) (v : List Nat) (h : dst < s.length) :
+    (s.set dst v).get dst = v := by
+  unfold State.get
+  rw [Compile.set_eq_list_set s dst v h, List.getElem?_set_self h, Option.getD_some]
+
+/-- Writing register `dst` to its current value is a no-op (in range). -/
+theorem Compile.set_get_self (s : State) (dst : Var) (h : dst < s.length) :
+    s.set dst (s.get dst) = s := by
+  have hg : s.get dst = s[dst] := by rw [State.get, List.getElem?_eq_getElem h]; rfl
+  rw [Compile.set_eq_list_set s dst _ h, hg]
+  exact List.set_getElem_self h
+
+/-- Two successive writes to the same register: the first is overwritten. -/
+theorem Compile.set_set (s : State) (dst : Var) (a b : List Nat) (h : dst < s.length) :
+    (s.set dst a).set dst b = s.set dst b := by
+  have hla : dst < (s.set dst a).length := by
+    rw [Compile.set_eq_list_set s dst a h, List.length_set]; exact h
+  rw [Compile.set_eq_list_set (s.set dst a) dst b hla, Compile.set_eq_list_set s dst a h,
+      List.set_set, Compile.set_eq_list_set s dst b h]
+
+/-- **State-level invariant of the `clear` loop.** Iterating the in-place `tail`
+body `t ↦ t.set dst t.tail` `n` times drops the first `n` symbols of register
+`dst`: `(·.set dst ·.tail)^[n] s = s.set dst ((s.get dst).drop n)`. At
+`n = |s.get dst|` (`drop` empties the register) this is `clear`. Combined with the
+tape-level `deleteCarry_tail_step`, this is the loop's correctness content. -/
+theorem Compile.set_tail_iterate (s : State) (dst : Var) (h : dst < s.length) :
+    ∀ n, (fun t : State => t.set dst (t.get dst).tail)^[n] s
+        = s.set dst ((s.get dst).drop n) := by
+  intro n
+  induction n with
+  | zero => rw [Function.iterate_zero, id_eq, List.drop_zero, Compile.set_get_self s dst h]
+  | succ n ih =>
+      rw [Function.iterate_succ', Function.comp_apply, ih,
+          Compile.get_set_eq s dst _ h, Compile.set_set s dst _ _ h, List.tail_drop]
+
+/-- **`clear` = iterating the `tail` body exactly `|s.get dst|` times.** The loop
+count the clear gadget's `loopTM` runs: dropping every symbol of register `dst`
+empties it (`Op.eval (clear dst) s = s.set dst []`). -/
+theorem Compile.iterate_tail_clear (s : State) (dst : Var) (h : dst < s.length) :
+    (fun t : State => t.set dst (t.get dst).tail)^[(s.get dst).length] s
+      = Op.eval (Op.clear dst) s := by
+  rw [Compile.set_tail_iterate s dst h, List.drop_length]; rfl
+
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
 register. -/
@@ -2406,6 +2626,22 @@ theorem Compile.opAppendBit_physical_residue (bit : Nat) (hb : bit ≤ 1)
     have hp_le' : p ≤ (Compile.encodeTape s ++ res_in).length := by rw [← hHDlen]; exact hp_le
     omega
 
+/-- The append ops' linear budget `3·tapeLen + 8` implies the per-op contract's
+quadratic budget `9·tapeLen² + 9` (every encoded tape has `tapeLen ≥ 2`). Lets
+the linear append cases discharge the (necessarily quadratic, for multi-cell ops)
+`compileOp_sound_physical_residue` budget. -/
+theorem Compile.linear_le_quadratic_tapeLen (s : State) (res_in : List Nat) :
+    3 * (Compile.encodeTape s ++ res_in).length + 8
+      ≤ 9 * (Compile.encodeTape s ++ res_in).length
+          * (Compile.encodeTape s ++ res_in).length + 9 := by
+  have hL : 2 ≤ (Compile.encodeTape s ++ res_in).length := by
+    rw [List.length_append, Compile.encodeTape_length]; omega
+  set L := (Compile.encodeTape s ++ res_in).length with hLdef
+  have h1 : 9 * L ≤ 9 * L * L := by
+    calc 9 * L = 9 * L * 1 := by rw [Nat.mul_one]
+      _ ≤ 9 * L * L := Nat.mul_le_mul_left _ (by omega)
+  omega
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
@@ -2418,11 +2654,24 @@ The residue stays terminator-free across composition (each gadget preserves
 Input: the start tape may carry residue (`res_in`), since the previous
 fragment's exit tape may have residue. The contract is:
   exit tape = `encodeTape (Op.eval o s) ++ res_out` (where `res_out` is
-  `ValidResidue`), head rewound to `0`, in ≤ `3·inputTapeLen + 8` steps.
+  `ValidResidue`), head rewound to `0`, in ≤ `9·inputTapeLen² + 9` steps.
 
 This is the replacement for `compileOp_sound_physical` (which demanded
 exact tape `encodeTape output` and was **unsatisfiable** for deletion ops).
-The `compileSeq_sound_physical_residue` combinator composes these directly. -/
+The `compileSeq_sound_physical_residue` combinator composes these directly.
+
+**⚠ 2026-06-01 — budget is QUADRATIC, not linear.** The per-op budget was
+`3·tapeLen + 8` (linear), which the append ops meet (one insert = one O(tapeLen)
+pass). But every **multi-cell** op is inherently **Θ(tapeLen²)** on a single-tape
+machine: `clear`/`tail`/`copy`/… must delete or move `Θ(tapeLen)` cells, and each
+deletion/insertion shifts the suffix in a separate O(tapeLen) pass (a single head
+cannot shift a block by a data-dependent distance in one pass — it would have to
+carry that distance in finite state). So the linear bound is **unsatisfiable** for
+them; the budget is loosened to the quadratic `9·tapeLen² + 9` (constant generous,
+tunable when the gadgets land). This composes fine: `compileSeq_sound_physical`
+uses the *additive* budget `t₁+1+t₂` (no linearity assumed), so summing per-op
+quadratics over `≤ cost` fragments (each tape `≤` the global max) gives a
+polynomial total — `toFrameworkWitness'` only needs `inOPoly`. -/
 theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s)
     (hres_in : Compile.ValidResidue res_in) :
@@ -2437,17 +2686,21 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
-      ∧ t ≤ 3 * (Compile.encodeTape s ++ res_in).length + 8 := by
+      ∧ t ≤ 9 * (Compile.encodeTape s ++ res_in).length
+              * (Compile.encodeTape s ++ res_in).length + 9 := by
   cases o with
   | appendOne dst =>
       -- `res_out = res_in`: the append grows `encodeTape s` by one cell; residue passes through.
+      -- The append op meets the *linear* `3·L+8`; relax to the contract's quadratic.
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
-      exact ⟨t, res_in, hres_in, hrun, htraj, hbudget⟩
+      exact ⟨t, res_in, hres_in, hrun, htraj,
+        le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
   | appendZero dst =>
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
-      exact ⟨t, res_in, hres_in, hrun, htraj, hbudget⟩
+      exact ⟨t, res_in, hres_in, hrun, htraj,
+        le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
   -- The 10 stub ops still need their gadgets (deletion: `res_out = res_in ++ replicate n 0`
   -- via `deleteCarryTM`; reuse `rewindBracket` for the head rewind). See HANDOFF.
   | clear dst => sorry
