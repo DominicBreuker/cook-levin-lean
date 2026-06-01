@@ -5,100 +5,92 @@ authoritative status and plan. This file says exactly what to do next.
 
 ## Where things stand
 
-- `lake build` ✅ green (3357 jobs). First build is slow (mathlib); one module
+- `lake build` ✅ green (3358 jobs). First build is slow (mathlib); one module
   rebuilds in ~5–10s after. `lake` is **not on PATH** —
   `export PATH="$HOME/.elan/bin:$PATH"`.
-- **Risk C2 (compiler soundness) is the focus.** The architecture is settled and
-  the append op is done end-to-end; the remaining work is the **10 stub `compileOp`s**
-  and the `Compile_run_physical_residue` assembly. The very next concrete task is
-  finishing the **`clear` op** (all its math is proven — only the TM machine
-  remains; see below).
+- **Risk C2 (compiler soundness) is the focus.** The `clear` op now has a **real
+  TM machine** (`clearRegionTM` in `ClearGadget.lean`), fully wired into
+  `compileOp`, with a sorry-free `CompiledCmd` (validity, halt uniqueness,
+  correct sig/tapes — all proven). The `clear` case in
+  `compileOp_sound_physical_residue` still has a `sorry` for its **run lemma**
+  (the `loopTM_run` plumbing). The remaining work is 9 stub cross-register ops
+  and the run-lemma assembly.
 
-## Two findings that shape all remaining op work (now established facts)
+## Architecture of clearRegionTM (built this session, ClearGadget.lean)
 
-1. **The ops are cross-register.** `tail`/`copy`/`head`/`eqBit`/`nonEmpty`/`takeAt`/
-   `dropAt`/`concat`/`consLen` are `s.set dst (f (s.get src))` — read `src`, write
-   `dst`, with `dst ≠ src` in the real witnesses (`PolyTime.lean`: `Op.head 1 0`,
-   `Op.tail 2 0`, …). They are **not** in-place edits. The gadget library has no
-   data-transport gadget, so they need a new **`copyBlockTM`** (block move src→dst);
-   then each decomposes as `clear dst ⨾ copyBlock src→dst ⨾ (in-place transform)`.
-   Only `clear dst` (no source) and `tail dst dst` are genuinely in-place.
-2. **Per-op budget is QUADRATIC.** `compileOp_sound_physical_residue`'s budget is
-   `9·tapeLen² + 9` (was `3·tapeLen+8`, which is unsatisfiable: a single-tape machine
-   deleting/moving `Θ(tapeLen)` cells needs `Θ(tapeLen)` shift passes ⇒ `Θ(tapeLen²)`).
-   This composes — `compileSeq_sound_physical` is additive (`t₁+1+t₂`), so per-op
-   quadratics sum to a polynomial total (`inOPoly` suffices). Only the append ops
-   are linear; they relax to the quadratic via `linear_le_quadratic_tapeLen`. **Target
-   `9·tapeLen²+9` for `clear`/`copy` gadgets** (the `clear` loop costs ≈ `6·tapeLen²`).
+`clearRegionTM dst = loopTM (clearBodyRawTM dst) exitDone exitLoop`
 
-## NEXT TASK: build the `clear` machine (`clearRegionTM`)
+The loop body `clearBodyRawTM dst` is a `branchComposeFlatTM`:
+- **M₁** = `navigateAndTestTM dst` (stepRight ⨾ scanPastDelim^dst ⨾ delimTest)
+  Two exits: `exit_content` (cell ≠ 0) and `exit_delim` (cell = 0).
+- **M₂** = `stepDeleteRewindRawTM` (stepRight ⨾ deleteCarryTM ⨾ rewindTwoPhaseTM)
+  Content branch: delete first cell, rewind to 0 → exitLoop.
+- **M₃** = `justRewindTM` (scanLeftUntilTM 4 3)
+  Delimiter branch: register empty, rewind to 0 → exitDone.
 
-All the **mathematics is proven** (inventory below); only the autonomous TM and its
-`loopTM_run` plumbing remain. `clear dst` deletes register `dst`'s content by a loop
-of single-cell deletions, leaving the freed cells as `0` residue past the terminator.
-Design: `clearRegionTM := loopTM B exitDone exitLoop` where the body
-`B = navigate-from-0-to-register-dst ⨾ branch(cell = delimiter? done : delete) ⨾
-rewind-to-0`, iteration count `= |s.get dst|`, final state via `iterate_tail_clear`.
-Validated end-to-end by `#eval` (the mechanism produces exactly
-`encodeTape(cleared) ++ residue` and the rewind returns head to 0).
+New primitives (all sorry-free, axiom-clean):
+- `stepRightTM` in `ScanLeft.lean` — mirror of `stepLeftTM`, with run/valid/traj
+- `delimTestTM` in `ClearGadget.lean` — reads one cell, halts at state 1 (content)
+  or state 2 (delimiter); step/run/no-early-halt all proven
+- `navigateToRegTM dst` — stepRight ⨾ scanPastDelim^dst; recursive like appendAtTM
+- Full validity chain: every submachine → clearRegionTM proven valid
 
-### Pre-build checklist (audited — no hidden surprises)
+## NEXT TASK: prove the `clear` run lemma
 
-**Build these small machines first (currently MISSING):**
-- **`stepRightTM`** — one-cell right move (only `stepLeftTM` exists, `ScanLeft.lean`).
-  The navigation base case needs it: head `0` is the leading sentinel `3` (not a
-  delimiter, so `scanPastDelimTM` doesn't apply); navigation =
-  `stepRightTM ⨾ scanPastDelimTM^dst`. Mirror `stepLeftTM`.
-- **A "current cell = delimiter `0`?" branch machine** (the `M₁` for
-  `branchComposeFlatTM`). `bitTestTM` is **not** reusable (hard-wired position,
-  tests `2`-vs-`1`). Have it **also step the head right by one** while testing —
-  this fixes the alignment that `deleteCarryTM` deletes the cell *before* the head
-  (head at `content-start+1` deletes `content-start`), avoiding a separate step.
+The `clear` case in `compileOp_sound_physical_residue` (line ~2744 of Compile.lean)
+is `sorry`. To discharge it, build the run lemma for `clearRegionTM`:
 
-**Design choices (decide up front — they change which proven lemmas apply):**
-- **First-cell vs last-cell deletion.** The proven lemmas (`deleteCarry_tail_step`,
-  `set_tail_iterate`) delete the **first** content cell (`tail`; head at
-  `content-start+1`, needs `stepRightTM`). Alternative: navigate to register `dst`'s
-  **delimiter** (reuse `appendAtTM`'s scan-to-`0`, *no* `stepRightTM`) and delete the
-  cell before it (the **last** cell, `dropLast`) — needs `dropLast` variants of those
-  two lemmas (modest re-proof). Pick one.
-- **Internal rewind halts.** Rewinds have **two** halt states (found + boundary).
-  Inside `B`, demote the boundary (`joinTwoHalts`, as `rewindBracket` does) or prove
-  it unreachable, so `B` presents clean `exitDone`/`exitLoop` and the `loopTM_run`
-  no-early-halt trajectory holds.
-- **Probably NO outer `rewindBracket`** (unlike append): both branches end head-`0`
-  and `loopTM` has a single halt (`B.states`), so `loopTM B` may be a `CompiledCmd`
-  directly. Confirm when building.
+### Step 1: navigateToRegTM run lemma
 
-**Confirmed present (reuse as-is):**
-- `loopTM`/`loopTM_run`, `composeFlatTM_run`/`_no_early_halt`,
-  `branchComposeFlatTM_run_pos`/`_neg`, all combinator `*_valid` lemmas.
-- Navigation: `scanPastDelimTM` + `scanPast_block` + `scanPastDelim_no_early_halt`.
-- **Done-branch rewind** (empty register, head interior/left of terminator):
-  `ScanLeft.rewindToStart_run`/`_traj` (single-phase scan left to the sentinel).
-- **Delete-branch rewind** (head in residue past terminator):
-  `rewindTwoPhase_run`/`_no_early_halt`.
+Prove `navigateToRegTM_run`: from head 0 on tape
+`encodeTape s ++ res_in`, after some steps, head lands at register `dst`'s first
+content cell (or delimiter). Follow the `appendAt_run` pattern (recursive on `dst`;
+uses `composeFlatTM_run` + `scanPastDelim_run`).
 
-### Proven `clear` inventory (all axiom-clean, `Compile.lean`)
+### Step 2: navigateAndTestTM run lemma (two cases)
 
-Every obligation the machine faces is pre-discharged by one of these:
-- `encodeTape_reg_decomp` — **master register-slot decomposition**:
-  `encodeTape (s.set dst v) = pre ++ shiftReg v ++ 0::rest`, `pre`/`rest` independent
-  of `v` (the workhorse every register-writing op uses).
-- `clear_block_decomp` — clearing `dst` deletes exactly the `shiftReg (s.get dst)`
-  block; the gadget's input/output target, residue `res_out = res_in ++ replicate |old| 0`.
-- `deleteCarry_drop_head` — one `deleteCarryTM` pass: `pre ++ (c0+1)::M → pre ++ M ++ [0]`.
-- `deleteCarry_tail_step` — **one deletion = the in-place `tail` step** on the encoded
-  tape (also the core of the `tail dst dst` op).
-- `set_tail_iterate`, `iterate_tail_clear` — loop **state invariant**: iterating the
-  tail-body `n` times drops `n` symbols; at `n = |content|` it equals `clear`.
-  (+ `State` algebra `set_eq_list_set`/`get_set_eq`/`set_get_self`/`set_set`.)
-- Budget/residue infra: `linear_le_quadratic_tapeLen`, `encodeTape_set_length`
-  (`|encodeTape (s.set dst v)| + |old| = |encodeTape s| + |v|`),
-  `ValidResidue_append_replicate_zero`.
+Compose navigation with `delimTestTM`:
+- **Empty register** (`s.get dst = []`): cell at dst is delimiter `0` →
+  `delimTestTM` → exit at `navigateAndTestTM_exit_delim`.
+- **Non-empty register** (`s.get dst ≠ []`): cell is shifted content `c0+1 ≠ 0` →
+  `delimTestTM` → exit at `navigateAndTestTM_exit_content`.
 
-Then discharge the `clear` branch of `compileOp_sound_physical_residue` (the 10
-`sorry`s); `compileOp` already dispatches `clear → opClear` (currently a stub).
+Use `composeFlatTM_run` to thread navigation into delimTest.
+
+### Step 3: delete-branch run lemma (stepDeleteRewindRawTM)
+
+After `navigateAndTestTM` exits content, head is at the first content cell `p`:
+1. `stepRightTM` → head at `p+1`
+2. `deleteCarryTM` → deletes cell at `p`, tape becomes
+   `encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])`,
+   head at some position past the trailing endMark (in residue zone)
+3. `rewindTwoPhaseTM` → scan left to trailing endMark, step left, scan left to
+   leading sentinel → head at 0
+
+The math is already proven:
+- `deleteCarry_tail_step` gives the deleteCarryTM run
+- `set_tail_iterate` / `iterate_tail_clear` give the loop invariant
+
+### Step 4: done-branch run lemma (justRewindTM)
+
+After `navigateAndTestTM` exits delimiter, head is at register dst's delimiter
+(an interior position). `scanLeftUntilTM 4 3` scans left to the leading sentinel
+(3) at position 0. Use `rewindToStart_run` with the appropriate tape decomposition.
+
+### Step 5: assemble via loopTM_run
+
+Feed `loopTM_run` with:
+- `T n` = tape after `n` deletions (from `set_tail_iterate`)
+- `tDone` = step count for the done branch (last iteration, register empty)
+- `tIter j` = step count for iteration `j` (delete one cell + rewind)
+- Iteration count = `|s.get dst|` (from `iterate_tail_clear`)
+
+### Step 6: connect to compileOp_sound_physical_residue
+
+The run lemma gives the exact tape `encodeTape (Op.eval (clear dst) s) ++
+(res_in ++ replicate |s.get dst| 0)`. The residue `res_out` is `ValidResidue`
+by `ValidResidue_append_replicate_zero`. The budget `9·L²+9` needs to be verified
+(each iteration is O(tapeLen), with |s.get dst| iterations → O(tapeLen²)).
 
 ## After `clear`: the cross-register ops, then assemble
 
@@ -115,29 +107,14 @@ Then discharge the `clear` branch of `compileOp_sound_physical_residue` (the 10
    proven) + the ifBit/forBnd combinators. This discharges the one obligation the
    whole S3 bridge sits on.
 
-## Architecture recap (the residue-tolerant contract)
-
-The physical TM tape **never shrinks** (`TapeMono.lean`), so an exit tape is
-`encodeTape output ++ residue` with `ValidResidue residue` (cells ∈ {0,1,2}), hidden
-existentially in `TapeOK`. Decode ignores residue (`decodeTape_encodeTape_append`);
-`compileSeq_sound_physical_residue` threads it. Residue lives **after** the trailing
-terminator, so a rewinding gadget exits inside it → use the **two-phase rewind**
-`rewindTwoPhaseTM` (never start `scanLeftUntilTM` on a `3`).
-
-**`rewindBracket compute exit … : CompiledCmd`** wraps any `compute` machine with the
-two-phase rewind, demotes its boundary halt (`joinTwoHalts`), and gives a unique-exit
-`CompiledCmd`; `rewindBracket_transport` turns the gadget's proven run + trajectory
-into the `CompiledCmd`'s. The append op (`opAppendBit_physical_residue`) is the worked
-template: `rewindBracket_transport` (compute = `appendAtTM`) + the `encodeTape ++
-residue` decomposition discharging the tape side-conditions. Copy it for each new op.
-
 ## Key files
 
 | File | Contents |
 |------|----------|
-| `Lang/Compile.lean` | compiler; residue infra (`TapeOK`/`ValidResidue`); `joinTwoHalts`; `rewindBracket`(+`_transport`); append op done; **all proven `clear` lemmas**; `compileOp_sound_physical_residue` (append done, 10 `sorry`s); `Compile_run_physical_residue` (`sorry`) |
+| `Lang/ClearGadget.lean` | **NEW**: `navigateToRegTM`, `delimTestTM`, `clearBodyRawTM`, `clearRegionTM`; all validity + primitives sorry-free |
+| `Lang/Compile.lean` | compiler; residue infra (`TapeOK`/`ValidResidue`); `joinTwoHalts`; `rewindBracket`(+`_transport`); append op done; **all proven `clear` lemmas**; `compileOp_sound_physical_residue` (append done, `clear` has real machine but sorry'd run, 9 cross-register `sorry`s); `Compile_run_physical_residue` (`sorry`) |
+| `Lang/ScanLeft.lean` | `stepLeftTM`, `stepRightTM` **(NEW)**, `scanLeftUntilTM`, `rewindToStart_run`, `rewindFromEndTM`, `rewindTwoPhaseTM` |
 | `Lang/AppendGadget.lean` | `appendAtTM` (+ recursive navigation pattern), `appendAt_twoPhaseRewind_run/_no_early_halt` |
-| `Lang/ScanLeft.lean` | `stepLeftTM`, `scanLeftUntilTM`, `rewindToStart_run`, `rewindFromEndTM`, `rewindTwoPhaseTM` |
 | `Lang/ShiftTape.lean` | `insertCarryTM` (fixed symbol), `deleteCarryTM` (+ `_loop_run`/`_no_early_halt`) |
 | `Lang/ScanPast.lean` / `Navigate.lean` | `scanPastDelimTM`(+`scanPast_block`), `scan_to_delim`/`scan_to_end` |
 | `Lang/Semantics.lean` | `Op.eval` (the cross-register truth), `Op.cost`, `State.size_set_add` |
@@ -160,13 +137,11 @@ residue` decomposition discharging the tape side-conditions. Copy it for each ne
 - **`.get`/`.set` on a `State` literal mis-resolves to `List.get`** — write
   `State.get`/`State.set` explicitly, or rewrite to `List.set` via `set_eq_list_set`.
 - **`omega` can't see through `Var := Nat`** — restate at `Nat`.
-- **`get`-congruence across list equality**: route through `getElem?` (reuse the
-  `hleft`/`hright` split in `opAppendBit_physical_residue`); `rw [List.getElem_append_left]`
-  fails directly (leftover `Fin.val` coercion).
+- **`branchComposeFlatTM_run_pos`/`_neg` require the *exact* exit state numbers** for
+  the composed machine's M₂/M₃ halts; trace them through `composeFlatTM_halt_some_intro`
+  as the existing `rewindBracket_transport` does.
 - **`exact` defeq across `opXxx`/`rewindBracket` + `initFlatConfig`** — normalise the
   start config with an explicit `hinit` (via `M.start = 0`) before `exact`.
-- **`#print axioms`** needs the full name + `import Complexity.Lang.Compile`; scratch:
-  `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean`.
 
 ## Conventions
 

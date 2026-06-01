@@ -1020,4 +1020,163 @@ theorem rewindTwoPhase_no_early_halt (sig target : Nat) (h_target : target < sig
     (by decide : (0 : Nat) < 3)
     left p tp h_sym_bound h_run1 h_traj1 h_traj2
 
+/-! ### `stepRightTM` — one unconditional right move
+
+Mirror of `stepLeftTM`: a two-state machine that moves the head right exactly
+once (for any current symbol), then halts in state `1`.  Used for navigation
+from the leading sentinel to the first register cell. -/
+
+/-- Unconditional right-move entry for a concrete in-range symbol `v`. -/
+def stepRightEntry (v : Nat) : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [some v]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Rmove] }
+
+/-- Unconditional right-move entry for a blank cell (off the right end). -/
+def stepRightNoneEntry : FlatTMTransEntry :=
+  { src_state := 0
+    src_tape_vals := [none]
+    dst_state := 1
+    dst_write_vals := [none]
+    move_dirs := [TMMove.Rmove] }
+
+/-- A two-state machine that moves the head right exactly once (for any current
+symbol), then halts in state `1`. Mirror of `stepLeftTM`. -/
+def stepRightTM (sig : Nat) : FlatTM where
+  sig := sig
+  tapes := 1
+  states := 2
+  trans := stepRightNoneEntry :: (List.range sig).map stepRightEntry
+  start := 0
+  halt := [false, true]
+
+theorem stepRightTM_trans_eq (sig : Nat) :
+    (stepRightTM sig).trans = stepRightNoneEntry :: (List.range sig).map stepRightEntry := rfl
+
+theorem stepRightTM_valid (sig : Nat) : validFlatTM (stepRightTM sig) := by
+  refine ⟨show (0 : Nat) < 2 from by decide, rfl, ?_⟩
+  intro entry hentry
+  have hentry' : entry ∈ stepRightNoneEntry :: (List.range sig).map stepRightEntry := hentry
+  rcases List.mem_cons.mp hentry' with hNone | hCont
+  · subst hNone
+    refine ⟨show (0 : Nat) < 2 from by decide, show (1 : Nat) < 2 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [stepRightNoneEntry] at hx; subst hx; trivial
+    · intro x hx; simp [stepRightNoneEntry] at hx; subst hx; trivial
+  · rcases List.mem_map.mp hCont with ⟨v, hv, hmk⟩
+    subst hmk
+    have hvlt : v < sig := List.mem_range.mp hv
+    refine ⟨show (0 : Nat) < 2 from by decide, show (1 : Nat) < 2 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [stepRightEntry] at hx; subst hx; exact hvlt
+    · intro x hx; simp [stepRightEntry] at hx; subst hx; trivial
+
+/-- `find?` over the step-right entry list returns `stepRightEntry v` when the head
+reads the in-range symbol `v`. -/
+private theorem find_stepRight_match
+    (cfg : FlatTMConfig) (v : Nat) (L : List Nat)
+    (h_cfg_state : cfg.state_idx = 0)
+    (h_cfg_tape : cfg.tapes.map currentTapeSymbol = [some v])
+    (h_mem : v ∈ L) :
+    (L.map stepRightEntry).find?
+        (fun entry => entryMatchesConfig entry cfg) =
+      some (stepRightEntry v) := by
+  induction L with
+  | nil => cases h_mem
+  | cons w ws ih =>
+      show List.find? _ (stepRightEntry w :: ws.map stepRightEntry) = _
+      rw [List.find?_cons]
+      by_cases hwv : w = v
+      · subst hwv
+        have hMatch : entryMatchesConfig (stepRightEntry w) cfg = true := by
+          show ((0 : Nat) == cfg.state_idx &&
+                  decide (([some w] : List (Option Nat)) =
+                    cfg.tapes.map currentTapeSymbol)) = true
+          rw [h_cfg_state, h_cfg_tape]; simp
+        rw [hMatch]
+      · have hNot : entryMatchesConfig (stepRightEntry w) cfg = false := by
+          show ((0 : Nat) == cfg.state_idx &&
+                  decide (([some w] : List (Option Nat)) =
+                    cfg.tapes.map currentTapeSymbol)) = false
+          rw [h_cfg_state, h_cfg_tape]
+          have h_ne' : ([some w] : List (Option Nat)) ≠ [some v] := by
+            intro h; injection h with h1 _; injection h1 with h2; exact hwv h2
+          simp [h_ne']
+        rw [hNot]
+        rcases List.mem_cons.mp h_mem with hvw | hvws
+        · exact absurd hvw.symm hwv
+        · exact ih hvws
+
+/-- One unconditional right step on an in-range cell: head `head → head + 1`,
+state `0 → 1`. -/
+theorem stepRightTM_step (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length) (h_sym_lt : right.get ⟨head, h_head_lt⟩ < sig) :
+    stepFlatTM (stepRightTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  set v := right.get ⟨head, h_head_lt⟩ with hv
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] } with hcfg
+  have hSym0 : currentTapeSymbol (left, head, right) = some v := by
+    rw [currentTapeSymbol_in_range h_head_lt]
+  have hSym : cfg.tapes.map currentTapeSymbol = [some v] := by
+    show [currentTapeSymbol (left, head, right)] = [some v]; rw [hSym0]
+  have hNotNone : entryMatchesConfig stepRightNoneEntry cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) =
+              cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym]
+    have h_ne' : ([none] : List (Option Nat)) ≠ [some v] := by
+      intro h; injection h with h1 _; cases h1
+    simp [h_ne']
+  have hvInRange : v ∈ List.range sig := List.mem_range.mpr h_sym_lt
+  have hFind :
+      (((List.range sig).map stepRightEntry).find?
+          (fun entry => entryMatchesConfig entry cfg)) = some (stepRightEntry v) :=
+    find_stepRight_match cfg v _ rfl hSym hvInRange
+  show Option.bind ((stepRightTM sig).trans.find?
+        (fun entry => entryMatchesConfig entry cfg))
+      (applyTransitionEntry cfg) = _
+  rw [stepRightTM_trans_eq, List.find?_cons, hNotNone, hFind]
+  show applyTransitionEntry cfg (stepRightEntry v) = _
+  exact applyEntry_single 0 1 left right head (some v) TMMove.Rmove
+
+/-- `stepRightTM` run for one step (its full computation): head `head → head + 1`,
+state `0 → 1`, halts. -/
+theorem stepRightTM_run (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head_lt : head < right.length) (h_sym_lt : right.get ⟨head, h_head_lt⟩ < sig) :
+    runFlatTM 1 (stepRightTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  show (if haltingStateReached (stepRightTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM (stepRightTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _
+          | some cfg' => runFlatTM 0 (stepRightTM sig) cfg') = _
+  rw [show haltingStateReached (stepRightTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      stepRightTM_step sig left right head h_head_lt h_sym_lt]
+  rfl
+
+/-- `stepRightTM` never halts before its single step. -/
+theorem stepRightTM_no_early_halt (sig : Nat) (left right : List Nat) (head : Nat) :
+    ∀ k, k < 1 → ∀ ck,
+      runFlatTM k (stepRightTM sig)
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      ck.state_idx ≠ 1 ∧ haltingStateReached (stepRightTM sig) ck = false := by
+  intro k hk ck hck
+  have hk0 : k = 0 := by omega
+  subst hk0
+  simp [runFlatTM] at hck; subst hck
+  constructor
+  · show (0 : Nat) ≠ 1; omega
+  · rfl
+
+theorem stepRightTM_states (sig : Nat) : (stepRightTM sig).states = 2 := rfl
+theorem stepRightTM_start (sig : Nat) : (stepRightTM sig).start = 0 := rfl
+theorem stepRightTM_tapes (sig : Nat) : (stepRightTM sig).tapes = 1 := rfl
+theorem stepRightTM_sig (sig : Nat) : (stepRightTM sig).sig = sig := rfl
+
 end Complexity.Lang.ScanLeft
