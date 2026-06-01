@@ -1015,6 +1015,27 @@ theorem Compile.encodeTape_length (s : State) :
   rw [Compile.encodeTape, List.length_cons, List.length_append,
       Compile.encodeRegs_length]; rfl
 
+/-- **Encoded-tape length balance for a register write (cross-register op
+bookkeeping).** Writing `v` to an in-range register `dst` changes the encoded
+tape length by `|v| − |old dst|`, stated in balance form to avoid ℕ subtraction:
+`|encodeTape (s.set dst v)| + |old dst| = |encodeTape s| + |v|`.
+
+Every cross-register op `dst := f (s.get src)` needs exactly this to express its
+residue length (`res_out`) and bound its budget: a `set` in range preserves the
+register count (`s.length`), so only the contents term moves — by
+`State.size_set_add`. (Length-growing writes — `v` longer than the old register
+— extend the tape; length-shrinking writes leave the freed cells as `0` residue,
+which is why the deletion-op residue is `res_in ++ replicate (|old| − |v|) 0`.) -/
+theorem Compile.encodeTape_set_length (s : State) (dst : Var) (v : List Nat)
+    (h : dst < s.length) :
+    (Compile.encodeTape (s.set dst v)).length + (s.get dst).length
+      = (Compile.encodeTape s).length + v.length := by
+  have hlen : (s.set dst v).length = s.length := by
+    simp only [State.set, if_pos h, List.length_set]
+  rw [Compile.encodeTape_length, Compile.encodeTape_length, hlen]
+  have hbal := State.size_set_add s dst v
+  omega
+
 /-- Flatten a single TM tape `(left, head, right)` into a `List Nat`.
 
 In this machine model (`MachineSemantics.lean`) the head is an *index*
@@ -2024,6 +2045,16 @@ theorem Compile.ValidResidue_replicate_zero (n : Nat) :
   rw [List.mem_replicate] at hx
   obtain ⟨_, rfl⟩ := hx
   exact ⟨by omega, by decide⟩
+
+/-- The residue a length-decreasing op produces: the incoming residue with `n`
+zero filler cells appended (the cells freed by a left-shift `deleteCarryTM`).
+Stays `ValidResidue` — the convenience form of `ValidResidue_append` +
+`ValidResidue_replicate_zero` that every deletion / shrinking-write op's residue
+contract (`res_out = res_in ++ replicate n 0`) discharges with. -/
+theorem Compile.ValidResidue_append_replicate_zero (res : List Nat) (n : Nat)
+    (hres : Compile.ValidResidue res) :
+    Compile.ValidResidue (res ++ List.replicate n 0) :=
+  Compile.ValidResidue_append res _ hres (Compile.ValidResidue_replicate_zero n)
 
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
