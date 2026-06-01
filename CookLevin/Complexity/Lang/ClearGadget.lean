@@ -433,11 +433,11 @@ def clearBodyRawTM (dst : Nat) : FlatTM :=
     (navigateAndTestTM_exit_content dst) (navigateAndTestTM_exit_delim dst)
 
 -- exitLoop: the content branch exit (from stepDeleteRewindRawTM in the M₂ slot)
-def clearBodyTM_exitLoop (dst : Nat) : Nat :=
+def clearBodyRawTM_exitLoop (dst : Nat) : Nat :=
   (navigateAndTestTM dst).states + stepDeleteRewindTM_exit
 
 -- exitDone: the delimiter branch exit (from justRewindTM in the M₃ slot)
-def clearBodyTM_exitDone (dst : Nat) : Nat :=
+def clearBodyRawTM_exitDone (dst : Nat) : Nat :=
   (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM_exit
 
 /-! ## 7. `clearRegionTM` via `loopTM`
@@ -447,7 +447,7 @@ We wrap it as a `CompiledCmd` (the single halt state is at `B.states`).
 -/
 
 def clearRegionTM (dst : Nat) : FlatTM :=
-  loopTM (clearBodyRawTM dst) (clearBodyTM_exitDone dst) (clearBodyTM_exitLoop dst)
+  loopTM (clearBodyRawTM dst) (clearBodyRawTM_exitDone dst) (clearBodyRawTM_exitLoop dst)
 
 /-! ## 8. Validity -/
 
@@ -491,24 +491,24 @@ theorem clearBodyRawTM_valid (dst : Nat) : validFlatTM (clearBodyRawTM dst) :=
     (navigateAndTestTM_exit_content_lt dst) (navigateAndTestTM_exit_delim_lt dst)
     (navigateAndTestTM_tapes dst) stepDeleteRewindRawTM_tapes justRewindTM_tapes
 
-theorem clearBodyTM_exitDone_lt (dst : Nat) :
-    clearBodyTM_exitDone dst < (clearBodyRawTM dst).states := by
+theorem clearBodyRawTM_exitDone_lt (dst : Nat) :
+    clearBodyRawTM_exitDone dst < (clearBodyRawTM dst).states := by
   show (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM_exit <
     (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM.states
   show _ + 1 < _ + 3
   omega
 
-theorem clearBodyTM_exitLoop_lt (dst : Nat) :
-    clearBodyTM_exitLoop dst < (clearBodyRawTM dst).states := by
+theorem clearBodyRawTM_exitLoop_lt (dst : Nat) :
+    clearBodyRawTM_exitLoop dst < (clearBodyRawTM dst).states := by
   show (navigateAndTestTM dst).states + stepDeleteRewindTM_exit <
     (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM.states
   show _ + 15 < _ + 17 + 3
   omega
 
 theorem clearRegionTM_valid (dst : Nat) : validFlatTM (clearRegionTM dst) :=
-  loopTM_valid (clearBodyRawTM dst) (clearBodyTM_exitDone dst) (clearBodyTM_exitLoop dst)
+  loopTM_valid (clearBodyRawTM dst) (clearBodyRawTM_exitDone dst) (clearBodyRawTM_exitLoop dst)
     (clearBodyRawTM_valid dst)
-    (clearBodyTM_exitDone_lt dst) (clearBodyTM_exitLoop_lt dst)
+    (clearBodyRawTM_exitDone_lt dst) (clearBodyRawTM_exitLoop_lt dst)
     (show (clearBodyRawTM dst).tapes = 1 from by
         show (branchComposeFlatTM _ _ _ _ _).tapes = 1
         rw [branchComposeFlatTM_tapes]; exact navigateAndTestTM_tapes dst)
