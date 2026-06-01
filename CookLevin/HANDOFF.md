@@ -128,9 +128,38 @@ first; the length ops are copy + in-place truncate.
      `n = |s.get dst|` this is `clear`. (Plus the supporting `State` algebra
      `set_eq_list_set`/`get_set_eq`/`set_get_self`/`set_set`.)
 
+   - `Compile.iterate_tail_clear` — `(tail-body)^[|s.get dst|] s = Op.eval (clear
+     dst) s`: the exact `loopTM` iteration count.
+
    So **both halves of the loop's correctness are proven** — the per-iteration tape
    effect (`deleteCarry_tail_step`) and the iterated state effect
-   (`set_tail_iterate`). What remains is purely the autonomous-machine packaging.
+   (`set_tail_iterate`/`iterate_tail_clear`). What remains is purely the
+   autonomous-machine packaging.
+
+   **Complete proven inventory for `clear` (all axiom-clean, in `Compile.lean`):**
+   `encodeTape_reg_decomp`, `clear_block_decomp`, `deleteCarry_drop_head`,
+   `deleteCarry_tail_step`, `set_eq_list_set`, `get_set_eq`, `set_get_self`,
+   `set_set`, `set_tail_iterate`, `iterate_tail_clear` — plus the budget infra
+   (`linear_le_quadratic_tapeLen`, `encodeTape_set_length`,
+   `ValidResidue_append_replicate_zero`). Every obligation the machine will face is
+   pre-discharged as one of these.
+
+   **Machine-assembly notes (for the next session):**
+   - ⚠ **No `stepRightTM` exists** (only `stepLeftTM`, `ScanLeft.lean`). Navigation
+     to register `dst`'s content-start from head 0 needs a rightward move past the
+     leading sentinel for the base case. Either add `stepRightTM` (mirror
+     `stepLeftTM`) or design the loop body around register `dst`'s **delimiter**
+     instead (reusing `appendAtTM`'s scan-to-delimiter navigation pattern: delete
+     the cell *before* the delimiter — the last content cell — each pass; "empty"
+     is detected when that cell is `0`/`3`).
+   - The body `B` (two exits) = `navigate ⨾ branch(cell=delim? done : delete) ⨾
+     two-phase-rewind-to-0`; the navigation recursion mirrors `appendAtTM`
+     (`composeFlatTM (scanPastDelimTM 4 0) … 1`); the delete step's tape contract IS
+     `deleteCarry_tail_step`; the rewind is `rewindTwoPhaseTM`. Feed `B` to
+     `loopTM_run` (tape family `T n` = "head 0, register `dst` has `n` content
+     cells, residue carries the `|content|−n` freed zeros"; count `= |s.get dst|`,
+     final state via `iterate_tail_clear`). Wrap in `rewindBracket`; discharge the
+     `clear` branch of `compileOp_sound_physical_residue` (budget `9·tapeLen²+9`).
 
    **Remaining (the loopTM plumbing — large but mechanical, no unknowns):**
    1. Body machine `B` (two exits): from head 0, `NAV` (scan past `dst` delimiters
