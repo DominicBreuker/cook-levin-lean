@@ -2196,6 +2196,47 @@ theorem Compile.deleteCarry_tail_step (s : State) (dst : Var) (res : List Nat)
   rw [htape, hout]
   exact Compile.deleteCarry_drop_head pre M c0 (by omega) hM hMb
 
+/-- In-range, `State.set` is `List.set`. -/
+theorem Compile.set_eq_list_set (s : State) (dst : Var) (w : List Nat) (h : dst < s.length) :
+    s.set dst w = List.set s dst w := by rw [State.set, if_pos h]
+
+/-- Reading back a just-written register (in range). (Local — `Frame`'s
+`State.get_set_eq` is not imported here.) -/
+theorem Compile.get_set_eq (s : State) (dst : Var) (v : List Nat) (h : dst < s.length) :
+    (s.set dst v).get dst = v := by
+  unfold State.get
+  rw [Compile.set_eq_list_set s dst v h, List.getElem?_set_self h, Option.getD_some]
+
+/-- Writing register `dst` to its current value is a no-op (in range). -/
+theorem Compile.set_get_self (s : State) (dst : Var) (h : dst < s.length) :
+    s.set dst (s.get dst) = s := by
+  have hg : s.get dst = s[dst] := by rw [State.get, List.getElem?_eq_getElem h]; rfl
+  rw [Compile.set_eq_list_set s dst _ h, hg]
+  exact List.set_getElem_self h
+
+/-- Two successive writes to the same register: the first is overwritten. -/
+theorem Compile.set_set (s : State) (dst : Var) (a b : List Nat) (h : dst < s.length) :
+    (s.set dst a).set dst b = s.set dst b := by
+  have hla : dst < (s.set dst a).length := by
+    rw [Compile.set_eq_list_set s dst a h, List.length_set]; exact h
+  rw [Compile.set_eq_list_set (s.set dst a) dst b hla, Compile.set_eq_list_set s dst a h,
+      List.set_set, Compile.set_eq_list_set s dst b h]
+
+/-- **State-level invariant of the `clear` loop.** Iterating the in-place `tail`
+body `t ↦ t.set dst t.tail` `n` times drops the first `n` symbols of register
+`dst`: `(·.set dst ·.tail)^[n] s = s.set dst ((s.get dst).drop n)`. At
+`n = |s.get dst|` (`drop` empties the register) this is `clear`. Combined with the
+tape-level `deleteCarry_tail_step`, this is the loop's correctness content. -/
+theorem Compile.set_tail_iterate (s : State) (dst : Var) (h : dst < s.length) :
+    ∀ n, (fun t : State => t.set dst (t.get dst).tail)^[n] s
+        = s.set dst ((s.get dst).drop n) := by
+  intro n
+  induction n with
+  | zero => rw [Function.iterate_zero, id_eq, List.drop_zero, Compile.set_get_self s dst h]
+  | succ n ih =>
+      rw [Function.iterate_succ', Function.comp_apply, ih,
+          Compile.get_set_eq s dst _ h, Compile.set_set s dst _ _ h, List.tail_drop]
+
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
 register. -/
