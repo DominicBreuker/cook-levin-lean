@@ -86,8 +86,31 @@ first; the length ops are copy + in-place truncate.
    against the `clear_block_decomp` target; wrap with `rewindBracket` (head→0,
    two-phase since the freed `0`s are residue past the terminator); then discharge
    the `clear` branch of `compileOp_sound_physical_residue` via the
-   `opAppendBit_physical_residue` template. ⚠ The `loopTM` body must return the
-   head to a fixed position each pass — the fiddly part; `#eval` the body first.
+   `opAppendBit_physical_residue` template.
+
+   **✅ Design validated by `#eval` (2026-06-01) — the mechanism works on a real
+   tape.** For `s = [[1,0],[1],[]]`, clearing register 0 (content length 2):
+   `encodeTape s = [3,2,1,0,2,0,0,3]`; running `deleteCarryTM` from head 2 twice
+   (deleting register 0's two content cells) gives `[3,0,2,0,0,3,0,0]`, which
+   **equals** `encodeTape (s.set 0 []) ++ [0,0]` (= `encodeTape(cleared) ++
+   replicate 2 0`) — confirming `clear_block_decomp`'s residue accounting. Then
+   `rewindTwoPhaseTM 4 3` started on the last real cell returns to `{state 6,
+   head 0}` (the `rewindBracket` exit). Re-run it (proven primitives only):
+   ```
+   import Complexity.Lang.Compile; import Complexity.Lang.ShiftTape; import Complexity.Lang.ScanLeft
+   open Complexity.Lang Complexity.Lang.ShiftTape Complexity.Lang.ScanLeft
+   def s0 : State := [[1,0],[1],[]]
+   def stepDel (t : List Nat) : List Nat :=
+     match runFlatTM 50 deleteCarryTM { state_idx := 0, tapes := [([], 2, t)] } with
+     | some c => match c.tapes with | (_,_,r) :: _ => r | _ => [] | none => []
+   #eval stepDel (stepDel (Compile.encodeTape s0)) == Compile.encodeTape (s0.set 0 []) ++ [0,0]  -- true
+   ```
+   ⚠ **Head management is the fiddly part** (confirmed by `#eval`): `deleteCarryTM`
+   leaves the head **one past the end** (on the blank), so the gadget steps left
+   off the blank before the two-phase rewind (like `rewindFromEndTM`). And the
+   loop body's rewind to a *fixed reference* each pass is cleanest as
+   **rewind-to-0 + re-navigate** (mid-tape markers aren't unique — the reason the
+   two-phase rewind exists), which is what makes `clear` quadratic (budget below).
 
 ### ⚠ The per-op budget is now QUADRATIC (was linear — a blocking finding)
 
