@@ -1040,7 +1040,7 @@ theorem appendAt_twoPhaseRewind_run (ins : Nat) (h_ins : ins < 4)
     (h_post_lt : ∀ x ∈ post, x < 4)
     (h_tp_lt : ∀ x ∈ pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post, x < 4)
     (h_p_pos : 0 < p)
-    (h_p_lt : p < pre.length + (regBlocks skipped).length + body.length + (0 :: post).length)
+    (h_p_le : p ≤ pre.length + (regBlocks skipped).length + body.length + (0 :: post).length)
     (h_t0 : ∀ (h : 0 < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
       (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨0, h⟩ = 3)
     (h_term : ∀ (h : p < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
@@ -1142,7 +1142,7 @@ theorem appendAt_twoPhaseRewind_no_early_halt (ins : Nat) (h_ins : ins < 4)
     (h_post_lt : ∀ x ∈ post, x < 4)
     (h_tp_lt : ∀ x ∈ pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post, x < 4)
     (h_p_pos : 0 < p)
-    (h_p_lt : p < pre.length + (regBlocks skipped).length + body.length + (0 :: post).length)
+    (h_p_le : p ≤ pre.length + (regBlocks skipped).length + body.length + (0 :: post).length)
     (h_t0 : ∀ (h : 0 < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
       (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).get ⟨0, h⟩ = 3)
     (h_term : ∀ (h : p < (pre ++ regBlocks skipped ++ body ++ ins :: 0 :: post).length),
