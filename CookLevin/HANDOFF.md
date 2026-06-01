@@ -112,6 +112,35 @@ first; the length ops are copy + in-place truncate.
    **rewind-to-0 + re-navigate** (mid-tape markers aren't unique — the reason the
    two-phase rewind exists), which is what makes `clear` quadratic (budget below).
 
+   **✅ Inductive heart PROVEN (2026-06-01), axiom-clean.** The mathematical core
+   is done — the rest is TM-composition plumbing:
+   - `Compile.encodeTape_reg_decomp` — master register-slot decomposition:
+     `encodeTape (s.set dst v) = pre ++ shiftReg v ++ 0::rest` with `pre`/`rest`
+     **independent of `v`** (the workhorse every register-writing op uses).
+   - `Compile.deleteCarry_drop_head` — one `deleteCarryTM` pass deletes a block's
+     head: `pre ++ (c0+1)::M → pre ++ M ++ [0]` (from `deleteCarryTM_loop_run`).
+   - `Compile.deleteCarry_tail_step` — **one deletion = the in-place `tail` step**
+     on the encoded tape: deleting register `dst`'s first content cell yields
+     `encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])`. Iterating this
+     `|s.get dst|` times is exactly `clear` (state-level: `(set dst ·.tail)^[n] =
+     set dst (·.drop n)`, and `drop |content| = []`). **This lemma is also the core
+     of the in-place `tail` op** (`tail dst dst`).
+
+   **Remaining (the loopTM plumbing — large but mechanical, no unknowns):**
+   1. Body machine `B` (two exits): from head 0, `NAV` (scan past `dst` delimiters
+      to content-start — chain `scanPastDelimTM`/`scan_to_delim`), read the cell:
+      delimiter `0` → `exitDone`; nonzero → `deleteCarryTM` (per `deleteCarry_tail_step`)
+      ⨾ two-phase rewind to 0 → `exitLoop`. Compose via `composeFlatTM`/
+      `branchComposeFlatTM`; prove `B`'s per-iteration + done contracts (the
+      iteration contract's tape step IS `deleteCarry_tail_step`).
+   2. `clearRegionTM := loopTM B exitDone exitLoop`; apply `loopTM_run` with tape
+      family `T n` = "head 0, register `dst` has `n` content cells, residue has the
+      `|content|−n` freed zeros", iteration count `= |s.get dst|`. Conclusion: the
+      cleared tape (`clear_block_decomp` gives the closed form).
+   3. Wrap in `rewindBracket` (already head-0 if the loop ends at 0; else final
+      rewind), discharge the `clear` branch of `compileOp_sound_physical_residue`
+      (budget `9·tapeLen²+9`, satisfied since the loop is `≈ 6·tapeLen²`).
+
 ### ⚠ The per-op budget is now QUADRATIC (was linear — a blocking finding)
 
 `compileOp_sound_physical_residue`'s budget was `3·tapeLen + 8` (linear). That is
