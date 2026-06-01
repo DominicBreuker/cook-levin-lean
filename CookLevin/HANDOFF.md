@@ -68,15 +68,33 @@ first; the length ops are copy + in-place truncate.
    decomposition. Use the two new bookkeeping lemmas (below) for the residue
    length / validity. Then discharge that op's branch of
    `compileOp_sound_physical_residue`.
-4. `clear dst` can be done **independently and earlier** if you want a quick win
-   on the in-place path: navigate to register `dst`'s content start, then
-   `loopTM`-delete to the delimiter (`loopTM`/`loopTM_run` proven,
-   `TMPrimitives.lean`); residue `res_out = res_in ++ replicate |old| 0`. It does
-   **not** validate the cross-register machinery, so it is a side-quest, not the
-   critical path.
+4. `clear dst` is **also foundational, not just a quick win**: clearing `dst`'s
+   old slot is the shared prerequisite for *every* cross-register op (you must
+   vacate `dst` before writing the new value). Its **spec bridge is now proven**
+   — `Compile.clear_block_decomp` (Compile.lean): clearing `dst` deletes exactly
+   the contiguous `shiftReg (s.get dst)` block before that register's `0`
+   delimiter, so the gadget input `encodeTape s ++ res_in` is
+   `pre ++ shiftReg(s.get dst) ++ (0 :: rest ++ res_in)` and deleting those
+   `|s.get dst|` cells yields exactly
+   `encodeTape (Op.eval (clear dst) s) ++ (res_in ++ replicate |s.get dst| 0)`
+   (residue `res_out = res_in ++ replicate |old| 0`, valid by
+   `ValidResidue_append_replicate_zero`). **Remaining for `clear`:** build the
+   gadget `clearRegionTM` (navigate to `dst`'s content start, then a `loopTM`
+   that deletes one content cell per pass until it reads the `0` delimiter, head
+   reset each pass — `loopTM`/`loopTM_run` proven, `TMPrimitives.lean`; body =
+   `deleteCarryTM` + a rewind-to-content-start guard); prove `clearRegionTM_run`
+   against the `clear_block_decomp` target; wrap with `rewindBracket` (head→0,
+   two-phase since the freed `0`s are residue past the terminator); then discharge
+   the `clear` branch of `compileOp_sound_physical_residue` via the
+   `opAppendBit_physical_residue` template. ⚠ The `loopTM` body must return the
+   head to a fixed position each pass — the fiddly part; `#eval` the body first.
 
 ### New this session (axiom-clean, ready to use)
 
+- `Compile.clear_block_decomp` (Compile.lean, after `encodeTape_split`): the
+  **`clear` gadget's input/output spec bridge** (see step 4 below) — clearing
+  `dst` deletes exactly the `shiftReg (s.get dst)` block; the proven target a
+  future `clearRegionTM_run` discharges.
 - `Compile.encodeTape_set_length` (Compile.lean, near `encodeTape_length`):
   `|encodeTape (s.set dst v)| + |old dst| = |encodeTape s| + |v|` for
   `dst < s.length` — the residue/budget bookkeeping for **every** cross-register

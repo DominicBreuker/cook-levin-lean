@@ -297,9 +297,14 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
       (verify the exit head lands in residue past the terminator, as the append
       op needed), prove its run/`_no_early_halt`, then per-op contracts via the
       `opAppendBit_physical_residue` template + `rewindBracket`. New bookkeeping
-      lemmas landed: `Compile.encodeTape_set_length` (tape-length balance for a
-      register write) and `Compile.ValidResidue_append_replicate_zero`. See
-      HANDOFF.md "the previous plan was wrong".
+      lemmas landed (axiom-clean): `Compile.encodeTape_set_length` (tape-length
+      balance for a register write), `Compile.ValidResidue_append_replicate_zero`,
+      and `Compile.clear_block_decomp` — the `clear` gadget's proven spec bridge
+      (clearing `dst` deletes exactly the `shiftReg (s.get dst)` block; gives the
+      input/output target for a future `clearRegionTM_run`). Note clearing `dst`'s
+      old slot is a shared prerequisite for *every* cross-register op, so the
+      `clear`/delete-region machinery is foundational. See HANDOFF.md "the
+      previous plan was wrong".
    d. Assemble `compileSeq_sound` from `compileSeq_compose_physical`,
       `compileForBnd_sound` from `loopTM_run`, `compileIfBit_sound` from
       `branchComposeFlatTM_run`; then `Compile_sound` / `Compile_run_physical` by

@@ -1422,6 +1422,56 @@ private theorem Compile.encodeTape_split (s : State) (dst : Var) (h : dst < s.le
   rw [Compile.regBlocks_map_shiftReg, hget, hs]
   simp [List.append_assoc]
 
+/-- **Spec bridge for `clear` (the deletion gadget's input/output contract).**
+Clearing register `dst` removes exactly the contiguous `shiftReg (s.get dst)`
+block that sits just before that register's `0` delimiter. There is a common
+prefix `pre` and suffix `0 :: rest` such that, with any incoming residue `res_in`:
+
+1. the gadget's **input** tape `encodeTape s ++ res_in` is
+   `pre ++ shiftReg (s.get dst) ++ (0 :: rest ++ res_in)` — i.e. the block to
+   delete is `shiftReg (s.get dst)`, of length `|s.get dst|` (conjunct 3); and
+2. after a left-shift that deletes those `|s.get dst|` cells (the gadget repeats
+   `deleteCarryTM`, each pushing one `0` filler to the far end), the tape is
+   exactly `encodeTape (Op.eval (clear dst) s) ++ (res_in ++ replicate |s.get dst| 0)`.
+
+So the residue-tolerant `clear` contract is `res_out = res_in ++ replicate |old| 0`
+(`ValidResidue` by `ValidResidue_append_replicate_zero`); the freed cells become
+terminator-free `0` residue past the real terminator, so the **two-phase rewind**
+applies (head ends in the residue). This is the `clear` analogue of
+`encodeTape_split` and the target a future `clearRegionTM_run` discharges. -/
+theorem Compile.clear_block_decomp (s : State) (dst : Var) (res_in : List Nat)
+    (h : dst < s.length) :
+    ∃ pre rest : List Nat,
+      Compile.encodeTape s ++ res_in
+          = pre ++ (Compile.shiftReg (s.get dst) ++ (0 :: rest ++ res_in)) ∧
+      pre ++ ((0 :: rest ++ res_in) ++ List.replicate (s.get dst).length 0)
+          = Compile.encodeTape (Op.eval (Op.clear dst) s)
+              ++ (res_in ++ List.replicate (s.get dst).length 0) ∧
+      (Compile.shiftReg (s.get dst)).length = (s.get dst).length := by
+  have hget : s.get dst = s[dst] := by
+    rw [State.get, List.getElem?_eq_getElem h]; rfl
+  refine ⟨Compile.endMark :: Compile.encodeRegs (s.take dst),
+          Compile.encodeRegs (s.drop (dst + 1)) ++ [Compile.endMark], ?_, ?_, ?_⟩
+  · have hs : Compile.encodeRegs s
+        = Compile.encodeRegs (s.take dst)
+            ++ (Compile.shiftReg (s.get dst)
+                ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1)))) := by
+      conv_lhs => rw [Compile.list_eq_take_getElem_drop s dst h]
+      rw [Compile.encodeRegs_append, Compile.encodeRegs_cons, ← hget]
+      simp [List.append_assoc]
+    rw [Compile.encodeTape, hs]
+    simp [List.append_assoc]
+  · have hset : s.set dst [] = s.take dst ++ ([] : List Nat) :: s.drop (dst + 1) := by
+      rw [State.set, if_pos h]; exact Compile.list_set_eq_take_cons_drop s dst [] h
+    have hs : Compile.encodeRegs (s.set dst [])
+        = Compile.encodeRegs (s.take dst) ++ ([0] ++ Compile.encodeRegs (s.drop (dst + 1))) := by
+      rw [hset, Compile.encodeRegs_append, Compile.encodeRegs_cons]
+      simp [Compile.shiftReg]
+    show _ = Compile.encodeTape (s.set dst []) ++ _
+    rw [Compile.encodeTape, hs]
+    simp [List.append_assoc]
+  · rw [Compile.shiftReg, List.length_map]
+
 /-- `appendOne` preserves bit-shape (it appends the bit `1`). -/
 private theorem Compile.BitState_appendOne (s : State) (dst : Var)
     (h : Compile.BitState s) (hdst : dst < s.length) :
