@@ -153,13 +153,72 @@ first; the length ops are copy + in-place truncate.
      the cell *before* the delimiter — the last content cell — each pass; "empty"
      is detected when that cell is `0`/`3`).
    - The body `B` (two exits) = `navigate ⨾ branch(cell=delim? done : delete) ⨾
-     two-phase-rewind-to-0`; the navigation recursion mirrors `appendAtTM`
+     rewind-to-0`; the navigation recursion mirrors `appendAtTM`
      (`composeFlatTM (scanPastDelimTM 4 0) … 1`); the delete step's tape contract IS
-     `deleteCarry_tail_step`; the rewind is `rewindTwoPhaseTM`. Feed `B` to
-     `loopTM_run` (tape family `T n` = "head 0, register `dst` has `n` content
-     cells, residue carries the `|content|−n` freed zeros"; count `= |s.get dst|`,
-     final state via `iterate_tail_clear`). Wrap in `rewindBracket`; discharge the
-     `clear` branch of `compileOp_sound_physical_residue` (budget `9·tapeLen²+9`).
+     `deleteCarry_tail_step`. Feed `B` to `loopTM_run` (tape family `T n` = "head 0,
+     register `dst` has `n` content cells, residue carries the `|content|−n` freed
+     zeros"; count `= |s.get dst|`, final state via `iterate_tail_clear`). Discharge
+     the `clear` branch of `compileOp_sound_physical_residue` (budget `9·tapeLen²+9`).
+
+### ⚠⚠ PRE-BUILD CHECKLIST for the `clear` machine (no surprises — read before building)
+
+A systematic audit of every primitive the machine needs. **Missing pieces to build
+first**, **design choices**, then **confirmed-present** infrastructure.
+
+**MISSING — must build (small, but build them up front):**
+1. **`stepRightTM`** (a one-cell right move; only `stepLeftTM` exists, `ScanLeft.lean`).
+   Needed for the **navigation base case**: from head `0` (the leading sentinel
+   `3`, *not* a delimiter, so `scanPastDelimTM` does not apply) the head must step
+   right to reach register 0's content-start (index 1). Navigation =
+   `stepRightTM ⨾ scanPastDelimTM^dst`. Mirror `stepLeftTM`.
+2. **A "test current cell" branch machine** (the `M₁` for `branchComposeFlatTM`).
+   `bitTestTM` is **not** reusable — it is hard-wired to head-after-sentinel and
+   tests `2`-vs-`1`. Need: read the cell at the (navigated) head, branch
+   `exit_pos`/`exit_neg` on `= 0` (delimiter ⇒ done) vs `∈ {1,2}` (content ⇒
+   delete). **Make it also move the head right by one while testing** — this folds
+   in the alignment that `deleteCarryTM` deletes the cell *before* the head (head
+   at `content-start+1` deletes `content-start`), so no separate step is needed
+   before the delete.
+
+**DESIGN CHOICES (decide up front — they change which proven lemmas apply):**
+3. **First-cell vs last-cell deletion.** Current proven lemmas
+   (`deleteCarry_tail_step`, `set_tail_iterate`) are for deleting register `dst`'s
+   **first** content cell (`tail`; head at `content-start+1`). Alternative:
+   navigate to register `dst`'s **delimiter** (reuse `appendAtTM`'s scan-to-`0`
+   pattern, *no* `stepRightTM`) and delete the cell *before* it (the **last**
+   content cell, `dropLast`). The last-cell route avoids `stepRightTM` but needs
+   `dropLast` variants of `deleteCarry_tail_step`/`set_tail_iterate` (re-prove with
+   `List.dropLast`/`List.tail` swapped — modest). Pick one before building.
+4. **Body's internal rewind halts.** The rewinds have **two** halt states
+   (found + boundary; e.g. `rewindTwoPhaseTM` halts at 6 *and* 7). Inside the body,
+   demote the boundary (`joinTwoHalts`, as `rewindBracket` does) — or prove it
+   unreachable — so the body presents clean `exitDone`/`exitLoop` and the
+   `loopTM_run` no-early-halt trajectory (which uses `haltingStateReached B`) holds.
+5. **Likely NO outer `rewindBracket` for `clear`** (unlike append): every loop
+   iteration (both branches) ends with the head at `0`, and `loopTM` has a single
+   halt state (`B.states`), so the finished `loopTM` machine already exits head-`0`
+   with a unique halt — it may be a `CompiledCmd` directly. Confirm when building.
+
+**CONFIRMED PRESENT (reusable as-is):**
+- `loopTM` + `loopTM_run` (`TMPrimitives.lean`); `composeFlatTM_run`/`_no_early_halt`;
+  `branchComposeFlatTM_run_pos`/`_neg` (the conditional split).
+- Navigation: `scanPastDelimTM` + `scanPast_block` + `scanPastDelim_no_early_halt`
+  (`ScanPast.lean`/`AppendGadget.lean`).
+- **Done-branch rewind**: `ScanLeft.rewindToStart_run`/`_traj` (single-phase scan
+  left to the sentinel from an *interior* head, head `≤` the cells before it —
+  fits the empty-register case, head left of the terminator).
+- **Delete-branch rewind**: `rewindTwoPhase_run`/`_no_early_halt` (requires head
+  `≥ p` = in the residue past the terminator — fits the post-delete head).
+- All the `clear` math lemmas above (decomposition, tail-step, state iteration).
+
+### ⚠ Beyond `clear`: the cross-register ops still need the block-move gadget
+Audit confirms there is **no** read-and-transport / block-copy gadget anywhere
+(`insertCarryTM` inserts a *fixed* symbol; `deleteCarryTM` deletes; scans navigate
+— none carry register content between tape positions). `copy`/`tail dst src`/
+`head`/`takeAt`/`dropAt`/`concat`/`consLen` (all `dst ≠ src` in the real witnesses)
+need `copyBlockTM` built from scratch — the largest remaining gadget (see top of
+file). `clear` (single-register) and `tail dst dst` (in-place) are the only
+deletion-style ops the current primitives + the `clear` machine cover.
 
    **Remaining (the loopTM plumbing — large but mechanical, no unknowns):**
    1. Body machine `B` (two exits): from head 0, `NAV` (scan past `dst` delimiters
