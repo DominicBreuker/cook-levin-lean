@@ -2571,6 +2571,146 @@ theorem branchComposeFlatTM_run_neg
       h_validM2 c₃
     rw [this]; exact h_halt3
 
+/-- **No-early-halt trajectory of `branchComposeFlatTM` — positive branch.** The
+branch analogue of `composeFlatTM_no_early_halt`: from the two component
+trajectories (M₁ never halts / hits an exit, M₂ never halts), the composite never
+halts during the first `t₁ + 1 + t₂` steps when M₁ exits at `exit_pos` (so M₂
+runs). The `h_traj1` consumed by an *outer* `loopTM`/composition. -/
+theorem branchComposeFlatTM_no_early_halt_pos
+    {M₁ M₂ M₃ : FlatTM} {exit_pos exit_neg : Nat}
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂) (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states) (h_exit_neg_lt : exit_neg < M₁.states)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (left₁ : List Nat) (head₁ : Nat) (right₁ : List Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left₁, head₁, right₁) = some v →
+                          v < max M₁.sig (max M₂.sig M₃.sig))
+    {t₁ t₂ : Nat}
+    (h_run1 : runFlatTM t₁ M₁ cfg0 =
+              some { state_idx := exit_pos, tapes := [(left₁, head₁, right₁)] })
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧ haltingStateReached M₁ ck = false)
+    (h_traj2 : ∀ k, k < t₂ → ∀ ck,
+       runFlatTM k M₂ { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] } = some ck →
+       haltingStateReached M₂ ck = false) :
+    ∀ k, k < t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 = some ck →
+      haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) ck = false := by
+  intro k hk ck hck
+  by_cases hkle : k ≤ t₁
+  · have h_traj1' : ∀ j, j < k → ∀ cj, runFlatTM j M₁ cfg0 = some cj →
+        cj.state_idx ≠ exit_pos ∧ cj.state_idx ≠ exit_neg ∧ haltingStateReached M₁ cj = false :=
+      fun j hj cj hcj => h_traj1 j (Nat.lt_of_lt_of_le hj hkle) cj hcj
+    have h_eq := runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1 k cfg0
+      h_cfg0_state_lt h_traj1'
+    rw [h_eq] at hck
+    have hck_lt : ck.state_idx < M₁.states :=
+      state_idx_lt_states_of_run M₁ h_validM1 k cfg0 ck h_cfg0_state_lt hck
+    exact branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg ck hck_lt
+  · push_neg at hkle
+    obtain ⟨j, rfl⟩ : ∃ j, k = (t₁ + 1) + j := ⟨k - (t₁ + 1), by omega⟩
+    have hj_lt : j < t₂ := by omega
+    have h_phase1 := runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1
+      t₁ cfg0 h_cfg0_state_lt h_traj1
+    have h_run1' : runFlatTM t₁ (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+        some { state_idx := exit_pos, tapes := [(left₁, head₁, right₁)] } := by
+      rw [h_phase1]; exact h_run1
+    have h_bridge := stepFlatTM_branchComposeFlatTM_bridge_pos M₁ M₂ M₃ exit_pos exit_neg
+      left₁ right₁ head₁ h_sym_bound
+    have h_phase12 : runFlatTM (t₁ + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+        some { state_idx := M₁.states + M₂.start, tapes := [(left₁, head₁, right₁)] } := by
+      apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1' ?_ h_bridge
+      exact branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg _ h_exit_pos_lt
+    rw [runFlatTM_compose _ (t₁ + 1) j cfg0 _ h_phase12] at hck
+    set cfg2_start : FlatTMConfig :=
+      { state_idx := M₂.start, tapes := [(left₁, head₁, right₁)] }
+    have h_phase_j := runFlatTM_branchComposeFlatTM_M2_phase M₁ M₂ M₃ exit_pos exit_neg
+      h_validM1 h_validM2 h_validM3 h_exit_pos_lt h_exit_neg_lt j cfg2_start h_validM2.1
+    have h_cfg_eq :
+        ({ state_idx := M₂.start + M₁.states, tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) =
+        { state_idx := M₁.states + M₂.start, tapes := [(left₁, head₁, right₁)] } := by
+      rw [Nat.add_comm M₂.start M₁.states]
+    rw [← h_cfg_eq, h_phase_j] at hck
+    cases hjm : runFlatTM j M₂ cfg2_start with
+    | none => rw [hjm] at hck; simp at hck
+    | some cj =>
+        rw [hjm] at hck; simp only [Option.map_some] at hck
+        have hck_eq : ck = { state_idx := cj.state_idx + M₁.states, tapes := cj.tapes } :=
+          (Option.some.inj hck).symm
+        have hcj_lt : cj.state_idx < M₂.states :=
+          state_idx_lt_states_of_run M₂ h_validM2 j cfg2_start cj h_validM2.1 hjm
+        have hcj_nothalt : haltingStateReached M₂ cj = false := h_traj2 j hj_lt cj hjm
+        rw [hck_eq, branchComposeFlatTM_haltingStateReached_M2 M₁ M₂ M₃ exit_pos exit_neg
+          h_validM2 cj.state_idx hcj_lt cj.tapes]
+        exact hcj_nothalt
+
+/-- **No-early-halt trajectory of `branchComposeFlatTM` — negative branch.** -/
+theorem branchComposeFlatTM_no_early_halt_neg
+    {M₁ M₂ M₃ : FlatTM} {exit_pos exit_neg : Nat}
+    (h_exit_neq : exit_pos ≠ exit_neg)
+    (h_validM1 : validFlatTM M₁) (h_validM2 : validFlatTM M₂) (h_validM3 : validFlatTM M₃)
+    (h_exit_pos_lt : exit_pos < M₁.states) (h_exit_neg_lt : exit_neg < M₁.states)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (left₁ : List Nat) (head₁ : Nat) (right₁ : List Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left₁, head₁, right₁) = some v →
+                          v < max M₁.sig (max M₂.sig M₃.sig))
+    {t₁ t₂ : Nat}
+    (h_run1 : runFlatTM t₁ M₁ cfg0 =
+              some { state_idx := exit_neg, tapes := [(left₁, head₁, right₁)] })
+    (h_traj1 : ∀ k, k < t₁ → ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit_pos ∧ ck.state_idx ≠ exit_neg ∧ haltingStateReached M₁ ck = false)
+    (h_traj3 : ∀ k, k < t₂ → ∀ ck,
+       runFlatTM k M₃ { state_idx := M₃.start, tapes := [(left₁, head₁, right₁)] } = some ck →
+       haltingStateReached M₃ ck = false) :
+    ∀ k, k < t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 = some ck →
+      haltingStateReached (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) ck = false := by
+  intro k hk ck hck
+  by_cases hkle : k ≤ t₁
+  · have h_traj1' : ∀ j, j < k → ∀ cj, runFlatTM j M₁ cfg0 = some cj →
+        cj.state_idx ≠ exit_pos ∧ cj.state_idx ≠ exit_neg ∧ haltingStateReached M₁ cj = false :=
+      fun j hj cj hcj => h_traj1 j (Nat.lt_of_lt_of_le hj hkle) cj hcj
+    have h_eq := runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1 k cfg0
+      h_cfg0_state_lt h_traj1'
+    rw [h_eq] at hck
+    have hck_lt : ck.state_idx < M₁.states :=
+      state_idx_lt_states_of_run M₁ h_validM1 k cfg0 ck h_cfg0_state_lt hck
+    exact branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg ck hck_lt
+  · push_neg at hkle
+    obtain ⟨j, rfl⟩ : ∃ j, k = (t₁ + 1) + j := ⟨k - (t₁ + 1), by omega⟩
+    have hj_lt : j < t₂ := by omega
+    have h_phase1 := runFlatTM_branchComposeFlatTM_M1_phase M₁ M₂ M₃ exit_pos exit_neg h_validM1
+      t₁ cfg0 h_cfg0_state_lt h_traj1
+    have h_run1' : runFlatTM t₁ (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+        some { state_idx := exit_neg, tapes := [(left₁, head₁, right₁)] } := by
+      rw [h_phase1]; exact h_run1
+    have h_bridge := stepFlatTM_branchComposeFlatTM_bridge_neg M₁ M₂ M₃ exit_pos exit_neg
+      h_exit_neq left₁ right₁ head₁ h_sym_bound
+    have h_phase12 : runFlatTM (t₁ + 1) (branchComposeFlatTM M₁ M₂ M₃ exit_pos exit_neg) cfg0 =
+        some { state_idx := M₁.states + M₂.states + M₃.start, tapes := [(left₁, head₁, right₁)] } := by
+      apply runFlatTM_extend_by_step _ t₁ cfg0 _ _ h_run1' ?_ h_bridge
+      exact branchComposeFlatTM_haltingStateReached_M1 M₁ M₂ M₃ exit_pos exit_neg _ h_exit_neg_lt
+    rw [runFlatTM_compose _ (t₁ + 1) j cfg0 _ h_phase12] at hck
+    set cfg3_start : FlatTMConfig :=
+      { state_idx := M₃.start, tapes := [(left₁, head₁, right₁)] }
+    have h_phase_j := runFlatTM_branchComposeFlatTM_M3_phase M₁ M₂ M₃ exit_pos exit_neg
+      h_validM1 h_validM2 h_validM3 h_exit_pos_lt h_exit_neg_lt j cfg3_start
+    have h_cfg_eq :
+        ({ state_idx := M₃.start + (M₁.states + M₂.states),
+           tapes := [(left₁, head₁, right₁)] } : FlatTMConfig) =
+        { state_idx := M₁.states + M₂.states + M₃.start, tapes := [(left₁, head₁, right₁)] } := by
+      rw [Nat.add_comm M₃.start (M₁.states + M₂.states)]
+    rw [← h_cfg_eq, h_phase_j] at hck
+    cases hjm : runFlatTM j M₃ cfg3_start with
+    | none => rw [hjm] at hck; simp at hck
+    | some cj =>
+        rw [hjm] at hck; simp only [Option.map_some] at hck
+        have hck_eq : ck = { state_idx := cj.state_idx + (M₁.states + M₂.states), tapes := cj.tapes } :=
+          (Option.some.inj hck).symm
+        have hcj_nothalt : haltingStateReached M₃ cj = false := h_traj3 j hj_lt cj hjm
+        rw [hck_eq, branchComposeFlatTM_haltingStateReached_M3 M₁ M₂ M₃ exit_pos exit_neg
+          h_validM2 cj.state_idx cj.tapes]
+        exact hcj_nothalt
+
 /-! ## Step 4 — atomic Bool-output TMs
 
 The simplest non-vacuous deciders: a TM that always halts in the
