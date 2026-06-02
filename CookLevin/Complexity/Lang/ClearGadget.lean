@@ -955,6 +955,41 @@ theorem clearBodyRawTM_exitLoop_lt (dst : Nat) :
   show _ + 17 < _ + 19 + 3
   omega
 
+/-- `clearBodyRawTM_exitLoop dst` is a halt state (the `stepDeleteRewindRawTM`
+"found" halt, in the M₂ slot). Used to derive `≠ exitLoop` from a no-early-halt
+trajectory in the loop assembly. -/
+theorem clearBodyRawTM_exitLoop_is_halt (dst : Nat) :
+    (clearBodyRawTM dst).halt[clearBodyRawTM_exitLoop dst]? = some true := by
+  show (composedBranchHalt (navigateAndTestTM dst) stepDeleteRewindRawTM justRewindTM)[
+        (navigateAndTestTM dst).states + stepDeleteRewindTM_exit]? = some true
+  show (List.replicate (navigateAndTestTM dst).states false
+        ++ stepDeleteRewindRawTM.halt ++ justRewindTM.halt)[
+        (navigateAndTestTM dst).states + 17]? = some true
+  have hlen : stepDeleteRewindRawTM.halt.length = 19 := stepDeleteRewindRawTM_valid.2.1
+  rw [List.append_assoc,
+      List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel_left,
+      List.getElem?_append_left (by rw [hlen]; omega)]
+  exact stepDeleteRewindRawTM_halt_seventeen
+
+/-- `clearBodyRawTM_exitDone dst` is a halt state (the `justRewindTM` "found"
+halt `1`, in the M₃ slot). -/
+theorem clearBodyRawTM_exitDone_is_halt (dst : Nat) :
+    (clearBodyRawTM dst).halt[clearBodyRawTM_exitDone dst]? = some true := by
+  show (composedBranchHalt (navigateAndTestTM dst) stepDeleteRewindRawTM justRewindTM)[
+        (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM_exit]?
+        = some true
+  show (List.replicate (navigateAndTestTM dst).states false
+        ++ stepDeleteRewindRawTM.halt ++ justRewindTM.halt)[
+        (navigateAndTestTM dst).states + 19 + 1]? = some true
+  have hlen : stepDeleteRewindRawTM.halt.length = 19 := stepDeleteRewindRawTM_valid.2.1
+  rw [List.getElem?_append_right
+        (by rw [List.length_append, List.length_replicate, hlen]; omega),
+      List.length_append, List.length_replicate, hlen,
+      show (navigateAndTestTM dst).states + 19 + 1 - ((navigateAndTestTM dst).states + 19) = 1
+        from by omega]
+  rfl
+
 theorem clearRegionTM_valid (dst : Nat) : validFlatTM (clearRegionTM dst) :=
   loopTM_valid (clearBodyRawTM dst) (clearBodyRawTM_exitDone dst) (clearBodyRawTM_exitLoop dst)
     (clearBodyRawTM_valid dst)
