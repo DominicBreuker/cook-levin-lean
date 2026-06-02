@@ -582,6 +582,194 @@ theorem navigateAndTestTM_states (dst : Nat) :
     (navigateAndTestTM dst).states = (navigateToRegTM dst).states + 3 := by
   show (navigateToRegTM dst).states + (delimTestTM 4).states = _; rfl
 
+/-! ### `navigateAndTestTM` run + trajectory
+
+`navigateAndTestTM skipped.length` navigates to register `dst`'s content start
+and reads that cell: if it is content `v ≠ 0` (register nonempty) it exits at
+`navigateAndTestTM_exit_content`; if it is the delimiter `0` (register empty) at
+`navigateAndTestTM_exit_delim`. The head and tape are unchanged from the
+navigation. -/
+
+/-- The cell at register `dst`'s content start (head `1 + |regBlocks skipped|`)
+on the tape `3 :: (regBlocks skipped ++ v :: tail')` is `v`. -/
+theorem navAndTest_cell (skipped : List (List Nat)) (v : Nat) (tail' : List Nat)
+    (hlt : 1 + (regBlocks skipped).length
+        < ((3 : Nat) :: (regBlocks skipped ++ v :: tail')).length) :
+    ((3 : Nat) :: (regBlocks skipped ++ v :: tail')).get
+        ⟨1 + (regBlocks skipped).length, hlt⟩ = v := by
+  have hcell? : ((3 : Nat) :: (regBlocks skipped ++ v :: tail'))[
+        1 + (regBlocks skipped).length]? = some v := by
+    rw [show ((3 : Nat) :: (regBlocks skipped ++ v :: tail'))
+          = ((3 : Nat) :: regBlocks skipped) ++ (v :: tail') from by simp,
+        List.getElem?_append_right (by simp),
+        show 1 + (regBlocks skipped).length - ((3 : Nat) :: regBlocks skipped).length = 0 by
+          simp; omega]
+    rfl
+  rw [List.get_eq_getElem]
+  have h2 := hcell?
+  rw [List.getElem?_eq_getElem hlt] at h2
+  exact Option.some_inj.mp h2
+
+theorem navAndTest_sym_bound (dst : Nat) (head : Nat) (right : List Nat) (v : Nat)
+    (hlt : head < right.length) (hget : right.get ⟨head, hlt⟩ = v) (hv4 : v < 4) :
+    ∀ w, currentTapeSymbol ([], head, right) = some w →
+      w < max (navigateToRegTM dst).sig (delimTestTM 4).sig := by
+  intro w hw
+  rw [currentTapeSymbol_in_range hlt, hget] at hw
+  injection hw with hw'
+  have hmax : max (navigateToRegTM dst).sig (delimTestTM 4).sig = 4 := by
+    rw [navigateToRegTM_sig]; rfl
+  rw [hmax, ← hw']; exact hv4
+
+/-- **`navigateAndTestTM` run — content branch** (`v ≠ 0`). -/
+theorem navigateAndTestTM_run_content (skipped : List (List Nat)) (v : Nat) (tail' : List Nat)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4))
+    (hv0 : v ≠ 0) (hv4 : v < 4) :
+    runFlatTM (navSteps skipped + 1 + 1) (navigateAndTestTM skipped.length)
+        { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ v :: tail'))] }
+      = some { state_idx := navigateAndTestTM_exit_content skipped.length,
+               tapes := [([], 1 + (regBlocks skipped).length,
+                          (3 : Nat) :: (regBlocks skipped ++ v :: tail'))] } := by
+  set T : List Nat := (3 : Nat) :: (regBlocks skipped ++ v :: tail') with hTdef
+  have hlt : 1 + (regBlocks skipped).length < T.length := by
+    rw [hTdef]; simp [List.length_append]; omega
+  have hcell : T.get ⟨1 + (regBlocks skipped).length, hlt⟩ = v :=
+    navAndTest_cell skipped v tail' hlt
+  have h_run1 := navigateToRegTM_run skipped (v :: tail') h_skip
+  have h_traj1 : ∀ k, k < navSteps skipped → ∀ ck,
+      runFlatTM k (navigateToRegTM skipped.length)
+          { state_idx := 0, tapes := [([], 0, T)] } = some ck →
+      ck.state_idx ≠ navigateToRegTM_exit skipped.length ∧
+      haltingStateReached (navigateToRegTM skipped.length) ck = false := by
+    intro k hk ck hck
+    rw [hTdef] at hck
+    have hh := navigateToRegTM_no_early_halt skipped (v :: tail') h_skip k hk ck hck
+    exact ⟨ne_of_not_halting (navigateToRegTM_exit_is_halt skipped.length) hh, hh⟩
+  have h_run2 := delimTestTM_run_content 4 (by decide) []
+    T (1 + (regBlocks skipped).length) v hlt hcell hv0 hv4
+  have hcomp := composeFlatTM_run
+    (navigateToRegTM_valid skipped.length) (delimTestTM_valid 4 (by decide))
+    (navigateToRegTM_exit_lt skipped.length)
+    { state_idx := 0, tapes := [([], 0, T)] }
+    (by show (0:Nat) < (navigateToRegTM skipped.length).states; rw [navigateToRegTM_states]; omega)
+    [] (1 + (regBlocks skipped).length) T
+    (navAndTest_sym_bound skipped.length _ T v hlt hcell hv4)
+    h_run1 h_traj1 h_run2 rfl
+  rw [show navigateAndTestTM skipped.length
+        = composeFlatTM (navigateToRegTM skipped.length) (delimTestTM 4)
+            (navigateToRegTM_exit skipped.length) from rfl, hcomp.1,
+      show navigateAndTestTM_exit_content skipped.length
+            = 1 + (navigateToRegTM skipped.length).states from by
+          show (navigateToRegTM skipped.length).states + 1
+            = 1 + (navigateToRegTM skipped.length).states; omega]
+
+/-- **`navigateAndTestTM` run — delimiter branch** (register empty). -/
+theorem navigateAndTestTM_run_delim (skipped : List (List Nat)) (tail' : List Nat)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) :
+    runFlatTM (navSteps skipped + 1 + 1) (navigateAndTestTM skipped.length)
+        { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ 0 :: tail'))] }
+      = some { state_idx := navigateAndTestTM_exit_delim skipped.length,
+               tapes := [([], 1 + (regBlocks skipped).length,
+                          (3 : Nat) :: (regBlocks skipped ++ 0 :: tail'))] } := by
+  set T : List Nat := (3 : Nat) :: (regBlocks skipped ++ 0 :: tail') with hTdef
+  have hlt : 1 + (regBlocks skipped).length < T.length := by
+    rw [hTdef]; simp [List.length_append]; omega
+  have hcell : T.get ⟨1 + (regBlocks skipped).length, hlt⟩ = 0 :=
+    navAndTest_cell skipped 0 tail' hlt
+  have h_run1 := navigateToRegTM_run skipped (0 :: tail') h_skip
+  have h_traj1 : ∀ k, k < navSteps skipped → ∀ ck,
+      runFlatTM k (navigateToRegTM skipped.length)
+          { state_idx := 0, tapes := [([], 0, T)] } = some ck →
+      ck.state_idx ≠ navigateToRegTM_exit skipped.length ∧
+      haltingStateReached (navigateToRegTM skipped.length) ck = false := by
+    intro k hk ck hck
+    rw [hTdef] at hck
+    have hh := navigateToRegTM_no_early_halt skipped (0 :: tail') h_skip k hk ck hck
+    exact ⟨ne_of_not_halting (navigateToRegTM_exit_is_halt skipped.length) hh, hh⟩
+  have h_run2 := delimTestTM_run_delim 4 (by decide) []
+    T (1 + (regBlocks skipped).length) hlt hcell
+  have hcomp := composeFlatTM_run
+    (navigateToRegTM_valid skipped.length) (delimTestTM_valid 4 (by decide))
+    (navigateToRegTM_exit_lt skipped.length)
+    { state_idx := 0, tapes := [([], 0, T)] }
+    (by show (0:Nat) < (navigateToRegTM skipped.length).states; rw [navigateToRegTM_states]; omega)
+    [] (1 + (regBlocks skipped).length) T
+    (navAndTest_sym_bound skipped.length _ T 0 hlt hcell (by decide))
+    h_run1 h_traj1 h_run2 rfl
+  rw [show navigateAndTestTM skipped.length
+        = composeFlatTM (navigateToRegTM skipped.length) (delimTestTM 4)
+            (navigateToRegTM_exit skipped.length) from rfl, hcomp.1,
+      show navigateAndTestTM_exit_delim skipped.length
+            = 2 + (navigateToRegTM skipped.length).states from by
+          show (navigateToRegTM skipped.length).states + 2
+            = 2 + (navigateToRegTM skipped.length).states; omega]
+
+/-- **`navigateAndTestTM` no-early-halt** (independent of the branch: the cell
+just needs to be in-range `< 4`). -/
+theorem navigateAndTestTM_no_early_halt (skipped : List (List Nat)) (v : Nat) (tail' : List Nat)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) (hv4 : v < 4) :
+    ∀ k, k < navSteps skipped + 1 + 1 → ∀ ck,
+      runFlatTM k (navigateAndTestTM skipped.length)
+          { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ v :: tail'))] }
+        = some ck →
+      haltingStateReached (navigateAndTestTM skipped.length) ck = false := by
+  set T : List Nat := (3 : Nat) :: (regBlocks skipped ++ v :: tail') with hTdef
+  have hlt : 1 + (regBlocks skipped).length < T.length := by
+    rw [hTdef]; simp [List.length_append]; omega
+  have hcell : T.get ⟨1 + (regBlocks skipped).length, hlt⟩ = v :=
+    navAndTest_cell skipped v tail' hlt
+  have h_run1 := navigateToRegTM_run skipped (v :: tail') h_skip
+  have h_traj1 : ∀ k, k < navSteps skipped → ∀ ck,
+      runFlatTM k (navigateToRegTM skipped.length)
+          { state_idx := 0, tapes := [([], 0, T)] } = some ck →
+      ck.state_idx ≠ navigateToRegTM_exit skipped.length ∧
+      haltingStateReached (navigateToRegTM skipped.length) ck = false := by
+    intro k hk ck hck
+    rw [hTdef] at hck
+    have hh := navigateToRegTM_no_early_halt skipped (v :: tail') h_skip k hk ck hck
+    exact ⟨ne_of_not_halting (navigateToRegTM_exit_is_halt skipped.length) hh, hh⟩
+  have h_traj2 : ∀ k, k < 1 → ∀ ck,
+      runFlatTM k (delimTestTM 4)
+          { state_idx := (delimTestTM 4).start, tapes := [([], 1 + (regBlocks skipped).length, T)] }
+        = some ck → haltingStateReached (delimTestTM 4) ck = false := by
+    intro k hk ck hck
+    exact (delimTestTM_no_early_halt 4 [] T (1 + (regBlocks skipped).length) k hk ck hck).2.2
+  rw [show navigateAndTestTM skipped.length
+        = composeFlatTM (navigateToRegTM skipped.length) (delimTestTM 4)
+            (navigateToRegTM_exit skipped.length) from rfl]
+  exact composeFlatTM_no_early_halt
+    (navigateToRegTM_valid skipped.length) (delimTestTM_valid 4 (by decide))
+    (navigateToRegTM_exit_lt skipped.length)
+    { state_idx := 0, tapes := [([], 0, T)] }
+    (by show (0:Nat) < (navigateToRegTM skipped.length).states; rw [navigateToRegTM_states]; omega)
+    [] (1 + (regBlocks skipped).length) T
+    (navAndTest_sym_bound skipped.length _ T v hlt hcell hv4)
+    h_run1 h_traj1 h_traj2
+
+/-- `navigateAndTestTM_exit_content dst` is a halt state. -/
+theorem navigateAndTestTM_exit_content_is_halt (dst : Nat) :
+    (navigateAndTestTM dst).halt[navigateAndTestTM_exit_content dst]? = some true := by
+  show (composedHalt (navigateToRegTM dst) (delimTestTM 4))[
+        navigateAndTestTM_exit_content dst]? = some true
+  rw [navigateAndTestTM_exit_content]
+  show (List.replicate (navigateToRegTM dst).states false ++ (delimTestTM 4).halt)[
+        (navigateToRegTM dst).states + delimTestTM_exit_content]? = some true
+  rw [List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel_left]
+  rfl
+
+/-- `navigateAndTestTM_exit_delim dst` is a halt state. -/
+theorem navigateAndTestTM_exit_delim_is_halt (dst : Nat) :
+    (navigateAndTestTM dst).halt[navigateAndTestTM_exit_delim dst]? = some true := by
+  show (composedHalt (navigateToRegTM dst) (delimTestTM 4))[
+        navigateAndTestTM_exit_delim dst]? = some true
+  rw [navigateAndTestTM_exit_delim]
+  show (List.replicate (navigateToRegTM dst).states false ++ (delimTestTM 4).halt)[
+        (navigateToRegTM dst).states + delimTestTM_exit_delim]? = some true
+  rw [List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel_left]
+  rfl
+
 /-! ## 4. Delete-and-rewind machine
 
 For the content branch: step right (so head is at content_start + 1),
