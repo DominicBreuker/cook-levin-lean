@@ -64,45 +64,65 @@ register `dst`'s first content cell (or its delimiter if the register is
 empty). Mirrors `AppendGadget.appendAtTM` but stops *at* the register
 content-start rather than scanning *through* it. -/
 
-/-- Navigate from head `0` to register `dst`'s first cell.
-- `dst = 0`: just `stepRightTM 4` (head 0 → 1).
-- `dst = d+1`: `scanPastDelimTM 4 0 ⨾ navigateToRegTM d` (skip one delimiter
-  then recurse). -/
+/-- The exit (halt) state of `navigateToRegTM dst`. Closed form so it can be
+referenced as the bridge in `navigateToRegTM`'s own recursion.
+- `dst = 0`: `stepRightTM`'s halt state `1`.
+- `dst = d+1`: `scanPastDelimTM`'s found halt (`1`) shifted by
+  `(navigateToRegTM d).states = 2 + 3·d`, i.e. `3·d + 3`. -/
+def navigateToRegTM_exit : Nat → Nat
+  | 0     => 1
+  | d + 1 => 3 * d + 3
+
+/-- Navigate from head `0` to register `dst`'s first content cell
+(`stepRight ⨾ scanPastDelim^dst`).
+- `dst = 0`: `stepRightTM 4` (head `0 → 1`, past the leading sentinel onto
+  register `0`'s content start).
+- `dst = d+1`: `navigateToRegTM d ⨾ scanPastDelimTM 4 0` (navigate to register
+  `d`'s content start, then scan past register `d`'s content and delimiter,
+  landing on register `d+1`'s content start).
+
+**Recursion is in the `M₁` slot** (the growing machine first, then one fixed
+`scanPastDelimTM`): a `scanPastDelim` started from a register's content start
+advances exactly one register, so `dst` of them after the base `stepRight` land
+on register `dst`. (The previous `scanPastDelim ⨾ navigateToRegTM d` shape
+overshot by the base `stepRight` — surfaced by `#eval` probing.) -/
 def navigateToRegTM : Nat → FlatTM
   | 0     => stepRightTM 4
-  | d + 1 => composeFlatTM (scanPastDelimTM 4 0) (navigateToRegTM d) 1
+  | d + 1 => composeFlatTM (navigateToRegTM d) (scanPastDelimTM 4 0) (navigateToRegTM_exit d)
 
 theorem navigateToRegTM_tapes : ∀ dst, (navigateToRegTM dst).tapes = 1
   | 0     => rfl
-  | _ + 1 => rfl
+  | d + 1 => by show (navigateToRegTM d).tapes = 1; exact navigateToRegTM_tapes d
 
 theorem navigateToRegTM_start : ∀ dst, (navigateToRegTM dst).start = 0
   | 0     => rfl
-  | _ + 1 => rfl
+  | d + 1 => by show (navigateToRegTM d).start = 0; exact navigateToRegTM_start d
 
 theorem navigateToRegTM_sig : ∀ dst, (navigateToRegTM dst).sig = 4
   | 0     => rfl
   | d + 1 => by
-      show (composeFlatTM (scanPastDelimTM 4 0) (navigateToRegTM d) 1).sig = 4
-      rw [composeFlatTM_sig, navigateToRegTM_sig d]; rfl
+      show max (navigateToRegTM d).sig (scanPastDelimTM 4 0).sig = 4
+      rw [navigateToRegTM_sig d]; rfl
 
-theorem navigateToRegTM_valid : ∀ dst, validFlatTM (navigateToRegTM dst)
-  | 0     => stepRightTM_valid 4
-  | d + 1 =>
-      composeFlatTM_valid (scanPastDelimTM 4 0) (navigateToRegTM d) 1
-        (scanPastDelimTM_valid 4 0 (by decide)) (navigateToRegTM_valid d)
-        (by decide) rfl (navigateToRegTM_tapes d)
-
-/-- The exit state of `navigateToRegTM dst`. -/
-def navigateToRegTM_exit : Nat → Nat
-  | 0     => 1
-  | d + 1 => 3 + navigateToRegTM_exit d
+/-- `(navigateToRegTM dst).states = 2 + 3·dst`. -/
+theorem navigateToRegTM_states : ∀ dst, (navigateToRegTM dst).states = 2 + 3 * dst
+  | 0     => rfl
+  | d + 1 => by
+      show (navigateToRegTM d).states + (scanPastDelimTM 4 0).states = 2 + 3 * (d + 1)
+      rw [navigateToRegTM_states d, show (scanPastDelimTM 4 0).states = 3 from rfl]; omega
 
 theorem navigateToRegTM_exit_lt : ∀ dst, navigateToRegTM_exit dst < (navigateToRegTM dst).states
   | 0     => by show 1 < 2; omega
   | d + 1 => by
-      show 3 + navigateToRegTM_exit d < 3 + (navigateToRegTM d).states
-      exact Nat.add_lt_add_left (navigateToRegTM_exit_lt d) 3
+      rw [navigateToRegTM_states]
+      show 3 * d + 3 < 2 + 3 * (d + 1); omega
+
+theorem navigateToRegTM_valid : ∀ dst, validFlatTM (navigateToRegTM dst)
+  | 0     => stepRightTM_valid 4
+  | d + 1 =>
+      composeFlatTM_valid (navigateToRegTM d) (scanPastDelimTM 4 0) (navigateToRegTM_exit d)
+        (navigateToRegTM_valid d) (scanPastDelimTM_valid 4 0 (by decide))
+        (navigateToRegTM_exit_lt d) (navigateToRegTM_tapes d) rfl
 
 /-! ## 2. Delimiter test: `delimTestTM`
 
@@ -373,28 +393,39 @@ The two-phase rewind has two halt states (6 = found, 7 = boundary).
 We demote the boundary halt using `Compile.joinTwoHalts`, leaving a single
 exit at the "found" position. -/
 
-/-- The raw delete-then-rewind (before demoting boundary halt):
-`deleteCarryTM ⨾ rewindTwoPhaseTM 4 3`, bridging at `deleteCarryTM`'s exit state `6`. -/
+/-- The raw delete-then-rewind:
+`deleteCarryTM ⨾ stepLeftTM 4 ⨾ rewindTwoPhaseTM 4 3`, bridging at
+`deleteCarryTM`'s exit state `6`.
+
+**The `stepLeftTM` is essential** (surfaced by `#eval` probing):
+`deleteCarryTM` leaves the head one cell *past* the tape end (on a blank), and
+`rewindTwoPhaseTM`'s phase-1 `scanLeftUntilTM` halts immediately at its boundary
+state when started on a blank (it never moves). One unconditional `stepLeftTM`
+moves the head onto the last real cell (a `0` filler in the residue zone), from
+where the two-phase rewind scans left to the trailing terminator, then to the
+leading sentinel at index `0`. -/
 def deleteRewindRawTM : FlatTM :=
-  composeFlatTM deleteCarryTM (rewindTwoPhaseTM 4 3) 6
+  composeFlatTM deleteCarryTM
+    (composeFlatTM (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1) 6
 
 /-- The step-right, then delete-then-rewind (no boundary demotion yet):
 `stepRightTM 4 ⨾ deleteRewindRawTM`. -/
 def stepDeleteRewindRawTM : FlatTM :=
   composeFlatTM (stepRightTM 4) deleteRewindRawTM 1
 
--- The boundary halt states need to be identified and demoted.
--- `deleteCarryTM.states = 7`, `rewindTwoPhaseTM.states = 8`.
--- `deleteRewindRawTM.states = 7 + 8 = 15`.
--- The rewind's halt states `6` and `7` become `7 + 6 = 13` and `7 + 7 = 14` in the raw composite.
+-- State accounting (`loopTM` tolerates extra non-loop halt states, so no
+-- demotion is needed — the boundary halt is simply never reached on a
+-- terminator-free residue):
+-- `deleteCarryTM.states = 7`, `stepLeftTM.states = 2`, `rewindTwoPhaseTM.states = 8`.
+-- inner `stepLeftTM ⨾ rewindTwoPhaseTM`: states `= 2 + 8 = 10`; the rewind's halts
+--   `6` (found) / `7` (boundary) become `2 + 6 = 8` / `2 + 7 = 9`.
+-- `deleteRewindRawTM.states = 7 + 10 = 17`; halts shift by `7`: found `15`, boundary `16`.
 -- `stepRightTM.states = 2`, so in `stepDeleteRewindRawTM`:
--- states = `2 + 15 = 17`
--- found halt = `2 + 13 = 15`
--- boundary halt = `2 + 14 = 16`
+--   states `= 2 + 17 = 19`; halts shift by `2`: found `17`, boundary `18`.
 
--- We keep halt `15` (found/head-rewound-to-0) and demote `16` (boundary).
+-- We keep halt `17` (found/head-rewound-to-0); halt `18` (boundary) is unreached.
 
-def stepDeleteRewindTM_exit : Nat := 15
+def stepDeleteRewindTM_exit : Nat := 17
 
 /-! ## 5. Done-branch rewind
 
@@ -452,9 +483,13 @@ def clearRegionTM (dst : Nat) : FlatTM :=
 /-! ## 8. Validity -/
 
 theorem deleteRewindRawTM_valid : validFlatTM deleteRewindRawTM :=
-  composeFlatTM_valid deleteCarryTM (rewindTwoPhaseTM 4 3) 6
-    deleteCarryTM_valid (rewindTwoPhaseTM_valid 4 3 (by decide))
-    (show (6 : Nat) < 7 from by decide) rfl (rewindTwoPhaseTM_tapes 4 3)
+  composeFlatTM_valid deleteCarryTM
+    (composeFlatTM (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1) 6
+    deleteCarryTM_valid
+    (composeFlatTM_valid (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1
+      (stepLeftTM_valid 4) (rewindTwoPhaseTM_valid 4 3 (by decide))
+      (show (1 : Nat) < 2 from by decide) rfl (rewindTwoPhaseTM_tapes 4 3))
+    (show (6 : Nat) < 7 from by decide) rfl rfl
 
 theorem deleteRewindRawTM_tapes : deleteRewindRawTM.tapes = 1 := rfl
 
@@ -502,7 +537,7 @@ theorem clearBodyRawTM_exitLoop_lt (dst : Nat) :
     clearBodyRawTM_exitLoop dst < (clearBodyRawTM dst).states := by
   show (navigateAndTestTM dst).states + stepDeleteRewindTM_exit <
     (navigateAndTestTM dst).states + stepDeleteRewindRawTM.states + justRewindTM.states
-  show _ + 15 < _ + 17 + 3
+  show _ + 17 < _ + 19 + 3
   omega
 
 theorem clearRegionTM_valid (dst : Nat) : validFlatTM (clearRegionTM dst) :=
