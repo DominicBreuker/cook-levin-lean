@@ -903,6 +903,11 @@ theorem deleteRewindRawTM_halt_fifteen : deleteRewindRawTM.halt[15]? = some true
   composeFlatTM_halt_some_intro deleteCarryTM
     (composeFlatTM (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1) 6 8 innerRewind_halt_eight
 
+/-- `stepDeleteRewindRawTM`'s "found" halt is state `17` (= `15` + `stepRightTM`'s
+`2` states). This is `stepDeleteRewindTM_exit`. -/
+theorem stepDeleteRewindRawTM_halt_seventeen : stepDeleteRewindRawTM.halt[17]? = some true :=
+  composeFlatTM_halt_some_intro (stepRightTM 4) deleteRewindRawTM 1 15 deleteRewindRawTM_halt_fifteen
+
 theorem stepDeleteRewindRawTM_valid : validFlatTM stepDeleteRewindRawTM :=
   composeFlatTM_valid (stepRightTM 4) deleteRewindRawTM 1
     (stepRightTM_valid 4) deleteRewindRawTM_valid
