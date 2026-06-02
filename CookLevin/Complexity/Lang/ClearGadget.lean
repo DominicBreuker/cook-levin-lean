@@ -883,6 +883,26 @@ theorem deleteRewindRawTM_valid : validFlatTM deleteRewindRawTM :=
 
 theorem deleteRewindRawTM_tapes : deleteRewindRawTM.tapes = 1 := rfl
 
+/-- Validity of the inner `stepLeftTM ⨾ rewindTwoPhaseTM` of `deleteRewindRawTM`. -/
+theorem innerRewind_valid :
+    validFlatTM (composeFlatTM (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1) :=
+  composeFlatTM_valid (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1
+    (stepLeftTM_valid 4) (rewindTwoPhaseTM_valid 4 3 (by decide))
+    (show (1 : Nat) < 2 from by decide) rfl (rewindTwoPhaseTM_tapes 4 3)
+
+/-- The inner rewind's "found" halt is state `8` (= rewind's `6` + `stepLeftTM`'s
+`2` states). -/
+theorem innerRewind_halt_eight :
+    (composeFlatTM (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1).halt[8]? = some true :=
+  composeFlatTM_halt_some_intro (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1 6
+    (rewindTwoPhaseTM_halt_six 4 3)
+
+/-- `deleteRewindRawTM`'s "found" halt is state `15` (= `8` + `deleteCarryTM`'s
+`7` states). -/
+theorem deleteRewindRawTM_halt_fifteen : deleteRewindRawTM.halt[15]? = some true :=
+  composeFlatTM_halt_some_intro deleteCarryTM
+    (composeFlatTM (stepLeftTM 4) (rewindTwoPhaseTM 4 3) 1) 6 8 innerRewind_halt_eight
+
 theorem stepDeleteRewindRawTM_valid : validFlatTM stepDeleteRewindRawTM :=
   composeFlatTM_valid (stepRightTM 4) deleteRewindRawTM 1
     (stepRightTM_valid 4) deleteRewindRawTM_valid
