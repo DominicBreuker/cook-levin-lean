@@ -121,15 +121,28 @@ a `stepDeleteRewindRawTM` no-early-halt, which the run side
    call sites (`obtain ⟨t, h_run, h_traj⟩`).
 
 ### Step 5b — assemble `clearRegionTM` run via `loopTM_run`
-Feed `loopTM_run` with
-`T j = encodeTape (s.set dst ((s.get dst).drop (n−j))) ++ (res_in ++ replicate (n−j) 0)`,
-`n = |s.get dst|`, so `T n = encodeTape s ++ res_in` (via `set_get_self`) and
-`T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)`. `tDone` = step-4
-count; `tIter j` = step-3 count (`T (j+1) → T j`); iteration count `n`. The
-register-`dst` block invariant across iterations is `set_tail_iterate` /
-`iterate_tail_clear` (proven). Note step-3/4 are stated generically over any
-`s'`/`res'`, so each iteration instantiates them at `s' = s.set dst (drop (n−j−1))`,
-`res' = res_in ++ replicate (n−j−1) 0`.
+`loopTM_run` (`TMPrimitives.lean` @3788) needs (`B = clearBodyRawTM dst`,
+`exitDone`/`exitLoop` = the two `clearBodyRawTM_exit…`, `B.start = 0`):
+- `T : Nat → tape`, `h_sym : ∀ n v, currentTapeSymbol (T n) = some v → v < B.sig` (=4);
+- `tDone` + **`h_done`**: `run tDone B {0,[T 0]} = some {exitDone, [T 0]}` **∧** its
+  trajectory `∀ k<tDone, ≠exitDone ∧ ≠exitLoop ∧ halting=false` — this is exactly
+  `clearBody_done_run`(+traj) at the **empty** state (register cleared, `T 0`);
+- per-iteration **`h_iter j`** (for `j < n`): `run (tIter j) B {0,[T (j+1)]}
+  = some {exitLoop, [T j]}` **∧** trajectory — exactly `clearBody_delete_run`(+traj);
+- conclusion: `run (loopBudget tIter tDone n) (loopTM B exitDone exitLoop) {0,[T n]}
+  = some {B.states, [T 0]}` (and `B.states = clearRegionTM_exit dst`).
+
+Use `T j = encodeTape (s.set dst ((s.get dst).drop (n−j))) ++ (res_in ++ replicate (n−j) 0)`,
+`n = |s.get dst|`, so `T n = encodeTape s ++ res_in` (via `set_get_self`,
+`drop 0`, `replicate 0`) and `T 0 = encodeTape (clear dst s) ++ (res_in ++
+replicate n 0)` (`drop n` empties `dst`). Instantiate the generic step-3/4 lemmas
+per iteration at `s' = s.set dst (drop (n−j−1))`, `res' = res_in ++ replicate
+(n−j−1) 0`; the bridge `s'.set dst (s'.get dst).tail = s.set dst (drop (n−j))`
+and `res'++[0] = res_in ++ replicate (n−j) 0` is `set_tail_iterate` +
+`List.replicate_succ` (proven `clear` math). The done branch fires at `T 0`
+because `(s.set dst (drop n)).get dst = [] ` (`iterate_tail_clear`/`drop_length`).
+Then `clearRegionTM_run` (head `0`, exit `clearRegionTM_exit dst`, output tape
+`T 0`) follows; wrap as the `opClear` `CompiledCmd` run.
 
 ### Step 6 — discharge the `clear` case of `compileOp_sound_physical_residue`
 `res_out = res_in ++ replicate |s.get dst| 0` (`ValidResidue` via
@@ -149,20 +162,47 @@ the `n ≤ tapeLen` iterations is O(tapeLen)). Then move to the cross-register o
   machine's *trajectory* for `composeFlatTM_run` — prove run + no-early-halt
   together. (`appendAtTM` avoids this with M₂-recursion + a fixed M₁.)
 - `omega` can't see through record projections (`{…}.state_idx`) or `def`-constants
-  (`delimTestTM_exit_content`) — `show` the reduced/`Nat` form first.
+  (`delimTestTM_exit_content`, `stepDeleteRewindTM_exit`) — `show` the reduced/`Nat`
+  form first (e.g. `show (navigateToRegTM dst).states + 1 ≠ … + 2`).
+- **`refine ⟨_, ?_⟩` for an `∃` goal fails** with *"don't know how to synthesize
+  placeholder for argument `w`"* (the `Exists.intro` witness can't be postponed
+  here). Use **`exact ⟨_, by …; exact (composeFlatTM_run …).1⟩`** — letting the
+  proof determine the witness — and inline the big combinator call into the
+  `exact` so the goal type drives elaboration (also fixes spurious `w`-synthesis in
+  `h_sym_bound` lambdas).
+- **`set x := e` folds `e` in *existing* hypotheses** (e.g. a prior `htape_nav`)
+  but **not** in terms produced *later* by lemma applications → `rw [← htape_nav]`
+  then can't match. Either don't `set` the shared sub-term, or establish all the
+  `have`s that reference it *after* the `set`.
+- The composite result state is `c₂.state_idx + M₁.states` (run_pos) /
+  `c₃.state_idx + (M₁.states + M₂.states)` (run_neg) — **`+`-order differs** from
+  the `exit…` defs (`M₁.states + 17`), so `rw [show exitLoop = 17 + M₁.states from
+  by …omega]` before the final `exact`.
 - `composeFlatTM_haltingStateReached_M2` is `private`; derive "exit is a halt
-  state" from `composedHalt = replicate M₁.states false ++ M₂.halt` directly.
+  state" from `composedHalt = replicate M₁.states false ++ M₂.halt` (or
+  `composedBranchHalt`) + `getElem?_append_right`/`composeFlatTM_halt_some_intro`.
+- **MCP `lean-lsp` / `#print axioms` can't find `lake`.** Axiom-check via a scratch
+  file: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
+  `#print axioms <fully.qualified.name>` (want only `propext`/`Classical.choice`/
+  `Quot.sound`; **no `sorryAx`**).
 
-## Key files
+## Key files & exact locations
 
 | File | Contents |
 |------|----------|
-| `Lang/ClearGadget.lean` | `navigateToRegTM` (**M₁-recursion, fixed**), `delimTestTM`, `navigateAndTestTM`, `deleteRewindRawTM` (**stepLeft inserted, fixed**), `clearRegionTM`; **all validity + run-lemma steps 1–2 proven**; steps 3–6 TODO |
-| `Lang/Compile.lean` | compiler; residue infra (`TapeOK`/`ValidResidue`); append op done; `compileOp_sound_physical_residue` (`clear` + 9 cross-register `sorry`s); proven `clear` math (`deleteCarry_tail_step`, `set_tail_iterate`, `iterate_tail_clear`, `clear_block_decomp`, `encodeTape_reg_decomp`); `Compile_run_physical_residue` (`sorry`) |
-| `Lang/ScanLeft.lean` | `stepLeftTM`/`stepRightTM`, `scanLeftUntilTM`, `rewindToStart_run`, `rewindFromEndTM`, `rewindTwoPhaseTM` (+`rewindTwoPhase_run`/`_no_early_halt`) |
-| `Lang/AppendGadget.lean` | `appendAtTM`, `regBlocks`, `scanPast_block`, append op residue contract template (`opAppendBit_physical_residue`) |
+| `Lang/ClearGadget.lean` | `navigateToRegTM` (**M₁-recursion, fixed**), `delimTestTM`, `navigateAndTestTM`, `deleteRewindRawTM` (**stepLeft inserted, fixed**), `clearBodyRawTM`, `clearRegionTM`; all validity; **run-lemma steps 1–2** (`navigateToRegTM_run_traj`, `navigateAndTestTM_run_content`/`_run_delim`/`_no_early_halt`); halt facts (`innerRewind_halt_eight`, `deleteRewindRawTM_halt_fifteen`, `stepDeleteRewindRawTM_halt_seventeen`, `clearBodyRawTM_exitLoop_is_halt`/`_exitDone_is_halt`); the generic `ne_of_not_halting` |
+| `Lang/Compile.lean` | compiler; residue infra (`TapeOK`/`ValidResidue`); append op done; **clear run-lemma steps 3–4** (`stepDeleteRewind_run` @2417, `clearBody_delete_run` @2569, `clearBody_done_run` @2676; helpers `encodeTape_residue_twoPhaseRewind`, `encodeTape_reg_decomp_at`, `BitState_set_tail`, `haltingStateReached_of_halt`); proven `clear` math (`deleteCarry_tail_step`, `set_tail_iterate`, `iterate_tail_clear`, `clear_block_decomp`, `encodeTape_reg_decomp`, `regBlocks_map_shiftReg`, `set_get_self`); `compileOp_sound_physical_residue` @3221 (**`clear` case `sorry` @3252**, 9 cross-register `sorry`s); `Compile_run_physical_residue` @3881 (`sorry` @3699) |
+| `Lang/ScanLeft.lean` | `stepLeftTM`/`stepRightTM` (+`stepLeftTM_run_blank`/`_no_early_halt`), `scanLeftUntilTM`, `rewindToStart_run`/`rewindToStart_traj`, `rewindFromEndTM`, `rewindTwoPhaseTM` (+`rewindTwoPhase_run`/`_no_early_halt`), `composeFlatTM_halt_some_intro` |
+| `Lang/AppendGadget.lean` | `appendAtTM`, `regBlocks` (+`regBlocks_cons`), `scanPast_block`, `scan_block_before` (in `Navigate.lean`), append op residue contract template (`opAppendBit_physical_residue`) |
 | `Lang/ShiftTape.lean` | `deleteCarryTM` (+`_run`/`_no_early_halt`), `insertCarryTM` |
-| `Complexity/TMPrimitives.lean` | `composeFlatTM`/`branchComposeFlatTM`/`loopTM` (+ `_run`/`_no_early_halt`/`_valid`) |
+| `Complexity/TMPrimitives.lean` | `composeFlatTM`/`branchComposeFlatTM`/`loopTM` + `_run`/`_no_early_halt`/`_valid`; **`branchComposeFlatTM_no_early_halt_pos`/`_neg`** (new); `loopTM_run` @3788; `composedBranchHalt`; `state_idx_lt_states_of_run` |
+
+**Where to put the step-5a/5b lemmas:** in `Compile.lean` next to the step-3/4
+lemmas (the trajectory lemmas right after `stepDeleteRewind_run` /
+`clearBody_delete_run` / `clearBody_done_run`; the `clearRegionTM_run` and the
+`clear`-case discharge right before `compileOp_sound_physical_residue` @3221).
+Step-3/4 are **generic over `s`/`res`** so the loop instantiates them per
+iteration; keep that genericity.
 
 ## Conventions
 - Build `lake build` (or `lake build Complexity.Lang.X`); commit per logical step
