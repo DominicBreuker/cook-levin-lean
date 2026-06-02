@@ -10,9 +10,11 @@ authoritative status and plan. This file says exactly what to do next.
   `export PATH="$HOME/.elan/bin:$PATH"`.
 - **Risk C2 (compiler soundness) is the focus.** The `clear` op has a **real TM
   machine** (`clearRegionTM` in `ClearGadget.lean`), wired into `compileOp` with a
-  sorry-free `CompiledCmd`. The `clear` case of `compileOp_sound_physical_residue`
-  (Compile.lean ~2744) still has a `sorry` for its **run lemma**; the remaining
-  cross-register ops (`copy`/`tail`/`head`/…) are also `sorry`.
+  sorry-free `CompiledCmd`. Its **run lemma is being built** (steps 1–6 below):
+  steps 1–3 are **DONE** (navigation + the full delete branch,
+  `Compile.clearBody_delete_run`); steps 4–6 remain. The `clear` case of
+  `compileOp_sound_physical_residue` (Compile.lean) is still `sorry` (closes at
+  step 6); the cross-register ops (`copy`/`tail`/`head`/…) are also `sorry`.
 
 ## ⚠ This session: `clearRegionTM` had two architecture bugs (now FIXED + validated)
 
@@ -66,43 +68,55 @@ is `3 :: (regBlocks skipped ++ tail)` where `regBlocks`/`scanPast_block`/
   + `navigateAndTestTM_exit_content_is_halt` / `_delim_is_halt`. Helpers
   `navAndTest_cell` (content-start cell value, via `getElem?` to dodge
   dependent-`Fin` `rw` motive errors) and `navAndTest_sym_bound`.
+- **Step 3 — delete branch DONE** (in `Compile.lean`, since it ties to
+  `encodeTape`): `Compile.clearBody_delete_run` — when register `dst` is nonempty,
+  `clearBodyRawTM dst` from head `0` on `encodeTape s ++ res` reaches
+  `clearBodyRawTM_exitLoop dst` with head `0` and tape `encodeTape (s.set dst
+  (s.get dst).tail) ++ (res ++ [0])`. Core sub-lemma `Compile.stepDeleteRewind_run`
+  (the `stepRight ⨾ deleteCarry ⨾ stepLeft ⨾ rewindTwoPhase` positioning — where
+  both bugs lived). New reusable pieces: `encodeTape_residue_twoPhaseRewind`,
+  `encodeTape_reg_decomp_at` (explicit `pre`/`rest`), `regBlocks_map_shiftReg`
+  (already existed), `BitState_set_tail`, `haltingStateReached_of_halt`,
+  `stepLeftTM_run_blank` (ScanLeft), and the ClearGadget halt lemmas
+  `innerRewind_halt_eight` / `deleteRewindRawTM_halt_fifteen` /
+  `stepDeleteRewindRawTM_halt_seventeen`.
 
-## NEXT TASK: finish the `clear` run lemma (steps 3–6)
-
-### Step 3 — delete-branch run (content path of `clearBodyRawTM`)
-Use `branchComposeFlatTM_run_pos` with M₁ = `navigateAndTestTM dst`,
-M₂ = `stepDeleteRewindRawTM`, exit_pos = `navigateAndTestTM_exit_content dst`,
-exit_neg = `navigateAndTestTM_exit_delim dst`.
-- `h_run1` = `navigateAndTestTM_run_content` (reg nonempty: `tail = (c0+1)::…`).
-- `h_traj1` (needs `≠exit_pos ∧ ≠exit_neg ∧ halting=false`): from
-  `navigateAndTestTM_no_early_halt` + the two `..._is_halt` lemmas via `ne_of_not_halting`.
-- `h_run2` = run of `stepDeleteRewindRawTM` = `stepRightTM ⨾ (deleteCarryTM ⨾
-  stepLeftTM ⨾ rewindTwoPhaseTM)`. Thread head positions:
-  content-start `p = 1+|regBlocks skipped|` → stepRight `p+1` → `deleteCarry_tail_step`
-  (head `p+1+L`, = tape end, tape `encodeTape (s.set dst tail) ++ (res++[0])`) →
-  stepLeft (head end−1) → `rewindTwoPhase_run` (head 0). Result exit
-  `(navigateAndTestTM dst).states + 17`.
-The math is `Compile.deleteCarry_tail_step` (already proven); compose the
-sub-machine runs with `composeFlatTM_run` (3 levels) to assemble `stepDeleteRewindRawTM`'s run.
+## NEXT TASK: finish the `clear` run lemma (steps 4–6)
 
 ### Step 4 — done-branch run (delim path of `clearBodyRawTM`)
-`branchComposeFlatTM_run_neg`, M₃ = `justRewindTM = scanLeftUntilTM 4 3`.
-`h_run1` = `navigateAndTestTM_run_delim`. `h_run2` = scanLeftUntilTM from the
-empty register's delimiter (head `1+|regBlocks skipped|`, interior) left to the
-sentinel `3` at index 0 — use `ScanLeft.rewindToStart_run`/`scanLeft_run` (all
-cells between are `{0,1,2}`, no `3`). Tape unchanged; exit
-`(navigateAndTestTM dst).states + 19 + 1`.
+Mirror `clearBody_delete_run`, but use `branchComposeFlatTM_run_neg` (M₃ =
+`justRewindTM = scanLeftUntilTM 4 3`) with `navigateAndTestTM_run_delim` (register
+empty: `tail = 0 :: …`). `h_run2` = run of `justRewindTM` from the empty
+register's delimiter (head `1+|regBlocks skipped|`, interior) left to the sentinel
+`3` at index 0 — use `ScanLeft.rewindToStart_run`/`scanLeft_run` (all cells
+between are `{0,1,2}`, no `3`). Tape unchanged; result exit
+`clearBodyRawTM_exitDone dst = (navigateAndTestTM dst).states + 19 + 1`. The
+target lemma: `Compile.clearBody_done_run` (register empty → `s` unchanged, exit
+done, head 0, tape `encodeTape s ++ res`). Reuse the step-3 setup
+(`encodeTape_reg_decomp_at`, `regBlocks_map_shiftReg`, the `htape_nav` connection,
+`htape4`); for the empty case `s.get dst = []` so the content start cell is the
+delimiter `0` (use the second conjunct of `encodeTape_reg_decomp_at` with
+`shiftReg [] = []`).
 
 ### Step 5 — assemble `clearRegionTM` run via `loopTM_run`
-`T j = encodeTape (s.set dst ((s.get dst).drop (n−j))) ++ (res_in ++ replicate (n−j) 0)`
-with `n = |s.get dst|`, so `T n = encodeTape s ++ res_in` (via `set_get_self`) and
-`T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)`. Feed `loopTM_run`:
-`tDone` = step-4 count (register empty at `T 0`); `tIter j` = step-3 count
-(delete one cell, `T (j+1) → T j`); iteration count `n`. Each `T j`'s register-`dst`
-block decomposition comes from `encodeTape_reg_decomp` / `clear_block_decomp` /
-`set_tail_iterate` (proven). Convert literal-`3` nav lemmas to `encodeTape` form
-here (`encodeTape s = 3 :: (encodeRegs s ++ [3])`, so the nav `skipped` = the first
-`dst` registers, `tail` = `shiftReg (s.get dst) ++ 0 :: rest`).
+**⚠ First build a `branchComposeFlatTM_no_early_halt` combinator** (TMPrimitives,
+mirror `composeFlatTM_no_early_halt`): `loopTM_run`'s per-iteration contract needs
+each body run's *trajectory* (`≠exitDone ∧ ≠exitLoop ∧ halting=false`), but steps
+3–4 only produce the *run*. With it, give `clearBody_delete_run`/`_done_run` a
+trajectory each (they already produce the run; the no-early-halt is the same
+`branchComposeFlatTM` shape with the sub-machine trajectories — nav's traj exists
+(`navigateAndTestTM_no_early_halt`), the M₂/M₃ trajs need `stepDeleteRewind`/
+`justRewind` no-early-halt, also missing — derive from the nested `composeFlatTM_no_early_halt`).
+
+Then feed `loopTM_run` with
+`T j = encodeTape (s.set dst ((s.get dst).drop (n−j))) ++ (res_in ++ replicate (n−j) 0)`,
+`n = |s.get dst|`, so `T n = encodeTape s ++ res_in` (via `set_get_self`) and
+`T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)`. `tDone` = step-4
+count; `tIter j` = step-3 count (`T (j+1) → T j`); iteration count `n`. The
+register-`dst` block invariant across iterations is `set_tail_iterate` /
+`iterate_tail_clear` (proven). Note step-3/4 are stated generically over any
+`s'`/`res'`, so each iteration instantiates them at `s' = s.set dst (drop (n−j−1))`,
+`res' = res_in ++ replicate (n−j−1) 0`.
 
 ### Step 6 — discharge the `clear` case of `compileOp_sound_physical_residue`
 `res_out = res_in ++ replicate |s.get dst| 0` (`ValidResidue` via
