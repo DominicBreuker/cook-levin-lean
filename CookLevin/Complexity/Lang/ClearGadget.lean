@@ -2,6 +2,7 @@ import Complexity.Lang.ScanLeft
 import Complexity.Lang.ScanPast
 import Complexity.Lang.ShiftTape
 import Complexity.Lang.Navigate
+import Complexity.Lang.AppendGadget
 
 set_option autoImplicit false
 
@@ -55,6 +56,8 @@ open TMPrimitives
 open Complexity.Lang.ScanLeft
 open Complexity.Lang.ScanPast
 open Complexity.Lang.ShiftTape
+open Complexity.Lang.AppendGadget
+open Complexity.Lang.Navigate
 
 /-! ## 1. Navigation: `navigateToRegTM dst`
 
@@ -123,6 +126,205 @@ theorem navigateToRegTM_valid : ∀ dst, validFlatTM (navigateToRegTM dst)
       composeFlatTM_valid (navigateToRegTM d) (scanPastDelimTM 4 0) (navigateToRegTM_exit d)
         (navigateToRegTM_valid d) (scanPastDelimTM_valid 4 0 (by decide))
         (navigateToRegTM_exit_lt d) (navigateToRegTM_tapes d) rfl
+
+/-! ### `navigateToRegTM` run + trajectory
+
+`navigateToRegTM skipped.length`, started at head `0` on
+`3 :: (regBlocks skipped ++ tail)` (leading sentinel `3 = endMark`, then the
+encoded blocks of the `skipped` registers, then `tail` = register `dst`'s content
+and the rest), lands at head `1 + |regBlocks skipped|` (register `dst`'s content
+start) without changing the tape. Stated over literal `3` (not `Compile.endMark`,
+which lives downstream); `Compile.lean`'s `clear` case instantiates it via
+`encodeTape_reg_decomp`. -/
+
+/-- Step count of `navigateToRegTM skipped.length`: one `stepRight` plus, per
+skipped register `b`, one `scanPast` over its `|b|` content cells (`+1` to land
+past the delimiter) and one bridge step (`+1`). -/
+def navSteps (skipped : List (List Nat)) : Nat :=
+  1 + (skipped.map (fun b => b.length + 2)).sum
+
+theorem navSteps_nil : navSteps [] = 1 := rfl
+
+theorem navSteps_append_singleton (init : List (List Nat)) (b : List Nat) :
+    navSteps (init ++ [b]) = navSteps init + (b.length + 2) := by
+  simp only [navSteps, List.map_append, List.sum_append, List.map_cons, List.map_nil,
+    List.sum_cons, List.sum_nil]
+  omega
+
+/-- `regBlocks` distributes over a trailing singleton. -/
+theorem regBlocks_append_singleton (init : List (List Nat)) (b : List Nat) :
+    regBlocks (init ++ [b]) = regBlocks init ++ (b ++ [0]) := by
+  simp only [regBlocks, List.map_append, List.flatten_append, List.map_cons, List.map_nil,
+    List.flatten_cons, List.flatten_nil, List.append_nil]
+
+/-- `navigateToRegTM_exit dst` is a halt state of `navigateToRegTM dst`. -/
+theorem navigateToRegTM_exit_is_halt : ∀ dst,
+    (navigateToRegTM dst).halt[navigateToRegTM_exit dst]? = some true
+  | 0 => rfl
+  | d + 1 => by
+      have hidx : navigateToRegTM_exit (d + 1) = (navigateToRegTM d).states + 1 := by
+        rw [navigateToRegTM_states]; show 3 * d + 3 = 2 + 3 * d + 1; omega
+      show (composedHalt (navigateToRegTM d) (scanPastDelimTM 4 0))[navigateToRegTM_exit (d+1)]?
+          = some true
+      rw [hidx]
+      show (List.replicate (navigateToRegTM d).states false ++ (scanPastDelimTM 4 0).halt)[
+            (navigateToRegTM d).states + 1]? = some true
+      rw [List.getElem?_append_right (by rw [List.length_replicate]; omega),
+          List.length_replicate, Nat.add_sub_cancel_left]
+      rfl
+
+/-- A non-halting config cannot sit at a halt state. -/
+theorem ne_of_not_halting {M : FlatTM} {ck : FlatTMConfig} {e : Nat}
+    (he : M.halt[e]? = some true) (h : haltingStateReached M ck = false) :
+    ck.state_idx ≠ e := by
+  intro hc
+  rw [show haltingStateReached M ck = M.halt.getD ck.state_idx false from rfl, hc,
+      List.getD_eq_getElem?_getD, he] at h
+  simp at h
+
+/-- **`navigateToRegTM` run + trajectory (combined induction).** The M₁-recursion
+puts the growing machine first, so `composeFlatTM_run` needs its own trajectory —
+hence run and no-early-halt are proven together. -/
+theorem navigateToRegTM_run_traj : ∀ (skipped : List (List Nat)) (tail : List Nat),
+    (∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) →
+    (runFlatTM (navSteps skipped) (navigateToRegTM skipped.length)
+          { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ tail))] }
+        = some { state_idx := navigateToRegTM_exit skipped.length,
+                 tapes := [([], 1 + (regBlocks skipped).length,
+                            (3 : Nat) :: (regBlocks skipped ++ tail))] })
+    ∧ (∀ k, k < navSteps skipped → ∀ ck,
+        runFlatTM k (navigateToRegTM skipped.length)
+            { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ tail))] }
+          = some ck →
+        haltingStateReached (navigateToRegTM skipped.length) ck = false) := by
+  intro skipped
+  induction skipped using List.reverseRecOn with
+  | nil =>
+      intro tail _
+      simp only [regBlocks_nil, List.nil_append, List.length_nil, navSteps_nil,
+        navigateToRegTM, navigateToRegTM_exit, Nat.add_zero]
+      have h0 : (0 : Nat) < ((3 : Nat) :: tail).length := by simp
+      have hsym : ((3 : Nat) :: tail).get ⟨0, h0⟩ < 4 := by simp
+      refine ⟨by simpa using stepRightTM_run 4 [] ((3 : Nat) :: tail) 0 h0 hsym, ?_⟩
+      intro k hk ck hck
+      exact (stepRightTM_no_early_halt 4 [] ((3 : Nat) :: tail) 0 k hk ck hck).2
+  | append_singleton init b ih =>
+      intro tail h_skip
+      have h_skip_init : ∀ x ∈ init, (∀ y ∈ x, y ≠ 0) ∧ (∀ y ∈ x, y < 4) :=
+        fun x hx => h_skip x (List.mem_append_left _ hx)
+      have h_b : (∀ y ∈ b, y ≠ 0) ∧ (∀ y ∈ b, y < 4) :=
+        h_skip b (List.mem_append_right _ (List.mem_singleton.mpr rfl))
+      set pre : List Nat := (3 : Nat) :: regBlocks init with hpre
+      have hpre_len : pre.length = 1 + (regBlocks init).length := by
+        rw [hpre]; simp [Nat.add_comm]
+      have hTassoc : (3 : Nat) :: (regBlocks init ++ (b ++ 0 :: tail)) = pre ++ b ++ 0 :: tail := by
+        rw [hpre]; simp [List.append_assoc]
+      -- IH instance with tail' = b ++ 0 :: tail.
+      have ih' := ih (b ++ 0 :: tail) h_skip_init
+      have h_run1 : runFlatTM (navSteps init) (navigateToRegTM init.length)
+          { state_idx := 0, tapes := [([], 0, pre ++ b ++ 0 :: tail)] }
+          = some { state_idx := navigateToRegTM_exit init.length,
+                   tapes := [([], pre.length, pre ++ b ++ 0 :: tail)] } := by
+        rw [hpre_len, ← hTassoc]; exact ih'.1
+      have h_traj1 : ∀ k, k < navSteps init → ∀ ck,
+          runFlatTM k (navigateToRegTM init.length)
+              { state_idx := 0, tapes := [([], 0, pre ++ b ++ 0 :: tail)] } = some ck →
+          ck.state_idx ≠ navigateToRegTM_exit init.length ∧
+          haltingStateReached (navigateToRegTM init.length) ck = false := by
+        intro k hk ck hck
+        rw [← hTassoc] at hck
+        have hh := ih'.2 k hk ck hck
+        exact ⟨ne_of_not_halting (navigateToRegTM_exit_is_halt init.length) hh, hh⟩
+      have h_run2 := scanPast_block pre b tail h_b.1 h_b.2
+      have h_halt2 : haltingStateReached (scanPastDelimTM 4 0)
+          { state_idx := 1, tapes := [([], pre.length + b.length + 1, pre ++ b ++ 0 :: tail)] }
+            = true := rfl
+      have h_traj2 : ∀ k, k < b.length + 1 → ∀ ck,
+          runFlatTM k (scanPastDelimTM 4 0)
+              { state_idx := (scanPastDelimTM 4 0).start, tapes := [([], pre.length, pre ++ b ++ 0 :: tail)] }
+            = some ck → haltingStateReached (scanPastDelimTM 4 0) ck = false := by
+        intro k hk ck hck
+        exact (scanPastDelim_no_early_halt 4 0 [] (pre ++ b ++ 0 :: tail) pre.length b.length
+          (scan_block_before 0 pre b tail h_b.1 h_b.2) k hk ck hck).2
+      have h_sym_bound : ∀ v, currentTapeSymbol ([], pre.length, pre ++ b ++ 0 :: tail) = some v →
+          v < max (navigateToRegTM init.length).sig (scanPastDelimTM 4 0).sig := by
+        intro v hv
+        have hmax : max (navigateToRegTM init.length).sig (scanPastDelimTM 4 0).sig = 4 := by
+          rw [navigateToRegTM_sig]; rfl
+        rw [hmax]
+        have hlt : pre.length < (pre ++ b ++ 0 :: tail).length := by
+          simp only [List.length_append, List.length_cons]; omega
+        rw [currentTapeSymbol_in_range hlt] at hv
+        injection hv with hv'
+        rcases b with _ | ⟨c0, cs⟩
+        · rw [← hv']
+          have : (pre ++ ([] : List Nat) ++ 0 :: tail).get ⟨pre.length, hlt⟩ = 0 := by
+            rw [List.get_eq_getElem,
+                List.getElem_append_right (show (pre ++ ([] : List Nat)).length ≤ pre.length by simp)]
+            simp
+          rw [this]; omega
+        · rw [← hv']
+          have hc0 : (pre ++ (c0 :: cs) ++ 0 :: tail).get ⟨pre.length, hlt⟩ = c0 := by
+            rw [List.get_eq_getElem,
+                List.getElem_append_left
+                  (show pre.length < (pre ++ (c0 :: cs)).length by simp),
+                List.getElem_append_right (Nat.le_refl pre.length)]
+            simp
+          rw [hc0]; exact h_b.2 c0 (List.mem_cons_self ..)
+      have hstate_lt : (0 : Nat) < (navigateToRegTM init.length).states := by
+        rw [navigateToRegTM_states]; omega
+      -- assemble both conjuncts.
+      have hlen_eq : (init ++ [b]).length = init.length + 1 := by simp
+      have hT : (3 : Nat) :: (regBlocks (init ++ [b]) ++ tail) = pre ++ b ++ 0 :: tail := by
+        rw [regBlocks_append_singleton, hpre]; simp [List.append_assoc]
+      have hmachine : navigateToRegTM (init.length + 1)
+          = composeFlatTM (navigateToRegTM init.length) (scanPastDelimTM 4 0)
+              (navigateToRegTM_exit init.length) := rfl
+      have hsteps : navSteps (init ++ [b]) = navSteps init + 1 + (b.length + 1) := by
+        rw [navSteps_append_singleton]; omega
+      have hstates : (1 : Nat) + (navigateToRegTM init.length).states
+          = navigateToRegTM_exit (init.length + 1) := by
+        rw [navigateToRegTM_states]; show 1 + (2 + 3 * init.length) = 3 * init.length + 3; omega
+      have hhead : pre.length + b.length + 1 = 1 + (regBlocks (init ++ [b])).length := by
+        rw [regBlocks_append_singleton, hpre_len]; simp [List.length_append]; omega
+      refine ⟨?_, ?_⟩
+      · -- run
+        have hcomp := composeFlatTM_run
+          (navigateToRegTM_valid init.length) (scanPastDelimTM_valid 4 0 (by decide))
+          (navigateToRegTM_exit_lt init.length)
+          { state_idx := 0, tapes := [([], 0, pre ++ b ++ 0 :: tail)] } hstate_lt
+          [] pre.length (pre ++ b ++ 0 :: tail)
+          h_sym_bound h_run1 h_traj1 h_run2 h_halt2
+        rw [hlen_eq, hsteps, hT, hmachine, ← hstates, ← hhead]
+        exact hcomp.1
+      · -- traj
+        rw [hlen_eq, hsteps, hT, hmachine]
+        exact composeFlatTM_no_early_halt
+          (navigateToRegTM_valid init.length) (scanPastDelimTM_valid 4 0 (by decide))
+          (navigateToRegTM_exit_lt init.length)
+          { state_idx := 0, tapes := [([], 0, pre ++ b ++ 0 :: tail)] } hstate_lt
+          [] pre.length (pre ++ b ++ 0 :: tail)
+          h_sym_bound h_run1 h_traj1 h_traj2
+
+/-- **`navigateToRegTM` run lemma.** -/
+theorem navigateToRegTM_run (skipped : List (List Nat)) (tail : List Nat)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) :
+    runFlatTM (navSteps skipped) (navigateToRegTM skipped.length)
+        { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ tail))] }
+      = some { state_idx := navigateToRegTM_exit skipped.length,
+               tapes := [([], 1 + (regBlocks skipped).length,
+                          (3 : Nat) :: (regBlocks skipped ++ tail))] } :=
+  (navigateToRegTM_run_traj skipped tail h_skip).1
+
+/-- **`navigateToRegTM` no-early-halt trajectory.** -/
+theorem navigateToRegTM_no_early_halt (skipped : List (List Nat)) (tail : List Nat)
+    (h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) :
+    ∀ k, k < navSteps skipped → ∀ ck,
+        runFlatTM k (navigateToRegTM skipped.length)
+            { state_idx := 0, tapes := [([], 0, (3 : Nat) :: (regBlocks skipped ++ tail))] }
+          = some ck →
+        haltingStateReached (navigateToRegTM skipped.length) ck = false :=
+  (navigateToRegTM_run_traj skipped tail h_skip).2
 
 /-! ## 2. Delimiter test: `delimTestTM`
 
