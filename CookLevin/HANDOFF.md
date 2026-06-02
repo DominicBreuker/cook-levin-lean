@@ -11,8 +11,11 @@ authoritative status and plan. This file says exactly what to do next.
 - **Risk C2 (compiler soundness) is the focus.** The `clear` op has a **real TM
   machine** (`clearRegionTM` in `ClearGadget.lean`), wired into `compileOp` with a
   sorry-free `CompiledCmd`. Its **run lemma is being built** (steps 1–6 below):
-  steps 1–3 are **DONE** (navigation + the full delete branch,
-  `Compile.clearBody_delete_run`); steps 4–6 remain. The `clear` case of
+  steps 1–4 are **DONE** (navigation, navigate-and-test, the full delete branch
+  `Compile.clearBody_delete_run`, the done branch `Compile.clearBody_done_run`),
+  plus step 5's `branchComposeFlatTM_no_early_halt_pos/_neg` combinator and the
+  `clearBodyRawTM` halt facts. Remaining: the `stepDeleteRewind` trajectory cascade
+  (step 5a) + the `loopTM` assembly (step 5b) + step 6. The `clear` case of
   `compileOp_sound_physical_residue` (Compile.lean) is still `sorry` (closes at
   step 6); the cross-register ops (`copy`/`tail`/`head`/…) are also `sorry`.
 
@@ -81,34 +84,44 @@ is `3 :: (regBlocks skipped ++ tail)` where `regBlocks`/`scanPast_block`/
   `innerRewind_halt_eight` / `deleteRewindRawTM_halt_fifteen` /
   `stepDeleteRewindRawTM_halt_seventeen`.
 
-## NEXT TASK: finish the `clear` run lemma (steps 4–6)
+- **Step 4 — done branch DONE**: `Compile.clearBody_done_run` — register `dst`
+  empty → `clearBodyRawTM dst` reaches `clearBodyRawTM_exitDone dst`, tape
+  unchanged, head `0`. Via `branchComposeFlatTM_run_neg` (M₃ = `justRewindTM`) +
+  `navigateAndTestTM_run_delim` + `ScanLeft.rewindToStart_run` (cells to the
+  sentinel are `{0,1,2}` via `encodeRegs_no_endMark`).
+- **Step 5 — combinator + halt facts DONE**:
+  `TMPrimitives.branchComposeFlatTM_no_early_halt_pos`/`_neg` (the branch analogue
+  of `composeFlatTM_no_early_halt`, needed for `loopTM`'s per-iteration
+  trajectory) and `ClearGadget.clearBodyRawTM_exitLoop_is_halt` /
+  `_exitDone_is_halt`.
 
-### Step 4 — done-branch run (delim path of `clearBodyRawTM`)
-Mirror `clearBody_delete_run`, but use `branchComposeFlatTM_run_neg` (M₃ =
-`justRewindTM = scanLeftUntilTM 4 3`) with `navigateAndTestTM_run_delim` (register
-empty: `tail = 0 :: …`). `h_run2` = run of `justRewindTM` from the empty
-register's delimiter (head `1+|regBlocks skipped|`, interior) left to the sentinel
-`3` at index 0 — use `ScanLeft.rewindToStart_run`/`scanLeft_run` (all cells
-between are `{0,1,2}`, no `3`). Tape unchanged; result exit
-`clearBodyRawTM_exitDone dst = (navigateAndTestTM dst).states + 19 + 1`. The
-target lemma: `Compile.clearBody_done_run` (register empty → `s` unchanged, exit
-done, head 0, tape `encodeTape s ++ res`). Reuse the step-3 setup
-(`encodeTape_reg_decomp_at`, `regBlocks_map_shiftReg`, the `htape_nav` connection,
-`htape4`); for the empty case `s.get dst = []` so the content start cell is the
-delimiter `0` (use the second conjunct of `encodeTape_reg_decomp_at` with
-`shiftReg [] = []`).
+## NEXT TASK: finish step 5 (trajectory cascade + `loopTM` assembly), then step 6
 
-### Step 5 — assemble `clearRegionTM` run via `loopTM_run`
-**⚠ First build a `branchComposeFlatTM_no_early_halt` combinator** (TMPrimitives,
-mirror `composeFlatTM_no_early_halt`): `loopTM_run`'s per-iteration contract needs
-each body run's *trajectory* (`≠exitDone ∧ ≠exitLoop ∧ halting=false`), but steps
-3–4 only produce the *run*. With it, give `clearBody_delete_run`/`_done_run` a
-trajectory each (they already produce the run; the no-early-halt is the same
-`branchComposeFlatTM` shape with the sub-machine trajectories — nav's traj exists
-(`navigateAndTestTM_no_early_halt`), the M₂/M₃ trajs need `stepDeleteRewind`/
-`justRewind` no-early-halt, also missing — derive from the nested `composeFlatTM_no_early_halt`).
+### Step 5a — the `stepDeleteRewind` trajectory cascade (the one remaining blocker)
+`loopTM`'s iteration contract needs the delete-body *trajectory*; via
+`branchComposeFlatTM_no_early_halt_pos` (M₂ = `stepDeleteRewindRawTM`) that needs
+a `stepDeleteRewindRawTM` no-early-halt, which the run side
+(`Compile.stepDeleteRewind_run`) doesn't yet produce. Build the cascade
+(mirroring `stepDeleteRewind_run`, replacing each `composeFlatTM_run` with
+`composeFlatTM_no_early_halt`; all sub-machine trajectories exist:
+`stepRightTM_no_early_halt`, `deleteCarryTM_no_early_halt`,
+`stepLeftTM_no_early_halt`, `ScanLeft.rewindTwoPhase_no_early_halt`):
+1. **Upgrade `Compile.encodeTape_residue_twoPhaseRewind`** to return `run ∧ traj`
+   with a shared step count (add `ScanLeft.rewindTwoPhase_no_early_halt`, same
+   side-conditions already discharged). Cleanest: change it to return the explicit
+   `(head-p+1)+1+(1+1+p)` step count instead of `∃ steps`.
+2. `Compile.stepDeleteRewind_no_early_halt` — 3-level `composeFlatTM_no_early_halt`
+   reusing the step-3 setup (decomp / `midSuf` / `Tout` / `htape_in` / `htape_out`).
+   The `h_run1` at each level = the same `stepRight`/`deleteCarry`/`stepLeft` runs;
+   the `≠exit` of `deleteCarry`'s `h_traj1` comes from `ne_of_not_halting` (halt 6).
+3. **Give `clearBody_delete_run` / `clearBody_done_run` a trajectory each** (return
+   `run ∧ traj`): `branchComposeFlatTM_no_early_halt_pos` (h_traj2 = step 5a.2) for
+   delete; `_neg` (h_traj3 = `ScanLeft.rewindToStart_traj`) for done. The `h_traj1`
+   = `navigateAndTestTM_no_early_halt` + the two `..._is_halt` lemmas. Update the
+   call sites (`obtain ⟨t, h_run, h_traj⟩`).
 
-Then feed `loopTM_run` with
+### Step 5b — assemble `clearRegionTM` run via `loopTM_run`
+Feed `loopTM_run` with
 `T j = encodeTape (s.set dst ((s.get dst).drop (n−j))) ++ (res_in ++ replicate (n−j) 0)`,
 `n = |s.get dst|`, so `T n = encodeTape s ++ res_in` (via `set_get_self`) and
 `T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)`. `tDone` = step-4
