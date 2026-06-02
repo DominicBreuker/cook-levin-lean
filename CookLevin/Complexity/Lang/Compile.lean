@@ -2283,6 +2283,77 @@ theorem Compile.iterate_tail_clear (s : State) (dst : Var) (h : dst < s.length) 
       = Op.eval (Op.clear dst) s := by
   rw [Compile.set_tail_iterate s dst h, List.drop_length]; rfl
 
+/-! ### `clear` run lemma — reusable building blocks (Risk C2, step 3)
+
+The delete branch of `clearRegionTM`'s loop body deletes register `dst`'s first
+content cell (`deleteCarryTM`), then rewinds the head to `0`. After
+`deleteCarryTM` the head sits one cell *past* the tape end, so the rewind is
+`stepLeftTM ⨾ rewindTwoPhaseTM` on the post-deletion tape, which has the shape
+`encodeTape output ++ ValidResidue`. The helper below packages the two-phase
+rewind for any such tape. -/
+
+/-- **Two-phase rewind on `encodeTape output ++ residue`.** From the head one cell
+*before* the end (where `stepLeftTM` lands after `deleteCarryTM`), the two-phase
+rewind scans left to the trailing terminator, steps off it, and scans to the
+leading sentinel at index `0`. Reaches `rewindTwoPhaseTM`'s "found" halt (state
+`6`) with the head at `0` and the tape unchanged. -/
+theorem Compile.encodeTape_residue_twoPhaseRewind (output : State) (residue : List Nat)
+    (hbit : Compile.BitState output) (hres : Compile.ValidResidue residue) :
+    ∃ steps, runFlatTM steps (ScanLeft.rewindTwoPhaseTM 4 3)
+        { state_idx := 0,
+          tapes := [([], (Compile.encodeTape output ++ residue).length - 1,
+                     Compile.encodeTape output ++ residue)] }
+      = some { state_idx := 6,
+               tapes := [([], 0, Compile.encodeTape output ++ residue)] } := by
+  set tp := Compile.encodeTape output ++ residue with htp
+  have hEO2 : 2 ≤ (Compile.encodeTape output).length := by rw [Compile.encodeTape_length]; omega
+  have hEOle : (Compile.encodeTape output).length ≤ tp.length := by
+    rw [htp, List.length_append]; omega
+  have htp_pos : 0 < tp.length := by omega
+  -- getElem transfers (proof-free via getElem?).
+  have hleft : ∀ i (hi : i < (Compile.encodeTape output).length) (htpi : i < tp.length),
+      tp.get ⟨i, htpi⟩ = (Compile.encodeTape output).get ⟨i, hi⟩ := by
+    intro i hi htpi
+    rw [List.get_eq_getElem, List.get_eq_getElem]
+    have hc : tp[i]? = (Compile.encodeTape output)[i]? := by
+      rw [htp, List.getElem?_append_left hi]
+    rw [List.getElem?_eq_getElem htpi, List.getElem?_eq_getElem hi] at hc
+    exact Option.some.inj hc
+  have hright : ∀ i (htpi : i < tp.length) (hge : (Compile.encodeTape output).length ≤ i)
+      (hir : i - (Compile.encodeTape output).length < residue.length),
+      tp.get ⟨i, htpi⟩ = residue.get ⟨i - (Compile.encodeTape output).length, hir⟩ := by
+    intro i htpi hge hir
+    rw [List.get_eq_getElem, List.get_eq_getElem]
+    have hc : tp[i]? = residue[i - (Compile.encodeTape output).length]? := by
+      rw [htp, List.getElem?_append_right hge]
+    rw [List.getElem?_eq_getElem htpi, List.getElem?_eq_getElem hir] at hc
+    exact Option.some.inj hc
+  refine ⟨_, ScanLeft.rewindTwoPhase_run 4 3 (by decide) [] tp
+    ((Compile.encodeTape output).length - 1) (tp.length - 1)
+    htp_pos ?_ (by omega) ?_ (by omega) (by omega) (by omega) ?_ ?_⟩
+  · -- sentinel at 0
+    rw [hleft 0 (by omega) htp_pos]; exact Compile.encodeTape_get_zero output (by omega)
+  · -- trailing terminator at p = (encodeTape output).length - 1
+    rw [hleft ((Compile.encodeTape output).length - 1) (by omega) (by omega)]
+    exact Compile.encodeTape_get_last output (by omega)
+  · -- interior (0 < i < p) is < 4 and ≠ 3
+    intro i hi0 hip
+    have hiEO : i + 1 < (Compile.encodeTape output).length := by omega
+    obtain ⟨hi_lt, hne⟩ := Compile.encodeTape_interior_ne_endMark output hbit i hi0 hiEO
+    have hitp : i < tp.length := by omega
+    refine ⟨hitp, ?_, ?_⟩
+    · rw [hleft i hi_lt hitp]; exact Compile.encodeTape_lt_four output hbit _ (List.get_mem _ _)
+    · rw [hleft i hi_lt hitp]; exact hne
+  · -- residue (p < i ≤ head) is < 4 and ≠ 3
+    intro i hpi hih
+    have hge : (Compile.encodeTape output).length ≤ i := by omega
+    have hitp : i < tp.length := by omega
+    have hir : i - (Compile.encodeTape output).length < residue.length := by
+      rw [htp, List.length_append] at hitp; omega
+    refine ⟨hitp, ?_, ?_⟩
+    · rw [hright i hitp hge hir]; exact (hres _ (List.get_mem _ _)).1
+    · rw [hright i hitp hge hir]; exact (hres _ (List.get_mem _ _)).2
+
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
 register. -/

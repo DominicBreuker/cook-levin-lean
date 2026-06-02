@@ -547,6 +547,64 @@ theorem stepLeftTM_run (sig : Nat) (left right : List Nat) (head : Nat)
       stepLeftTM_step sig left right head h_head_lt h_sym_lt]
   rfl
 
+theorem stepLeftTM_states (sig : Nat) : (stepLeftTM sig).states = 2 := rfl
+theorem stepLeftTM_start (sig : Nat) : (stepLeftTM sig).start = 0 := rfl
+theorem stepLeftTM_tapes (sig : Nat) : (stepLeftTM sig).tapes = 1 := rfl
+theorem stepLeftTM_sig (sig : Nat) : (stepLeftTM sig).sig = sig := rfl
+
+/-- `stepLeftTM` step on a **blank** (head at or past the tape end): the
+`stepLeftNoneEntry` fires, moving the head left and halting at state `1`. This is
+the case `deleteCarryTM` leaves the head in (one past the end) — the head must
+step left onto the last real cell before any rewind scan. -/
+theorem stepLeftTM_step_blank (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head : right.length ≤ head) :
+    stepFlatTM (stepLeftTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head - 1, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] } with hcfg
+  have hSym0 : currentTapeSymbol (left, head, right) = none :=
+    currentTapeSymbol_out_of_range (by omega)
+  have hSym : cfg.tapes.map currentTapeSymbol = [none] := by
+    show [currentTapeSymbol (left, head, right)] = [none]; rw [hSym0]
+  have hMatch : entryMatchesConfig stepLeftNoneEntry cfg = true := by
+    show ((0 : Nat) == cfg.state_idx &&
+            decide (([none] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = true
+    rw [hSym]; rfl
+  show Option.bind ((stepLeftTM sig).trans.find?
+        (fun entry => entryMatchesConfig entry cfg)) (applyTransitionEntry cfg) = _
+  rw [stepLeftTM_trans_eq, List.find?_cons, hMatch]
+  show applyTransitionEntry cfg stepLeftNoneEntry = _
+  rfl
+
+/-- `stepLeftTM` run on a blank head (one step). -/
+theorem stepLeftTM_run_blank (sig : Nat) (left right : List Nat) (head : Nat)
+    (h_head : right.length ≤ head) :
+    runFlatTM 1 (stepLeftTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } =
+      some { state_idx := 1, tapes := [(left, head - 1, right)] } := by
+  show (if haltingStateReached (stepLeftTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM (stepLeftTM sig)
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _
+          | some cfg' => runFlatTM 0 (stepLeftTM sig) cfg') = _
+  rw [show haltingStateReached (stepLeftTM sig)
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      stepLeftTM_step_blank sig left right head h_head]
+  rfl
+
+/-- `stepLeftTM` never halts before its single step. -/
+theorem stepLeftTM_no_early_halt (sig : Nat) (left right : List Nat) (head : Nat) :
+    ∀ k, k < 1 → ∀ ck,
+      runFlatTM k (stepLeftTM sig)
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      ck.state_idx ≠ 1 ∧ haltingStateReached (stepLeftTM sig) ck = false := by
+  intro k hk ck hck
+  have hk0 : k = 0 := by omega
+  subst hk0
+  simp [runFlatTM] at hck; subst hck
+  exact ⟨by show (0 : Nat) ≠ 1; omega, rfl⟩
+
 /-- The corrected rewind: step off the trailing terminator, then scan left to the
 leading sentinel. -/
 def rewindFromEndTM (sig target : Nat) : FlatTM :=
