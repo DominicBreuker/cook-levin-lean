@@ -1,136 +1,184 @@
-# Handoff — current state and next step
+# Handoff — the computable layer / compiler (Risk C2)
 
-Read [`../README.md`](../README.md) and [`ROADMAP.md`](ROADMAP.md) first for the
-authoritative status and plan. This file says exactly what to do next.
+Authoritative status & the full risk register live in [`../README.md`](../README.md)
+and [`ROADMAP.md`](ROADMAP.md). **This file is the working plan for the compiler
+(Risk C2)** — what we are building, why, the invariant you must not break, the
+ordered tasks, and an inventory of the code you will touch.
 
-## Where things stand
+---
 
-- `lake build` ✅ green (3358 jobs). First build is slow (mathlib); one module
-  rebuilds in ~5–10s after. `lake` is **not on PATH** —
-  `export PATH="$HOME/.elan/bin:$PATH"`.
-- **Risk C2 (compiler soundness) is the focus.** The `clear` op has a **real TM
-  machine** (`clearRegionTM` in `ClearGadget.lean`), wired into `compileOp`.
-  Its **full run lemma is now PROVEN** (`Compile.clearRegionTM_run`): from head `0`
-  on `encodeTape s ++ res_in` it reaches `clearRegionTM_exit dst` with head `0`,
-  tape `encodeTape (clear dst s) ++ (res_in ++ replicate |s.get dst| 0)`, **and a
-  no-early-halt trajectory**. In `compileOp_sound_physical_residue` the **`clear`
-  case's run + trajectory are discharged**; the **only remaining `clear` gap is
-  the quadratic budget** `t ≤ 9·tapeLen²+9` (one isolated `sorry`, see NEXT TASK).
-  The 9 cross-register ops (`copy`/`tail`/`head`/…) are still `sorry`.
+## The bigger picture (read once)
 
-## Proven this session (sorry-free, axiom-clean: propext/Classical.choice/Quot.sound)
+We are proving `theorem CookLevin : NPcomplete SAT`, real and unconditional.
+NP-hardness is transported along a chain of poly-time reductions
+`GenNP ⪯p … ⪯p FlatTCC ⪯p … ⪯p SAT`; the **sound tail** (`FlatTCC → … → SAT`) is
+real, done mathematics. The remaining work is the *front* and the `⪯p` / in-NP
+**interfaces** — and those all route through one device:
 
-- **Step 5a — delete-body trajectory cascade.** `encodeTape_residue_twoPhaseRewind`,
-  `stepDeleteRewind_run`, `clearBody_delete_run`, `clearBody_done_run` now each
-  return **`∃ t, run ∧ no-early-halt traj`** (loopTM's per-iteration contract needs
-  both at the same `t`). Built by mirroring each `composeFlatTM_run` /
-  `branchComposeFlatTM_run_pos/_neg` with its `_no_early_halt` analogue. The two
-  `clearBody` lemmas' traj is the full loopTM shape `≠exitDone ∧ ≠exitLoop ∧ ¬halt`
-  (the `≠`s via `ne_of_not_halting` + `clearBodyRawTM_exitDone/Loop_is_halt`).
-- **`loopTM_no_early_halt`** (`TMPrimitives.lean`, just after `loopTM_run`): the
-  reusable companion — the counted loop never reaches its halt state `B.states`
-  before completion (`k < loopBudget`). Proven by the same induction as
-  `loopTM_run`, using `runFlatTM_loopTM_B_phase` + `loopTM_haltingStateReached_inB`.
-  **`compileForBnd` will reuse this.**
-- **Step 5b — `Compile.clearRegionTM_run`** (`Compile.lean`, just before
-  `compileOp_sound_physical_residue`): assembles the loop via `loopTM_run` +
-  `loopTM_no_early_halt`. Tape sequence `T j = encodeTape (s.set dst (drop (n−j)))
-  ++ (res_in ++ replicate (n−j) 0)`, `n = |s.get dst|`; `T n = encodeTape s ++
-  res_in`, `T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)`. Per
-  iteration applies `clearBody_delete_run` at `s.set dst (drop (n−j−1))`; the
-  state bridge is `get_set_eq`+`tail_drop`+`set_set`, the residue bridge is
-  `replicate_succ'`. `tIter` is `Classical.choose` of the per-`j` existential.
-- **Step 6 (partial)** — `clear` case of `compileOp_sound_physical_residue`:
-  `res_out = res_in ++ replicate |s.get dst| 0` (`ValidResidue_append_replicate_zero`),
-  run + traj via `clearRegionTM_run` (after `initFlatConfig` normalisation with
-  `clearRegionTM_start`). New general helpers: `Compile.BitState_set`,
-  `Compile.length_set`.
+**The computable layer.** Hand-rolling each verifier/reduction as a raw `FlatTM`
+overran budget ~10×. Instead we have a tiny structured while-language
+(`Cmd`/`Op`, with explicit **cost** semantics) compiled **once** to a single-tape
+`FlatTM` (`Compile`). Every verifier and reduction is then a short DSL program.
+This is the linchpin, **Risk C2**: the framework bridge (`toFrameworkWitness'`,
+`inNPLang_to_inNP`) and the *live* `sat_NP : inNP SAT` both reduce to a single
+obligation — **`Compile_sound` / `Compile_run_physical_residue`** (still `sorry`).
+Discharging it is the job.
 
-## NEXT TASK (ordered)
+---
 
-### 1. Close the `clear` budget `t ≤ 9·tapeLen²+9` (the one remaining `clear` sorry)
-`t = loopBudget tIter tDone n` with `tIter`/`tDone` currently **opaque**
-(`Classical.choose`). To bound it you must make the step counts **explicit**:
-thread an extra `∧ t ≤ <linear-in-tapeLen>` conjunct through the existentials of
-(bottom-up) `encodeTape_residue_twoPhaseRewind` → `stepDeleteRewind_run` →
-`clearBody_delete_run` / `clearBody_done_run`, then a `loopBudget` bound through
-`clearRegionTM_run`. The explicit counts already exist inside the proofs:
-- rewind `t_rw = (head−p+1)+1+(1+1+p)` with `head = Tout.length−1`,
-  `p = (encodeTape (s.set dst cs)).length−1` — so `t_rw ≤ 2·Tout.length`.
-- `stepDeleteRewind` `t = 1+1+((3·(tt::suf).length+1)+1+(1+1+t_rw))`,
-  `(tt::suf).length = midSuf.length < tapeLen` ⇒ `O(tapeLen)`.
-- `clearBody_delete` `t = (navSteps skipped+1+1)+1+t2`; `navSteps skipped` is
-  `Σ (block.len+1) + 1 ≤ |regBlocks skipped|+|skipped|+1 ≤ tapeLen`
-  (`navSteps`/`navSteps_append_singleton` in `ClearGadget.lean`).
-- loop: `n = |s.get dst| ≤ tapeLen` (the shifted `dst` block sits in `encodeTape s`),
-  each iteration `O(tapeLen)`, so `loopBudget ≤ O(tapeLen²) ≤ 9·tapeLen²+9`
-  (the `9` is generous; `omega` after the per-iteration linear bound + `n ≤ tapeLen`).
-  Key length facts needed: relate `midSuf`/`regBlocks skipped`/`(s.get dst).length`
-  to `(encodeTape s ++ res_in).length` (use `encodeTape_length`,
-  `encodeTape_reg_decomp_at`). **Watch for `Σ` over `j<n` of a per-iter linear
-  bound — `loopBudget` recursion + `n ≤ tapeLen` gives the quadratic.**
-*Estimate ~150–300 LOC of arithmetic threading; structural-unknown-free.*
+## ⚠ The invariant you must not break: `BitState`
 
-### 2. Cross-register ops (`copy`/`tail`/`head`/`eqBit`/`nonEmpty`/`takeAt`/`dropAt`/`concat`/`consLen`)
-**The missing critical-path primitive is a single-tape block-move gadget
-`copyBlockTM`** (carry `src` content to `dst`, resizing the slot); the gadget
-library has scan / insert-one / delete-one but **no data transport**. Then every
-cross-register op = `(clear dst) ⨾ (copyBlock src→dst) ⨾ (in-place transform)`.
-Order: probe `copyBlockTM` go/no-go (`#eval` end-to-end — verify the exit head
-lands in residue past the terminator, like the append op needed) **before**
-proving its run/`_no_early_halt`; then per-op contracts via the
-`opAppendBit_physical_residue` template + `rewindBracket`. The `clear` machinery
-(`clearRegionTM_run`, `loopTM_no_early_halt`) is the reusable model for any
-`loopTM`-based gadget. See ROADMAP C2.c.
+The compiled machine has a **fixed 4-symbol alphabet** (`sig = 4`):
+`encodeTape s = 3 :: (encodeRegs s ++ [3])`, where each register's bits are
+shifted `+1` (`0→1`, `1→2`), `0` separates registers, and `3` is the terminator.
+**A register cell `≥ 2` would shift to `≥ 3` and collide with the terminator.** So
+every state that touches the tape must be `Compile.BitState` (all cells `∈ {0,1}`).
 
-### 3. Assemble `Compile_run_physical_residue`
-`compileIfBit`/`compileForBnd` residue contracts (`branchComposeFlatTM_run` /
-`loopTM_run` + `loopTM_no_early_halt`), then the `Compile_run_physical_residue`
-induction (`sorry` in `Compile.lean`). Then S3 migration (ROADMAP step 2).
+**The mistake the plan already corrected (do NOT reintroduce it).** The
+`LangEncodable` encodings were Nat-valued — `enc (n : Nat) = [n]`, and the product
+`enc (x,y) = (enc x).length :: (enc x ++ enc y)` puts a *length* (a Nat) in one
+cell — and `takeAt`/`dropAt`/`consLen` were defined around Nat length cells. That
+is **incompatible** with the BitState compiler (it would put symbols `> 3` on the
+tape), and `Compile_sound` was even mis-stated *without* a `BitState` hypothesis,
+which hid the gap. The gap is on the **live** in-NP path
+(`CookLevin → sat_NP → evalCnfCmd → Compile`), masked today only by sorries.
 
-## Gotchas (still live)
-- **`#eval`-probe a built machine end-to-end before proving its run lemma.** Both
-  `clearRegionTM` architecture bugs (last session) were invisible to validity
-  proofs; one probe surfaced them.
-- **For `∃ t, A ∧ B` sharing one `t`:** give the **explicit witness**
-  (`refine ⟨<expr>, ?_, ?_⟩`) or `exact ⟨_, term_A, term_B⟩` with *concrete* terms
-  (the witness is read off `term_A`). `refine ⟨_, ?_, ?_⟩` (postponed `_` witness)
-  fails to synthesize. Computing the explicit total = `t₁ + 1 + t₂` from the
-  combinator (`composeFlatTM`/`branchComposeFlatTM`/`loopBudget`) makes both bullets'
-  goals fully determined.
-- **`_no_early_halt` mirrors `_run` exactly:** same args up to `h_traj2`/`h_traj3`,
-  replacing each sub-`_run` with its `_no_early_halt`; `composeFlatTM_no_early_halt`'s
-  `h_traj1` wants `≠exit ∧ ¬halt` (use `stepRight/LeftTM_no_early_halt`,
-  `deleteCarryTM_no_early_halt`+`ne_of_not_halting`, etc.).
-- **`loopTM`/`clearBody` start is provably (not always defeq) `0`** — `rw [hBstart]`
-  (`= (branchComposeFlatTM …).start`, `branchComposeFlatTM_start`,
-  `navigateAndTestTM_start`) to bridge `{B.start, …}` ↔ `{0, …}`.
-- **`List.drop_length` takes no explicit arg** (`l.drop l.length = []`, `l` implicit);
-  `rw [hn]` (where `n := (s.get dst).length`) first to expose the pattern.
-- `omega` can't see through record projections / `def`-constants — `show` the
-  reduced/`Nat` form first (e.g. `show _ + 19 + 1 ≠ _ + 17`).
-- **`set x := e with h`** makes `x` defeq `e`; unfold `x j` in goals with
-  `simp only [h]` (beta-reduces). `Classical.choose`'s value is proof-irrelevant,
-  so `simp only [htIter, dif_pos hj]` exposes `(hiter_ex j hj).choose` for `choose_spec`.
-- **MCP `lean-lsp` / `#print axioms` can't find `lake`.** Axiom-check via a scratch
-  file: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
-  `import Complexity.Lang.Compile` + `#print axioms <FULLY.QUALIFIED.name>` (the
-  `clear` run lemmas live in `Complexity.Lang.Compile.…`, `loopTM_no_early_halt` in
-  `TMPrimitives.…`). Want only `propext`/`Classical.choice`/`Quot.sound`; **no `sorryAx`**.
+**The decision (owner-approved): everything is bit-level; numbers are UNARY.**
+This keeps `sig = 4`/`BitState` (so all proven gadgets stay valid), keeps sizes
+polynomial (every length/index `≤` input size), and — the key payoff — a unary
+length register *is a loop counter*, which makes the hard data-movement gadgets
+**mark-free** (see Task 3).
 
-## Key files & exact locations
+---
 
-| File | Contents |
-|------|----------|
-| `Lang/ClearGadget.lean` | `navigateToRegTM`/`navigateAndTestTM`/`deleteRewindRawTM`/`clearBodyRawTM`/`clearRegionTM`; validity; run-lemma steps 1–2; halt facts; `navSteps` (loop-count math); `ne_of_not_halting` |
-| `Lang/Compile.lean` | compiler; residue infra; append op done; **clear run lemma steps 3–5b** (`stepDeleteRewind_run`, `clearBody_delete_run`/`_done_run` — all `run ∧ traj`; `clearRegionTM_run` `run ∧ traj`); helpers `BitState_set`/`length_set`/`set_tail_iterate`/`iterate_tail_clear`/`set_get_self`/`set_set`; `compileOp_sound_physical_residue` (**`clear` case: run+traj done, budget `sorry`**; 9 cross-register `sorry`s); `Compile_run_physical_residue` (`sorry`) |
-| `Lang/ScanLeft.lean` | `stepLeft/RightTM` (+`_run`/`_no_early_halt`), `scanLeftUntilTM`, `rewindToStart_run`/`_traj`, `rewindTwoPhaseTM` (+`_run`/`_no_early_halt`) |
-| `Lang/ShiftTape.lean` | `deleteCarryTM` (+`_run`/`_no_early_halt`), `insertCarryTM` |
-| `Complexity/TMPrimitives.lean` | `composeFlatTM`/`branchComposeFlatTM`/`loopTM` + `_run`/`_no_early_halt`/`_valid`; **`loopTM_no_early_halt`** (new, after `loopTM_run` @~3887); `loopBudget` |
+## The plan — option B (unary lengths, bit data), ordered
 
-## Conventions
-- Build `lake build` (or `lake build Complexity.Lang.X`); commit per logical step
-  with a **green build**; new finished lemmas must be `#print axioms`-clean (only
-  `propext`/`Classical.choice`/`Quot.sound`; **no `sorryAx`**).
-- Probe `#eval` files via `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/probe.lean`.
-- See ROADMAP "Hard-won gotchas" and "How we work" for full methodology.
+**1. Make the `BitState` invariant explicit and true.**
+- Add `(hbit : Compile.BitState s)` to `Compile_sound` and
+  `Compile_run_physical_residue` (and thread it through the assembly).
+- Give `LangEncodable` a guarantee that every `encodeState x` is `BitState` (a new
+  field, or a derived lemma per instance), so the bridge `toFrameworkWitness'`
+  can supply `hbit`. Confirm `BitState` is preserved by `Op.eval` (it is the
+  standing convention — `BitState_set`, `BitState_set_tail` already exist).
+
+**2. Re-encode numbers as unary; keep every cell `∈ {0,1}`.**
+- `LangEncodable Nat`: `enc n = List.replicate n 1` (not `[n]`). Make the product
+  length-prefix a unary block (self-delimiting with the existing `0` separators).
+  Re-prove `dec_enc` and `enc_size` (unary length is `≤` size, still linear/poly).
+- Restate `Op.takeAt`/`Op.dropAt`/`Op.consLen` so the length is a *unary count*
+  (the register's length / number of `1`s), not `(s.get lenReg).headD 0` of a Nat
+  cell. **Only three witnesses use these ops** — `swapCmd`, `mapFstCmd`,
+  `mapSndCmd`, all in `Lang/PolyTime.lean` — so the re-prove surface is small.
+
+**3. Build the 9 cross-register ops as counted-loop gadgets — NO marking.**
+`Op.eval` of each is `s.set dst (f (s.get src…))` (read `src`, write `dst`,
+`dst ≠ src`). The unary decision dissolves the single-tape block-copy problem:
+- **Counter + rotation = non-destructive block copy, no spare symbol needed.**
+  Each `loopTM` iteration moves `src`'s front cell to both `dst` and `src`'s back;
+  after `N` (= the counter) iterations `src` is rotated full-circle (unchanged) and
+  `dst` holds the copy.
+- `takeAt`/`dropAt`: use `lenReg` directly as the counter. `copy`/`tail`/`concat`:
+  first **count** `src`'s length into a scratch register (a count loop ending at the
+  `0` separator — mirror the `clear` loop), then rotate-copy. `head`/`eqBit`/
+  `nonEmpty`: `≤ 1`-cell output — `clear dst ⨾ (navigate+read-bit branch) ⨾
+  (append the answer bit)`.
+- **Reuse this session's budget machinery:** give each iteration a linear
+  `∧ t ≤ c·L + d` step bound, assemble with `Compile.loopBudget_le` + a
+  `Compile.clearBudget_arith`-style closer → quadratic `9·L²+9` per op (bump the
+  constant if `clear ⨾ copy ⨾ transform` overflows it — `inOPoly` is all that's
+  needed). Bracket every head-moving machine with the **two-phase rewind**
+  (`rewindBracket` / `opAppendBit_physical_residue` is the template). **`#eval`-probe
+  each new machine end-to-end before proving its run lemma** — architecture bugs
+  (wrong exit head, off-by-one slot) are invisible to validity proofs.
+
+**4. Assemble `Compile_run_physical_residue` → `Compile_sound`.** Compose per-op
+contracts with `compileSeq_sound_physical_residue` (done), the `compileIfBit` /
+`compileForBnd` residue contracts (`branchComposeFlatTM_run` / `loopTM_run` +
+`loopTM_no_early_halt`), then induction on `Cmd`. This discharges the C2 obligation
+the whole bridge sits on. Downstream then unlocks: S3 migration (ROADMAP step 2),
+C7 verifiers (`evalCnfCmd`), C8 hardness, S1 tableau.
+
+---
+
+## Inventory — the C2 working set
+
+### Machine model — `Complexity/Complexity/MachineSemantics.lean`
+| Name | Role |
+|------|------|
+| `FlatTM`, `FlatTMConfig`, `FlatTMTransEntry` | single-tape TM (head = index into `right`; `left` unused) |
+| `stepFlatTM`, `runFlatTM`, `currentTapeSymbol`, `haltingStateReached`, `initFlatConfig` | semantics; `runFlatTM` stops at a halt state or when no transition matches |
+
+### Combinators — `Complexity/Complexity/TMPrimitives.lean` (~4K LOC, sound)
+| Name | Role |
+|------|------|
+| `composeFlatTM` / `branchComposeFlatTM` / `loopTM` (+ `_run`, `_no_early_halt`, `_valid`) | sequence / 2-way branch / counted loop; `sig = max` (so a higher-`sig` gadget composes — not needed under plan B) |
+| `loopBudget`, `loopTM_no_early_halt` | per-iteration step budget; the loop never early-halts |
+
+### Compiler & encoding — `Complexity/Lang/Compile.lean`
+| Name | Role |
+|------|------|
+| `Compile.encodeTape` / `encodeRegs` / `shiftReg` / `endMark` / `decodeTape` | the `sig=4` tape encoding; `decodeTape` ignores residue + head |
+| `Compile.BitState` | the standing invariant (cells `∈ {0,1}`); `BitState_set`, `BitState_set_tail` preserve it |
+| `Compile.encodeTape_length`, `encodeTape_set_length`, `encodeRegs_no_endMark` | length balance; why BitState is required |
+| `Compile.ValidResidue`, `TapeOK`, `decodeTape_encodeTape_append` | residue-tolerant contract (the tape never shrinks, so deletion ops leave terminator-free residue) |
+| `rewindBracket`, `rewindBracket_transport`, `opAppendBit_physical_residue` | **template for any head-moving op**: wrap a compute machine with the two-phase rewind, demote the extra halt → unique-exit `CompiledCmd` |
+| `compileOp_sound_physical_residue` | per-op contract (`appendOne`/`appendZero`/**`clear`** PROVEN; 9 cross-register `sorry`) |
+| `compileSeq_sound_physical_residue` | PROVEN (additive budget `t₁+1+t₂`) |
+| `Compile_run_physical_residue`, `Compile_sound` | **the C2 obligations (`sorry`)** — need the `BitState` hypothesis (Task 1) |
+| `Compile.loopBudget_le`, `Compile.clearBudget_arith` | **reusable budget template** (per-iteration `M` → `(n+1)·M`; quadratic closer) |
+
+**The `clear` op chain (the model to copy for every `loopTM`-based op):**
+`clearRegionTM_run` (loop, run + trajectory + budget `≤ 9·L²+9`) ← `clearBody_delete_run` /
+`clearBody_done_run` (`≤ 6·L+12`) ← `stepDeleteRewind_run` (`≤ 4·L+9`) ←
+`encodeTape_residue_twoPhaseRewind` (`≤ L+3`). Each existential carries a
+`∧ t ≤ <linear/quadratic>` bound; `clearRegionTM_run` proves every loop tape has
+the same length `L` and `n+2 ≤ L`.
+
+### Gadget library (sorry-free; sig=4)
+| File | Gadgets |
+|------|---------|
+| `Lang/ClearGadget.lean` | `navigateToRegTM`, `navigateAndTestTM` (read+branch), `clearBodyRawTM`, `clearRegionTM`; `navSteps`, `navSteps_le` (loop-count) |
+| `Lang/AppendGadget.lean` | `appendAtTM` (insert a bit at register `dst`), `regBlocks`, `appendAt_run` |
+| `Lang/ScanLeft.lean` | `scanLeftUntilTM`, `stepLeft/RightTM`, `rewindToStart_run`, `rewindTwoPhaseTM` (the two-phase rewind) |
+| `Lang/ShiftTape.lean` | `insertCarryTM` / `deleteCarryTM` (single-cell carries; the rotation in Task 3 builds on these) |
+
+### Layer semantics & bridge
+| Name (file) | Role |
+|------|------|
+| `Op`, `Cmd`, `State` (`Lang/Syntax.lean`) | the while-language; `State = List (List Nat)` (registers) |
+| `Op.eval`, `Op.cost`, `Cmd.eval`, `Cmd.size_eval_le`, `State.size_set_add` (`Lang/Semantics.lean`) | size-aware cost model (charges size-growing ops + the `forBnd` counter) |
+| `LangEncodable` (`enc`/`dec`/`enc_size`), `encodeState`, instances `Nat`/`List Nat`/`Bool`/`×` (`Lang/PolyTime.lean`) | canonical per-type encoding — **Task 2 rewrites these to be unary/BitState** |
+| `PolyTimeComputableLang'`, `toFrameworkWitness'`, `ComputesBy` (`Lang/PolyTime.lean`) | layer witness → framework witness; consumes `Compile_sound` |
+| `inNPLang`, `red_inNPLang`, `inNPLang_to_inNP`, `reducesPolyMO_of_lang`, `red_inNP_of_lang`, `bitTestTM` | the layer-native NP class + capstones; sorry-free **modulo C2** |
+| `swapCmd`, `mapFstCmd`, `mapSndCmd` (`Lang/PolyTime.lean`) | the repack toolkit every reduction is built from — the **only** users of `takeAt`/`dropAt`/`consLen` (Task 2 re-proves them) |
+| `DecidesBy`, `inTimePoly`, `⪯p`, `NPhard`, `polyTimeComputable'` (`Complexity/NP.lean`) | the framework; `polyTimeComputable'` is the faithful (TM-time) target for S3 |
+
+---
+
+## Conventions & hard-won gotchas
+
+- **Build:** `export PATH="$HOME/.elan/bin:$PATH"; lake build` (first build slow;
+  one module ~10s after). `lake` is **not on PATH** and most MCP/LSP features
+  can't find it. Commit per logical step with a **green build**.
+- **Axiom-check** via a scratch file (LSP can't find `lake`):
+  `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
+  `import Complexity.Lang.Compile` + `#print axioms <Fully.Qualified.name>`. New
+  results must show only `propext`/`Classical.choice`/`Quot.sound` — **no `sorryAx`**.
+- **`#eval`-probe a built machine end-to-end before proving its run lemma.** Every
+  gadget so far exits with its head **on the trailing terminator** (rewind-bracket,
+  don't assume "left of" it). Probe with the same `LEAN_PATH` invocation.
+- **Threading a step bound through `∃ t, …`:** add a `∧ t ≤ <bound>` conjunct; the
+  witness is explicit, so `refine ⟨<expr>, ?_, ?_, ?_⟩` leaves an `omega` goal.
+  For `loopTM` totals use `loopBudget_le` + a `clearBudget_arith`-style closer.
+- **`rw [List.length_cons]` fires on the *first* `(_::_).length`** — often a
+  `pre = endMark :: …` you didn't mean. Prefer `simp [List.length_append,
+  List.length_cons]` (full simp normalises the Nat arithmetic and dodges it).
+- **`omega` can't see through record projections / `def`-constants, nor `Var := Nat`
+  coercions** — `show` the reduced `Nat` form first.
+- **`set x := e with h`** makes `x` defeq `e`; `Classical.choose` is
+  proof-irrelevant, so `simp only [hx, dif_pos hj]` exposes `(…).choose` and
+  `.choose_spec.2.2` is the bound conjunct.
+- Methodology (do not deviate without reason): **skeleton-first, refine the
+  highest-risk gap next, decompose `sorry`s don't elaborate them, probe before
+  committing engineering, `def`+`sorry` over `axiom` (count = 0).** See ROADMAP
+  "How we work".
