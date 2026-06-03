@@ -2260,6 +2260,25 @@ theorem Compile.set_set (s : State) (dst : Var) (a b : List Nat) (h : dst < s.le
   rw [Compile.set_eq_list_set (s.set dst a) dst b hla, Compile.set_eq_list_set s dst a h,
       List.set_set, Compile.set_eq_list_set s dst b h]
 
+/-- Writing register `dst` (in range) preserves the register count. -/
+theorem Compile.length_set (s : State) (dst : Var) (v : List Nat) (h : dst < s.length) :
+    (s.set dst v).length = s.length := by
+  rw [Compile.set_eq_list_set s dst v h, List.length_set]
+
+/-- `BitState` is preserved by writing a `≤ 1`-valued register. The general form
+of `BitState_set_tail` (used by the `clear` loop, where the register is a `drop`
+of the original bit-shaped content). -/
+theorem Compile.BitState_set (s : State) (dst : Var) (v : List Nat)
+    (h : Compile.BitState s) (hdst : dst < s.length) (hv : ∀ x ∈ v, x ≤ 1) :
+    Compile.BitState (s.set dst v) := by
+  rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop s dst _ hdst]
+  intro reg hreg x hx
+  simp only [List.mem_append, List.mem_cons] at hreg
+  rcases hreg with hr | hr | hr
+  · exact h reg (List.mem_of_mem_take hr) x hx
+  · subst hr; exact hv x hx
+  · exact h reg (List.mem_of_mem_drop hr) x hx
+
 /-- **State-level invariant of the `clear` loop.** Iterating the in-place `tail`
 body `t ↦ t.set dst t.tail` `n` times drops the first `n` symbols of register
 `dst`: `(·.set dst ·.tail)^[n] s = s.set dst ((s.get dst).drop n)`. At
@@ -3352,6 +3371,139 @@ theorem Compile.linear_le_quadratic_tapeLen (s : State) (res_in : List Nat) :
     calc 9 * L = 9 * L * 1 := by rw [Nat.mul_one]
       _ ≤ 9 * L * L := Nat.mul_le_mul_left _ (by omega)
   omega
+
+/-- **`clearRegionTM` run (Risk C2, step 5b).** Assembled from `loopTM_run`. The
+loop deletes register `dst`'s `n = |s.get dst|` leading cells one per iteration
+(`clearBody_delete_run`), then the done branch fires when `dst` is empty
+(`clearBody_done_run`). The tape sequence is `T j = encodeTape (s.set dst (drop
+(n−j))) ++ (res_in ++ replicate (n−j) 0)`: `T n = encodeTape s ++ res_in` (start)
+and `T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)` (end). Each
+deleted cell becomes a `0` filler appended to the residue. -/
+theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
+    (h : dst < s.length) (hbit : Compile.BitState s) (hres : Compile.ValidResidue res_in) :
+    ∃ t, runFlatTM t (ClearGadget.clearRegionTM dst)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] }
+      = some { state_idx := ClearGadget.clearRegionTM_exit dst,
+               tapes := [([], 0, Compile.encodeTape (Op.eval (Op.clear dst) s)
+                                  ++ (res_in ++ List.replicate (s.get dst).length 0))] } := by
+  set n := (s.get dst).length with hn
+  -- the loop's tape after `n − j` deletions of `dst`'s leading cells.
+  set T : Nat → (List Nat × Nat × List Nat) := fun j =>
+    ([], 0, Compile.encodeTape (s.set dst ((s.get dst).drop (n - j)))
+              ++ (res_in ++ List.replicate (n - j) 0)) with hTdef
+  have hBstart : (ClearGadget.clearBodyRawTM dst).start = 0 := by
+    show (branchComposeFlatTM _ _ _ _ _).start = 0
+    rw [branchComposeFlatTM_start]; exact ClearGadget.navigateAndTestTM_start dst
+  -- every drop of `dst`'s (bit-shaped) content keeps the state bit-shaped.
+  have hbit_drop : ∀ k, Compile.BitState (s.set dst ((s.get dst).drop k)) := by
+    intro k
+    refine Compile.BitState_set s dst _ hbit h (fun x hx => ?_)
+    have hmem : s.get dst ∈ s := by
+      rw [State.get, List.getElem?_eq_getElem h]; exact List.getElem_mem h
+    exact hbit _ hmem x (List.mem_of_mem_drop hx)
+  -- all tape symbols of `T j` are `< 4`.
+  have hT_lt : ∀ j x, x ∈ (T j).2.2 → x < 4 := by
+    intro j x hx
+    simp only [hTdef] at hx
+    rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeTape_lt_four _ (hbit_drop _) x hx
+    · rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact (hres x hx).1
+      · rw [List.mem_replicate] at hx; omega
+  have h_sym : ∀ m v, currentTapeSymbol (T m) = some v → v < (ClearGadget.clearBodyRawTM dst).sig := by
+    intro m v hv
+    have hsig : (ClearGadget.clearBodyRawTM dst).sig = 4 := by
+      show (branchComposeFlatTM _ _ _ _ _).sig = 4
+      rw [branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig]; rfl
+    rw [hsig]
+    have hmem : v ∈ (T m).2.2 := by
+      simp only [currentTapeSymbol] at hv
+      split at hv
+      · injection hv with e; rw [← e]; exact List.get_mem _ _
+      · exact absurd hv (by simp)
+    exact hT_lt m v hmem
+  -- done branch: at `T 0`, register `dst` is empty.
+  have hdone := Compile.clearBody_done_run (s.set dst ((s.get dst).drop n)) dst
+    (res_in ++ List.replicate n 0)
+    (by rw [Compile.length_set s dst _ h]; exact h)
+    (hbit_drop n)
+    (by rw [Compile.get_set_eq s dst _ h, hn]; exact List.drop_length)
+    (Compile.ValidResidue_append_replicate_zero res_in n hres)
+  obtain ⟨tDone, hdr, hdt⟩ := hdone
+  have hT0 : T 0 = ([], 0, Compile.encodeTape (s.set dst ((s.get dst).drop n))
+      ++ (res_in ++ List.replicate n 0)) := by simp only [hTdef, Nat.sub_zero]
+  -- per-iteration delete: `T (j+1) → T j` for `j < n`.
+  have hiter_ex : ∀ j, j < n → ∃ t,
+      runFlatTM t (ClearGadget.clearBodyRawTM dst)
+          { state_idx := (ClearGadget.clearBodyRawTM dst).start, tapes := [T (j + 1)] }
+        = some { state_idx := ClearGadget.clearBodyRawTM_exitLoop dst, tapes := [T j] } ∧
+      (∀ k, k < t → ∀ ck,
+        runFlatTM k (ClearGadget.clearBodyRawTM dst)
+            { state_idx := (ClearGadget.clearBodyRawTM dst).start, tapes := [T (j + 1)] } = some ck →
+        ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitDone dst ∧
+        ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitLoop dst ∧
+        haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false) := by
+    intro j hj
+    obtain ⟨t, hr, ht⟩ := Compile.clearBody_delete_run
+      (s.set dst ((s.get dst).drop (n - (j + 1)))) dst (res_in ++ List.replicate (n - (j + 1)) 0)
+      (by rw [Compile.length_set s dst _ h]; exact h)
+      (hbit_drop _)
+      (by rw [Compile.get_set_eq s dst _ h]
+          intro hc
+          have hlen : ((s.get dst).drop (n - (j + 1))).length = 0 := by rw [hc]; rfl
+          rw [List.length_drop] at hlen; omega)
+      (Compile.ValidResidue_append_replicate_zero res_in (n - (j + 1)) hres)
+    -- bridge the delete output to `T j`.
+    have hstate_eq :
+        (s.set dst ((s.get dst).drop (n - (j + 1)))).set dst
+            (((s.set dst ((s.get dst).drop (n - (j + 1)))).get dst).tail)
+          = s.set dst ((s.get dst).drop (n - j)) := by
+      rw [Compile.get_set_eq s dst _ h, List.tail_drop, Compile.set_set s dst _ _ h,
+          show n - (j + 1) + 1 = n - j from by omega]
+    have hres_eq : (res_in ++ List.replicate (n - (j + 1)) 0) ++ [0]
+        = res_in ++ List.replicate (n - j) 0 := by
+      rw [List.append_assoc, ← List.replicate_succ', show n - (j + 1) + 1 = n - j from by omega]
+    rw [hstate_eq, hres_eq] at hr
+    refine ⟨t, ?_, ?_⟩
+    · rw [hBstart]; simp only [hTdef]; exact hr
+    · rw [hBstart]; simp only [hTdef]; exact ht
+  -- choose per-iteration step counts.
+  set tIter : Nat → Nat := fun j => if hj : j < n then (hiter_ex j hj).choose else 0 with htIter
+  have hmain := loopTM_run (ClearGadget.clearBodyRawTM dst)
+    (ClearGadget.clearBodyRawTM_exitDone dst) (ClearGadget.clearBodyRawTM_exitLoop dst)
+    (ClearGadget.clearBodyRawTM_valid dst)
+    (ClearGadget.clearBodyRawTM_exitDone_lt dst) (ClearGadget.clearBodyRawTM_exitLoop_lt dst)
+    (by show ClearGadget.clearBodyRawTM_exitDone dst ≠ ClearGadget.clearBodyRawTM_exitLoop dst
+        show (ClearGadget.navigateAndTestTM dst).states + ClearGadget.stepDeleteRewindRawTM.states
+              + ClearGadget.justRewindTM_exit
+            ≠ (ClearGadget.navigateAndTestTM dst).states + ClearGadget.stepDeleteRewindTM_exit
+        show _ + 19 + 1 ≠ _ + 17
+        omega)
+    T h_sym tIter tDone
+    (by refine ⟨?_, ?_⟩
+        · rw [hBstart, hT0]; exact hdr
+        · rw [hBstart, hT0]; exact hdt)
+    n
+    (by intro j hj
+        have hspec := (hiter_ex j hj).choose_spec
+        simp only [htIter, dif_pos hj]
+        exact hspec)
+  -- convert `T n`, `T 0`, `B.start`, `B.states` to the stated forms.
+  have hTn : T n = ([], 0, Compile.encodeTape s ++ res_in) := by
+    simp only [hTdef, Nat.sub_self, List.drop_zero, List.replicate_zero, List.append_nil]
+    rw [Compile.set_get_self s dst h]
+  rw [hBstart, hTn, hT0] at hmain
+  refine ⟨loopBudget tIter tDone n, ?_⟩
+  rw [show ClearGadget.clearRegionTM dst
+        = loopTM (ClearGadget.clearBodyRawTM dst) (ClearGadget.clearBodyRawTM_exitDone dst)
+            (ClearGadget.clearBodyRawTM_exitLoop dst) from rfl,
+      show ClearGadget.clearRegionTM_exit dst = (ClearGadget.clearBodyRawTM dst).states from rfl,
+      show Op.eval (Op.clear dst) s = s.set dst ((s.get dst).drop n) from by
+        have hdn : (s.get dst).drop n = [] := by rw [hn]; exact List.drop_length
+        rw [hdn]; rfl]
+  exact hmain
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
