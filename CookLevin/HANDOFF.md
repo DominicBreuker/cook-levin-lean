@@ -38,7 +38,56 @@ authoritative status and plan. This file says exactly what to do next.
   filler) and **`hnL : n+2 ≤ L`** (via `State.size_set_add s dst []`; the cleared
   register's `n` bits sit inside the encoded tape).
 
-## ⚠ Risk surfaced this session — the per-op budget constant `9·L²+9` is TIGHT
+## ⚠⚠ BLOCKING FINDING (2026-06-03) — encoding mismatch: compiler is BitState-only, the witnesses are not
+
+**Scoping the verifiers (per the owner's steer) surfaced a deeper gap than the
+cross-register ops.** The compiler is **fundamentally `BitState`-only**: `encodeTape`
+uses `shiftReg = (·+1)` into `sig=4`, so a cell value `≥ 2` emits `≥ 3` and
+collides with the terminator `endMark = 3` (`Compile.encodeRegs_no_endMark` needs
+`BitState`; every gadget assumes `sig=4`). **But the witnesses the toolkit is built
+from do NOT produce `BitState` states:**
+- `LangEncodable Nat`: `enc n = [n]` — a single cell holding `n` (unbounded).
+- `LangEncodable (List Nat)`: `enc = id` — arbitrary Nat cells.
+- product `X×Y`: `enc (x,y) = (enc x).length :: (enc x ++ enc y)` — the **length
+  prefix is a Nat cell** (`swapCmd`/`mapFstCmd` operate on exactly these states).
+- `takeAt`/`dropAt` use `(s.get lenReg).headD 0` (a Nat length cell) and `consLen`
+  produces `(…).length :: …` — these ops are **semantically designed around
+  Nat-valued cells**, not bits.
+
+**Consequences (the real state of C2):**
+1. `Compile_sound` (`Compile.lean:4149`) is stated for a **general `State` with no
+   `BitState` hypothesis** — it is *false/vacuous* for the non-bit states the
+   bridge feeds it (`toFrameworkWitness'` calls `Compile_sound W.c (W.encodeIn x)`
+   with `W.encodeIn = encodeState`, e.g. `encodeState (5:Nat) = [[5]]`, whose
+   `encodeTape` is `[3,6,0,3]` — symbol `6 > sig`). The mis-statement hides the gap.
+2. **Building ANY cross-register op (or `copyBlockTM`) as a `sig=4`/`BitState`
+   gadget is premature** — the toolkit applies `head`/`tail`/`takeAt`/… to
+   non-bit (length-prefixed) states, so those gadgets could not be *used* until
+   the encoding is bit-level. The already-proven `clear` op is correct but is in
+   the same boat (its contract assumes `BitState`).
+
+**This is the new top decision (owner's call) — pick the data encoding before more
+gadget work:**
+- **(A) Bit-level (binary) re-encoding.** Every `LangEncodable.enc` produces a
+  `{0,1}`-list (self-delimiting binary). All `encodeState` become `BitState`; the
+  `sig=4` compiler + the `clear` op + future gadgets apply. Length prefixes become
+  binary blocks ⇒ `takeAt`/`dropAt`/`consLen` must be **restated** for binary
+  lengths; re-prove `swap`/`mapFst`. Keeps the gadget investment. *Recommended.*
+- **(B) Unary length, bit data.** Lengths as unary `1`-blocks; cells stay `{0,1}`,
+  ops count unary ones. Simpler ops, larger tapes. Also keeps the gadget work.
+- **(C) Multi-symbol tape (variable `sig`).** Generalise `encodeTape`/all gadgets to
+  arbitrary Nat cells. Discards the `sig=4` gadget investment (clear, append, …).
+  Not recommended.
+- Add the missing **`BitState` hypothesis to `Compile_sound`** (and have the
+  `LangEncodable` layer guarantee `BitState` of every `encodeState`), regardless
+  of A/B/C.
+
+**Until this is decided, do NOT build the cross-register gadgets below** — they'd be
+built against `BitState`/`sig=4` while the data isn't bit-shaped. The
+`navigateAndReadBitTM` design and Class A/B split below remain valid *once the
+encoding is bit-level* (A/B).
+
+## ⚠ Risk surfaced earlier this session — the per-op budget constant `9·L²+9` is TIGHT
 
 The clear budget closes only because of the **tight** `n+2 ≤ L` (not just `n ≤ L`)
 and **carefully-bounded** per-iteration constants (`6·L+13`); a naive per-iter
