@@ -57,25 +57,45 @@ new constant). `clearRegionTM_run` itself can keep `9·L²+9`.
 
 ## NEXT TASK (ordered)
 
-### 1. The block-move gadget `copyBlockTM` (the missing critical-path primitive)
-The gadget library has only **single-cell** carries (`ShiftTape.insertCarryTM` /
-`deleteCarryTM`) — **no data transport** between two register slots on the same
-tape. Every cross-register op needs one: `Op.eval` is `s.set dst (f (s.get src))`
-(reads `src`, writes `dst`; the real witnesses use `dst ≠ src`, e.g. `Op.tail 2
-0`). So each op = `clear dst` (now DONE, reuse `clearRegionTM_run`) ⨾
-`copyBlock src→dst` ⨾ `in-place transform on dst`.
-- **Probe first (`#eval`, go/no-go).** Build `copyBlockTM` and verify *end-to-end*
-  that it carries `src`'s content into `dst`'s (resized) slot and **exits with the
-  head in residue past the trailing terminator** — exactly the architecture-bug
-  class that bit the append and clear gadgets (invisible to validity proofs;
-  `#eval`-probe via `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/probe.lean`).
-- It will almost certainly be a **`loopTM`** (ferry one bit per iteration). When you
-  prove its run lemma, give each iteration a **linear** `∧ t ≤ c·L+d` bound and
-  feed `Compile.loopBudget_le` + a `clearBudget_arith`-style closer — the **exact
-  template `clearRegionTM_run` now provides** (copy it).
-- Then per-op contracts via the `opAppendBit_physical_residue` template +
-  `rewindBracket`. The `clear` machinery (`clearRegionTM_run`, `loopTM_no_early_halt`,
-  the budget threading) is the reusable model.
+### 1. Cross-register ops — PROBED (2026-06-03), the plan is now concrete
+The 9 cross-register ops are `s.set dst (f (s.get src…))` (read `src`, write `dst`,
+`dst ≠ src`). **Probe verdict (go), with a two-class split:**
+
+**Tape facts confirmed by `#eval`** (`encodeTape [[1,0],[0,1],[]] = [3,2,1,0,1,2,0,0,3]`):
+content cells are shifted bits `{1,2}`, separators `0`, terminator `3` — **the
+4-symbol alphabet (`sig=4`) is fully used; there is NO spare mark symbol.**
+`appendAtTM 2 1` inserts a bit into `dst`'s block and **exits with the head on the
+trailing terminator** (rewind-bracketable, like append/clear). `navigateAndTestTM`
+lands on `src`'s first content cell. Higher-`sig` gadgets **compose fine**
+(`composeFlatTM.sig = max`; boundary tapes stay 4-valued), so marking is allowed.
+
+**Class A — small-output ops `head` / `nonEmpty` / `eqBit` (NO marking needed).**
+Output is `≤ 1` cell. Build as `clear dst ⨾ (navigate to src, branch on the first
+content cell ∈ {1,2,delim}) ⨾ (append the fixed bit in each branch) ⨾ rewind`.
+Needs one new gadget: a **3-way `navigateAndReadBitTM`** (refine `navigateAndTestTM`'s
+content/delim branch to also split content `1` vs `2`), then `branchComposeFlatTM`
+into two `appendAtTM` arms. Reuse `rewindBracket` + the `opAppendBit_physical_residue`
+template. **Start here — fully buildable from proven pieces; `head`/`Op.head 1 0`
+is a real witness.**
+
+**Class B — block-transport ops `tail`/`copy`/`concat`/`takeAt`/`dropAt`/`consLen`.**
+These move a **variable-length block** non-destructively. **⚠ Architectural finding:
+non-destructive block copy on a single tape with a fixed alphabet provably needs
+either spare mark symbols or a counter — neither exists in `sig=4`.** Resolution:
+a `copyBlockTM` with a **locally-extended alphabet `sig=6`** (4 = "marked, was 1",
+5 = "marked, was 2"); it `loopTM`s one cell per iteration (mark next `src` cell,
+carry its bit in state, `insertCarry` at `dst`), then a final unmark pass restores
+`src`. Composes back into the `sig=4` pipeline (max-sig). It's a `loopTM`, so the
+per-iteration-linear → quadratic **budget template (`loopBudget_le`) from this
+session applies directly**. (`takeAt`/`dropAt`/`consLen` carry a `lenReg` that can
+double as the loop counter.) **Before building B, confirm the verifiers actually
+need these ops** (C7 verifiers are still `sorry`) — if the DSL programs can be
+written with only Class-A + `append` + `forBnd`, the `sig=6` marking machine is
+avoidable. See the open AskUserQuestion / commit message.
+
+**Order:** (1) `navigateAndReadBitTM` + the 3 Class-A ops (probe each end-to-end
+first), reusing `rewindBracket`; (2) settle the Class-B op-set question; (3) if
+needed, probe+build `copyBlockTM` (sig=6), then the Class-B ops.
 
 ### 2. Assemble `Compile_run_physical_residue`
 `compileIfBit`/`compileForBnd` residue contracts
