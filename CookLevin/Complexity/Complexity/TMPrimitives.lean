@@ -3878,6 +3878,87 @@ theorem loopTM_run
         (loopBudget tIter tDone m) _ _ h_step1]
       exact ih'
 
+/-- **No-early-halt trajectory of `loopTM`.** Until the loop completes
+(`k < loopBudget tIter tDone n`), the loop machine has not reached its dedicated
+halt state `B.states` — every intermediate config sits at a `B`-state (`<
+B.states`), which is non-halting in `loopTM`. The `h_traj` companion to
+`loopTM_run`, needed by every counted-loop physical contract (e.g. the `clear`
+gadget). Same hypotheses as `loopTM_run`. -/
+theorem loopTM_no_early_halt
+    (B : FlatTM) (exitDone exitLoop : Nat)
+    (h_validB : validFlatTM B)
+    (h_done_lt : exitDone < B.states) (h_loop_lt : exitLoop < B.states)
+    (h_ne : exitDone ≠ exitLoop)
+    (T : Nat → List Nat × Nat × List Nat)
+    (h_sym : ∀ n v, currentTapeSymbol (T n) = some v → v < B.sig)
+    (tIter : Nat → Nat) (tDone : Nat)
+    (h_done :
+        runFlatTM tDone B { state_idx := B.start, tapes := [T 0] }
+          = some { state_idx := exitDone, tapes := [T 0] } ∧
+        (∀ k, k < tDone → ∀ ck,
+            runFlatTM k B { state_idx := B.start, tapes := [T 0] } = some ck →
+            ck.state_idx ≠ exitDone ∧ ck.state_idx ≠ exitLoop ∧
+            haltingStateReached B ck = false)) :
+    ∀ n,
+      (∀ j, j < n →
+        runFlatTM (tIter j) B { state_idx := B.start, tapes := [T (j + 1)] }
+          = some { state_idx := exitLoop, tapes := [T j] } ∧
+        (∀ k, k < tIter j → ∀ ck,
+            runFlatTM k B { state_idx := B.start, tapes := [T (j + 1)] } = some ck →
+            ck.state_idx ≠ exitDone ∧ ck.state_idx ≠ exitLoop ∧
+            haltingStateReached B ck = false)) →
+      ∀ k, k < loopBudget tIter tDone n → ∀ ck,
+        runFlatTM k (loopTM B exitDone exitLoop)
+            { state_idx := B.start, tapes := [T n] } = some ck →
+        haltingStateReached (loopTM B exitDone exitLoop) ck = false := by
+  intro n
+  induction n with
+  | zero =>
+      intro _ k hk ck hck
+      have h_traj : ∀ j, j < k → ∀ cj,
+          runFlatTM j B { state_idx := B.start, tapes := [T 0] } = some cj →
+          cj.state_idx ≠ exitDone ∧ cj.state_idx ≠ exitLoop ∧ haltingStateReached B cj = false :=
+        fun j hj cj hcj => h_done.2 j (by simp only [loopBudget] at hk; omega) cj hcj
+      have h_phase := runFlatTM_loopTM_B_phase B exitDone exitLoop h_validB k
+        { state_idx := B.start, tapes := [T 0] } h_validB.1 h_traj
+      rw [h_phase] at hck
+      exact loopTM_haltingStateReached_inB B exitDone exitLoop ck
+        (state_idx_lt_states_of_run B h_validB k _ ck h_validB.1 hck)
+  | succ m ih =>
+      intro h_iter k hk ck hck
+      have h_iter_m := h_iter m (Nat.lt_succ_self m)
+      by_cases hkle : k < tIter m + 1
+      · have h_traj : ∀ j, j < k → ∀ cj,
+            runFlatTM j B { state_idx := B.start, tapes := [T (m + 1)] } = some cj →
+            cj.state_idx ≠ exitDone ∧ cj.state_idx ≠ exitLoop ∧ haltingStateReached B cj = false :=
+          fun j hj cj hcj => h_iter_m.2 j (by omega) cj hcj
+        have h_phase := runFlatTM_loopTM_B_phase B exitDone exitLoop h_validB k
+          { state_idx := B.start, tapes := [T (m + 1)] } h_validB.1 h_traj
+        rw [h_phase] at hck
+        exact loopTM_haltingStateReached_inB B exitDone exitLoop ck
+          (state_idx_lt_states_of_run B h_validB k _ ck h_validB.1 hck)
+      · push_neg at hkle
+        obtain ⟨j', rfl⟩ : ∃ j', k = (tIter m + 1) + j' := ⟨k - (tIter m + 1), by omega⟩
+        have hj'_lt : j' < loopBudget tIter tDone m := by simp only [loopBudget] at hk; omega
+        have ih' := ih (fun j hj => h_iter j (Nat.lt_succ_of_lt hj))
+        have h_lift := runFlatTM_loopTM_B_phase B exitDone exitLoop h_validB (tIter m)
+          { state_idx := B.start, tapes := [T (m + 1)] } h_validB.1 h_iter_m.2
+        rw [h_iter_m.1] at h_lift
+        have h_bridge : stepFlatTM (loopTM B exitDone exitLoop)
+            { state_idx := exitLoop, tapes := [T m] }
+              = some { state_idx := B.start, tapes := [T m] } :=
+          stepFlatTM_loopTM_bridgeLoop B exitDone exitLoop h_ne
+            (T m).1 (T m).2.2 (T m).2.1 (fun v hv => h_sym m v hv)
+        have h_step1 := runFlatTM_extend_by_step (loopTM B exitDone exitLoop) (tIter m)
+          { state_idx := B.start, tapes := [T (m + 1)] }
+          { state_idx := exitLoop, tapes := [T m] }
+          { state_idx := B.start, tapes := [T m] }
+          h_lift
+          (loopTM_haltingStateReached_inB B exitDone exitLoop _ h_loop_lt)
+          h_bridge
+        rw [runFlatTM_compose (loopTM B exitDone exitLoop) (tIter m + 1) j' _ _ h_step1] at hck
+        exact ih' j' hj'_lt ck hck
+
 /-! ### `AllFalse` namespace: pre-work for a real `DecidesBy` example
 
 We are building toward a complete `DecidesBy` witness for
