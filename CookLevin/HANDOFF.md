@@ -66,26 +66,48 @@ from do NOT produce `BitState` states:**
    the encoding is bit-level. The already-proven `clear` op is correct but is in
    the same boat (its contract assumes `BitState`).
 
-**This is the new top decision (owner's call) — pick the data encoding before more
-gadget work:**
-- **(A) Bit-level (binary) re-encoding.** Every `LangEncodable.enc` produces a
-  `{0,1}`-list (self-delimiting binary). All `encodeState` become `BitState`; the
-  `sig=4` compiler + the `clear` op + future gadgets apply. Length prefixes become
-  binary blocks ⇒ `takeAt`/`dropAt`/`consLen` must be **restated** for binary
-  lengths; re-prove `swap`/`mapFst`. Keeps the gadget investment. *Recommended.*
-- **(B) Unary length, bit data.** Lengths as unary `1`-blocks; cells stay `{0,1}`,
-  ops count unary ones. Simpler ops, larger tapes. Also keeps the gadget work.
-- **(C) Multi-symbol tape (variable `sig`).** Generalise `encodeTape`/all gadgets to
-  arbitrary Nat cells. Discards the `sig=4` gadget investment (clear, append, …).
-  Not recommended.
-- Add the missing **`BitState` hypothesis to `Compile_sound`** (and have the
-  `LangEncodable` layer guarantee `BitState` of every `encodeState`), regardless
-  of A/B/C.
+**Status of the gap (investigated 2026-06-03):**
+- **It is on the live in-NP path, not purely future.** `sat_NP : inNP SAT`
+  (consumed by `CookLevin`) routes through `EvalCnfCmd.evalCnfCmd` compiled by
+  `Compile` (`Deciders/EvalCnfTM.lean`). CNF data carries Nat variable indices ⇒
+  non-`BitState`. Currently masked by the sorries in `evalCnfCmd`
+  (`encodeIn_size`/`decides`/`cost_bound`) and `Compile_sound`; it becomes the
+  blocker as those close. The capstones `reducesPolyMO_of_lang`/`red_inNP_of_lang`
+  are otherwise built-but-unwired (latent there).
+- **Rework surface is small & contained.** The Nat-cell-dependent ops
+  (`takeAt`/`dropAt`/`consLen`) are used **only** in `PolyTime.lean`'s three repack
+  combinators (`swapCmd`/`mapFstCmd`/`mapSndCmd`); the `LangEncodable` instances
+  (`Nat`/`List Nat`/product) are all in `PolyTime.lean`. So the re-encoding touches
+  one file plus the `Op` length-semantics.
 
-**Until this is decided, do NOT build the cross-register gadgets below** — they'd be
-built against `BitState`/`sig=4` while the data isn't bit-shaped. The
-`navigateAndReadBitTM` design and Class A/B split below remain valid *once the
-encoding is bit-level* (A/B).
+**Decision (owner's call) — pick the data encoding before more gadget work:**
+- **(B) Unary lengths, bit data — RECOMMENDED.** Numbers (lengths, indices) are
+  unary `1`-blocks; all cells stay `{0,1}` (`BitState`), so the `sig=4` compiler +
+  the proven `clear`/append gadgets apply unchanged. Sizes stay polynomial (every
+  length/index is `≤` input size). **Crucially it also dissolves the `copyBlockTM`
+  marking problem:** a unary length register *is a loop counter*, and **counter +
+  rotation = non-destructive block copy with NO marks** (each `loopTM` iteration
+  moves `src`'s front cell to both `dst` and `src`'s back; after `N` = counter
+  iterations `src` is rotated full-circle = unchanged and `dst` holds the copy).
+  `takeAt`/`dropAt` use their `lenReg` directly as the counter; `copy`/`tail`/
+  `concat` first count `src`'s length into a scratch register (a count loop ending
+  at the separator, like the clear loop). **All cross-register ops become counted
+  loops reusing this session's `loopBudget_le` — no `sig=6`, no marking gadget.**
+  Cost: restate the `Op` length-semantics + the 3 repack combinators for unary
+  lengths; re-prove them (small surface).
+- **(A) Binary re-encoding.** Self-delimiting binary cells. Smaller tapes, but the
+  length-ops need on-tape **binary parsing/arithmetic** — much harder gadgets. Not
+  recommended given (B) exists.
+- **(C) Multi-symbol tape (variable `sig`).** Generalise all gadgets to arbitrary
+  Nat cells; discards the `sig=4` investment. Not recommended.
+- Regardless of A/B/C: add the missing **`BitState` hypothesis to `Compile_sound`**
+  and have `LangEncodable` guarantee `BitState` of every `encodeState`.
+
+**Until the encoding is settled, do NOT build the cross-register gadgets** — under
+(B) they are counted-loop/rotation gadgets (no marking), which is a *different and
+simpler* design than the `sig=6` `copyBlockTM` sketched below. The Class-A/B split
+and `navigateAndReadBitTM` notes below are superseded by the (B) counted-loop plan
+if (B) is chosen.
 
 ## ⚠ Risk surfaced earlier this session — the per-op budget constant `9·L²+9` is TIGHT
 
