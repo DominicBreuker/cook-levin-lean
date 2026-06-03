@@ -157,6 +157,21 @@ theorem regBlocks_append_singleton (init : List (List Nat)) (b : List Nat) :
   simp only [regBlocks, List.map_append, List.flatten_append, List.map_cons, List.map_nil,
     List.flatten_cons, List.flatten_nil, List.append_nil]
 
+/-- **Linear navigation-step bound.** `navSteps skipped` (one `stepRight` plus, per
+skipped register `b`, `|b|+2` steps) is at most `2·|regBlocks skipped| + 1`: each
+`b` contributes `|b|+2 ≤ 2(|b|+1)` and `regBlocks` contributes `|b|+1` per block.
+Used to bound the clear-loop per-iteration step count linearly in the tape length. -/
+theorem navSteps_le (skipped : List (List Nat)) :
+    navSteps skipped ≤ 2 * (regBlocks skipped).length + 1 := by
+  induction skipped with
+  | nil => simp [navSteps, regBlocks]
+  | cons b t ih =>
+      have h1 : navSteps (b :: t) = navSteps t + (b.length + 2) := by
+        simp only [navSteps, List.map_cons, List.sum_cons]; omega
+      have h2 : (regBlocks (b :: t)).length = (regBlocks t).length + (b.length + 1) := by
+        rw [regBlocks_cons]; simp only [List.length_append, List.length_cons]; omega
+      omega
+
 /-- `navigateToRegTM_exit dst` is a halt state of `navigateToRegTM dst`. -/
 theorem navigateToRegTM_exit_is_halt : ∀ dst,
     (navigateToRegTM dst).halt[navigateToRegTM_exit dst]? = some true

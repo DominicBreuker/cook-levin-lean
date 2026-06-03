@@ -2329,7 +2329,8 @@ theorem Compile.encodeTape_residue_twoPhaseRewind (output : State) (residue : Li
               { state_idx := 0,
                 tapes := [([], (Compile.encodeTape output ++ residue).length - 1,
                            Compile.encodeTape output ++ residue)] } = some ck →
-          haltingStateReached (ScanLeft.rewindTwoPhaseTM 4 3) ck = false) := by
+          haltingStateReached (ScanLeft.rewindTwoPhaseTM 4 3) ck = false)
+      ∧ steps ≤ (Compile.encodeTape output ++ residue).length + 3 := by
   set tp := Compile.encodeTape output ++ residue with htp
   have hEO2 : 2 ≤ (Compile.encodeTape output).length := by rw [Compile.encodeTape_length]; omega
   have hEOle : (Compile.encodeTape output).length ≤ tp.length := by
@@ -2385,7 +2386,10 @@ theorem Compile.encodeTape_residue_twoPhaseRewind (output : State) (residue : Li
   have htraj := ScanLeft.rewindTwoPhase_no_early_halt 4 3 (by decide) [] tp
     ((Compile.encodeTape output).length - 1) (tp.length - 1)
     htp_pos h_sent hp_lt h_term (by omega) (by omega) (by omega) h_int h_res
-  exact ⟨_, hrun, htraj⟩
+  -- the step count `(head−p+1)+1+(1+1+p)` with `head = tp.length−1`, `p = E−1`
+  -- equals exactly `tp.length + 3`; bound it with `omega` (`2 ≤ E ≤ tp.length`).
+  refine ⟨_, hrun, htraj, ?_⟩
+  omega
 
 /-- **Explicit register decomposition of `encodeTape`** (the existential `pre`/
 `rest` of `encodeTape_reg_decomp` made concrete). `pre = endMark :: encodeRegs
@@ -2462,7 +2466,8 @@ theorem Compile.stepDeleteRewind_run (s : State) (dst : Var) (res : List Nat)
               { state_idx := 0,
                 tapes := [([], 1 + (Compile.encodeRegs (s.take dst)).length,
                            Compile.encodeTape s ++ res)] } = some ck →
-          haltingStateReached ClearGadget.stepDeleteRewindRawTM ck = false) := by
+          haltingStateReached ClearGadget.stepDeleteRewindRawTM ck = false)
+      ∧ t ≤ 4 * (Compile.encodeTape s ++ res).length + 9 := by
   obtain ⟨c0, cs, hcons⟩ : ∃ c0 cs, s.get dst = c0 :: cs := by
     cases hg : s.get dst with
     | nil => exact absurd hg hne
@@ -2515,9 +2520,16 @@ theorem Compile.stepDeleteRewind_run (s : State) (dst : Var) (res : List Nat)
   have htape_eq : pre ++ (c0 + 1) :: tt :: suf = Compile.encodeTape s ++ res := by
     rw [htape_in, hts]
   -- (1) inner rewind: stepLeft (blank) ⨾ rewindTwoPhase, on Tout, head Tout.length → 0.
-  obtain ⟨t_rw, h_rw, h_rw_traj⟩ := Compile.encodeTape_residue_twoPhaseRewind (s.set dst cs) (res ++ [0])
-    hbit_out hres0
-  rw [← hToutdef] at h_rw h_rw_traj
+  obtain ⟨t_rw, h_rw, h_rw_traj, h_rw_bnd⟩ :=
+    Compile.encodeTape_residue_twoPhaseRewind (s.set dst cs) (res ++ [0]) hbit_out hres0
+  rw [← hToutdef] at h_rw h_rw_traj h_rw_bnd
+  -- length bridge: the output tape `Tout` has the same length as the input
+  -- (`encodeTape s ++ res`), and `(tt :: suf).length` is bounded by it.
+  have hLinTout : (Compile.encodeTape s ++ res).length = Tout.length := by
+    rw [htape_in, hTout_len]
+    simp [List.length_append, List.length_cons, Nat.add_assoc]
+  have hsuf_le : (tt :: suf).length ≤ (Compile.encodeTape s ++ res).length := by
+    rw [hLinTout, ← hhead_eq]; omega
   have h_innerRewind :
       runFlatTM (1 + 1 + t_rw)
         (composeFlatTM (ScanLeft.stepLeftTM 4) (ScanLeft.rewindTwoPhaseTM 4 3) 1)
@@ -2619,7 +2631,7 @@ theorem Compile.stepDeleteRewind_run (s : State) (dst : Var) (res : List Nat)
     rw [htape_in]; simp [List.length_append]
   have hr2 : pre.length + 1 < (Compile.encodeTape s ++ res).length := by
     rw [htape_in]; simp [List.length_append]; omega
-  refine ⟨(1 : Nat) + 1 + ((3 * (tt :: suf).length + 1) + 1 + (1 + 1 + t_rw)), ?_, ?_⟩
+  refine ⟨(1 : Nat) + 1 + ((3 * (tt :: suf).length + 1) + 1 + (1 + 1 + t_rw)), ?_, ?_, ?_⟩
   · rw [show ClearGadget.stepDeleteRewindRawTM
           = composeFlatTM (ScanLeft.stepRightTM 4) ClearGadget.deleteRewindRawTM 1 from rfl,
         ← hpre_len, hcons]
@@ -2655,6 +2667,10 @@ theorem Compile.stepDeleteRewind_run (s : State) (dst : Var) (res : List Nat)
         (by rw [hcell]; omega))
       (ScanLeft.stepRightTM_no_early_halt 4 [] (Compile.encodeTape s ++ res) pre.length)
       h_deleteRewind_traj
+  · -- budget: `3·M + t_rw + 6 ≤ 4·Tout.length + 9 = 4·Lin + 9` (`M ≤ Tout`, `t_rw ≤ Tout+3`).
+    rw [hLinTout]
+    have hd : (tt :: suf).length ≤ Tout.length := by omega
+    omega
 
 /-- **Clear loop body — delete branch (Risk C2, step 3).** When register `dst` is
 nonempty, the loop body `clearBodyRawTM dst` navigates to it, tests its content
@@ -2675,7 +2691,8 @@ theorem Compile.clearBody_delete_run (s : State) (dst : Var) (res : List Nat)
               { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
           ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitDone dst ∧
           ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitLoop dst ∧
-          haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false) := by
+          haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false)
+      ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 12 := by
   obtain ⟨c0, cs, hcons⟩ : ∃ c0 cs, s.get dst = c0 :: cs := by
     cases hg : s.get dst with
     | nil => exact absurd hg hne
@@ -2713,8 +2730,14 @@ theorem Compile.clearBody_delete_run (s : State) (dst : Var) (res : List Nat)
     · exact Compile.encodeTape_lt_four s hbit x hx
     · exact (hres x hx).1
   -- M₂: the deletion+rewind core (step 3 sub-lemma).
-  obtain ⟨t2, h_sdr, h_sdr_traj⟩ := Compile.stepDeleteRewind_run s dst res h hbit hne hres
+  obtain ⟨t2, h_sdr, h_sdr_traj, h_t2_bnd⟩ := Compile.stepDeleteRewind_run s dst res h hbit hne hres
   rw [← hregBlocks] at h_sdr h_sdr_traj
+  -- `regBlocks skipped` and `midSuf` partition the tape after the leading sentinel
+  -- and `dst`'s first cell, so `|regBlocks skipped| + 2 ≤ Lin`.
+  have h_rb_le : (AppendGadget.regBlocks skipped).length + 2 ≤ (Compile.encodeTape s ++ res).length := by
+    rw [htape_nav]; simp only [List.length_cons, List.length_append]; omega
+  have h_nav_le : ClearGadget.navSteps skipped ≤ 2 * (AppendGadget.regBlocks skipped).length + 1 :=
+    ClearGadget.navSteps_le skipped
   -- navigation run, transported to `encodeTape` form.
   have h_run1 : runFlatTM (ClearGadget.navSteps skipped + 1 + 1) (ClearGadget.navigateAndTestTM dst)
       { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
@@ -2753,7 +2776,7 @@ theorem Compile.clearBody_delete_run (s : State) (dst : Var) (res : List Nat)
     exact ⟨ClearGadget.ne_of_not_halting (ClearGadget.navigateAndTestTM_exit_content_is_halt dst) hh,
            ClearGadget.ne_of_not_halting (ClearGadget.navigateAndTestTM_exit_delim_is_halt dst) hh,
            hh⟩
-  refine ⟨(ClearGadget.navSteps skipped + 1 + 1) + 1 + t2, ?_, ?_⟩
+  refine ⟨(ClearGadget.navSteps skipped + 1 + 1) + 1 + t2, ?_, ?_, ?_⟩
   · rw [show ClearGadget.clearBodyRawTM dst
         = branchComposeFlatTM (ClearGadget.navigateAndTestTM dst)
             ClearGadget.stepDeleteRewindRawTM ClearGadget.justRewindTM
@@ -2794,6 +2817,8 @@ theorem Compile.clearBody_delete_run (s : State) (dst : Var) (res : List Nat)
       k hk ck hck
     exact ⟨ClearGadget.ne_of_not_halting (ClearGadget.clearBodyRawTM_exitDone_is_halt dst) hh,
            ClearGadget.ne_of_not_halting (ClearGadget.clearBodyRawTM_exitLoop_is_halt dst) hh, hh⟩
+  · -- budget: `navSteps + 3 + t2 ≤ (2·rb+1) + 3 + (4·Lin+9) ≤ 6·Lin+12` (`rb+2 ≤ Lin`).
+    omega
 
 /-- **Clear loop body — done branch (Risk C2, step 4).** When register `dst` is
 empty, the loop body `clearBodyRawTM dst` navigates to it, finds the delimiter `0`
@@ -2813,7 +2838,8 @@ theorem Compile.clearBody_done_run (s : State) (dst : Var) (res : List Nat)
               { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
           ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitDone dst ∧
           ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitLoop dst ∧
-          haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false) := by
+          haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false)
+      ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 12 := by
   obtain ⟨hv, hs⟩ := Compile.encodeTape_reg_decomp_at s dst h
   have hbit_take : Compile.BitState (s.take dst) :=
     fun reg hreg => hbit reg (List.mem_of_mem_take hreg)
@@ -2837,6 +2863,11 @@ theorem Compile.clearBody_done_run (s : State) (dst : Var) (res : List Nat)
       = (3 : Nat) :: (AppendGadget.regBlocks skipped ++ 0 :: tail') := by
     rw [hs, hempty, hregBlocks, htaildef]
     simp [Compile.shiftReg, Compile.endMark, List.append_assoc]
+  -- linear budget ingredients: `|regBlocks skipped| + 2 ≤ Lin` and `navSteps ≤ 2·rb+1`.
+  have h_rb_le : (AppendGadget.regBlocks skipped).length + 2 ≤ (Compile.encodeTape s ++ res).length := by
+    rw [htape_nav]; simp only [List.length_cons, List.length_append]; omega
+  have h_nav_le : ClearGadget.navSteps skipped ≤ 2 * (AppendGadget.regBlocks skipped).length + 1 :=
+    ClearGadget.navSteps_le skipped
   -- `regBlocks skipped` is `{0,1,2}`-valued (no terminator).
   have hrb : ∀ x ∈ AppendGadget.regBlocks skipped, x < 4 ∧ x ≠ 3 := by
     rw [hregBlocks]; intro x hx
@@ -2935,7 +2966,7 @@ theorem Compile.clearBody_done_run (s : State) (dst : Var) (res : List Nat)
         ≠ (ClearGadget.navigateToRegTM dst).states + 2
     omega
   refine ⟨(ClearGadget.navSteps skipped + 1 + 1) + 1
-      + ((1 + (AppendGadget.regBlocks skipped).length) + 1), ?_, ?_⟩
+      + ((1 + (AppendGadget.regBlocks skipped).length) + 1), ?_, ?_, ?_⟩
   · rw [show ClearGadget.clearBodyRawTM dst
         = branchComposeFlatTM (ClearGadget.navigateAndTestTM dst)
             ClearGadget.stepDeleteRewindRawTM ClearGadget.justRewindTM
@@ -2974,6 +3005,8 @@ theorem Compile.clearBody_done_run (s : State) (dst : Var) (res : List Nat)
       k hk ck hck
     exact ⟨ClearGadget.ne_of_not_halting (ClearGadget.clearBodyRawTM_exitDone_is_halt dst) hh,
            ClearGadget.ne_of_not_halting (ClearGadget.clearBodyRawTM_exitLoop_is_halt dst) hh, hh⟩
+  · -- budget: `navSteps + (rb + 5) ≤ (2·rb+1) + rb + 5 = 3·rb+6 ≤ 3·Lin ≤ 6·Lin+12`.
+    omega
 
 /-- An `Op` is in-bounds with respect to a state when all its register operands
 are valid indices. Needed because the TM must physically navigate to each
@@ -3372,13 +3405,41 @@ theorem Compile.linear_le_quadratic_tapeLen (s : State) (res_in : List Nat) :
       _ ≤ 9 * L * L := Nat.mul_le_mul_left _ (by omega)
   omega
 
+/-- **Uniform per-term bound on `loopBudget`.** If every iteration body and the
+done branch each run in `≤ M` steps (counting the `+1` backward/leave bridge),
+then the whole counted loop runs in `≤ (n+1)·M` steps. The clear loop instantiates
+`M` with a linear-in-tape-length bound, giving the quadratic total. -/
+theorem Compile.loopBudget_le (tIter : Nat → Nat) (tDone M : Nat) :
+    ∀ n, (tDone + 1 ≤ M) → (∀ j, j < n → tIter j + 1 ≤ M) →
+      loopBudget tIter tDone n ≤ (n + 1) * M
+  | 0, hDone, _ => by simp only [loopBudget]; omega
+  | n + 1, hDone, hIter => by
+      have ih := Compile.loopBudget_le tIter tDone M n hDone
+        (fun j hj => hIter j (Nat.lt_succ_of_lt hj))
+      have hI : tIter n + 1 ≤ M := hIter n (Nat.lt_succ_self n)
+      have hstep : loopBudget tIter tDone (n + 1) = tIter n + 1 + loopBudget tIter tDone n := rfl
+      have hexp : (n + 1 + 1) * M = (n + 1) * M + M := by ring
+      rw [hstep, hexp]
+      omega
+
+/-- **Clear-loop budget arithmetic.** The per-iteration linear bound `6·L+13`
+summed over `n+1 ≤ L−1` terms is dominated by the quadratic `9·L²+9`. Proven by
+substituting `L = n+2+d` (legal since `n+2 ≤ L`): the difference is a polynomial
+with non-negative coefficients. -/
+theorem Compile.clearBudget_arith (n L : Nat) (h : n + 2 ≤ L) :
+    (n + 1) * (6 * L + 13) ≤ 9 * L * L + 9 := by
+  obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le h
+  nlinarith [Nat.zero_le n, Nat.zero_le d, Nat.zero_le (n * d)]
+
 /-- **`clearRegionTM` run (Risk C2, step 5b).** Assembled from `loopTM_run`. The
 loop deletes register `dst`'s `n = |s.get dst|` leading cells one per iteration
 (`clearBody_delete_run`), then the done branch fires when `dst` is empty
 (`clearBody_done_run`). The tape sequence is `T j = encodeTape (s.set dst (drop
 (n−j))) ++ (res_in ++ replicate (n−j) 0)`: `T n = encodeTape s ++ res_in` (start)
 and `T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)` (end). Each
-deleted cell becomes a `0` filler appended to the residue. -/
+deleted cell becomes a `0` filler appended to the residue. The total step count
+is bounded by `9·L²+9` where `L = |encodeTape s ++ res_in|` (every loop tape has
+length `L`, each iteration is `O(L)`, and there are `≤ L` iterations). -/
 theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
     (h : dst < s.length) (hbit : Compile.BitState s) (hres : Compile.ValidResidue res_in) :
     ∃ t, runFlatTM t (ClearGadget.clearRegionTM dst)
@@ -3390,7 +3451,9 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
           runFlatTM k (ClearGadget.clearRegionTM dst)
               { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } = some ck →
           ck.state_idx ≠ ClearGadget.clearRegionTM_exit dst ∧
-          haltingStateReached (ClearGadget.clearRegionTM dst) ck = false) := by
+          haltingStateReached (ClearGadget.clearRegionTM dst) ck = false)
+      ∧ t ≤ 9 * (Compile.encodeTape s ++ res_in).length * (Compile.encodeTape s ++ res_in).length + 9
+      := by
   set n := (s.get dst).length with hn
   -- the loop's tape after `n − j` deletions of `dst`'s leading cells.
   set T : Nat → (List Nat × Nat × List Nat) := fun j =>
@@ -3429,6 +3492,23 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
       · injection hv with e; rw [← e]; exact List.get_mem _ _
       · exact absurd hv (by simp)
     exact hT_lt m v hmem
+  -- **Budget bookkeeping.** Every loop tape `T j` (`j ≤ n`) has the same length
+  -- `L = |encodeTape s ++ res_in|` (a delete frees a cell but adds a `0` filler),
+  -- and the cleared register satisfies `n + 2 ≤ L`.
+  have hTlen : ∀ j, j ≤ n →
+      (T j).2.2.length = (Compile.encodeTape s ++ res_in).length := by
+    intro j hj
+    have hdroplen : ((s.get dst).drop (n - j)).length = j := by
+      rw [List.length_drop, ← hn]; omega
+    have hbal := Compile.encodeTape_set_length s dst ((s.get dst).drop (n - j)) h
+    rw [hdroplen, ← hn] at hbal
+    simp only [hTdef, List.length_append, List.length_replicate]
+    omega
+  have hnL : n + 2 ≤ (Compile.encodeTape s ++ res_in).length := by
+    have hsize := State.size_set_add s dst ([] : List Nat)
+    simp only [List.length_nil, Nat.add_zero] at hsize
+    rw [List.length_append, Compile.encodeTape_length]
+    omega
   -- done branch: at `T 0`, register `dst` is empty.
   have hdone := Compile.clearBody_done_run (s.set dst ((s.get dst).drop n)) dst
     (res_in ++ List.replicate n 0)
@@ -3436,7 +3516,13 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
     (hbit_drop n)
     (by rw [Compile.get_set_eq s dst _ h, hn]; exact List.drop_length)
     (Compile.ValidResidue_append_replicate_zero res_in n hres)
-  obtain ⟨tDone, hdr, hdt⟩ := hdone
+  obtain ⟨tDone, hdr, hdt, hdb⟩ := hdone
+  -- done-branch tape is `T 0` (length `L`), so its bound becomes `tDone + 1 ≤ 6·L+13`.
+  have h_done_bnd : tDone + 1 ≤ 6 * (Compile.encodeTape s ++ res_in).length + 13 := by
+    have hlen0 := hTlen 0 (Nat.zero_le n)
+    simp only [hTdef, Nat.sub_zero] at hlen0
+    rw [hlen0] at hdb
+    omega
   have hT0 : T 0 = ([], 0, Compile.encodeTape (s.set dst ((s.get dst).drop n))
       ++ (res_in ++ List.replicate n 0)) := by simp only [hTdef, Nat.sub_zero]
   -- per-iteration delete: `T (j+1) → T j` for `j < n`.
@@ -3449,9 +3535,10 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
             { state_idx := (ClearGadget.clearBodyRawTM dst).start, tapes := [T (j + 1)] } = some ck →
         ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitDone dst ∧
         ck.state_idx ≠ ClearGadget.clearBodyRawTM_exitLoop dst ∧
-        haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false) := by
+        haltingStateReached (ClearGadget.clearBodyRawTM dst) ck = false) ∧
+      t ≤ 6 * (Compile.encodeTape s ++ res_in).length + 12 := by
     intro j hj
-    obtain ⟨t, hr, ht⟩ := Compile.clearBody_delete_run
+    obtain ⟨t, hr, ht, hb⟩ := Compile.clearBody_delete_run
       (s.set dst ((s.get dst).drop (n - (j + 1)))) dst (res_in ++ List.replicate (n - (j + 1)) 0)
       (by rw [Compile.length_set s dst _ h]; exact h)
       (hbit_drop _)
@@ -3460,6 +3547,10 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
           have hlen : ((s.get dst).drop (n - (j + 1))).length = 0 := by rw [hc]; rfl
           rw [List.length_drop] at hlen; omega)
       (Compile.ValidResidue_append_replicate_zero res_in (n - (j + 1)) hres)
+    -- the input tape is `T (j+1)`, whose length is `L`; rewrite the bound to `L`.
+    have hlenj := hTlen (j + 1) (by omega)
+    simp only [hTdef] at hlenj
+    rw [hlenj] at hb
     -- bridge the delete output to `T j`.
     have hstate_eq :
         (s.set dst ((s.get dst).drop (n - (j + 1)))).set dst
@@ -3471,7 +3562,7 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
         = res_in ++ List.replicate (n - j) 0 := by
       rw [List.append_assoc, ← List.replicate_succ', show n - (j + 1) + 1 = n - j from by omega]
     rw [hstate_eq, hres_eq] at hr
-    refine ⟨t, ?_, ?_⟩
+    refine ⟨t, ?_, ?_, hb⟩
     · rw [hBstart]; simp only [hTdef]; exact hr
     · rw [hBstart]; simp only [hTdef]; exact ht
   -- choose per-iteration step counts.
@@ -3508,7 +3599,14 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
     intro j hj
     have hspec := (hiter_ex j hj).choose_spec
     simp only [htIter, dif_pos hj]
-    exact hspec
+    exact ⟨hspec.1, hspec.2.1⟩
+  -- per-iteration linear bound, extracted from the (now bound-carrying) existential.
+  have h_iter_bnd : ∀ j, j < n →
+      tIter j + 1 ≤ 6 * (Compile.encodeTape s ++ res_in).length + 13 := by
+    intro j hj
+    have hb := (hiter_ex j hj).choose_spec.2.2
+    simp only [htIter, dif_pos hj]
+    omega
   have hmain := loopTM_run (ClearGadget.clearBodyRawTM dst)
     (ClearGadget.clearBodyRawTM_exitDone dst) (ClearGadget.clearBodyRawTM_exitLoop dst)
     (ClearGadget.clearBodyRawTM_valid dst)
@@ -3532,12 +3630,17 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
   have hEval : Op.eval (Op.clear dst) s = s.set dst ((s.get dst).drop n) := by
     have hdn : (s.get dst).drop n = [] := by rw [hn]; exact List.drop_length
     rw [hdn]; rfl
-  refine ⟨loopBudget tIter tDone n, ?_, ?_⟩
+  refine ⟨loopBudget tIter tDone n, ?_, ?_, ?_⟩
   · rw [hMeq, hExeq, hEval]; exact hmain
   · intro k hk ck hck
     rw [hMeq] at hck
     have hh := hmain_traj k hk ck hck
     exact ⟨ClearGadget.ne_of_not_halting (Compile.opClear dst).exit_is_halt hh, hh⟩
+  · -- budget: `loopBudget ≤ (n+1)·(6L+13) ≤ 9L²+9` (each tape length `L`, `n+2 ≤ L`).
+    exact le_trans
+      (Compile.loopBudget_le tIter tDone (6 * (Compile.encodeTape s ++ res_in).length + 13)
+        n h_done_bnd h_iter_bnd)
+      (Compile.clearBudget_arith n (Compile.encodeTape s ++ res_in).length hnL)
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
@@ -3603,21 +3706,17 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
       -- `clearRegionTM_run` (step 5b) provides the run + no-early-halt trajectory; the loop
       -- frees `|s.get dst|` cells, each becoming a `0` residue cell.
       -- res_out = res_in ++ replicate |s.get dst| 0.
-      obtain ⟨t, hrun, htraj⟩ := Compile.clearRegionTM_run s dst res_in hbnd hbit hres_in
+      obtain ⟨t, hrun, htraj, hbud⟩ := Compile.clearRegionTM_run s dst res_in hbnd hbit hres_in
       have hstart0 : (compileOp (Op.clear dst)).M.start = 0 := ClearGadget.clearRegionTM_start dst
       have hinit : initFlatConfig (compileOp (Op.clear dst)).M [Compile.encodeTape s ++ res_in]
           = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } := by
         simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, ?_⟩
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, hbud⟩
       · rw [hinit]; exact hrun
       · intro k hk ck hck
         rw [hinit] at hck
         exact htraj k hk ck hck
-      · -- ⚠ REMAINING (step 6): the quadratic budget `t ≤ 9·tapeLen² + 9`. `t = loopBudget
-        -- tIter tDone n`; needs explicit `O(tapeLen)` step bounds on each `clearBody`
-        -- iteration (currently bare `∃ t`) and `n ≤ tapeLen`. See HANDOFF.md.
-        sorry
   | copy dst src => sorry
   | tail dst src => sorry
   | head dst src => sorry
