@@ -6,131 +6,131 @@ authoritative status and plan. This file says exactly what to do next.
 ## Where things stand
 
 - `lake build` ✅ green (3358 jobs). First build is slow (mathlib); one module
-  rebuilds in ~5–10s after. `lake` is **not on PATH** —
+  rebuilds in ~10s after. `lake` is **not on PATH** —
   `export PATH="$HOME/.elan/bin:$PATH"`.
-- **Risk C2 (compiler soundness) is the focus.** The `clear` op has a **real TM
-  machine** (`clearRegionTM` in `ClearGadget.lean`), wired into `compileOp`.
-  Its **full run lemma is now PROVEN** (`Compile.clearRegionTM_run`): from head `0`
-  on `encodeTape s ++ res_in` it reaches `clearRegionTM_exit dst` with head `0`,
-  tape `encodeTape (clear dst s) ++ (res_in ++ replicate |s.get dst| 0)`, **and a
-  no-early-halt trajectory**. In `compileOp_sound_physical_residue` the **`clear`
-  case's run + trajectory are discharged**; the **only remaining `clear` gap is
-  the quadratic budget** `t ≤ 9·tapeLen²+9` (one isolated `sorry`, see NEXT TASK).
-  The 9 cross-register ops (`copy`/`tail`/`head`/…) are still `sorry`.
+- **Risk C2 (compiler soundness) is the focus.** In the residue-tolerant per-op
+  contract `compileOp_sound_physical_residue` (`Compile.lean`), the **`clear`
+  case is now FULLY proven** (run + trajectory + the quadratic budget `t ≤
+  9·tapeLen²+9`), joining the two `appendOne`/`appendZero` cases. The **9
+  cross-register ops** (`copy`/`tail`/`head`/`eqBit`/`nonEmpty`/`takeAt`/`dropAt`/
+  `concat`/`consLen`) are still `sorry`. After them comes the assembly
+  (`compileIfBit`/`compileForBnd` residue + `Compile_run_physical_residue`).
 
 ## Proven this session (sorry-free, axiom-clean: propext/Classical.choice/Quot.sound)
 
-- **Step 5a — delete-body trajectory cascade.** `encodeTape_residue_twoPhaseRewind`,
-  `stepDeleteRewind_run`, `clearBody_delete_run`, `clearBody_done_run` now each
-  return **`∃ t, run ∧ no-early-halt traj`** (loopTM's per-iteration contract needs
-  both at the same `t`). Built by mirroring each `composeFlatTM_run` /
-  `branchComposeFlatTM_run_pos/_neg` with its `_no_early_halt` analogue. The two
-  `clearBody` lemmas' traj is the full loopTM shape `≠exitDone ∧ ≠exitLoop ∧ ¬halt`
-  (the `≠`s via `ne_of_not_halting` + `clearBodyRawTM_exitDone/Loop_is_halt`).
-- **`loopTM_no_early_halt`** (`TMPrimitives.lean`, just after `loopTM_run`): the
-  reusable companion — the counted loop never reaches its halt state `B.states`
-  before completion (`k < loopBudget`). Proven by the same induction as
-  `loopTM_run`, using `runFlatTM_loopTM_B_phase` + `loopTM_haltingStateReached_inB`.
-  **`compileForBnd` will reuse this.**
-- **Step 5b — `Compile.clearRegionTM_run`** (`Compile.lean`, just before
-  `compileOp_sound_physical_residue`): assembles the loop via `loopTM_run` +
-  `loopTM_no_early_halt`. Tape sequence `T j = encodeTape (s.set dst (drop (n−j)))
-  ++ (res_in ++ replicate (n−j) 0)`, `n = |s.get dst|`; `T n = encodeTape s ++
-  res_in`, `T 0 = encodeTape (clear dst s) ++ (res_in ++ replicate n 0)`. Per
-  iteration applies `clearBody_delete_run` at `s.set dst (drop (n−j−1))`; the
-  state bridge is `get_set_eq`+`tail_drop`+`set_set`, the residue bridge is
-  `replicate_succ'`. `tIter` is `Classical.choose` of the per-`j` existential.
-- **Step 6 (partial)** — `clear` case of `compileOp_sound_physical_residue`:
-  `res_out = res_in ++ replicate |s.get dst| 0` (`ValidResidue_append_replicate_zero`),
-  run + traj via `clearRegionTM_run` (after `initFlatConfig` normalisation with
-  `clearRegionTM_start`). New general helpers: `Compile.BitState_set`,
-  `Compile.length_set`.
+- **Step 6 — the clear-loop quadratic budget.** Threaded an **explicit
+  linear-in-tape-length step bound** through the whole clear run-lemma chain
+  (each existential gained a `∧ t ≤ <linear>` conjunct): bottom-up
+  `encodeTape_residue_twoPhaseRewind` (`≤ tapeLen+3`) → `stepDeleteRewind_run`
+  (`≤ 4·L+9`) → `clearBody_delete_run` / `clearBody_done_run` (`≤ 6·L+12`) →
+  `clearRegionTM_run` (`≤ 9·L²+9`). Then the `clear` case of
+  `compileOp_sound_physical_residue` just forwards `clearRegionTM_run`'s bound.
+- **Reusable budget helpers** (`Compile.lean`, just before `clearRegionTM_run`):
+  - `Compile.loopBudget_le : (tDone+1 ≤ M) → (∀ j<n, tIter j+1 ≤ M) →
+    loopBudget tIter tDone n ≤ (n+1)·M`. **Every `loopTM`-based gadget reuses
+    this** to turn a per-iteration linear bound into the `(n+1)·M` total.
+  - `Compile.clearBudget_arith : n+2 ≤ L → (n+1)·(6·L+13) ≤ 9·L²+9` (proven by
+    substituting `L = n+2+d`, `nlinarith`).
+- **`ClearGadget.navSteps_le : navSteps skipped ≤ 2·|regBlocks skipped|+1`** (the
+  linear navigation-step bound).
+- Inside `clearRegionTM_run`: **`hTlen`** (every loop tape `T j` has the *same*
+  length `L = |encodeTape s ++ res_in|` — a delete frees a cell but appends a `0`
+  filler) and **`hnL : n+2 ≤ L`** (via `State.size_set_add s dst []`; the cleared
+  register's `n` bits sit inside the encoded tape).
+
+## ⚠ Risk surfaced this session — the per-op budget constant `9·L²+9` is TIGHT
+
+The clear budget closes only because of the **tight** `n+2 ≤ L` (not just `n ≤ L`)
+and **carefully-bounded** per-iteration constants (`6·L+13`); a naive per-iter
+bound *fails the inequality at small `L`*. **This matters for the cross-register
+ops:** each one compiles to a *single* machine that internally does
+`clear dst ⨾ copyBlock src→dst ⨾ transform` — each phase is itself `Θ(L²)` on a
+single tape. Their **sum may exceed `9·L²+9`**, making the current statement
+constant unsatisfiable. Plan for it: **you will likely bump the `9·L²+9` in
+`compileOp_sound_physical_residue`'s statement to a larger quadratic** (e.g.
+`C·L²+C`; `toFrameworkWitness'` only needs `inOPoly`, so any constant is fine).
+If you do, update **three sites consistently**: (1) the statement; (2) the two
+append cases (currently relax linear → `9·L²+9` via
+`Compile.linear_le_quadratic_tapeLen`; add a `le_trans` to the new constant); (3)
+the `clear` case (forwards `clearRegionTM_run`'s `9·L²+9`; add a `le_trans` to the
+new constant). `clearRegionTM_run` itself can keep `9·L²+9`.
 
 ## NEXT TASK (ordered)
 
-### 1. Close the `clear` budget `t ≤ 9·tapeLen²+9` (the one remaining `clear` sorry)
-`t = loopBudget tIter tDone n` with `tIter`/`tDone` currently **opaque**
-(`Classical.choose`). To bound it you must make the step counts **explicit**:
-thread an extra `∧ t ≤ <linear-in-tapeLen>` conjunct through the existentials of
-(bottom-up) `encodeTape_residue_twoPhaseRewind` → `stepDeleteRewind_run` →
-`clearBody_delete_run` / `clearBody_done_run`, then a `loopBudget` bound through
-`clearRegionTM_run`. The explicit counts already exist inside the proofs:
-- rewind `t_rw = (head−p+1)+1+(1+1+p)` with `head = Tout.length−1`,
-  `p = (encodeTape (s.set dst cs)).length−1` — so `t_rw ≤ 2·Tout.length`.
-- `stepDeleteRewind` `t = 1+1+((3·(tt::suf).length+1)+1+(1+1+t_rw))`,
-  `(tt::suf).length = midSuf.length < tapeLen` ⇒ `O(tapeLen)`.
-- `clearBody_delete` `t = (navSteps skipped+1+1)+1+t2`; `navSteps skipped` is
-  `Σ (block.len+1) + 1 ≤ |regBlocks skipped|+|skipped|+1 ≤ tapeLen`
-  (`navSteps`/`navSteps_append_singleton` in `ClearGadget.lean`).
-- loop: `n = |s.get dst| ≤ tapeLen` (the shifted `dst` block sits in `encodeTape s`),
-  each iteration `O(tapeLen)`, so `loopBudget ≤ O(tapeLen²) ≤ 9·tapeLen²+9`
-  (the `9` is generous; `omega` after the per-iteration linear bound + `n ≤ tapeLen`).
-  Key length facts needed: relate `midSuf`/`regBlocks skipped`/`(s.get dst).length`
-  to `(encodeTape s ++ res_in).length` (use `encodeTape_length`,
-  `encodeTape_reg_decomp_at`). **Watch for `Σ` over `j<n` of a per-iter linear
-  bound — `loopBudget` recursion + `n ≤ tapeLen` gives the quadratic.**
-*Estimate ~150–300 LOC of arithmetic threading; structural-unknown-free.*
+### 1. The block-move gadget `copyBlockTM` (the missing critical-path primitive)
+The gadget library has only **single-cell** carries (`ShiftTape.insertCarryTM` /
+`deleteCarryTM`) — **no data transport** between two register slots on the same
+tape. Every cross-register op needs one: `Op.eval` is `s.set dst (f (s.get src))`
+(reads `src`, writes `dst`; the real witnesses use `dst ≠ src`, e.g. `Op.tail 2
+0`). So each op = `clear dst` (now DONE, reuse `clearRegionTM_run`) ⨾
+`copyBlock src→dst` ⨾ `in-place transform on dst`.
+- **Probe first (`#eval`, go/no-go).** Build `copyBlockTM` and verify *end-to-end*
+  that it carries `src`'s content into `dst`'s (resized) slot and **exits with the
+  head in residue past the trailing terminator** — exactly the architecture-bug
+  class that bit the append and clear gadgets (invisible to validity proofs;
+  `#eval`-probe via `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/probe.lean`).
+- It will almost certainly be a **`loopTM`** (ferry one bit per iteration). When you
+  prove its run lemma, give each iteration a **linear** `∧ t ≤ c·L+d` bound and
+  feed `Compile.loopBudget_le` + a `clearBudget_arith`-style closer — the **exact
+  template `clearRegionTM_run` now provides** (copy it).
+- Then per-op contracts via the `opAppendBit_physical_residue` template +
+  `rewindBracket`. The `clear` machinery (`clearRegionTM_run`, `loopTM_no_early_halt`,
+  the budget threading) is the reusable model.
 
-### 2. Cross-register ops (`copy`/`tail`/`head`/`eqBit`/`nonEmpty`/`takeAt`/`dropAt`/`concat`/`consLen`)
-**The missing critical-path primitive is a single-tape block-move gadget
-`copyBlockTM`** (carry `src` content to `dst`, resizing the slot); the gadget
-library has scan / insert-one / delete-one but **no data transport**. Then every
-cross-register op = `(clear dst) ⨾ (copyBlock src→dst) ⨾ (in-place transform)`.
-Order: probe `copyBlockTM` go/no-go (`#eval` end-to-end — verify the exit head
-lands in residue past the terminator, like the append op needed) **before**
-proving its run/`_no_early_halt`; then per-op contracts via the
-`opAppendBit_physical_residue` template + `rewindBracket`. The `clear` machinery
-(`clearRegionTM_run`, `loopTM_no_early_halt`) is the reusable model for any
-`loopTM`-based gadget. See ROADMAP C2.c.
+### 2. Assemble `Compile_run_physical_residue`
+`compileIfBit`/`compileForBnd` residue contracts
+(`branchComposeFlatTM_run` / `loopTM_run` + `loopTM_no_early_halt`), then the
+`Compile_run_physical_residue` induction (`sorry` in `Compile.lean`). Then S3
+migration (ROADMAP step 2).
 
-### 3. Assemble `Compile_run_physical_residue`
-`compileIfBit`/`compileForBnd` residue contracts (`branchComposeFlatTM_run` /
-`loopTM_run` + `loopTM_no_early_halt`), then the `Compile_run_physical_residue`
-induction (`sorry` in `Compile.lean`). Then S3 migration (ROADMAP step 2).
+## How the budget threading works (reuse this exactly)
+
+To bound an opaque `Classical.choose` step count, you **must** carry the bound in
+the existential — there is no shortcut. Pattern, bottom-up:
+1. Add `∧ t ≤ <linear in input tape length>` to each run lemma's `∃ t, …`.
+2. The witness is already explicit (`refine ⟨<expr>, …⟩`); add one `?_` goal and
+   close it with `omega`, having first established the sub-lemma's bound (`obtain
+   ⟨…, hb⟩`) and the **tape-length bridges** (e.g. `hLinTout`, `hTlen`).
+3. **`omega` + cons/append lengths:** `rw [List.length_cons]` fires on the
+   **first** `(_::_).length` — which may be a `pre = endMark :: …` you didn't mean.
+   Use **`simp [List.length_append, List.length_cons]`** (full simp normalises the
+   Nat arithmetic and avoids the wrong-cons trap) instead of a hand `rw` chain.
+4. For the `loopTM` total: `Compile.loopBudget_le` (per-term `M`) then the
+   `clearBudget_arith` quadratic closer (substitute `L = n+2+d`, `nlinarith`).
 
 ## Gotchas (still live)
 - **`#eval`-probe a built machine end-to-end before proving its run lemma.** Both
-  `clearRegionTM` architecture bugs (last session) were invisible to validity
-  proofs; one probe surfaced them.
-- **For `∃ t, A ∧ B` sharing one `t`:** give the **explicit witness**
-  (`refine ⟨<expr>, ?_, ?_⟩`) or `exact ⟨_, term_A, term_B⟩` with *concrete* terms
-  (the witness is read off `term_A`). `refine ⟨_, ?_, ?_⟩` (postponed `_` witness)
-  fails to synthesize. Computing the explicit total = `t₁ + 1 + t₂` from the
-  combinator (`composeFlatTM`/`branchComposeFlatTM`/`loopBudget`) makes both bullets'
-  goals fully determined.
-- **`_no_early_halt` mirrors `_run` exactly:** same args up to `h_traj2`/`h_traj3`,
-  replacing each sub-`_run` with its `_no_early_halt`; `composeFlatTM_no_early_halt`'s
-  `h_traj1` wants `≠exit ∧ ¬halt` (use `stepRight/LeftTM_no_early_halt`,
-  `deleteCarryTM_no_early_halt`+`ne_of_not_halting`, etc.).
-- **`loopTM`/`clearBody` start is provably (not always defeq) `0`** — `rw [hBstart]`
-  (`= (branchComposeFlatTM …).start`, `branchComposeFlatTM_start`,
-  `navigateAndTestTM_start`) to bridge `{B.start, …}` ↔ `{0, …}`.
-- **`List.drop_length` takes no explicit arg** (`l.drop l.length = []`, `l` implicit);
-  `rw [hn]` (where `n := (s.get dst).length`) first to expose the pattern.
-- `omega` can't see through record projections / `def`-constants — `show` the
-  reduced/`Nat` form first (e.g. `show _ + 19 + 1 ≠ _ + 17`).
-- **`set x := e with h`** makes `x` defeq `e`; unfold `x j` in goals with
-  `simp only [h]` (beta-reduces). `Classical.choose`'s value is proof-irrelevant,
-  so `simp only [htIter, dif_pos hj]` exposes `(hiter_ex j hj).choose` for `choose_spec`.
+  `clearRegionTM` architecture bugs (a prior session) were invisible to validity
+  proofs; one probe surfaced them. The append/clear gadgets all **exit on the
+  trailing terminator**, head in residue — design `copyBlockTM` the same way and
+  bracket it with the **two-phase** rewind (`rewindBracket`).
+- **For `∃ t, A ∧ B ∧ (t ≤ …)` sharing one `t`:** give the **explicit witness**
+  (`refine ⟨<expr>, ?_, ?_, ?_⟩`); the witness is read off the run term, so the
+  bound goal is fully determined for `omega`.
+- **`_no_early_halt` mirrors `_run` exactly** (same args up to the trajectory
+  inputs, each sub-`_run` replaced by its `_no_early_halt`).
+- **`omega` can't see through record projections / `def`-constants** — `show` the
+  reduced/`Nat` form first.
+- **`set x := e with h`** makes `x` defeq `e`; `Classical.choose`'s value is
+  proof-irrelevant, so `simp only [hx, dif_pos hj]` exposes `(…).choose` for
+  `choose_spec` (and `.choose_spec.2.2` is the bound conjunct).
 - **MCP `lean-lsp` / `#print axioms` can't find `lake`.** Axiom-check via a scratch
   file: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
-  `import Complexity.Lang.Compile` + `#print axioms <FULLY.QUALIFIED.name>` (the
-  `clear` run lemmas live in `Complexity.Lang.Compile.…`, `loopTM_no_early_halt` in
-  `TMPrimitives.…`). Want only `propext`/`Classical.choice`/`Quot.sound`; **no `sorryAx`**.
+  `import Complexity.Lang.Compile` + `#print axioms <FULLY.QUALIFIED.name>`. Want
+  only `propext`/`Classical.choice`/`Quot.sound`; **no `sorryAx`**.
 
 ## Key files & exact locations
 
 | File | Contents |
 |------|----------|
-| `Lang/ClearGadget.lean` | `navigateToRegTM`/`navigateAndTestTM`/`deleteRewindRawTM`/`clearBodyRawTM`/`clearRegionTM`; validity; run-lemma steps 1–2; halt facts; `navSteps` (loop-count math); `ne_of_not_halting` |
-| `Lang/Compile.lean` | compiler; residue infra; append op done; **clear run lemma steps 3–5b** (`stepDeleteRewind_run`, `clearBody_delete_run`/`_done_run` — all `run ∧ traj`; `clearRegionTM_run` `run ∧ traj`); helpers `BitState_set`/`length_set`/`set_tail_iterate`/`iterate_tail_clear`/`set_get_self`/`set_set`; `compileOp_sound_physical_residue` (**`clear` case: run+traj done, budget `sorry`**; 9 cross-register `sorry`s); `Compile_run_physical_residue` (`sorry`) |
-| `Lang/ScanLeft.lean` | `stepLeft/RightTM` (+`_run`/`_no_early_halt`), `scanLeftUntilTM`, `rewindToStart_run`/`_traj`, `rewindTwoPhaseTM` (+`_run`/`_no_early_halt`) |
-| `Lang/ShiftTape.lean` | `deleteCarryTM` (+`_run`/`_no_early_halt`), `insertCarryTM` |
-| `Complexity/TMPrimitives.lean` | `composeFlatTM`/`branchComposeFlatTM`/`loopTM` + `_run`/`_no_early_halt`/`_valid`; **`loopTM_no_early_halt`** (new, after `loopTM_run` @~3887); `loopBudget` |
+| `Lang/ClearGadget.lean` | clear machines; validity; halt facts; `navSteps` + **`navSteps_le`** (loop-count math); `ne_of_not_halting` |
+| `Lang/Compile.lean` | compiler; residue infra; append + **clear** ops done; **budget helpers `loopBudget_le`/`clearBudget_arith`** (before `clearRegionTM_run`); clear run-lemma chain (`stepDeleteRewind_run`, `clearBody_delete_run`/`_done_run`, `clearRegionTM_run` — all carry a `∧ t ≤ linear/quadratic` bound); `compileOp_sound_physical_residue` (**append + clear cases done**; 9 cross-register `sorry`s); `Compile_run_physical_residue` (`sorry`) |
+| `Lang/ScanLeft.lean` | `stepLeft/RightTM`, `scanLeftUntilTM`, `rewindToStart_run`/`_traj`, `rewindTwoPhaseTM` (+`_run`/`_no_early_halt`) |
+| `Lang/ShiftTape.lean` | `deleteCarryTM` / `insertCarryTM` (+`_run`/`_no_early_halt`) — **single-cell only; `copyBlockTM` must be built here** |
+| `Complexity/TMPrimitives.lean` | `composeFlatTM`/`branchComposeFlatTM`/`loopTM` + `_run`/`_no_early_halt`; `loopBudget`; `loopTM_no_early_halt` |
 
 ## Conventions
 - Build `lake build` (or `lake build Complexity.Lang.X`); commit per logical step
   with a **green build**; new finished lemmas must be `#print axioms`-clean (only
   `propext`/`Classical.choice`/`Quot.sound`; **no `sorryAx`**).
-- Probe `#eval` files via `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/probe.lean`.
 - See ROADMAP "Hard-won gotchas" and "How we work" for full methodology.
