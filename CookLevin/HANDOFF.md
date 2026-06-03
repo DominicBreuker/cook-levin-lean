@@ -97,6 +97,26 @@ avoidable. See the open AskUserQuestion / commit message.
 first), reusing `rewindBracket`; (2) settle the Class-B op-set question; (3) if
 needed, probe+build `copyBlockTM` (sig=6), then the Class-B ops.
 
+**Concrete Class-A starting point — `bitReadTM` (mirror `delimTestTM` exactly).**
+`delimTestTM` (`ClearGadget.lean`) is a 3-state read-and-branch (content `≠0` →
+state 1, delim `0` → state 2, no head move). Build the 4-state analogue:
+```
+def bitReadTM (sig) : FlatTM := {
+  sig, tapes := 1, states := 4, start := 0, halt := [false,true,true,true],
+  trans := [ ⟨0,[some 0],3,[none],[N]⟩,    -- delim     → exit 3
+             ⟨0,[some 1],1,[none],[N]⟩,    -- shifted 0 → exit 1
+             ⟨0,[some 2],2,[none],[N]⟩ ] } -- shifted 1 → exit 2
+```
+Copy `delimTestTM`'s `_valid`/`_step_*`/`_run` lemmas verbatim (just 3 cases
+instead of a filtered range — simpler). Then `navigateAndReadBitTM dst :=
+composeFlatTM (navigateToRegTM dst) (bitReadTM 4) (navigateToRegTM_exit dst)`,
+mirroring `navigateAndTestTM` (`navigateAndTestTM_run_content` is the template for
+its run lemma). `head dst src` = `clear dst ⨾` (3-way branch on
+`navigateAndReadBitTM src`: arm `1`→`appendAtTM`(bit0) at `dst`, arm `2`→
+`appendAtTM`(bit1) at `dst`, arm `3`→nothing) `⨾ rewind`. A 3-way branch nests two
+`branchComposeFlatTM`s (the clear gadget uses the 2-way one). `nonEmpty`/`eqBit`
+follow the same shape (read 1–2 bits, append a fixed answer bit).
+
 ### 2. Assemble `Compile_run_physical_residue`
 `compileIfBit`/`compileForBnd` residue contracts
 (`branchComposeFlatTM_run` / `loopTM_run` + `loopTM_no_early_halt`), then the
