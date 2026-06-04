@@ -61,11 +61,15 @@ length register *is a loop counter*, which makes the hard data-movement gadgets
 > branch, both `joinTwoHalts`-merged). **7 cross-register ops left:**
 > `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`.
 >
-> **Recommended order from here:** **`eqBit`** (Class A, now cheap — `bitReadTM`
-> exists; if the live verifier only needs `eqBit` vs a 1-cell constant, do that
-> special case first — see Class A below), then settle the Class-B **scratch-counter
-> decision** (item (2) below) and do the block-copy ops, then Tasks 1+2 together
-> (**one monolithic change** — see ⚠ below), then Task 4.
+> **Recommended order from here (reassessed — there is no remaining "head-sized"
+> quick win; all 7 ops route through the rotation `loopTM` gadget, which is
+> validated but unbuilt — see risk item (3)):** build the **rotation block-copy
+> `loopTM` gadget** (`navigate ⨾ deleteCarryTM ⨾ navigate ⨾ insertCarryTM`, probed
+> GO), prove **`takeAt`/`dropAt` FIRST** (their `lenReg` is the counter — no scratch,
+> no `Op` change), then settle the Class-B **scratch-counter decision** (item (2))
+> and do `copy`/`tail`/`concat`/`consLen`/`eqBit`, then Tasks 1+2 together (**one
+> monolithic change** — see ⚠ below), then Task 4. (General `eqBit` is a
+> two-register compare, **not** the cheap bit-read case — see Class A.)
 >
 > **Budget:** `compileOp_sound_physical_residue`'s budget is `9·L² + 9·L + 30`.
 > `nonEmpty`/`head` both fit. When you add an op whose chain is longer, bump (3
@@ -121,23 +125,33 @@ new signatures. (Alternative without an `Op` change: a temporary trailing regist
 + delete-its-separator cleanup, or scratch in the residue past the terminator —
 both add gadget machinery and are riskier; not recommended.)
 
-**(3) Build `copy` FIRST among the rotation ops, and `#eval`-probe the rotation
-machine end-to-end as a real `FlatTM` before proving** (compose `navigate` +
-`deleteCarryTM` (front) + `insertCarryTM`/`appendAtTM` (src-back & dst-back) +
-counter-consume into a `loopTM` body; verify exit head + exact tape on a real
-`encodeTape`). `copy`'s gadget is the rotation infrastructure; `tail` (skip first
-bit), `concat` (two copies), `takeAt`/`dropAt` (`lenReg` is the counter directly —
-**these two need NO scratch**, the unary `lenReg` already shrinks), `consLen`
-(prepend a unary length) then reuse it. **`eqBit` is the hardest** (lockstep compare
-of two registers, or rotate-both-and-AND) — do it last, and first check whether the
-live verifier (`EvalCnfCmd`) only needs `eqBit` against a 1-cell constant (a much
-cheaper special case).
+**(3) ✅ Rotation step PROBED & validated (`#eval`, GO).** `deleteCarryTM` (delete
+register front cell) **then** `insertCarryTM` (re-insert the carried bit at the
+register's back) rotates one register by one position with **no spare symbol**.
+Probe (`encodeTape [[1,0,1],[0,0]] = [3,2,1,2,0,1,1,0,3]`): delete from head `2`
+→ `[3,1,2,0,1,1,0,3,0]` (head 9, state 6); insert `2` from head `3`
+→ `[3,1,2,2,0,1,1,0,3,0]` = **`encodeTape [[0,1,1],[0,0]] ++ [0]`** (head 9, state
+5). I.e. the **logical tape is the rotated register**, with a terminator-free `[0]`
+**residue** (rotation costs `+1` residue cell/step — fits the residue-tolerant
+contract). The per-step head returns to the right end, so a `loopTM` body =
+`navigate-to-front ⨾ deleteCarryTM ⨾ navigate-to-back ⨾ insertCarryTM` (+ for `copy`,
+append the carried bit to `dst`). O(L)/step ⇒ O(L²) total (use `loopBudget_le`).
 
-**Sequencing:** ✅ `head` done → **`eqBit`** (Class A, reuse `bitReadTM`; 1-cell
-special case first if the live verifier allows) → (settle the scratch-operand
-decision) → `copy` (probe + rotation infra) →
-`tail`/`concat`/`takeAt`/`dropAt`/`consLen` → Tasks 1+2 (fold the `Op` scratch
-change in here) → Task 4 (assemble).
+**⚠ Refined sequencing among the rotation ops:** **do `takeAt`/`dropAt` FIRST** —
+their `lenReg` (unary) **is** the loop counter directly, so they need **NO scratch
+register and NO `Op`-signature change** (`Op.takeAt dst src lenReg`,
+`Op.dropAt dst src lenReg` already carry it). `copy`/`tail`/`concat`/`consLen` and
+general `eqBit` rotate a register that does NOT shrink, so they need a
+guaranteed-empty scratch counter — **still the unresolved decision in item (2)**
+(fold the `Op` scratch operand into Task 2 before building them). **`eqBit` is the
+hardest** (lockstep compare of two registers — rotate both and AND the front bits;
+needs scratch); do it last. The 1-cell-constant special case is cheaper but does
+**not** apply at the general `compileOp` level (the contract is for all `Op.eqBit`).
+
+**Sequencing:** ✅ `head` done → build the **rotation `loopTM` gadget** (probed GO,
+item (3)) → **`takeAt`/`dropAt`** (counter-free, no `Op` change) → settle the
+scratch-operand decision → `copy`/`tail`/`concat`/`consLen` → `eqBit` (two-register
+compare, hardest) → Tasks 1+2 (fold the `Op` scratch change in here) → Task 4.
 
 **Bigger-picture sanity check.** C2 is on a converging track: the per-op cost drops
 sharply as infrastructure compounds (the `nonEmpty` branch-merge engine and the
@@ -219,15 +233,20 @@ proof engineering.*
   like `head` — check the verifier's needs first.
 
 **Class B — `copy`/`tail`/`concat`/`takeAt`/`dropAt`/`consLen` (block copy).**
-Counter + rotation = non-destructive block copy, no spare symbol:
-- Each `loopTM` iteration moves `src`'s front cell to both `dst` and `src`'s back;
-  after `N` (= counter) iterations `src` is rotated full-circle (unchanged), `dst`
-  holds the copy. `takeAt`/`dropAt`: `lenReg` (unary) is the counter directly.
-  `copy`/`tail`/`concat`: first **count** `src`'s length into a scratch register
-  (mirror the `clear` count loop), then rotate-copy. **Probe the rotation machine
-  with `#eval` before proving.** Budget: per-iteration linear `∧ t ≤ c·L + d`,
+Counter + rotation = non-destructive block copy, no spare symbol. **The rotation
+step is now `#eval`-validated (GO — risk item (3)):** one `loopTM` iteration =
+`navigate-to-front ⨾ deleteCarryTM ⨾ navigate-to-back ⨾ insertCarryTM` rotates
+`src` one position, leaving `encodeTape(rotated) ++ [0]` (terminator-free residue,
+`+1`/step); for `copy` also append the carried bit to `dst`.
+- After `N` (= counter) iterations `src` is rotated full-circle (unchanged), `dst`
+  holds the copy. **`takeAt`/`dropAt` FIRST**: `lenReg` (unary) is the counter
+  directly — no scratch, no `Op` change. `copy`/`tail`/`concat`/`consLen`: first
+  **count** `src`'s length into a scratch register (mirror the `clear` count loop) —
+  needs the scratch operand (item (2)). Budget: per-iteration linear `∧ t ≤ c·L + d`,
   assemble with `Compile.loopBudget_le` + a `Compile.clearBudget_arith`-style
-  closer → quadratic (bump the op budget again).
+  closer → quadratic (bump the op budget again). **Next concrete build:** the
+  rotation `loopTM` body + its run/`_no_early_halt`/budget (mirror the proven
+  `clearRegionTM_run` loop chain), then wire `takeAt`/`dropAt`.
 
 **⚠ `#eval`-probe every new machine end-to-end before proving its run lemma** —
 architecture bugs (wrong exit head, off-by-one slot) are invisible to validity
