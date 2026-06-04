@@ -79,6 +79,68 @@ length register *is a loop counter*, which makes the hard data-movement gadgets
 > `DecidesBy.encode_size` and the decider budget) in one green-landing batch.
 > Budget a full session; it is mechanical but wide.
 
+### ⚠ Risk analysis & recommended sequencing (2026-06-04, probe-validated)
+
+A focused risk pass on the 8 remaining ops (with `#eval` probes). **Verdict: the
+plan is feasible and C2 is converging, but the Class-B ops have ONE unresolved
+design decision (the scratch counter) that you must settle BEFORE building them.**
+
+**(1) Do `head` next — lowest risk, counter-free.** `head dst src` writes `[]` /
+`[0]` / `[1]` (≤1 cell), so it reuses the *entire* `nonEmpty` engine
+(`clearAppendM_run` + the `joinTwoHalts` branch-merge). The **only** new piece is a
+**bit-*value* test** (branch cell `=1` vs `=2` vs delim) — a direct mirror of
+`ClearGadget.delimTestTM` (which already branches delim-vs-content). `head` is a
+3-way branch (empty→`[]` i.e. just clear `dst`; bit0→`[0]`; bit1→`[1]`): nest two
+`joinTwoHalts` merges, or merge a 3-exit machine. Estimate ~300–400 LOC.
+
+**(2) The 6 block-copy ops + `eqBit` need a guaranteed-empty SCRATCH register —
+this is the one real gap. Resolve it before building.** The "counter + rotation =
+mark-free block copy" claim is **algorithmically correct** (probed: rotating `src`
+one bit/iteration restores `src` after `|src|` iters while `dst` accumulates the
+copy). BUT `loopTM` terminates by *reading a shrinking tape region* (cf. `clear`,
+which loops until the register empties), and a rotated `src` never shrinks — so the
+loop must consume a **scratch counter** (`replicate |src| 1`, cleared over the run).
+`Op.eval` does **not** designate a free register, and the probe shows using a
+register past `s.length` **adds a trailing register** (extra `0` separator ⇒ the
+exit tape is `≠ encodeTape output ++ residue`; breaks the residue contract).
+**Recommended resolution (cheapest, validated):** give these ops an explicit
+**empty-scratch operand** (`copy dst src sc`, …) with contract precondition
+`s.get sc = []`, `sc < s.length`, `sc ∉ {dst,src}`; `Op.eval` is unchanged
+(`s.set dst (…)` — the gadget restores `sc = []`). The witnesses already allocate
+scratch registers (`swapCmd` uses regs 1–5; reductions use `regBound+k`), so they
+pass a known-empty one. **This Op-signature change is best folded into Task 2**
+(the witnesses are re-derived there anyway) — i.e. do Task 2's `Op` restatement and
+the scratch-operand addition together, then build the Class-B gadgets against the
+new signatures. (Alternative without an `Op` change: a temporary trailing register
++ delete-its-separator cleanup, or scratch in the residue past the terminator —
+both add gadget machinery and are riskier; not recommended.)
+
+**(3) Build `copy` FIRST among the rotation ops, and `#eval`-probe the rotation
+machine end-to-end as a real `FlatTM` before proving** (compose `navigate` +
+`deleteCarryTM` (front) + `insertCarryTM`/`appendAtTM` (src-back & dst-back) +
+counter-consume into a `loopTM` body; verify exit head + exact tape on a real
+`encodeTape`). `copy`'s gadget is the rotation infrastructure; `tail` (skip first
+bit), `concat` (two copies), `takeAt`/`dropAt` (`lenReg` is the counter directly —
+**these two need NO scratch**, the unary `lenReg` already shrinks), `consLen`
+(prepend a unary length) then reuse it. **`eqBit` is the hardest** (lockstep compare
+of two registers, or rotate-both-and-AND) — do it last, and first check whether the
+live verifier (`EvalCnfCmd`) only needs `eqBit` against a 1-cell constant (a much
+cheaper special case).
+
+**Sequencing:** `head` → (settle the scratch-operand decision) → `copy` (probe +
+rotation infra) → `tail`/`concat`/`takeAt`/`dropAt`/`consLen` → `eqBit` →
+Tasks 1+2 (fold the `Op` scratch change in here) → Task 4 (assemble).
+
+**Bigger-picture sanity check.** C2 is on a converging track: the per-op cost drops
+sharply as infrastructure compounds (the `nonEmpty` branch-merge engine and the
+future rotation gadget are *one-time* builds). Estimate **~4–7 more sessions** to
+finish C2. The overall proof is still ~15–25K LOC dominated by **S1 (the Cook 2D
+tableau, ~6–11K LOC)** — C2 is necessary but a fraction of the whole. The compiler
+strategy remains sound; **no trigger for the destination-B fallback.** The single
+thing that could still derail C2 is a tape-level snag in the rotation realization —
+which is exactly why step (3) says *probe `copy` end-to-end before committing the
+proof engineering.*
+
 **1. Make the `BitState` invariant explicit and true.**
 - Add `(hbit : Compile.BitState s)` to `Compile_sound` and
   `Compile_run_physical_residue` (and thread it through the assembly).
