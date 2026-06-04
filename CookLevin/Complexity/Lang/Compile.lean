@@ -595,8 +595,240 @@ def Compile.opHead (_dst _src : Var) : CompiledCmd := compiledCmd_default
 /-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
 def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
 
-/-- Compile `Op.nonEmpty dst src`. **Stub.** -/
-def Compile.opNonEmpty (_dst _src : Var) : CompiledCmd := compiledCmd_default
+/-! ### Class-A op machinery: `nonEmpty` (`compileOp` dispatches here)
+
+`nonEmpty dst src` reads register `src`, branches, and writes a single answer bit
+to (a freshly cleared) register `dst`. The machine reads `src` FIRST (so it is
+correct even when `dst = src`): `navigateAndTest src ⨠ branch ⨠ (rewind ⨠ clear
+dst ⨠ append answer-bit)`. Each branch's clear-then-append reuses the proven
+`opClear`/`opAppendBitRewind` `CompiledCmd`s. The two branch exits are merged into
+a single exit by `joinTwoHalts` (bridge `delimExit → contentExit`). Validated
+end-to-end by `#eval` (incl. `dst = src`). -/
+
+/-- `composeFlatTM` inherits a unique halt from `M₂`'s unique halt. -/
+theorem Compile.composeFlatTM_halt_unique (M₁ M₂ : FlatTM) (e₂ exit : Nat)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂) :
+    ∀ i, (composeFlatTM M₁ M₂ exit).halt[i]? = some true → i = M₁.states + e₂ := by
+  intro i hi
+  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp M₁ M₂ exit i hi
+  have := h2 _ hh; omega
+
+/-- `M₂`'s halt state shifts to a halt of `composeFlatTM` (intro). -/
+theorem Compile.composeFlatTM_halt_intro (M₁ M₂ : FlatTM) (e₂ exit : Nat)
+    (h : M₂.halt[e₂]? = some true) :
+    (composeFlatTM M₁ M₂ exit).halt[M₁.states + e₂]? = some true :=
+  ScanLeft.composeFlatTM_halt_some_intro M₁ M₂ exit e₂ h
+
+/-- A `branchComposeFlatTM` of two unique-halt sub-machines has exactly the two
+shifted branch exits as halt states. -/
+theorem Compile.branchComposeFlatTM_halt_only (M₁ M₂ M₃ : FlatTM) (ep en e₂ e₃ : Nat)
+    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂)
+    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃) :
+    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
+      i = M₁.states + e₂ ∨ i = M₁.states + M₂.states + e₃ := by
+  intro i hi
+  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  rw [List.append_assoc] at hi
+  by_cases h1 : i < M₁.states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
+        List.getElem?_replicate] at hi
+    simp [h1] at hi
+  · rw [Nat.not_lt] at h1
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
+        List.length_replicate] at hi
+    by_cases h2lt : i - M₁.states < M₂.states
+    · left
+      rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
+      have := h2 _ hi; omega
+    · rw [Nat.not_lt] at h2lt
+      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
+      have := h3 _ hi; omega
+
+/-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
+branch composite (positive branch). -/
+theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
+    (h2v : validFlatTM M₂) (he : e₂ < M₂.states) (h : M₂.halt[e₂]? = some true) :
+    (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[M₁.states + e₂]? = some true := by
+  change (composedBranchHalt M₁ M₂ M₃)[M₁.states + e₂]? = some true
+  unfold composedBranchHalt
+  rw [List.append_assoc,
+      List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel_left,
+      List.getElem?_append_left (by rw [h2v.2.1]; exact he)]
+  exact h
+
+/-- Clear register `dst`, then append the shifted bit `ins` — both head-`0`-exit
+machines, composed. The unique exit is at
+`clearRegionTM.states + opAppendBitRewind.exit`. -/
+def Compile.clearAppendM (dst ins : Var) (h_ins : ins < 4) : FlatTM :=
+  composeFlatTM (ClearGadget.clearRegionTM dst) (Compile.opAppendBitRewind ins h_ins dst).M
+    (ClearGadget.clearRegionTM_exit dst)
+
+def Compile.clearAppendM_exit (dst ins : Var) (h_ins : ins < 4) : Nat :=
+  (ClearGadget.clearRegionTM dst).states + (Compile.opAppendBitRewind ins h_ins dst).exit
+
+theorem Compile.clearAppendM_tapes (dst ins : Var) (h_ins : ins < 4) :
+    (Compile.clearAppendM dst ins h_ins).tapes = 1 := by
+  rw [Compile.clearAppendM, composeFlatTM_tapes]; exact ClearGadget.clearRegionTM_tapes dst
+
+theorem Compile.clearAppendM_sig (dst ins : Var) (h_ins : ins < 4) :
+    (Compile.clearAppendM dst ins h_ins).sig = 4 := by
+  rw [Compile.clearAppendM, composeFlatTM_sig, ClearGadget.clearRegionTM_sig,
+      (Compile.opAppendBitRewind ins h_ins dst).M_sig]
+  rfl
+
+theorem Compile.clearRegionTM_exit_lt (dst : Var) :
+    ClearGadget.clearRegionTM_exit dst < (ClearGadget.clearRegionTM dst).states := by
+  rw [ClearGadget.clearRegionTM_states]
+  show (ClearGadget.clearBodyRawTM dst).states < (ClearGadget.clearBodyRawTM dst).states + 1
+  omega
+
+theorem Compile.clearAppendM_valid (dst ins : Var) (h_ins : ins < 4) :
+    validFlatTM (Compile.clearAppendM dst ins h_ins) :=
+  composeFlatTM_valid _ _ _ (ClearGadget.clearRegionTM_valid dst)
+    (Compile.opAppendBitRewind ins h_ins dst).M_valid (Compile.clearRegionTM_exit_lt dst)
+    (ClearGadget.clearRegionTM_tapes dst) (Compile.opAppendBitRewind ins h_ins dst).M_tapes
+
+theorem Compile.clearAppendM_halt_unique (dst ins : Var) (h_ins : ins < 4) :
+    ∀ i, (Compile.clearAppendM dst ins h_ins).halt[i]? = some true →
+      i = Compile.clearAppendM_exit dst ins h_ins := by
+  rw [Compile.clearAppendM, Compile.clearAppendM_exit]
+  exact Compile.composeFlatTM_halt_unique _ _ _ _ (Compile.opAppendBitRewind ins h_ins dst).halt_unique
+
+theorem Compile.clearAppendM_exit_is_halt (dst ins : Var) (h_ins : ins < 4) :
+    (Compile.clearAppendM dst ins h_ins).halt[Compile.clearAppendM_exit dst ins h_ins]? = some true := by
+  rw [Compile.clearAppendM, Compile.clearAppendM_exit]
+  exact Compile.composeFlatTM_halt_intro _ _ _ _ (Compile.opAppendBitRewind ins h_ins dst).exit_is_halt
+
+/-- A branch body: rewind to the leading sentinel, then clear-and-append. -/
+def Compile.nonEmptyBranchBody (dst ins : Var) (h_ins : ins < 4) : FlatTM :=
+  composeFlatTM (ScanLeft.scanLeftUntilTM 4 3) (Compile.clearAppendM dst ins h_ins) 1
+
+def Compile.nonEmptyBranchBody_exit (dst ins : Var) (h_ins : ins < 4) : Nat :=
+  (ScanLeft.scanLeftUntilTM 4 3).states + Compile.clearAppendM_exit dst ins h_ins
+
+theorem Compile.nonEmptyBranchBody_tapes (dst ins : Var) (h_ins : ins < 4) :
+    (Compile.nonEmptyBranchBody dst ins h_ins).tapes = 1 := by
+  rw [Compile.nonEmptyBranchBody, composeFlatTM_tapes]; rfl
+
+theorem Compile.nonEmptyBranchBody_valid (dst ins : Var) (h_ins : ins < 4) :
+    validFlatTM (Compile.nonEmptyBranchBody dst ins h_ins) :=
+  composeFlatTM_valid _ _ _ (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide))
+    (Compile.clearAppendM_valid dst ins h_ins) (by decide)
+    rfl (Compile.clearAppendM_tapes dst ins h_ins)
+
+theorem Compile.nonEmptyBranchBody_halt_unique (dst ins : Var) (h_ins : ins < 4) :
+    ∀ i, (Compile.nonEmptyBranchBody dst ins h_ins).halt[i]? = some true →
+      i = Compile.nonEmptyBranchBody_exit dst ins h_ins := by
+  rw [Compile.nonEmptyBranchBody, Compile.nonEmptyBranchBody_exit]
+  exact Compile.composeFlatTM_halt_unique _ _ _ _ (Compile.clearAppendM_halt_unique dst ins h_ins)
+
+theorem Compile.nonEmptyBranchBody_exit_is_halt (dst ins : Var) (h_ins : ins < 4) :
+    (Compile.nonEmptyBranchBody dst ins h_ins).halt[Compile.nonEmptyBranchBody_exit dst ins h_ins]?
+      = some true := by
+  rw [Compile.nonEmptyBranchBody, Compile.nonEmptyBranchBody_exit]
+  exact Compile.composeFlatTM_halt_intro _ _ _ _ (Compile.clearAppendM_exit_is_halt dst ins h_ins)
+
+theorem Compile.nonEmptyBranchBody_exit_lt (dst ins : Var) (h_ins : ins < 4) :
+    Compile.nonEmptyBranchBody_exit dst ins h_ins < (Compile.nonEmptyBranchBody dst ins h_ins).states := by
+  rw [Compile.nonEmptyBranchBody_exit, Compile.nonEmptyBranchBody, composeFlatTM_states,
+      Compile.clearAppendM_exit, Compile.clearAppendM, composeFlatTM_states]
+  have := (Compile.opAppendBitRewind ins h_ins dst).exit_lt
+  omega
+
+/-- The raw (two-exit) `nonEmpty` machine: branch on `navigateAndTest src`. -/
+def Compile.nonEmptyRawM (dst src : Var) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.navigateAndTestTM src)
+    (Compile.nonEmptyBranchBody dst 2 (by decide))
+    (Compile.nonEmptyBranchBody dst 1 (by decide))
+    (ClearGadget.navigateAndTestTM_exit_content src)
+    (ClearGadget.navigateAndTestTM_exit_delim src)
+
+/-- content exit (positive branch). -/
+def Compile.nonEmptyRawM_h1 (dst src : Var) : Nat :=
+  (ClearGadget.navigateAndTestTM src).states + Compile.nonEmptyBranchBody_exit dst 2 (by decide)
+
+/-- delim exit (negative branch). -/
+def Compile.nonEmptyRawM_h2 (dst src : Var) : Nat :=
+  (ClearGadget.navigateAndTestTM src).states + (Compile.nonEmptyBranchBody dst 2 (by decide)).states
+    + Compile.nonEmptyBranchBody_exit dst 1 (by decide)
+
+theorem Compile.nonEmptyRawM_valid (dst src : Var) : validFlatTM (Compile.nonEmptyRawM dst src) :=
+  branchComposeFlatTM_valid _ _ _ _ _ (ClearGadget.navigateAndTestTM_valid src)
+    (Compile.nonEmptyBranchBody_valid dst 2 (by decide))
+    (Compile.nonEmptyBranchBody_valid dst 1 (by decide))
+    (ClearGadget.navigateAndTestTM_exit_content_lt src)
+    (ClearGadget.navigateAndTestTM_exit_delim_lt src)
+    (ClearGadget.navigateAndTestTM_tapes src)
+    (Compile.nonEmptyBranchBody_tapes dst 2 (by decide))
+    (Compile.nonEmptyBranchBody_tapes dst 1 (by decide))
+
+theorem Compile.nonEmptyRawM_tapes (dst src : Var) : (Compile.nonEmptyRawM dst src).tapes = 1 := by
+  rw [Compile.nonEmptyRawM, branchComposeFlatTM_tapes]; exact ClearGadget.navigateAndTestTM_tapes src
+
+theorem Compile.nonEmptyRawM_sig (dst src : Var) : (Compile.nonEmptyRawM dst src).sig = 4 := by
+  rw [Compile.nonEmptyRawM, branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig]
+  rw [show (Compile.nonEmptyBranchBody dst 2 (by decide)).sig = 4 from by
+        rw [Compile.nonEmptyBranchBody, composeFlatTM_sig, Compile.clearAppendM_sig]; rfl,
+      show (Compile.nonEmptyBranchBody dst 1 (by decide)).sig = 4 from by
+        rw [Compile.nonEmptyBranchBody, composeFlatTM_sig, Compile.clearAppendM_sig]; rfl]
+  rfl
+
+theorem Compile.nonEmptyRawM_h1_ne_h2 (dst src : Var) :
+    Compile.nonEmptyRawM_h1 dst src ≠ Compile.nonEmptyRawM_h2 dst src := by
+  rw [Compile.nonEmptyRawM_h1, Compile.nonEmptyRawM_h2]
+  have hb2 := Compile.nonEmptyBranchBody_exit_lt dst 2 (by decide)
+  omega
+
+theorem Compile.nonEmptyRawM_halt_only (dst src : Var) :
+    ∀ i, (Compile.nonEmptyRawM dst src).halt[i]? = some true →
+      i = Compile.nonEmptyRawM_h1 dst src ∨ i = Compile.nonEmptyRawM_h2 dst src := by
+  rw [Compile.nonEmptyRawM_h1, Compile.nonEmptyRawM_h2, Compile.nonEmptyRawM]
+  exact Compile.branchComposeFlatTM_halt_only _ _ _ _ _ _ _
+    (Compile.nonEmptyBranchBody_valid dst 2 (by decide))
+    (Compile.nonEmptyBranchBody_valid dst 1 (by decide))
+    (Compile.nonEmptyBranchBody_halt_unique dst 2 (by decide))
+    (Compile.nonEmptyBranchBody_halt_unique dst 1 (by decide))
+
+theorem Compile.nonEmptyRawM_h1_is_halt (dst src : Var) :
+    (Compile.nonEmptyRawM dst src).halt[Compile.nonEmptyRawM_h1 dst src]? = some true := by
+  rw [Compile.nonEmptyRawM_h1, Compile.nonEmptyRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.nonEmptyBranchBody_valid dst 2 (by decide))
+    (Compile.nonEmptyBranchBody_exit_lt dst 2 (by decide))
+    (Compile.nonEmptyBranchBody_exit_is_halt dst 2 (by decide))
+
+theorem Compile.nonEmptyRawM_h1_lt (dst src : Var) :
+    Compile.nonEmptyRawM_h1 dst src < (Compile.nonEmptyRawM dst src).states := by
+  rw [Compile.nonEmptyRawM_h1, Compile.nonEmptyRawM, branchComposeFlatTM_states]
+  have := Compile.nonEmptyBranchBody_exit_lt dst 2 (by decide)
+  omega
+
+theorem Compile.nonEmptyRawM_h2_lt (dst src : Var) :
+    Compile.nonEmptyRawM_h2 dst src < (Compile.nonEmptyRawM dst src).states := by
+  rw [Compile.nonEmptyRawM_h2, Compile.nonEmptyRawM, branchComposeFlatTM_states]
+  have := Compile.nonEmptyBranchBody_exit_lt dst 1 (by decide)
+  omega
+
+/-- Compile `Op.nonEmpty dst src`: the `joinTwoHalts`-merged branch machine. -/
+def Compile.opNonEmpty (dst src : Var) : CompiledCmd where
+  M := joinTwoHalts (Compile.nonEmptyRawM dst src)
+        (Compile.nonEmptyRawM_h1 dst src) (Compile.nonEmptyRawM_h2 dst src)
+  exit := Compile.nonEmptyRawM_h1 dst src
+  exit_lt := by
+    rw [joinTwoHalts_states]; exact Compile.nonEmptyRawM_h1_lt dst src
+  exit_is_halt :=
+    joinTwoHalts_h1_is_halt _ _ _ (Compile.nonEmptyRawM_h1_ne_h2 dst src)
+      (Compile.nonEmptyRawM_h1_is_halt dst src)
+  halt_unique :=
+    joinTwoHalts_halt_unique _ _ _ (Compile.nonEmptyRawM_halt_only dst src)
+  M_valid := joinTwoHalts_valid _ _ _ (Compile.nonEmptyRawM_valid dst src)
+    (Compile.nonEmptyRawM_h1_lt dst src) (Compile.nonEmptyRawM_h2_lt dst src)
+    (Compile.nonEmptyRawM_tapes dst src)
+  M_tapes := by rw [joinTwoHalts_tapes]; exact Compile.nonEmptyRawM_tapes dst src
+  M_sig := by rw [joinTwoHalts_sig]; exact Compile.nonEmptyRawM_sig dst src
 
 /-- Compile a single primitive operation `Op` to a `CompiledCmd`
 by dispatching on the constructor. The actual TM construction
