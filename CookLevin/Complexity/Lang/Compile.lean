@@ -4341,6 +4341,75 @@ theorem Compile.nonEmptyBranchBody_run (s : State) (dst src : Var) (bit : Nat) (
       omega
     omega
 
+/-- The branch that reaches the **kept** exit `h1`: `joinTwoHalts` agrees with the
+raw machine, reaching `h1` at step `T`; the trajectory never hits `h1` and never
+halts. -/
+theorem Compile.joinTwoHalts_reaches_kept (raw : FlatTM) (h1 h2 : Nat) (cfg0 : FlatTMConfig)
+    (T : Nat) (tape : List Nat × Nat × List Nat)
+    (hraw : runFlatTM T raw cfg0 = some { state_idx := h1, tapes := [tape] })
+    (hraw_traj : ∀ k, k < T → ∀ ck, runFlatTM k raw cfg0 = some ck →
+        haltingStateReached raw ck = false)
+    (hh1 : raw.halt[h1]? = some true) (hh2 : raw.halt[h2]? = some true) :
+    runFlatTM T (joinTwoHalts raw h1 h2) cfg0 = some { state_idx := h1, tapes := [tape] } ∧
+    (∀ k, k < T → ∀ ck, runFlatTM k (joinTwoHalts raw h1 h2) cfg0 = some ck →
+        ck.state_idx ≠ h1 ∧ haltingStateReached (joinTwoHalts raw h1 h2) ck = false) := by
+  have hnv : ∀ k, k < T → ∀ ck, runFlatTM k raw cfg0 = some ck → ck.state_idx ≠ h2 :=
+    fun k hk ck hck => ClearGadget.ne_of_not_halting hh2 (hraw_traj k hk ck hck)
+  refine ⟨?_, ?_⟩
+  · rw [joinTwoHalts_run_eq_weak raw h1 h2 T cfg0 hnv]; exact hraw
+  · intro k hk ck hck
+    rw [joinTwoHalts_run_eq_weak raw h1 h2 k cfg0
+        (fun j hj cj hcj => hnv j (by omega) cj hcj)] at hck
+    have hnh := hraw_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting hh1 hnh, Compile.joinTwoHalts_halting_false raw h1 h2 ck hnh⟩
+
+/-- The branch that reaches the **demoted** exit `h2`: `joinTwoHalts` reaches `h2`
+at step `T`, then bridges to the kept exit `h1` in one more step. -/
+theorem Compile.joinTwoHalts_reaches_demoted (raw : FlatTM) (h1 h2 : Nat) (cfg0 : FlatTMConfig)
+    (T : Nat) (left right : List Nat) (head : Nat)
+    (hraw : runFlatTM T raw cfg0 = some { state_idx := h2, tapes := [(left, head, right)] })
+    (hraw_traj : ∀ k, k < T → ∀ ck, runFlatTM k raw cfg0 = some ck →
+        haltingStateReached raw ck = false)
+    (hh1 : raw.halt[h1]? = some true) (hh2 : raw.halt[h2]? = some true) (hne : h1 ≠ h2)
+    (h_sym : ∀ v, currentTapeSymbol (left, head, right) = some v → v < raw.sig) :
+    runFlatTM (T + 1) (joinTwoHalts raw h1 h2) cfg0
+        = some { state_idx := h1, tapes := [(left, head, right)] } ∧
+    (∀ k, k < T + 1 → ∀ ck, runFlatTM k (joinTwoHalts raw h1 h2) cfg0 = some ck →
+        ck.state_idx ≠ h1 ∧ haltingStateReached (joinTwoHalts raw h1 h2) ck = false) := by
+  have hnv : ∀ k, k < T → ∀ ck, runFlatTM k raw cfg0 = some ck → ck.state_idx ≠ h2 :=
+    fun k hk ck hck => ClearGadget.ne_of_not_halting hh2 (hraw_traj k hk ck hck)
+  have hjoinT : runFlatTM T (joinTwoHalts raw h1 h2) cfg0
+      = some { state_idx := h2, tapes := [(left, head, right)] } := by
+    rw [joinTwoHalts_run_eq_weak raw h1 h2 T cfg0 hnv]; exact hraw
+  have hjoinHalt_h2 : haltingStateReached (joinTwoHalts raw h1 h2)
+      { state_idx := h2, tapes := [(left, head, right)] } = false := by
+    show (raw.halt.set h2 false).getD h2 false = false
+    rw [List.getD_eq_getElem?_getD, List.getElem?_set, if_pos rfl]; split <;> rfl
+  have hstep : stepFlatTM (joinTwoHalts raw h1 h2)
+      { state_idx := h2, tapes := [(left, head, right)] }
+      = some { state_idx := h1, tapes := [(left, head, right)] } :=
+    joinTwoHalts_step_to_h1 raw h1 h2 left right head h_sym
+  refine ⟨?_, ?_⟩
+  · rw [runFlatTM_compose (joinTwoHalts raw h1 h2) T 1 cfg0 _ hjoinT]
+    show (if haltingStateReached (joinTwoHalts raw h1 h2)
+              { state_idx := h2, tapes := [(left, head, right)] } = true then _
+          else match stepFlatTM (joinTwoHalts raw h1 h2)
+              { state_idx := h2, tapes := [(left, head, right)] } with
+            | none => _ | some c => runFlatTM 0 (joinTwoHalts raw h1 h2) c) = _
+    rw [if_neg (by rw [hjoinHalt_h2]; decide), hstep]
+    rfl
+  · intro k hk ck hck
+    rcases Nat.lt_or_ge k T with hkT | hkT
+    · rw [joinTwoHalts_run_eq_weak raw h1 h2 k cfg0
+          (fun j hj cj hcj => hnv j (by omega) cj hcj)] at hck
+      have hnh := hraw_traj k hkT ck hck
+      exact ⟨ClearGadget.ne_of_not_halting hh1 hnh, Compile.joinTwoHalts_halting_false raw h1 h2 ck hnh⟩
+    · have hkeq : k = T := by omega
+      subst hkeq
+      rw [hjoinT] at hck
+      obtain rfl := (Option.some.inj hck).symm
+      exact ⟨Ne.symm hne, hjoinHalt_h2⟩
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
