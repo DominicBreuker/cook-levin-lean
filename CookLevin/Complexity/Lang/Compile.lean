@@ -4668,7 +4668,8 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
       ∧ t ≤ 9 * (Compile.encodeTape s ++ res_in).length
-              * (Compile.encodeTape s ++ res_in).length + 9 := by
+              * (Compile.encodeTape s ++ res_in).length
+              + 9 * (Compile.encodeTape s ++ res_in).length + 30 := by
   cases o with
   | appendOne dst =>
       -- `res_out = res_in`: the append grows `encodeTape s` by one cell; residue passes through.
@@ -4676,12 +4677,12 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
       exact ⟨t, res_in, hres_in, hrun, htraj,
-        le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
+        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)) (by omega)⟩
   | appendZero dst =>
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
       exact ⟨t, res_in, hres_in, hrun, htraj,
-        le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)⟩
+        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)) (by omega)⟩
   -- The 9 cross-register stub ops still need their gadgets (`copyBlockTM`, see ROADMAP C2.c).
   | clear dst =>
       -- `clearRegionTM_run` (step 5b) provides the run + no-early-halt trajectory; the loop
@@ -4693,7 +4694,7 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
           = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } := by
         simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, hbud⟩
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, le_trans hbud (by omega)⟩
       · rw [hinit]; exact hrun
       · intro k hk ck hck
         rw [hinit] at hck
@@ -4702,7 +4703,11 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
   | tail dst src => sorry
   | head dst src => sorry
   | eqBit dst src1 src2 => sorry
-  | nonEmpty dst src => sorry
+  | nonEmpty dst src =>
+      obtain ⟨t, hrun, htraj, hbud⟩ :=
+        Compile.opNonEmpty_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
+      exact ⟨t, res_in ++ List.replicate (s.get dst).length 0,
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, hrun, htraj, hbud⟩
   | takeAt dst src lenReg => sorry
   | dropAt dst src lenReg => sorry
   | concat dst src1 src2 => sorry
