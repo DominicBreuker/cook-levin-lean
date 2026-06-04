@@ -148,10 +148,61 @@ hardest** (lockstep compare of two registers — rotate both and AND the front b
 needs scratch); do it last. The 1-cell-constant special case is cheaper but does
 **not** apply at the general `compileOp` level (the contract is for all `Op.eqBit`).
 
-**Sequencing:** ✅ `head` done → build the **rotation `loopTM` gadget** (probed GO,
-item (3)) → **`takeAt`/`dropAt`** (counter-free, no `Op` change) → settle the
-scratch-operand decision → `copy`/`tail`/`concat`/`consLen` → `eqBit` (two-register
-compare, hardest) → Tasks 1+2 (fold the `Op` scratch change in here) → Task 4.
+**Sequencing:** ✅ `head` done → build the **transfer `loopTM` gadget** (item (3) /
+deep-pass finding B) → **`takeAt`/`dropAt`** (use `lenReg`) → `copy`/`tail`/`concat`/
+`consLen` → `eqBit` → Tasks 1+2 (fold the `Op` scratch operand in here) → Task 4.
+
+### ⚠⚠ Deep feasibility pass (2026-06-04) — verdict: FEASIBLE, with one blocking
+budget inconsistency to fix BEFORE the assembly. Two concrete findings:
+
+**Finding A — the top-level budget is unprovable as stated (will block Task 4).**
+`Compile_run_physical_residue` / `Compile_sound` / `bitDecider_run` use
+`Compile.overhead (size s + c.cost s)` with `overhead m = (m+1)²` (quadratic). It is
+too small for **two** compounding reasons:
+- *(degree)* The per-op budget is `9·L²+…` (quadratic in tape length `L`) — `clear`
+  and every cross-register op do `Θ(L)` cell-moves, each an `O(L)` shift pass, so
+  they are genuinely `Θ(L²)`/op on a single tape. Summing over `~cost` executed
+  fragments ⇒ a **cubic** total. But `overhead`'s own doc (`Compile.lean` ~L2037)
+  still assumes "`O(L)` per Cmd-step ⇒ quadratic total" — true only for the
+  append ops, **false** for `clear`/the transfer ops. (Latent today only because
+  `Compile_run_physical_residue` is still `sorry`; the budget `omega` won't close.)
+- *(register count)* Per-fragment `L = size + s.length + 2` includes the **register
+  count** `s.length` (a state with `N` empty registers has tape `~N`, size `0`).
+  `Cmd.encodeTape_eval_length_le` correctly caps `L ≤ size+cost+max(s.length,regBound)+2`,
+  but `overhead(size+cost)` **drops `s.length`** — the ROADMAP reason-#1 register-count
+  bug, resurfaced at the top level (one `clear` on a many-empty-reg state costs
+  `O(s.length)` TM steps, invisible to `overhead(size+cost)`).
+- **Fix (mechanical but wide):** restate the budget as `overhead(size s + s.length +
+  c.cost s)` with `overhead` bumped to **cubic** (e.g. `9·(m+1)³`). Downstream only
+  needs `inOPoly` + `monotonic` (confirmed: `overhead_poly`/`overhead_mono` + every
+  consumer composes via those), both degree-agnostic ⇒ ripples mechanically through
+  `bitDecider_run`, the `DecidesBy` budgets, and `toFrameworkWitness'.timeBound`. Stays
+  poly on the live path (`encodeState x` is 1 register; the program adds a constant
+  `regBound`, so `s.length` is constant). **Restate the budget before proving
+  `Compile_run_physical_residue` — it is the most likely surprise in Task 4.**
+
+**Finding B — the scratch question resolves WITHOUT a counter (de-risks Class B,
+supersedes the "rotation + length counter" framing in items (2)/(3) above).** A
+**two-phase transfer** needs no counter and no marker: `copy dst src sc` = (move
+`src`→`sc` bit-by-bit until `src` empties) ⨾ (move `sc`→both `src` and `dst` until
+`sc` empties). **Each phase is a `clear`-style `loopTM` that terminates by EMPTYING a
+register** (the already-proven termination mode), and order is preserved (front→back
+twice): `[a,b,c] → sc=[a,b,c],src=[] → src=[a,b,c],dst=[a,b,c],sc=[]`. The loop body
+composes **only already-proven gadgets** — `bitReadTM` (read front bit) ⨾
+`deleteCarryTM` (remove + shift left) ⨾ `appendAtTM` (append to target). So **all 7
+remaining ops are buildable from existing gadgets** (no new low-level TM): `tail` =
+skip the first transferred bit for `dst`; `concat` = two copies; `eqBit` = transfer
+both and AND the front bits; `takeAt`/`dropAt` bound phase 2 by `lenReg`. The **only**
+new requirement is one **empty scratch operand** `sc` on the `Op` (precondition
+`s.get sc = []`, restored to `[]` on exit, `Op.eval` ignores it) — fold into Task 2.
+*Earlier "rotation step" `#eval` (delete-front + insert-at-back) is still valid but the
+transfer form is simpler and counter-free; prefer it.*
+
+**No gap in `loopTM`:** `loopTM_run` is parameterised by an arbitrary per-iteration
+tape `T : ℕ → tape`, so it already tolerates the residue growing each iteration (the
+`clear` loop relies on this) — both `compileForBnd` and the transfer loops fit.
+`compileSeq_sound_physical_residue` is PROVEN and threads residue correctly; the
+`compileIfBit`/`compileForBnd` residue contracts are well-stated (additive budgets).
 
 **Bigger-picture sanity check.** C2 is on a converging track: the per-op cost drops
 sharply as infrastructure compounds (the `nonEmpty` branch-merge engine and the

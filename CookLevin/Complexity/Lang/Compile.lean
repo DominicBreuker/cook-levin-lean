@@ -6250,9 +6250,20 @@ theorem Compile_run_physical_residue (c : Cmd) (s : State) :
          -- Induction on `Cmd`; each `Op` case from `compileOp_sound_physical_residue`,
          -- `seq` from `compileSeq_sound_physical_residue`, `ifBit` and `forBnd`
          -- from their residue-tolerant siblings (to be stated).
-         -- The quadratic budget comes from summing linear per-fragment budgets
-         -- (`3·tapeLen + 6`) over `~cost` fragments, where each fragment's tape
-         -- length is bounded by `size + cost + regBound` (`Cmd.encodeTape_eval_length_le`).
+         --
+         -- ⚠⚠ BUDGET IS WRONG AS STATED (deep feasibility pass 2026-06-04, Finding A).
+         -- The per-op budget is QUADRATIC in tape length L (`9·L²+…`, since `clear`
+         -- and the cross-register transfer ops do Θ(L) cell-moves each an O(L) pass),
+         -- and `L = size + s.length + 2` includes the REGISTER COUNT. Summing ~`cost`
+         -- such per-op quadratics ⇒ a CUBIC total in `size + s.length + cost`. The
+         -- stated `overhead(size+cost)` with `overhead m = (m+1)²` is too small on
+         -- BOTH counts (degree, and dropping `s.length`). FIX before proving this:
+         -- restate as `overhead(State.size s + s.length + c.cost s)` with
+         -- `Compile.overhead` bumped to CUBIC (e.g. `9·(m+1)³`). Downstream needs only
+         -- `overhead_poly`/`overhead_mono` (degree-agnostic), so it ripples mechanically
+         -- to `bitDecider_run`, the `DecidesBy` budgets, and `toFrameworkWitness'`.
+         -- Stays poly on the live path (`encodeState x` = 1 reg; `s.length` ≤ const
+         -- `regBound`). See HANDOFF.md "Deep feasibility pass".
 
 /-- The compiled decider machine: run `Compile c`, then the bit-test gadget. The
 gadget converts register `0`'s answer (on the tape) into a distinct halting
