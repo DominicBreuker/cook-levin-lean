@@ -384,6 +384,62 @@ theorem joinTwoHalts_run_eq (M : FlatTM) (h1 h2 : Nat) :
             exact ih cfg' (fun k hk ck hck =>
               hstate (k + 1) (Nat.succ_le_succ hk) ck (by rw [hunfold k]; exact hck))
 
+/-- **Weak run-preservation.** If the raw run never visits the demoted state `h2`
+*strictly before* step `t`, then `joinTwoHalts` agrees with `M` at step `t`.
+Unlike `joinTwoHalts_run_eq` this allows the step-`t` config itself to be `h2`
+(the divergence only happens when stepping *out of* `h2`). Used for the branch
+that reaches the demoted exit, which then bridges to the kept exit in one step. -/
+theorem joinTwoHalts_run_eq_weak (M : FlatTM) (h1 h2 : Nat) :
+    ∀ (t : Nat) (cfg0 : FlatTMConfig),
+      (∀ k, k < t → ∀ ck, runFlatTM k M cfg0 = some ck → ck.state_idx ≠ h2) →
+      runFlatTM t (joinTwoHalts M h1 h2) cfg0 = runFlatTM t M cfg0 := by
+  intro t
+  induction t with
+  | zero => intro cfg0 _; rfl
+  | succ n ih =>
+      intro cfg0 hstate
+      have h0 : cfg0.state_idx ≠ h2 := hstate 0 (Nat.succ_pos n) cfg0 rfl
+      have hhaltj : haltingStateReached (joinTwoHalts M h1 h2) cfg0 = haltingStateReached M cfg0 :=
+        joinTwoHalts_halting_eq M h1 h2 cfg0 h0
+      have hstepj : stepFlatTM (joinTwoHalts M h1 h2) cfg0 = stepFlatTM M cfg0 :=
+        joinTwoHalts_step_eq M h1 h2 cfg0 h0
+      by_cases hhalt : haltingStateReached M cfg0 = true
+      · rw [runFlatTM_of_halting (joinTwoHalts M h1 h2) cfg0 (n + 1) (by rw [hhaltj]; exact hhalt),
+            runFlatTM_of_halting M cfg0 (n + 1) hhalt]
+      · cases hstep : stepFlatTM M cfg0 with
+        | none =>
+            rw [runFlatTM_stuck (joinTwoHalts M h1 h2) cfg0
+                  (by rw [hhaltj]; exact Bool.not_eq_true _ ▸ hhalt) (by rw [hstepj]; exact hstep),
+                runFlatTM_stuck M cfg0 (Bool.not_eq_true _ ▸ hhalt) hstep]
+        | some cfg' =>
+            have hL : runFlatTM (n + 1) (joinTwoHalts M h1 h2) cfg0
+                = runFlatTM n (joinTwoHalts M h1 h2) cfg' := by
+              show (if haltingStateReached (joinTwoHalts M h1 h2) cfg0 = true then some cfg0
+                    else match stepFlatTM (joinTwoHalts M h1 h2) cfg0 with
+                      | none => some cfg0
+                      | some c => runFlatTM n (joinTwoHalts M h1 h2) c) = _
+              rw [if_neg (by rw [hhaltj]; exact hhalt), hstepj, hstep]
+            have hunfold : ∀ k, runFlatTM (k + 1) M cfg0 = runFlatTM k M cfg' := by
+              intro k
+              show (if haltingStateReached M cfg0 = true then some cfg0
+                    else match stepFlatTM M cfg0 with
+                      | none => some cfg0
+                      | some c => runFlatTM k M c) = _
+              rw [if_neg hhalt, hstep]
+            rw [hL, hunfold n]
+            exact ih cfg' (fun k hk ck hck =>
+              hstate (k + 1) (Nat.succ_lt_succ hk) ck (by rw [hunfold k]; exact hck))
+
+/-- **`joinTwoHalts` bridge step.** From the demoted state `h2` (single tape, head
+symbol in range), one step jumps to the kept exit `h1` leaving the tape
+unchanged. The prepended `bridgeEntries h2 h1` fire. -/
+theorem joinTwoHalts_step_to_h1 (M : FlatTM) (h1 h2 : Nat)
+    (left right : List Nat) (head : Nat)
+    (h_sym : ∀ v, currentTapeSymbol (left, head, right) = some v → v < M.sig) :
+    stepFlatTM (joinTwoHalts M h1 h2) { state_idx := h2, tapes := [(left, head, right)] }
+      = some { state_idx := h1, tapes := [(left, head, right)] } :=
+  stepFlatTM_bridge_prefix (joinTwoHalts M h1 h2) h2 h1 M.trans rfl left right head h_sym
+
 /-! ### General rewinding-op `CompiledCmd` builder (`rewindBracket`)
 
 Every rewinding op (the append ops, and every deletion op
