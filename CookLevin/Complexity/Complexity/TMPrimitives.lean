@@ -595,6 +595,66 @@ private theorem stepFlatTM_composeFlatTM_bridge
       exact find_bridgeRange_some (max M₁.sig M₂.sig) exit (M₁.states + M₂.start) v
         h_v_lt cfg h_cfg_state (by rw [h_tape_map, h_sym])
 
+/-- **Generic bridge step.** If a machine's transition table begins with
+`bridgeEntries M.sig srcState dstState`, then one step from `srcState` (with an
+in-range head symbol, single tape) jumps to `dstState` leaving the tape
+unchanged. `stepFlatTM_composeFlatTM_bridge` is the `composeFlatTM` instance;
+this generic form also serves `joinTwoHalts` (whose `trans` is
+`bridgeEntries sig h2 h1 ++ M.trans`). -/
+theorem stepFlatTM_bridge_prefix
+    (M : FlatTM) (srcState dstState : Nat) (rest : List FlatTMTransEntry)
+    (htrans : M.trans = bridgeEntries M.sig srcState dstState ++ rest)
+    (left right : List Nat) (head : Nat)
+    (h_sym_bound : ∀ v, currentTapeSymbol (left, head, right) = some v → v < M.sig) :
+    stepFlatTM M { state_idx := srcState, tapes := [(left, head, right)] } =
+      some { state_idx := dstState, tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := srcState, tapes := [(left, head, right)] } with hcfg
+  show (M.trans.find? (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg) = _
+  rw [htrans, List.find?_append]
+  have h_tape_map : cfg.tapes.map currentTapeSymbol = [currentTapeSymbol (left, head, right)] := rfl
+  have h_cfg_state : cfg.state_idx = srcState := rfl
+  rw [bridgeEntries_eq_bridgeMkEntry]
+  suffices h_bridge_find :
+      ((bridgeMkEntry srcState dstState none ::
+          (List.range M.sig).map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+          (fun e => entryMatchesConfig e cfg)) =
+        some (bridgeMkEntry srcState dstState (currentTapeSymbol (left, head, right))) by
+    rw [h_bridge_find]
+    show ((some _).or _).bind _ = _
+    simp only [Option.some_or]
+    exact applyBridgeMkEntry_singleTape srcState dstState
+      (currentTapeSymbol (left, head, right)) left right head
+  cases h_sym : currentTapeSymbol (left, head, right) with
+  | none =>
+      have h_match : entryMatchesConfig (bridgeMkEntry srcState dstState none) cfg = true := by
+        refine entryMatchesConfig_true_of rfl ?_
+        show ([none] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol
+        rw [h_tape_map, h_sym]
+      exact List.find?_cons_of_pos h_match
+  | some v =>
+      have h_no_match : ¬ entryMatchesConfig (bridgeMkEntry srcState dstState none) cfg = true := by
+        intro h
+        have h_tape_eq := ((entryMatchesConfig_iff _ _).mp h).2
+        have h_eq : ([none] : List (Option Nat)) = [some v] := by
+          calc ([none] : List (Option Nat))
+              = (bridgeMkEntry srcState dstState none).src_tape_vals := rfl
+            _ = cfg.tapes.map currentTapeSymbol := h_tape_eq
+            _ = [currentTapeSymbol (left, head, right)] := h_tape_map
+            _ = [some v] := by rw [h_sym]
+        injection h_eq with h1 _
+        cases h1
+      have h_step :
+          ((bridgeMkEntry srcState dstState none ::
+            (List.range M.sig).map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+              (fun e => entryMatchesConfig e cfg)) =
+          ((List.range M.sig).map (fun w => bridgeMkEntry srcState dstState (some w))).find?
+              (fun e => entryMatchesConfig e cfg) :=
+        List.find?_cons_of_neg h_no_match
+      rw [h_step]
+      have h_v_lt : v < M.sig := h_sym_bound v h_sym
+      exact find_bridgeRange_some M.sig srcState dstState v
+        h_v_lt cfg h_cfg_state (by rw [h_tape_map, h_sym])
+
 /-! ### M₂-phase step lemma -/
 
 /-- Shifted M₂ entry's apply on a config equals the unshifted entry's
