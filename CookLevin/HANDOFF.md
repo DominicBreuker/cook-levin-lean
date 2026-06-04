@@ -53,13 +53,19 @@ length register *is a loop counter*, which makes the hard data-movement gadgets
 
 ## The plan — option B (unary lengths, bit data), ordered
 
-> **Status (this session).** Nothing of Tasks 1–4 was *broken*; the build is
-> green (3358 jobs). **Task 3 Class-A architecture is now validated in code** and
-> its reading lemmas are committed (see Task 3). **Recommended order from here:**
-> finish **Task 3 `nonEmpty`** first (fully scoped + validated below — a contained
-> win that proves the Class-A skeleton end-to-end), then `head`/`eqBit`, then the
-> Class-B block-copy ops, then Tasks 1+2 together (they are **one monolithic
-> change** — see the ⚠ below), then Task 4.
+> **Status (this session).** Build green (3358 jobs). **✅ Task 3 `nonEmpty` is
+> FULLY PROVEN and axiom-clean** (`compileOp_sound_physical_residue` now discharges
+> the `nonEmpty` case; only `propext`/`Classical.choice`/`Quot.sound`). This is the
+> first cross-register op done and it builds the whole **branch-merge machinery**
+> the other branching ops reuse. **Recommended order from here:** `head` (needs a
+> bit-*value* read — see Class A below), then `eqBit`, then the Class-B block-copy
+> ops, then Tasks 1+2 together (**one monolithic change** — see ⚠ below), then
+> Task 4.
+>
+> **Budget bumped:** `compileOp_sound_physical_residue`'s budget is now
+> `9·L² + 9·L + 30` (multi-phase Class-A ops have linear overhead on top of the
+> `clear`'s `9·L²`). When you add an op whose chain is longer, bump again (3 sites:
+> statement + the relaxing `le_trans … (by omega)` in each proven case).
 >
 > **⚠ Tasks 1 & 2 are coupled and large; do NOT start them piecemeal.** Adding
 > `BitState` to `Compile_sound` forces the bridge (`toFrameworkWitness'`,
@@ -90,49 +96,51 @@ length register *is a loop counter*, which makes the hard data-movement gadgets
   cell. **Only three witnesses use these ops** — `swapCmd`, `mapFstCmd`,
   `mapSndCmd`, all in `Lang/PolyTime.lean` — so the re-prove surface is small.
 
-**3. Build the 9 cross-register ops (`compileOp_sound_physical_residue`, 9 sorrys
-left).** `Op.eval` of each is `s.set dst (f (s.get src…))` (read `src`, write
-`dst`, `dst ≠ src`). Two classes:
+**3. Build the 9 cross-register ops (`compileOp_sound_physical_residue`).**
+`Op.eval` of each is `s.set dst (f (s.get src…))`. **✅ `nonEmpty` DONE; 8 left**
+(`copy`/`tail`/`head`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`). Two classes:
 
-**Class A — `nonEmpty`/`head`/`eqBit` (`≤ 1`-cell output). ARCHITECTURE VALIDATED;
-do `nonEmpty` next.** Machine = `clear dst ⨾ (navigate+read-bit branch) ⨾ rewind ⨾
-append answer-bit`. The whole `nonEmpty` machine was **`#eval`-verified end-to-end**
-this session:
-```
-nonEmptyTM dst src :=                          -- exit head 0, residue = cleared-cell zeros
-  composeFlatTM (clearRegionTM dst)
-    (branchComposeFlatTM (navigateAndTestTM src) thenM elseM
-       (navigateAndTestTM_exit_content src) (navigateAndTestTM_exit_delim src))
-    (clearRegionTM_exit dst)
-thenM/elseM := composeFlatTM (scanLeftUntilTM 4 3) (appendAtThenTwoPhaseRewindTM ins dst) 1
-               -- ins=2 (bit 1) for content/non-empty, ins=1 (bit 0) for delim/empty
-```
-On `s=[[1,0],[1],[]]`, `nonEmptyTM 0 2` (src empty) → head `0`, tape
-`encodeTape(s.set 0 [0]) ++ [0,0]`; `nonEmptyTM 0 1` (src non-empty) →
-`encodeTape(s.set 0 [1]) ++ [0,0]`. Both exactly the residue contract shape.
-- **Reading is DONE & committed:** `Compile.navTestReg_run_content` /
-  `_run_delim` (residue-tolerant `navigateAndTest` on `encodeTape s ++ res`,
-  reading register `src`; content exit ⇒ src non-empty, delim ⇒ empty). Plus
-  helpers `Compile.skipped_length` / `skipped_ok`. Axiom-clean.
-- **Branch exits MERGE via `joinTwoHalts`, not demote.** The branch has *two*
-  reachable exits (content-branch halt vs delim-branch halt, after the outer
-  `composeFlatTM` shifts). `joinTwoHalts raw contentExit delimExit` adds a bridge
-  `delimExit → contentExit` (delim path takes one extra step) ⇒ unique exit
-  `contentExit`. Use `joinTwoHalts_run_eq` (content case never visits delimExit)
-  for the positive branch; for the delim branch chain the `+1` bridge step.
-- **Assembly lemmas (all proven, just plumb):** `branchComposeFlatTM_run_pos`
-  (content) / `_run_neg` (delim) + `_no_early_halt_pos`/`_neg`; the branch
-  `h_traj1` (≠ both exits) follows from `navigateAndTestTM_no_early_halt` +
-  `ne_of_not_halting` (both exits are halt states:
-  `navigateAndTestTM_exit_content_is_halt`/`_delim_is_halt`). `thenM`/`elseM`
-  run = `composeFlatTM_run` of `ScanLeft.rewindToStart_run` (head→0; interior
-  cells `<4`/`≠3` from `BitState`) then `opAppendBit_physical_residue` (applied to
-  the **cleared** state `s.set dst []`, so `s'.get dst ++ [bit] = [bit]`). Outer
-  compose with `clearRegionTM_run` (proven). Budget: clear is `9·L²+9`, each other
-  fragment linear, sum is a polynomial — `inOPoly` is all `toFrameworkWitness'`
-  needs (bump the stated `9·L²+9` to a larger quadratic/cubic if needed; update
-  the 3 sites: statement + append cases + clear case). `head` and `eqBit` reuse
-  the same skeleton (`head` writes `[src.head]`; `eqBit` is two reads + compare).
+**Class A — `nonEmpty` (✅ DONE), `head`, `eqBit` (`≤ 1`-cell output).** The
+**proven `nonEmpty` machine and the reusable building blocks** (all in
+`Compile.lean`, axiom-clean):
+- `Compile.opNonEmpty dst src` — the `CompiledCmd`: `joinTwoHalts (nonEmptyRawM …)
+  h1 h2` where `nonEmptyRawM = branchComposeFlatTM (navigateAndTestTM src) body₂
+  body₁ exit_content exit_delim`, `bodyᵢ = nonEmptyBranchBody dst ins` =
+  `rewind (scanLeftUntilTM 4 3) ⨾ clear dst ⨾ append bit`. **Read `src` FIRST,
+  clear `dst` AFTER** (so it is correct for `dst = src` — verified). Structural
+  `CompiledCmd` fields proven via the new halt-characterization helpers.
+- `Compile.opNonEmpty_run` — the full residue contract (run + trajectory + budget
+  `9·L²+9·L+30`); the **template to copy** for any branching op. Cases on
+  `s.get src = []` and feeds `joinTwoHalts_reaches_kept` (content) /
+  `joinTwoHalts_reaches_demoted` (delim, the `+1` bridge step).
+- **Reusable infrastructure (use verbatim):**
+  - `Compile.clearAppendM_run` — clear `dst` ⨾ append bit ⇒ `encodeTape (s.set dst
+    [bit]) ++ (res ++ replicate |s.get dst| 0)`, head 0. **`head`/`eqBit` reuse this
+    to write their answer bit.**
+  - `Compile.nonEmptyBranchBody_run` — rewind-from-`navtest`-exit ⨾ clearAppend.
+  - `Compile.navTestReg_run_content`/`_run_delim` + `_traj_content`/`_traj_delim`
+    — residue-tolerant `navigateAndTest` run + no-early-halt (≠ both exits).
+  - `Compile.joinTwoHalts_reaches_kept`/`_reaches_demoted` — **the branch-merge
+    engine**: given the raw branch run (to kept exit `h1` / demoted exit `h2`) +
+    trajectory + `h1`/`h2` are halts + `h1≠h2` (+ tape-symbol bound for demoted),
+    produce the `joinTwoHalts` run-to-`h1` + trajectory. Any 2-way branching op
+    plugs straight in.
+  - `joinTwoHalts_step_to_h1` (bridge step `h2→h1`) ← `stepFlatTM_bridge_prefix`
+    (new, **`TMPrimitives.lean`**, generic bridge step for any
+    `bridgeEntries sig src dst ++ rest` trans); `joinTwoHalts_run_eq_weak`
+    (run-preserve while intermediate `≠ h2`); `joinTwoHalts_halting_false`;
+    `branchComposeFlatTM_M2_halt_intro`/`_M3_halt_intro`,
+    `Compile.branchComposeFlatTM_halt_only`, `composeFlatTM_halt_unique`.
+- **⚠ `head`/`eqBit` are NOT a copy-paste of `nonEmpty`.** `navigateAndTestTM`
+  branches only **delim vs content** — content covers BOTH bit `0` (cell `1`) and
+  bit `1` (cell `2`), so it does *not* read the bit value. `head dst src` =
+  `[src.head]` needs the actual first bit ⇒ build a **bit-value branch** (read the
+  cell, branch `1`-vs-`2`; extend `delimTestTM`/`navigateAndTestTM` to a 3-way, or
+  add a `navigateAndReadBitTM`). Then it is `clearAppendM` with the read bit. The
+  empty case writes `[]` (just `clear dst`, no append) — a third branch, so `head`
+  is a 3-way branch (`joinTwoHalts` twice, or a nested merge). `eqBit dst src1
+  src2` compares two full registers — a **cell-by-cell `loopTM` compare** (more
+  than `nonEmpty`); scope it as its own gadget.
 
 **Class B — `copy`/`tail`/`concat`/`takeAt`/`dropAt`/`consLen` (block copy).**
 Counter + rotation = non-destructive block copy, no spare symbol:
@@ -141,25 +149,32 @@ Counter + rotation = non-destructive block copy, no spare symbol:
   holds the copy. `takeAt`/`dropAt`: `lenReg` (unary) is the counter directly.
   `copy`/`tail`/`concat`: first **count** `src`'s length into a scratch register
   (mirror the `clear` count loop), then rotate-copy. **Probe the rotation machine
-  with `#eval` before proving** (the Class-A probe above is the template).
-- Budget: per-iteration linear `∧ t ≤ c·L + d`, assemble with
-  `Compile.loopBudget_le` + a `Compile.clearBudget_arith`-style closer → quadratic.
+  with `#eval` before proving.** Budget: per-iteration linear `∧ t ≤ c·L + d`,
+  assemble with `Compile.loopBudget_le` + a `Compile.clearBudget_arith`-style
+  closer → quadratic (bump the op budget again).
 
 **⚠ `#eval`-probe every new machine end-to-end before proving its run lemma** —
 architecture bugs (wrong exit head, off-by-one slot) are invisible to validity
-proofs and the proofs are expensive.
+proofs and the proofs are expensive. Probe template (run a composed `FlatTM` on a
+real `encodeTape`, check the exit state + head + tape):
+`(runFlatTM N M (initFlatConfig M [Compile.encodeTape s])).map (·.tapes)` via the
+`LEAN_PATH` lean invocation.
 
-**★ The exact structural template for `nonEmpty` already exists:
-`Compile.clearBody_delete_run` (`Compile.lean` ~2681).** `clearBodyRawTM` is
-itself a `branchComposeFlatTM (navigateAndTestTM dst) <delete-rewind>
-<just-rewind>` — i.e. the *same* "navtest → 2-way branch → rewind" shape as
-`nonEmpty`. That proof shows verbatim how to: decompose the tape (`htape_nav`),
+**★ The proven `nonEmpty` chain is the template for the next branching op:
+`Compile.opNonEmpty_run` (`Compile.lean`).** It shows verbatim how to: decompose
+the tape, build the navtest run + trajectory, apply `branchComposeFlatTM_run_pos`
+/`_run_neg`, convert the branch output state (commute to `h1`/`h2`), and merge via
+`joinTwoHalts_reaches_kept`/`_demoted`. The older `Compile.clearBody_delete_run`
+(~`Compile.lean` 2750) is the lower-level `navtest → branch → rewind` example.
+
+<details><summary>(historical, now superseded) the clearBody template walkthrough</summary>
+shows how to: decompose the tape (`htape_nav`),
 bound `navSteps`/`regBlocks`, **discharge the `rewindToStart_run`/`_traj` cell
 conditions** (the fiddly part — copy lines ~2884–2921), set the
 `branchComposeFlatTM` symbol bound, and assemble. For `nonEmpty`, swap the two
 sub-machines for `thenM`/`elseM` (rewind ⨾ append), and (unlike clear's loop)
-**merge the two branch exits with `joinTwoHalts`** as described above. Start by
-copying `clearBody_delete_run`'s skeleton.
+**merge the two branch exits with `joinTwoHalts`** as described above.
+</details>
 
 **4. Assemble `Compile_run_physical_residue` → `Compile_sound`.** Compose per-op
 contracts with `compileSeq_sound_physical_residue` (done), the `compileIfBit` /
@@ -192,8 +207,12 @@ C7 verifiers (`evalCnfCmd`), C8 hardness, S1 tableau.
 | `Compile.encodeTape_length`, `encodeTape_set_length`, `encodeRegs_no_endMark` | length balance; why BitState is required |
 | `Compile.ValidResidue`, `TapeOK`, `decodeTape_encodeTape_append` | residue-tolerant contract (the tape never shrinks, so deletion ops leave terminator-free residue) |
 | `rewindBracket`, `rewindBracket_transport`, `opAppendBit_physical_residue` | **template for any head-moving op**: wrap a compute machine with the two-phase rewind, demote the extra halt → unique-exit `CompiledCmd` |
-| `compileOp_sound_physical_residue` | per-op contract (`appendOne`/`appendZero`/**`clear`** PROVEN; 9 cross-register `sorry`) |
-| `Compile.navTestReg_run_content` / `_run_delim` (+ `skipped_length`/`skipped_ok`) | **NEW** residue-tolerant `navigateAndTest` reading of register `src` on `encodeTape s ++ res`; the Class-A reading step (content ⇒ src non-empty, delim ⇒ empty) |
+| `compileOp_sound_physical_residue` | per-op contract; budget `9·L²+9·L+30`. PROVEN: `appendOne`/`appendZero`/`clear`/**`nonEmpty`**. `sorry`: `copy`/`tail`/`head`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (8) |
+| `Compile.opNonEmpty` (+ `_run`) | **✅ NEW, PROVEN** the `nonEmpty` `CompiledCmd` (navtest-first; `joinTwoHalts` merge) + its full residue contract — **the template for any branching op** |
+| `Compile.clearAppendM_run`, `nonEmptyBranchBody_run` | **NEW** clear `dst` ⨾ append bit (head 0); rewind ⨾ clearAppend — reuse for `head`/`eqBit`'s answer-bit write |
+| `Compile.navTestReg_run_content`/`_run_delim`/`_traj_content`/`_traj_delim` (+ `skipped_length`/`skipped_ok`) | residue-tolerant `navigateAndTest` reading + no-early-halt of register `src` (content ⇒ non-empty, delim ⇒ empty). **NB only delim-vs-content, not the bit value** — `head`/`eqBit` need a bit-value read |
+| `Compile.joinTwoHalts_reaches_kept`/`_reaches_demoted`, `joinTwoHalts_step_to_h1`, `joinTwoHalts_run_eq_weak`, `joinTwoHalts_halting_false` | **NEW branch-merge engine**: a 2-way `branchComposeFlatTM` (`joinTwoHalts`-merged) op plugs straight in |
+| `stepFlatTM_bridge_prefix` (`TMPrimitives.lean`), `branchComposeFlatTM_M2_halt_intro`/`_M3_halt_intro`, `branchComposeFlatTM_halt_only`, `composeFlatTM_halt_unique` | **NEW** generic bridge step + branch halt-state characterization |
 | `compileSeq_sound_physical_residue` | PROVEN (additive budget `t₁+1+t₂`) |
 | `Compile_run_physical_residue`, `Compile_sound` | **the C2 obligations (`sorry`)** — need the `BitState` hypothesis (Task 1) |
 | `Compile.loopBudget_le`, `Compile.clearBudget_arith` | **reusable budget template** (per-iteration `M` → `(n+1)·M`; quadratic closer) |
@@ -229,8 +248,20 @@ the same length `L` and `n+2 ≤ L`.
 ## Conventions & hard-won gotchas
 
 - **Build:** `export PATH="$HOME/.elan/bin:$PATH"; lake build` (first build slow;
-  one module ~10s after). `lake` is **not on PATH** and most MCP/LSP features
-  can't find it. Commit per logical step with a **green build**.
+  one module ~10s after; `lake build Complexity.Lang.Compile` to iterate one
+  module). `lake` is **not on PATH**. Commit per logical step with a **green
+  build**.
+- **NEW — `omega` can't see through `Var := Nat`.** A tape *symbol* / *bit*
+  parameter must be typed `Nat`, **not** `Var` — otherwise `(by omega : bit+1 < 4)`
+  fails on the `↑bit` coercion. (`Compile.clearAppendM_run` takes `bit : Nat`.)
+- **NEW — `set x := e` folds the goal but NOT hyps created later.** Lemmas
+  obtained *after* the `set` carry the *unfolded* `e`, so `omega` sees `x` and `e`
+  as two atoms and fails. Fix: `rw [hxdef] at h` to unfold before `omega` (e.g.
+  `rw [hskdef] at hn` before the budget `omega`).
+- **NEW — branching op correctness for `dst = src`.** Read `src` BEFORE clearing
+  `dst` (the `nonEmpty` machine is navtest-first); clear-first is WRONG when
+  `dst = src`. `Op.inBounds` does NOT force `dst ≠ src`.
+- **NEW — `max 4 4 = 4` is not closed by `rw` alone** — append `rfl`/`decide`.
 - **Axiom-check** via a scratch file (LSP can't find `lake`):
   `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
   `import Complexity.Lang.Compile` + `#print axioms <Fully.Qualified.name>`. New
