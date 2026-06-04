@@ -149,6 +149,18 @@ Counter + rotation = non-destructive block copy, no spare symbol:
 architecture bugs (wrong exit head, off-by-one slot) are invisible to validity
 proofs and the proofs are expensive.
 
+**★ The exact structural template for `nonEmpty` already exists:
+`Compile.clearBody_delete_run` (`Compile.lean` ~2681).** `clearBodyRawTM` is
+itself a `branchComposeFlatTM (navigateAndTestTM dst) <delete-rewind>
+<just-rewind>` — i.e. the *same* "navtest → 2-way branch → rewind" shape as
+`nonEmpty`. That proof shows verbatim how to: decompose the tape (`htape_nav`),
+bound `navSteps`/`regBlocks`, **discharge the `rewindToStart_run`/`_traj` cell
+conditions** (the fiddly part — copy lines ~2884–2921), set the
+`branchComposeFlatTM` symbol bound, and assemble. For `nonEmpty`, swap the two
+sub-machines for `thenM`/`elseM` (rewind ⨾ append), and (unlike clear's loop)
+**merge the two branch exits with `joinTwoHalts`** as described above. Start by
+copying `clearBody_delete_run`'s skeleton.
+
 **4. Assemble `Compile_run_physical_residue` → `Compile_sound`.** Compose per-op
 contracts with `compileSeq_sound_physical_residue` (done), the `compileIfBit` /
 `compileForBnd` residue contracts (`branchComposeFlatTM_run` / `loopTM_run` +
