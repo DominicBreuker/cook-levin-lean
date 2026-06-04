@@ -53,19 +53,27 @@ length register *is a loop counter*, which makes the hard data-movement gadgets
 
 ## The plan — option B (unary lengths, bit data), ordered
 
-> **Status (this session).** Build green (3358 jobs). **✅ Task 3 `nonEmpty` is
-> FULLY PROVEN and axiom-clean** (`compileOp_sound_physical_residue` now discharges
-> the `nonEmpty` case; only `propext`/`Classical.choice`/`Quot.sound`). This is the
-> first cross-register op done and it builds the whole **branch-merge machinery**
-> the other branching ops reuse. **Recommended order from here:** `head` (needs a
-> bit-*value* read — see Class A below), then `eqBit`, then the Class-B block-copy
-> ops, then Tasks 1+2 together (**one monolithic change** — see ⚠ below), then
-> Task 4.
+> **Status (current).** Build green (3358 jobs). **✅ `nonEmpty` AND `head` are
+> FULLY PROVEN and axiom-clean** (`compileOp_sound_physical_residue` discharges
+> both; only `propext`/`Classical.choice`/`Quot.sound`). `head` was the first
+> op needing a bit-*value* read, and it built the reusable **`bitReadTM`** (cell →
+> bit 0/1) plus the **nested-branch template** (outer empty/content + inner bit
+> branch, both `joinTwoHalts`-merged). **7 cross-register ops left:**
+> `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`.
 >
-> **Budget bumped:** `compileOp_sound_physical_residue`'s budget is now
-> `9·L² + 9·L + 30` (multi-phase Class-A ops have linear overhead on top of the
-> `clear`'s `9·L²`). When you add an op whose chain is longer, bump again (3 sites:
-> statement + the relaxing `le_trans … (by omega)` in each proven case).
+> **Recommended order from here (reassessed — there is no remaining "head-sized"
+> quick win; all 7 ops route through the rotation `loopTM` gadget, which is
+> validated but unbuilt — see risk item (3)):** build the **rotation block-copy
+> `loopTM` gadget** (`navigate ⨾ deleteCarryTM ⨾ navigate ⨾ insertCarryTM`, probed
+> GO), prove **`takeAt`/`dropAt` FIRST** (their `lenReg` is the counter — no scratch,
+> no `Op` change), then settle the Class-B **scratch-counter decision** (item (2))
+> and do `copy`/`tail`/`concat`/`consLen`/`eqBit`, then Tasks 1+2 together (**one
+> monolithic change** — see ⚠ below), then Task 4. (General `eqBit` is a
+> two-register compare, **not** the cheap bit-read case — see Class A.)
+>
+> **Budget:** `compileOp_sound_physical_residue`'s budget is `9·L² + 9·L + 30`.
+> `nonEmpty`/`head` both fit. When you add an op whose chain is longer, bump (3
+> sites: statement + the relaxing `le_trans … (by omega)` in each proven case).
 >
 > **⚠ Tasks 1 & 2 are coupled and large; do NOT start them piecemeal.** Adding
 > `BitState` to `Compile_sound` forces the bridge (`toFrameworkWitness'`,
@@ -85,15 +93,17 @@ A focused risk pass on the 8 remaining ops (with `#eval` probes). **Verdict: the
 plan is feasible and C2 is converging, but the Class-B ops have ONE unresolved
 design decision (the scratch counter) that you must settle BEFORE building them.**
 
-**(1) Do `head` next — lowest risk, counter-free.** `head dst src` writes `[]` /
-`[0]` / `[1]` (≤1 cell), so it reuses the *entire* `nonEmpty` engine
-(`clearAppendM_run` + the `joinTwoHalts` branch-merge). The **only** new piece is a
-**bit-*value* test** (branch cell `=1` vs `=2` vs delim) — a direct mirror of
-`ClearGadget.delimTestTM` (which already branches delim-vs-content). `head` is a
-3-way branch (empty→`[]` i.e. just clear `dst`; bit0→`[0]`; bit1→`[1]`): nest two
-`joinTwoHalts` merges, or merge a 3-exit machine. Estimate ~300–400 LOC.
+**(1) ✅ `head` DONE.** Built `bitReadTM` (the bit-*value* test — cell `1`→bit 0,
+`2`→bit 1; mirror of `delimTestTM`) and realised the 3-way branch as **two nested
+2-way branches**, each `joinTwoHalts`-merged: outer `navigateAndTestTM` (empty vs
+content) → delim writes `[]` (`clearOnlyBranchBody`), content runs `opInnerBit`
+(`bitReadTM` → write `[bit]` via `nonEmptyBranchBody`). **`eqBit` should reuse
+`bitReadTM`**; if the live verifier only needs `eqBit dst src k` against a 1-cell
+constant `k`, that is a near-clone of `head` (read `src`'s only bit, compare to `k`,
+write `[1]`/`[0]`) — do that special case first.
 
-**(2) The 6 block-copy ops + `eqBit` need a guaranteed-empty SCRATCH register —
+**(2) The block-copy ops (`copy`/`tail`/`concat`/`takeAt`/`dropAt`/`consLen`) +
+general `eqBit` need a guaranteed-empty SCRATCH register —
 this is the one real gap. Resolve it before building.** The "counter + rotation =
 mark-free block copy" claim is **algorithmically correct** (probed: rotating `src`
 one bit/iteration restores `src` after `|src|` iters while `dst` accumulates the
@@ -115,21 +125,84 @@ new signatures. (Alternative without an `Op` change: a temporary trailing regist
 + delete-its-separator cleanup, or scratch in the residue past the terminator —
 both add gadget machinery and are riskier; not recommended.)
 
-**(3) Build `copy` FIRST among the rotation ops, and `#eval`-probe the rotation
-machine end-to-end as a real `FlatTM` before proving** (compose `navigate` +
-`deleteCarryTM` (front) + `insertCarryTM`/`appendAtTM` (src-back & dst-back) +
-counter-consume into a `loopTM` body; verify exit head + exact tape on a real
-`encodeTape`). `copy`'s gadget is the rotation infrastructure; `tail` (skip first
-bit), `concat` (two copies), `takeAt`/`dropAt` (`lenReg` is the counter directly —
-**these two need NO scratch**, the unary `lenReg` already shrinks), `consLen`
-(prepend a unary length) then reuse it. **`eqBit` is the hardest** (lockstep compare
-of two registers, or rotate-both-and-AND) — do it last, and first check whether the
-live verifier (`EvalCnfCmd`) only needs `eqBit` against a 1-cell constant (a much
-cheaper special case).
+**(3) ✅ Rotation step PROBED & validated (`#eval`, GO).** `deleteCarryTM` (delete
+register front cell) **then** `insertCarryTM` (re-insert the carried bit at the
+register's back) rotates one register by one position with **no spare symbol**.
+Probe (`encodeTape [[1,0,1],[0,0]] = [3,2,1,2,0,1,1,0,3]`): delete from head `2`
+→ `[3,1,2,0,1,1,0,3,0]` (head 9, state 6); insert `2` from head `3`
+→ `[3,1,2,2,0,1,1,0,3,0]` = **`encodeTape [[0,1,1],[0,0]] ++ [0]`** (head 9, state
+5). I.e. the **logical tape is the rotated register**, with a terminator-free `[0]`
+**residue** (rotation costs `+1` residue cell/step — fits the residue-tolerant
+contract). The per-step head returns to the right end, so a `loopTM` body =
+`navigate-to-front ⨾ deleteCarryTM ⨾ navigate-to-back ⨾ insertCarryTM` (+ for `copy`,
+append the carried bit to `dst`). O(L)/step ⇒ O(L²) total (use `loopBudget_le`).
 
-**Sequencing:** `head` → (settle the scratch-operand decision) → `copy` (probe +
-rotation infra) → `tail`/`concat`/`takeAt`/`dropAt`/`consLen` → `eqBit` →
-Tasks 1+2 (fold the `Op` scratch change in here) → Task 4 (assemble).
+**⚠ Refined sequencing among the rotation ops:** **do `takeAt`/`dropAt` FIRST** —
+their `lenReg` (unary) **is** the loop counter directly, so they need **NO scratch
+register and NO `Op`-signature change** (`Op.takeAt dst src lenReg`,
+`Op.dropAt dst src lenReg` already carry it). `copy`/`tail`/`concat`/`consLen` and
+general `eqBit` rotate a register that does NOT shrink, so they need a
+guaranteed-empty scratch counter — **still the unresolved decision in item (2)**
+(fold the `Op` scratch operand into Task 2 before building them). **`eqBit` is the
+hardest** (lockstep compare of two registers — rotate both and AND the front bits;
+needs scratch); do it last. The 1-cell-constant special case is cheaper but does
+**not** apply at the general `compileOp` level (the contract is for all `Op.eqBit`).
+
+**Sequencing:** ✅ `head` done → build the **transfer `loopTM` gadget** (item (3) /
+deep-pass finding B) → **`takeAt`/`dropAt`** (use `lenReg`) → `copy`/`tail`/`concat`/
+`consLen` → `eqBit` → Tasks 1+2 (fold the `Op` scratch operand in here) → Task 4.
+
+### ⚠⚠ Deep feasibility pass (2026-06-04) — verdict: FEASIBLE, with one blocking
+budget inconsistency to fix BEFORE the assembly. Two concrete findings:
+
+**Finding A — the top-level budget is unprovable as stated (will block Task 4).**
+`Compile_run_physical_residue` / `Compile_sound` / `bitDecider_run` use
+`Compile.overhead (size s + c.cost s)` with `overhead m = (m+1)²` (quadratic). It is
+too small for **two** compounding reasons:
+- *(degree)* The per-op budget is `9·L²+…` (quadratic in tape length `L`) — `clear`
+  and every cross-register op do `Θ(L)` cell-moves, each an `O(L)` shift pass, so
+  they are genuinely `Θ(L²)`/op on a single tape. Summing over `~cost` executed
+  fragments ⇒ a **cubic** total. But `overhead`'s own doc (`Compile.lean` ~L2037)
+  still assumes "`O(L)` per Cmd-step ⇒ quadratic total" — true only for the
+  append ops, **false** for `clear`/the transfer ops. (Latent today only because
+  `Compile_run_physical_residue` is still `sorry`; the budget `omega` won't close.)
+- *(register count)* Per-fragment `L = size + s.length + 2` includes the **register
+  count** `s.length` (a state with `N` empty registers has tape `~N`, size `0`).
+  `Cmd.encodeTape_eval_length_le` correctly caps `L ≤ size+cost+max(s.length,regBound)+2`,
+  but `overhead(size+cost)` **drops `s.length`** — the ROADMAP reason-#1 register-count
+  bug, resurfaced at the top level (one `clear` on a many-empty-reg state costs
+  `O(s.length)` TM steps, invisible to `overhead(size+cost)`).
+- **Fix (mechanical but wide):** restate the budget as `overhead(size s + s.length +
+  c.cost s)` with `overhead` bumped to **cubic** (e.g. `9·(m+1)³`). Downstream only
+  needs `inOPoly` + `monotonic` (confirmed: `overhead_poly`/`overhead_mono` + every
+  consumer composes via those), both degree-agnostic ⇒ ripples mechanically through
+  `bitDecider_run`, the `DecidesBy` budgets, and `toFrameworkWitness'.timeBound`. Stays
+  poly on the live path (`encodeState x` is 1 register; the program adds a constant
+  `regBound`, so `s.length` is constant). **Restate the budget before proving
+  `Compile_run_physical_residue` — it is the most likely surprise in Task 4.**
+
+**Finding B — the scratch question resolves WITHOUT a counter (de-risks Class B,
+supersedes the "rotation + length counter" framing in items (2)/(3) above).** A
+**two-phase transfer** needs no counter and no marker: `copy dst src sc` = (move
+`src`→`sc` bit-by-bit until `src` empties) ⨾ (move `sc`→both `src` and `dst` until
+`sc` empties). **Each phase is a `clear`-style `loopTM` that terminates by EMPTYING a
+register** (the already-proven termination mode), and order is preserved (front→back
+twice): `[a,b,c] → sc=[a,b,c],src=[] → src=[a,b,c],dst=[a,b,c],sc=[]`. The loop body
+composes **only already-proven gadgets** — `bitReadTM` (read front bit) ⨾
+`deleteCarryTM` (remove + shift left) ⨾ `appendAtTM` (append to target). So **all 7
+remaining ops are buildable from existing gadgets** (no new low-level TM): `tail` =
+skip the first transferred bit for `dst`; `concat` = two copies; `eqBit` = transfer
+both and AND the front bits; `takeAt`/`dropAt` bound phase 2 by `lenReg`. The **only**
+new requirement is one **empty scratch operand** `sc` on the `Op` (precondition
+`s.get sc = []`, restored to `[]` on exit, `Op.eval` ignores it) — fold into Task 2.
+*Earlier "rotation step" `#eval` (delete-front + insert-at-back) is still valid but the
+transfer form is simpler and counter-free; prefer it.*
+
+**No gap in `loopTM`:** `loopTM_run` is parameterised by an arbitrary per-iteration
+tape `T : ℕ → tape`, so it already tolerates the residue growing each iteration (the
+`clear` loop relies on this) — both `compileForBnd` and the transfer loops fit.
+`compileSeq_sound_physical_residue` is PROVEN and threads residue correctly; the
+`compileIfBit`/`compileForBnd` residue contracts are well-stated (additive budgets).
 
 **Bigger-picture sanity check.** C2 is on a converging track: the per-op cost drops
 sharply as infrastructure compounds (the `nonEmpty` branch-merge engine and the
@@ -159,10 +232,10 @@ proof engineering.*
   `mapSndCmd`, all in `Lang/PolyTime.lean` — so the re-prove surface is small.
 
 **3. Build the 9 cross-register ops (`compileOp_sound_physical_residue`).**
-`Op.eval` of each is `s.set dst (f (s.get src…))`. **✅ `nonEmpty` DONE; 8 left**
-(`copy`/`tail`/`head`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`). Two classes:
+`Op.eval` of each is `s.set dst (f (s.get src…))`. **✅ `nonEmpty` + `head` DONE;
+7 left** (`copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`). Two classes:
 
-**Class A — `nonEmpty` (✅ DONE), `head`, `eqBit` (`≤ 1`-cell output).** The
+**Class A — `nonEmpty` (✅ DONE), `head` (✅ DONE), `eqBit` (`≤ 1`-cell output).** The
 **proven `nonEmpty` machine and the reusable building blocks** (all in
 `Compile.lean`, axiom-clean):
 - `Compile.opNonEmpty dst src` — the `CompiledCmd`: `joinTwoHalts (nonEmptyRawM …)
@@ -193,27 +266,38 @@ proof engineering.*
     (run-preserve while intermediate `≠ h2`); `joinTwoHalts_halting_false`;
     `branchComposeFlatTM_M2_halt_intro`/`_M3_halt_intro`,
     `Compile.branchComposeFlatTM_halt_only`, `composeFlatTM_halt_unique`.
-- **⚠ `head`/`eqBit` are NOT a copy-paste of `nonEmpty`.** `navigateAndTestTM`
-  branches only **delim vs content** — content covers BOTH bit `0` (cell `1`) and
-  bit `1` (cell `2`), so it does *not* read the bit value. `head dst src` =
-  `[src.head]` needs the actual first bit ⇒ build a **bit-value branch** (read the
-  cell, branch `1`-vs-`2`; extend `delimTestTM`/`navigateAndTestTM` to a 3-way, or
-  add a `navigateAndReadBitTM`). Then it is `clearAppendM` with the read bit. The
-  empty case writes `[]` (just `clear dst`, no append) — a third branch, so `head`
-  is a 3-way branch (`joinTwoHalts` twice, or a nested merge). `eqBit dst src1
-  src2` compares two full registers — a **cell-by-cell `loopTM` compare** (more
-  than `nonEmpty`); scope it as its own gadget.
+- **✅ The bit-value read is now BUILT (`head`).** `Compile.bitReadTM` (cell `1`→
+  state 1 = bit 0, `2`→state 2 = bit 1; mirror of `delimTestTM`, +`_run`/
+  `_no_early_halt`/`_halt_only`) is the reusable bit-*value* test
+  `navigateAndTestTM` lacked. `head` was realised as **two nested 2-way branches**,
+  NOT a custom 3-way: outer `navigateAndTestTM` (empty vs content) merged by
+  `joinTwoHalts`; the content body is `Compile.opInnerBit` (itself
+  `bitReadTM` → `nonEmptyBranchBody dst {1,2}`, two exits `joinTwoHalts`-merged →
+  a unique-halt `CompiledCmd`); the delim body is `Compile.clearOnlyBranchBody`
+  (rewind + `clearRegionTM`, writes `[]`). See `Compile.opHead`/`opHead_run` —
+  **the template for any 3-way / nested branching op.**
+- **`eqBit dst src1 src2` (`= s.set dst (if s.get src1 = s.get src2 then [1] else
+  [0])`).** General case compares two full registers — a **cell-by-cell `loopTM`
+  compare** (its own gadget, harder). **But `bitReadTM` makes the 1-cell case
+  cheap:** if the live verifier (`EvalCnfTM`) only needs `eqBit` against a 1-cell
+  constant, read `src`'s single bit with `bitReadTM` and write `[1]`/`[0]` exactly
+  like `head` — check the verifier's needs first.
 
 **Class B — `copy`/`tail`/`concat`/`takeAt`/`dropAt`/`consLen` (block copy).**
-Counter + rotation = non-destructive block copy, no spare symbol:
-- Each `loopTM` iteration moves `src`'s front cell to both `dst` and `src`'s back;
-  after `N` (= counter) iterations `src` is rotated full-circle (unchanged), `dst`
-  holds the copy. `takeAt`/`dropAt`: `lenReg` (unary) is the counter directly.
-  `copy`/`tail`/`concat`: first **count** `src`'s length into a scratch register
-  (mirror the `clear` count loop), then rotate-copy. **Probe the rotation machine
-  with `#eval` before proving.** Budget: per-iteration linear `∧ t ≤ c·L + d`,
+Counter + rotation = non-destructive block copy, no spare symbol. **The rotation
+step is now `#eval`-validated (GO — risk item (3)):** one `loopTM` iteration =
+`navigate-to-front ⨾ deleteCarryTM ⨾ navigate-to-back ⨾ insertCarryTM` rotates
+`src` one position, leaving `encodeTape(rotated) ++ [0]` (terminator-free residue,
+`+1`/step); for `copy` also append the carried bit to `dst`.
+- After `N` (= counter) iterations `src` is rotated full-circle (unchanged), `dst`
+  holds the copy. **`takeAt`/`dropAt` FIRST**: `lenReg` (unary) is the counter
+  directly — no scratch, no `Op` change. `copy`/`tail`/`concat`/`consLen`: first
+  **count** `src`'s length into a scratch register (mirror the `clear` count loop) —
+  needs the scratch operand (item (2)). Budget: per-iteration linear `∧ t ≤ c·L + d`,
   assemble with `Compile.loopBudget_le` + a `Compile.clearBudget_arith`-style
-  closer → quadratic (bump the op budget again).
+  closer → quadratic (bump the op budget again). **Next concrete build:** the
+  rotation `loopTM` body + its run/`_no_early_halt`/budget (mirror the proven
+  `clearRegionTM_run` loop chain), then wire `takeAt`/`dropAt`.
 
 **⚠ `#eval`-probe every new machine end-to-end before proving its run lemma** —
 architecture bugs (wrong exit head, off-by-one slot) are invisible to validity
@@ -269,8 +353,10 @@ C7 verifiers (`evalCnfCmd`), C8 hardness, S1 tableau.
 | `Compile.encodeTape_length`, `encodeTape_set_length`, `encodeRegs_no_endMark` | length balance; why BitState is required |
 | `Compile.ValidResidue`, `TapeOK`, `decodeTape_encodeTape_append` | residue-tolerant contract (the tape never shrinks, so deletion ops leave terminator-free residue) |
 | `rewindBracket`, `rewindBracket_transport`, `opAppendBit_physical_residue` | **template for any head-moving op**: wrap a compute machine with the two-phase rewind, demote the extra halt → unique-exit `CompiledCmd` |
-| `compileOp_sound_physical_residue` | per-op contract; budget `9·L²+9·L+30`. PROVEN: `appendOne`/`appendZero`/`clear`/**`nonEmpty`**. `sorry`: `copy`/`tail`/`head`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (8) |
-| `Compile.opNonEmpty` (+ `_run`) | **✅ NEW, PROVEN** the `nonEmpty` `CompiledCmd` (navtest-first; `joinTwoHalts` merge) + its full residue contract — **the template for any branching op** |
+| `compileOp_sound_physical_residue` | per-op contract; budget `9·L²+9·L+30`. PROVEN: `appendOne`/`appendZero`/`clear`/**`nonEmpty`**/**`head`**. `sorry`: `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (7) |
+| `Compile.opNonEmpty` (+ `_run`) | **✅ PROVEN** the `nonEmpty` `CompiledCmd` (navtest-first; `joinTwoHalts` merge) + its full residue contract — **the template for any branching op** |
+| `Compile.bitReadTM` (+ `_run`/`_no_early_halt`/`_halt_only`) | **✅ NEW** bit-*value* cell test (`1`→bit 0, `2`→bit 1). The piece `navigateAndTestTM` lacks. Reusable by `eqBit` |
+| `Compile.opHead` (+ `_run`), `opInnerBit` (+ `_run`/`_start`), `clearOnlyBranchBody` (+ `_run`) | **✅ NEW, PROVEN** the `head` op as **nested 2-way branches** (outer empty/content + inner bit; both `joinTwoHalts`-merged) — **the template for any 3-way / nested branching op** |
 | `Compile.clearAppendM_run`, `nonEmptyBranchBody_run` | **NEW** clear `dst` ⨾ append bit (head 0); rewind ⨾ clearAppend — reuse for `head`/`eqBit`'s answer-bit write |
 | `Compile.navTestReg_run_content`/`_run_delim`/`_traj_content`/`_traj_delim` (+ `skipped_length`/`skipped_ok`) | residue-tolerant `navigateAndTest` reading + no-early-halt of register `src` (content ⇒ non-empty, delim ⇒ empty). **NB only delim-vs-content, not the bit value** — `head`/`eqBit` need a bit-value read |
 | `Compile.joinTwoHalts_reaches_kept`/`_reaches_demoted`, `joinTwoHalts_step_to_h1`, `joinTwoHalts_run_eq_weak`, `joinTwoHalts_halting_false` | **NEW branch-merge engine**: a 2-way `branchComposeFlatTM` (`joinTwoHalts`-merged) op plugs straight in |
