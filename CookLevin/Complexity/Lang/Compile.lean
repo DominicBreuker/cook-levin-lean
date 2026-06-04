@@ -3642,6 +3642,105 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
         n h_done_bnd h_iter_bnd)
       (Compile.clearBudget_arith n (Compile.encodeTape s ++ res_in).length hnL)
 
+/-! ### Residue-tolerant `navigateAndTest` reading (Class-A cross-register ops)
+
+The Class-A cross-register ops (`nonEmpty`/`head`/`eqBit`: ≤ 1-cell output) all
+start by reading register `src`'s first tape cell and branching. `ClearGadget`'s
+`navigateAndTestTM_run_content`/`_run_delim` do exactly this, but are stated on a
+clean tape `3 :: (regBlocks skipped ++ v :: tail')`. The lemmas below lift them to
+the residue-tolerant `encodeTape s ++ res` shape (the input every compiled
+fragment actually sees): register `src`'s slot sits between the leading sentinel
+and the trailing terminator, so the residue (past the terminator) is irrelevant
+to the read. The exit head lands on `src`'s first cell at index
+`1 + |regBlocks (preceding registers)|`; the **content** exit means `src` is
+non-empty (answer bit `1`), the **delim** exit means `src` is empty (answer bit
+`0`). Reusable by every Class-A op. -/
+
+/-- Helper bridge: `s.take src` mapped through `shiftReg` has length `src`. -/
+private theorem Compile.skipped_length (s : State) (src : Var) (h : src < s.length) :
+    ((s.take src).map Compile.shiftReg).length = src := by
+  rw [List.length_map, List.length_take, Nat.min_eq_left (le_of_lt h)]
+
+/-- The `h_skip` precondition: every preceding register block (`shiftReg` of a
+`BitState` register) is delimiter-free and `< 4`. -/
+private theorem Compile.skipped_ok (s : State) (src : Var) (hbit : Compile.BitState s) :
+    ∀ b' ∈ (s.take src).map Compile.shiftReg, (∀ x ∈ b', x ≠ 0) ∧ (∀ x ∈ b', x < 4) := by
+  intro b' hb'
+  rw [List.mem_map] at hb'
+  obtain ⟨reg, hreg, rfl⟩ := hb'
+  have hregs : reg ∈ s := List.mem_of_mem_take hreg
+  refine ⟨?_, ?_⟩
+  · intro x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, _, rfl⟩ := hx; omega
+  · intro x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, hy, rfl⟩ := hx
+    have := hbit reg hregs y hy; omega
+
+/-- **Residue-tolerant `navigateAndTest` — content branch (`src` non-empty).** -/
+theorem Compile.navTestReg_run_content (s : State) (src : Var) (res : List Nat)
+    (h : src < s.length) (hbit : Compile.BitState s) (hne : s.get src ≠ []) :
+    runFlatTM (ClearGadget.navSteps ((s.take src).map Compile.shiftReg) + 1 + 1)
+        (ClearGadget.navigateAndTestTM src)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := ClearGadget.navigateAndTestTM_exit_content src,
+               tapes := [([], 1 + (AppendGadget.regBlocks ((s.take src).map Compile.shiftReg)).length,
+                          Compile.encodeTape s ++ res)] } := by
+  set skipped := (s.take src).map Compile.shiftReg with hsk
+  have hskiplen : skipped.length = src := Compile.skipped_length s src h
+  obtain ⟨b, r, hbr⟩ : ∃ b r, s.get src = b :: r := by
+    cases hsr : s.get src with
+    | nil => exact absurd hsr hne
+    | cons b r => exact ⟨b, r, rfl⟩
+  have hb1 : b ≤ 1 := by
+    have hmem : s.get src ∈ s := by
+      rw [State.get, List.getElem?_eq_getElem h]; exact List.getElem_mem h
+    exact hbit _ hmem b (by simp [hbr])
+  set tail' := Compile.shiftReg r ++ 0 :: (Compile.encodeRegs (s.drop (src + 1))
+      ++ [Compile.endMark] ++ res) with htail
+  have hdecomp : Compile.encodeTape s ++ res
+      = (3 : Nat) :: (AppendGadget.regBlocks skipped ++ (b + 1) :: tail') := by
+    have hsplit := Compile.encodeTape_split s src h
+    rw [← hsk] at hsplit
+    have hsr : Compile.shiftReg (s.get src) = (b + 1) :: Compile.shiftReg r := by
+      rw [hbr]; simp only [Compile.shiftReg, List.map_cons]
+    rw [hsr] at hsplit
+    rw [Compile.encodeTape, List.cons_append, ← hsplit, htail]
+    simp only [Compile.endMark, List.append_assoc, List.cons_append]
+  have hcontent := ClearGadget.navigateAndTestTM_run_content skipped (b + 1) tail'
+    (Compile.skipped_ok s src hbit) (by omega) (by omega)
+  rw [hskiplen] at hcontent
+  rw [← hdecomp] at hcontent
+  exact hcontent
+
+/-- **Residue-tolerant `navigateAndTest` — delim branch (`src` empty).** -/
+theorem Compile.navTestReg_run_delim (s : State) (src : Var) (res : List Nat)
+    (h : src < s.length) (hbit : Compile.BitState s) (hempty : s.get src = []) :
+    runFlatTM (ClearGadget.navSteps ((s.take src).map Compile.shiftReg) + 1 + 1)
+        (ClearGadget.navigateAndTestTM src)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := ClearGadget.navigateAndTestTM_exit_delim src,
+               tapes := [([], 1 + (AppendGadget.regBlocks ((s.take src).map Compile.shiftReg)).length,
+                          Compile.encodeTape s ++ res)] } := by
+  set skipped := (s.take src).map Compile.shiftReg with hsk
+  have hskiplen : skipped.length = src := Compile.skipped_length s src h
+  set tail' := Compile.encodeRegs (s.drop (src + 1)) ++ [Compile.endMark] ++ res with htail
+  have hdecomp : Compile.encodeTape s ++ res
+      = (3 : Nat) :: (AppendGadget.regBlocks skipped ++ 0 :: tail') := by
+    have hsplit := Compile.encodeTape_split s src h
+    rw [← hsk] at hsplit
+    have hsr : Compile.shiftReg (s.get src) = [] := by
+      rw [hempty]; rfl
+    rw [hsr, List.append_nil] at hsplit
+    rw [Compile.encodeTape, List.cons_append, ← hsplit, htail]
+    simp only [Compile.endMark, List.append_assoc, List.cons_append]
+  have hdelim := ClearGadget.navigateAndTestTM_run_delim skipped tail'
+    (Compile.skipped_ok s src hbit)
+  rw [hskiplen] at hdelim
+  rw [← hdecomp] at hdelim
+  exact hdelim
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
