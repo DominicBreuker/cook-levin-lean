@@ -53,19 +53,23 @@ length register *is a loop counter*, which makes the hard data-movement gadgets
 
 ## The plan — option B (unary lengths, bit data), ordered
 
-> **Status (this session).** Build green (3358 jobs). **✅ Task 3 `nonEmpty` is
-> FULLY PROVEN and axiom-clean** (`compileOp_sound_physical_residue` now discharges
-> the `nonEmpty` case; only `propext`/`Classical.choice`/`Quot.sound`). This is the
-> first cross-register op done and it builds the whole **branch-merge machinery**
-> the other branching ops reuse. **Recommended order from here:** `head` (needs a
-> bit-*value* read — see Class A below), then `eqBit`, then the Class-B block-copy
-> ops, then Tasks 1+2 together (**one monolithic change** — see ⚠ below), then
-> Task 4.
+> **Status (current).** Build green (3358 jobs). **✅ `nonEmpty` AND `head` are
+> FULLY PROVEN and axiom-clean** (`compileOp_sound_physical_residue` discharges
+> both; only `propext`/`Classical.choice`/`Quot.sound`). `head` was the first
+> op needing a bit-*value* read, and it built the reusable **`bitReadTM`** (cell →
+> bit 0/1) plus the **nested-branch template** (outer empty/content + inner bit
+> branch, both `joinTwoHalts`-merged). **7 cross-register ops left:**
+> `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`.
 >
-> **Budget bumped:** `compileOp_sound_physical_residue`'s budget is now
-> `9·L² + 9·L + 30` (multi-phase Class-A ops have linear overhead on top of the
-> `clear`'s `9·L²`). When you add an op whose chain is longer, bump again (3 sites:
-> statement + the relaxing `le_trans … (by omega)` in each proven case).
+> **Recommended order from here:** **`eqBit`** (Class A, now cheap — `bitReadTM`
+> exists; if the live verifier only needs `eqBit` vs a 1-cell constant, do that
+> special case first — see Class A below), then settle the Class-B **scratch-counter
+> decision** (item (2) below) and do the block-copy ops, then Tasks 1+2 together
+> (**one monolithic change** — see ⚠ below), then Task 4.
+>
+> **Budget:** `compileOp_sound_physical_residue`'s budget is `9·L² + 9·L + 30`.
+> `nonEmpty`/`head` both fit. When you add an op whose chain is longer, bump (3
+> sites: statement + the relaxing `le_trans … (by omega)` in each proven case).
 >
 > **⚠ Tasks 1 & 2 are coupled and large; do NOT start them piecemeal.** Adding
 > `BitState` to `Compile_sound` forces the bridge (`toFrameworkWitness'`,
@@ -85,15 +89,17 @@ A focused risk pass on the 8 remaining ops (with `#eval` probes). **Verdict: the
 plan is feasible and C2 is converging, but the Class-B ops have ONE unresolved
 design decision (the scratch counter) that you must settle BEFORE building them.**
 
-**(1) Do `head` next — lowest risk, counter-free.** `head dst src` writes `[]` /
-`[0]` / `[1]` (≤1 cell), so it reuses the *entire* `nonEmpty` engine
-(`clearAppendM_run` + the `joinTwoHalts` branch-merge). The **only** new piece is a
-**bit-*value* test** (branch cell `=1` vs `=2` vs delim) — a direct mirror of
-`ClearGadget.delimTestTM` (which already branches delim-vs-content). `head` is a
-3-way branch (empty→`[]` i.e. just clear `dst`; bit0→`[0]`; bit1→`[1]`): nest two
-`joinTwoHalts` merges, or merge a 3-exit machine. Estimate ~300–400 LOC.
+**(1) ✅ `head` DONE.** Built `bitReadTM` (the bit-*value* test — cell `1`→bit 0,
+`2`→bit 1; mirror of `delimTestTM`) and realised the 3-way branch as **two nested
+2-way branches**, each `joinTwoHalts`-merged: outer `navigateAndTestTM` (empty vs
+content) → delim writes `[]` (`clearOnlyBranchBody`), content runs `opInnerBit`
+(`bitReadTM` → write `[bit]` via `nonEmptyBranchBody`). **`eqBit` should reuse
+`bitReadTM`**; if the live verifier only needs `eqBit dst src k` against a 1-cell
+constant `k`, that is a near-clone of `head` (read `src`'s only bit, compare to `k`,
+write `[1]`/`[0]`) — do that special case first.
 
-**(2) The 6 block-copy ops + `eqBit` need a guaranteed-empty SCRATCH register —
+**(2) The block-copy ops (`copy`/`tail`/`concat`/`takeAt`/`dropAt`/`consLen`) +
+general `eqBit` need a guaranteed-empty SCRATCH register —
 this is the one real gap. Resolve it before building.** The "counter + rotation =
 mark-free block copy" claim is **algorithmically correct** (probed: rotating `src`
 one bit/iteration restores `src` after `|src|` iters while `dst` accumulates the
@@ -127,9 +133,11 @@ of two registers, or rotate-both-and-AND) — do it last, and first check whethe
 live verifier (`EvalCnfCmd`) only needs `eqBit` against a 1-cell constant (a much
 cheaper special case).
 
-**Sequencing:** `head` → (settle the scratch-operand decision) → `copy` (probe +
-rotation infra) → `tail`/`concat`/`takeAt`/`dropAt`/`consLen` → `eqBit` →
-Tasks 1+2 (fold the `Op` scratch change in here) → Task 4 (assemble).
+**Sequencing:** ✅ `head` done → **`eqBit`** (Class A, reuse `bitReadTM`; 1-cell
+special case first if the live verifier allows) → (settle the scratch-operand
+decision) → `copy` (probe + rotation infra) →
+`tail`/`concat`/`takeAt`/`dropAt`/`consLen` → Tasks 1+2 (fold the `Op` scratch
+change in here) → Task 4 (assemble).
 
 **Bigger-picture sanity check.** C2 is on a converging track: the per-op cost drops
 sharply as infrastructure compounds (the `nonEmpty` branch-merge engine and the
@@ -159,10 +167,10 @@ proof engineering.*
   `mapSndCmd`, all in `Lang/PolyTime.lean` — so the re-prove surface is small.
 
 **3. Build the 9 cross-register ops (`compileOp_sound_physical_residue`).**
-`Op.eval` of each is `s.set dst (f (s.get src…))`. **✅ `nonEmpty` DONE; 8 left**
-(`copy`/`tail`/`head`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`). Two classes:
+`Op.eval` of each is `s.set dst (f (s.get src…))`. **✅ `nonEmpty` + `head` DONE;
+7 left** (`copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`). Two classes:
 
-**Class A — `nonEmpty` (✅ DONE), `head`, `eqBit` (`≤ 1`-cell output).** The
+**Class A — `nonEmpty` (✅ DONE), `head` (✅ DONE), `eqBit` (`≤ 1`-cell output).** The
 **proven `nonEmpty` machine and the reusable building blocks** (all in
 `Compile.lean`, axiom-clean):
 - `Compile.opNonEmpty dst src` — the `CompiledCmd`: `joinTwoHalts (nonEmptyRawM …)
@@ -193,16 +201,22 @@ proof engineering.*
     (run-preserve while intermediate `≠ h2`); `joinTwoHalts_halting_false`;
     `branchComposeFlatTM_M2_halt_intro`/`_M3_halt_intro`,
     `Compile.branchComposeFlatTM_halt_only`, `composeFlatTM_halt_unique`.
-- **⚠ `head`/`eqBit` are NOT a copy-paste of `nonEmpty`.** `navigateAndTestTM`
-  branches only **delim vs content** — content covers BOTH bit `0` (cell `1`) and
-  bit `1` (cell `2`), so it does *not* read the bit value. `head dst src` =
-  `[src.head]` needs the actual first bit ⇒ build a **bit-value branch** (read the
-  cell, branch `1`-vs-`2`; extend `delimTestTM`/`navigateAndTestTM` to a 3-way, or
-  add a `navigateAndReadBitTM`). Then it is `clearAppendM` with the read bit. The
-  empty case writes `[]` (just `clear dst`, no append) — a third branch, so `head`
-  is a 3-way branch (`joinTwoHalts` twice, or a nested merge). `eqBit dst src1
-  src2` compares two full registers — a **cell-by-cell `loopTM` compare** (more
-  than `nonEmpty`); scope it as its own gadget.
+- **✅ The bit-value read is now BUILT (`head`).** `Compile.bitReadTM` (cell `1`→
+  state 1 = bit 0, `2`→state 2 = bit 1; mirror of `delimTestTM`, +`_run`/
+  `_no_early_halt`/`_halt_only`) is the reusable bit-*value* test
+  `navigateAndTestTM` lacked. `head` was realised as **two nested 2-way branches**,
+  NOT a custom 3-way: outer `navigateAndTestTM` (empty vs content) merged by
+  `joinTwoHalts`; the content body is `Compile.opInnerBit` (itself
+  `bitReadTM` → `nonEmptyBranchBody dst {1,2}`, two exits `joinTwoHalts`-merged →
+  a unique-halt `CompiledCmd`); the delim body is `Compile.clearOnlyBranchBody`
+  (rewind + `clearRegionTM`, writes `[]`). See `Compile.opHead`/`opHead_run` —
+  **the template for any 3-way / nested branching op.**
+- **`eqBit dst src1 src2` (`= s.set dst (if s.get src1 = s.get src2 then [1] else
+  [0])`).** General case compares two full registers — a **cell-by-cell `loopTM`
+  compare** (its own gadget, harder). **But `bitReadTM` makes the 1-cell case
+  cheap:** if the live verifier (`EvalCnfTM`) only needs `eqBit` against a 1-cell
+  constant, read `src`'s single bit with `bitReadTM` and write `[1]`/`[0]` exactly
+  like `head` — check the verifier's needs first.
 
 **Class B — `copy`/`tail`/`concat`/`takeAt`/`dropAt`/`consLen` (block copy).**
 Counter + rotation = non-destructive block copy, no spare symbol:
@@ -269,8 +283,10 @@ C7 verifiers (`evalCnfCmd`), C8 hardness, S1 tableau.
 | `Compile.encodeTape_length`, `encodeTape_set_length`, `encodeRegs_no_endMark` | length balance; why BitState is required |
 | `Compile.ValidResidue`, `TapeOK`, `decodeTape_encodeTape_append` | residue-tolerant contract (the tape never shrinks, so deletion ops leave terminator-free residue) |
 | `rewindBracket`, `rewindBracket_transport`, `opAppendBit_physical_residue` | **template for any head-moving op**: wrap a compute machine with the two-phase rewind, demote the extra halt → unique-exit `CompiledCmd` |
-| `compileOp_sound_physical_residue` | per-op contract; budget `9·L²+9·L+30`. PROVEN: `appendOne`/`appendZero`/`clear`/**`nonEmpty`**. `sorry`: `copy`/`tail`/`head`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (8) |
-| `Compile.opNonEmpty` (+ `_run`) | **✅ NEW, PROVEN** the `nonEmpty` `CompiledCmd` (navtest-first; `joinTwoHalts` merge) + its full residue contract — **the template for any branching op** |
+| `compileOp_sound_physical_residue` | per-op contract; budget `9·L²+9·L+30`. PROVEN: `appendOne`/`appendZero`/`clear`/**`nonEmpty`**/**`head`**. `sorry`: `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (7) |
+| `Compile.opNonEmpty` (+ `_run`) | **✅ PROVEN** the `nonEmpty` `CompiledCmd` (navtest-first; `joinTwoHalts` merge) + its full residue contract — **the template for any branching op** |
+| `Compile.bitReadTM` (+ `_run`/`_no_early_halt`/`_halt_only`) | **✅ NEW** bit-*value* cell test (`1`→bit 0, `2`→bit 1). The piece `navigateAndTestTM` lacks. Reusable by `eqBit` |
+| `Compile.opHead` (+ `_run`), `opInnerBit` (+ `_run`/`_start`), `clearOnlyBranchBody` (+ `_run`) | **✅ NEW, PROVEN** the `head` op as **nested 2-way branches** (outer empty/content + inner bit; both `joinTwoHalts`-merged) — **the template for any 3-way / nested branching op** |
 | `Compile.clearAppendM_run`, `nonEmptyBranchBody_run` | **NEW** clear `dst` ⨾ append bit (head 0); rewind ⨾ clearAppend — reuse for `head`/`eqBit`'s answer-bit write |
 | `Compile.navTestReg_run_content`/`_run_delim`/`_traj_content`/`_traj_delim` (+ `skipped_length`/`skipped_ok`) | residue-tolerant `navigateAndTest` reading + no-early-halt of register `src` (content ⇒ non-empty, delim ⇒ empty). **NB only delim-vs-content, not the bit value** — `head`/`eqBit` need a bit-value read |
 | `Compile.joinTwoHalts_reaches_kept`/`_reaches_demoted`, `joinTwoHalts_step_to_h1`, `joinTwoHalts_run_eq_weak`, `joinTwoHalts_halting_false` | **NEW branch-merge engine**: a 2-way `branchComposeFlatTM` (`joinTwoHalts`-merged) op plugs straight in |
