@@ -634,4 +634,50 @@ theorem Cmd.eval_length_le (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k) (s : Stat
       exact Nat.le_trans (ihbody hbody (st.set cnt (List.replicate i 1)))
         (Nat.max_le.mpr ⟨hset, Nat.le_max_right _ _⟩)
 
+/-! ## Register-count monotonicity (`inBounds` threading)
+
+`State.set` never shrinks the register count (in range it is unchanged; out of
+range it pads), so every `Op`/`Cmd` is register-count non-decreasing. Together
+with `Op.inBounds_of_UsesBelow` (Compile.lean), this is what threads a *static*
+`UsesBelow c k` bound into a *per-fragment* `inBounds` hypothesis through the
+`Compile_run_physical_residue` induction: pick `k ≤ s.length`; every reached
+state still has width `≥ k`, so every op stays in bounds. This is the
+`inBounds`-side companion of `Op.eval_preserves_BitState` (the `BitState` side). -/
+
+/-- `State.set` never shrinks the register count. -/
+theorem State.set_length_ge (s : State) (v : Var) (val : List Nat) :
+    s.length ≤ (s.set v val).length := by
+  rcases Nat.lt_or_ge v s.length with h | h
+  · rw [State.set, if_pos h]
+    exact Nat.le_of_eq (List.length_set ..).symm
+  · rw [State.set, if_neg (Nat.not_lt.mpr h), List.length_set, List.length_append,
+      List.length_replicate]
+    exact Nat.le_add_right _ _
+
+/-- Every `Op` is register-count non-decreasing (it is a single `State.set`). -/
+theorem Op.eval_length_ge (o : Op) (s : State) :
+    s.length ≤ (Op.eval o s).length := by
+  cases o <;> (simp only [Op.eval]; exact State.set_length_ge s _ _)
+
+/-- Every `Cmd` is register-count non-decreasing. Unconditional (no `UsesBelow`
+needed): each `Op` only grows the width, and the `forBnd` counter-write does too.
+This is the loop-invariant that keeps `k ≤ s.length` true across the induction. -/
+theorem Cmd.eval_length_ge (c : Cmd) (s : State) :
+    s.length ≤ (c.eval s).length := by
+  induction c generalizing s with
+  | op o => exact Op.eval_length_ge o s
+  | seq c1 c2 ih1 ih2 =>
+      rw [Cmd.eval_seq]; exact Nat.le_trans (ih1 s) (ih2 (c1.eval s))
+  | ifBit t cT cE ihT ihE =>
+      by_cases hb : s.get t = [1]
+      · rw [Cmd.eval_ifBit_true t cT cE s hb]; exact ihT s
+      · rw [Cmd.eval_ifBit_false t cT cE s hb]; exact ihE s
+  | forBnd cnt bnd body ihbody =>
+      rw [Cmd.eval_forBnd]
+      refine Cmd.foldlState_range_induct body cnt (s.get bnd).length s
+        (fun _ st => s.length ≤ st.length) (Nat.le_refl _) ?_
+      intro i st _ hM
+      exact Nat.le_trans hM (Nat.le_trans (State.set_length_ge st cnt _)
+        (ihbody (st.set cnt (List.replicate i 1))))
+
 end Complexity.Lang
