@@ -2984,6 +2984,37 @@ theorem Compile.BitState_set (s : State) (dst : Var) (v : List Nat)
   · subst hr; exact hv x hx
   · exact h reg (List.mem_of_mem_drop hr) x hx
 
+/-- **Padding-tolerant `BitState_set`.** `BitState` is preserved by writing a
+`≤ 1`-valued register to *any* index — including one past the current length,
+where `State.set` pads with empty (hence bit-safe) registers. This is the
+unconditional form the `forBnd` counter-write (`set counter (replicate i 1)`,
+where `counter` may exceed the live register count) and the residue-tolerant
+`Cmd` induction need; `BitState_set` requires `dst < s.length`. -/
+theorem Compile.BitState_set_pad (s : State) (dst : Var) (v : List Nat)
+    (h : Compile.BitState s) (hv : ∀ x ∈ v, x ≤ 1) :
+    Compile.BitState (s.set dst v) := by
+  by_cases hd : dst < s.length
+  · exact Compile.BitState_set s dst v h hd hv
+  · rw [State.set, if_neg hd]
+    have hpad : Compile.BitState (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)) := by
+      intro reg hreg x hx
+      rw [List.mem_append] at hreg
+      rcases hreg with hr | hr
+      · exact h reg hr x hx
+      · rw [List.mem_replicate] at hr; rw [hr.2] at hx; simp at hx
+    have hlen : dst < (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)).length := by
+      rw [List.length_append, List.length_replicate]
+      have hle : s.length ≤ dst + 1 := Nat.le_succ_of_le (Nat.le_of_not_lt hd)
+      rw [Nat.add_sub_cancel' hle]
+      exact Nat.lt_succ_self dst
+    rw [Compile.list_set_eq_take_cons_drop _ dst v hlen]
+    intro reg hreg x hx
+    simp only [List.mem_append, List.mem_cons] at hreg
+    rcases hreg with hr | hr | hr
+    · exact hpad reg (List.mem_of_mem_take hr) x hx
+    · subst hr; exact hv x hx
+    · exact hpad reg (List.mem_of_mem_drop hr) x hx
+
 /-- **State-level invariant of the `clear` loop.** Iterating the in-place `tail`
 body `t ↦ t.set dst t.tail` `n` times drops the first `n` symbols of register
 `dst`: `(·.set dst ·.tail)^[n] s = s.set dst ((s.get dst).drop n)`. At
