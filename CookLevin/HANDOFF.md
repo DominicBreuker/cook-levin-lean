@@ -36,6 +36,54 @@ level unary canonical encodings). No further design sign-off is needed.
 
 ---
 
+## ▶ ACTIVE BUILD (chosen larger item): the move-one-bit transfer primitive
+
+**Why this item.** It is the single critical-path TM gadget the whole of `Compile_sound`
+waits on: once the move primitive + its loop run-lemma exist, **all 7 remaining
+cross-register ops** (`copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`)
+become wiring (Task 2). Its design is **probe-validated GO** and it is the **one**
+op-piece buildable before the Task-1 encoding rework. (The alternative larger item,
+closing the live free bridges, only consolidates onto `Compile_sound`; this advances
+it.)
+
+**✅ Probe (re-validated 2026-06-05, this session — reproduce with the trace below).**
+`encodeTape [[1,0],[1]] = [3,2,1,0,2,0,3]`; move reg0's front bit to reg1:
+```
+A  navigateAndTestTM 0          → state 3 (content exit), head=1 on src cell `2`
+B  bitReadTM                    → state 2 (= bit 1; Nmove, head unmoved)
+C  stepDeleteRewindRawTM        → [3,1,0,2,0,3,0] head 0  (src front cell deleted, 0-residue)
+D  appendAtThenTwoPhaseRewindTM 2 1 → [3,1,0,2,2,0,3,0] head 0 = encodeTape [[0],[1,1]] ++ [0]
+```
+Works for `dst>src` and (per prior probe) `dst<src`. ⚠ **append symbol = `bit+1`**.
+
+**Machine structure (mirror `clearBodyRawTM`/`clearRegionTM` exactly).** In `Compile.lean`
+(needs `bitReadTM`, which lives there):
+- `moveBodyM2TM b dst := composeFlatTM stepDeleteRewindRawTM
+     (appendAtThenTwoPhaseRewindTM (b+1) dst) stepDeleteRewindTM_exit`
+  — delete src's front cell + rewind, then append `(b+1)` to `dst` + two-phase rewind.
+- `moveBodyContentTM src dst := branchComposeFlatTM bitReadTM
+     (moveBodyM2TM 0 dst) (moveBodyM2TM 1 dst) bitReadTM_exit_b0 bitReadTM_exit_b1`
+  — on the front cell, read the bit then run the bit-dependent delete+append.
+- `moveBodyRawTM src dst := branchComposeFlatTM (navigateAndTestTM src)
+     (moveBodyContentTM src dst) justRewindTM
+     (navigateAndTestTM_exit_content src) (navigateAndTestTM_exit_delim src)`
+  — content branch = move one bit & continue; delim branch (src empty) = rewind & stop.
+- `moveRegionTM src dst := loopTM (moveBodyRawTM src dst) <exitDone> <exitLoop>`.
+
+**Run-lemma plan (mirror the `clearRegionTM_run` chain).** Per-iteration invariant
+`T j` couples BOTH registers: src = the last `j` bits of src₀ (drop `n−j`), dst =
+dst₀ ++ (first `n−j` bits of src₀, in order — FIFO, append-at-end preserves order),
+residue grows by one `0` per moved bit. Prove `moveBody_delete_run` (`T(j+1)→T j`,
+one bit moved) + `moveBody_done_run` (src empty → rewind, stop), then assemble via
+`loopTM_run`/`loopTM_no_early_halt` into `moveRegionTM_run` with a quadratic budget
+(same shape as `clearRegionTM_run`: `9·L²+…`). ⚠ The new content vs clear: the moved
+bit's value must be threaded so the dst-invariant gets the *right* bit — that is the
+one genuinely new accounting vs `clear` (where dst is untouched).
+
+**Status / next:** machine defs + validity scaffolding being built; the inductive
+run-lemma is the bulk. Each commit green (sorry-skeleton then fill). See
+`Compile.lean` `Compile.moveRegionTM*`.
+
 ## ✅ DONE this session (2026-06-05): Task 1 batch 1 — the `BitState` plumbing
 
 The architecture is now wired end-to-end and **proven to compose** (the core risk
