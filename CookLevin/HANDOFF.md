@@ -251,11 +251,37 @@ Task 1.
 
 **2. Build the 7 op gadgets** (`compileOp_sound_physical_residue`, the 7 remaining
 `sorry`s at Compile.lean:5763–5779): the move-bit primitive (probe-validated) + the
-two-phase transfer loop, wired per op. **Templates:** `clearRegionTM_run` (the
-`loopTM` chain to mirror), `opNonEmpty_run` (branch-merge engine + budget),
-`opHead_run` (nested branch + `bitReadTM` reuse). Bump the per-op budget when a
-chain exceeds the current `9·L²+9·L+30` (3 sites: statement + the two relaxing
-`le_trans … (by omega)` in the proven append/clear cases).
+two-phase transfer loop, wired per op. **No structural unknowns remain — this is
+mechanical (if large, ~400 LOC) composition work.** Concrete recipe (mirror the
+proven `opHead` stack, Compile.lean:1196–1305, and its run lemma `opHead_run`:5325):
+
+- **Move-tail (the per-bit, branch-free core) = a `composeFlatTM` chain** of proven
+  gadgets, head threaded explicitly: `deleteCarryTM` (ShiftTape; deletes the cell
+  *left* of the head — head must sit one past src's front content cell, so step
+  right once after `navigateAndTestTM_exit_content`; exits at state 6, head deep
+  right, tape `pre ++ t::suf ++ [0]`) ⨾ two-phase rewind to 0 (`ScanLeft.rewindTwoPhaseTM`
+  / the `rewindBracket` used by `opAppendBitRewind`, Compile.lean:582) ⨾
+  `appendAtTM (bit+1)` (AppendGadget; `appendAt_run`:513) ⨾ rewind to 0. Its run
+  lemma chains the 4 component run lemmas via `composeFlatTM_run` + the
+  `composeFlatTM_no_early_halt` trajectory — **the exact pattern of
+  `opAppendBit_physical_residue` (Compile.lean ~3970), just with `deleteCarryTM`
+  prepended.** ⚠ append symbol is **`bit+1`** (encoding shift), not `bit`.
+- **Move-one-bit = nested branch over the bit**, *exactly* `opHead`'s shape: outer
+  `branchComposeFlatTM (navigateAndTestTM src) … (content vs delim)`; inner
+  `branchComposeFlatTM` on `bitReadTM`'s two exits (state 1 = bit 0, state 2 = bit 1),
+  each feeding the move-tail with the matching append symbol; close with two
+  `joinTwoHalts` (copy `headRawM`/`opInnerBit`'s ~14 invariant lemmas: `_valid`,
+  `_tapes`, `_sig`, `_halt_only`, `_h1_is_halt`, `_h1_lt`, `_h2_is_halt`, `_h2_lt`,
+  `_h1_ne_h2`). **Re-`#eval` the assembled machine end-to-end before the run lemma**
+  (handoff already validated the tape transform `[3,2,1,0,2,0,3] → [3,1,0,2,2,0,3,0]`).
+- **Per-op wiring** (after Task 1 adds the scratch operand `sc`): the move-one-bit is
+  the body of two `clear`-style `loopTM`s (terminate-by-emptying) — mirror
+  `clearRegionTM_run` (Compile.lean:4148, the `loopTM` chain with the quadratic
+  budget). `copy dst src sc` = move `src→sc` ⨾ move `sc→{src,dst}`; `tail`/`concat`/
+  `eqBit`/`takeAt`/`dropAt`/`consLen` as in the GO-verdict section above.
+
+Bump the per-op budget when a chain exceeds the current `9·L²+9·L+30` (3 sites:
+statement + the two relaxing `le_trans … (by omega)` in the proven append/clear cases).
 
 **3. Finding A — restate the top-level budget (do this WITH the assembly, not
 before).** The stated `overhead(size+cost)` with `overhead m = (m+1)²` is **too small
