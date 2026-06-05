@@ -276,6 +276,18 @@ proven `opHead` stack, Compile.lean:1196–1305, and its run lemma `opHead_run`:
   both levels with `joinTwoHalts`; copy `headRawM`/`opInnerBit`'s ~14 invariant lemmas
   (`_valid`/`_tapes`/`_sig`/`_halt_only`/`_h1_is_halt`/`_h1_lt`/`_h2_is_halt`/`_h2_lt`/
   `_h1_ne_h2`) verbatim. **Re-`#eval` the assembled machine before the run lemma.**
+  ⚠ **Gotcha found while proving `moveTailM`:** `moveTailM` carries
+  `stepDeleteRewindRawTM`'s **stray halt state `18`** (the unreached boundary halt;
+  `stepDeleteRewindRawTM.states = 19`, kept halt `17` is the bridge exit). It is
+  harmless for the *run* lemma (the run never reaches it — `moveTailM_run` goes
+  through fine), and the `branchComposeFlatTM_run_pos/_neg` + `joinTwoHalts_run_eq`
+  path needs only `moveTailM_valid`/`_exit_is_halt`/`moveTailM_run`, **not**
+  `halt_unique` — so prove the move-one-bit as a **run lemma** the same way
+  `opHead_run` does (avoid building the full unique-halt `CompiledCmd` stack for the
+  inner machine). If a unique-halt `CompiledCmd` is later needed, demote state `18`
+  with an extra `joinTwoHalts` (needs a `composeFlatTM` halt-only lemma + a
+  `stepDeleteRewindRawTM` halts-only-at-`{17,18}` characterization, neither of which
+  exists yet).
 - **Per-op wiring** (after Task 1 adds the scratch operand `sc`): the move-one-bit is
   the body of two `clear`-style `loopTM`s (terminate-by-emptying) — mirror
   `clearRegionTM_run` (Compile.lean:4148, the `loopTM` chain with the quadratic
