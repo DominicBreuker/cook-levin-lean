@@ -73,6 +73,14 @@ noncomputable def evalCnfDecidesLang :
     -- `n ≥ 3`, plus a base-case check for `n < 3`.
   decides := EvalCnfCmd.evalCnfCmd_decides
   cost_bound := EvalCnfCmd.evalCnfCmd_cost_bound
+  enc_bit := by intro x; sorry
+    -- TODO(C2, B′ — LIVE PATH): `Compile.BitState (EvalCnfCmd.encodeState x)`.
+    -- `encodeState` currently lays cells `v+3` (variable values) and
+    -- `CLAUSE_END = 2`, so it is NOT bit-level. This is the live `sat_NP`
+    -- obligation: re-lay `encodeState` UNARY (variables as `1`-blocks, markers in
+    -- `{0,1}`) so it satisfies `BitState`, then discharge here. See HANDOFF.md
+    -- "The live path — EvalCnfCmd" — this, not a `LangEncodable (cnf × assgn)`
+    -- instance, is what `Compile_sound`/`DecidesLang.toDecidesBy` need.
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_evalCnf :
