@@ -292,6 +292,13 @@ must be **built** before their contracts can be proven. This is C1/C3 gadget wor
 comparable in size to a cross-register op. This discharges C2; downstream unlocks S3
 migration, C7 verifiers, C8 hardness, S1 tableau.
 
+✅ **The last mile (residue contract ⇒ `Compile_sound`) is already PROVEN**
+(`Compile.sound_of_run_residue`, Compile.lean, axiom-clean): feed it the residue
+run's components + `BitState (c.eval s)` (from `Cmd.eval_preserves_BitState`) and it
+extends the run to the full budget and decodes (residue invisible). So the only
+remaining content for `Compile_sound` is `Compile_run_physical_residue` itself
+(induction over the per-`Op`/`ifBit`/`forBnd` contracts above).
+
 ---
 
 ## Inventory — the C2 working set
