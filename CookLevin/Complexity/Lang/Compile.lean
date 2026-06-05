@@ -4424,11 +4424,25 @@ def Compile.moveRegionTM (src dst : Nat) : FlatTM :=
 /-- The single halt state of `moveRegionTM` (the `loopTM` done-exit, at `B.states`). -/
 def Compile.moveRegionTM_exit (src dst : Nat) : Nat := (Compile.moveBodyRawTM src dst).states
 
+theorem Compile.moveBitM2TM_tapes (b dst : Nat) : (Compile.moveBitM2TM b dst).tapes = 1 := by
+  rw [Compile.moveBitM2TM, composeFlatTM_tapes]; exact ClearGadget.stepDeleteRewindRawTM_tapes
+
+theorem Compile.moveContentRawTM_tapes (dst : Nat) : (Compile.moveContentRawTM dst).tapes = 1 := by
+  rw [Compile.moveContentRawTM, branchComposeFlatTM_tapes]; exact Compile.bitReadTM_tapes
+
+theorem Compile.moveContentTM_tapes (dst : Nat) : (Compile.moveContentTM dst).tapes = 1 := by
+  rw [Compile.moveContentTM, Compile.joinTwoHalts_tapes]; exact Compile.moveContentRawTM_tapes dst
+
+theorem Compile.moveBodyRawTM_tapes (src dst : Nat) : (Compile.moveBodyRawTM src dst).tapes = 1 := by
+  rw [Compile.moveBodyRawTM, branchComposeFlatTM_tapes]; exact ClearGadget.navigateAndTestTM_tapes src
+
 theorem Compile.moveRegionTM_tapes (src dst : Nat) : (Compile.moveRegionTM src dst).tapes = 1 := by
-  show (loopTM _ _ _).tapes = 1
-  rw [loopTM_tapes]
-  show (branchComposeFlatTM _ _ _ _ _).tapes = 1
-  rw [branchComposeFlatTM_tapes]; exact ClearGadget.navigateAndTestTM_tapes src
+  rw [Compile.moveRegionTM, loopTM_tapes]; exact Compile.moveBodyRawTM_tapes src dst
+
+theorem Compile.moveRegionTM_start (src dst : Nat) : (Compile.moveRegionTM src dst).start = 0 := by
+  show (Compile.moveBodyRawTM src dst).start = 0
+  show (branchComposeFlatTM _ _ _ _ _).start = 0
+  rw [branchComposeFlatTM_start]; exact ClearGadget.navigateAndTestTM_start src
 
 /-- **The residue-tolerant move contract (Risk C2 — Task 2 critical path).**
 Running `moveRegionTM src dst` on `encodeTape s ++ res_in` transfers `src`'s
