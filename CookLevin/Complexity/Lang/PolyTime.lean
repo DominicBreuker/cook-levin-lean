@@ -676,14 +676,18 @@ theorem PolyTimeComputableLang'.toFrameworkWitness'
 
 /-! ### Inhabitants — the machinery is non-vacuous -/
 
-/-- `Nat`: a number is one register `[n]`. -/
+/-- `Nat` in **UNARY** (Risk C2, B′): `n ↦ replicate n 1`, one bit-level register.
+The size law holds because `encodable.size Nat = id`, so unary length `= n = size`.
+This is the bit-level replacement for the legacy `[n]` (single non-bit cell). -/
 instance : LangEncodable Nat where
-  enc := fun n => [n]
-  dec := fun s => s.headD 0
-  dec_enc := fun _ => rfl
+  enc := fun n => List.replicate n 1
+  dec := fun s => s.length
+  dec_enc := fun n => by simp
   enc_size := fun n => by
-    show ([n] : List Nat).length ≤ 2 * encodable.size n + 1
-    simp
+    show (List.replicate n 1).length ≤ 2 * encodable.size n + 1
+    rw [List.length_replicate]
+    show n ≤ 2 * n + 1
+    omega
 
 /-- `List Nat` is the layer's native register type: its canonical encoding is
 the identity. (`enc_size`: a list's length never exceeds its `encodable.size`,
@@ -907,6 +911,13 @@ over them. `Bool`/`Unit`/`List Bool` qualify today. `Nat` (`[n]`), `List Nat`
 (`id`), and the product (length-prefix cell) do **not** — they must be re-laid
 **unary** before they can become `BitEncodable` (HANDOFF.md "The ordered plan",
 Task 1). -/
+
+/-- `Nat` is bit-level: unary `enc n = replicate n 1`, every cell is `1`. -/
+instance : BitEncodable Nat where
+  enc_bit n := (BitState_encodeState_iff n).mpr (by
+    intro y hy
+    simp only [LangEncodable.enc, List.mem_replicate] at hy
+    omega)
 
 /-- `Bool` is bit-level: `enc b ∈ {[0], [1]}`. -/
 instance : BitEncodable Bool where

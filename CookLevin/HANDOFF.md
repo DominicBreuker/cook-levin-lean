@@ -48,8 +48,10 @@ of B′). Build green (3358 jobs); `#print axioms CookLevin` unchanged; 0 `axiom
 - Witness field `enc_bit : ∀ x, Compile.BitState (encodeIn x)` added to
   `DecidesLang`, `PolyTimeComputableLang`, `DecidesLang'`, `PolyTimeComputableLang'`
   (PolyTime.lean). Mixin `class BitEncodable X` + helper `BitState_encodeState_iff`.
-- `BitEncodable Bool/Unit/(List Bool)` proved **sorry-free** (these encodings are
-  already bit-level). `constTrueBool` is now a **complete, axiom-clean** canonical
+- `BitEncodable Bool/Unit/(List Bool)` proved **sorry-free**, and **`Nat` re-laid
+  UNARY** (`replicate n 1`) with `BitEncodable Nat` proved (the first bit-level
+  canonical encoding; isolated change, no concrete consumers of the old `[n]`).
+  `constTrueBool` is now a **complete, axiom-clean** canonical
   witness exercising the new field. `comp`/`toLang`/`precompose` derive `enc_bit`
   from sub-witnesses (sorry-free); `id_witness` uses `[BitEncodable X]`.
 - **Surfaced as explicit `enc_bit := sorry` (each with a TODO):** `swap`, `map_fst`
@@ -81,15 +83,18 @@ Each item replaces an `enc_bit := sorry` with a real proof. Land green per item.
   `encodeIn_size` bounds content). Either add a register-count field to
   `DecidesLang` (supply it from evalCnf's fixed ~12-register layout) or route the
   live path through a canonical `DecidesLang'`. Decide and execute.
-- **Canonical encodings bit-level + `BitEncodable` instances:** `Nat` unary
-  (`replicate n 1`); `X×Y` unary length-prefix; `List X` self-delimiting on bit
+- **Canonical encodings bit-level + `BitEncodable` instances.** ✅ **`Nat` DONE**
+  (unary `replicate n 1`, `dec = length`; `BitEncodable Nat` proved axiom-clean).
+  **Remaining:** `X×Y` unary length-prefix; `List X` self-delimiting on bit
   separators. Re-prove `dec_enc`/`enc_size` (unary roughly doubles size — loosen
   `enc_size`'s constant; ripples to `NP.lean` `DecidesBy.encode_size` + the decider
-  budget, both need only `inOPoly`/`monotonic`). Then `BitEncodable Nat`,
-  `BitEncodable (X×Y)` (→ unblocks `swap`/`map_fst` `enc_bit`, switch those to
-  `[BitEncodable …]` + `BitEncodable.enc_bit`), `BitEncodable (List X)`. Retire
-  `List Nat = id` / `Nat = [n]` from the compiled path (quarantine; verify nothing
-  non-compiled breaks before deleting).
+  budget, both need only `inOPoly`/`monotonic`). Then `BitEncodable (X×Y)` (→
+  unblocks `swap`/`map_fst` `enc_bit`, switch those to `[BitEncodable …]` +
+  `BitEncodable.enc_bit`), `BitEncodable (List X)`. Retire `List Nat = id` from the
+  compiled path (quarantine; verify nothing non-compiled breaks before deleting).
+  ⚠ The product `dec` currently reads its length prefix via `headD 0` (a single
+  non-bit cell); the unary version must parse a `1`-block, which is coupled to the
+  value-as-length op rework below.
 - **Value-as-length ops → unary:** restate `Op.takeAt`/`dropAt`/`consLen` so length
   = the register's **unary count**, not `(s.get lenReg).headD 0` (meaningless under
   `BitState`, ≤1). Add an empty-scratch operand to `copy`/`tail`/`concat`/`eqBit`
