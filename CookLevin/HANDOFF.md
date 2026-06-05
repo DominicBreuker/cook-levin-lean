@@ -207,9 +207,16 @@ Task 1.
     width `≥ k`). **`Compile_run_physical_residue` will need an added `(hk : Cmd.UsesBelow
     c s.length)` hypothesis** (or `k ≤ s.length` + `UsesBelow c k`) alongside `hbit`;
     the bridge then supplies both from the witness (the encoder fixes `s.length` and the
-    program's register footprint). The remaining `Cmd`-level *combination* is mechanical
-    induction over the two atoms — write it as part of the obligation restatement, not
-    standalone.
+    program's register footprint).
+  - ✅ **2026-06-05 — the `Cmd`-level combination is now PROVEN**
+    (`Cmd.eval_preserves_BitState`, PolyTime.lean, axiom-clean): `Cmd.UsesBelow c k →
+    k ≤ s.length → Cmd.NoConsLen c → BitState s → BitState (c.eval s)`. The full
+    induction (incl. the `forBnd` fold, invariant `k ≤ width ∧ BitState`) **composes** —
+    **reuse it** when restating `Compile_run_physical_residue`. `Cmd.NoConsLen` is the
+    single temporary hypothesis Task 1 removes (restate `consLen` unary ⇒ it is bit-safe
+    ⇒ the predicate is unnecessary). Worth checking: are the live `EvalCnfCmd` / reduction
+    `Cmd`s already `consLen`-free? (consLen is used only by the `swap`/`mapFst`/`mapSnd`
+    product toolkit, which Task 1 rebuilds anyway.)
 - **Witness field:** add `enc_bit : ∀ x, Compile.BitState (encodeIn x)` to
   `DecidesLang`, `DecidesLang'`, `PolyTimeComputableLang`, `PolyTimeComputableLang'`.
   This is what feeds `hbit` at every bridge (`bitDecider_run`,
