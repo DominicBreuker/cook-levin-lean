@@ -195,12 +195,21 @@ Task 1.
     **correctness**; `takeAt`/`dropAt` only for **expressiveness**. Once `consLen` is
     unary the `hcons` side-condition of `Op.eval_preserves_BitState` is discharged
     unconditionally and the lemma becomes the clean universal induction step.
-  - **Still TODO:** lift to the `Cmd` level. The blocker is **not** `BitState` (atoms
-    above) but **per-op `inBounds` at every reached runtime state** — there is no
-    syntactic `Cmd`-wellformedness predicate yet, and `Op.eval_preserves_BitState`
-    needs `o.inBounds s`. Decide how the assembly establishes per-fragment `inBounds`
-    (likely a `Cmd.WellFormed`/register-count invariant threaded with the run) *before*
-    writing the `Cmd`-level preservation lemma — otherwise it will be re-shaped.
+  - ✅ **2026-06-05 — the `inBounds`-threading question is RESOLVED.** The static
+    wellformedness predicate already existed (`Cmd.UsesBelow c k`, Frame.lean —
+    "touches only registers `< k`"). The missing bridge is now built, sorry-free and
+    axiom-clean: `State.set_length_ge`/`Op.eval_length_ge`/`Cmd.eval_length_ge`
+    (Frame.lean — register count never shrinks) + **`Op.inBounds_of_UsesBelow`**
+    (PolyTime.lean — `UsesBelow o k → k ≤ s.length → o.inBounds s`). So the residue
+    induction threads **two invariants**: fix `k ≤ s.length` with `Cmd.UsesBelow c k`;
+    `BitState` is re-established per-op by `Op.eval_preserves_BitState`, and `inBounds`
+    by `Op.inBounds_of_UsesBelow` (width is monotone, so every reached state keeps
+    width `≥ k`). **`Compile_run_physical_residue` will need an added `(hk : Cmd.UsesBelow
+    c s.length)` hypothesis** (or `k ≤ s.length` + `UsesBelow c k`) alongside `hbit`;
+    the bridge then supplies both from the witness (the encoder fixes `s.length` and the
+    program's register footprint). The remaining `Cmd`-level *combination* is mechanical
+    induction over the two atoms — write it as part of the obligation restatement, not
+    standalone.
 - **Witness field:** add `enc_bit : ∀ x, Compile.BitState (encodeIn x)` to
   `DecidesLang`, `DecidesLang'`, `PolyTimeComputableLang`, `PolyTimeComputableLang'`.
   This is what feeds `hbit` at every bridge (`bitDecider_run`,
@@ -266,8 +275,15 @@ for shrinking bodies** (the same `TapeMono` obstruction that killed
 `compileSeq_sound_physical_residue` generalises `compileSeq_sound_physical`: thread
 `res_in`/`res_out`, require only the inter-fragment residue `ValidResidue`), then
 prove them via `branchComposeFlatTM_run` / `loopTM_run` + `loopTM_no_early_halt`.
-This discharges C2; downstream unlocks S3 migration, C7 verifiers, C8 hardness, S1
-tableau.
+⚠ **Also note (prerequisite, not just a restatement):** `compileForBnd`
+(Compile.lean:1631) is still a `compiledCmd_default` **stub**, and `compileIfBit`
+(1537) is wired to `compileTestBit` which is **also a stub** (`branchTester_default`,
+1483) — so neither machine actually branches/loops yet. The real `compileTestBit`
+(navigate to register `t`, then `bitReadTM`-style read → `exitPos`/`exitNeg`) and the
+real `compileForBnd` (a `loopTM` over `bound`'s unary length, writing the counter)
+must be **built** before their contracts can be proven. This is C1/C3 gadget work,
+comparable in size to a cross-register op. This discharges C2; downstream unlocks S3
+migration, C7 verifiers, C8 hardness, S1 tableau.
 
 ---
 
