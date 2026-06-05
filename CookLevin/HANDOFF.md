@@ -109,6 +109,19 @@ chain exactly.
 Then wire `moveRegionTM_run` into the 7 `compileOp_sound_physical_residue` ops
 (needs the Task-1 scratch operand for `copy`/`tail`/`concat`/`eqBit`).
 
+**Cheap scaffolding (do first, all sub-lemmas already exist):** `moveRegionTM_valid`
+mirrors `clearRegionTM_valid` — chain `loopTM_valid → branchComposeFlatTM_valid →
+joinTwoHalts_valid → branchComposeFlatTM_valid → composeFlatTM_valid` over
+`navigateAndTestTM_valid`/`bitReadTM_valid`/`stepDeleteRewindRawTM_valid`/
+`appendAtThenTwoPhaseRewindTM_valid`/`justRewindTM_valid`. The only `exit_lt`
+side-conditions to discharge are numeric (`stepDeleteRewindTM_exit=17 < states`,
+`bitReadTM_exit_b{0,1} < 3`, the two `navigateAndTestTM_exit_*_lt`, and
+`moveContentExit{0,1} < moveContentRawTM.states`) — provable by unfolding `.states`
+through `composeFlatTM_states`/`branchComposeFlatTM_states` + `omega`. Plus
+`moveRegionTM_sig`/`_start` mirror `clearRegionTM_sig`/`_start`. None of this is
+load-bearing for the run lemma; it is just the wrapper the run lemma's
+`composeFlatTM_run`/`loopTM_run` calls will need.
+
 ## ✅ DONE this session (2026-06-05): Task 1 batch 1 — the `BitState` plumbing
 
 The architecture is now wired end-to-end and **proven to compose** (the core risk
