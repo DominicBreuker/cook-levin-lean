@@ -80,9 +80,34 @@ one bit moved) + `moveBody_done_run` (src empty → rewind, stop), then assemble
 bit's value must be threaded so the dst-invariant gets the *right* bit — that is the
 one genuinely new accounting vs `clear` (where dst is untouched).
 
-**Status / next:** machine defs + validity scaffolding being built; the inductive
-run-lemma is the bulk. Each commit green (sorry-skeleton then fill). See
-`Compile.lean` `Compile.moveRegionTM*`.
+**✅ Status — machine DEFINED & probe-validated, run contract STATED (`sorry`).**
+Landed in `Compile.lean` (after `clearRegionTM_run`, search `Compile.moveRegionTM`):
+`moveBitM2TM`, `moveBitM2_exit`, `moveContentRawTM`/`moveContentExit0`/`Exit1`,
+`moveContentTM` (the `joinTwoHalts` merge), `moveBodyRawTM`(+`_exitLoop`/`_exitDone`),
+`moveRegionTM`(+`_exit`/`_tapes`), and the contract **`Compile.moveRegionTM_run`**
+(residue-tolerant; result tape `encodeTape ((s.set dst (dst₀++src₀)).set src []) ++
+res_in ++ replicate |src₀| 0`). The exit-state offset formulas were read off the
+probe and verified to make the loop continue/terminate (⚠ the composed `moveBitM2TM`
+found-exit includes `stepDeleteRewindRawTM.states` — dropping it silently breaks the
+loop; that bug was caught by the full-machine probe). Build green; the def block is
+purely additive.
+
+**▶ NEXT (the bulk — proving `moveRegionTM_run`):** mirror the `clearRegionTM_run`
+chain exactly.
+1. `moveBody_done_run` (delim branch, src empty): like `clearBody_done_run` —
+   `branchComposeFlatTM_run_neg` into `justRewindTM`, exit `moveBodyRawTM_exitDone`.
+2. `moveBody_delete_run` (content branch, one bit moved): the new piece. Compose
+   `navigateAndTestTM_run_content` → `bitReadTM_step` (branch on the front bit) →
+   `stepDeleteRewindRawTM` run (reuse the `clearBody_delete_run` internals) →
+   `appendAt_twoPhaseRewind_run` (append `bit+1` to `dst`), through
+   `branchComposeFlatTM_run` (outer navtest branch) and the inner `bitRead` branch +
+   `joinTwoHalts_run_eq` (to land the merged `moveContentExit0`). The per-iteration
+   invariant `T j` couples src and dst (see contract docstring); thread the moved
+   bit's value into the dst block.
+3. Assemble with `loopTM_run` + `loopTM_no_early_halt` (as `clearRegionTM_run` does),
+   then tighten the budget constant (currently a provisional `25·L²+25`).
+Then wire `moveRegionTM_run` into the 7 `compileOp_sound_physical_residue` ops
+(needs the Task-1 scratch operand for `copy`/`tail`/`concat`/`eqBit`).
 
 ## ✅ DONE this session (2026-06-05): Task 1 batch 1 — the `BitState` plumbing
 

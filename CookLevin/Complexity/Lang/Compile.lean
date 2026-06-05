@@ -4347,6 +4347,121 @@ theorem Compile.clearRegionTM_run (s : State) (dst : Var) (res_in : List Nat)
         n h_done_bnd h_iter_bnd)
       (Compile.clearBudget_arith n (Compile.encodeTape s ++ res_in).length hnL)
 
+/-! ### The move-one-bit transfer gadget (Risk C2, Task 2 critical path)
+
+`moveRegionTM src dst` transfers register `src`'s content, **one bit at a time**,
+to the **end** of register `dst` (FIFO — order preserved), emptying `src`. It is
+the single building block of every remaining cross-register op
+(`copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`): e.g. `copy dst src sc`
+= move `src→sc` then move `sc→`(`src`&`dst`).
+
+**Structure — mirrors `clearRegionTM` exactly, with the content branch doing a
+read+append instead of a bare delete.** The loop body navigates to `src`; on the
+content branch (src non-empty) it reads the front bit (`bitReadTM`), deletes that
+cell and rewinds (`stepDeleteRewindRawTM`, exactly as `clear`), then appends the
+bit (`+1`) to `dst` and two-phase-rewinds; on the delim branch (src empty) it just
+rewinds and the loop stops.
+
+**✅ Probe-validated end-to-end** (2026-06-05, `#eval` on real `encodeTape`s, both
+`dst>src` and `dst<src`): `encodeTape [[1,0],[1]] → encodeTape [[],[1,1,0]] ++ [0,0]`
+and `encodeTape [[1],[0,1]] → encodeTape [[1,0,1],[]] ++ [0,0]` (residue =
+`replicate (#moved bits) 0`). The exit-state offsets below were read off the probe
+and verified to make the `loopTM` continue/terminate correctly. -/
+
+/-- Single-bit transfer engine for a fixed bit `b`: delete `src`'s front cell and
+rewind (`stepDeleteRewindRawTM`), then append `b+1` to `dst` and two-phase-rewind. -/
+def Compile.moveBitM2TM (b dst : Nat) : FlatTM :=
+  composeFlatTM ClearGadget.stepDeleteRewindRawTM
+    (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst) ClearGadget.stepDeleteRewindTM_exit
+
+/-- The surviving (found) exit of `moveBitM2TM` (independent of `b`): the
+`stepDeleteRewindRawTM` state count plus the append bracket's found exit
+(`appendAtTM.states + 6`). -/
+def Compile.moveBitM2_exit (dst : Nat) : Nat :=
+  ClearGadget.stepDeleteRewindRawTM.states + ((AppendGadget.appendAtTM 1 dst).states + 6)
+
+/-- Content branch (src non-empty): read the front bit, then run the matching
+single-bit transfer engine. The two bit paths exit at distinct states
+(`moveContentExit0`/`moveContentExit1`), merged by `joinTwoHalts` below. -/
+def Compile.moveContentRawTM (dst : Nat) : FlatTM :=
+  branchComposeFlatTM Compile.bitReadTM (Compile.moveBitM2TM 0 dst) (Compile.moveBitM2TM 1 dst)
+    Compile.bitReadTM_exit_b0 Compile.bitReadTM_exit_b1
+
+/-- Bit-0 path exit of `moveContentRawTM`. -/
+def Compile.moveContentExit0 (dst : Nat) : Nat :=
+  Compile.bitReadTM.states + Compile.moveBitM2_exit dst
+
+/-- Bit-1 path exit of `moveContentRawTM` (shifted by the bit-0 engine's states). -/
+def Compile.moveContentExit1 (dst : Nat) : Nat :=
+  Compile.bitReadTM.states + (Compile.moveBitM2TM 0 dst).states + Compile.moveBitM2_exit dst
+
+/-- Content branch with the two bit-exits merged into one (`moveContentExit0`). -/
+def Compile.moveContentTM (dst : Nat) : FlatTM :=
+  Compile.joinTwoHalts (Compile.moveContentRawTM dst)
+    (Compile.moveContentExit0 dst) (Compile.moveContentExit1 dst)
+
+/-- The loop body: navigate to `src`, branch content (move one bit) vs delim
+(src empty → rewind & stop). -/
+def Compile.moveBodyRawTM (src dst : Nat) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.navigateAndTestTM src) (Compile.moveContentTM dst)
+    ClearGadget.justRewindTM
+    (ClearGadget.navigateAndTestTM_exit_content src) (ClearGadget.navigateAndTestTM_exit_delim src)
+
+/-- The loop's "continue" exit (content branch fired: one bit moved). -/
+def Compile.moveBodyRawTM_exitLoop (src dst : Nat) : Nat :=
+  (ClearGadget.navigateAndTestTM src).states + Compile.moveContentExit0 dst
+
+/-- The loop's "done" exit (delim branch fired: src empty). -/
+def Compile.moveBodyRawTM_exitDone (src dst : Nat) : Nat :=
+  (ClearGadget.navigateAndTestTM src).states + (Compile.moveContentTM dst).states
+    + ClearGadget.justRewindTM_exit
+
+/-- The full move gadget: loop the body until `src` empties. -/
+def Compile.moveRegionTM (src dst : Nat) : FlatTM :=
+  loopTM (Compile.moveBodyRawTM src dst)
+    (Compile.moveBodyRawTM_exitDone src dst) (Compile.moveBodyRawTM_exitLoop src dst)
+
+/-- The single halt state of `moveRegionTM` (the `loopTM` done-exit, at `B.states`). -/
+def Compile.moveRegionTM_exit (src dst : Nat) : Nat := (Compile.moveBodyRawTM src dst).states
+
+theorem Compile.moveRegionTM_tapes (src dst : Nat) : (Compile.moveRegionTM src dst).tapes = 1 := by
+  show (loopTM _ _ _).tapes = 1
+  rw [loopTM_tapes]
+  show (branchComposeFlatTM _ _ _ _ _).tapes = 1
+  rw [branchComposeFlatTM_tapes]; exact ClearGadget.navigateAndTestTM_tapes src
+
+/-- **The residue-tolerant move contract (Risk C2 — Task 2 critical path).**
+Running `moveRegionTM src dst` on `encodeTape s ++ res_in` transfers `src`'s
+content (FIFO) to the end of `dst`, empties `src`, rewinds the head to `0`, and
+leaves the tape `encodeTape (moved s) ++ (res_in ++ replicate |s.get src| 0)`,
+within a quadratic budget, never halting/hitting the exit early. Mirrors
+`clearRegionTM_run`; the per-iteration invariant `T j` couples BOTH registers
+(`src` = `drop (n−j)` of src₀, `dst` = dst₀ ++ first `n−j` bits of src₀) and the
+moved bit's value must be threaded so `dst` gets the right bit (the one genuinely
+new accounting vs `clear`). **Probe-validated; proof TODO** (the bulk of Task 2). -/
+theorem Compile.moveRegionTM_run (s : State) (src dst : Var) (res_in : List Nat)
+    (hsd : src ≠ dst) (hsrc : src < s.length) (hdst : dst < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res_in) :
+    ∃ t, runFlatTM t (Compile.moveRegionTM src dst)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] }
+      = some { state_idx := Compile.moveRegionTM_exit src dst,
+               tapes := [([], 0,
+                 Compile.encodeTape ((s.set dst (s.get dst ++ s.get src)).set src [])
+                   ++ (res_in ++ List.replicate (s.get src).length 0))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.moveRegionTM src dst)
+              { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } = some ck →
+          ck.state_idx ≠ Compile.moveRegionTM_exit src dst ∧
+          haltingStateReached (Compile.moveRegionTM src dst) ck = false)
+      ∧ t ≤ 25 * (Compile.encodeTape s ++ res_in).length * (Compile.encodeTape s ++ res_in).length
+              + 25 := by
+  sorry  -- TODO(C2, Task 2): mirror `clearRegionTM_run`. Build `moveBody_delete_run`
+         -- (T(j+1)→T j, one bit moved: navtest-content ⨾ bitRead ⨾ stepDeleteRewind ⨾
+         -- append(bit+1) ⨾ rewind, exit `moveBodyRawTM_exitLoop`) and `moveBody_done_run`
+         -- (src empty → justRewind, exit `moveBodyRawTM_exitDone`), then `loopTM_run` +
+         -- `loopTM_no_early_halt`. The budget constant (25) is provisional — tighten
+         -- when the per-iteration step bound is threaded (append adds O(L) over `clear`).
+
 /-! ### Residue-tolerant `navigateAndTest` reading (Class-A cross-register ops)
 
 The Class-A cross-register ops (`nonEmpty`/`head`/`eqBit`: ≤ 1-cell output) all
