@@ -2970,6 +2970,14 @@ theorem Compile.length_set (s : State) (dst : Var) (v : List Nat) (h : dst < s.l
     (s.set dst v).length = s.length := by
   rw [Compile.set_eq_list_set s dst v h, List.length_set]
 
+/-- Reading a register other than the one just written (in range). (Local —
+`Frame`'s `State.get_set_ne` is not imported here.) -/
+theorem Compile.get_set_ne (s : State) (v : Var) (val : List Nat) (r : Var)
+    (hv : v < s.length) (hr : r ≠ v) :
+    (s.set v val).get r = s.get r := by
+  unfold State.get
+  rw [Compile.set_eq_list_set s v val hv, List.getElem?_set_ne hr.symm]
+
 /-- `BitState` is preserved by writing a `≤ 1`-valued register. The general form
 of `BitState_set_tail` (used by the `clear` loop, where the register is a `drop`
 of the original bit-shaped content). -/
@@ -4839,6 +4847,151 @@ theorem Compile.moveRegionTM_start (src dst : Nat) : (Compile.moveRegionTM src d
   show (Compile.moveBodyRawTM src dst).start = 0
   show (branchComposeFlatTM _ _ _ _ _).start = 0
   rw [branchComposeFlatTM_start]; exact ClearGadget.navigateAndTestTM_start src
+
+/-- `appendAtTM`'s state count is independent of the inserted symbol (`ins` only
+enters via `insertCarryTM ins`, whose `states` field is the constant `6`). -/
+theorem Compile.appendAtTM_states_eq (ins dst : Nat) :
+    (AppendGadget.appendAtTM ins dst).states = (AppendGadget.appendAtTM 1 dst).states := by
+  induction dst with
+  | zero => rfl
+  | succ d ih =>
+      rw [show AppendGadget.appendAtTM ins (d + 1)
+            = composeFlatTM (ScanPast.scanPastDelimTM 4 0) (AppendGadget.appendAtTM ins d) 1 from rfl,
+          show AppendGadget.appendAtTM 1 (d + 1)
+            = composeFlatTM (ScanPast.scanPastDelimTM 4 0) (AppendGadget.appendAtTM 1 d) 1 from rfl,
+          composeFlatTM_states, composeFlatTM_states, ih]
+
+/-- **The single-bit transfer engine run (Risk C2, Task 2).** Run from `src`'s
+content start (head `1 + |encodeRegs (s.take src)|`) with `src`'s front bit `b`
+(`s.get src = b :: cs`), `moveBitM2TM b dst` deletes that front cell, rewinds,
+appends `b` to the end of `dst`, and two-phase-rewinds, landing at
+`moveBitM2_exit dst` with the tape
+`encodeTape ((s.set src cs).set dst (s.get dst ++ [b])) ++ (res ++ [0])` and head
+`0`. Composes `stepDeleteRewind_run` (on `src`) with `appendBitTwoPhase_run` (on
+the deleted state, appending to `dst`). -/
+theorem Compile.moveBitM2_run (s : State) (src dst : Var) (b : Nat) (cs : List Nat)
+    (hb : b ≤ 1) (hsd : src ≠ dst) (hsrc : src < s.length) (hdst : dst < s.length)
+    (hbit : Compile.BitState s) (hcons : s.get src = b :: cs) (res : List Nat)
+    (hres : Compile.ValidResidue res) :
+    ∃ t, runFlatTM t (Compile.moveBitM2TM b dst)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                     Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.moveBitM2_exit dst,
+               tapes := [([], 0,
+                 Compile.encodeTape ((s.set src cs).set dst (s.get dst ++ [b]))
+                   ++ (res ++ [0]))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.moveBitM2TM b dst)
+            { state_idx := 0,
+              tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                         Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached (Compile.moveBitM2TM b dst) ck = false)
+    ∧ t ≤ 7 * (Compile.encodeTape s ++ res).length + 18 := by
+  have hne : s.get src ≠ [] := by rw [hcons]; exact List.cons_ne_nil _ _
+  have htl : (s.get src).tail = cs := by rw [hcons, List.tail_cons]
+  -- Phase 1: delete src's front cell + rewind.
+  obtain ⟨t1, h_sdr, h_sdr_traj, h_t1_bnd⟩ :=
+    Compile.stepDeleteRewind_run s src res hsrc hbit hne hres
+  rw [htl] at h_sdr
+  -- Phase 2 ingredients (on the post-delete state `s.set src cs`).
+  have hbit1 : Compile.BitState (s.set src cs) := by
+    have := Compile.BitState_set_tail s src hbit hsrc; rwa [htl] at this
+  have hlen1 : (s.set src cs).length = s.length := Compile.length_set s src cs hsrc
+  have hdst1 : dst < (s.set src cs).length := by rw [hlen1]; exact hdst
+  have hres1 : Compile.ValidResidue (res ++ [0]) := by
+    apply Compile.ValidResidue_append _ _ hres; intro x hx
+    simp only [List.mem_singleton] at hx; subst hx; exact ⟨by omega, by decide⟩
+  obtain ⟨t2, h_app, h_app_traj, h_t2_bnd⟩ :=
+    Compile.appendBitTwoPhase_run b hb (s.set src cs) dst hbit1 hdst1 (res ++ [0]) hres1
+  have hgetdst : (s.set src cs).get dst = s.get dst :=
+    Compile.get_set_ne s src cs dst hsrc (Ne.symm hsd)
+  rw [hgetdst] at h_app
+  -- length balance: deleting a bit and padding the residue with `[0]` keeps the length.
+  have hLbal : (Compile.encodeTape (s.set src cs) ++ (res ++ [0])).length
+      = (Compile.encodeTape s ++ res).length := by
+    have hbalance := Compile.encodeTape_set_length s src cs hsrc
+    rw [hcons] at hbalance
+    simp only [List.length_append, List.length_cons, List.length_singleton, List.length_nil]
+      at hbalance ⊢
+    omega
+  -- M₂ start (= 0).
+  have hM2start : (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst).start = 0 := by
+    show (composeFlatTM (AppendGadget.appendAtTM (b + 1) dst) (ScanLeft.rewindTwoPhaseTM 4 3)
+          (AppendGadget.appendAtTM_exit dst)).start = 0
+    rw [composeFlatTM_start, AppendGadget.appendAtTM_start]
+  set right₁ : List Nat := Compile.encodeTape (s.set src cs) ++ (res ++ [0]) with hr1
+  -- shared compose inputs.
+  have hvalid1 : validFlatTM ClearGadget.stepDeleteRewindRawTM := ClearGadget.stepDeleteRewindRawTM_valid
+  have hvalid2 : validFlatTM (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst) :=
+    AppendGadget.appendAtThenTwoPhaseRewindTM_valid (b + 1) (by omega) dst
+  have hexit_lt : ClearGadget.stepDeleteRewindTM_exit < ClearGadget.stepDeleteRewindRawTM.states := by
+    show (17 : Nat) < ClearGadget.stepDeleteRewindRawTM.states
+    show (17 : Nat) < 19; omega
+  have hcfg0lt : (0 : Nat) < ClearGadget.stepDeleteRewindRawTM.states := by
+    show (0 : Nat) < 19; omega
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right₁) = some v →
+      v < max ClearGadget.stepDeleteRewindRawTM.sig
+          (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst).sig := by
+    intro v hv
+    rw [hr1, show currentTapeSymbol (([] : List Nat), 0,
+          Compile.encodeTape (s.set src cs) ++ (res ++ [0])) = some 3 from rfl] at hv
+    rw [show max ClearGadget.stepDeleteRewindRawTM.sig
+          (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst).sig = 4 from by
+        rw [AppendGadget.appendAtThenTwoPhaseRewindTM_sig]; rfl]
+    have : v = 3 := (Option.some.inj hv).symm
+    omega
+  -- per-component trajectory hyps with the `≠ exit` part for M₁.
+  have h_traj1 : ∀ k, k < t1 → ∀ ck,
+      runFlatTM k ClearGadget.stepDeleteRewindRawTM
+          { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                                       Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ ClearGadget.stepDeleteRewindTM_exit ∧
+      haltingStateReached ClearGadget.stepDeleteRewindRawTM ck = false := by
+    intro k hk ck hck
+    have hh := h_sdr_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting ClearGadget.stepDeleteRewindRawTM_halt_seventeen hh, hh⟩
+  have h_app_traj' : ∀ k, k < t2 → ∀ ck,
+      runFlatTM k (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst)
+          { state_idx := (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst).start,
+            tapes := [([], 0, right₁)] } = some ck →
+      haltingStateReached (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst) ck = false := by
+    rw [hM2start, hr1]; exact h_app_traj
+  -- h_halt2 (the M₂ exit halts).
+  have h_halt2 : haltingStateReached (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst)
+      { state_idx := 6 + (AppendGadget.appendAtTM (b + 1) dst).states,
+        tapes := [([], 0, Compile.encodeTape ((s.set src cs).set dst (s.get dst ++ [b]))
+                    ++ (res ++ [0]))] } = true := by
+    rw [show (6 : Nat) + (AppendGadget.appendAtTM (b + 1) dst).states
+          = (AppendGadget.appendAtTM (b + 1) dst).states + 6 from Nat.add_comm ..]
+    exact Compile.haltingStateReached_of_halt
+      (AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt (b + 1) dst)
+  have hmoveeq : Compile.moveBitM2TM b dst
+      = composeFlatTM ClearGadget.stepDeleteRewindRawTM
+          (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst)
+          ClearGadget.stepDeleteRewindTM_exit := rfl
+  have hstate_eq : Compile.moveBitM2_exit dst
+      = (6 + (AppendGadget.appendAtTM (b + 1) dst).states)
+          + ClearGadget.stepDeleteRewindRawTM.states := by
+    show ClearGadget.stepDeleteRewindRawTM.states + ((AppendGadget.appendAtTM 1 dst).states + 6)
+        = (6 + (AppendGadget.appendAtTM (b + 1) dst).states)
+            + ClearGadget.stepDeleteRewindRawTM.states
+    rw [Compile.appendAtTM_states_eq (b + 1) dst]; omega
+  have hmain := composeFlatTM_run hvalid1 hvalid2 hexit_lt
+    { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                                 Compile.encodeTape s ++ res)] }
+    hcfg0lt [] 0 right₁ hsym h_sdr h_traj1
+    (by rw [hM2start]; exact h_app) h_halt2
+  refine ⟨t1 + 1 + t2, ?_, ?_, ?_⟩
+  · rw [hmoveeq, hstate_eq]; exact hmain.1
+  · intro k hk ck hck
+    rw [hmoveeq] at hck ⊢
+    exact composeFlatTM_no_early_halt hvalid1 hvalid2 hexit_lt
+      { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                                   Compile.encodeTape s ++ res)] }
+      hcfg0lt [] 0 right₁ hsym h_sdr h_traj1 h_app_traj' k hk ck hck
+  · rw [hLbal] at h_t2_bnd
+    omega
 
 /-- **The residue-tolerant move contract (Risk C2 — Task 2 critical path).**
 Running `moveRegionTM src dst` on `encodeTape s ++ res_in` transfers `src`'s
