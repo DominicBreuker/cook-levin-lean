@@ -47,6 +47,43 @@ theorem Cmd.encodeTape_eval_length_le (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k
   have h2 := Cmd.eval_length_le c k h s
   omega
 
+/-- **`inBounds` from a static `UsesBelow` bound (the `inBounds`-threading
+bridge; lives here because it relates `Op.UsesBelow` in `Frame` to `Op.inBounds`
+in `Compile`).** An op that statically touches only registers `< k`, run on a
+state of width `≥ k`, is in bounds. Combined with `Op.eval_length_ge` /
+`Cmd.eval_length_ge` (the register count never shrinks) and `Cmd.UsesBelow`, this
+supplies the `o.inBounds s` premise of `Op.eval_preserves_BitState` and of the
+per-op gadgets at *every* fragment of the `Compile_run_physical_residue`
+induction: fix `k ≤ s.length` with `Cmd.UsesBelow c k`, and every reached state
+keeps width `≥ k`. -/
+theorem Op.inBounds_of_UsesBelow (o : Op) (k : Nat) (s : State)
+    (h : Op.UsesBelow o k) (hk : k ≤ s.length) : o.inBounds s := by
+  cases o with
+  | clear dst => exact Nat.lt_of_lt_of_le h hk
+  | appendOne dst => exact Nat.lt_of_lt_of_le h hk
+  | appendZero dst => exact Nat.lt_of_lt_of_le h hk
+  | copy dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | tail dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | head dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | eqBit dst a b =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | nonEmpty dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | takeAt dst src l =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | dropAt dst src l =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | concat dst a b =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | consLen dst l src =>
+      -- `Op.inBounds` orders consLen's last two as `src, lenSrc`; `UsesBelow` as
+      -- `lenSrc, src` — so the second/third components swap.
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.2 hk,
+             Nat.lt_of_lt_of_le h.2.1 hk⟩
+
 /-- A program `c` *decides* a predicate `P` in cost bound `costBound`
 when run on the encoded input `encodeIn`.
 
