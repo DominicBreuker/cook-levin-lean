@@ -2984,6 +2984,37 @@ theorem Compile.BitState_set (s : State) (dst : Var) (v : List Nat)
   · subst hr; exact hv x hx
   · exact h reg (List.mem_of_mem_drop hr) x hx
 
+/-- **Padding-tolerant `BitState_set`.** `BitState` is preserved by writing a
+`≤ 1`-valued register to *any* index — including one past the current length,
+where `State.set` pads with empty (hence bit-safe) registers. This is the
+unconditional form the `forBnd` counter-write (`set counter (replicate i 1)`,
+where `counter` may exceed the live register count) and the residue-tolerant
+`Cmd` induction need; `BitState_set` requires `dst < s.length`. -/
+theorem Compile.BitState_set_pad (s : State) (dst : Var) (v : List Nat)
+    (h : Compile.BitState s) (hv : ∀ x ∈ v, x ≤ 1) :
+    Compile.BitState (s.set dst v) := by
+  by_cases hd : dst < s.length
+  · exact Compile.BitState_set s dst v h hd hv
+  · rw [State.set, if_neg hd]
+    have hpad : Compile.BitState (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)) := by
+      intro reg hreg x hx
+      rw [List.mem_append] at hreg
+      rcases hreg with hr | hr
+      · exact h reg hr x hx
+      · rw [List.mem_replicate] at hr; rw [hr.2] at hx; simp at hx
+    have hlen : dst < (s ++ List.replicate (dst + 1 - s.length) ([] : List Nat)).length := by
+      rw [List.length_append, List.length_replicate]
+      have hle : s.length ≤ dst + 1 := Nat.le_succ_of_le (Nat.le_of_not_lt hd)
+      rw [Nat.add_sub_cancel' hle]
+      exact Nat.lt_succ_self dst
+    rw [Compile.list_set_eq_take_cons_drop _ dst v hlen]
+    intro reg hreg x hx
+    simp only [List.mem_append, List.mem_cons] at hreg
+    rcases hreg with hr | hr | hr
+    · exact hpad reg (List.mem_of_mem_take hr) x hx
+    · subst hr; exact hv x hx
+    · exact hpad reg (List.mem_of_mem_drop hr) x hx
+
 /-- **State-level invariant of the `clear` loop.** Iterating the in-place `tail`
 body `t ↦ t.set dst t.tail` `n` times drops the first `n` symbols of register
 `dst`: `(·.set dst ·.tail)^[n] s = s.set dst ((s.get dst).drop n)`. At
@@ -3725,6 +3756,128 @@ def Op.inBounds (o : Op) (s : State) : Prop :=
   | .takeAt dst src lenReg | .dropAt dst src lenReg | .consLen dst lenReg src =>
       dst < s.length ∧ src < s.length ∧ lenReg < s.length
   | .concat dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
+
+/-- Reading an in-range register of a `BitState` yields a bit-shaped list (every
+symbol `≤ 1`). The atom for `Op.eval_preserves_BitState`. -/
+private theorem Compile.BitState_get (s : State) (r : Var)
+    (hbit : Compile.BitState s) (hr : r < s.length) :
+    ∀ x ∈ s.get r, x ≤ 1 := by
+  intro x hx
+  refine hbit (s.get r) ?_ x hx
+  rw [State.get, List.getElem?_eq_getElem hr]; exact List.getElem_mem hr
+
+/-- **`BitState` is preserved by every op except `consLen` (Task 1 — the
+induction step the residue-tolerant compiler contract needs).**
+
+`Compile_run_physical_residue` is proved by induction on `Cmd`, and every
+per-fragment lemma it composes carries an `(hbit : BitState s)` premise (the
+compiler's `sig = 4` alphabet has no room for a register cell `≥ 2`). So the
+induction must re-establish `BitState` after each `Op`. This lemma is that step.
+
+**Machine-checked risk finding (refines HANDOFF's "value-as-length ops are
+non-`BitState`"):** of the three value-as-length ops, only **`consLen`** actually
+*breaks* `BitState` — it writes `(s.get lenSrc).length` as a single cell, which is
+`≥ 2` whenever `lenSrc` holds `≥ 2` symbols (witness `Op.consLen_breaks_BitState`).
+`takeAt`/`dropAt` *preserve* `BitState` (their output is a sub-list of a bit-shaped
+register); they are merely *useless* under `BitState` (the length read from a
+`≤ 1` cell is `0` or `1`), not invariant-breaking. So Task 1's unary restatement is
+required for **correctness** only for `consLen`; for `takeAt`/`dropAt` it is
+required only for **expressiveness**. The `hcons` hypothesis isolates exactly the
+`consLen` obligation: once Task 1 restates `consLen` to write a unary block, the
+written head cell is `≤ 1` and `hcons` is discharged unconditionally. -/
+theorem Op.eval_preserves_BitState (o : Op) (s : State)
+    (hbit : Compile.BitState s) (hbnd : o.inBounds s)
+    (hcons : ∀ dst lenSrc src, o = Op.consLen dst lenSrc src →
+        (s.get lenSrc).length ≤ 1) :
+    Compile.BitState (Op.eval o s) := by
+  cases o with
+  | clear dst =>
+      exact Compile.BitState_set s dst [] hbit hbnd (by simp)
+  | appendOne dst =>
+      refine Compile.BitState_set s dst _ hbit hbnd ?_
+      intro x hx; rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact Compile.BitState_get s dst hbit hbnd x hx
+      · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; omega
+  | appendZero dst =>
+      refine Compile.BitState_set s dst _ hbit hbnd ?_
+      intro x hx; rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact Compile.BitState_get s dst hbit hbnd x hx
+      · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; omega
+  | copy dst src =>
+      obtain ⟨hd, hs⟩ := hbnd
+      exact Compile.BitState_set s dst _ hbit hd (Compile.BitState_get s src hbit hs)
+  | tail dst src =>
+      obtain ⟨hd, hs⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      exact Compile.BitState_get s src hbit hs x (List.mem_of_mem_tail hx)
+  | head dst src =>
+      obtain ⟨hd, hs⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      cases hsrc : s.get src with
+      | nil => rw [hsrc] at hx; simp at hx
+      | cons y ys =>
+          rw [hsrc] at hx
+          have hy : ∀ z ∈ (y :: ys), z ≤ 1 := by
+            rw [← hsrc]; exact Compile.BitState_get s src hbit hs
+          simp only [List.mem_cons, List.not_mem_nil, or_false] at hx
+          rw [hx]; exact hy y (List.mem_cons_self ..)
+  | eqBit dst src1 src2 =>
+      obtain ⟨hd, _, _⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      split at hx <;>
+        (simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; omega)
+  | nonEmpty dst src =>
+      obtain ⟨hd, _⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      split at hx <;>
+        (simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; omega)
+  | takeAt dst src lenReg =>
+      obtain ⟨hd, hs, _⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      exact Compile.BitState_get s src hbit hs x (List.mem_of_mem_take hx)
+  | dropAt dst src lenReg =>
+      obtain ⟨hd, hs, _⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      exact Compile.BitState_get s src hbit hs x (List.mem_of_mem_drop hx)
+  | concat dst src1 src2 =>
+      obtain ⟨hd, hs1, hs2⟩ := hbnd
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx; rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact Compile.BitState_get s src1 hbit hs1 x hx
+      · exact Compile.BitState_get s src2 hbit hs2 x hx
+  | consLen dst lenSrc src =>
+      obtain ⟨hd, hs, _⟩ := hbnd
+      have hlen := hcons dst lenSrc src rfl
+      refine Compile.BitState_set s dst _ hbit hd ?_
+      intro x hx
+      simp only [List.mem_cons] at hx
+      rcases hx with hx | hx
+      · subst hx; exact hlen
+      · exact Compile.BitState_get s src hbit hs x hx
+
+/-- **Machine-checked counterexample: `consLen` is the one op that breaks
+`BitState`.** With `s = [[1, 1]]` (a valid `BitState`) and `o = consLen 0 0 0`,
+the op writes `(s.get 0).length = 2` as a register cell, so the result `[[2,1,1]]`
+is *not* a `BitState`. This is why Task 1 must restate `consLen` to a unary block;
+the corresponding `hcons` hypothesis of `Op.eval_preserves_BitState` fails here
+(`(s.get 0).length = 2 > 1`). -/
+theorem Op.consLen_breaks_BitState :
+    ¬ Compile.BitState (Op.eval (Op.consLen 0 0 0) [[1, 1]]) := by
+  intro h
+  have : (2 : Nat) ≤ 1 := by
+    refine h [2, 1, 1] ?_ 2 (by simp)
+    show ([2, 1, 1] : List Nat) ∈ ([[2, 1, 1]] : State)
+    simp
+  omega
 
 /-- **Risk C2 finding (machine-checked): the exact-tape physical contract is
 unsatisfiable for length-decreasing ops.** No `FlatTM`, in any number of steps,
@@ -6401,6 +6554,43 @@ theorem Compile_run_physical_residue (c : Cmd) (s : State)
          -- to `bitDecider_run`, the `DecidesBy` budgets, and `toFrameworkWitness'`.
          -- Stays poly on the live path (`encodeState x` = 1 reg; `s.length` ≤ const
          -- `regBound`). See HANDOFF.md "Deep feasibility pass".
+
+/-- **Bridge: the residue contract ⇒ `Compile_sound` (PROVEN, the assembly's last
+mile).** Given the residue-tolerant physical run of `Compile c` (exit at
+`Compile.exit c`, tape `encodeTape (c.eval s) ++ res`, halt step `t ≤ overhead`)
+**and** that the output is `BitState`, the `decodeTape`-level `Compile_sound`
+conclusion follows: extend the run to the full `overhead` budget
+(`runFlatTM_extend`, since the exit is a halt state), and decode (the residue is
+invisible — `decodeTape_encodeTape_append`). The `BitState (c.eval s)` premise is
+exactly what `Op.eval_preserves_BitState`/`Cmd.eval_preserves_BitState` now supply,
+so once `Compile_run_physical_residue` is discharged this lemma closes
+`Compile_sound` mechanically. Stated to take the residue run's components directly
+so it does not depend on the (still-`sorry`) `Compile_run_physical_residue`. -/
+theorem Compile.sound_of_run_residue (c : Cmd) (s : State)
+    (hbit_out : Compile.BitState (c.eval s))
+    (t : Nat) (res : List Nat)
+    (hrun : runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
+      = some { state_idx := Compile.exit c,
+               tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] })
+    (ht : t ≤ Compile.overhead (State.size s + c.cost s)) :
+    ∃ cfg,
+      runFlatTM (Compile.overhead (State.size s + c.cost s)) (Compile c)
+          (initFlatConfig (Compile c) [Compile.encodeTape s]) = some cfg ∧
+      haltingStateReached (Compile c) cfg = true ∧
+      Compile.decodeTape cfg = c.eval s := by
+  have hhalt : haltingStateReached (Compile c)
+      { state_idx := Compile.exit c,
+        tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] } = true := by
+    show (Compile c).halt.getD (Compile.exit c) false = true
+    have hex := (compileCmd c).exit_is_halt
+    show (compileCmd c).M.halt.getD (compileCmd c).exit false = true
+    simp only [List.getD, hex, Option.getD]
+  refine ⟨{ state_idx := Compile.exit c,
+            tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] }, ?_, hhalt, ?_⟩
+  · obtain ⟨k, hk⟩ := Nat.le.dest ht
+    rw [← hk]
+    exact runFlatTM_extend hrun hhalt
+  · exact Compile.decodeTape_encodeTape_append (c.eval s) res _ _ hbit_out
 
 /-- The compiled decider machine: run `Compile c`, then the bit-test gadget. The
 gadget converts register `0`'s answer (on the tape) into a distinct halting
