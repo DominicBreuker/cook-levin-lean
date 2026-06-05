@@ -38,10 +38,10 @@ design decision below rests on.
 
 ### ★ DESIGN DECISION — SETTLED (reviewed 2026-06-05): adopt **Option B′**
 
-The three top-level obligations — `Compile_sound` (Compile.lean:6047),
-`Compile_run_physical` (6207), `Compile_run_physical_residue` (6237) — are stated
+The three top-level obligations — `Compile_sound` (Compile.lean:6200),
+`Compile_run_physical` (6360), `Compile_run_physical_residue` (6390) — are stated
 **without** a `BitState s` hypothesis, but every per-op/per-fragment lemma needs it
-(`compileOp_sound_physical_residue`:5564 + the 10 lemmas at
+(`compileOp_sound_physical_residue`:5717 + the per-op `BitState` lemmas at
 2393/2554/2901/3025/3160/3387/3535/3761/3823/4149). Adding `hbit` (Task 1) forces
 each compile site to supply `BitState` of the state it feeds in. The previous
 handoff posed this as a fork (A: bundle `enc_bit` into `LangEncodable`, breaking
@@ -180,9 +180,27 @@ Task 1.
 **1. The `BitState` plumbing (one coupled green-landing batch).** This is the old
 "Task 2" restated per B′. Land it green in this order:
 - **Obligations:** add `(hbit : Compile.BitState s)` to `Compile_sound`,
-  `Compile_run_physical`, `Compile_run_physical_residue`. Confirm `BitState` is
-  `Op.eval`-preserved through the induction (`BitState_set`, `BitState_set_tail`
-  already exist).
+  `Compile_run_physical`, `Compile_run_physical_residue`.
+  - ✅ **2026-06-05 — the induction step is now PROVEN** (`Op.eval_preserves_BitState`,
+    Compile.lean, axiom-clean): `BitState s → o.inBounds s → (consLen side-cond) →
+    BitState (Op.eval o s)`. Plus the unconditional **`BitState_set_pad`** (drops
+    `BitState_set`'s `dst < s.length` requirement, for `forBnd`'s padding
+    counter-write). These are the atoms the `Cmd` induction composes — **reuse them
+    directly**; do not re-derive per-op `BitState`.
+  - ⚠ **Machine-checked refinement of "value-as-length ops are non-`BitState`":**
+    only **`consLen`** actually breaks `BitState` (`Op.consLen_breaks_BitState` is an
+    explicit counterexample — it writes a length as a `≥2` cell). `takeAt`/`dropAt`
+    **preserve** `BitState` (sub-list of a bit register); they are merely *useless*
+    under it. So when restating ops below: `consLen` MUST become unary for
+    **correctness**; `takeAt`/`dropAt` only for **expressiveness**. Once `consLen` is
+    unary the `hcons` side-condition of `Op.eval_preserves_BitState` is discharged
+    unconditionally and the lemma becomes the clean universal induction step.
+  - **Still TODO:** lift to the `Cmd` level. The blocker is **not** `BitState` (atoms
+    above) but **per-op `inBounds` at every reached runtime state** — there is no
+    syntactic `Cmd`-wellformedness predicate yet, and `Op.eval_preserves_BitState`
+    needs `o.inBounds s`. Decide how the assembly establishes per-fragment `inBounds`
+    (likely a `Cmd.WellFormed`/register-count invariant threaded with the run) *before*
+    writing the `Cmd`-level preservation lemma — otherwise it will be re-shaped.
 - **Witness field:** add `enc_bit : ∀ x, Compile.BitState (encodeIn x)` to
   `DecidesLang`, `DecidesLang'`, `PolyTimeComputableLang`, `PolyTimeComputableLang'`.
   This is what feeds `hbit` at every bridge (`bitDecider_run`,
@@ -216,7 +234,7 @@ Task 1.
   already `sorry`, so no proven work is discarded.)
 
 **2. Build the 7 op gadgets** (`compileOp_sound_physical_residue`, the 7 remaining
-`sorry`s at Compile.lean:5610–5626): the move-bit primitive (probe-validated) + the
+`sorry`s at Compile.lean:5763–5779): the move-bit primitive (probe-validated) + the
 two-phase transfer loop, wired per op. **Templates:** `clearRegionTM_run` (the
 `loopTM` chain to mirror), `opNonEmpty_run` (branch-merge engine + budget),
 `opHead_run` (nested branch + `bitReadTM` reuse). Bump the per-op budget when a
@@ -235,11 +253,21 @@ them is **cubic**, and `L = size + s.length + 2` includes the **register count
 is 1 register; the program adds a constant `regBound`).
 
 **4. Assemble** `Compile_run_physical_residue` → `Compile_sound` by induction on
-`Cmd`: per-`Op` from step 2, `seq` from `compileSeq_sound_physical_residue` (PROVEN),
-`ifBit`/`forBnd` from their residue siblings (`branchComposeFlatTM_run` / `loopTM_run`
-+ `loopTM_no_early_halt`; the `compileIfBit`/`compileForBnd` residue contracts at
-~5884/5934 are stated, sorry'd). This discharges C2; downstream unlocks S3 migration,
-C7 verifiers, C8 hardness, S1 tableau.
+`Cmd`: per-`Op` from step 2, `seq` from `compileSeq_sound_physical_residue` (PROVEN).
+⚠ **Gap surfaced 2026-06-05:** the `ifBit`/`forBnd` contracts that currently exist
+(`compileIfBit_sound_physical`, `compileForBnd_sound_physical`, Compile.lean
+~6045/6096, both `sorry`) are stated with the **exact-tape** contract (`tapes =
+encodeTape (evalT s)`), **not** the residue-tolerant one. A loop/branch body can be a
+length-decreasing op (`clear`/`tail`/…) whose real physical run leaves
+`encodeTape output ++ residue` — so these exact-tape hypotheses are **unsatisfiable
+for shrinking bodies** (the same `TapeMono` obstruction that killed
+`compileOp_sound_physical`) and cannot be fed by `compileOp_sound_physical_residue`.
+**Before assembling, restate both as residue-tolerant siblings** (mirror how
+`compileSeq_sound_physical_residue` generalises `compileSeq_sound_physical`: thread
+`res_in`/`res_out`, require only the inter-fragment residue `ValidResidue`), then
+prove them via `branchComposeFlatTM_run` / `loopTM_run` + `loopTM_no_early_halt`.
+This discharges C2; downstream unlocks S3 migration, C7 verifiers, C8 hardness, S1
+tableau.
 
 ---
 
@@ -248,13 +276,13 @@ C7 verifiers, C8 hardness, S1 tableau.
 | Name (file) | Role |
 |------|------|
 | `Compile.encodeTape`/`encodeRegs`/`shiftReg`/`BitState`/`ValidResidue`/`decodeTape` (`Lang/Compile.lean`) | `sig=4` tape encoding; the standing bit invariant; residue-tolerant contract |
-| `compileOp_sound_physical_residue` (5564) | per-op contract, `(hbit : BitState s)`, budget `9·L²+9·L+30`. **PROVEN:** `appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`. **`sorry` (7):** `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (5610–5626) |
+| `compileOp_sound_physical_residue` (5717) | per-op contract, `(hbit : BitState s)`, budget `9·L²+9·L+30`. **PROVEN:** `appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`. **`sorry` (7):** `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen` (5763–5779) |
 | `opNonEmpty`(+`_run`), `opHead`(+`_run`), `bitReadTM`, `opInnerBit`, `clearOnlyBranchBody` | ✅ the two proven cross-register ops + the **branching-op templates** (`joinTwoHalts` branch-merge engine; `bitReadTM` = bit-value cell test; nested 2-way branches) |
 | `clearRegionTM_run` ← `clearBody_delete_run`/`_done_run` ← `stepDeleteRewind_run` (4148+, 200+) | **the `loopTM` chain to MIRROR** for the transfer gadget (run + trajectory + quadratic budget; threads a `∧ t ≤ …` through every layer) |
 | `loopTM`(+`_run`/`_no_early_halt`), `loopBudget`(+`_le`), `clearBudget_arith` (`TMPrimitives`, `Compile`) | counted loop (terminate-by-emptying mode) + reusable budget closers |
 | `navigateAndTestTM` (+`_exit_content`/`_delim`), `appendAtTM` (+`appendAt_run`, exit), `deleteCarryTM`(+`_run`/`_no_early_halt`), `scanLeft`/`rewindTwoPhaseTM` | ✅ the proven gadget pieces the move primitive composes |
-| `compileSeq_sound_physical_residue` (PROVEN); `compileIfBit`/`compileForBnd` residue (~5884/5934, stated `sorry`) | the `Cmd`-constructor assembly pieces |
-| `Compile_run_physical_residue` (6237), `Compile_sound` (6047) | **the C2 obligations (`sorry`)** — add `(hbit : BitState s)` (Task 1) |
+| `compileSeq_sound_physical_residue` (PROVEN); `compileIfBit`/`compileForBnd` physical (~6045/6096, stated `sorry`, EXACT-tape — need residue restatement, see plan step 4) | the `Cmd`-constructor assembly pieces |
+| `Compile_run_physical_residue` (6390), `Compile_sound` (6200) | **the C2 obligations (`sorry`)** — add `(hbit : BitState s)` (Task 1) |
 | `LangEncodable` (`enc`/`dec`/`enc_size`) + instances `Nat`/`List Nat`/product (`Lang/PolyTime.lean` 440/640/839) | **Task 1 rewrites these bit-level** (B′); add the `BitEncodable` mixin alongside |
 | `DecidesLang`/`DecidesLang'`/`PolyTimeComputableLang`/`PolyTimeComputableLang'` (PolyTime.lean 62/1100/85/483) | the witness structures — **gain the `enc_bit : ∀ x, BitState (encodeIn x)` field** (B′) |
 | `EvalCnfCmd.encodeState` (EvalCnfCmd.lean:87) + `evalCnfDecidesLang` (EvalCnfTM.lean:63) | **the LIVE `sat_NP` encoding** (free `DecidesLang`); cells `v+3`/`2` → re-lay unary in Task 1 |
