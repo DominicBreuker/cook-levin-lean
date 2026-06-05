@@ -6251,6 +6251,13 @@ theorem Compile_run_physical_residue (c : Cmd) (s : State) :
          -- `seq` from `compileSeq_sound_physical_residue`, `ifBit` and `forBnd`
          -- from their residue-tolerant siblings (to be stated).
          --
+         -- ⚠ STRUCTURAL BLOCKER (Task 1): this statement LACKS the `(hbit :
+         -- Compile.BitState s)` hypothesis that EVERY per-fragment lemma requires
+         -- (`compileOp_sound_physical_residue` and the 10 lemmas at lines 2393/2554/
+         -- 2901/3025/3160/3387/3535/3761/3823/4149 all take `hbit`). The induction
+         -- cannot feed them without `hbit` here. Add it — and then the bridge must
+         -- supply `BitState (encodeState x)` (the Option A/B fork in HANDOFF.md).
+         --
          -- ⚠⚠ BUDGET IS WRONG AS STATED (deep feasibility pass 2026-06-04, Finding A).
          -- The per-op budget is QUADRATIC in tape length L (`9·L²+…`, since `clear`
          -- and the cross-register transfer ops do Θ(L) cell-moves each an O(L) pass),
