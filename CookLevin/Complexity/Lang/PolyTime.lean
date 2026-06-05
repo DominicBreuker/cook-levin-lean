@@ -72,6 +72,12 @@ structure DecidesLang {X : Type} [encodable X]
   /-- Cost bound: running `c` on `encodeIn x` costs at most
   `costBound (encodable.size x)` primitive operations. -/
   cost_bound : ∀ x, c.cost (encodeIn x) ≤ costBound (encodable.size x)
+  /-- **(B′, Risk C2) Bit-level encoding obligation.** The compiled machine has a
+  fixed 4-symbol alphabet (`Compile.sig = 4`); `encodeTape` only stays inside it
+  when every register cell is `0`/`1` (`Compile.BitState`). `Compile_sound`
+  therefore requires `BitState (encodeIn x)`, supplied here by the witness. Bit-
+  level (unary) encodings discharge it; see `BitEncodable` and HANDOFF.md. -/
+  enc_bit : ∀ x, Compile.BitState (encodeIn x)
 
 /-- `P` is in polynomial time *at the layer level*: there is a
 `DecidesLang` witness with polynomially bounded cost. -/
@@ -98,6 +104,8 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   /-- Output size is bounded by the output of `cost_bound` —
   i.e. polynomial-time output is polynomial-size. -/
   output_size_le : ∀ x, encodable.size (f x) ≤ cost_bound (encodable.size x)
+  /-- **(B′, Risk C2) Bit-level input obligation** — see `DecidesLang.enc_bit`. -/
+  enc_bit : ∀ x, Compile.BitState (encodeIn x)
 
 /-! ## Bridges
 
@@ -280,7 +288,7 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
       computes := ?_ }
     · rw [Compile_tapes]; exact Nat.one_pos
     · intro x
-      obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound W.c (W.encodeIn x)
+      obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound W.c (W.encodeIn x) (W.enc_bit x)
       refine ⟨cfg, ?_, hhalt, ?_⟩
       · -- The single-tape `initialTapes` collapses to `[encodeTape …]`,
         -- then pad the run budget up to `timeBound (size x)`.
@@ -477,6 +485,31 @@ theorem LangEncodable.encodeState_get_pos {X : Type} [encodable X] [LangEncodabl
   rw [List.getElem?_eq_none (show ([LangEncodable.enc x] : List (List Nat)).length ≤ r from hr)]
   rfl
 
+/-- **(B′, Risk C2) The bit-level encoding mixin.** A `LangEncodable` whose
+canonical encoding only ever produces `0`/`1` cells, i.e. its `encodeState` is a
+`Compile.BitState`. This is the once-per-type discharge of the `enc_bit`
+obligation that the canonical witnesses (`DecidesLang'`, `PolyTimeComputableLang'`)
+carry: prove `BitEncodable X` once and every canonical witness over `X` gets its
+`enc_bit` field for free. Bit-level (unary) encodings satisfy it; the legacy
+non-bit encodings (`Nat = [n]`, `List Nat = id`, the product length-prefix) do
+not and must be re-laid unary — see HANDOFF.md "The ordered plan". -/
+class BitEncodable (X : Type) [encodable X] [LangEncodable X] : Prop where
+  enc_bit : ∀ x : X, Compile.BitState (LangEncodable.encodeState x)
+
+/-- `encodeState x = [enc x]` is a `BitState` iff every cell of `enc x` is `0`/`1`.
+The single-register layout reduces the `BitState` obligation to the encoder. -/
+theorem BitState_encodeState_iff {X : Type} [encodable X] [LangEncodable X] (x : X) :
+    Compile.BitState (LangEncodable.encodeState x)
+      ↔ ∀ y ∈ LangEncodable.enc x, y ≤ 1 := by
+  constructor
+  · intro h y hy
+    exact h (LangEncodable.enc x)
+      (by simp [LangEncodable.encodeState]) y hy
+  · intro h reg hreg y hy
+    simp only [LangEncodable.encodeState, List.mem_singleton] at hreg
+    subst hreg
+    exact h y hy
+
 /-- A polynomial-time computable function **in canonical normal form**: the
 program maps `encodeState x` to `encodeState (f x)` exactly. This is the
 stronger contract that lets programs compose without a re-encoding bridge. -/
@@ -507,6 +540,9 @@ structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
   Single-register witnesses set `regBound = 1`. -/
   regBound : Nat
   usesBelow : Cmd.UsesBelow c regBound
+  /-- **(B′, Risk C2) Bit-level input obligation** — `encodeState x` is a
+  `Compile.BitState`. Discharged once-per-type by `BitEncodable X`. -/
+  enc_bit : ∀ x : X, Compile.BitState (LangEncodable.encodeState x)
 
 /-- **Frame application (C5a).** Running the witness program on *any* state `s`
 preserves every register `≥ regBound` — so a value stashed at register
@@ -604,6 +640,8 @@ def PolyTimeComputableLang'.comp
   regBound := max Wh.regBound Wg.regBound
   usesBelow := ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wh.usesBelow,
     Cmd.UsesBelow_mono (Nat.le_max_right _ _) Wg.usesBelow⟩
+  -- Input type is `X` (= `Wh`'s input), so its bit-level guarantee is `Wh`'s.
+  enc_bit := Wh.enc_bit
 
 /-- A canonical witness is in particular a free-encoding
 `PolyTimeComputableLang` witness (using the canonical encode/decode). This
@@ -625,6 +663,8 @@ def PolyTimeComputableLang'.toLang
     exact LangEncodable.decodeState_encodeState (f x)
   cost_le := W.cost_le
   output_size_le := W.output_size_le
+  -- `encodeIn = encodeState`, so the bit-level guarantee is `W`'s canonical one.
+  enc_bit := W.enc_bit
 
 /-- **C9 + S3 end-to-end:** a canonical layer witness yields a real TM-backed
 `polyTimeComputable'` (via `toLang` then the S3 bridge). Sorry-free modulo the
@@ -859,10 +899,39 @@ instance {X Y : Type} [encodable X] [encodable Y]
     rw [List.length_append]
     omega
 
+/-! ### `BitEncodable` instances (Risk C2, B′)
+
+The types whose canonical encoding is **already** bit-level get a `BitEncodable`
+instance for free, discharging the `enc_bit` obligation of any canonical witness
+over them. `Bool`/`Unit`/`List Bool` qualify today. `Nat` (`[n]`), `List Nat`
+(`id`), and the product (length-prefix cell) do **not** — they must be re-laid
+**unary** before they can become `BitEncodable` (HANDOFF.md "The ordered plan",
+Task 1). -/
+
+/-- `Bool` is bit-level: `enc b ∈ {[0], [1]}`. -/
+instance : BitEncodable Bool where
+  enc_bit b := (BitState_encodeState_iff b).mpr (by cases b <;> decide)
+
+/-- `Unit` is bit-level: `enc () = []`. -/
+instance : BitEncodable Unit where
+  enc_bit u := (BitState_encodeState_iff u).mpr (by simp [LangEncodable.enc])
+
+/-- `List Bool` is bit-level: each cell is `0`/`1`. -/
+instance : BitEncodable (List Bool) where
+  enc_bit bs := (BitState_encodeState_iff bs).mpr (by
+    intro y hy
+    simp only [LangEncodable.enc, List.mem_map] at hy
+    obtain ⟨b, _, rfl⟩ := hy
+    cases b <;> simp)
+
 /-- The identity is canonically computable: `copy 0 0` is a no-op on a
 single-register state. Witnesses that `PolyTimeComputableLang'` is inhabited;
-together with `comp` the canonical-computable functions form a category. -/
-def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X] :
+together with `comp` the canonical-computable functions form a category.
+
+Requires `[BitEncodable X]` (Risk C2, B′): the `enc_bit` field needs the input
+type's canonical encoding to be bit-level. -/
+def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X]
+    [BitEncodable X] :
     PolyTimeComputableLang' (id : X → X) where
   c := Cmd.op (Op.copy 0 0)
   -- Under the realistic cost model `copy 0 0` costs `|enc x| + 1 ≤ 2·size + 2`.
@@ -892,6 +961,7 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
   output_size_le := fun x => by show encodable.size x ≤ encodable.size x + encodable.size x + 2; omega
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
+  enc_bit := BitEncodable.enc_bit
 
 /-! ### A non-trivial concrete witness — template for chain reductions
 
@@ -949,6 +1019,7 @@ def PolyTimeComputableLang'.constTrueBool :
     show 1 ≤ 3; omega
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
+  enc_bit := BitEncodable.enc_bit
 
 /-! ### A non-identity *pair-rearranging* witness — `swap`
 
@@ -1088,6 +1159,10 @@ def PolyTimeComputableLang'.swap {X Y : Type} [encodable X] [encodable Y]
     unfold swapCmd
     simp only [Cmd.UsesBelow, Op.UsesBelow]
     decide
+  -- TODO(C2, B′): the input type is `X × Y`; the product encoding must be re-laid
+  -- UNARY before it is `BitState`, then this becomes `BitEncodable.enc_bit` (add
+  -- a `[BitEncodable (X × Y)]` instance hypothesis). See HANDOFF.md Task 1.
+  enc_bit := sorry
 
 /-! ### Verifier composition (toward `red_inNP`)
 
@@ -1109,6 +1184,9 @@ structure DecidesLang' {X : Type} [encodable X] [LangEncodable X]
   scratch), so its accept/reject — read off register `0` — must be frame-robust. -/
   regBound : Nat
   usesBelow : Cmd.UsesBelow c regBound
+  /-- **(B′, Risk C2) Bit-level input obligation** — `encodeState x` is a
+  `Compile.BitState`. Discharged once-per-type by `BitEncodable X`. -/
+  enc_bit : ∀ x : X, Compile.BitState (LangEncodable.encodeState x)
 
 /-- **Verifier composition.** Precomposing a canonical decider for `P` with a
 canonical computable map `g` yields a canonical decider for `P ∘ g`: run `g`,
@@ -1166,6 +1244,8 @@ def DecidesLang'.precompose
   regBound := max Wg.regBound D.regBound
   usesBelow := ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wg.usesBelow,
     Cmd.UsesBelow_mono (Nat.le_max_right _ _) D.usesBelow⟩
+  -- Result input type is `X` (= `Wg`'s input), so its bit guarantee is `Wg`'s.
+  enc_bit := Wg.enc_bit
 
 /-- **Assembling `red_inNP` at the layer.** From (a) the reduction lifted to
 the pair input — `Wf : PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` —
@@ -1491,6 +1571,10 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     unfold PolyTimeComputableLang'.mapFstCmd
     exact ⟨⟨bk, b0⟩, ⟨bk1, b0⟩, ⟨bk2, bk1, bk⟩, ⟨b0, bk1, bk⟩, hwf,
       ⟨bk1, b0, bk2⟩, ⟨b0, b0, bk1⟩, bk, bk1, bk2⟩
+  -- TODO(C2, B′): input type is `X × C`; the product encoding must be re-laid
+  -- UNARY before it is `BitState`, then this becomes `BitEncodable.enc_bit` (add
+  -- a `[BitEncodable (X × C)]` instance hypothesis). See HANDOFF.md Task 1.
+  enc_bit := sorry
 
 /-- **`map_snd` (the mirror of `map_fst`).** Lift `Wf : PolyTimeComputableLang' f`
 to apply `f` to a pair's *second* component:
@@ -1714,7 +1798,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
     have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [1] :=
       eq_of_beq ((D.decides x).1.mp hPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
-      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 1 (Or.inr rfl) hb
+      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 1 (D.enc_bit x) (Or.inr rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.bitDeciderTM D.c)
             (Compile.encodeTape (LangEncodable.encodeState x))
@@ -1737,7 +1821,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
     have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [0] :=
       eq_of_beq ((D.decides x).2.mp hnPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
-      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 0 (Or.inl rfl) hb
+      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 0 (D.enc_bit x) (Or.inl rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.bitDeciderTM D.c)
             (Compile.encodeTape (LangEncodable.encodeState x))
@@ -1847,7 +1931,8 @@ witnesses for `f` and `g`. -/
 
 /-- **Identity is TM-backed poly-time computable.** Provided the type has a
 canonical layer encoding. -/
-theorem polyTimeComputable'_id {X : Type} [encodable X] [LangEncodable X] :
+theorem polyTimeComputable'_id {X : Type} [encodable X] [LangEncodable X]
+    [BitEncodable X] :
     polyTimeComputable' (id : X → X) :=
   PolyTimeComputableLang'.id_witness.toFrameworkWitness'
 
@@ -1912,6 +1997,7 @@ theorem reducesPolyMO'_to_reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
 /-- Reflexivity of `⪯p'` (needs `[LangEncodable X]` to construct the layer
 identity witness). -/
 theorem reducesPolyMO'_reflexive (X : Type) [encodable X] [LangEncodable X]
+    [BitEncodable X]
     (P : X → Prop) : P ⪯p' P :=
   ⟨⟨id, polyTimeComputable'_id, fun _ => Iff.rfl⟩⟩
 

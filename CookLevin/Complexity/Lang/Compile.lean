@@ -6044,7 +6044,7 @@ The bound shape `Compile.overhead (State.size s + c.cost s)`
 (rather than the pre-decomposition `overhead(size s) * (cost + 1)`)
 honestly accounts for tape growth during execution; see the
 docstring on `Compile.overhead`. -/
-theorem Compile_sound (c : Cmd) (s : State) :
+theorem Compile_sound (c : Cmd) (s : State) (hbit : Compile.BitState s) :
     ∃ cfg,
       runFlatTM (Compile.overhead (State.size s + c.cost s))
           (Compile c)
@@ -6065,7 +6065,7 @@ theorem Compile_polyBound (c : Cmd)
     (h_mono : monotonic costBound)
     (h_bound : ∀ s, c.cost s ≤ costBound (State.size s)) :
     ∃ tmBound : Nat → Nat, inOPoly tmBound ∧ monotonic tmBound ∧
-      ∀ s, ∃ cfg,
+      ∀ s, Compile.BitState s → ∃ cfg,
         runFlatTM (tmBound (State.size s)) (Compile c)
             (initFlatConfig (Compile c) [Compile.encodeTape s]) = some cfg ∧
         haltingStateReached (Compile c) cfg = true ∧
@@ -6080,8 +6080,8 @@ theorem Compile_polyBound (c : Cmd)
     have h1 : costBound a ≤ costBound b := h_mono a b hab
     exact Compile.overhead_mono _ _ (by omega)
   · -- For each `s`, pad the `Compile_sound` budget up to the bound.
-    intro s
-    obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound c s
+    intro s hbit
+    obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound c s hbit
     refine ⟨cfg, ?_, hhalt, hdec⟩
     have hle : Compile.overhead (State.size s + c.cost s)
         ≤ Compile.overhead (State.size s + costBound (State.size s)) :=
@@ -6204,7 +6204,7 @@ rewinding needs a uniquely-detectable left sentinel at index `0` that
 migrate to the leading-sentinel encoding** `encodeTape s = endMark ::
 encodeRegs s ++ [endMark]` (reuse `3`, `sig` stays `4`) — full steps in
 HANDOFF.md "Recommended next step" (1b-0 … 1d). -/
-theorem Compile_run_physical (c : Cmd) (s : State) :
+theorem Compile_run_physical (c : Cmd) (s : State) (hbit : Compile.BitState s) :
     ∃ t : Nat,
       runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
           = some { state_idx := Compile.exit c,
@@ -6234,7 +6234,8 @@ budgets summed over `~cost` fragments.
 The decider bridge (`bitDeciderTM`) reads the answer from register `0` via
 `decodeTape`, which ignores the residue (`decodeTape_encodeTape_append`),
 so the residue is invisible to the decider. -/
-theorem Compile_run_physical_residue (c : Cmd) (s : State) :
+theorem Compile_run_physical_residue (c : Cmd) (s : State)
+    (hbit : Compile.BitState s) :
     ∃ (t : Nat) (res : List Nat),
       Compile.ValidResidue res ∧
       runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
@@ -6302,6 +6303,7 @@ it is `[0]` (reject). Combines the physical run contract of `Compile c` with the
 `sorry`-free gadget run lemma, via `composeFlatTM_run`. (The `+3` is one bridge
 step plus the two gadget steps — step past the leading sentinel, then read.) -/
 theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
+    (hbitst : Compile.BitState s)
     (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
     ∃ cfg,
       runFlatTM (Compile.overhead (State.size s + c.cost s) + 3) (Compile.bitDeciderTM c)
@@ -6309,7 +6311,7 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
       haltingStateReached (Compile.bitDeciderTM c) cfg = true ∧
       cfg.state_idx = (if b = 1 then 1 else 2) + (Compile c).states := by
   obtain ⟨tl0, htl0⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
-  obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ := Compile_run_physical_residue c s
+  obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ := Compile_run_physical_residue c s hbitst
   -- Rewrite the physical exit tape via the encoding lemma (leading sentinel).
   -- The residue trails the encoded output; the gadget reads only positions 0–1,
   -- so fold the residue into the tail `tl := tl0 ++ res`.

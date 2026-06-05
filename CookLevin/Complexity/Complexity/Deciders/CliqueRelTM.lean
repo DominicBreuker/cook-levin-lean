@@ -68,6 +68,8 @@ noncomputable def cliqueRelDecidesLang :
   encodeIn_size := by intro x; sorry  -- TODO(Part3.5-encode-size)
   decides := by sorry                  -- TODO(Part3.5-correctness)
   cost_bound := by intro x; sorry      -- TODO(Part3.5-cost-bound)
+  enc_bit := by intro x; sorry         -- TODO(C2, B′): BitState (cliqueRelEncode x);
+    -- lay out `cliqueRelEncode` unary so it is bit-level. See HANDOFF.md Task 1.
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_cliqueRel :
