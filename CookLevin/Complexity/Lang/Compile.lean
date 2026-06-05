@@ -6425,6 +6425,43 @@ theorem Compile_run_physical_residue (c : Cmd) (s : State) :
          -- Stays poly on the live path (`encodeState x` = 1 reg; `s.length` ≤ const
          -- `regBound`). See HANDOFF.md "Deep feasibility pass".
 
+/-- **Bridge: the residue contract ⇒ `Compile_sound` (PROVEN, the assembly's last
+mile).** Given the residue-tolerant physical run of `Compile c` (exit at
+`Compile.exit c`, tape `encodeTape (c.eval s) ++ res`, halt step `t ≤ overhead`)
+**and** that the output is `BitState`, the `decodeTape`-level `Compile_sound`
+conclusion follows: extend the run to the full `overhead` budget
+(`runFlatTM_extend`, since the exit is a halt state), and decode (the residue is
+invisible — `decodeTape_encodeTape_append`). The `BitState (c.eval s)` premise is
+exactly what `Cmd.eval_preserves_BitState` (PolyTime.lean) now supplies, so once
+`Compile_run_physical_residue` is discharged this lemma closes `Compile_sound`
+mechanically. Stated to take the residue run's components directly so it does not
+depend on the (still-`sorry`) `Compile_run_physical_residue` itself. -/
+theorem Compile.sound_of_run_residue (c : Cmd) (s : State)
+    (hbit_out : Compile.BitState (c.eval s))
+    (t : Nat) (res : List Nat)
+    (hrun : runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
+      = some { state_idx := Compile.exit c,
+               tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] })
+    (ht : t ≤ Compile.overhead (State.size s + c.cost s)) :
+    ∃ cfg,
+      runFlatTM (Compile.overhead (State.size s + c.cost s)) (Compile c)
+          (initFlatConfig (Compile c) [Compile.encodeTape s]) = some cfg ∧
+      haltingStateReached (Compile c) cfg = true ∧
+      Compile.decodeTape cfg = c.eval s := by
+  have hhalt : haltingStateReached (Compile c)
+      { state_idx := Compile.exit c,
+        tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] } = true := by
+    show (Compile c).halt.getD (Compile.exit c) false = true
+    have hex := (compileCmd c).exit_is_halt
+    show (compileCmd c).M.halt.getD (compileCmd c).exit false = true
+    simp only [List.getD, hex, Option.getD]
+  refine ⟨{ state_idx := Compile.exit c,
+            tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] }, ?_, hhalt, ?_⟩
+  · obtain ⟨k, hk⟩ := Nat.le.dest ht
+    rw [← hk]
+    exact runFlatTM_extend hrun hhalt
+  · exact Compile.decodeTape_encodeTape_append (c.eval s) res _ _ hbit_out
+
 /-- The compiled decider machine: run `Compile c`, then the bit-test gadget. The
 gadget converts register `0`'s answer (on the tape) into a distinct halting
 *state*, as `DecidesBy` requires. -/
