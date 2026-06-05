@@ -167,6 +167,51 @@ re-laid UNARY (`replicate n 1`). **Still `enc_bit := sorry`:** `swap`, `map_fst`
 
 ---
 
+## ⚠ Four under-acknowledged C2 obligations (code-audited 2026-06-05b — do not rediscover)
+
+The residue + size-aware-cost design is **internally consistent and the poly bound is
+genuinely TRUE** (verified: `Op.cost` charges every size-growing op — `copy`/`tail`/
+`takeAt`/`dropAt` cost `|src|+1`, `concat` `|src1|+|src2|+1`, `Semantics.lean:75` +
+`Op.size_eval_le`; so physical-tape growth/op ≤ cost/op, max tape `O(size+regCount+
+cost)`, **not** exponential). **No showstopper.** But discharging C2 is bigger than the
+plan below frames it — four obligations beyond Finding A:
+
+1. **`Compile_run_physical_residue` (Compile.lean:6519) is too weak to be its own
+   induction hypothesis.** It is stated with **no incoming residue** (input
+   `[encodeTape s]`), but the proven `compileSeq_sound_physical_residue` threads
+   `res0→res1→res2` — the second fragment runs on `encodeTape mid ++ res1`, *with* the
+   first's residue. So the `seq` case cannot apply the IH to `c2`. **Generalize the
+   obligation to carry an arbitrary incoming `(res0 : List Nat) (ValidResidue res0)`**
+   (output `encodeTape (c.eval s) ++ res_out`); prove the live instance with `res0 = []`.
+   The per-op lemma already is residue-in/out — only the top obligation is wrong-shaped.
+2. **Nothing bounds the physical tape length *including residue*, yet the per-op budgets
+   are quadratic in exactly that.** Per-op budget is `9·L²+9·L+30` with `L = (encodeTape
+   s ++ res_in).length`. But `ValidResidue` constrains only *symbols*, **not length**
+   (Compile.lean:2858); `Cmd.encodeTape_eval_length_le` bounds output *content* only (no
+   residue). So a **new lemma is required: max physical tape ≤ poly(size + regCount +
+   cost)**, proved by charging each op's physical growth to the size-aware cost and
+   threading it through the run. This is **separate from Finding A** (which only covers
+   budget *degree* + register count) and is real work coupled to the budget proof. The
+   generalized obligation's budget should be `overhead(size + s.length + cost + |res0|)`,
+   cubic.
+3. **The branch and loop *machines* are still STUBS — not just their contracts.**
+   `compileForBnd` (1631) and `compileTestBit` (1483, feeding `compileIfBit`'s tester)
+   are `compiledCmd_default`/`branchTester_default` — they do not branch/loop at all yet.
+   The `ifBit`/`forBnd` assembly is gated on **building** a real `compileTestBit`
+   (navigate + `bitReadTM`) and a real `compileForBnd` (a `loopTM` over the bound's unary
+   length that materialises the counter) — each C1/C3 gadget work comparable to a
+   cross-register op, on top of the residue restatement of their contracts.
+4. **Minor couplings (none fatal):** (a) **`consLen` cost under unary** — Task 1's unary
+   `consLen` writes `|lenSrc|` cells (not 1), so `Op.cost (consLen …)` must *also* charge
+   `(s.get lenSrc).length` or obligation #2 breaks for it. (b) **Residue must stay inert**
+   — every gadget's scans/rewinds must stop at the terminator and never read into residue
+   (the point of `rewindTwoPhaseTM`); this is where bugs hide in the move gadget + 7 ops.
+   (c) **Stray halt states** — `joinTwoHalts`/`loopTM` must demote every halt but one or
+   `halt_unique` fails and the op can't be wired into `compileOp` (PR #55 hit a stray
+   state 18; clear/nonEmpty/head already handle it).
+
+---
+
 ## The ordered plan from here
 
 ### 1. Finish Task 1 — make the encodings actually bit-level (unary)
