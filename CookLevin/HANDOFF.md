@@ -255,25 +255,27 @@ two-phase transfer loop, wired per op. **No structural unknowns remain — this 
 mechanical (if large, ~400 LOC) composition work.** Concrete recipe (mirror the
 proven `opHead` stack, Compile.lean:1196–1305, and its run lemma `opHead_run`:5325):
 
-- **Move-tail (the per-bit, branch-free core) = a `composeFlatTM` chain** of proven
-  gadgets, head threaded explicitly: `deleteCarryTM` (ShiftTape; deletes the cell
-  *left* of the head — head must sit one past src's front content cell, so step
-  right once after `navigateAndTestTM_exit_content`; exits at state 6, head deep
-  right, tape `pre ++ t::suf ++ [0]`) ⨾ two-phase rewind to 0 (`ScanLeft.rewindTwoPhaseTM`
-  / the `rewindBracket` used by `opAppendBitRewind`, Compile.lean:582) ⨾
-  `appendAtTM (bit+1)` (AppendGadget; `appendAt_run`:513) ⨾ rewind to 0. Its run
-  lemma chains the 4 component run lemmas via `composeFlatTM_run` + the
-  `composeFlatTM_no_early_halt` trajectory — **the exact pattern of
-  `opAppendBit_physical_residue` (Compile.lean ~3970), just with `deleteCarryTM`
-  prepended.** ⚠ append symbol is **`bit+1`** (encoding shift), not `bit`.
-- **Move-one-bit = nested branch over the bit**, *exactly* `opHead`'s shape: outer
-  `branchComposeFlatTM (navigateAndTestTM src) … (content vs delim)`; inner
-  `branchComposeFlatTM` on `bitReadTM`'s two exits (state 1 = bit 0, state 2 = bit 1),
-  each feeding the move-tail with the matching append symbol; close with two
-  `joinTwoHalts` (copy `headRawM`/`opInnerBit`'s ~14 invariant lemmas: `_valid`,
-  `_tapes`, `_sig`, `_halt_only`, `_h1_is_halt`, `_h1_lt`, `_h2_is_halt`, `_h2_lt`,
-  `_h1_ne_h2`). **Re-`#eval` the assembled machine end-to-end before the run lemma**
-  (handoff already validated the tape transform `[3,2,1,0,2,0,3] → [3,1,0,2,2,0,3,0]`).
+- ✅ **Move-tail (the per-bit, branch-free core) is now PROVEN** —
+  `Compile.moveTailM` / `Compile.moveTailM_run` (Compile.lean, axiom-clean). It
+  reuses `stepDeleteRewindRawTM` (the clear chain's delete-front-cell+rewind, so no
+  raw `deleteCarryTM`/head-arithmetic is needed) composed with `opAppendBitRewind
+  (bit+1)`; started at register `src`'s **content head** `1 + |encodeRegs (s.take
+  src)|`, it halts at head 0 with `encodeTape ((s.set src (s.get src).tail).set dst
+  (… ++ [bit])) ++ (res ++ [0])`, no-early-halt, `≤ 7·L+18`. Proved by mirroring
+  `clearAppendM_run` with `stepDeleteRewind_run` in the M₁ slot. ⚠ append symbol is
+  **`bit+1`** (it takes `bit`, uses `opAppendBitRewind (bit+1)`).
+- **Move-one-bit = nested branch over the bit (REMAINING)** — *exactly* `opHead`'s
+  shape, now with `moveTailM` as the leaf. Inner: `branchComposeFlatTM bitReadTM
+  (moveTailM dst src 0) (moveTailM dst src 1) bitReadTM_exit_b0 bitReadTM_exit_b1`
+  (run lemma: case `interval_cases` on the bit, feed `moveTailM_run` to
+  `branchComposeFlatTM_run_pos/_neg` — mirror `opHead_run`:5325, which does this with
+  `nonEmptyBranchBody_run`). `bitReadTM` reads at the content head **without moving**,
+  so `moveTailM` starts exactly where `bitReadTM` leaves the head — the seam matches.
+  Outer: `branchComposeFlatTM (navigateAndTestTM src) innerBit justRewindTM
+  content-exit delim-exit` (delim = `src` empty ⇒ nothing to move, just rewind). Close
+  both levels with `joinTwoHalts`; copy `headRawM`/`opInnerBit`'s ~14 invariant lemmas
+  (`_valid`/`_tapes`/`_sig`/`_halt_only`/`_h1_is_halt`/`_h1_lt`/`_h2_is_halt`/`_h2_lt`/
+  `_h1_ne_h2`) verbatim. **Re-`#eval` the assembled machine before the run lemma.**
 - **Per-op wiring** (after Task 1 adds the scratch operand `sc`): the move-one-bit is
   the body of two `clear`-style `loopTM`s (terminate-by-emptying) — mirror
   `clearRegionTM_run` (Compile.lean:4148, the `loopTM` chain with the quadratic
