@@ -5639,6 +5639,147 @@ theorem Compile.moveBitM3_exit_lt (b dst1 dst2 : Nat) :
       < (Compile.moveBitM2TM 0 dst1).states + ((AppendGadget.appendAtTM 1 dst2).states + 8)
   omega
 
+/-- **The single-bit DUAL-transfer engine run (Risk C2).** From `src`'s content
+start with front bit `b` (`s.get src = b :: cs`), `moveBitM3TM b dst1 dst2` deletes
+`src`'s front cell, appends `b` to the end of **both** `dst1` and `dst2`, and
+two-phase-rewinds, landing at `moveBitM3_exit` with the tape
+`encodeTape (((s.set src cs).set dst1 (s.get dst1 ++ [b])).set dst2 (s.get dst2 ++ [b]))
+  ++ (res ++ [0])` and head `0`. Composes `moveBitM2_run` (delete + append to `dst1`)
+with `appendBitTwoPhase_run` (append to `dst2`). -/
+theorem Compile.moveBitM3_run (s : State) (src dst1 dst2 : Var) (b : Nat) (cs : List Nat)
+    (hb : b ≤ 1) (hsd1 : src ≠ dst1) (hsd2 : src ≠ dst2) (hd12 : dst1 ≠ dst2)
+    (hsrc : src < s.length) (hdst1 : dst1 < s.length) (hdst2 : dst2 < s.length)
+    (hbit : Compile.BitState s) (hcons : s.get src = b :: cs) (res : List Nat)
+    (hres : Compile.ValidResidue res) :
+    ∃ t, runFlatTM t (Compile.moveBitM3TM b dst1 dst2)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                     Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.moveBitM3_exit dst1 dst2,
+               tapes := [([], 0,
+                 Compile.encodeTape
+                     (((s.set src cs).set dst1 (s.get dst1 ++ [b])).set dst2 (s.get dst2 ++ [b]))
+                   ++ (res ++ [0]))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.moveBitM3TM b dst1 dst2)
+            { state_idx := 0,
+              tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                         Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached (Compile.moveBitM3TM b dst1 dst2) ck = false)
+    ∧ t ≤ 10 * (Compile.encodeTape s ++ res).length + 30 := by
+  -- Phase A: moveBitM2TM b dst1 (delete src front, append b to dst1).
+  obtain ⟨tA, hA, hA_traj, hA_bud⟩ :=
+    Compile.moveBitM2_run s src dst1 b cs hb hsd1 hsrc hdst1 hbit hcons res hres
+  -- Phase B ingredients (on `mid`, appending b to dst2).
+  have hbitA : Compile.BitState (s.set src cs) := by
+    have := Compile.BitState_set_tail s src hbit hsrc
+    rwa [show (s.get src).tail = cs from by rw [hcons, List.tail_cons]] at this
+  have hgd1 : (s.set src cs).get dst1 = s.get dst1 :=
+    Compile.get_set_ne s src cs dst1 hsrc (Ne.symm hsd1)
+  have hdst1A : dst1 < (s.set src cs).length := by
+    rw [Compile.length_set s src cs hsrc]; exact hdst1
+  have hbitmid : Compile.BitState ((s.set src cs).set dst1 (s.get dst1 ++ [b])) := by
+    refine Compile.BitState_set _ dst1 _ hbitA hdst1A ?_
+    intro x hx; rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.BitState_get _ dst1 hbitA hdst1A x (by rw [hgd1]; exact hx)
+    · simp only [List.mem_singleton] at hx; subst hx; omega
+  have hdst2mid : dst2 < ((s.set src cs).set dst1 (s.get dst1 ++ [b])).length := by
+    rw [Compile.length_set _ dst1 _ hdst1A, Compile.length_set s src cs hsrc]; exact hdst2
+  have hgd2 : ((s.set src cs).set dst1 (s.get dst1 ++ [b])).get dst2 = s.get dst2 := by
+    rw [Compile.get_set_ne (s.set src cs) dst1 (s.get dst1 ++ [b]) dst2 hdst1A (Ne.symm hd12),
+        Compile.get_set_ne s src cs dst2 hsrc (Ne.symm hsd2)]
+  have hres1 : Compile.ValidResidue (res ++ [0]) := by
+    apply Compile.ValidResidue_append _ _ hres; intro x hx
+    simp only [List.mem_singleton] at hx; subst hx; exact ⟨by omega, by decide⟩
+  obtain ⟨tB, hB, hB_traj, hB_bud⟩ :=
+    Compile.appendBitTwoPhase_run b hb ((s.set src cs).set dst1 (s.get dst1 ++ [b])) dst2
+      hbitmid hdst2mid (res ++ [0]) hres1
+  rw [hgd2] at hB
+  -- length: phase A's exit tape is one cell longer than the input tape.
+  have hmidlen : (Compile.encodeTape ((s.set src cs).set dst1 (s.get dst1 ++ [b])) ++ (res ++ [0])).length
+      = (Compile.encodeTape s ++ res).length + 1 := by
+    have e1 := Compile.encodeTape_set_length s src cs hsrc
+    have e2 := Compile.encodeTape_set_length (s.set src cs) dst1 (s.get dst1 ++ [b]) hdst1A
+    rw [hgd1] at e2
+    rw [hcons] at e1
+    simp only [List.length_append, List.length_cons, List.length_singleton, List.length_nil] at e1 e2 ⊢
+    omega
+  -- compose: moveBitM2TM b dst1 ⨾ appendAtThenTwoPhaseRewindTM (b+1) dst2.
+  set right₁ : List Nat :=
+    Compile.encodeTape ((s.set src cs).set dst1 (s.get dst1 ++ [b])) ++ (res ++ [0]) with hr1
+  have hvalid1 : validFlatTM (Compile.moveBitM2TM b dst1) := Compile.moveBitM2TM_valid b dst1 hb
+  have hvalid2 : validFlatTM (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2) :=
+    AppendGadget.appendAtThenTwoPhaseRewindTM_valid (b + 1) (by omega) dst2
+  have hexit_lt : Compile.moveBitM2_exit dst1 < (Compile.moveBitM2TM b dst1).states :=
+    Compile.moveBitM2_exit_lt b dst1
+  have hcfg0lt : (0 : Nat) < (Compile.moveBitM2TM b dst1).states := by
+    have := Compile.moveBitM2_exit_lt b dst1; omega
+  have hM2start : (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2).start = 0 := by
+    show (composeFlatTM (AppendGadget.appendAtTM (b + 1) dst2) (ScanLeft.rewindTwoPhaseTM 4 3)
+          (AppendGadget.appendAtTM_exit dst2)).start = 0
+    rw [composeFlatTM_start, AppendGadget.appendAtTM_start]
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right₁) = some v →
+      v < max (Compile.moveBitM2TM b dst1).sig
+          (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2).sig := by
+    intro v hv
+    rw [hr1, show currentTapeSymbol (([] : List Nat), 0,
+          Compile.encodeTape ((s.set src cs).set dst1 (s.get dst1 ++ [b])) ++ (res ++ [0]))
+        = some 3 from rfl] at hv
+    rw [show max (Compile.moveBitM2TM b dst1).sig
+          (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2).sig = 4 from by
+        rw [Compile.moveBitM2TM_sig, AppendGadget.appendAtThenTwoPhaseRewindTM_sig]; rfl]
+    have : v = 3 := (Option.some.inj hv).symm
+    omega
+  have h_traj1 : ∀ k, k < tA → ∀ ck,
+      runFlatTM k (Compile.moveBitM2TM b dst1)
+          { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                                       Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ Compile.moveBitM2_exit dst1 ∧
+      haltingStateReached (Compile.moveBitM2TM b dst1) ck = false := by
+    intro k hk ck hck
+    have hh := hA_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.moveBitM2_exit_is_halt b dst1) hh, hh⟩
+  have h_app_traj' : ∀ k, k < tB → ∀ ck,
+      runFlatTM k (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2)
+          { state_idx := (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2).start,
+            tapes := [([], 0, right₁)] } = some ck →
+      haltingStateReached (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2) ck = false := by
+    rw [hM2start, hr1]; exact hB_traj
+  have h_halt2 : haltingStateReached (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2)
+      { state_idx := 6 + (AppendGadget.appendAtTM (b + 1) dst2).states,
+        tapes := [([], 0,
+          Compile.encodeTape (((s.set src cs).set dst1 (s.get dst1 ++ [b])).set dst2 (s.get dst2 ++ [b]))
+            ++ (res ++ [0]))] } = true := by
+    rw [show (6 : Nat) + (AppendGadget.appendAtTM (b + 1) dst2).states
+          = (AppendGadget.appendAtTM (b + 1) dst2).states + 6 from Nat.add_comm ..]
+    exact Compile.haltingStateReached_of_halt
+      (AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt (b + 1) dst2)
+  have hmoveeq : Compile.moveBitM3TM b dst1 dst2
+      = composeFlatTM (Compile.moveBitM2TM b dst1)
+          (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2) (Compile.moveBitM2_exit dst1) := rfl
+  have hstate_eq : Compile.moveBitM3_exit dst1 dst2
+      = (6 + (AppendGadget.appendAtTM (b + 1) dst2).states) + (Compile.moveBitM2TM b dst1).states := by
+    show (Compile.moveBitM2TM 0 dst1).states + ((AppendGadget.appendAtTM 1 dst2).states + 6)
+        = (6 + (AppendGadget.appendAtTM (b + 1) dst2).states) + (Compile.moveBitM2TM b dst1).states
+    rw [Compile.moveBitM2TM_states_eq b dst1, Compile.appendAtTM_states_eq (b + 1) dst2]
+    omega
+  have hmain := composeFlatTM_run hvalid1 hvalid2 hexit_lt
+    { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                                 Compile.encodeTape s ++ res)] }
+    hcfg0lt [] 0 right₁ hsym hA h_traj1
+    (by rw [hM2start]; exact hB) h_halt2
+  refine ⟨tA + 1 + tB, ?_, ?_, ?_⟩
+  · rw [hmoveeq, hstate_eq]; exact hmain.1
+  · intro k hk ck hck
+    rw [hmoveeq] at hck ⊢
+    exact composeFlatTM_no_early_halt hvalid1 hvalid2 hexit_lt
+      { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                                   Compile.encodeTape s ++ res)] }
+      hcfg0lt [] 0 right₁ hsym hA h_traj1 h_app_traj' k hk ck hck
+  · rw [hr1, hmidlen] at hB_bud
+    omega
+
 /-- Content branch (src non-empty): read the front bit, then run the matching
 dual-bit transfer engine. The two bit paths exit at distinct states, merged by
 `joinTwoHalts` below. -/
