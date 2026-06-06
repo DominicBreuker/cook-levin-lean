@@ -5563,6 +5563,278 @@ theorem Compile.moveRegionTM_sig (src dst : Nat) : (Compile.moveRegionTM src dst
   rw [Compile.moveContentTM_sig dst]
   rfl
 
+/-! ### The dual-target *duplicating* move gadget `moveRegion2TM` (Risk C2)
+
+`moveRegion2TM src dst1 dst2` transfers `src`'s content (FIFO, one bit/iter) to the
+**end of BOTH** `dst1` and `dst2`, emptying `src`. It is the duplicating primitive
+the `copy`/`tail`/`concat` ops need — a single-target move (`moveRegionTM`) cannot
+duplicate data (the number of copies is invariant). The structure mirrors
+`moveRegionTM` exactly; the content branch appends the read bit to **two** registers
+instead of one (`moveBitM3TM = moveBitM2TM b dst1 ⨾ appendAtThenTwoPhaseRewind(b+1, dst2)`).
+A TM-`#eval` probe confirms the dual-append body yields the exact `encodeTape`
+(head→`0`, clean halt). Only the structural scaffolding (validity/halts) is built
+here; the run lemma `moveRegion2TM_run` mirrors `moveRegionTM_run` (a three-register
+coupled invariant) and is the next step. -/
+
+/-- Single-bit dual-transfer engine for a fixed bit `b`: run `moveBitM2TM` (delete
+`src`'s front, append `b+1` to `dst1`, rewind), then append `b+1` to `dst2` and
+two-phase-rewind. -/
+def Compile.moveBitM3TM (b dst1 dst2 : Nat) : FlatTM :=
+  composeFlatTM (Compile.moveBitM2TM b dst1)
+    (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2) (Compile.moveBitM2_exit dst1)
+
+/-- The surviving (found) exit of `moveBitM3TM` (b-independent: `moveBitM2TM`'s state
+count and `appendAtTM`'s are both b-independent). -/
+def Compile.moveBitM3_exit (dst1 dst2 : Nat) : Nat :=
+  (Compile.moveBitM2TM 0 dst1).states + ((AppendGadget.appendAtTM 1 dst2).states + 6)
+
+/-- `moveBitM2TM`'s state count does not depend on the bit `b`. -/
+theorem Compile.moveBitM2TM_states_eq (b dst : Nat) :
+    (Compile.moveBitM2TM b dst).states = (Compile.moveBitM2TM 0 dst).states := by
+  show (composeFlatTM ClearGadget.stepDeleteRewindRawTM
+        (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst)
+        ClearGadget.stepDeleteRewindTM_exit).states
+      = (composeFlatTM ClearGadget.stepDeleteRewindRawTM
+        (AppendGadget.appendAtThenTwoPhaseRewindTM (0 + 1) dst)
+        ClearGadget.stepDeleteRewindTM_exit).states
+  rw [composeFlatTM_states, composeFlatTM_states,
+      AppendGadget.appendAtThenTwoPhaseRewindTM_states,
+      AppendGadget.appendAtThenTwoPhaseRewindTM_states,
+      Compile.appendAtTM_states_eq (b + 1) dst, Compile.appendAtTM_states_eq (0 + 1) dst]
+
+theorem Compile.moveBitM3TM_tapes (b dst1 dst2 : Nat) :
+    (Compile.moveBitM3TM b dst1 dst2).tapes = 1 := by
+  rw [Compile.moveBitM3TM, composeFlatTM_tapes]; exact Compile.moveBitM2TM_tapes b dst1
+
+theorem Compile.moveBitM3TM_sig (b dst1 dst2 : Nat) :
+    (Compile.moveBitM3TM b dst1 dst2).sig = 4 := by
+  rw [Compile.moveBitM3TM, composeFlatTM_sig, Compile.moveBitM2TM_sig,
+      AppendGadget.appendAtThenTwoPhaseRewindTM_sig]; rfl
+
+theorem Compile.moveBitM3TM_valid (b dst1 dst2 : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.moveBitM3TM b dst1 dst2) :=
+  composeFlatTM_valid (Compile.moveBitM2TM b dst1)
+    (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2) (Compile.moveBitM2_exit dst1)
+    (Compile.moveBitM2TM_valid b dst1 hb)
+    (AppendGadget.appendAtThenTwoPhaseRewindTM_valid (b + 1) (by omega) dst2)
+    (Compile.moveBitM2_exit_lt b dst1)
+    (Compile.moveBitM2TM_tapes b dst1)
+    (AppendGadget.appendAtThenTwoPhaseRewindTM_tapes (b + 1) dst2)
+
+theorem Compile.moveBitM3_exit_is_halt (b dst1 dst2 : Nat) :
+    (Compile.moveBitM3TM b dst1 dst2).halt[Compile.moveBitM3_exit dst1 dst2]? = some true := by
+  have h := ScanLeft.composeFlatTM_halt_some_intro (Compile.moveBitM2TM b dst1)
+    (AppendGadget.appendAtThenTwoPhaseRewindTM (b + 1) dst2) (Compile.moveBitM2_exit dst1)
+    ((AppendGadget.appendAtTM (b + 1) dst2).states + 6)
+    (AppendGadget.appendAtThenTwoPhaseRewindTM_exit_is_halt (b + 1) dst2)
+  rw [Compile.appendAtTM_states_eq (b + 1) dst2, Compile.moveBitM2TM_states_eq b dst1] at h
+  exact h
+
+theorem Compile.moveBitM3_exit_lt (b dst1 dst2 : Nat) :
+    Compile.moveBitM3_exit dst1 dst2 < (Compile.moveBitM3TM b dst1 dst2).states := by
+  rw [Compile.moveBitM3TM, composeFlatTM_states, Compile.moveBitM2TM_states_eq b dst1,
+      AppendGadget.appendAtThenTwoPhaseRewindTM_states, Compile.appendAtTM_states_eq (b + 1) dst2,
+      show (ScanLeft.rewindTwoPhaseTM 4 3).states = 8 from rfl]
+  show (Compile.moveBitM2TM 0 dst1).states + ((AppendGadget.appendAtTM 1 dst2).states + 6)
+      < (Compile.moveBitM2TM 0 dst1).states + ((AppendGadget.appendAtTM 1 dst2).states + 8)
+  omega
+
+/-- Content branch (src non-empty): read the front bit, then run the matching
+dual-bit transfer engine. The two bit paths exit at distinct states, merged by
+`joinTwoHalts` below. -/
+def Compile.moveContent2RawTM (dst1 dst2 : Nat) : FlatTM :=
+  branchComposeFlatTM Compile.bitReadTM
+    (Compile.moveBitM3TM 0 dst1 dst2) (Compile.moveBitM3TM 1 dst1 dst2)
+    Compile.bitReadTM_exit_b0 Compile.bitReadTM_exit_b1
+
+def Compile.moveContent2Exit0 (dst1 dst2 : Nat) : Nat :=
+  Compile.bitReadTM.states + Compile.moveBitM3_exit dst1 dst2
+
+def Compile.moveContent2Exit1 (dst1 dst2 : Nat) : Nat :=
+  Compile.bitReadTM.states + (Compile.moveBitM3TM 0 dst1 dst2).states + Compile.moveBitM3_exit dst1 dst2
+
+/-- Content branch with the two bit-exits merged into one (`moveContent2Exit0`). -/
+def Compile.moveContent2TM (dst1 dst2 : Nat) : FlatTM :=
+  Compile.joinTwoHalts (Compile.moveContent2RawTM dst1 dst2)
+    (Compile.moveContent2Exit0 dst1 dst2) (Compile.moveContent2Exit1 dst1 dst2)
+
+theorem Compile.moveContent2RawTM_tapes (dst1 dst2 : Nat) :
+    (Compile.moveContent2RawTM dst1 dst2).tapes = 1 := by
+  rw [Compile.moveContent2RawTM, branchComposeFlatTM_tapes]; exact Compile.bitReadTM_tapes
+
+theorem Compile.moveContent2TM_tapes (dst1 dst2 : Nat) :
+    (Compile.moveContent2TM dst1 dst2).tapes = 1 := by
+  rw [Compile.moveContent2TM, Compile.joinTwoHalts_tapes]
+  exact Compile.moveContent2RawTM_tapes dst1 dst2
+
+theorem Compile.moveContent2RawTM_sig (dst1 dst2 : Nat) :
+    (Compile.moveContent2RawTM dst1 dst2).sig = 4 := by
+  rw [Compile.moveContent2RawTM, branchComposeFlatTM_sig, Compile.bitReadTM_sig,
+      Compile.moveBitM3TM_sig 0 dst1 dst2, Compile.moveBitM3TM_sig 1 dst1 dst2]; rfl
+
+theorem Compile.moveContent2TM_sig (dst1 dst2 : Nat) :
+    (Compile.moveContent2TM dst1 dst2).sig = 4 := by
+  rw [Compile.moveContent2TM, joinTwoHalts_sig]; exact Compile.moveContent2RawTM_sig dst1 dst2
+
+theorem Compile.moveContent2RawTM_valid (dst1 dst2 : Nat) :
+    validFlatTM (Compile.moveContent2RawTM dst1 dst2) :=
+  branchComposeFlatTM_valid _ _ _ _ _ Compile.bitReadTM_valid
+    (Compile.moveBitM3TM_valid 0 dst1 dst2 (by decide))
+    (Compile.moveBitM3TM_valid 1 dst1 dst2 (by decide))
+    (by rw [Compile.bitReadTM_states, Compile.bitReadTM_exit_b0]; decide)
+    (by rw [Compile.bitReadTM_states, Compile.bitReadTM_exit_b1]; decide)
+    Compile.bitReadTM_tapes (Compile.moveBitM3TM_tapes 0 dst1 dst2)
+    (Compile.moveBitM3TM_tapes 1 dst1 dst2)
+
+theorem Compile.moveContent2Exit0_is_halt (dst1 dst2 : Nat) :
+    (Compile.moveContent2RawTM dst1 dst2).halt[Compile.moveContent2Exit0 dst1 dst2]? = some true := by
+  rw [Compile.moveContent2Exit0, Compile.moveContent2RawTM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.moveBitM3TM_valid 0 dst1 dst2 (by decide)) (Compile.moveBitM3_exit_lt 0 dst1 dst2)
+    (Compile.moveBitM3_exit_is_halt 0 dst1 dst2)
+
+theorem Compile.moveContent2Exit1_is_halt (dst1 dst2 : Nat) :
+    (Compile.moveContent2RawTM dst1 dst2).halt[Compile.moveContent2Exit1 dst1 dst2]? = some true := by
+  rw [Compile.moveContent2Exit1, Compile.moveContent2RawTM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.moveBitM3TM_valid 0 dst1 dst2 (by decide)) (Compile.moveBitM3_exit_is_halt 1 dst1 dst2)
+
+theorem Compile.moveContent2Exit0_ne_exit1 (dst1 dst2 : Nat) :
+    Compile.moveContent2Exit0 dst1 dst2 ≠ Compile.moveContent2Exit1 dst1 dst2 := by
+  show Compile.bitReadTM.states + Compile.moveBitM3_exit dst1 dst2
+      ≠ Compile.bitReadTM.states + (Compile.moveBitM3TM 0 dst1 dst2).states
+        + Compile.moveBitM3_exit dst1 dst2
+  have h0 : 0 < (Compile.moveBitM3TM 0 dst1 dst2).states := by
+    have := Compile.moveBitM3_exit_lt 0 dst1 dst2; omega
+  omega
+
+theorem Compile.moveContent2Exit0_lt (dst1 dst2 : Nat) :
+    Compile.moveContent2Exit0 dst1 dst2 < (Compile.moveContent2RawTM dst1 dst2).states := by
+  rw [Compile.moveContent2Exit0, Compile.moveContent2RawTM, branchComposeFlatTM_states]
+  have := Compile.moveBitM3_exit_lt 0 dst1 dst2; omega
+
+theorem Compile.moveContent2Exit1_lt (dst1 dst2 : Nat) :
+    Compile.moveContent2Exit1 dst1 dst2 < (Compile.moveContent2RawTM dst1 dst2).states := by
+  rw [Compile.moveContent2Exit1, Compile.moveContent2RawTM, branchComposeFlatTM_states]
+  have := Compile.moveBitM3_exit_lt 1 dst1 dst2; omega
+
+theorem Compile.moveContent2TM_valid (dst1 dst2 : Nat) :
+    validFlatTM (Compile.moveContent2TM dst1 dst2) :=
+  joinTwoHalts_valid _ _ _ (Compile.moveContent2RawTM_valid dst1 dst2)
+    (Compile.moveContent2Exit0_lt dst1 dst2) (Compile.moveContent2Exit1_lt dst1 dst2)
+    (Compile.moveContent2RawTM_tapes dst1 dst2)
+
+theorem Compile.moveContent2TM_exit0_is_halt (dst1 dst2 : Nat) :
+    (Compile.moveContent2TM dst1 dst2).halt[Compile.moveContent2Exit0 dst1 dst2]? = some true :=
+  joinTwoHalts_h1_is_halt _ _ _ (Compile.moveContent2Exit0_ne_exit1 dst1 dst2)
+    (Compile.moveContent2Exit0_is_halt dst1 dst2)
+
+theorem Compile.moveContent2Exit0_lt_states (dst1 dst2 : Nat) :
+    Compile.moveContent2Exit0 dst1 dst2 < (Compile.moveContent2TM dst1 dst2).states := by
+  rw [Compile.moveContent2TM, joinTwoHalts_states]; exact Compile.moveContent2Exit0_lt dst1 dst2
+
+/-- The loop body: navigate to `src`, branch content (move one bit to both targets)
+vs delim (src empty → rewind & stop). -/
+def Compile.moveBody2RawTM (src dst1 dst2 : Nat) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.navigateAndTestTM src) (Compile.moveContent2TM dst1 dst2)
+    ClearGadget.justRewindTM
+    (ClearGadget.navigateAndTestTM_exit_content src) (ClearGadget.navigateAndTestTM_exit_delim src)
+
+def Compile.moveBody2RawTM_exitLoop (src dst1 dst2 : Nat) : Nat :=
+  (ClearGadget.navigateAndTestTM src).states + Compile.moveContent2Exit0 dst1 dst2
+
+def Compile.moveBody2RawTM_exitDone (src dst1 dst2 : Nat) : Nat :=
+  (ClearGadget.navigateAndTestTM src).states + (Compile.moveContent2TM dst1 dst2).states
+    + ClearGadget.justRewindTM_exit
+
+/-- The full dual-target move gadget: loop the body until `src` empties. -/
+def Compile.moveRegion2TM (src dst1 dst2 : Nat) : FlatTM :=
+  loopTM (Compile.moveBody2RawTM src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone src dst1 dst2) (Compile.moveBody2RawTM_exitLoop src dst1 dst2)
+
+/-- The single halt state of `moveRegion2TM` (the `loopTM` done-exit). -/
+def Compile.moveRegion2TM_exit (src dst1 dst2 : Nat) : Nat :=
+  (Compile.moveBody2RawTM src dst1 dst2).states
+
+theorem Compile.moveBody2RawTM_tapes (src dst1 dst2 : Nat) :
+    (Compile.moveBody2RawTM src dst1 dst2).tapes = 1 := by
+  rw [Compile.moveBody2RawTM, branchComposeFlatTM_tapes]
+  exact ClearGadget.navigateAndTestTM_tapes src
+
+theorem Compile.moveBody2RawTM_valid (src dst1 dst2 : Nat) :
+    validFlatTM (Compile.moveBody2RawTM src dst1 dst2) :=
+  branchComposeFlatTM_valid _ _ _ _ _ (ClearGadget.navigateAndTestTM_valid src)
+    (Compile.moveContent2TM_valid dst1 dst2) ClearGadget.justRewindTM_valid
+    (ClearGadget.navigateAndTestTM_exit_content_lt src)
+    (ClearGadget.navigateAndTestTM_exit_delim_lt src)
+    (ClearGadget.navigateAndTestTM_tapes src) (Compile.moveContent2TM_tapes dst1 dst2)
+    ClearGadget.justRewindTM_tapes
+
+theorem Compile.moveBody2RawTM_exitLoop_is_halt (src dst1 dst2 : Nat) :
+    (Compile.moveBody2RawTM src dst1 dst2).halt[Compile.moveBody2RawTM_exitLoop src dst1 dst2]?
+      = some true := by
+  rw [Compile.moveBody2RawTM_exitLoop, Compile.moveBody2RawTM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.moveContent2TM_valid dst1 dst2) (Compile.moveContent2Exit0_lt_states dst1 dst2)
+    (Compile.moveContent2TM_exit0_is_halt dst1 dst2)
+
+theorem Compile.moveBody2RawTM_exitDone_is_halt (src dst1 dst2 : Nat) :
+    (Compile.moveBody2RawTM src dst1 dst2).halt[Compile.moveBody2RawTM_exitDone src dst1 dst2]?
+      = some true := by
+  rw [Compile.moveBody2RawTM_exitDone, Compile.moveBody2RawTM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.moveContent2TM_valid dst1 dst2)
+    (show ClearGadget.justRewindTM.halt[ClearGadget.justRewindTM_exit]? = some true from rfl)
+
+theorem Compile.moveBody2RawTM_exitLoop_lt (src dst1 dst2 : Nat) :
+    Compile.moveBody2RawTM_exitLoop src dst1 dst2 < (Compile.moveBody2RawTM src dst1 dst2).states := by
+  rw [Compile.moveBody2RawTM_exitLoop, Compile.moveBody2RawTM, branchComposeFlatTM_states]
+  have := Compile.moveContent2Exit0_lt_states dst1 dst2; omega
+
+theorem Compile.moveBody2RawTM_exitDone_lt (src dst1 dst2 : Nat) :
+    Compile.moveBody2RawTM_exitDone src dst1 dst2 < (Compile.moveBody2RawTM src dst1 dst2).states := by
+  rw [Compile.moveBody2RawTM_exitDone, Compile.moveBody2RawTM, branchComposeFlatTM_states]
+  show (ClearGadget.navigateAndTestTM src).states + (Compile.moveContent2TM dst1 dst2).states
+      + ClearGadget.justRewindTM_exit
+    < (ClearGadget.navigateAndTestTM src).states + (Compile.moveContent2TM dst1 dst2).states
+      + ClearGadget.justRewindTM.states
+  show _ + _ + 1 < _ + _ + 3; omega
+
+theorem Compile.moveBody2RawTM_exitDone_ne_exitLoop (src dst1 dst2 : Nat) :
+    Compile.moveBody2RawTM_exitDone src dst1 dst2 ≠ Compile.moveBody2RawTM_exitLoop src dst1 dst2 := by
+  rw [Compile.moveBody2RawTM_exitDone, Compile.moveBody2RawTM_exitLoop]
+  have := Compile.moveContent2Exit0_lt_states dst1 dst2; omega
+
+theorem Compile.moveRegion2TM_tapes (src dst1 dst2 : Nat) :
+    (Compile.moveRegion2TM src dst1 dst2).tapes = 1 := by
+  rw [Compile.moveRegion2TM, loopTM_tapes]; exact Compile.moveBody2RawTM_tapes src dst1 dst2
+
+theorem Compile.moveRegion2TM_start (src dst1 dst2 : Nat) :
+    (Compile.moveRegion2TM src dst1 dst2).start = 0 := by
+  show (Compile.moveBody2RawTM src dst1 dst2).start = 0
+  show (branchComposeFlatTM _ _ _ _ _).start = 0
+  rw [branchComposeFlatTM_start]; exact ClearGadget.navigateAndTestTM_start src
+
+/-- **Validity of `moveRegion2TM`.** Mirrors `moveRegionTM_valid`: a `loopTM` over
+the valid dual-target body. -/
+theorem Compile.moveRegion2TM_valid (src dst1 dst2 : Nat) :
+    validFlatTM (Compile.moveRegion2TM src dst1 dst2) :=
+  loopTM_valid (Compile.moveBody2RawTM src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone src dst1 dst2) (Compile.moveBody2RawTM_exitLoop src dst1 dst2)
+    (Compile.moveBody2RawTM_valid src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone_lt src dst1 dst2) (Compile.moveBody2RawTM_exitLoop_lt src dst1 dst2)
+    (Compile.moveBody2RawTM_tapes src dst1 dst2)
+
+theorem Compile.moveRegion2TM_sig (src dst1 dst2 : Nat) :
+    (Compile.moveRegion2TM src dst1 dst2).sig = 4 := by
+  rw [Compile.moveRegion2TM, loopTM_sig]
+  show (Compile.moveBody2RawTM src dst1 dst2).sig = 4
+  show (branchComposeFlatTM _ _ _ _ _).sig = 4
+  rw [branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig]
+  show max 4 (max (Compile.moveContent2TM dst1 dst2).sig ClearGadget.justRewindTM.sig) = 4
+  rw [Compile.moveContent2TM_sig dst1 dst2]
+  rfl
+
 /-- **Move loop body — done branch (`src` empty).** Mirrors `clearBody_done_run`:
 navigate to `src`, find the delimiter (empty), rewind to head `0`, tape unchanged,
 landing at `moveBodyRawTM_exitDone`. The content machine `moveContentTM dst` is the
