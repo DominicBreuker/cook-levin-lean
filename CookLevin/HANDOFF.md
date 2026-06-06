@@ -4,6 +4,20 @@ Authoritative status & the full risk register live in [`../README.md`](../README
 and [`ROADMAP.md`](ROADMAP.md). **This file is the working plan for the compiler
 (Risk C2)** — the one obligation the whole NP-completeness bridge sits on.
 
+We now work **multi-session in two alternating work streams**. At the start of
+each session the owner says **`bottom-up`** or **`top-down`**:
+
+- **Bottom-up** — build the gadgets/lemmas the contracts need, iterating toward
+  the final proofs (the way we always worked).
+- **Top-down** — work directly on the final pieces to assemble, *design* their
+  proofs, and create whatever supporting lemmas/gadgets we need with `sorry` (if
+  they look reasonably provable). Surfaces gaps *before* we waste effort.
+
+The two streams **share one interface** — the per-fragment *physical-residue
+contracts* — and are meant to **meet in the middle** there. Keep both stream
+sections below concrete and forward-looking. When you rewrite this file at the
+end of a session, reflect the whole picture so the streams stay aligned.
+
 ---
 
 ## The bigger picture (read once)
@@ -17,8 +31,20 @@ with explicit **cost** semantics) compiled **once** to a single-tape `FlatTM`
 
 This is **Risk C2**. The framework bridge (`toFrameworkWitness'`, `inNPLang_to_inNP`)
 and the live `sat_NP : inNP SAT` all reduce to one obligation:
-**`Compile_sound` / `Compile_run_physical_residue`** (still `sorry`). Discharging it
+**`Compile_run_physical_residue` ⇒ `Compile_sound`** (still `sorry`). Discharging it
 is the job. The design is **settled (Option B′)**; execution is underway.
+
+**The whole live dependency chain (top to bottom):**
+```
+sat_NP → inNPLang_to_inNP → Compile.bitDecider_run            (Compile.lean:9015)
+       → Compile_run_physical_residue                          (Compile.lean:8910, SORRY — THE OBLIGATION)
+       → [per-fragment physical-residue contracts]             ← THE SHARED INTERFACE
+            ├ compileOp_sound_physical_residue                 (Compile.lean:8237; 5/12 ops done, 7 sorry)
+            ├ compileSeq_sound_physical_residue                (Compile.lean:8454; PROVEN)
+            ├ compileIfBit_sound_physical_residue              (NEEDS to exist — GAP, see TOP-DOWN)
+            └ compileForBnd_sound_physical_residue             (NEEDS to exist — GAP, see TOP-DOWN)
+DecidesLang.toDecidesBy / inTimePolyLang_to_inTimePoly         (PolyTime.lean:228/243, SORRY — live bridge)
+```
 
 ---
 
@@ -29,323 +55,219 @@ shifts each register cell `+1` (`0→1`, `1→2`), `0` separates registers, `3`
 terminates/anchors. A cell `≥ 2` shifts to `≥ 3` and collides with the terminator,
 so **every state touching the tape must be `Compile.BitState`** (all cells `∈ {0,1}`,
 `Compile.lean:1708`). Numbers are therefore **UNARY** (`enc n = replicate n 1`).
-Sound for the size law because `encodable.size Nat = id` (verified `Definitions.lean:18`):
-unary length `= n = size n`. `sig=4`/`BitState` is **owner-settled**; the design
-choice is **Option B′** (witness-carried `enc_bit` + a `BitEncodable` mixin + bit-
-level unary canonical encodings). No further design sign-off is needed.
+Sound for the size law because `encodable.size Nat = id`: unary length `= n = size n`.
+`sig=4`/`BitState`/Option B′ is **owner-settled**; no further design sign-off needed.
+
+---
+
+## ★ TOP-DOWN findings (2026-06-06, first top-down pass) — the assembly design
+
+A top-down pass over the final assembly (`Compile_run_physical_residue` and the
+per-fragment contracts) **validated the composition by hand and pinned the exact
+remaining interface**. The headline result: the obligation is provable by a clean
+induction, the budget composes with the *right* shape, and the residue stays
+polynomially bounded — but **three structural pieces were missing or wrong-shaped
+and are now fixed/pinned**. The designed artifact is in
+`Lang/PolyTime.lean` (search `run_physical_residue_gen`).
+
+### The designed induction — `Compile.run_physical_residue_gen`
+The top obligation `Compile_run_physical_residue` (no incoming residue) is **too
+weak to be its own induction hypothesis**: in the `seq` case the second fragment
+runs on `encodeTape mid ++ res1` — *with* the first fragment's residue. So the
+real lemma carries an **arbitrary incoming residue `res0`** (live instance:
+`res0 = []`), plus the threading hyps and a shared tape bound `G`:
+
+```
+Compile.run_physical_residue_gen (c) (k) (s) (res0) (G)
+  (hbit : BitState s) (hk : k ≤ s.length)
+  (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c)
+  (hres0 : ValidResidue res0)
+  (hG : State.size s + s.length + res0.length + c.cost s + 2 ≤ G) :
+  ∃ t res, ValidResidue res
+    ∧ State.size (c.eval s) + res.length ≤ State.size s + res0.length + c.cost s   -- ① W-invariant
+    ∧ runFlatTM t (Compile c) (init [encodeTape s ++ res0])
+        = some {exit c, [([], 0, encodeTape (c.eval s) ++ res)]}                     -- run
+    ∧ (trajectory: never halts / hits exit before t)
+    ∧ t ≤ Compile.physStepBudget G (c.cost s)                                        -- ② budget
+```
+Induction on `c`: **op** → `compileOp_sound_physical_residue`; **seq** →
+`compileSeq_sound_physical_residue` + `compileSeq_traj_physical_residue` (both
+PROVEN); **ifBit/forBnd** → the two residue combinators below. `BitState mid` and
+`k ≤ mid.length` thread via `Cmd.eval_preserves_BitState` / `Cmd.eval_length_ge`
+(both PROVEN). The `op`/`seq` structural cases are written; the **W-invariant ①
+and budget ② steps are `sorry`** (validated arithmetic below — mechanical Nat work).
+
+### ① The W-invariant — resolves "obligation #2: nothing bounds the residue"
+**Key insight:** track `W := State.size + residueLength` *jointly*. Then
+**`W_out ≤ W_in + Op.cost o s` for every op** (clear: size shrinks by `|dst|`,
+residue grows by `|dst|` → `W` unchanged, cost ≥ 0; append: `W` +1 = cost; copy:
+`W` +`|src|` ≤ cost). This is **non-compounding** (unlike "`|res| ≤ size + |res0| +
+cost`", which re-adds `size` at every `seq` and blows up). Globally `State.size
+(c.eval s) + |res| ≤ State.size s + |res0| + c.cost s`. Hence every physical tape
+(monotone, `TapeMono.lean`) `≤ State.size s + s.length + res0.length + c.cost s + 2
+= the bound `hG``, so a **single shared `G` bounds all sub-fragment tapes** with no
+compounding — this is what makes the budget compose.
+
+### ② The budget — `physStepBudget`, exactly superadditive (fixes ROADMAP Finding #3)
+`Compile.physStepBudget G cost := (9·G² + 9·G + 33)·(cost + 1) + cost`. Per-op
+budget `9·L²+9·L+30` with `L ≤ G` fits (op `cost ≥ 1`). It is **exactly
+superadditive under `seq`**: `physStepBudget G (1+c₁+c₂) = physStepBudget G c₁ + 1
++ physStepBudget G c₂` (the `(cost+1)` factor counts the ops, the `+cost` slack
+absorbs `seq`'s control step). `ifBit` composes with room (`+3` ≤ one extra
+`(9G²+…)` unit). It is `inOPoly`/`monotonic` in `G` and `cost` (downstream only
+needs that). **This is why the old `overhead(size+cost)=(·+1)²` was unprovable:
+quadratics are not superadditive, and it dropped both `s.length` and the residue.**
+
+### THE GAPS this pass surfaced (now the concrete shared interface / bottom-up work)
+1. **`compileIfBit_sound_physical_residue` / `compileForBnd_sound_physical_residue`
+   do not exist** (only the no-incoming-residue `*_sound_physical`, Compile.lean
+   8565/8616, do). The induction *cannot* thread residue through branches/loops
+   without them. **Statements are now written (sorry) in `PolyTime.lean`** — they
+   are the pinned interface the bottom-up stream must hit.
+2. **`compileForBnd` and `compileTestBit` are still STUBS** (`compiledCmd_default`
+   / `branchTester_default`, **0 transitions** — `#eval`-confirmed). The loop and
+   branch-tester *machines themselves* don't exist. Building them (a `loopTM` over
+   the bound's unary length; a navigate+`bitReadTM` tester) is bottom-up gadget
+   work comparable to a cross-register op, and **gates** combinator #1.
+3. **Architecture / file order:** the threading lemmas `Cmd.NoConsLen`,
+   `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow` live in `PolyTime.lean`,
+   **downstream** of `Compile_run_physical_residue` and its consumer `bitDecider_run`
+   (both `Compile.lean`). So `run_physical_residue_gen` currently lives in
+   `PolyTime.lean` and **cannot yet be used to discharge the `Compile.lean`
+   obligation**. Fix: **relocate those three lemmas (and `Op.NotConsLen`) upstream
+   into `Compile.lean`** (all their deps — `Op.eval_preserves_BitState`,
+   `BitState_set_pad`, `Cmd.eval_length_ge`, `foldlState_range_induct` — are already
+   available there), then move `run_physical_residue_gen` up too and prove the
+   obligation from it.
+4. **Budget restatement ripples (do together with #3):** `Compile_run_physical_residue`
+   (Compile.lean:8910), `sound_of_run_residue`, `Compile_sound`, `Compile_polyBound`,
+   `bitDecider_run` all carry the **wrong** `Compile.overhead (State.size s + c.cost s)`
+   budget. Restate them with `physStepBudget G (c.cost s)` (or any `inOPoly` bound in
+   `size + s.length + cost`). **Register-count coupling:** the budget legitimately
+   includes `s.length`, which is **not** bounded by `costBound(size)` in general — so
+   `DecidesLang.toDecidesBy` / `Compile_polyBound` need a **register-count bound**
+   (add a `regCount`/`usesBelow` field to `DecidesLang`, or route the live path
+   through the canonical `DecidesLang'`). On the live path `encodeState x` has a
+   constant register count, so it stays poly.
+
+### Reflection — where the streams meet
+The **shared interface is the four per-fragment physical-residue contracts** (op,
+seq, ifBit, forBnd) **plus the per-op W-invariant ①**. Top-down *consumes* them in
+`run_physical_residue_gen`; bottom-up *produces* them (7 ops, the loop/branch
+machines, the two new combinators). With the statements now pinned, the streams
+have a precise rendezvous: **a contract is "met" when its statement (already
+written) is `sorry`-free.** No further design surprises are expected on the
+assembly side — the composition is hand-validated.
 
 ---
 
 ## ✅ PROVEN gadgets the ops build on (reuse, do not re-derive)
 
-- **`Compile.moveRegionTM_run`** (axiom-clean) — the **single-target** FIFO
-  transfer: moves `src`'s content one bit/iter to the **end** of `dst`, empties
-  `src`, rewinds to head `0`. Result tape
-  `encodeTape ((s.set dst (dst₀++src₀)).set src []) ++ (res_in ++ replicate |src₀| 0)`,
-  budget `25·L²+25`. Built from `loopTM_run` over `moveBodyRawTM` (body =
-  `navigateAndTestTM ⨾ bitReadTM ⨾ stepDeleteRewind ⨾ appendAtThenTwoPhaseRewind(bit+1, dst)`).
-  Full validity/halt scaffolding exists (`moveBitM2TM_valid`/`_sig`/`_exit_*`,
-  `moveContent*`, `moveBodyRawTM_valid`/`_exit{Loop,Done}_{is_halt,lt}`/`_ne_`).
-- **`Compile.moveRegionTM_valid` / `_sig`** (axiom-clean) — the
-  `loopTM_valid`/`loopTM_sig` wrappers for `moveRegionTM`.
-- **`Compile.moveRegion2TM_run`** ✅ **PROVEN & axiom-clean** — the **dual-target
-  duplicating move** (transfers `src`→ end of **both** `dst1` and `dst2`, empties
-  `src`). Full chain done: `moveBitM3_run` (dual-bit engine), `moveContent2_run`,
-  `moveBody2_{done,delete}_run`, `moveRegion2TM_run` (loop), plus all structural
-  scaffolding. Result tape `encodeTape (((s.set dst1 (dst1₀++src₀)).set dst2
-  (dst2₀++src₀)).set src []) ++ (res ++ replicate |src₀| 0)`, head→`0`, budget
-  `36·L²+39·L`. ⚠ The move **duplicates**, so `State.size` grows by `m` and the
-  per-iter tape is `L+2(n−j)` (vs `L+(n−j)` for the single-target move). This is
-  the primitive `copy`/`tail`/`concat` build on.
-
-## ⚠ DESIGN CORRECTION (this session, probe-validated): the 7 ops are 4 different shapes — NOT all "built from moveRegionTM"
-
-`moveRegionTM` is **single-target** (one `dst`). The prior plan said all 7 ops
-reduce to it; that is false. A conservative single-target move can never
-*duplicate* data (the number of copies is invariant), and `copy`/`tail`/`concat`
-must duplicate. State-level + TM-level `#eval` probes (this session) reproduce
-every `Op.eval` exactly and pin the four real shapes:
-
-1. **`copy`/`tail`/`concat` — need a NEW dual-target duplicating move
-   `moveRegion2TM`** (append `src`'s content to the end of **both** `dst1` and
-   `dst2`, empty `src`). Validated recipes (registers must be **distinct**;
-   `sc` starts empty):
-   - `copy dst src sc` = `clear dst ⨾ move src→sc ⨾ move2 sc→(src,dst)`.
-   - `tail dst src sc` = `copy dst src sc ⨾ deleteFirstBit dst` (one `stepDeleteRewind` on dst's front).
-   - `concat dst src1 src2 sc` = `copy dst src1 sc ⨾ move src2→sc ⨾ move2 sc→(src2,dst)`.
-   ✅ **`moveRegion2TM_run` is now PROVEN** (axiom-clean; see "PROVEN gadgets"
-   above). The duplicating primitive `copy`/`tail`/`concat` need is ready — wire
-   them via the validated recipes (below).
-2. **`eqBit` — NOT moves; a comparison-loop gadget.** Copy both operands to **two**
-   scratch regs, then loop: compare-and-delete the front bits; equal iff fronts
-   always matched and both empty together. **Needs 2 scratch operands**, not 1.
-3. **`takeAt`/`dropAt` — a counter-bounded transfer**, NOT `moveRegionTM` (which
-   transfers *all*). Under `BitState` the count is `k = (s.get lenReg).length`
-   (unary), so the loop is `loopTM`/`forBnd`-shaped over `lenReg`; transfer/skip
-   the first `k` bits. Validated specs: `takeAt → src.take k`, `dropAt → src.drop k`.
-   Needs 1 scratch.
-4. **`consLen` — the ONLY op whose `Op.eval` must be RESTATED unary:**
-   `dst := replicate |lenSrc| 1 ++ src` (validated spec). ⚠ **Its `Op.cost` must
-   ALSO be bumped to charge `|lenSrc|`** (today only `|src|+1`), else
-   `Op.size_eval_le` breaks (output grows by `|lenSrc|+|src|`).
-
-**Scratch-operand counts (corrects "all need one sc"):** copy/tail/concat/takeAt/
-dropAt/consLen need **1**; **eqBit needs 2**. Size the `Op` signature change to
-this before refactoring.
-
-## ▶ NEXT STEPS (risk-first summary; full detail in "The ordered plan from here" below)
-
-Task 1 (the coupled encoding/signature batch) gates all 7 ops and must come first;
-the dual-target gadget can be built in parallel.
-
-1. **Task 1 — unary encodings + scratch operands** (see "The ordered plan from
-   here §1" below for the full item list). Add the scratch operands above to the
-   `Op` constructors (`Op.eval` ignores them; the gadget restores them to `[]`);
-   restate `takeAt`/`dropAt`/`consLen` unary (+ the `consLen` cost bump);
-   re-derive `swapCmd`/`mapFstCmd`/`mapSndCmd`. Land green per item.
-2. ✅ **`moveRegion2TM_run` is DONE.** Build the remaining gadgets: the comparison
-   loop (`eqBit`) and the counter-bounded transfer (`takeAt`/`dropAt`). The
-   single-target `moveRegionTM_run` + dual-target `moveRegion2TM_run` are both
-   proven and are the data-transport primitives for the rest.
-3. **Wire each op into `compileOp_sound_physical_residue`** (the 7 `sorry`s,
-   ~Compile.lean:7109–7125) via the proven `clear`/`nonEmpty`/`head` templates +
-   `rewindBracket`/`joinTwoHalts` to keep a unique halt. **Re-`#eval` end-to-end
-   before proving each run lemma.**
-
-## ✅ Already PROVEN — the residue-induction invariant toolkit (reuse, don't re-derive)
-
-Ported (and re-verified axiom-clean) the proven invariant scaffolding from the
-parallel branch (old PR #55, which is conflict-stranded against the move-gadget
-merge — its run-gadget half differs, but this invariant half is move-gadget-
-*independent*). Build green; all new decls `#print axioms`-clean (no `sorryAx`).
-These are **exactly the lemmas the `Compile_run_physical_residue` induction and the
-`→ Compile_sound` assembly will call** — reuse them directly, do not re-derive:
-
-- **The last mile is PROVEN — `Compile.sound_of_run_residue`** (Compile.lean, after
-  `Compile_run_physical_residue`): given the residue run's components + `BitState
-  (c.eval s)`, extends the run to the full `overhead` budget and decodes (residue
-  invisible). So once `Compile_run_physical_residue` is discharged, `Compile_sound`
-  closes mechanically.
-- **`BitState` is preserved through the induction:** `Op.eval_preserves_BitState`
-  (per-op step: `BitState s → o.inBounds s → consLen-side-cond → BitState (Op.eval o
-  s)`) + the unconditional `Compile.BitState_set_pad` (for `forBnd`'s padding
-  counter-write) + `Cmd.eval_preserves_BitState` (PolyTime.lean — the **full `Cmd`
-  induction composes**, incl. the `forBnd` fold; hyps `UsesBelow c k`, `k ≤
-  s.length`, `Cmd.NoConsLen c`).
-- **`inBounds` threads from a static bound:** `Op.inBounds_of_UsesBelow`
-  (PolyTime.lean) + register-count monotonicity `State.set_length_ge` /
-  `Op.eval_length_ge` / `Cmd.eval_length_ge` (Frame.lean). Fix `k ≤ s.length` with
-  `Cmd.UsesBelow c k`; width never shrinks, so every reached state keeps width `≥ k`.
-- ⚠ **Risk finding (machine-checked):** only **`consLen`** actually breaks `BitState`
-  (`Op.consLen_breaks_BitState` is an explicit counterexample); `takeAt`/`dropAt`
-  *preserve* it (sub-list of a bit register), they are merely *useless* under it. So
-  Task 1's unary restatement is required for **correctness** only for `consLen`.
-- ⚠ **Consequence for the obligation:** `Compile_run_physical_residue` will need
-  **added hyps `(hk : k ≤ s.length)`, `(huses : Cmd.UsesBelow c k)`, `(hnc :
-  Cmd.NoConsLen c)`** alongside `hbit` — the bridge supplies them from the witness
-  (`encodeState` fixes `s.length = 1`; the program's `regBound` / `usesBelow`
-  fixes the footprint; live `Cmd`s are `consLen`-free once Task 1 rebuilds the
-  product toolkit). Worth confirming `EvalCnfCmd`/reduction `Cmd`s are already
-  `consLen`-free (consLen is used only by `swap`/`mapFst`/`mapSnd`, rebuilt in Task 1).
-
-**Already in place from the prior batch (do not redo):** the three obligations
-(`Compile_sound`/`Compile_run_physical`/`_residue`) carry `(hbit : BitState s)`;
-witness field `enc_bit : ∀ x, BitState (encodeIn x)` on all four witness structures
-+ the `BitEncodable` mixin; `BitEncodable Bool/Unit/List Bool` proven and `Nat`
-re-laid UNARY (`replicate n 1`). **Still `enc_bit := sorry`:** `swap`, `map_fst`
-(product encoding non-bit), `evalCnfDecidesLang` (LIVE `sat_NP`), `cliqueRelDecidesLang`.
+- **`Compile.moveRegionTM_run`** (axiom-clean) — **single-target** FIFO transfer:
+  moves `src` one bit/iter to the **end** of `dst`, empties `src`, rewinds head→0.
+  Budget `25·L²+25`. Built from `loopTM_run` over `moveBodyRawTM`.
+- **`Compile.moveRegion2TM_run`** (axiom-clean) — **dual-target duplicating move**
+  (`src`→ end of **both** `dst1` & `dst2`, empties `src`). Budget `36·L²+39·L`. The
+  primitive `copy`/`tail`/`concat` build on. ⚠ duplicates ⇒ `State.size` grows by `m`.
+- **`compileOp_sound_physical_residue`** (Compile.lean:8237) — per-op contract,
+  carries incoming residue. **PROVEN:** `appendOne`/`appendZero`/`clear`/`nonEmpty`/
+  `head`. **`sorry` (7):** `copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`.
+- **`compileSeq_sound_physical_residue`** + **`compileSeq_traj_physical_residue`**
+  (Compile.lean:8454/8502) — residue-tolerant `seq` composition + trajectory.
+- **`Compile.sound_of_run_residue`** (Compile.lean:8960) — last mile: residue run +
+  `BitState (c.eval s)` ⇒ `Compile_sound`. PROVEN.
+- **Threading toolkit** (PolyTime.lean — relocate upstream, see GAP 3):
+  `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow`, `Cmd.eval_length_ge`/
+  `_le`, `Cmd.size_eval_le`, `State.set_length_ge`, `BitState_set_pad`. All PROVEN.
+- **Branch-merge / rewind:** `joinTwoHalts*`, `rewindBracket`/`_transport`,
+  `bitReadTM`, `rewindTwoPhaseTM`, `deleteCarryTM`, `navigateAndTestTM`. PROVEN.
+- **Loop:** `loopTM` (+`_run`/`_no_early_halt`), `loopBudget_le`. PROVEN.
 
 ---
 
-## ⚠ Four under-acknowledged C2 obligations (code-audited 2026-06-05b — do not rediscover)
+# ▶ TOP-DOWN work stream — next steps
 
-The residue + size-aware-cost design is **internally consistent and the poly bound is
-genuinely TRUE** (verified: `Op.cost` charges every size-growing op — `copy`/`tail`/
-`takeAt`/`dropAt` cost `|src|+1`, `concat` `|src1|+|src2|+1`, `Semantics.lean:75` +
-`Op.size_eval_le`; so physical-tape growth/op ≤ cost/op, max tape `O(size+regCount+
-cost)`, **not** exponential). **No showstopper.** But discharging C2 is bigger than the
-plan below frames it — four obligations beyond Finding A:
+You are assembling the final pieces and designing their proofs. Create supporting
+lemmas with `sorry` when they look provable; surface gaps early.
 
-1. **`Compile_run_physical_residue` (Compile.lean:6519) is too weak to be its own
-   induction hypothesis.** It is stated with **no incoming residue** (input
-   `[encodeTape s]`), but the proven `compileSeq_sound_physical_residue` threads
-   `res0→res1→res2` — the second fragment runs on `encodeTape mid ++ res1`, *with* the
-   first's residue. So the `seq` case cannot apply the IH to `c2`. **Generalize the
-   obligation to carry an arbitrary incoming `(res0 : List Nat) (ValidResidue res0)`**
-   (output `encodeTape (c.eval s) ++ res_out`); prove the live instance with `res0 = []`.
-   The per-op lemma already is residue-in/out — only the top obligation is wrong-shaped.
-2. **Nothing bounds the physical tape length *including residue*, yet the per-op budgets
-   are quadratic in exactly that.** Per-op budget is `9·L²+9·L+30` with `L = (encodeTape
-   s ++ res_in).length`. But `ValidResidue` constrains only *symbols*, **not length**
-   (Compile.lean:2858); `Cmd.encodeTape_eval_length_le` bounds output *content* only (no
-   residue). So a **new lemma is required: max physical tape ≤ poly(size + regCount +
-   cost)**, proved by charging each op's physical growth to the size-aware cost and
-   threading it through the run. This is **separate from Finding A** (which only covers
-   budget *degree* + register count) and is real work coupled to the budget proof. The
-   generalized obligation's budget should be `overhead(size + s.length + cost + |res0|)`,
-   cubic.
-3. **The branch and loop *machines* are still STUBS — not just their contracts.**
-   `compileForBnd` (1631) and `compileTestBit` (1483, feeding `compileIfBit`'s tester)
-   are `compiledCmd_default`/`branchTester_default` — they do not branch/loop at all yet.
-   The `ifBit`/`forBnd` assembly is gated on **building** a real `compileTestBit`
-   (navigate + `bitReadTM`) and a real `compileForBnd` (a `loopTM` over the bound's unary
-   length that materialises the counter) — each C1/C3 gadget work comparable to a
-   cross-register op, on top of the residue restatement of their contracts.
-4. **Minor couplings (none fatal):** (a) **`consLen` cost under unary** — Task 1's unary
-   `consLen` writes `|lenSrc|` cells (not 1), so `Op.cost (consLen …)` must *also* charge
-   `(s.get lenSrc).length` or obligation #2 breaks for it. (b) **Residue must stay inert**
-   — every gadget's scans/rewinds must stop at the terminator and never read into residue
-   (the point of `rewindTwoPhaseTM`); this is where bugs hide in the move gadget + 7 ops.
-   (c) **Stray halt states** — `joinTwoHalts`/`loopTM` must demote every halt but one or
-   `halt_unique` fails and the op can't be wired into `compileOp` (PR #55 hit a stray
-   state 18; clear/nonEmpty/head already handle it).
+1. **Mechanize `Compile.run_physical_residue_gen`** (PolyTime.lean — the statement
+   and the `op`/`seq` structural cases are drafted). Wire the `ifBit`/`forBnd` cases
+   to the two residue combinators (statements pinned, sorry). Discharge the
+   **W-invariant ①** and **budget ②** sub-goals — the arithmetic is worked out above
+   (`W_out ≤ W_in + cost`; `physStepBudget` superadditivity). This is Nat work, no
+   new gadgets.
+2. **Relocate the threading lemmas upstream (GAP 3)** and **restate the budgets
+   (GAP 4)**, then prove `Compile_run_physical_residue` (the `res0=[]` instance) from
+   `run_physical_residue_gen` and re-thread `bitDecider_run` etc. Add the
+   **register-count bound** to `DecidesLang` (or use `DecidesLang'`).
+3. **Close the live bridge** `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`
+   (PolyTime.lean:228/243) using the new budget shape + the register-count field +
+   the witness `enc_bit`. This is what `sat_NP` actually calls.
+4. **Add the per-op W-invariant ① to the shared contract.** The cleanest place is a
+   new conjunct on `compileOp_sound_physical_residue` (or a sibling lemma
+   `Op.size_residue_eval_le`); the *already-proven* op cases (append/clear/head/
+   nonEmpty) satisfy it — discharge those now so the bottom-up stream inherits the
+   obligation only for the 7 remaining ops. (This is a small top-down task that
+   hardens the interface.)
 
----
+# ▶ BOTTOM-UP work stream — next steps
 
-## The ordered plan from here
+You build the gadgets the (now-pinned) contracts need. Build green per item;
+`#print axioms`-clean. Probe each assembled machine end-to-end (`#eval`) before
+proving its run lemma.
 
-### 1. Finish Task 1 — make the encodings actually bit-level (unary)
-
-Each item replaces an `enc_bit := sorry` with a real proof. Land green per item.
-
-- **`EvalCnfCmd.encodeState` UNARY (the LIVE `sat_NP` obligation — highest value).**
-  Today (`EvalCnfCmd.lean:87`) its cells are `v+3` (variable values) and
-  `CLAUSE_END=2` → not `BitState`, not `sig=4`-representable. Re-lay it unary:
-  variables as `1`-blocks, polarity/clause-end markers as bit-patterns in `{0,1}`
-  (no `2`/`+3` literal cells). Rewrites `memberCheck` (variable equality becomes
-  unary-block equality). Then discharge `evalCnfDecidesLang.enc_bit`
-  (EvalCnfTM.lean:67-area). `evalCnfCmd`'s bodies are already `sorry`, so no proven
-  work is discarded. **This — not a `LangEncodable (cnf × assgn)` instance — is what
-  the live path needs.**
-- **Close the live free bridges** `DecidesLang.toDecidesBy` /
-  `inTimePolyLang_to_inTimePoly` (PolyTime.lean:125/140, **still `sorry`**). The
-  `enc_bit` field is now available to feed `Compile_sound`'s `hbit`. ⚠ **Concrete
-  obstacle (this session):** `DecidesBy.encode_size` needs the encoder's *register
-  COUNT* bounded, which the free `DecidesLang` does **not** carry (only
-  `encodeIn_size` bounds content). Either add a register-count field to
-  `DecidesLang` (supply it from evalCnf's fixed ~12-register layout) or route the
-  live path through a canonical `DecidesLang'`. Decide and execute.
-- **Canonical encodings bit-level + `BitEncodable` instances.** ✅ **`Nat` DONE**
-  (unary `replicate n 1`, `dec = length`; `BitEncodable Nat` proved axiom-clean).
-  **Remaining:** `X×Y` unary length-prefix; `List X` self-delimiting on bit
-  separators. Re-prove `dec_enc`/`enc_size` (unary roughly doubles size — loosen
-  `enc_size`'s constant; ripples to `NP.lean` `DecidesBy.encode_size` + the decider
-  budget, both need only `inOPoly`/`monotonic`). Then `BitEncodable (X×Y)` (→
-  unblocks `swap`/`map_fst` `enc_bit`, switch those to `[BitEncodable …]` +
-  `BitEncodable.enc_bit`), `BitEncodable (List X)`. Retire `List Nat = id` from the
-  compiled path (quarantine; verify nothing non-compiled breaks before deleting).
-  ⚠ The product `dec` currently reads its length prefix via `headD 0` (a single
-  non-bit cell); the unary version must parse a `1`-block, which is coupled to the
-  value-as-length op rework below.
-- **Value-as-length ops → unary:** restate `Op.takeAt`/`dropAt`/`consLen` so length
-  = the register's **unary count**, not `(s.get lenReg).headD 0` (meaningless under
-  `BitState`, ≤1). Add an empty-scratch operand to `copy`/`tail`/`concat`/`eqBit`
-  (`copy dst src sc`, precond `s.get sc = []`, `sc ∉ {dst,src}`; `Op.eval` ignores
-  `sc`, the gadget restores it to `[]`). Re-derive `swapCmd`/`mapFstCmd`/`mapSndCmd`
-  against the new encoding & signatures (witnesses already allocate spare scratch).
-- **Confirm** `BitState` is `Op.eval`-preserved through the induction
-  (`BitState_set`, `BitState_set_tail` exist, Compile.lean:2976/3132) — needed by
-  step 4.
-
-### 2. Build the 7 op gadgets (the `sorry`s in `compileOp_sound_physical_residue`)
-
-Remaining `sorry`s (Compile.lean 7109–7125): `copy`/`tail`/`eqBit`/`takeAt`/
-`dropAt`/`concat`/`consLen`. **PROVEN already:** `appendOne`/`appendZero`/`clear`/
-`nonEmpty`/`head`.
-
-**See "⚠ DESIGN CORRECTION" near the top** for the validated per-op recipes and the
-four gadget shapes. Summary: `moveRegionTM` (single-target FIFO move) is one phase
-but is **not** sufficient alone — `copy`/`tail`/`concat` need the new dual-target
-`moveRegion2TM`, `eqBit` a comparison loop, `takeAt`/`dropAt` a counter-bounded
-transfer, and `consLen` a unary `Op.eval`+cost restatement. Build each gadget +
-run/`_no_early_halt`/budget **mirroring `clearRegionTM_run`/`moveRegionTM_run`**, and
-**re-probe each assembled machine end-to-end (`#eval`) before proving its run
-lemma.** Templates: `moveRegionTM_run`/`clearRegionTM_run` (the loop chains to
-mirror), `opNonEmpty_run` (branch-merge engine), `opHead_run` (nested branch +
-`bitReadTM`).
-
-### 3. Finding A — restate the top-level budget (do WITH the assembly)
-
-The stated `overhead(size+cost)`, `overhead m = (m+1)²`, is **too small** on two
-counts: per-op budgets are `Θ(L²)` (multi-cell ops) so summing `~cost` of them is
-**cubic**, and `L = size + s.length + 2` includes the **register count `s.length`**
-which `overhead(size+cost)` drops. Restate as
-`overhead(State.size s + s.length + c.cost s)` with `overhead` bumped to **cubic**
-(e.g. `9·(m+1)³`). Downstream uses only `overhead_poly`/`overhead_mono` → ripples
-mechanically. Stays poly on the live path (`encodeState x` is 1 register; programs
-add a constant `regBound`).
-
-### 4. Assemble
-
-`Compile_run_physical_residue` → `Compile_sound`. **The last mile and the induction
-invariants are now PROVEN (this session) — reuse, don't re-derive:**
-- `Compile_run_physical_residue` (the residue run) by induction on `Cmd`: per-`Op`
-  from step 2 (feeding `hbit` re-established by `Op.eval_preserves_BitState` and
-  `inBounds` by `Op.inBounds_of_UsesBelow`); `seq` from
-  `compileSeq_sound_physical_residue` (PROVEN); `ifBit`/`forBnd` from their residue
-  siblings (`branchComposeFlatTM_run` / `loopTM_run` + `loopTM_no_early_halt`; the
-  `compileIfBit`/`compileForBnd` residue contracts are stated, sorry'd). ⚠ Thread
-  the added `UsesBelow`/`k ≤ s.length`/`NoConsLen` hyps (see DONE-this-session) — or
-  prove `Cmd.eval_preserves_BitState` is enough to supply `BitState (c.eval s)` for
-  every fragment boundary.
-- `→ Compile_sound`: feed the residue run + `Cmd.eval_preserves_BitState`'s
-  `BitState (c.eval s)` to **`Compile.sound_of_run_residue` (PROVEN)**. Done.
-This discharges C2; downstream unlocks S3 migration, C7 verifiers, C8 hardness.
-
----
-
-## Inventory — the C2 working set
-
-| Name (file) | Role |
-|------|------|
-| `Compile.BitState`/`encodeTape`/`encodeRegs`/`shiftReg`/`ValidResidue`/`decodeTape` (Compile.lean) | `sig=4` tape encoding; the standing bit invariant; residue-tolerant contract |
-| `Compile_sound`, `Compile_run_physical`, `Compile_run_physical_residue` (search; line nums drift) | **the C2 obligations (`sorry`)** — now carry `(hbit : BitState s)` |
-| `compileOp_sound_physical_residue` (Compile.lean:7063) | per-op contract, `(hbit)`, budget `9·L²+9·L+30`. **PROVEN:** appendOne/Zero/clear/nonEmpty/head. **`sorry` (7):** copy/tail/eqBit/takeAt/dropAt/concat/consLen (lines 7109–7125) — see the DESIGN CORRECTION above for the 4 gadget shapes (needs Task 1 scratch/unary) |
-| `opNonEmpty`/`opHead`/`bitReadTM`/`joinTwoHalts*` | proven cross-register ops + branch-merge templates |
-| `Compile.moveRegionTM_run` (+`_valid`/`_sig`, `moveBitM2_run`/`moveContent_run`/`moveBody_{done,delete}_run`) | ✅ **PROVEN** **single-target** FIFO transfer `src→end of dst`. Used by `copy`/`tail`/`concat`/`takeAt`/`dropAt` as one phase — but NOT sufficient alone (see DESIGN CORRECTION) |
-| `Compile.moveRegion2TM_run` (+`moveBitM3_run`/`moveContent2_run`/`moveBody2_{done,delete}_run`) | ✅ **PROVEN & axiom-clean** dual-target duplicating move (`src`→ end of both `dst1`&`dst2`). Budget `36L²+39L`. The primitive `copy`/`tail`/`concat` build on |
-| `clearRegionTM_run` chain | the `loopTM` chain `moveRegionTM_run` mirrored (run + traj + quadratic budget) |
-| `Compile.sound_of_run_residue` (Compile.lean) | ✅ **PROVEN last mile** — residue run + `BitState(c.eval s)` ⇒ `Compile_sound` |
-| `Op.eval_preserves_BitState`/`Compile.BitState_set_pad`/`Cmd.eval_preserves_BitState` (Compile/PolyTime) | ✅ **PROVEN** `BitState` induction step + full-`Cmd` composition (hyps `UsesBelow`/`k≤len`/`NoConsLen`); `Op.consLen_breaks_BitState` = the only breaker |
-| `Op.inBounds_of_UsesBelow` (PolyTime) + `State.set_length_ge`/`Op`/`Cmd.eval_length_ge` (Frame) | ✅ **PROVEN** `inBounds`-threading (width never shrinks) |
-| `navigateAndTestTM`/`appendAtTM`/`deleteCarryTM`/`rewindTwoPhaseTM` | the proven gadget pieces the move primitive composes |
-| `loopTM`(+`_run`/`_no_early_halt`), `loopBudget_le`, `clearBudget_arith` | counted loop (terminate-by-emptying) + budget closers |
-| `LangEncodable` + `BitEncodable` mixin + `BitState_encodeState_iff` (PolyTime.lean) | per-type encoding + the bit-level mixin (**`BitEncodable Bool/Unit/List Bool` proven**) |
-| `DecidesLang`/`DecidesLang'`/`PolyTimeComputableLang`/`PolyTimeComputableLang'` | witness structures — now carry `enc_bit`; constructions wired (sorry only at non-bit leaves: `swap`/`map_fst`/`evalCnf`/`cliqueRel`) |
-| `EvalCnfCmd.encodeState` (EvalCnfCmd.lean:87) + `evalCnfDecidesLang` (EvalCnfTM.lean) | **the LIVE `sat_NP` encoding** (free `DecidesLang`); cells `v+3`/`2` → re-lay unary (Task 1, item 1) + discharge `enc_bit` |
-| `DecidesLang.toDecidesBy`/`inTimePolyLang_to_inTimePoly` (PolyTime.lean:125/140, **`sorry`**) | live free bridge — close with the new `enc_bit` field + a register-count bound (see Task 1) |
-| `swapCmd`/`mapFstCmd`/`mapSndCmd` (PolyTime.lean) | only users of takeAt/dropAt/consLen — re-derive in Task 1 |
+1. **Task 1 — unary encodings + scratch operands** (gates all 7 ops; can run in
+   parallel with the move gadgets, which are done). Restate `takeAt`/`dropAt`/
+   `consLen` unary (length = the register's **unary count**, not `headD 0`); bump
+   `consLen`'s `Op.cost` to charge `|lenSrc|`; add empty-scratch operands
+   (`copy`/`tail`/`concat` need **1**, `eqBit` needs **2**); re-lay `Nat`/product/
+   `List` canonical encodings bit-level (`Nat` DONE) + `BitEncodable` instances;
+   re-derive `swapCmd`/`mapFstCmd`/`mapSndCmd`; re-lay `EvalCnfCmd.encodeState`
+   unary (the LIVE `sat_NP` encoding, cells `v+3`/`2` today) and discharge its
+   `enc_bit`.
+2. **The 7 op gadgets** in `compileOp_sound_physical_residue` (Compile.lean
+   7109–7125): `copy`/`tail`/`concat` via the validated `moveRegion2TM` recipes;
+   `eqBit` via a compare-and-delete loop (2 scratch); `takeAt`/`dropAt` via a
+   counter-bounded transfer over `lenReg`; `consLen` unary. **Each op must ALSO
+   satisfy the W-invariant** `State.size(out) + |res_out| ≤ State.size s + |res_in|
+   + Op.cost o s` (top-down ①) — design the residue so it holds (it does for the
+   move recipes: freed cells → residue, scratch returns to `[]`).
+3. **Build the real loop/branch machines (GAP 2 — currently 0-transition stubs):**
+   - `compileTestBit t` (Compile.lean:1483): navigate to register `t` + `bitReadTM`,
+     two-exit tester; feeds `compileIfBit`. Then prove
+     `compileIfBit_sound_physical_residue` (statement pinned in PolyTime.lean) via
+     `branchComposeFlatTM_run` + `joinTwoHalts` + the rewind bracket.
+   - `compileForBnd counter bound body` (Compile.lean:1631): a `loopTM` over the
+     bound's unary length that materialises the unary counter each iteration, runs
+     the body, advances. Then prove `compileForBnd_sound_physical_residue` via
+     `loopTM_run` + `loopTM_no_early_halt` + the body's residue contract.
+   These two machines are the critical-path gadget work that unblocks the
+   `ifBit`/`forBnd` cases of the assembly.
 
 ---
 
 ## Conventions & hard-won gotchas
 
 - **Build:** `export PATH="$HOME/.elan/bin:$PATH"; lake build` (`lake` is **not** on
-  PATH; LSP/most MCP features can't find it). First build slow (~minutes); one
-  module `lake build Complexity.Lang.Compile` to iterate. Commit per logical step,
-  green.
+  PATH; LSP/most MCP features can't find it). First build slow (~minutes); iterate a
+  single module with `lake build Complexity.Lang.Compile` / `…PolyTime`. Commit per
+  logical step, green. The headline module is `Complexity.NP.SAT.CookLevin`.
 - **Probe** a built machine end-to-end *before* proving its run lemma:
   `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/x.lean` with
-  `import Complexity.Lang.Compile`, `open Complexity.Lang`, and
+  `import Complexity.Lang.Compile`, `open Complexity.Lang`,
   `runFlatTM N M { state_idx := M.start, tapes := [([], 0, Compile.encodeTape s)] }`.
   **Every gadget exits with its head on the trailing terminator** — rewind-bracket.
-- **Axiom-check** via a scratch file (LSP can't find `lake`):
-  `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean` with
-  `#print axioms <name>` — must show only `propext`/`Classical.choice`/`Quot.sound`
-  for new sorry-free results. The headline module is `Complexity.NP.SAT.CookLevin`.
+- **Axiom-check** via a scratch file: `#print axioms <name>` — must show only
+  `propext`/`Classical.choice`/`Quot.sound` for new sorry-free results.
 - **Append a BIT `b`** = `appendAtTM (b+1)`. `deleteCarryTM` deletes the cell **left
   of the head**; `navigateAndTestTM src` lands the head **on** src's first content.
-- **A polymorphic structure field over `encodeState` needs `∀ x : X`** (annotate the
-  binder) — without an `encodeIn` field to pin the type, inference loops (this
-  session's first build error).
-- **`omega` can't see through `Var := Nat`** (use a `Nat`-typed `bit` param), record
+- **`omega` can't see through `Var := Nat`** (use a `Nat`-typed param), record
   projections / `def`-constants (`show` the reduced form first), nor a `set x := e`
-  for hyps created *after* the `set`.
-- **`decide` rejects goals with free variables** (e.g. `BitEncodable Unit`); use
-  `simp`/`cases` to remove the var first.
-- Branching-op correctness for `dst = src`: **read `src` BEFORE clearing/writing
-  `dst`** (`Op.inBounds` does NOT force `dst ≠ src`).
-- Methodology (do not deviate without reason): **skeleton-first, refine the
-  highest-risk gap next, decompose `sorry`s don't elaborate them, probe before
-  committing engineering, `def`+`sorry` over `axiom` (count = 0), build green
-  between commits.**
+  for hyps created *after* the `set`. **Avoid nested `set`/`let` over `State.set`/
+  `.get`** (`isDefEq` blows up ×8/level — flatten with `simp only [Cmd.eval_op, Op.eval]`).
+  **`.get` mis-resolves on `State` literals** — write `State.get s r` explicitly.
+- **A polymorphic structure field over `encodeState` needs `∀ x : X`** (annotate the
+  binder) or inference loops.
+- Methodology: **skeleton-first, refine the highest-risk gap next, decompose
+  `sorry`s don't elaborate them, probe before committing engineering, `def`+`sorry`
+  over `axiom` (count = 0), build green between commits.**
