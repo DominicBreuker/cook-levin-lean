@@ -6963,6 +6963,301 @@ theorem Compile.moveRegionTM_run (s : State) (src dst : Var) (res_in : List Nat)
       (Compile.loopBudget_le tIter tDone (18 * L + 27) n h_done_bnd h_iter_bnd)
       (by rw [← hLdef]; exact Compile.moveBudget_arith n L (by rw [hLdef]; exact hnL))
 
+/-- **Dual-target move-loop budget arithmetic.** `(n+1)` iterations each `≤ 36L+39`
+(per-iter tape `≤ L + 2(n−j) ≤ 3L`, two appends/bit), `n+1 ≤ L`, gives a cubic-free
+quadratic total. -/
+theorem Compile.moveBudget2_arith (n L : Nat) (h : n + 2 ≤ L) :
+    (n + 1) * (36 * L + 39) ≤ 36 * L * L + 39 * L := by
+  obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le h
+  nlinarith [Nat.zero_le n, Nat.zero_le d, Nat.zero_le (n * d)]
+
+/-- **The dual-target duplicating move contract (Risk C2).** Running
+`moveRegion2TM src dst1 dst2` on `encodeTape s ++ res_in` transfers `src`'s content
+(FIFO) to the end of **both** `dst1` and `dst2`, empties `src`, rewinds the head to
+`0`, leaving `encodeTape (moved s) ++ (res_in ++ replicate |s.get src| 0)`. Mirrors
+`moveRegionTM_run`, but the per-iteration invariant couples **three** registers and
+the state size grows (each bit is duplicated), so the per-iteration tape length is
+`L + 2(n−j)` and the loop budget is `36·L²+39·L`. -/
+theorem Compile.moveRegion2TM_run (s : State) (src dst1 dst2 : Var) (res_in : List Nat)
+    (hsd1 : src ≠ dst1) (hsd2 : src ≠ dst2) (hd12 : dst1 ≠ dst2)
+    (hsrc : src < s.length) (hdst1 : dst1 < s.length) (hdst2 : dst2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res_in) :
+    ∃ t, runFlatTM t (Compile.moveRegion2TM src dst1 dst2)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] }
+      = some { state_idx := Compile.moveRegion2TM_exit src dst1 dst2,
+               tapes := [([], 0,
+                 Compile.encodeTape
+                     (((s.set dst1 (s.get dst1 ++ s.get src)).set dst2 (s.get dst2 ++ s.get src)).set src [])
+                   ++ (res_in ++ List.replicate (s.get src).length 0))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.moveRegion2TM src dst1 dst2)
+              { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } = some ck →
+          ck.state_idx ≠ Compile.moveRegion2TM_exit src dst1 dst2 ∧
+          haltingStateReached (Compile.moveRegion2TM src dst1 dst2) ck = false)
+      ∧ t ≤ 36 * (Compile.encodeTape s ++ res_in).length * (Compile.encodeTape s ++ res_in).length
+              + 39 * (Compile.encodeTape s ++ res_in).length := by
+  set n := (s.get src).length with hn
+  set st : Nat → State := fun m =>
+    ((s.set dst1 (s.get dst1 ++ (s.get src).take m)).set dst2 (s.get dst2 ++ (s.get src).take m)).set src
+      ((s.get src).drop m) with hstdef
+  set T : Nat → (List Nat × Nat × List Nat) := fun j =>
+    ([], 0, Compile.encodeTape (st (n - j)) ++ (res_in ++ List.replicate (n - j) 0)) with hTdef
+  set L := (Compile.encodeTape s ++ res_in).length with hLdef
+  have hv_bit : ∀ x ∈ s.get src, x ≤ 1 := Compile.BitState_get s src hbit hsrc
+  have hd1_bit : ∀ x ∈ s.get dst1, x ≤ 1 := Compile.BitState_get s dst1 hbit hdst1
+  have hd2_bit : ∀ x ∈ s.get dst2, x ≤ 1 := Compile.BitState_get s dst2 hbit hdst2
+  have hBstart : (Compile.moveBody2RawTM src dst1 dst2).start = 0 := by
+    show (branchComposeFlatTM _ _ _ _ _).start = 0
+    rw [branchComposeFlatTM_start]; exact ClearGadget.navigateAndTestTM_start src
+  have hlenP : ∀ (m : Nat),
+      (s.set dst1 (s.get dst1 ++ (s.get src).take m)).length = s.length :=
+    fun m => Compile.length_set s dst1 _ hdst1
+  have hlenQ : ∀ m, ((s.set dst1 (s.get dst1 ++ (s.get src).take m)).set dst2
+      (s.get dst2 ++ (s.get src).take m)).length = s.length :=
+    fun m => by rw [Compile.length_set _ dst2 _ (by rw [hlenP]; exact hdst2), hlenP]
+  have hlen_st : ∀ m, (st m).length = s.length := fun m => by
+    simp only [hstdef]; rw [Compile.length_set _ src _ (by rw [hlenQ]; exact hsrc), hlenQ]
+  have hget_src_st : ∀ m, (st m).get src = (s.get src).drop m := fun m => by
+    simp only [hstdef]; exact Compile.get_set_eq _ src _ (by rw [hlenQ]; exact hsrc)
+  have hget_dst1_st : ∀ m, (st m).get dst1 = s.get dst1 ++ (s.get src).take m := fun m => by
+    simp only [hstdef]
+    rw [Compile.get_set_ne _ src _ dst1 (by rw [hlenQ]; exact hsrc) (Ne.symm hsd1),
+        Compile.get_set_ne _ dst2 _ dst1 (by rw [hlenP]; exact hdst2) hd12,
+        Compile.get_set_eq s dst1 _ hdst1]
+  have hget_dst2_st : ∀ m, (st m).get dst2 = s.get dst2 ++ (s.get src).take m := fun m => by
+    simp only [hstdef]
+    rw [Compile.get_set_ne _ src _ dst2 (by rw [hlenQ]; exact hsrc) (Ne.symm hsd2),
+        Compile.get_set_eq _ dst2 _ (by rw [hlenP]; exact hdst2)]
+  have hbit_st : ∀ m, Compile.BitState (st m) := fun m => by
+    simp only [hstdef]
+    refine Compile.BitState_set _ src _ ?_ (by rw [hlenQ]; exact hsrc)
+      (fun x hx => hv_bit x (List.mem_of_mem_drop hx))
+    refine Compile.BitState_set _ dst2 _ ?_ (by rw [hlenP]; exact hdst2) ?_
+    · refine Compile.BitState_set s dst1 _ hbit hdst1 ?_
+      intro x hx; rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact hd1_bit x hx
+      · exact hv_bit x (List.mem_of_mem_take hx)
+    · intro x hx; rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact hd2_bit x hx
+      · exact hv_bit x (List.mem_of_mem_take hx)
+  -- size of `st m` grows by `m` (each moved bit is duplicated into dst1 and dst2).
+  have hsize_st : ∀ m, m ≤ n → State.size (st m) = State.size s + m := by
+    intro m hm
+    have htake : ((s.get src).take m).length = m := by rw [List.length_take, ← hn]; omega
+    have hdrop : ((s.get src).drop m).length = n - m := by rw [List.length_drop, ← hn]
+    have e1 := State.size_set_add s dst1 (s.get dst1 ++ (s.get src).take m)
+    have hP_d2 : (s.set dst1 (s.get dst1 ++ (s.get src).take m)).get dst2 = s.get dst2 :=
+      Compile.get_set_ne s dst1 _ dst2 hdst1 (Ne.symm hd12)
+    have e2 := State.size_set_add (s.set dst1 (s.get dst1 ++ (s.get src).take m)) dst2
+      (s.get dst2 ++ (s.get src).take m)
+    rw [hP_d2] at e2
+    have hQ_src : ((s.set dst1 (s.get dst1 ++ (s.get src).take m)).set dst2
+        (s.get dst2 ++ (s.get src).take m)).get src = s.get src := by
+      rw [Compile.get_set_ne _ dst2 _ src (by rw [hlenP]; exact hdst2) hsd2,
+          Compile.get_set_ne s dst1 _ src hdst1 hsd1]
+    have e3 := State.size_set_add ((s.set dst1 (s.get dst1 ++ (s.get src).take m)).set dst2
+      (s.get dst2 ++ (s.get src).take m)) src ((s.get src).drop m)
+    rw [hQ_src] at e3
+    simp only [hstdef, List.length_append, htake, hdrop] at e1 e2 e3 ⊢
+    omega
+  have hTlen : ∀ j, j ≤ n → (T j).2.2.length = L + 2 * (n - j) := by
+    intro j hj
+    simp only [hTdef, List.length_append, List.length_replicate]
+    rw [Compile.encodeTape_length, hsize_st (n - j) (Nat.sub_le n j), hlen_st,
+        hLdef, List.length_append, Compile.encodeTape_length]
+    omega
+  have hnL : n + 2 ≤ L := by
+    have hsize := State.size_set_add s src ([] : List Nat)
+    simp only [List.length_nil, Nat.add_zero] at hsize
+    rw [hLdef, List.length_append, Compile.encodeTape_length]
+    omega
+  have hT_lt : ∀ j x, x ∈ (T j).2.2 → x < 4 := by
+    intro j x hx
+    simp only [hTdef] at hx
+    rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeTape_lt_four _ (hbit_st _) x hx
+    · rw [List.mem_append] at hx
+      rcases hx with hx | hx
+      · exact (hres x hx).1
+      · rw [List.mem_replicate] at hx; omega
+  have h_sym : ∀ m v, currentTapeSymbol (T m) = some v → v < (Compile.moveBody2RawTM src dst1 dst2).sig := by
+    intro m v hv
+    have hsig : (Compile.moveBody2RawTM src dst1 dst2).sig = 4 := by
+      show (branchComposeFlatTM _ _ _ _ _).sig = 4
+      rw [branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig, Compile.moveContent2TM_sig]; rfl
+    rw [hsig]
+    have hmem : v ∈ (T m).2.2 := by
+      simp only [currentTapeSymbol] at hv
+      split at hv
+      · injection hv with e; rw [← e]; exact List.get_mem _ _
+      · exact absurd hv (by simp)
+    exact hT_lt m v hmem
+  -- done branch: `T 0`, register `src` empty.
+  have hdone := Compile.moveBody2_done_run (st n) src dst1 dst2 (res_in ++ List.replicate n 0)
+    (by rw [hlen_st]; exact hsrc) (hbit_st n)
+    (by rw [hget_src_st, hn]; exact List.drop_length)
+    (Compile.ValidResidue_append_replicate_zero res_in n hres)
+  obtain ⟨tDone, hdr, hdt, hdb⟩ := hdone
+  have hT0 : T 0 = ([], 0, Compile.encodeTape (st n) ++ (res_in ++ List.replicate n 0)) := by
+    simp only [hTdef, Nat.sub_zero]
+  have h_done_bnd : tDone + 1 ≤ 36 * L + 39 := by
+    have hlen0 := hTlen 0 (Nat.zero_le n)
+    simp only [hTdef, Nat.sub_zero] at hlen0
+    rw [hlen0] at hdb
+    have : n ≤ L := by omega
+    omega
+  -- per-iteration move: `T (j+1) → T j` for `j < n`, moving one bit to both dsts.
+  have hiter_ex : ∀ j, j < n → ∃ t,
+      runFlatTM t (Compile.moveBody2RawTM src dst1 dst2)
+          { state_idx := (Compile.moveBody2RawTM src dst1 dst2).start, tapes := [T (j + 1)] }
+        = some { state_idx := Compile.moveBody2RawTM_exitLoop src dst1 dst2, tapes := [T j] } ∧
+      (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.moveBody2RawTM src dst1 dst2)
+            { state_idx := (Compile.moveBody2RawTM src dst1 dst2).start, tapes := [T (j + 1)] } = some ck →
+        ck.state_idx ≠ Compile.moveBody2RawTM_exitDone src dst1 dst2 ∧
+        ck.state_idx ≠ Compile.moveBody2RawTM_exitLoop src dst1 dst2 ∧
+        haltingStateReached (Compile.moveBody2RawTM src dst1 dst2) ck = false) ∧
+      t ≤ 36 * L + 38 := by
+    intro j hj
+    set m := n - (j + 1) with hm
+    have hmn : m < n := by omega
+    have hm1 : m + 1 = n - j := by omega
+    have hmlen : m < (s.get src).length := by rw [← hn]; exact hmn
+    have hdc : (s.get src).drop m = (s.get src)[m] :: (s.get src).drop (m + 1) :=
+      List.drop_eq_getElem_cons hmlen
+    have hb1 : (s.get src)[m] ≤ 1 := hv_bit _ (List.getElem_mem hmlen)
+    have hsrc_cons : (st m).get src = (s.get src)[m] :: (s.get src).drop (m + 1) := by
+      rw [hget_src_st]; exact hdc
+    obtain ⟨t, hr, ht, hbnd⟩ := Compile.moveBody2_delete_run (st m) src dst1 dst2 ((s.get src)[m])
+      ((s.get src).drop (m + 1)) hsrc_cons hb1 hsd1 hsd2 hd12 (hbit_st m)
+      (by rw [hlen_st]; exact hsrc) (by rw [hlen_st]; exact hdst1) (by rw [hlen_st]; exact hdst2)
+      (res_in ++ List.replicate m 0)
+      (Compile.ValidResidue_append_replicate_zero res_in m hres)
+    -- bridge the dual-move output to `T j` (3-register reshuffle).
+    have hsrcQ : ∀ (m' : Nat), src < ((s.set dst1 (s.get dst1 ++ (s.get src).take m')).set dst2
+        (s.get dst2 ++ (s.get src).take m')).length := fun m' => by rw [hlenQ]; exact hsrc
+    have hstate_eq : (((st m).set src ((s.get src).drop (m + 1))).set dst1
+          ((st m).get dst1 ++ [(s.get src)[m]])).set dst2 ((st m).get dst2 ++ [(s.get src)[m]])
+        = st (n - j) := by
+      rw [hget_dst1_st, hget_dst2_st, ← hm1,
+          show (s.get dst1 ++ (s.get src).take m) ++ [(s.get src)[m]]
+            = s.get dst1 ++ (s.get src).take (m + 1) from by
+            rw [List.append_assoc, List.take_succ_eq_append_getElem hmlen],
+          show (s.get dst2 ++ (s.get src).take m) ++ [(s.get src)[m]]
+            = s.get dst2 ++ (s.get src).take (m + 1) from by
+            rw [List.append_assoc, List.take_succ_eq_append_getElem hmlen]]
+      simp only [hstdef]
+      -- normalize LHS to `((s.set dst1 X).set dst2 Y).set src Z`.
+      rw [Compile.set_set _ src _ _ (hsrcQ m)]
+      rw [Compile.set_comm _ dst1 dst2 _ _ (by rw [Compile.length_set _ src _ (hsrcQ m), hlenQ]; exact hdst1)
+            (by rw [Compile.length_set _ src _ (hsrcQ m), hlenQ]; exact hdst2) hd12]
+      rw [Compile.set_comm _ src dst2 _ _ (hsrcQ m)
+            (by rw [hlenQ]; exact hdst2) hsd2]
+      rw [Compile.set_set _ dst2 _ _ (by rw [hlenP]; exact hdst2)]
+      rw [Compile.set_comm _ src dst1 _ _ (by rw [Compile.length_set _ dst2 _ (by rw [hlenP]; exact hdst2), hlenP]; exact hsrc)
+            (by rw [Compile.length_set _ dst2 _ (by rw [hlenP]; exact hdst2), hlenP]; exact hdst1) hsd1]
+      rw [Compile.set_comm _ dst2 dst1 _ _ (by rw [hlenP]; exact hdst2)
+            (by rw [hlenP]; exact hdst1) (Ne.symm hd12)]
+      rw [Compile.set_set _ dst1 _ _ hdst1]
+    have hres_eq : (res_in ++ List.replicate m 0) ++ [0] = res_in ++ List.replicate (n - j) 0 := by
+      rw [List.append_assoc, ← List.replicate_succ', hm1]
+    rw [hstate_eq, hres_eq] at hr
+    have hlenj := hTlen (j + 1) (by omega)
+    simp only [hTdef] at hlenj
+    rw [show n - (j + 1) = m from rfl] at hlenj
+    rw [hlenj] at hbnd
+    refine ⟨t, ?_, ?_, ?_⟩
+    · rw [hBstart]; simp only [hTdef]; rw [show n - (j + 1) = m from rfl]; exact hr
+    · rw [hBstart]; simp only [hTdef]; rw [show n - (j + 1) = m from rfl]; exact ht
+    · have : m ≤ n := by omega
+      omega
+  set tIter : Nat → Nat := fun j => if hj : j < n then (hiter_ex j hj).choose else 0 with htIter
+  have h_done_full :
+      runFlatTM tDone (Compile.moveBody2RawTM src dst1 dst2)
+          { state_idx := (Compile.moveBody2RawTM src dst1 dst2).start, tapes := [T 0] }
+        = some { state_idx := Compile.moveBody2RawTM_exitDone src dst1 dst2, tapes := [T 0] } ∧
+      (∀ k, k < tDone → ∀ ck,
+          runFlatTM k (Compile.moveBody2RawTM src dst1 dst2)
+              { state_idx := (Compile.moveBody2RawTM src dst1 dst2).start, tapes := [T 0] } = some ck →
+          ck.state_idx ≠ Compile.moveBody2RawTM_exitDone src dst1 dst2 ∧
+          ck.state_idx ≠ Compile.moveBody2RawTM_exitLoop src dst1 dst2 ∧
+          haltingStateReached (Compile.moveBody2RawTM src dst1 dst2) ck = false) := by
+    refine ⟨?_, ?_⟩
+    · rw [hBstart, hT0]; exact hdr
+    · rw [hBstart, hT0]; exact hdt
+  have h_iter_full : ∀ j, j < n →
+      runFlatTM (tIter j) (Compile.moveBody2RawTM src dst1 dst2)
+          { state_idx := (Compile.moveBody2RawTM src dst1 dst2).start, tapes := [T (j + 1)] }
+        = some { state_idx := Compile.moveBody2RawTM_exitLoop src dst1 dst2, tapes := [T j] } ∧
+      (∀ k, k < tIter j → ∀ ck,
+          runFlatTM k (Compile.moveBody2RawTM src dst1 dst2)
+              { state_idx := (Compile.moveBody2RawTM src dst1 dst2).start, tapes := [T (j + 1)] } = some ck →
+          ck.state_idx ≠ Compile.moveBody2RawTM_exitDone src dst1 dst2 ∧
+          ck.state_idx ≠ Compile.moveBody2RawTM_exitLoop src dst1 dst2 ∧
+          haltingStateReached (Compile.moveBody2RawTM src dst1 dst2) ck = false) := by
+    intro j hj
+    have hspec := (hiter_ex j hj).choose_spec
+    simp only [htIter, dif_pos hj]
+    exact ⟨hspec.1, hspec.2.1⟩
+  have h_iter_bnd : ∀ j, j < n → tIter j + 1 ≤ 36 * L + 39 := by
+    intro j hj
+    have hb := (hiter_ex j hj).choose_spec.2.2
+    simp only [htIter, dif_pos hj]
+    omega
+  have hmain := loopTM_run (Compile.moveBody2RawTM src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone src dst1 dst2) (Compile.moveBody2RawTM_exitLoop src dst1 dst2)
+    (Compile.moveBody2RawTM_valid src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone_lt src dst1 dst2) (Compile.moveBody2RawTM_exitLoop_lt src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone_ne_exitLoop src dst1 dst2) T h_sym tIter tDone h_done_full n h_iter_full
+  have hmain_traj := loopTM_no_early_halt (Compile.moveBody2RawTM src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone src dst1 dst2) (Compile.moveBody2RawTM_exitLoop src dst1 dst2)
+    (Compile.moveBody2RawTM_valid src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone_lt src dst1 dst2) (Compile.moveBody2RawTM_exitLoop_lt src dst1 dst2)
+    (Compile.moveBody2RawTM_exitDone_ne_exitLoop src dst1 dst2) T h_sym tIter tDone h_done_full n h_iter_full
+  have hTn : T n = ([], 0, Compile.encodeTape s ++ res_in) := by
+    simp only [hTdef, Nat.sub_self]
+    rw [hstdef]
+    simp only [List.take_zero, List.drop_zero, List.append_nil, List.replicate_zero]
+    rw [Compile.set_get_self s dst1 hdst1, Compile.set_get_self s dst2 hdst2,
+        Compile.set_get_self s src hsrc]
+  have hTfin : T 0 = ([], 0, Compile.encodeTape
+      (((s.set dst1 (s.get dst1 ++ s.get src)).set dst2 (s.get dst2 ++ s.get src)).set src [])
+      ++ (res_in ++ List.replicate n 0)) := by
+    simp only [hTdef, Nat.sub_zero, hstdef]
+    rw [show (s.get src).take n = s.get src from by rw [hn]; exact List.take_length,
+        show (s.get src).drop n = [] from by rw [hn]; exact List.drop_length]
+  rw [hBstart, hTn, hTfin] at hmain
+  rw [hBstart, hTn] at hmain_traj
+  have hMeq : Compile.moveRegion2TM src dst1 dst2
+      = loopTM (Compile.moveBody2RawTM src dst1 dst2) (Compile.moveBody2RawTM_exitDone src dst1 dst2)
+          (Compile.moveBody2RawTM_exitLoop src dst1 dst2) := rfl
+  have hExeq : Compile.moveRegion2TM_exit src dst1 dst2 = (Compile.moveBody2RawTM src dst1 dst2).states := rfl
+  have hexit_halt : (Compile.moveRegion2TM src dst1 dst2).halt[(Compile.moveBody2RawTM src dst1 dst2).states]?
+      = some true := by
+    rw [hMeq]
+    show (loopHalt (Compile.moveBody2RawTM src dst1 dst2))[(Compile.moveBody2RawTM src dst1 dst2).states]? = some true
+    show (List.replicate (Compile.moveBody2RawTM src dst1 dst2).states false ++ [true])[(Compile.moveBody2RawTM src dst1 dst2).states]?
+        = some true
+    rw [List.getElem?_append_right (by rw [List.length_replicate]),
+        List.length_replicate, Nat.sub_self]
+    rfl
+  refine ⟨loopBudget tIter tDone n, ?_, ?_, ?_⟩
+  · rw [hMeq, hExeq]; exact hmain
+  · intro k hk ck hck
+    rw [hMeq] at hck
+    have hh := hmain_traj k hk ck hck
+    refine ⟨?_, hh⟩
+    rw [hExeq]
+    rw [hMeq] at hexit_halt
+    exact ClearGadget.ne_of_not_halting hexit_halt hh
+  · rw [hLdef] at hnL ⊢
+    exact le_trans
+      (Compile.loopBudget_le tIter tDone (36 * L + 39) n h_done_bnd h_iter_bnd)
+      (by rw [← hLdef]; exact Compile.moveBudget2_arith n L (by rw [hLdef]; exact hnL))
+
 /-- **`clearAppendM` run + no-early-halt + budget.** From head `0` on
 `encodeTape s ++ res`, clearing register `dst` then appending bit `bit` reaches
 the unique exit at head `0` with tape `encodeTape (s.set dst [bit]) ++ res'`
