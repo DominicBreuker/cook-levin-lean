@@ -9380,6 +9380,43 @@ theorem Compile_run_physical_residue (c : Cmd) (s : State)
          -- Stays poly on the live path (`encodeState x` = 1 reg; `s.length` ≤ const
          -- `regBound`). See HANDOFF.md "Deep feasibility pass".
 
+/-- **★ The C2 obligation, PROVEN from the assembly** — the `res0 = []` instance of
+`Compile.run_physical_residue_gen`. This is `Compile_run_physical_residue` with the
+**correct, provable budget** (`physStepBudget`; the unprimed version's
+`overhead (size + cost)` is the wrong shape — too small in both degree and the
+register count `s.length`, Finding A) and the threading hypotheses the bridge
+supplies (`Cmd.UsesBelow c k` / `k ≤ s.length` / `Cmd.NoConsLen c`). Its proof body
+is `sorry`-free; the only remaining gaps are the leaf gadgets (the 7 stub ops in
+`compileOp_sound_physical_residue` + the 2 stub loop/branch machines feeding the
+residue combinators).
+
+⚠ The unprimed `Compile_run_physical_residue` (above) is still `sorry` and is what
+`bitDecider_run` / `Compile_sound` currently consume. Retargeting them to THIS lemma
+— i.e. restating their `overhead`-shaped budgets as `physStepBudget` and threading
+the `UsesBelow`/`NoConsLen`/register-count hypotheses — is the deferred **GAP-4
+ripple** (see HANDOFF.md). -/
+theorem Compile_run_physical_residue' (c : Cmd) (k : Nat) (s : State)
+    (hbit : Compile.BitState s) (hk : k ≤ s.length)
+    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c) :
+    ∃ (t : Nat) (res : List Nat),
+      Compile.ValidResidue res ∧
+      runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
+          = some { state_idx := Compile.exit c,
+                   tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] } ∧
+      (∀ k', k' < t → ∀ ck,
+          runFlatTM k' (Compile c)
+              (initFlatConfig (Compile c) [Compile.encodeTape s]) = some ck →
+          ck.state_idx ≠ Compile.exit c ∧
+          haltingStateReached (Compile c) ck = false) ∧
+      t ≤ Compile.physStepBudget (State.size s + s.length + c.cost s + 2) (c.cost s) := by
+  obtain ⟨t, res, hres, _hW, hrun, htraj, hbud⟩ :=
+    Compile.run_physical_residue_gen c k s [] (State.size s + s.length + c.cost s + 2)
+      hbit hk huses hnc Compile.ValidResidue_nil (by rw [List.length_nil]; omega)
+  refine ⟨t, res, hres, ?_, ?_, hbud⟩
+  · rw [List.append_nil] at hrun; exact hrun
+  · intro k' hk' ck hck
+    exact htraj k' hk' ck (by rw [List.append_nil]; exact hck)
+
 /-- **Bridge: the residue contract ⇒ `Compile_sound` (PROVEN, the assembly's last
 mile).** Given the residue-tolerant physical run of `Compile c` (exit at
 `Compile.exit c`, tape `encodeTape (c.eval s) ++ res`, halt step `t ≤ overhead`)
