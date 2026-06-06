@@ -149,16 +149,15 @@ quadratics are not superadditive, and it dropped both `s.length` and the residue
    branch-tester *machines themselves* don't exist. Building them (a `loopTM` over
    the bound's unary length; a navigate+`bitReadTM` tester) is bottom-up gadget
    work comparable to a cross-register op, and **gates** combinator #1.
-3. **Architecture / file order:** the threading lemmas `Cmd.NoConsLen`,
-   `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow` live in `PolyTime.lean`,
-   **downstream** of `Compile_run_physical_residue` and its consumer `bitDecider_run`
-   (both `Compile.lean`). So `run_physical_residue_gen` currently lives in
-   `PolyTime.lean` and **cannot yet be used to discharge the `Compile.lean`
-   obligation**. Fix: **relocate those three lemmas (and `Op.NotConsLen`) upstream
-   into `Compile.lean`** (all their deps — `Op.eval_preserves_BitState`,
-   `BitState_set_pad`, `Cmd.eval_length_ge`, `foldlState_range_induct` — are already
-   available there), then move `run_physical_residue_gen` up too and prove the
-   obligation from it.
+3. ✅ **Architecture / file order — DONE (relocation, 2026-06-06).** The threading
+   lemmas + budget lemmas + the two residue combinators + `run_physical_residue_gen`
+   now live in `Compile.lean` **before** `Compile_run_physical_residue` (added
+   `import Complexity.Lang.Frame` to Compile.lean — Frame depends only on Semantics,
+   no cycle). So the assembly is now positioned to discharge the obligation. **What
+   remains:** actually replace the `sorry` at `Compile_run_physical_residue` with the
+   `res0 = []` instance of `run_physical_residue_gen` — which requires the budget
+   restatement (GAP 4), since the obligation's current budget `overhead (size+cost)`
+   is the wrong (unprovable) shape.
 4. **Budget restatement ripples (do together with #3):** `Compile_run_physical_residue`
    (Compile.lean:8910), `sound_of_run_residue`, `Compile_sound`, `Compile_polyBound`,
    `bitDecider_run` all carry the **wrong** `Compile.overhead (State.size s + c.cost s)`
@@ -213,19 +212,22 @@ lemmas with `sorry` when they look provable; surface gaps early.
 ✅ **DONE (2026-06-06):** `Compile.run_physical_residue_gen` is mechanized
 (op/seq proven, ifBit/forBnd dispatch proven); the W-invariant ① is on
 `compileOp_sound_physical_residue` and discharged for the 5 done ops;
-`physStepBudget` + its `seq` superadditivity are proven. Remaining top-down work:
+`physStepBudget` + its `seq` superadditivity / mono / poly are proven; **the whole
+assembly is RELOCATED into `Compile.lean`** (GAP 3) before the obligation. Remaining
+top-down work:
 
-1. **Relocate the threading lemmas upstream (GAP 3)** — move `Cmd.NoConsLen`,
-   `Op.NotConsLen`, `Op.inBounds_of_UsesBelow`, `Cmd.eval_preserves_BitState`, and
-   `Compile.run_physical_residue_gen` (+ `physStepBudget*`) from `PolyTime.lean`
-   into `Compile.lean` (all deps already available there). Then **prove
-   `Compile_run_physical_residue` (the `res0=[]` instance) from
-   `run_physical_residue_gen`** and **restate the budgets (GAP 4)** —
+1. **Prove `Compile_run_physical_residue` from `run_physical_residue_gen`** (the
+   `res0 = []`, `k = s.length`, `G = State.size s + s.length + c.cost s + 2`
+   instance — `hres0 = ValidResidue []`, `huses`/`hnc` from the bridge). This
+   **requires the budget restatement (GAP 4)**: change
    `Compile_run_physical_residue`/`sound_of_run_residue`/`Compile_sound`/
-   `Compile_polyBound`/`bitDecider_run` to use `physStepBudget G (c.cost s)` (drop
-   the unprovable `overhead (size+cost)`), threading the register-count bound. The
-   `inOPoly`/`monotonic` facts the restatement feeds to `toFrameworkWitness'` are
-   **ready and axiom-clean**: `Compile.physStepBudget_mono` / `physStepBudget_poly`.
+   `Compile_polyBound`/`bitDecider_run` from `overhead (size+cost)` (unprovable
+   shape) to `physStepBudget G (c.cost s)`. The `inOPoly`/`monotonic` facts the
+   restatement feeds to `toFrameworkWitness'` are **ready and axiom-clean**
+   (`Compile.physStepBudget_mono` / `physStepBudget_poly`). ⚠ The obligation must
+   also gain the `huses : Cmd.UsesBelow c k` / `k ≤ s.length` / `hnc : Cmd.NoConsLen c`
+   hypotheses (supplied by the bridge / witness) and a **register-count bound** so
+   the `s.length` term in the budget stays poly on the live path.
 2. **Close the live bridge** `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`
    (PolyTime.lean) using the new budget shape + a **register-count bound** added to
    `DecidesLang` (or route via `DecidesLang'`) + the witness `enc_bit`. This is what
