@@ -36,71 +36,77 @@ level unary canonical encodings). No further design sign-off is needed.
 
 ---
 
-## ✅ DONE this session (2026-06-06): the move-one-bit transfer gadget is PROVEN
+## ✅ PROVEN gadgets the ops build on (reuse, do not re-derive)
 
-**`Compile.moveRegionTM_run` is fully proven and axiom-clean** (only
-`propext`/`Classical.choice`/`Quot.sound`). This was the single critical-path TM
-gadget the whole of `Compile_sound` waited on. It transfers register `src`'s
-content (FIFO, one bit/iteration) to the end of `dst`, empties `src`, rewinds to
-head `0`: result tape `encodeTape ((s.set dst (dst₀++src₀)).set src []) ++
-(res_in ++ replicate |src₀| 0)`, budget `25·L²+25`. Reusable lemmas landed (all
-in `Compile.lean`, all axiom-clean — **reuse, do not re-derive**):
+- **`Compile.moveRegionTM_run`** (axiom-clean) — the **single-target** FIFO
+  transfer: moves `src`'s content one bit/iter to the **end** of `dst`, empties
+  `src`, rewinds to head `0`. Result tape
+  `encodeTape ((s.set dst (dst₀++src₀)).set src []) ++ (res_in ++ replicate |src₀| 0)`,
+  budget `25·L²+25`. Built from `loopTM_run` over `moveBodyRawTM` (body =
+  `navigateAndTestTM ⨾ bitReadTM ⨾ stepDeleteRewind ⨾ appendAtThenTwoPhaseRewind(bit+1, dst)`).
+  Full validity/halt scaffolding exists (`moveBitM2TM_valid`/`_sig`/`_exit_*`,
+  `moveContent*`, `moveBodyRawTM_valid`/`_exit{Loop,Done}_{is_halt,lt}`/`_ne_`).
+- **`Compile.moveRegionTM_valid` / `_sig`** (axiom-clean, this session) — the
+  `loopTM_valid`/`loopTM_sig` wrappers needed to drop `moveRegionTM` into
+  `composeFlatTM`/`branchComposeFlatTM`.
 
-- `Compile.appendBitTwoPhase_run` — bracket-free raw two-phase append (head 0 →
-  append `bit` to `dst`'s end → rewind), `≤ 3·L+8`. The shared append core.
-- `Compile.moveBitM2_run` — single-bit transfer engine (delete src front +
-  append to dst), `≤ 7·L+18`, via `composeFlatTM_run` over
-  `stepDeleteRewind_run` + `appendBitTwoPhase_run`.
-- `Compile.moveContent_run` — the bit-read branch (`bitReadTM` → `moveBitM2`),
-  two paths merged by `joinTwoHalts` into `moveContentExit0`, `≤ 7·L+21`.
-- `Compile.moveBody_done_run` (src empty → rewind, `≤ 6·L+12`) and
-  `Compile.moveBody_delete_run` (one bit moved, `≤ 9·L+26`): the loop-body
-  branches.
-- `Compile.moveRegionTM_run` — the loop assembly (`loopTM_run` +
-  `loopTM_no_early_halt`), per-iter invariant `T j` couples both registers
-  (`src = drop (n−j)`, `dst = dst₀ ++ take (n−j)`), threads the moved bit.
-- Full validity/halt scaffolding: `moveBitM2TM_valid`/`_sig`/`_exit_is_halt`/
-  `_exit_lt`, `moveContentRawTM_valid`/`_sig`, `moveContentExit{0,1}_is_halt`/`_lt`,
-  `moveContentTM_valid`/`_sig`/`_exit0_is_halt`, `moveBodyRawTM_valid`/
-  `_exitLoop_is_halt`/`_exitDone_is_halt`/`_exitLoop_lt`/`_exitDone_lt`/
-  `_exitDone_ne_exitLoop`. Plus utilities `Compile.get_set_ne`/`set_comm`,
-  `appendAtTM_states_eq`, `moveBudget_arith`.
-- ⚠ **Key finding vs `clear`:** the move tape **grows** one residue cell per
-  iteration (`|T j| = L + (n−j)`; delete adds a `0`, append grows `encodeTape`,
-  total +1). So the per-iteration budget is in the *current* (growing) tape length,
-  bounded by `2L`; this is the one accounting that differs from `clearRegionTM_run`.
-- ⚠ **Stray halts are fine for the run:** `appendAtThenTwoPhaseRewindTM` has a
-  boundary halt (state 7) that `moveBitM2TM`/`moveContentRawTM` inherit and that
-  `joinTwoHalts` does NOT demote — but it is **never reached**, so every run/traj
-  lemma goes through (`composeFlatTM_no_early_halt` proves halting-false at every
-  reached step). The next agent does **not** need a `halt_unique` for `moveRegionTM`.
+## ⚠ DESIGN CORRECTION (this session, probe-validated): the 7 ops are 4 different shapes — NOT all "built from moveRegionTM"
 
-## ▶ ACTIVE BUILD (next agent): Task 1 (unary encodings + scratch), then wire the 7 ops
+`moveRegionTM` is **single-target** (one `dst`). The prior plan said all 7 ops
+reduce to it; that is false. A conservative single-target move can never
+*duplicate* data (the number of copies is invariant), and `copy`/`tail`/`concat`
+must duplicate. State-level + TM-level `#eval` probes (this session) reproduce
+every `Op.eval` exactly and pin the four real shapes:
 
-`moveRegionTM_run` is the data-transport primitive. The **7 remaining cross-register
-ops** (`copy`/`tail`/`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, the `sorry`s in
-`compileOp_sound_physical_residue`, ~Compile.lean:5892) are now gated **only** on
-Task 1 (the coupled encoding batch), which must come first (see the ordered plan
-below — "the prior 'build ops before Tasks 1+2' was self-contradictory"):
+1. **`copy`/`tail`/`concat` — need a NEW dual-target duplicating move
+   `moveRegion2TM`** (append `src`'s content to the end of **both** `dst1` and
+   `dst2`, empty `src`). Validated recipes (registers must be **distinct**;
+   `sc` starts empty):
+   - `copy dst src sc` = `clear dst ⨾ move src→sc ⨾ move2 sc→(src,dst)`.
+   - `tail dst src sc` = `copy dst src sc ⨾ deleteFirstBit dst` (one `stepDeleteRewind` on dst's front).
+   - `concat dst src1 src2 sc` = `copy dst src1 sc ⨾ move src2→sc ⨾ move2 sc→(src2,dst)`.
+   **`moveRegion2TM` is buildable by mirroring `moveRegionTM`** with a second
+   append in the body: `moveBitM3TM b dst1 dst2 := moveBitM2TM b dst1 ⨾
+   appendAtThenTwoPhaseRewindTM (b+1) dst2`. ✅ TM-`#eval` confirms the dual
+   append (append `b` to dst1 then dst2 from head 0, residue-tolerant) yields the
+   exact `encodeTape` with head→0 and a clean halt. The `_run` lemma mirrors
+   `moveRegionTM_run` but its per-iter invariant couples **three** registers
+   (`src`, `dst1`, `dst2`) and the budget grows (two appends/bit). This is the
+   single highest-value next gadget — it unblocks 3 of the 7 ops.
+2. **`eqBit` — NOT moves; a comparison-loop gadget.** Copy both operands to **two**
+   scratch regs, then loop: compare-and-delete the front bits; equal iff fronts
+   always matched and both empty together. **Needs 2 scratch operands**, not 1.
+3. **`takeAt`/`dropAt` — a counter-bounded transfer**, NOT `moveRegionTM` (which
+   transfers *all*). Under `BitState` the count is `k = (s.get lenReg).length`
+   (unary), so the loop is `loopTM`/`forBnd`-shaped over `lenReg`; transfer/skip
+   the first `k` bits. Validated specs: `takeAt → src.take k`, `dropAt → src.drop k`.
+   Needs 1 scratch.
+4. **`consLen` — the ONLY op whose `Op.eval` must be RESTATED unary:**
+   `dst := replicate |lenSrc| 1 ++ src` (validated spec). ⚠ **Its `Op.cost` must
+   ALSO be bumped to charge `|lenSrc|`** (today only `|src|+1`), else
+   `Op.size_eval_le` breaks (output grows by `|lenSrc|+|src|`).
 
-1. **Task 1 — unary `Nat`/product encodings + a scratch operand** (ordered plan §1).
-   `copy`/`tail`/`concat`/`eqBit` need an **empty-scratch operand** `sc` (precond
-   `s.get sc = []`, `sc ∉ {dst,src}`; `Op.eval` ignores it); `takeAt`/`dropAt`/
-   `consLen` need the **unary length** restatement (`.headD 0` is meaningless under
-   `BitState`). `swapCmd`/`mapFstCmd`/`mapSndCmd` (the only users) re-derive against
-   the new signatures.
-2. **Wire `moveRegionTM_run` into the ops** (ordered plan §2). Probe-validated
-   design: every op is a **two-phase counter-free transfer** built from
-   `moveRegionTM_run` (move `src→sc` until src empties, then `sc→`(`src`&`dst`)).
-   `copy dst src sc` = move `src→sc` ⨾ move `sc→src`&`dst`; `tail` = drop the first
-   moved bit for dst; `concat` = two copies; `eqBit` = transfer both + AND fronts;
-   `takeAt`/`dropAt`/`consLen` bound phase 2 by the unary length. Each op's per-op
-   contract: feed `moveRegionTM_run` + the residue bookkeeping into the
-   `compileOp_sound_physical_residue` shape (template: the proven `appendOne`/`clear`/
-   `nonEmpty`/`head` cases). **Re-probe each assembled op (`#eval`) before proving.**
-   ⚠ You will likely need `moveRegionTM_valid`/`_sig`/`_start` wrappers (mirror
-   `clearRegionTM_valid` — `loopTM_valid` over `moveBodyRawTM_valid` which now
-   exists; numeric `exit_lt` via `moveRegionTM_exit = moveBodyRawTM.states`).
+**Scratch-operand counts (corrects "all need one sc"):** copy/tail/concat/takeAt/
+dropAt/consLen need **1**; **eqBit needs 2**. Size the `Op` signature change to
+this before refactoring.
+
+## ▶ NEXT STEPS (risk-first summary; full detail in "The ordered plan from here" below)
+
+Task 1 (the coupled encoding/signature batch) gates all 7 ops and must come first;
+the dual-target gadget can be built in parallel.
+
+1. **Task 1 — unary encodings + scratch operands** (see "The ordered plan from
+   here §1" below for the full item list). Add the scratch operands above to the
+   `Op` constructors (`Op.eval` ignores them; the gadget restores them to `[]`);
+   restate `takeAt`/`dropAt`/`consLen` unary (+ the `consLen` cost bump);
+   re-derive `swapCmd`/`mapFstCmd`/`mapSndCmd`. Land green per item.
+2. **Build `moveRegion2TM` + `moveRegion2TM_run`** (mirror `moveRegionTM_run`;
+   probe each assembled machine with `#eval` BEFORE proving). Then the comparison
+   loop (`eqBit`) and the counter-bounded transfer (`takeAt`/`dropAt`).
+3. **Wire each op into `compileOp_sound_physical_residue`** (the 7 `sorry`s,
+   ~Compile.lean:7109–7125) via the proven `clear`/`nonEmpty`/`head` templates +
+   `rewindBracket`/`joinTwoHalts` to keep a unique halt. **Re-`#eval` end-to-end
+   before proving each run lemma.**
 
 ## ✅ Already PROVEN — the residue-induction invariant toolkit (reuse, don't re-derive)
 
@@ -239,29 +245,20 @@ Each item replaces an `enc_bit := sorry` with a real proof. Land green per item.
 
 ### 2. Build the 7 op gadgets (the `sorry`s in `compileOp_sound_physical_residue`)
 
-Remaining `sorry`s (Compile.lean ~5610–5626): `copy`/`tail`/`eqBit`/`takeAt`/
+Remaining `sorry`s (Compile.lean 7109–7125): `copy`/`tail`/`eqBit`/`takeAt`/
 `dropAt`/`concat`/`consLen`. **PROVEN already:** `appendOne`/`appendZero`/`clear`/
 `nonEmpty`/`head`.
 
-**✅ Probe-validated GO design (counter-free two-phase transfer).** Reuses only
-proven gadgets. **Move-one-bit primitive** (inner loop body), from
-`encodeTape s ++ res`: `navigateAndTestTM src` → `bitReadTM` (read bit into state)
-→ `deleteCarryTM` (delete src's front cell, left-shift, `0`-residue) → rewind to 0
-→ `appendAtTM (bit+1) dst` → rewind to 0. ⚠ **append symbol is `bit+1`, not `bit`**
-(the encoding shifts `+1`). Works for `dst>src` AND `dst<src` (both `#eval`-probed).
-Each phase is a `clear`-style `loopTM` terminating by emptying a register, so
-`loopTM_run`/`loopTM_no_early_halt` apply.
-
-Per-op realizations (after scratch `sc` exists): `copy dst src sc` = move `src→sc`
-(src empties) ⨾ move `sc→src`&`dst` (sc empties, src rebuilt, dst built);
-`tail` = drop the first transferred bit for `dst`; `concat` = two copies;
-`eqBit` = transfer both, AND the front bits; `takeAt`/`dropAt`/`consLen` bound
-phase 2 by the unary length. **No new low-level TM needed.** Build the move
-primitive + run/`_no_early_halt`/budget **mirroring `clearRegionTM_run`** (same
-`loopTM` shape + an extra `appendAtTM` in the body). **Re-probe each assembled
-machine end-to-end (`#eval`) before proving its run lemma.** Templates:
-`clearRegionTM_run` (the chain to mirror), `opNonEmpty_run` (branch-merge engine),
-`opHead_run` (nested branch + `bitReadTM`).
+**See "⚠ DESIGN CORRECTION" near the top** for the validated per-op recipes and the
+four gadget shapes. Summary: `moveRegionTM` (single-target FIFO move) is one phase
+but is **not** sufficient alone — `copy`/`tail`/`concat` need the new dual-target
+`moveRegion2TM`, `eqBit` a comparison loop, `takeAt`/`dropAt` a counter-bounded
+transfer, and `consLen` a unary `Op.eval`+cost restatement. Build each gadget +
+run/`_no_early_halt`/budget **mirroring `clearRegionTM_run`/`moveRegionTM_run`**, and
+**re-probe each assembled machine end-to-end (`#eval`) before proving its run
+lemma.** Templates: `moveRegionTM_run`/`clearRegionTM_run` (the loop chains to
+mirror), `opNonEmpty_run` (branch-merge engine), `opHead_run` (nested branch +
+`bitReadTM`).
 
 ### 3. Finding A — restate the top-level budget (do WITH the assembly)
 
@@ -299,9 +296,10 @@ This discharges C2; downstream unlocks S3 migration, C7 verifiers, C8 hardness.
 |------|------|
 | `Compile.BitState`/`encodeTape`/`encodeRegs`/`shiftReg`/`ValidResidue`/`decodeTape` (Compile.lean) | `sig=4` tape encoding; the standing bit invariant; residue-tolerant contract |
 | `Compile_sound`, `Compile_run_physical`, `Compile_run_physical_residue` (search; line nums drift) | **the C2 obligations (`sorry`)** — now carry `(hbit : BitState s)` |
-| `compileOp_sound_physical_residue` (search) | per-op contract, `(hbit)`, budget `9·L²+9·L+30`. **PROVEN:** appendOne/Zero/clear/nonEmpty/head. **`sorry` (7):** copy/tail/eqBit/takeAt/dropAt/concat/consLen — now wire from `moveRegionTM_run` (needs Task 1 scratch/unary) |
+| `compileOp_sound_physical_residue` (Compile.lean:7063) | per-op contract, `(hbit)`, budget `9·L²+9·L+30`. **PROVEN:** appendOne/Zero/clear/nonEmpty/head. **`sorry` (7):** copy/tail/eqBit/takeAt/dropAt/concat/consLen (lines 7109–7125) — see the DESIGN CORRECTION above for the 4 gadget shapes (needs Task 1 scratch/unary) |
 | `opNonEmpty`/`opHead`/`bitReadTM`/`joinTwoHalts*` | proven cross-register ops + branch-merge templates |
-| `Compile.moveRegionTM_run` (+`moveBitM2_run`/`moveContent_run`/`moveBody_{done,delete}_run`/`appendBitTwoPhase_run`) | ✅ **PROVEN** move-one-bit transfer gadget (data transport, FIFO `src→end of dst`); the primitive the 7 ops are built from |
+| `Compile.moveRegionTM_run` (+`_valid`/`_sig`, `moveBitM2_run`/`moveContent_run`/`moveBody_{done,delete}_run`) | ✅ **PROVEN** **single-target** FIFO transfer `src→end of dst`. Used by `copy`/`tail`/`concat`/`takeAt`/`dropAt` as one phase — but NOT sufficient alone (see DESIGN CORRECTION) |
+| `Compile.moveRegion2TM` / `_run` | ⬜ **NOT BUILT** — the dual-target *duplicating* move (`src→` end of both `dst1`&`dst2`). The next gadget to build; mirror `moveRegionTM_run`, body adds a 2nd `appendAtThenTwoPhaseRewindTM`. Probe-confirmed feasible. Unblocks copy/tail/concat |
 | `clearRegionTM_run` chain | the `loopTM` chain `moveRegionTM_run` mirrored (run + traj + quadratic budget) |
 | `Compile.sound_of_run_residue` (Compile.lean) | ✅ **PROVEN last mile** — residue run + `BitState(c.eval s)` ⇒ `Compile_sound` |
 | `Op.eval_preserves_BitState`/`Compile.BitState_set_pad`/`Cmd.eval_preserves_BitState` (Compile/PolyTime) | ✅ **PROVEN** `BitState` induction step + full-`Cmd` composition (hyps `UsesBelow`/`k≤len`/`NoConsLen`); `Op.consLen_breaks_BitState` = the only breaker |
