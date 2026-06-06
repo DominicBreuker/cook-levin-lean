@@ -216,18 +216,21 @@ lemmas with `sorry` when they look provable; surface gaps early.
 assembly is RELOCATED into `Compile.lean`** (GAP 3) before the obligation. Remaining
 top-down work:
 
-1. **Prove `Compile_run_physical_residue` from `run_physical_residue_gen`** (the
-   `res0 = []`, `k = s.length`, `G = State.size s + s.length + c.cost s + 2`
-   instance — `hres0 = ValidResidue []`, `huses`/`hnc` from the bridge). This
-   **requires the budget restatement (GAP 4)**: change
-   `Compile_run_physical_residue`/`sound_of_run_residue`/`Compile_sound`/
-   `Compile_polyBound`/`bitDecider_run` from `overhead (size+cost)` (unprovable
-   shape) to `physStepBudget G (c.cost s)`. The `inOPoly`/`monotonic` facts the
-   restatement feeds to `toFrameworkWitness'` are **ready and axiom-clean**
-   (`Compile.physStepBudget_mono` / `physStepBudget_poly`). ⚠ The obligation must
-   also gain the `huses : Cmd.UsesBelow c k` / `k ≤ s.length` / `hnc : Cmd.NoConsLen c`
-   hypotheses (supplied by the bridge / witness) and a **register-count bound** so
-   the `s.length` term in the budget stays poly on the live path.
+1. ✅ **DONE — the C2 obligation is PROVEN from the assembly:**
+   `Compile_run_physical_residue'` (Compile.lean, right after the unprimed sorry) is
+   the `res0 = []` instance of `run_physical_residue_gen`, with the correct
+   `physStepBudget` budget and the `UsesBelow`/`k ≤ s.length`/`NoConsLen` hypotheses.
+   Its proof body is `sorry`-free; the transitive `sorryAx` is **only** the leaf gaps
+   (7 stub ops + 2 stub loop/branch machines). **What remains (the deferred GAP-4
+   ripple — retarget consumers to the primed lemma):**
+   - Restate `bitDecider_run` / `Compile_sound` / `Compile_polyBound` /
+     `sound_of_run_residue` budgets from `overhead (size+cost)` to
+     `physStepBudget …` and have them consume `Compile_run_physical_residue'`
+     (threading `UsesBelow`/`NoConsLen` + a **register-count bound** through their
+     signatures), then delete the unprimed `Compile_run_physical_residue` sorry.
+   - Ripple the budget-shape change to the `PolyTime.lean` consumers
+     (`DecidesLang.toDecidesBy`, the `inNPLang` decider bridge). The
+     `inOPoly`/`monotonic` facts they need are ready (`physStepBudget_mono`/`_poly`).
 2. **Close the live bridge** `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`
    (PolyTime.lean) using the new budget shape + a **register-count bound** added to
    `DecidesLang` (or route via `DecidesLang'`) + the witness `enc_bit`. This is what
