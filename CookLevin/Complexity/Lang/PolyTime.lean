@@ -193,6 +193,32 @@ theorem Compile.physStepBudget_seq (G a b : Nat) :
       = Compile.physStepBudget G (1 + a + b) := by
   simp only [Compile.physStepBudget]; ring
 
+/-- `physStepBudget` is monotone in both the tape bound and the op count. -/
+theorem Compile.physStepBudget_mono {G G' cost cost' : Nat}
+    (hG : G ≤ G') (hc : cost ≤ cost') :
+    Compile.physStepBudget G cost ≤ Compile.physStepBudget G' cost' := by
+  unfold Compile.physStepBudget; gcongr
+
+/-- The diagonal of `physStepBudget` is a cubic, hence `inOPoly`. With
+`physStepBudget_mono` this is the interface the budget restatement (GAP 4) feeds to
+`toFrameworkWitness'` in place of `overhead_poly`/`overhead_mono`. -/
+theorem Compile.physStepBudget_poly :
+    inOPoly (fun m => Compile.physStepBudget m m) := by
+  refine ⟨3, 103, 1, ?_⟩
+  intro m hm
+  show Compile.physStepBudget m m ≤ 103 * m ^ 3
+  have hm1 : 1 ≤ m := hm
+  have h0 : (1 : Nat) ≤ m ^ 3 := by
+    calc (1 : Nat) = m ^ 0 := by simp
+      _ ≤ m ^ 3 := Nat.pow_le_pow_right hm1 (by norm_num)
+  have h1 : m ≤ m ^ 3 := by
+    calc m = m ^ 1 := (pow_one m).symm
+      _ ≤ m ^ 3 := Nat.pow_le_pow_right hm1 (by norm_num)
+  have h2 : m ^ 2 ≤ m ^ 3 := Nat.pow_le_pow_right hm1 (by norm_num)
+  have e : Compile.physStepBudget m m = 9 * m ^ 3 + 18 * m ^ 2 + 43 * m + 33 := by
+    simp only [Compile.physStepBudget]; ring
+  rw [e]; omega
+
 /-- **Residue-tolerant `compileIfBit` contract (GAP 1 — pinned interface, `sorry`).**
 The incoming-residue generalisation of `compileIfBit_sound_physical`
 (`Compile.lean:8565`), in the shape the `ifBit` case of `run_physical_residue_gen`

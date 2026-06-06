@@ -223,7 +223,9 @@ lemmas with `sorry` when they look provable; surface gaps early.
    `run_physical_residue_gen`** and **restate the budgets (GAP 4)** —
    `Compile_run_physical_residue`/`sound_of_run_residue`/`Compile_sound`/
    `Compile_polyBound`/`bitDecider_run` to use `physStepBudget G (c.cost s)` (drop
-   the unprovable `overhead (size+cost)`), threading the register-count bound.
+   the unprovable `overhead (size+cost)`), threading the register-count bound. The
+   `inOPoly`/`monotonic` facts the restatement feeds to `toFrameworkWitness'` are
+   **ready and axiom-clean**: `Compile.physStepBudget_mono` / `physStepBudget_poly`.
 2. **Close the live bridge** `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`
    (PolyTime.lean) using the new budget shape + a **register-count bound** added to
    `DecidesLang` (or route via `DecidesLang'`) + the witness `enc_bit`. This is what
