@@ -5541,6 +5541,28 @@ theorem Compile.moveBodyRawTM_exitDone_ne_exitLoop (src dst : Nat) :
   rw [Compile.moveBodyRawTM_exitDone, Compile.moveBodyRawTM_exitLoop]
   have := Compile.moveContentExit0_lt_states dst; omega
 
+/-- **Validity of `moveRegionTM`.** Mirrors `clearRegionTM_valid`: a `loopTM` over
+the valid `moveBodyRawTM` body with both exits in range and single-tape. Needed to
+wire `moveRegionTM` into `composeFlatTM`/`branchComposeFlatTM` when assembling the
+cross-register ops. -/
+theorem Compile.moveRegionTM_valid (src dst : Nat) :
+    validFlatTM (Compile.moveRegionTM src dst) :=
+  loopTM_valid (Compile.moveBodyRawTM src dst)
+    (Compile.moveBodyRawTM_exitDone src dst) (Compile.moveBodyRawTM_exitLoop src dst)
+    (Compile.moveBodyRawTM_valid src dst)
+    (Compile.moveBodyRawTM_exitDone_lt src dst) (Compile.moveBodyRawTM_exitLoop_lt src dst)
+    (Compile.moveBodyRawTM_tapes src dst)
+
+/-- The compiled-machine alphabet of `moveRegionTM` is the fixed `sig = 4`. -/
+theorem Compile.moveRegionTM_sig (src dst : Nat) : (Compile.moveRegionTM src dst).sig = 4 := by
+  rw [Compile.moveRegionTM, loopTM_sig]
+  show (Compile.moveBodyRawTM src dst).sig = 4
+  show (branchComposeFlatTM _ _ _ _ _).sig = 4
+  rw [branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig]
+  show max 4 (max (Compile.moveContentTM dst).sig ClearGadget.justRewindTM.sig) = 4
+  rw [Compile.moveContentTM_sig dst]
+  rfl
+
 /-- **Move loop body — done branch (`src` empty).** Mirrors `clearBody_done_run`:
 navigate to `src`, find the delimiter (empty), rewind to head `0`, tape unchanged,
 landing at `moveBodyRawTM_exitDone`. The content machine `moveContentTM dst` is the
