@@ -1,4 +1,5 @@
 import Complexity.Lang.Semantics
+import Complexity.Lang.Frame
 import Complexity.Lang.AppendGadget
 import Complexity.Lang.ClearGadget
 import Complexity.Complexity.TMPrimitives
@@ -8922,6 +8923,410 @@ theorem Compile_run_physical (c : Cmd) (s : State) (hbit : Compile.BitState s) :
          -- ⚠ THIS EXACT-TAPE CONTRACT IS UNSATISFIABLE for commands that use
          -- length-decreasing ops. Use `Compile_run_physical_residue` below.
 
+/-! ## ★ The C2 assembly toolkit (relocated upstream 2026-06-06 from PolyTime.lean)
+
+Threading lemmas + the residue-induction assembly `run_physical_residue_gen`,
+moved here so they sit BEFORE `Compile_run_physical_residue` and can discharge it
+(they were downstream in PolyTime.lean). See HANDOFF.md. -/
+
+/-- **`inBounds` from a static `UsesBelow` bound (the `inBounds`-threading
+bridge; lives here because it relates `Op.UsesBelow` in `Frame` to `Op.inBounds`
+in `Compile`).** An op that statically touches only registers `< k`, run on a
+state of width `≥ k`, is in bounds. Combined with `Op.eval_length_ge` /
+`Cmd.eval_length_ge` (the register count never shrinks) and `Cmd.UsesBelow`, this
+supplies the `o.inBounds s` premise of `Op.eval_preserves_BitState` and of the
+per-op gadgets at *every* fragment of the `Compile_run_physical_residue`
+induction: fix `k ≤ s.length` with `Cmd.UsesBelow c k`, and every reached state
+keeps width `≥ k`. -/
+theorem Op.inBounds_of_UsesBelow (o : Op) (k : Nat) (s : State)
+    (h : Op.UsesBelow o k) (hk : k ≤ s.length) : o.inBounds s := by
+  cases o with
+  | clear dst => exact Nat.lt_of_lt_of_le h hk
+  | appendOne dst => exact Nat.lt_of_lt_of_le h hk
+  | appendZero dst => exact Nat.lt_of_lt_of_le h hk
+  | copy dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | tail dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | head dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | eqBit dst a b =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | nonEmpty dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
+  | takeAt dst src l =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | dropAt dst src l =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | concat dst a b =>
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
+             Nat.lt_of_lt_of_le h.2.2 hk⟩
+  | consLen dst l src =>
+      -- `Op.inBounds` orders consLen's last two as `src, lenSrc`; `UsesBelow` as
+      -- `lenSrc, src` — so the second/third components swap.
+      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.2 hk,
+             Nat.lt_of_lt_of_le h.2.1 hk⟩
+
+/-- An op other than `consLen`. `consLen` is the unique op that can break
+`BitState` (`Op.consLen_breaks_BitState`); this is the (temporary) syntactic
+condition under which `BitState` preservation is unconditional. Task 1 restates
+`consLen` to write a unary block, after which the side-condition is discharged
+for free and this predicate can be dropped. -/
+def Op.NotConsLen : Op → Prop
+  | .consLen _ _ _ => False
+  | _ => True
+
+/-- A `Cmd` with no `consLen` op anywhere. -/
+def Cmd.NoConsLen : Cmd → Prop
+  | .op o            => Op.NotConsLen o
+  | .seq c1 c2       => Cmd.NoConsLen c1 ∧ Cmd.NoConsLen c2
+  | .ifBit _ cT cE   => Cmd.NoConsLen cT ∧ Cmd.NoConsLen cE
+  | .forBnd _ _ body => Cmd.NoConsLen body
+
+/-- **`BitState` is preserved by a `consLen`-free `Cmd` (the residue induction's
+invariant, validated end-to-end).** Threads the two per-op atoms
+(`Op.eval_preserves_BitState` for `BitState`, `Op.inBounds_of_UsesBelow` for
+`inBounds`) and register-count monotonicity (`Cmd.eval_length_ge`,
+`State.set_length_ge`) through the full `Cmd` induction — including the `forBnd`
+fold, whose invariant is `k ≤ width ∧ BitState`. This is exactly the
+invariant-threading `Compile_run_physical_residue` performs, so proving it
+standalone de-risks that induction: the `forBnd` counter-write (`BitState_set_pad`
++ width growth) and the `seq` width-carry both go through.
+
+The `Cmd.UsesBelow c k`/`k ≤ s.length` pair is the wellformedness hypothesis the
+obligation will carry; `NoConsLen` is the one piece Task 1 removes (by restating
+`consLen` unary). -/
+theorem Cmd.eval_preserves_BitState (c : Cmd) (k : Nat) (s : State)
+    (huses : Cmd.UsesBelow c k) (hk : k ≤ s.length)
+    (hnc : Cmd.NoConsLen c) (hbit : Compile.BitState s) :
+    Compile.BitState (c.eval s) := by
+  induction c generalizing s with
+  | op o =>
+      refine Op.eval_preserves_BitState o s hbit
+        (Op.inBounds_of_UsesBelow o k s huses hk) ?_
+      intro dst lenSrc src heq
+      subst heq
+      simp only [Cmd.NoConsLen, Op.NotConsLen] at hnc
+  | seq c1 c2 ih1 ih2 =>
+      rw [Cmd.eval_seq]
+      have hbit1 : Compile.BitState (c1.eval s) := ih1 s huses.1 hk hnc.1 hbit
+      have hk1 : k ≤ (c1.eval s).length := Nat.le_trans hk (Cmd.eval_length_ge c1 s)
+      exact ih2 (c1.eval s) huses.2 hk1 hnc.2 hbit1
+  | ifBit t cT cE ihT ihE =>
+      by_cases hb : s.get t = [1]
+      · rw [Cmd.eval_ifBit_true t cT cE s hb]
+        exact ihT s huses.2.1 hk hnc.1 hbit
+      · rw [Cmd.eval_ifBit_false t cT cE s hb]
+        exact ihE s huses.2.2 hk hnc.2 hbit
+  | forBnd cnt bnd body ihbody =>
+      obtain ⟨_, _, hbody⟩ := huses
+      rw [Cmd.eval_forBnd]
+      refine (Cmd.foldlState_range_induct body cnt (s.get bnd).length s
+        (fun _ st => k ≤ st.length ∧ Compile.BitState st) ⟨hk, hbit⟩ ?_).2
+      intro i st _ hM
+      obtain ⟨hkst, hbst⟩ := hM
+      have hset_bit : Compile.BitState (st.set cnt (List.replicate i 1)) :=
+        Compile.BitState_set_pad st cnt _ hbst (by
+          intro x hx; obtain ⟨-, rfl⟩ := List.mem_replicate.mp hx; exact Nat.le_refl 1)
+      have hset_k : k ≤ (st.set cnt (List.replicate i 1)).length :=
+        Nat.le_trans hkst (State.set_length_ge st cnt _)
+      exact ⟨Nat.le_trans hset_k (Cmd.eval_length_ge body _),
+        ihbody (st.set cnt (List.replicate i 1)) hbody hset_k hnc hset_bit⟩
+
+/-! ## ★ TOP-DOWN ASSEMBLY DESIGN (2026-06-06) — the residue induction skeleton
+
+This block is the **top-down** design of the proof of `Compile_run_physical_residue`
+(`Compile.lean:8910`, the central C2 obligation). It pins the **shared interface**
+between the two work streams (see `HANDOFF.md`): the four per-fragment
+physical-residue contracts (op / seq / ifBit / forBnd) compose into the obligation
+by induction on `Cmd`. The composition has been **validated by hand** (budget,
+residue, defeq); the remaining work is mechanical (the W-invariant + budget Nat
+arithmetic) plus the two `sorry`-bodied combinators below — which are gated on the
+bottom-up stream building the real `compileForBnd` / `compileTestBit` machines (today
+both are 0-transition stubs).
+
+⚠ These lemmas live here (not in `Compile.lean`) because they call the threading
+lemmas `Cmd.eval_preserves_BitState` / `Op.inBounds_of_UsesBelow` / `Cmd.NoConsLen`
+which are defined above in this file — *downstream* of the obligation they must
+discharge. **To actually close `Compile_run_physical_residue`, relocate those
+threading lemmas (and this block) upstream into `Compile.lean`** (all their deps are
+already available there). See HANDOFF.md "TOP-DOWN findings", GAP 3. -/
+
+/-- **Compositional per-fragment TM-step budget.** A `Compile` fragment whose
+physical tape stays `≤ G` cells and which runs `cost` layer-ops halts within
+`(9·G² + 9·G + 33)·(cost + 1) + cost` steps: `cost + 1` ops, each an `O(G²)`
+single-tape pass, plus `+cost` slack for `seq` control steps.
+
+Chosen because it is **exactly superadditive** under `seq`:
+`physStepBudget G (1 + c₁ + c₂) = physStepBudget G c₁ + 1 + physStepBudget G c₂`.
+The quadratic `Compile.overhead (·+1)²` fails this (ROADMAP Finding #3): summing
+`~cost` per-op quadratics is cubic, and it dropped both the register count `s.length`
+and the residue length. `inOPoly`/`monotonic` in both arguments, which is all the
+downstream consumers (`toFrameworkWitness'`, `bitDecider_run`) need. -/
+def Compile.physStepBudget (G cost : Nat) : Nat :=
+  (9 * G * G + 9 * G + 33) * (cost + 1) + cost
+
+/-- **`physStepBudget` is exactly superadditive under `seq`.** The `seq`
+control step (`+1`) plus the two fragments' budgets land exactly on the
+composed budget — this is the algebraic fact that makes the `seq` case of
+`Compile.run_physical_residue_gen` close (and that the quadratic `overhead`
+failed, ROADMAP Finding #3). -/
+theorem Compile.physStepBudget_seq (G a b : Nat) :
+    Compile.physStepBudget G a + 1 + Compile.physStepBudget G b
+      = Compile.physStepBudget G (1 + a + b) := by
+  simp only [Compile.physStepBudget]; ring
+
+/-- `physStepBudget` is monotone in both the tape bound and the op count. -/
+theorem Compile.physStepBudget_mono {G G' cost cost' : Nat}
+    (hG : G ≤ G') (hc : cost ≤ cost') :
+    Compile.physStepBudget G cost ≤ Compile.physStepBudget G' cost' := by
+  unfold Compile.physStepBudget; gcongr
+
+/-- The diagonal of `physStepBudget` is a cubic, hence `inOPoly`. With
+`physStepBudget_mono` this is the interface the budget restatement (GAP 4) feeds to
+`toFrameworkWitness'` in place of `overhead_poly`/`overhead_mono`. -/
+theorem Compile.physStepBudget_poly :
+    inOPoly (fun m => Compile.physStepBudget m m) := by
+  refine ⟨3, 103, 1, ?_⟩
+  intro m hm
+  show Compile.physStepBudget m m ≤ 103 * m ^ 3
+  have hm1 : 1 ≤ m := hm
+  have h0 : (1 : Nat) ≤ m ^ 3 := by
+    calc (1 : Nat) = m ^ 0 := by simp
+      _ ≤ m ^ 3 := Nat.pow_le_pow_right hm1 (by norm_num)
+  have h1 : m ≤ m ^ 3 := by
+    calc m = m ^ 1 := (pow_one m).symm
+      _ ≤ m ^ 3 := Nat.pow_le_pow_right hm1 (by norm_num)
+  have h2 : m ^ 2 ≤ m ^ 3 := Nat.pow_le_pow_right hm1 (by norm_num)
+  have e : Compile.physStepBudget m m = 9 * m ^ 3 + 18 * m ^ 2 + 43 * m + 33 := by
+    simp only [Compile.physStepBudget]; ring
+  rw [e]; omega
+
+/-- **Residue-tolerant `compileIfBit` contract (GAP 1 — pinned interface, `sorry`).**
+The incoming-residue generalisation of `compileIfBit_sound_physical`
+(`Compile.lean:8565`), in the shape the `ifBit` case of `run_physical_residue_gen`
+needs: the chosen branch's residue run, threaded through the tester (`+3` control
+steps) and the `joinTwoHalts` rewind bracket. Gated on a real `compileTestBit`
+(today a 0-transition stub). The `+3 ≤` one extra `physStepBudget` unit, so the
+budget composes with room. -/
+theorem compileIfBit_sound_physical_residue
+    (t : Var) (rT rE : CompiledCmd)
+    (evalT evalE : State → State) (costT costE : State → Nat)
+    (G : Nat) (s : State) (res0 : List Nat)
+    (hbit : Compile.BitState s) (hres0 : Compile.ValidResidue res0)
+    (hT : s.get t = [1] →
+      ∃ (tt : Nat) (res : List Nat),
+        Compile.ValidResidue res ∧
+        State.size (evalT s) + res.length ≤ State.size s + res0.length + costT s ∧
+        runFlatTM tt rT.M (initFlatConfig rT.M [Compile.encodeTape s ++ res0])
+          = some { state_idx := rT.exit,
+                   tapes := [([], 0, Compile.encodeTape (evalT s) ++ res)] } ∧
+        (∀ k, k < tt → ∀ ck,
+            runFlatTM k rT.M (initFlatConfig rT.M [Compile.encodeTape s ++ res0]) = some ck →
+            ck.state_idx ≠ rT.exit ∧ haltingStateReached rT.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G (costT s))
+    (hE : s.get t ≠ [1] →
+      ∃ (tt : Nat) (res : List Nat),
+        Compile.ValidResidue res ∧
+        State.size (evalE s) + res.length ≤ State.size s + res0.length + costE s ∧
+        runFlatTM tt rE.M (initFlatConfig rE.M [Compile.encodeTape s ++ res0])
+          = some { state_idx := rE.exit,
+                   tapes := [([], 0, Compile.encodeTape (evalE s) ++ res)] } ∧
+        (∀ k, k < tt → ∀ ck,
+            runFlatTM k rE.M (initFlatConfig rE.M [Compile.encodeTape s ++ res0]) = some ck →
+            ck.state_idx ≠ rE.exit ∧ haltingStateReached rE.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G (costE s)) :
+    let chosen := if s.get t = [1] then evalT s else evalE s
+    let chosenCost := if s.get t = [1] then costT s else costE s
+    ∃ (tt : Nat) (res : List Nat),
+      Compile.ValidResidue res ∧
+      State.size chosen + res.length ≤ State.size s + res0.length + (1 + chosenCost) ∧
+      runFlatTM tt (compileIfBit t rT rE).M
+          (initFlatConfig (compileIfBit t rT rE).M [Compile.encodeTape s ++ res0])
+        = some { state_idx := (compileIfBit t rT rE).exit,
+                 tapes := [([], 0, Compile.encodeTape chosen ++ res)] } ∧
+      (∀ k, k < tt → ∀ ck,
+          runFlatTM k (compileIfBit t rT rE).M
+              (initFlatConfig (compileIfBit t rT rE).M [Compile.encodeTape s ++ res0]) = some ck →
+          ck.state_idx ≠ (compileIfBit t rT rE).exit ∧
+          haltingStateReached (compileIfBit t rT rE).M ck = false) ∧
+      tt ≤ Compile.physStepBudget G (1 + chosenCost) := by
+  sorry  -- GAP 1: build real `compileTestBit`, then `branchComposeFlatTM_run` +
+         -- `joinTwoHalts` + rewind bracket. See HANDOFF.md (bottom-up step 3).
+
+/-- **Residue-tolerant `compileForBnd` contract (GAP 1 — pinned interface, `sorry`).**
+The incoming-residue generalisation of `compileForBnd_sound_physical`
+(`Compile.lean:8616`). The body hypothesis is quantified over every state reachable
+as a counter-set during the fold (with valid incoming residue), matching what the
+`forBnd` case of `run_physical_residue_gen` supplies from its IH. Gated on a real
+`compileForBnd` (today a 0-transition stub) built as a `loopTM` over the bound's
+unary length. Budget = the per-iteration budgets summed + loop overhead, dominated
+by `physStepBudget G (forBnd …).cost`. -/
+theorem compileForBnd_sound_physical_residue
+    (counter bound : Var) (rbody : CompiledCmd) (body : Cmd)
+    (k : Nat) (G : Nat) (s : State) (res0 : List Nat)
+    (hbit : Compile.BitState s) (hk : k ≤ s.length) (hres0 : Compile.ValidResidue res0)
+    -- The body contract is the FULL `run_physical_residue_gen` conclusion, with its
+    -- OWN per-call tape bound `G'` (the fold-state sizes grow, so a single fixed bound
+    -- is dishonest) and the `k ≤ s'.length` premise (which the loop invariant
+    -- re-establishes for every counter-set fold state from `hk` + width monotonicity).
+    (hbody : ∀ (s' : State) (res' : List Nat) (G' : Nat),
+      Compile.BitState s' → k ≤ s'.length → Compile.ValidResidue res' →
+      State.size s' + s'.length + res'.length + body.cost s' + 2 ≤ G' →
+      ∃ (tt : Nat) (res : List Nat),
+        Compile.ValidResidue res ∧
+        State.size (body.eval s') + res.length ≤ State.size s' + res'.length + body.cost s' ∧
+        runFlatTM tt rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res'])
+          = some { state_idx := rbody.exit,
+                   tapes := [([], 0, Compile.encodeTape (body.eval s') ++ res)] } ∧
+        (∀ kk, kk < tt → ∀ ck,
+            runFlatTM kk rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res']) = some ck →
+            ck.state_idx ≠ rbody.exit ∧ haltingStateReached rbody.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G' (body.cost s')) :
+    ∃ (tt : Nat) (res : List Nat),
+      Compile.ValidResidue res ∧
+      State.size ((Cmd.forBnd counter bound body).eval s) + res.length
+        ≤ State.size s + res0.length + (Cmd.forBnd counter bound body).cost s ∧
+      runFlatTM tt (compileForBnd counter bound rbody).M
+          (initFlatConfig (compileForBnd counter bound rbody).M [Compile.encodeTape s ++ res0])
+        = some { state_idx := (compileForBnd counter bound rbody).exit,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Cmd.forBnd counter bound body).eval s) ++ res)] } ∧
+      (∀ k, k < tt → ∀ ck,
+          runFlatTM k (compileForBnd counter bound rbody).M
+              (initFlatConfig (compileForBnd counter bound rbody).M
+                [Compile.encodeTape s ++ res0]) = some ck →
+          ck.state_idx ≠ (compileForBnd counter bound rbody).exit ∧
+          haltingStateReached (compileForBnd counter bound rbody).M ck = false) ∧
+      tt ≤ Compile.physStepBudget G ((Cmd.forBnd counter bound body).cost s) := by
+  sorry  -- GAP 1+2: build real `compileForBnd` (loopTM over the bound's unary
+         -- length), then `loopTM_run`/`_no_early_halt` + the body contract.
+
+/-- **★ The designed residue induction (the assembly of `Compile_run_physical_residue`).**
+Carries an arbitrary incoming residue `res0` (live instance: `res0 = []`), a shared
+tape bound `G` (`hG`), and the threading hyps. The conclusion bundles:
+- **① the W-invariant** `State.size (c.eval s) + |res| ≤ State.size s + |res0| + c.cost s`
+  (joint size+residue grows by ≤ cost; non-compounding — this is what keeps the
+  residue polynomially bounded and lets one `G` bound every sub-fragment tape);
+- the residue-tolerant physical run + trajectory;
+- **② the budget** `t ≤ physStepBudget G (c.cost s)` (exactly superadditive).
+
+**Proof design (induction on `c`):**
+- `op o`: `compileOp_sound_physical_residue` (`hbnd` from `Op.inBounds_of_UsesBelow`);
+  ① per-op from the residue formula (append/clear/head/nonEmpty: equality;
+  the 7 sorry ops owe it — see HANDOFF top-down step 4); ② from `9·L²+9·L+30`, `L ≤ G`.
+- `seq c1 c2`: IH₁ on `(s,res0)` → `(mid,res1)`; `BitState mid`,`k ≤ mid.length` via
+  `Cmd.eval_preserves_BitState`/`Cmd.eval_length_ge`; IH₂ on `(mid,res1)`;
+  `compileSeq_sound_physical_residue` (run+halt) + `compileSeq_traj_physical_residue`
+  (trajectory). ① telescopes; ② is the exact `physStepBudget` superadditivity.
+- `ifBit`/`forBnd`: dispatch to the two residue combinators above (their hyps are the IHs).
+
+The `op`/`seq` cases are the structural heart; they reduce to PROVEN combinators.
+Body is `sorry` pending the relocation upstream (GAP 3) + the two combinators. -/
+theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
+    (res0 : List Nat) (G : Nat)
+    (hbit : Compile.BitState s) (hk : k ≤ s.length)
+    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c)
+    (hres0 : Compile.ValidResidue res0)
+    (hG : State.size s + s.length + res0.length + c.cost s + 2 ≤ G) :
+    ∃ (t : Nat) (res : List Nat),
+      Compile.ValidResidue res ∧
+      State.size (c.eval s) + res.length ≤ State.size s + res0.length + c.cost s ∧
+      runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s ++ res0])
+          = some { state_idx := Compile.exit c,
+                   tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] } ∧
+      (∀ k', k' < t → ∀ ck,
+          runFlatTM k' (Compile c)
+              (initFlatConfig (Compile c) [Compile.encodeTape s ++ res0]) = some ck →
+          ck.state_idx ≠ Compile.exit c ∧
+          haltingStateReached (Compile c) ck = false) ∧
+      t ≤ Compile.physStepBudget G (c.cost s) := by
+  induction c generalizing s res0 G with
+  | op o =>
+      -- `op` reduces to the per-op residue contract. `inBounds` from the static bound.
+      have hbnd : o.inBounds s := Op.inBounds_of_UsesBelow o k s huses hk
+      obtain ⟨t, res_out, hres, hW, hrun, htraj, hbud⟩ :=
+        compileOp_sound_physical_residue o s res0 hbit hbnd hres0
+      refine ⟨t, res_out, hres, hW, hrun, htraj, ?_⟩
+      · -- ② budget: `9·L²+9·L+30 ≤ physStepBudget G (Op.cost o s)`, since `L ≤ G`.
+        have hL : (Compile.encodeTape s ++ res0).length ≤ G := by
+          rw [List.length_append, Compile.encodeTape_length]; omega
+        have h1 : 9 * (Compile.encodeTape s ++ res0).length * (Compile.encodeTape s ++ res0).length
+                    + 9 * (Compile.encodeTape s ++ res0).length + 30 ≤ 9 * G * G + 9 * G + 30 := by
+          gcongr <;> omega
+        have h2 : 9 * G * G + 9 * G + 30 ≤ Compile.physStepBudget G (Op.cost o s) := by
+          unfold Compile.physStepBudget
+          have hge : (9 * G * G + 9 * G + 33) * 1
+              ≤ (9 * G * G + 9 * G + 33) * (Op.cost o s + 1) := by gcongr; omega
+          rw [Nat.mul_one] at hge
+          omega
+        have : t ≤ Compile.physStepBudget G (Op.cost o s) := by omega
+        exact this
+  | seq c1 c2 ih1 ih2 =>
+      -- thread residue `res0 → res1 → res2` through both fragments.
+      have hG1 : State.size s + s.length + res0.length + c1.cost s + 2 ≤ G := by
+        rw [Cmd.cost_seq] at hG; omega
+      obtain ⟨t1, res1, hres1, hW1, hrun1, htraj1, hbud1⟩ :=
+        ih1 s res0 G hbit hk huses.1 hnc.1 hres0 hG1
+      have hbit_mid : Compile.BitState (c1.eval s) :=
+        Cmd.eval_preserves_BitState c1 k s huses.1 hk hnc.1 hbit
+      have hk1 : k ≤ (c1.eval s).length := Nat.le_trans hk (Cmd.eval_length_ge c1 s)
+      have hmidlen : (c1.eval s).length ≤ s.length := by
+        have := Cmd.eval_length_le c1 k huses.1 s; rwa [Nat.max_eq_left hk] at this
+      have hG2 : State.size (c1.eval s) + (c1.eval s).length + res1.length
+                    + c2.cost (c1.eval s) + 2 ≤ G := by
+        rw [Cmd.cost_seq] at hG; omega
+      obtain ⟨t2, res2, hres2, hW2, hrun2, htraj2, hbud2⟩ :=
+        ih2 (c1.eval s) res1 G hbit_mid hk1 huses.2 hnc.2 hres1 hG2
+      have hhalt2 : haltingStateReached (compileCmd c2).M
+          { state_idx := (compileCmd c2).exit,
+            tapes := [([], 0, Compile.encodeTape (c2.eval (c1.eval s)) ++ res2)] } = true := by
+        have hex := (compileCmd c2).exit_is_halt
+        show (compileCmd c2).M.halt.getD (compileCmd c2).exit false = true
+        simp only [List.getD, hex, Option.getD]
+      obtain ⟨hrunseq, _⟩ := compileSeq_sound_physical_residue (compileCmd c1) (compileCmd c2)
+        s (c1.eval s) (c2.eval (c1.eval s)) res0 res1 res2 hbit_mid hres1
+        hrun1 htraj1 hrun2 hhalt2
+      have htrajseq := compileSeq_traj_physical_residue (compileCmd c1) (compileCmd c2)
+        s (c1.eval s) res0 res1 hbit_mid hres1 hrun1 htraj1 htraj2
+      refine ⟨t1 + 1 + t2, res2, hres2, ?_, ?_, ?_, ?_⟩
+      · -- ① telescopes from hW1, hW2.
+        rw [Cmd.eval_seq, Cmd.cost_seq]; omega
+      · -- run.
+        rw [Cmd.eval_seq]; exact hrunseq
+      · -- trajectory.
+        exact htrajseq
+      · -- ② exact `physStepBudget` superadditivity.
+        rw [Cmd.cost_seq, ← Compile.physStepBudget_seq]; omega
+  | ifBit tt cT cE ihT ihE =>
+      -- dispatch to the residue branch combinator; the IHs supply the branch contracts.
+      have hT : s.get tt = [1] → _ := fun htrue =>
+        ihT s res0 G hbit hk huses.2.1 hnc.1 hres0 (by
+          have hc := Cmd.cost_ifBit_true tt cT cE s htrue; rw [hc] at hG; omega)
+      have hE : s.get tt ≠ [1] → _ := fun hfalse =>
+        ihE s res0 G hbit hk huses.2.2 hnc.2 hres0 (by
+          have hc := Cmd.cost_ifBit_false tt cT cE s hfalse; rw [hc] at hG; omega)
+      have hcomb := compileIfBit_sound_physical_residue tt (compileCmd cT) (compileCmd cE)
+        cT.eval cE.eval cT.cost cE.cost G s res0 hbit hres0 hT hE
+      have heval : (Cmd.ifBit tt cT cE).eval s
+          = if s.get tt = [1] then cT.eval s else cE.eval s := by
+        by_cases hb : s.get tt = [1]
+        · rw [Cmd.eval_ifBit_true tt cT cE s hb, if_pos hb]
+        · rw [Cmd.eval_ifBit_false tt cT cE s hb, if_neg hb]
+      have hcost : (Cmd.ifBit tt cT cE).cost s
+          = 1 + if s.get tt = [1] then cT.cost s else cE.cost s := by
+        by_cases hb : s.get tt = [1]
+        · rw [Cmd.cost_ifBit_true tt cT cE s hb, if_pos hb]
+        · rw [Cmd.cost_ifBit_false tt cT cE s hb, if_neg hb]
+      obtain ⟨t', res', hres', hW', hrun', htraj', hbud'⟩ := hcomb
+      rw [← heval] at hW' hrun'
+      rw [← hcost] at hW' hbud'
+      exact ⟨t', res', hres', hW', hrun', htraj', hbud'⟩
+  | forBnd cnt bnd body ihbody =>
+      -- dispatch to the residue loop combinator; the IH supplies the body contract
+      -- (with its own per-call tape bound `G'`, as the loop's fold-states grow).
+      exact compileForBnd_sound_physical_residue cnt bnd (compileCmd body) body k G s res0
+        hbit hk hres0
+        (fun s' res' G' hb hk' hr hg => ihbody s' res' G' hb hk' huses.2.2 hnc hr hg)
 /-- **Residue-tolerant physical compiler contract (Risk C2).** The replacement
 for `Compile_run_physical` that accounts for the tape never shrinking: the exit
 tape is `encodeTape (c.eval s) ++ res` for some `ValidResidue` residue `res`,
