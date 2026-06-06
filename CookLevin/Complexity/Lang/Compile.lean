@@ -8239,6 +8239,11 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
     (hres_in : Compile.ValidResidue res_in) :
     ∃ (t : Nat) (res_out : List Nat),
       Compile.ValidResidue res_out ∧
+      -- ① the **W-invariant** (joint size+residue grows by ≤ cost). Non-compounding;
+      -- this is what keeps the residue polynomially bounded across the whole
+      -- `Compile_run_physical_residue` induction (see `run_physical_residue_gen`).
+      State.size (Op.eval o s) + res_out.length
+          ≤ State.size s + res_in.length + Op.cost o s ∧
       runFlatTM t (compileOp o).M
           (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in])
         = some { state_idx := (compileOp o).exit,
@@ -8257,12 +8262,14 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
       -- The append op meets the *linear* `3·L+8`; relax to the contract's quadratic.
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
-      exact ⟨t, res_in, hres_in, hrun, htraj,
+      exact ⟨t, res_in, hres_in,
+        (by have := Op.size_eval_le (Op.appendOne dst) s; omega), hrun, htraj,
         le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)) (by omega)⟩
   | appendZero dst =>
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
-      exact ⟨t, res_in, hres_in, hrun, htraj,
+      exact ⟨t, res_in, hres_in,
+        (by have := Op.size_eval_le (Op.appendZero dst) s; omega), hrun, htraj,
         le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)) (by omega)⟩
   -- The 9 cross-register stub ops still need their gadgets (`copyBlockTM`, see ROADMAP C2.c).
   | clear dst =>
@@ -8275,7 +8282,12 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
           = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } := by
         simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, le_trans hbud (by omega)⟩
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, ?_, le_trans hbud (by omega)⟩
+      · -- ① the freed `|dst|` cells move into the residue: `W` is unchanged (cost ≥ 0).
+        have h := State.size_set_add s dst ([] : List Nat)
+        simp only [List.length_nil, Nat.add_zero] at h
+        simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
+        omega
       · rw [hinit]; exact hrun
       · intro k hk ck hck
         rw [hinit] at hck
@@ -8285,14 +8297,31 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
   | head dst src =>
       obtain ⟨t, hrun, htraj, hbud⟩ :=
         Compile.opHead_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
-      exact ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, hrun, htraj, hbud⟩
+      refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj, hbud⟩
+      · -- ① `head` writes `≤ 1` cell to `dst`; freed cells go to residue.
+        rcases hsrc : s.get src with _ | ⟨x, xs⟩
+        · have h := State.size_set_add s dst ([] : List Nat)
+          simp only [Op.eval, Op.cost, hsrc, List.length_append, List.length_replicate,
+            List.length_nil, Nat.add_zero] at h ⊢
+          omega
+        · have h := State.size_set_add s dst [x]
+          simp only [Op.eval, Op.cost, hsrc, List.length_append, List.length_replicate,
+            List.length_cons, List.length_nil] at h ⊢
+          omega
   | eqBit dst src1 src2 => sorry
   | nonEmpty dst src =>
       obtain ⟨t, hrun, htraj, hbud⟩ :=
         Compile.opNonEmpty_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
-      exact ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, hrun, htraj, hbud⟩
+      refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj, hbud⟩
+      · -- ① `nonEmpty` writes exactly `1` cell to `dst`; freed cells go to residue.
+        have h := State.size_set_add s dst (if (s.get src).isEmpty then ([0] : List Nat) else [1])
+        have hv : (if (s.get src).isEmpty then ([0] : List Nat) else [1]).length = 1 := by
+          by_cases hb : (s.get src).isEmpty <;> simp [hb]
+        rw [hv] at h
+        simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
+        omega
   | takeAt dst src lenReg => sorry
   | dropAt dst src lenReg => sorry
   | concat dst src1 src2 => sorry

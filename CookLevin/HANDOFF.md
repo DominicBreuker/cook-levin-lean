@@ -39,10 +39,11 @@ is the job. The design is **settled (Option B′)**; execution is underway.
 sat_NP → inNPLang_to_inNP → Compile.bitDecider_run            (Compile.lean:9015)
        → Compile_run_physical_residue                          (Compile.lean:8910, SORRY — THE OBLIGATION)
        → [per-fragment physical-residue contracts]             ← THE SHARED INTERFACE
-            ├ compileOp_sound_physical_residue                 (Compile.lean:8237; 5/12 ops done, 7 sorry)
+            ├ compileOp_sound_physical_residue                 (Compile.lean:8237; +W-invariant ①; 5/12 ops done, 7 sorry)
             ├ compileSeq_sound_physical_residue                (Compile.lean:8454; PROVEN)
-            ├ compileIfBit_sound_physical_residue              (NEEDS to exist — GAP, see TOP-DOWN)
-            └ compileForBnd_sound_physical_residue             (NEEDS to exist — GAP, see TOP-DOWN)
+            ├ compileIfBit_sound_physical_residue              (PolyTime.lean; stated, sorry — gated on real compileTestBit)
+            └ compileForBnd_sound_physical_residue             (PolyTime.lean; stated, sorry — gated on real compileForBnd)
+       Compile.run_physical_residue_gen                        (PolyTime.lean; ★ MECHANIZED — assembles the above)
 DecidesLang.toDecidesBy / inTimePolyLang_to_inTimePoly         (PolyTime.lean:228/243, SORRY — live bridge)
 ```
 
@@ -63,12 +64,27 @@ Sound for the size law because `encodable.size Nat = id`: unary length `= n = si
 ## ★ TOP-DOWN findings (2026-06-06, first top-down pass) — the assembly design
 
 A top-down pass over the final assembly (`Compile_run_physical_residue` and the
-per-fragment contracts) **validated the composition by hand and pinned the exact
+per-fragment contracts) **mechanized the composition and pinned the exact
 remaining interface**. The headline result: the obligation is provable by a clean
 induction, the budget composes with the *right* shape, and the residue stays
-polynomially bounded — but **three structural pieces were missing or wrong-shaped
-and are now fixed/pinned**. The designed artifact is in
-`Lang/PolyTime.lean` (search `run_physical_residue_gen`).
+polynomially bounded. The designed artifact is in `Lang/PolyTime.lean` (search
+`run_physical_residue_gen`).
+
+### ✅ STATUS — `Compile.run_physical_residue_gen` is MECHANIZED (sorry-free proof body)
+The full induction is **proven** (build green; `#print axioms` shows `sorryAx`
+only *transitively*, via the honest leaf gaps below — the assembly's own proof has
+no `sorry`):
+- **`op`** — reduces to `compileOp_sound_physical_residue` (now carries the
+  W-invariant ①, discharged for the 5 done ops); budget ② via `L ≤ G`. ✅
+- **`seq`** — reduces to the PROVEN `compileSeq_sound_physical_residue` +
+  `compileSeq_traj_physical_residue`; ① telescopes; ② is the exact `physStepBudget`
+  superadditivity (`Compile.physStepBudget_seq`, axiom-clean). ✅
+- **`ifBit`/`forBnd`** — dispatch to the two residue combinators (proven reductions;
+  the combinators themselves are the `sorry` leaves, gated on the stub machines). ✅
+
+So the **assembly is done**: what remains are exactly the leaf gadgets (the 7 ops,
+the 2 stub machines + their combinators) and the upstream wiring (GAP 3/4). No
+composition surprises remain — the induction compile-checks end to end.
 
 ### The designed induction — `Compile.run_physical_residue_gen`
 The top obligation `Compile_run_physical_residue` (no incoming residue) is **too
@@ -120,10 +136,14 @@ quadratics are not superadditive, and it dropped both `s.length` and the residue
 
 ### THE GAPS this pass surfaced (now the concrete shared interface / bottom-up work)
 1. **`compileIfBit_sound_physical_residue` / `compileForBnd_sound_physical_residue`
-   do not exist** (only the no-incoming-residue `*_sound_physical`, Compile.lean
-   8565/8616, do). The induction *cannot* thread residue through branches/loops
-   without them. **Statements are now written (sorry) in `PolyTime.lean`** — they
-   are the pinned interface the bottom-up stream must hit.
+   needed to exist** (only the no-incoming-residue `*_sound_physical`, Compile.lean
+   8565/8616, did). The induction *cannot* thread residue through branches/loops
+   without them. **Statements are now written (`sorry`) in `PolyTime.lean` and
+   `run_physical_residue_gen` dispatches to them** (the dispatch is proven) — they
+   are the pinned interface the bottom-up stream must hit. ⚠ The `forBnd` body
+   hypothesis is the *full* `run_physical_residue_gen` conclusion with its **own
+   per-call tape bound `G'`** and a `k ≤ s'.length` premise (the fold-states grow,
+   so a single fixed `G` is dishonest) — match this when proving it.
 2. **`compileForBnd` and `compileTestBit` are still STUBS** (`compiledCmd_default`
    / `branchTester_default`, **0 transitions** — `#eval`-confirmed). The loop and
    branch-tester *machines themselves* don't exist. Building them (a `loopTM` over
@@ -190,25 +210,24 @@ assembly side — the composition is hand-validated.
 You are assembling the final pieces and designing their proofs. Create supporting
 lemmas with `sorry` when they look provable; surface gaps early.
 
-1. **Mechanize `Compile.run_physical_residue_gen`** (PolyTime.lean — the statement
-   and the `op`/`seq` structural cases are drafted). Wire the `ifBit`/`forBnd` cases
-   to the two residue combinators (statements pinned, sorry). Discharge the
-   **W-invariant ①** and **budget ②** sub-goals — the arithmetic is worked out above
-   (`W_out ≤ W_in + cost`; `physStepBudget` superadditivity). This is Nat work, no
-   new gadgets.
-2. **Relocate the threading lemmas upstream (GAP 3)** and **restate the budgets
-   (GAP 4)**, then prove `Compile_run_physical_residue` (the `res0=[]` instance) from
-   `run_physical_residue_gen` and re-thread `bitDecider_run` etc. Add the
-   **register-count bound** to `DecidesLang` (or use `DecidesLang'`).
-3. **Close the live bridge** `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`
-   (PolyTime.lean:228/243) using the new budget shape + the register-count field +
-   the witness `enc_bit`. This is what `sat_NP` actually calls.
-4. **Add the per-op W-invariant ① to the shared contract.** The cleanest place is a
-   new conjunct on `compileOp_sound_physical_residue` (or a sibling lemma
-   `Op.size_residue_eval_le`); the *already-proven* op cases (append/clear/head/
-   nonEmpty) satisfy it — discharge those now so the bottom-up stream inherits the
-   obligation only for the 7 remaining ops. (This is a small top-down task that
-   hardens the interface.)
+✅ **DONE (2026-06-06):** `Compile.run_physical_residue_gen` is mechanized
+(op/seq proven, ifBit/forBnd dispatch proven); the W-invariant ① is on
+`compileOp_sound_physical_residue` and discharged for the 5 done ops;
+`physStepBudget` + its `seq` superadditivity are proven. Remaining top-down work:
+
+1. **Relocate the threading lemmas upstream (GAP 3)** — move `Cmd.NoConsLen`,
+   `Op.NotConsLen`, `Op.inBounds_of_UsesBelow`, `Cmd.eval_preserves_BitState`, and
+   `Compile.run_physical_residue_gen` (+ `physStepBudget*`) from `PolyTime.lean`
+   into `Compile.lean` (all deps already available there). Then **prove
+   `Compile_run_physical_residue` (the `res0=[]` instance) from
+   `run_physical_residue_gen`** and **restate the budgets (GAP 4)** —
+   `Compile_run_physical_residue`/`sound_of_run_residue`/`Compile_sound`/
+   `Compile_polyBound`/`bitDecider_run` to use `physStepBudget G (c.cost s)` (drop
+   the unprovable `overhead (size+cost)`), threading the register-count bound.
+2. **Close the live bridge** `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`
+   (PolyTime.lean) using the new budget shape + a **register-count bound** added to
+   `DecidesLang` (or route via `DecidesLang'`) + the witness `enc_bit`. This is what
+   `sat_NP` actually calls.
 
 # ▶ BOTTOM-UP work stream — next steps
 
@@ -228,9 +247,10 @@ proving its run lemma.
 2. **The 7 op gadgets** in `compileOp_sound_physical_residue` (Compile.lean
    7109–7125): `copy`/`tail`/`concat` via the validated `moveRegion2TM` recipes;
    `eqBit` via a compare-and-delete loop (2 scratch); `takeAt`/`dropAt` via a
-   counter-bounded transfer over `lenReg`; `consLen` unary. **Each op must ALSO
-   satisfy the W-invariant** `State.size(out) + |res_out| ≤ State.size s + |res_in|
-   + Op.cost o s` (top-down ①) — design the residue so it holds (it does for the
+   counter-bounded transfer over `lenReg`; `consLen` unary. **The W-invariant ① is
+   now a literal conjunct of `compileOp_sound_physical_residue`**
+   (`State.size(out) + |res_out| ≤ State.size s + |res_in| + Op.cost o s`, already
+   discharged for the 5 done ops) — each new op must establish it (it holds for the
    move recipes: freed cells → residue, scratch returns to `[]`).
 3. **Build the real loop/branch machines (GAP 2 — currently 0-transition stubs):**
    - `compileTestBit t` (Compile.lean:1483): navigate to register `t` + `bitReadTM`,
