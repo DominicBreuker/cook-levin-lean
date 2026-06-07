@@ -9327,75 +9327,28 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       exact compileForBnd_sound_physical_residue cnt bnd (compileCmd body) body k G s res0
         hbit hk hres0
         (fun s' res' G' hb hk' hr hg => ihbody s' res' G' hb hk' huses.2.2 hnc hr hg)
-/-- **Residue-tolerant physical compiler contract (Risk C2).** The replacement
-for `Compile_run_physical` that accounts for the tape never shrinking: the exit
-tape is `encodeTape (c.eval s) ++ res` for some `ValidResidue` residue `res`,
-head rewound to `0`. This is provable for ALL ops (including deletion ops like
+/-- **★ The C2 obligation, residue-tolerant physical compiler contract (Risk C2),
+PROVEN from the assembly** — the `res0 = []` instance of
+`Compile.run_physical_residue_gen`. Accounts for the tape never shrinking: the
+exit tape is `encodeTape (c.eval s) ++ res` for some `ValidResidue` residue `res`,
+head rewound to `0`. Provable for ALL ops (including deletion ops like
 `clear`/`tail`) because the residue absorbs the cells vacated by left-shifting.
 
-Composes per-fragment via `compileSeq_sound_physical_residue` (proven), using
-`compileOp_sound_physical_residue` for each `Op` fragment. The budget is
-quadratic (`overhead`) in `size + cost`, covering the linear per-fragment
-budgets summed over `~cost` fragments.
-
-The decider bridge (`bitDeciderTM`) reads the answer from register `0` via
-`decodeTape`, which ignores the residue (`decodeTape_encodeTape_append`),
-so the residue is invisible to the decider. -/
-theorem Compile_run_physical_residue (c : Cmd) (s : State)
-    (hbit : Compile.BitState s) :
-    ∃ (t : Nat) (res : List Nat),
-      Compile.ValidResidue res ∧
-      runFlatTM t (Compile c) (initFlatConfig (Compile c) [Compile.encodeTape s])
-          = some { state_idx := Compile.exit c,
-                   tapes := [([], 0, Compile.encodeTape (c.eval s) ++ res)] } ∧
-      (∀ k, k < t → ∀ ck,
-          runFlatTM k (Compile c)
-              (initFlatConfig (Compile c) [Compile.encodeTape s]) = some ck →
-          ck.state_idx ≠ Compile.exit c ∧
-          haltingStateReached (Compile c) ck = false) ∧
-      t ≤ Compile.overhead (State.size s + c.cost s) := by
-  sorry  -- TODO(C2): compose per-fragment via `compileSeq_sound_physical_residue`.
-         -- Induction on `Cmd`; each `Op` case from `compileOp_sound_physical_residue`,
-         -- `seq` from `compileSeq_sound_physical_residue`, `ifBit` and `forBnd`
-         -- from their residue-tolerant siblings (to be stated).
-         --
-         -- ⚠ STRUCTURAL BLOCKER (Task 1): this statement LACKS the `(hbit :
-         -- Compile.BitState s)` hypothesis that EVERY per-fragment lemma requires
-         -- (`compileOp_sound_physical_residue` and the 10 lemmas at lines 2393/2554/
-         -- 2901/3025/3160/3387/3535/3761/3823/4149 all take `hbit`). The induction
-         -- cannot feed them without `hbit` here. Add it — and then the bridge must
-         -- supply `BitState (encodeState x)` (the Option A/B fork in HANDOFF.md).
-         --
-         -- ⚠⚠ BUDGET IS WRONG AS STATED (deep feasibility pass 2026-06-04, Finding A).
-         -- The per-op budget is QUADRATIC in tape length L (`9·L²+…`, since `clear`
-         -- and the cross-register transfer ops do Θ(L) cell-moves each an O(L) pass),
-         -- and `L = size + s.length + 2` includes the REGISTER COUNT. Summing ~`cost`
-         -- such per-op quadratics ⇒ a CUBIC total in `size + s.length + cost`. The
-         -- stated `overhead(size+cost)` with `overhead m = (m+1)²` is too small on
-         -- BOTH counts (degree, and dropping `s.length`). FIX before proving this:
-         -- restate as `overhead(State.size s + s.length + c.cost s)` with
-         -- `Compile.overhead` bumped to CUBIC (e.g. `9·(m+1)³`). Downstream needs only
-         -- `overhead_poly`/`overhead_mono` (degree-agnostic), so it ripples mechanically
-         -- to `bitDecider_run`, the `DecidesBy` budgets, and `toFrameworkWitness'`.
-         -- Stays poly on the live path (`encodeState x` = 1 reg; `s.length` ≤ const
-         -- `regBound`). See HANDOFF.md "Deep feasibility pass".
-
-/-- **★ The C2 obligation, PROVEN from the assembly** — the `res0 = []` instance of
-`Compile.run_physical_residue_gen`. This is `Compile_run_physical_residue` with the
-**correct, provable budget** (`physStepBudget`; the unprimed version's
-`overhead (size + cost)` is the wrong shape — too small in both degree and the
-register count `s.length`, Finding A) and the threading hypotheses the bridge
-supplies (`Cmd.UsesBelow c k` / `k ≤ s.length` / `Cmd.NoConsLen c`). Its proof body
-is `sorry`-free; the only remaining gaps are the leaf gadgets (the 7 stub ops in
+The budget is `physStepBudget G (c.cost s)`, the **correct, provable** shape
+(exactly superadditive under `seq`). The earlier `overhead (size + cost)` form was
+unprovable — too small in both degree and the register count `s.length` (Finding A);
+`physStepBudget`'s tape bound `G = State.size s + s.length + c.cost s + 2` carries
+`s.length` explicitly. The threading hypotheses (`Cmd.UsesBelow c k` /
+`k ≤ s.length` / `Cmd.NoConsLen c`) are what the bridge supplies (see the
+register-count discussion in HANDOFF.md). Its proof body is `sorry`-free; the only
+remaining gaps are the leaf gadgets (the 7 stub ops in
 `compileOp_sound_physical_residue` + the 2 stub loop/branch machines feeding the
 residue combinators).
 
-⚠ The unprimed `Compile_run_physical_residue` (above) is still `sorry` and is what
-`bitDecider_run` / `Compile_sound` currently consume. Retargeting them to THIS lemma
-— i.e. restating their `overhead`-shaped budgets as `physStepBudget` and threading
-the `UsesBelow`/`NoConsLen`/register-count hypotheses — is the deferred **GAP-4
-ripple** (see HANDOFF.md). -/
-theorem Compile_run_physical_residue' (c : Cmd) (k : Nat) (s : State)
+The decider bridge (`bitDeciderTM`) reads the answer from register `0` via
+`decodeTape`, which ignores the residue (`decodeTape_encodeTape_append`), so the
+residue is invisible to the decider. -/
+theorem Compile_run_physical_residue (c : Cmd) (k : Nat) (s : State)
     (hbit : Compile.BitState s) (hk : k ≤ s.length)
     (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c) :
     ∃ (t : Nat) (res : List Nat),
@@ -9478,21 +9431,28 @@ theorem Compile.encodeTape_singleton_length (r : List Nat) :
   simp [Compile.encodeTape, Compile.encodeRegs, Compile.shiftReg]
 
 /-- **C6 headline.** Running `bitDeciderTM c` on `encodeTape s` halts, within
-`overhead (size s + cost s) + 3` steps, in state `1 + (Compile c).states` when
-register `0` of `c.eval s` is `[1]` (accept) and `2 + (Compile c).states` when
-it is `[0]` (reject). Combines the physical run contract of `Compile c` with the
-`sorry`-free gadget run lemma, via `composeFlatTM_run`. (The `+3` is one bridge
-step plus the two gadget steps — step past the leading sentinel, then read.) -/
-theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
-    (hbitst : Compile.BitState s)
+`physStepBudget G (cost s) + 3` steps (`G = size s + s.length + cost s + 2`), in
+state `1 + (Compile c).states` when register `0` of `c.eval s` is `[1]` (accept)
+and `2 + (Compile c).states` when it is `[0]` (reject). Combines the physical run
+contract of `Compile c` (`Compile_run_physical_residue'`, the residue/`physStepBudget`
+form — the unprimed `overhead` form is the wrong budget shape and is unprovable,
+Finding A) with the `sorry`-free gadget run lemma, via `composeFlatTM_run`. The
+`UsesBelow`/`NoConsLen`/`k ≤ s.length` hypotheses are what the primed contract
+threads; consumers (`DecidesLang(')`) supply them. (The `+3` is one bridge step
+plus the two gadget steps — step past the leading sentinel, then read.) -/
+theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
+    (hbitst : Compile.BitState s) (hk : k ≤ s.length)
+    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c)
     (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
     ∃ cfg,
-      runFlatTM (Compile.overhead (State.size s + c.cost s) + 3) (Compile.bitDeciderTM c)
+      runFlatTM (Compile.physStepBudget (State.size s + s.length + c.cost s + 2)
+            (c.cost s) + 3) (Compile.bitDeciderTM c)
           (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = some cfg ∧
       haltingStateReached (Compile.bitDeciderTM c) cfg = true ∧
       cfg.state_idx = (if b = 1 then 1 else 2) + (Compile c).states := by
   obtain ⟨tl0, htl0⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
-  obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ := Compile_run_physical_residue c s hbitst
+  obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ :=
+    Compile_run_physical_residue c k s hbitst hk huses hnc
   -- Rewrite the physical exit tape via the encoding lemma (leading sentinel).
   -- The residue trails the encoded output; the gadget reads only positions 0–1,
   -- so fold the residue into the tail `tl := tl0 ++ res`.
@@ -9528,12 +9488,14 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat)
     [] 0 (Compile.endMark :: (b + 1) :: tl) hsym hrun1 htraj1 hrun2 hhalt2
   obtain ⟨hcrun, hchalt⟩ := hcomp
   -- Pad the run up to the stated budget.
-  obtain ⟨k, hk⟩ := Nat.le.dest ht1
+  obtain ⟨kpad, hkpad⟩ := Nat.le.dest ht1
   refine ⟨{ state_idx := dst + (Compile c).states,
             tapes := [([], 1, Compile.endMark :: (b + 1) :: tl)] }, ?_, ?_, ?_⟩
-  · show runFlatTM (Compile.overhead (State.size s + c.cost s) + 3) (Compile.bitDeciderTM c)
+  · show runFlatTM (Compile.physStepBudget (State.size s + s.length + c.cost s + 2)
+          (c.cost s) + 3) (Compile.bitDeciderTM c)
         (initFlatConfig (Compile.bitDeciderTM c) [Compile.encodeTape s]) = _
-    have hbudget : Compile.overhead (State.size s + c.cost s) + 3 = (t1 + 1 + 2) + k := by omega
+    have hbudget : Compile.physStepBudget (State.size s + s.length + c.cost s + 2)
+        (c.cost s) + 3 = (t1 + 1 + 2) + kpad := by omega
     rw [hbudget]
     exact runFlatTM_extend (M := Compile.bitDeciderTM c) hcrun hchalt
   · exact hchalt
