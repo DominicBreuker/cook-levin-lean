@@ -81,6 +81,23 @@ noncomputable def evalCnfDecidesLang :
     -- `{0,1}`) so it satisfies `BitState`, then discharge here. See HANDOFF.md
     -- "The live path — EvalCnfCmd" — this, not a `LangEncodable (cnf × assgn)`
     -- instance, is what `Compile_sound`/`DecidesLang.toDecidesBy` need.
+  -- WALL / register frame (free path). `evalCnfCmd` uses registers `0..11`
+  -- (`OUTPUT … INNER_IDX`), and `encodeState` lays out exactly those 12 registers.
+  regBound := 12
+  usesBelow := by sorry
+    -- TODO(C2, free path): `Cmd.UsesBelow evalCnfCmd 12`. Gated on the concrete
+    -- inner bodies (`processOneClause`/`processOneLiteral`/`memberCheck`, still
+    -- `sorry`); each uses only registers `0..11`. Discharge once they are concrete.
+  width_le := by
+    intro x; rcases x with ⟨N, a⟩
+    -- `encodeState (N, a)` is a 12-register literal, so its width is exactly 12.
+    show (EvalCnfCmd.encodeState (N, a)).length ≤ 12
+    simp only [EvalCnfCmd.encodeState, List.length_cons, List.length_nil]
+    omega
+  noConsLen := by sorry
+    -- TODO(C2, free path): `Cmd.NoConsLen evalCnfCmd`. Like the canonical
+    -- `c_noConsLen`, this is dropped entirely once `Op.consLen` is re-laid UNARY
+    -- (HANDOFF.md Task 1). Until then it is the witness's `NoConsLen` side-condition.
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_evalCnf :

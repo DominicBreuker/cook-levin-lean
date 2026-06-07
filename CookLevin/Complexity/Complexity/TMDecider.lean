@@ -101,6 +101,9 @@ def DecidesBy.negate {X : Type} [encodable X]
     {timeBound : Nat → Nat} (D : DecidesBy P timeBound) :
     DecidesBy (fun x => ¬ P x) timeBound where
   encode := D.encode
+  encodeBound := D.encodeBound
+  encodeBound_poly := D.encodeBound_poly
+  encodeBound_mono := D.encodeBound_mono
   encode_size := D.encode_size
   M := D.M
   M_valid := D.M_valid
@@ -129,6 +132,9 @@ def DecidesBy.iff {X : Type} [encodable X]
     (hEq : ∀ x, P x ↔ Q x) (D : DecidesBy P timeBound) :
     DecidesBy Q timeBound where
   encode := D.encode
+  encodeBound := D.encodeBound
+  encodeBound_poly := D.encodeBound_poly
+  encodeBound_mono := D.encodeBound_mono
   encode_size := D.encode_size
   M := D.M
   M_valid := D.M_valid

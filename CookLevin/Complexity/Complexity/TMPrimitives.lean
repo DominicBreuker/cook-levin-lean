@@ -2874,6 +2874,9 @@ but not on the Cook–Levin proof path. -/
 def trueDecider (X : Type) [encodable X] :
     DecidesBy (fun _ : X => True) (fun _ => 1) where
   encode := fun _ => []
+  encodeBound := fun _ => 0
+  encodeBound_poly := inOPoly_const 0
+  encodeBound_mono := fun _ _ _ => Nat.le_refl _
   encode_size := fun x => Nat.zero_le _
   M := verdictTM 1 true
   M_valid := verdictTM_valid 1 true
@@ -2892,6 +2895,9 @@ def trueDecider (X : Type) [encodable X] :
 def falseDecider (X : Type) [encodable X] :
     DecidesBy (fun _ : X => False) (fun _ => 1) where
   encode := fun _ => []
+  encodeBound := fun _ => 0
+  encodeBound_poly := inOPoly_const 0
+  encodeBound_mono := fun _ _ _ => Nat.le_refl _
   encode_size := fun x => Nat.zero_le _
   M := verdictTM 1 false
   M_valid := verdictTM_valid 1 false
@@ -4169,7 +4175,10 @@ theorem exists_first_true (bs : List Bool)
 def decider : DecidesBy (fun bs : List Bool => ∀ b ∈ bs, b = false)
     (fun n => n + 2) where
   encode := encode
-  encode_size := fun bs => Nat.le_trans (encode_size_le bs) (by omega)
+  encodeBound := fun n => n + 1
+  encodeBound_poly := inOPoly_add inOPoly_id (inOPoly_const 1)
+  encodeBound_mono := fun _ _ h => Nat.add_le_add_right h 1
+  encode_size := fun bs => encode_size_le bs
   M := scanRightUntilTM 2 1
   M_valid := scanRightUntilTM_valid 2 1 (by decide)
   M_tapes_pos := by decide
@@ -4316,7 +4325,10 @@ open AllFalse (encode encode_length encode_size_le encode_get_lt_two
 def decider : DecidesBy (fun bs : List Bool => ∃ b ∈ bs, b = true)
     (fun n => n + 2) where
   encode := encode
-  encode_size := fun bs => Nat.le_trans (encode_size_le bs) (by omega)
+  encodeBound := fun n => n + 1
+  encodeBound_poly := inOPoly_add inOPoly_id (inOPoly_const 1)
+  encodeBound_mono := fun _ _ h => Nat.add_le_add_right h 1
+  encode_size := fun bs => encode_size_le bs
   M := scanRightUntilTM 2 1
   M_valid := scanRightUntilTM_valid 2 1 (by decide)
   M_tapes_pos := by decide

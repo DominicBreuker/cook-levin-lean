@@ -52,15 +52,24 @@ structure DecidesBy {X : Type} [encodable X]
     (P : X → Prop) (timeBound : Nat → Nat) where
   /-- How to lay the input out on tape 0. -/
   encode      : X → List Nat
-  /-- The encoded input length is linearly bounded by `encodable.size x`.
-  The slack (`2 · size + 4` rather than `size + 1`) is what makes the
-  interface satisfiable by the computable layer's `encodeTape ∘ encodeState`:
-  the canonical single-register tape is `endMark :: shiftReg (enc x) ++ [0,
-  endMark]` (a leading sentinel for head-rewind plus the trailing terminator), of
-  length `(enc x).length + 3 ≤ 2 · size x + 4` (the `2 · size + 1` is the
-  `LangEncodable.enc_size` bound, closed under products). Still linear, so every
-  downstream consumer (`proj_left`, …) survives the loosening. -/
-  encode_size : ∀ x, (encode x).length ≤ 2 * encodable.size x + 4
+  /-- A monotone polynomial bounding the encoded-input length. -/
+  encodeBound : Nat → Nat
+  /-- The encoding bound is a polynomial. -/
+  encodeBound_poly : inOPoly encodeBound
+  /-- The encoding bound is monotone (so derived deciders — `proj_left`, the
+  product lift — propagate `encode_size` by monotonicity alone). -/
+  encodeBound_mono : monotonic encodeBound
+  /-- The encoded input length is **polynomially** bounded by `encodable.size x`.
+  This is the principled "poly-size encoding" requirement of complexity theory: a
+  poly-size encoding processed in poly *time* (`timeBound`) is faithful. It is
+  *per-decider* (each witness supplies its own `encodeBound`) rather than the old
+  globally-fixed linear `2 · size + 4`, so encodings whose width is more than the
+  tight single canonical register — e.g. the live `sat_NP` verifier's multi-register
+  `EvalCnfCmd.encodeState` (`≤ 5 · size + 20`), or any future super-linear
+  reduction-chain / tableau encoding — are admissible without another framework
+  change. The canonical single-register layer (`DecidesLang'`) still uses the
+  linear instance `encodeBound n = 2 · n + 4`. -/
+  encode_size : ∀ x, (encode x).length ≤ encodeBound (encodable.size x)
   /-- The underlying flat Turing machine. -/
   M           : FlatTM
   /-- It is a well-formed TM. -/
@@ -140,11 +149,14 @@ private def DecidesBy.proj_left {X : Type} [encodable X]
     (D : DecidesBy P f) (hMono : monotonic f) :
     DecidesBy (fun xy : X × Unit => P xy.1) f where
   encode xy := D.encode xy.1
+  encodeBound := D.encodeBound
+  encodeBound_poly := D.encodeBound_poly
+  encodeBound_mono := D.encodeBound_mono
   encode_size xy := by
-    have h1 : (D.encode xy.1).length ≤ 2 * encodable.size xy.1 + 4 := D.encode_size xy.1
-    have he : encodable.size xy = encodable.size xy.1 + encodable.size xy.2 + 1 := rfl
-    show (D.encode xy.1).length ≤ 2 * encodable.size xy + 4
-    rw [he]; omega
+    have hsize : encodable.size xy.1 ≤ encodable.size xy := by
+      show encodable.size xy.1 ≤ encodable.size xy.1 + encodable.size xy.2 + 1
+      exact Nat.le_trans (Nat.le_add_right _ _) (Nat.le_succ _)
+    exact Nat.le_trans (D.encode_size xy.1) (D.encodeBound_mono _ _ hsize)
   M := D.M
   M_valid := D.M_valid
   M_tapes_pos := D.M_tapes_pos
