@@ -64,49 +64,47 @@ Sound for the size law because `encodable.size Nat = id`: unary length `= n`.
 
 ---
 
-## ★★ THE WALL — surfaced 2026-06-07 (this top-down pass). #1 cross-stream decision.
+## ★★ THE WALL — surfaced + RESOLVED (canonical bridge) 2026-06-07.
 
-The C2 obligation `Compile_run_physical_residue` (correctly) carries
-`huses : Cmd.UsesBelow c k` and **`hk : k ≤ s.length`** — it threads `Op.inBounds`
-(every per-op gadget assumes its registers already exist on the tape) through the
-induction. **But the live and canonical encodings are too narrow to supply `hk`:**
+**The problem.** `Compile_run_physical_residue` (correctly) carries
+`huses : Cmd.UsesBelow c k` and **`hk : k ≤ s.length`** — its per-op gadgets assume
+the registers they touch already exist on the tape (`Op.inBounds`: gadgets navigate
+by counting `0`-separators; a register past the tape width is not there to navigate
+to). But the decider's *input* tape is narrow (`encodeState x = [enc x]`, width 1)
+while composed programs touch `regBound > 1` registers — so `hk` is unsatisfiable —
+**and** the framework's tight `DecidesBy.encode_size` (`≤ 2·size+4`, NP.lean) forbids
+pre-padding the *input* encoding (each pad register adds a cell). The earlier
+`DecidesLang'.reg_width` (`regBound ≤ 1`) was therefore a *false* `sorry`.
 
-- **Canonical** `LangEncodable.encodeState x = [enc x]` has **length 1**, yet
-  composed verifiers use `regBound > 1` (every `precompose`/`map_fst` raises it).
-  So `hk : regBound ≤ 1` is **false**.
-- **Free / live** `evalCnfDecidesLang` similarly lays its data in a few registers
-  while the program touches more.
+**The resolution — runtime tape-padding (CHOSEN, implemented at the canonical
+bridge).** Grow the tape *during the run*: `Compile.padRegsTM k` maps `encodeTape s`
+→ `encodeTape (s ++ replicate k [])` (width `≥ k`). The extra registers are empty, so
+`c.eval` is unchanged register-wise (`Cmd.eval_agree`/`cost_agree`), and the *input*
+encoding stays the tight single register (`encode_size` untouched). Composed before
+the decider (`Compile.paddedBitDeciderTM := padRegsTM ⨾ bitDeciderTM`), it discharges
+`k ≤ wide.length` for the inner `bitDecider_run`. So `Compile_run_physical_residue`
+and `bitDecider_run` stay exactly as they are — the fix is purely additive.
 
-Two interacting constraints make this a genuine design fork, not a typo:
-1. **Register pre-existence.** `Op.inBounds o s` requires `dst/src < s.length`. The
-   gadgets navigate by counting `0`-separators; a register past the tape's width
-   does not exist to navigate to. (`State.set` auto-pads *semantically*, but the
-   *physical gadget* does not create the missing register.)
-2. **Tight input encoding.** The framework's `DecidesBy.encode_size` is
-   `≤ 2·size + 4` (NP.lean), exactly fitting the canonical 1-register tape. So you
-   **cannot** just pre-pad the *input encoding* to `regBound` registers — that adds
-   `regBound` cells and busts `encode_size`. (The free path additionally busts it
-   already: `EvalCnfCmd.encodeState_size ≤ 5·size+20 ⊄ 2·size+4`.)
+**Status:** `Compile.paddedBitDecider_run` (Compile.lean) is **PROVEN** from the
+`padRegsTM` interface + `bitDecider_run` via `composeFlatTM_run` — **no `k ≤ s.length`
+hypothesis**. `DecidesLang'.toDecidesBy`/`toInTimePoly` are rewired to it (tight input
+encoding, `physStepBudget`-shaped poly budget `DecidesLang'.padTimeBound`); the false
+`reg_width` is **deleted**. The canonical decider bridge `inNPLang → inNP` is now
+sorry-free **except** for the precisely-pinned obligations below.
 
-**Recommended resolution (bottom-up, clean, eliminates the wall on BOTH paths):**
-a **runtime width-padding gadget** that grows the *tape during the run* (appends
-empty register blocks up to `k`), tolerant of any starting width. Prepend it inside
-`Compile` (using the cmd's static `UsesBelow` bound) or expose a
-`Compile_run_physical_residue` variant that pads first. Because the padding is on
-the *running tape*, the **input** `encodeTape (encodeState x)` stays length
-`2·size+4` (encode_size unaffected!), and after padding `k ≤ s.length` holds, so
-`hk` (and `DecidesLang'.reg_width`) can be **dropped** from the contract entirely.
-Budget stays poly (`k = regBound` is a per-decider constant added to `G`).
+**The single pinned BOTTOM-UP obligation that remains (replacing the false sorry):**
+build `Compile.padRegsTM k` and discharge its interface lemmas (`_valid`/`_tapes`/
+`_sig`/`padRegsExit_lt`/`_run`/`_traj`, all `sorry` in Compile.lean). The spec is
+*true and buildable*: a `k`-fold `(stepRightTM ⨾ scanRightUntilTM 4 endMark ⨾
+insertCarryTM 0 ⨾ rewindFromEndTM 4 endMark)`, each iteration inserting one `0`
+delimiter just before the trailing `endMark`.
 
-Alternatives, weaker: (a) make *every* per-op gadget auto-create out-of-bounds
-registers (more gadget surgery, same effect); (b) relax the framework
-`DecidesBy.encode_size` to a per-decider linear `c₁·size+c₂` and pad the input
-(ripples to NP.lean:143's product lift; needed anyway for the free path's
-`5·size+20`).
-
-Until resolved, the two facts are isolated as `DecidesLang'.reg_width` /
-`DecidesLang'.c_noConsLen` (`PolyTime.lean`, `sorry`, fully documented) and the live
-`DecidesLang.toDecidesBy` stays `sorry`.
+**Still open for the FREE/live path** (`DecidesLang.toDecidesBy`, what `sat_NP`
+walks): the same padding applies, BUT `evalCnfDecidesLang`'s encoding is
+`≤ 5·size+20 ⊄ 2·size+4`, so the free path *additionally* needs the framework's
+`DecidesBy.encode_size` loosened to a per-decider linear `c₁·size+c₂` (ripples to
+NP.lean:143's product lift) — an **owner decision**. Plus `c_noConsLen` (consLen,
+Task 1). See the stream sections.
 
 ---
 
@@ -125,14 +123,24 @@ session executed the **GAP-4 ripple** at the compiler→decider boundary:
   `physStepBudget (State.size s + s.length + c.cost s + 2) (c.cost s) + 3`. So the
   live decider boundary rests on the **provable** budget shape.
 - **Migrated `DecidesLang'.toDecidesBy` / `budget_ge` / `toInTimePoly`** to the new
-  budget (encoding/correctness/halting all sorry-free; the only gaps are the two
-  pinned `WALL` facts). Added `inOPoly_of_le` (pointwise domination) helper.
+  budget. Added `inOPoly_of_le` (pointwise domination) helper.
+
+Then **resolved the WALL at the canonical bridge** (runtime tape-padding):
+- Added `Compile.padRegsTM` + interface (`sorry` — the pinned gadget),
+  `Compile.paddedBitDeciderTM`, and **proved `Compile.paddedBitDecider_run`** from
+  the interface + `bitDecider_run` via `composeFlatTM_run` — **no `k ≤ s.length`**.
+  Sorry-free bookkeeping: `get/size/BitState/agreeBelow_append_replicate_nil`,
+  `paddedBitDeciderTM_valid/_tapes/_halt_shift`.
+- Rewired `DecidesLang'.toDecidesBy`/`toInTimePoly` onto it with the poly budget
+  `DecidesLang'.padTimeBound`; **deleted the false `reg_width`**. Tight input
+  encoding preserved (`encode_size ≤ 2·size+4`).
 - Build green (3358 jobs); `#print axioms CookLevin` unchanged
   (`[propext, sorryAx, Classical.choice, Quot.sound]`).
 
-Net effect: the wrong-budget sorry is gone; the wall it was hiding is now explicit
-and pinned. **Do not re-introduce an `overhead`-shaped budget anywhere** — it is
-not superadditive and cannot compose (Finding #3 / A).
+Net effect: the wrong-budget sorry and the false `reg_width` are gone; the WALL is
+resolved by an additive, validated design whose only residual is the buildable
+`padRegsTM` gadget. **Do not re-introduce an `overhead`-shaped budget anywhere** — it
+is not superadditive and cannot compose (Finding #3 / A).
 
 ---
 
@@ -145,6 +153,9 @@ not superadditive and cannot compose (Finding #3 / A).
   (cubic diagonal) — the composable budget. **The only correct budget shape.**
 - **`Compile.bitDecider_run`** — decider boundary, now `physStepBudget`. Sorry-free
   except transitively via the leaf gadgets.
+- **`Compile.paddedBitDecider_run`** — the WALL resolution: pad-then-decide on a
+  **narrow** input, **no `k ≤ s.length`**. Proven from the `padRegsTM` interface +
+  `bitDecider_run`. Plus the `*_append_replicate_nil` padding bookkeeping (sorry-free).
 - **`compileSeq_sound_physical_residue`** + `_traj` — residue `seq` composition.
 - **`Compile.sound_of_run_residue`** — residue run ⇒ `Compile_sound` shape.
 - **Threading toolkit** (now all in `Compile.lean`): `Cmd.eval_preserves_BitState`,
@@ -164,21 +175,19 @@ not superadditive and cannot compose (Finding #3 / A).
 You assemble final pieces and design their proofs; create `sorry` lemmas when
 provable; surface gaps early.
 
-1. **Drive the WALL resolution (see ★★ above) — highest priority, do FIRST.**
-   Confirm the runtime-padding design with a `#eval` probe (does a width-padding
-   gadget on a narrow `encodeTape` produce the wider tape the op gadgets expect?),
-   then **restate `Compile_run_physical_residue`** to drop `hk : k ≤ s.length`
-   (pad internally from `UsesBelow c k`). This deletes `DecidesLang'.reg_width` and
-   unblocks the canonical bridge. Coordinate with bottom-up (who builds the pad
-   gadget). If you instead go the encode_size route, that touches NP.lean.
-2. **Close the live free bridge `DecidesLang.toDecidesBy` / `inTimePolyLang_to_inTimePoly`.**
-   AFTER the wall resolution (it determines the fields): add to `DecidesLang` the
-   `regBound`/`usesBelow`/`noConsLen` (and, only if padding the input, a width
-   field), thread them into `bitDecider_run`, and restate the budget as
-   `physStepBudget`-shaped (mirror `DecidesLang'.toInTimePoly`; `inOPoly_of_le` +
-   `physStepBudget_poly`/`_mono` are ready). This is the path `sat_NP` walks.
-   ⚠ Also needs the framework `DecidesBy.encode_size` (`2·size+4`) loosened for the
-   free path's larger linear encoding — decide this with the owner.
+1. ✅ **WALL resolved at the canonical bridge** (runtime padding; `paddedBitDecider_run`
+   proven, `reg_width` deleted). **Remaining top-down on the WALL = the FREE/live path:**
+   give `DecidesLang.toDecidesBy` (free encoding, what `sat_NP` walks) the same
+   padded-decider treatment. This needs (i) the same `paddedBitDecider_run` (reuse it),
+   (ii) `DecidesLang` to expose `regBound`/`usesBelow`/`noConsLen` (add as fields —
+   coordinate with the EvalCnf instance), and (iii) an **owner decision** to loosen the
+   framework `DecidesBy.encode_size` from the tight `2·size+4` to a per-decider linear
+   `c₁·size+c₂` (EvalCnf's encoding is `5·size+20`; ripples to NP.lean:143's product
+   lift). Surface (iii) to the owner before implementing.
+2. **Then close `inTimePolyLang_to_inTimePoly`** (the headline the free bridge feeds)
+   by mirroring `DecidesLang'.toInTimePoly` (`inOPoly_of_le` + `physStepBudget_poly`/
+   `_mono` are ready). This finishes the path `sat_NP` walks (modulo the leaf gadgets
+   + EvalCnf's unary re-encoding, bottom-up).
 3. **Retarget the reduction side** (`Compile_sound`, Compile.lean:8750, still an
    independent `sorry`; `PolyTimeComputableLang.toFrameworkWitness'`,
    PolyTime.lean) to the `physStepBudget` budget via `sound_of_run_residue` + the
@@ -189,11 +198,15 @@ provable; surface gaps early.
 You build the gadgets the (pinned) contracts need. Build green per item;
 `#print axioms`-clean. Probe each machine end-to-end (`#eval`) before proving.
 
-1. **Build the runtime width-padding gadget (NEW — unblocks the WALL).** A gadget
-   that, on a tape narrower than `k` registers, appends empty register blocks (one
-   `0`-separator each) until the tape has `≥ k` registers, head rewound, tolerant
-   of any starting width. Prove its run/`_no_early_halt`/budget. This is the
-   shared rendezvous with top-down step 1.
+1. **Build `Compile.padRegsTM` (THE pinned WALL gadget — interface already stubbed
+   in `Compile.lean`).** Discharge `padRegsTM_valid`/`_tapes`/`_sig`/`padRegsExit_lt`/
+   `padRegsTM_run`/`padRegsTM_traj`. Spec (true + buildable): map `encodeTape s` →
+   `encodeTape (s ++ replicate k [])`, head rewound to `0`, within `padBudget`, no
+   early halt. Suggested construction: `k`-fold `(stepRightTM ⨾ scanRightUntilTM 4
+   endMark ⨾ insertCarryTM 0 ⨾ rewindFromEndTM 4 endMark)` (each iteration inserts one
+   `0` delimiter before the trailing `endMark`). `#eval`-probe one iteration first.
+   Discharging these makes `paddedBitDecider_run` (already proven on top) axiom-clean,
+   which closes the canonical decider bridge `inNPLang → inNP`.
 2. **Task 1 — unary encodings + scratch operands** (gates all 7 ops). Restate
    `takeAt`/`dropAt`/`consLen` unary (length = the register's unary count, not
    `headD 0`); bump `consLen`'s `Op.cost`; add empty-scratch operands

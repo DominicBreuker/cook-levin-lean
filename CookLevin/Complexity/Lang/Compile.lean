@@ -9514,4 +9514,202 @@ theorem Compile.bitDeciderTM_halt_shift (c : Cmd) (i : Nat) :
       List.getElem?_append_right (by rw [List.length_replicate]; exact Nat.le_add_left _ _),
       List.length_replicate, Nat.add_sub_cancel]
 
-end Complexity.Lang
+/-! ## ★★ The WALL resolution — runtime register-width padding (2026-06-07)
+
+`Compile_run_physical_residue` honestly requires `k ≤ s.length` (its per-op gadgets
+assume the registers they touch already exist on the tape — `Op.inBounds`). But the
+decider's *input* tape is narrow (`encodeState x = [enc x]`, width 1) while the
+program touches `regBound > 1` registers, and the framework's tight
+`DecidesBy.encode_size` (`2·size+4`) forbids pre-padding the *input* encoding.
+
+**Resolution:** pad the tape *at runtime*. `padRegsTM k` grows a narrow tape
+`encodeTape s` into `encodeTape (s ++ replicate k [])` (width `≥ k`) — the extra
+registers are empty, so `c.eval` is unchanged register-wise (`Cmd.eval_agree`), and
+the *input* encoding stays tight (`encode_size` unaffected). Prepended before the
+decider, it discharges `k ≤ s'.length` for the whole run. This keeps
+`Compile_run_physical_residue` and `bitDecider_run` exactly as they are.
+
+⚠ **`padRegsTM` and its run/trajectory are the single pinned BOTTOM-UP gadget
+obligation** replacing the *false* `DecidesLang'.reg_width`. A real construction:
+`k`-fold `(stepRightTM ⨾ scanRightUntilTM 4 endMark ⨾ insertCarryTM 0 ⨾
+rewindFromEndTM 4 endMark)` — each iteration inserts one `0` delimiter just before
+the trailing `endMark`. Its validity/tapes/sig/exit are construction-shape facts;
+only the behavioural `run`/`traj` are nontrivial. `Compile.paddedBitDecider_run`
+below is PROVEN from this interface, validating the composition design end-to-end. -/
+
+/-- **Empty-register padding machine (interface, BOTTOM-UP stub).** Grows the tape
+by `k` empty register blocks. See the section docstring for the construction. -/
+def Compile.padRegsTM (k : Nat) : FlatTM := sorry
+
+/-- The padding machine's halt/exit state. -/
+def Compile.padRegsExit (k : Nat) : Nat := sorry
+
+theorem Compile.padRegsTM_valid (k : Nat) : validFlatTM (Compile.padRegsTM k) := sorry
+theorem Compile.padRegsTM_tapes (k : Nat) : (Compile.padRegsTM k).tapes = 1 := sorry
+theorem Compile.padRegsTM_sig (k : Nat) : (Compile.padRegsTM k).sig = 4 := sorry
+theorem Compile.padRegsExit_lt (k : Nat) :
+    Compile.padRegsExit k < (Compile.padRegsTM k).states := sorry
+
+/-- Step budget for `padRegsTM k` on `encodeTape s` — polynomial in tape width and
+`k`. (Each of the `k` insertions is one `O(tapeLen)` pass.) -/
+def Compile.padBudget (k : Nat) (s : State) : Nat :=
+  (k + 1) * (State.size s + s.length + k + 2)
+
+/-- **`padRegsTM` run (interface, BOTTOM-UP stub).** From the narrow tape
+`encodeTape s`, reach the exit with tape `encodeTape (s ++ replicate k [])`, head
+rewound to `0`, within `padBudget`. -/
+theorem Compile.padRegsTM_run (k : Nat) (s : State) (hbit : Compile.BitState s) :
+    runFlatTM (Compile.padBudget k s) (Compile.padRegsTM k)
+        (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s])
+      = some { state_idx := Compile.padRegsExit k,
+               tapes := [([], 0, Compile.encodeTape (s ++ List.replicate k []))] } := sorry
+
+/-- **`padRegsTM` trajectory (interface, BOTTOM-UP stub).** It does not hit the exit
+or any halt state before `padBudget`. -/
+theorem Compile.padRegsTM_traj (k : Nat) (s : State) (hbit : Compile.BitState s) :
+    ∀ j, j < Compile.padBudget k s → ∀ ck,
+      runFlatTM j (Compile.padRegsTM k)
+          (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s]) = some ck →
+      ck.state_idx ≠ Compile.padRegsExit k ∧
+      haltingStateReached (Compile.padRegsTM k) ck = false := sorry
+
+/-! ### Padding bookkeeping (sorry-free) -/
+
+/-- Reading any register of `s ++ replicate k []` is reading it of `s` (the
+appended blocks are empty, so out-of-range reads still return `[]`). -/
+theorem Compile.get_append_replicate_nil (s : State) (k r : Nat) :
+    (s ++ List.replicate k []).get r = s.get r := by
+  unfold State.get
+  by_cases hr : r < s.length
+  · rw [List.getElem?_append_left hr]
+  · have hr' : s.length ≤ r := Nat.le_of_not_lt hr
+    rw [List.getElem?_append_right hr', List.getElem?_eq_none hr']
+    rcases Nat.lt_or_ge (r - s.length) k with hr2 | hr2
+    · simp [List.getElem?_replicate, hr2]
+    · rw [List.getElem?_eq_none (by rw [List.length_replicate]; exact hr2)]
+
+/-- Appending empty registers preserves `BitState`. -/
+theorem Compile.BitState_append_replicate_nil (s : State) (k : Nat)
+    (h : Compile.BitState s) : Compile.BitState (s ++ List.replicate k []) := by
+  intro reg hreg x hx
+  rcases List.mem_append.mp hreg with hs | hp
+  · exact h reg hs x hx
+  · obtain ⟨-, rfl⟩ := List.mem_replicate.mp hp; cases hx
+
+/-- The aggregate size is unchanged by appending empty registers. -/
+theorem Compile.size_append_replicate_nil (s : State) (k : Nat) :
+    State.size (s ++ List.replicate k []) = State.size s := by
+  have hz : ∀ m, (List.replicate m (0 : Nat)).foldr (· + ·) 0 = 0 := by
+    intro m; induction m with
+    | zero => rfl
+    | succ n ih => simp [List.replicate_succ, ih]
+  unfold State.size
+  rw [List.map_append, List.foldr_append, List.map_replicate, List.length_nil, hz]
+
+/-- `s` and its empty-register padding agree on every register `< k`. -/
+theorem Compile.agreeBelow_append_replicate_nil (s : State) (k : Nat) :
+    AgreeBelow k s (s ++ List.replicate k []) :=
+  fun r _ => (Compile.get_append_replicate_nil s k r).symm
+
+/-! ### The padded decider — `padRegsTM ⨾ bitDeciderTM` -/
+
+/-- The full decider with runtime width-padding: pad to `k` registers, then run the
+bit-decider. The input tape is the **narrow** `encodeTape s`. -/
+def Compile.paddedBitDeciderTM (c : Cmd) (k : Nat) : FlatTM :=
+  composeFlatTM (Compile.padRegsTM k) (Compile.bitDeciderTM c) (Compile.padRegsExit k)
+
+theorem Compile.paddedBitDeciderTM_valid (c : Cmd) (k : Nat) :
+    validFlatTM (Compile.paddedBitDeciderTM c k) :=
+  composeFlatTM_valid (Compile.padRegsTM k) (Compile.bitDeciderTM c) (Compile.padRegsExit k)
+    (Compile.padRegsTM_valid k) (Compile.bitDeciderTM_valid c) (Compile.padRegsExit_lt k)
+    (Compile.padRegsTM_tapes k) (Compile.bitDeciderTM_tapes c)
+
+theorem Compile.paddedBitDeciderTM_tapes (c : Cmd) (k : Nat) :
+    (Compile.paddedBitDeciderTM c k).tapes = 1 := by
+  show (composeFlatTM (Compile.padRegsTM k) (Compile.bitDeciderTM c) (Compile.padRegsExit k)).tapes = 1
+  rw [composeFlatTM_tapes, Compile.padRegsTM_tapes]
+
+/-- Halt bits of `paddedBitDeciderTM` past `(Compile c).states + (padRegsTM k).states`
+are the gadget's, shifted by both compositions. -/
+theorem Compile.paddedBitDeciderTM_halt_shift (c : Cmd) (k i : Nat) :
+    (Compile.paddedBitDeciderTM c k).halt.getD
+        (i + (Compile c).states + (Compile.padRegsTM k).states) false
+      = Compile.bitTestTM.halt.getD i false := by
+  show (composedHalt (Compile.padRegsTM k) (Compile.bitDeciderTM c)).getD
+      (i + (Compile c).states + (Compile.padRegsTM k).states) false = _
+  rw [composedHalt, List.getD_eq_getElem?_getD,
+      List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate]
+  have he : i + (Compile c).states + (Compile.padRegsTM k).states
+      - (Compile.padRegsTM k).states = i + (Compile c).states := by omega
+  rw [he, ← List.getD_eq_getElem?_getD]
+  exact Compile.bitDeciderTM_halt_shift c i
+
+/-- **★ The padded decider run (PROVEN from the `padRegsTM` interface +
+`bitDecider_run`).** Runs `paddedBitDeciderTM c k` on the **narrow** input
+`encodeTape s` — **no `k ≤ s.length` hypothesis** — and reaches the accept/reject
+state. The pad makes `k ≤ (s ++ replicate k []).length` hold for the inner
+`bitDecider_run`, and `Cmd.eval_agree`/`cost_agree` transport the answer/cost from
+the wide state back to `s`. This is the WALL resolution, validated. -/
+theorem Compile.paddedBitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
+    (hbitst : Compile.BitState s)
+    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c)
+    (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
+    ∃ cfg,
+      runFlatTM (Compile.padBudget k s + 1 +
+            (Compile.physStepBudget (State.size s + (s.length + k) + c.cost s + 2)
+              (c.cost s) + 3))
+          (Compile.paddedBitDeciderTM c k)
+          (initFlatConfig (Compile.paddedBitDeciderTM c k) [Compile.encodeTape s]) = some cfg ∧
+      haltingStateReached (Compile.paddedBitDeciderTM c k) cfg = true ∧
+      cfg.state_idx
+        = (if b = 1 then 1 else 2) + (Compile c).states + (Compile.padRegsTM k).states := by
+  set wide : State := s ++ List.replicate k [] with hwide
+  -- Facts about the widened state.
+  have hbit_w : Compile.BitState wide := Compile.BitState_append_replicate_nil s k hbitst
+  have hk_w : k ≤ wide.length := by
+    rw [hwide, List.length_append, List.length_replicate]; omega
+  have hagree : AgreeBelow k s wide := Compile.agreeBelow_append_replicate_nil s k
+  have heval0 : (c.eval s).get 0 = (c.eval wide).get 0 :=
+    Cmd.eval_agree c k huses hagree 0 (Cmd.UsesBelow_pos huses)
+  have h0_w : (c.eval wide).get 0 = [b] := by rw [← heval0]; exact h0
+  have hcost : c.cost wide = c.cost s := (Cmd.cost_agree c k huses hagree).symm
+  have hsize : State.size wide = State.size s := Compile.size_append_replicate_nil s k
+  -- The inner decider run on the WIDE tape.
+  obtain ⟨cfg2, hrun2, hhalt2, hstate2⟩ :=
+    Compile.bitDecider_run c wide b k hbit_w hk_w huses hnc hbit h0_w
+  -- Rewrite its budget in terms of the narrow state's size/cost.
+  have hlenw : wide.length = s.length + k := by
+    rw [hwide, List.length_append, List.length_replicate]
+  rw [hcost, hsize, hlenw] at hrun2
+  -- Compose: pad (M₁) then the decider (M₂), spliced at `padRegsExit`.
+  have hstate0 : (initFlatConfig (Compile.padRegsTM k)
+      [Compile.encodeTape s]).state_idx < (Compile.padRegsTM k).states :=
+    (Compile.padRegsTM_valid k).1
+  -- The intermediate tape symbol (leading `endMark`) is `< max sigs`.
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape wide) = some v →
+        v < max (Compile.padRegsTM k).sig (Compile.bitDeciderTM c).sig := by
+    intro v hv
+    have hces : currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape wide)
+        = some Compile.endMark := rfl
+    have hv2 : v = Compile.endMark := ((Option.some.injEq _ _).mp (hces.symm.trans hv)).symm
+    subst hv2
+    have hbd : (Compile.bitDeciderTM c).sig = max (Compile c).sig Compile.bitTestTM.sig := by
+      show (composeFlatTM (Compile c) Compile.bitTestTM (Compile.exit c)).sig = _
+      rw [composeFlatTM_sig]
+    have h4 : (4 : Nat) ≤ max (Compile.padRegsTM k).sig (Compile.bitDeciderTM c).sig := by
+      refine Nat.le_trans ?_ (Nat.le_max_right _ _)
+      rw [hbd, Compile_sig]; exact Nat.le_max_left _ _
+    exact Nat.lt_of_lt_of_le (by decide : Compile.endMark < 4) h4
+  have hcomp := composeFlatTM_run (M₁ := Compile.padRegsTM k) (M₂ := Compile.bitDeciderTM c)
+    (exit := Compile.padRegsExit k)
+    (Compile.padRegsTM_valid k) (Compile.bitDeciderTM_valid c) (Compile.padRegsExit_lt k)
+    (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s]) hstate0
+    [] 0 (Compile.encodeTape wide) hsym
+    (Compile.padRegsTM_run k s hbitst) (Compile.padRegsTM_traj k s hbitst)
+    hrun2 hhalt2
+  obtain ⟨hcrun, hchalt⟩ := hcomp
+  refine ⟨{ state_idx := cfg2.state_idx + (Compile.padRegsTM k).states,
+            tapes := cfg2.tapes }, hcrun, hchalt, ?_⟩
+  rw [hstate2]
