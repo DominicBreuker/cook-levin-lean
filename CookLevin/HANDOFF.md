@@ -46,7 +46,8 @@ sat_NP (EvalCnfTM.lean)
                                                                SORRY fields: encodeIn_size, enc_bit,
                                                                usesBelow, noConsLen — all BOTTOM-UP, Task 1)
 REAL REMAINING MATH under the assembly:
-  padRegsTM_run / _traj (+_valid/_sig/padRegsExit_lt)  (Compile.lean ~9561; SORRY — THE pinned WALL gadget)
+  padRegsTM_run / _traj   (Compile.lean ~9650; SORRY — machine now REAL; valid/tapes/sig/
+                           states/padRegsExit_lt PROVEN; only run/traj remain — see below)
   compileOp_sound_physical_residue   (Compile.lean:8238; 5/12 ops PROVEN, 7 SORRY)
   compileIfBit_sound_physical_residue  (Compile.lean ~9111; SORRY — gated on real compileTestBit)
   compileForBnd_sound_physical_residue (Compile.lean ~9164; SORRY — gated on real compileForBnd)
@@ -152,6 +153,16 @@ the 7 ops, the 2 combinators) and EvalCnf's bottom-up encoding fields. **Do not
 re-introduce an `overhead`-shaped budget** (not superadditive) and **do not re-tighten
 `encode_size`**.
 
+Then this session **switched to bottom-up** and built the WALL gadget machine:
+- Replaced the `sorry` `padRegsTM`/`padRegsExit` defs with the **real** recursive
+  construction (`padBody` k-fold), `#eval`-validated end-to-end. Proved 4/6 interface
+  lemmas sorry-free (`valid`/`tapes`/`sig`/`states`/`padRegsExit_lt`, + `padBody` shape).
+- **Found & fixed the `padBudget` bug** (too small by the `2·L` double-pass factor;
+  `#eval`-validated) and rippled the correction through both bridges.
+- `padRegsTM_run`/`_traj` remain `sorry` but now about a **real** machine with a
+  **provable** budget; the exact construction (step count `2·L+7`/body), the lemmas to
+  compose, and the induction are pinned in the bottom-up section below.
+
 ---
 
 ## ✅ PROVEN, reusable — do not re-derive
@@ -173,6 +184,17 @@ re-introduce an `overhead`-shaped budget** (not superadditive) and **do not re-t
   `paddedBitDecider_run`. `inOPoly_of_le` (pointwise domination) helper.
 - **`DecidesBy.encode_size` is per-decider polynomial** (`encodeBound`+`_poly`+`_mono`);
   all constructors migrated. **Settled — do not re-tighten.**
+- **`Compile.padRegsTM` is now a REAL machine** (Compile.lean ~9540): `k`-fold static
+  composition (recursion on `k`) of `Compile.padBody` (= `stepRightTM ⨾ scanRightUntilTM
+  4 3 ⨾ insertCarryTM 0 ⨾ rewindFromEndTM 4 3`), base `scanLeftUntilTM 4 3`. Proven
+  sorry-free: `padBody_{states=16,tapes=1,sig=4,start=0,valid}`, `padBodyExit=14`,
+  `padRegsTM_{tapes,sig,states=3+16k,valid}`, `padRegsExit k = 1+16k`, `padRegsExit_lt`.
+  **`#eval`-validated:** `padBody` on a length-`L` tape halts at state 14, head 0, in
+  exactly `2·L + 7` steps, mapping `encodeTape s → encodeTape (s ++ [[]])`.
+- **`Compile.padBudget` corrected** to `(k+1)·(2·size + 2·s.length + 2·k + 12)` (the old
+  `(k+1)·(size+s.length+k+2)` undercounted the `2·L` scan+rewind double pass — **was
+  too small**, `#eval`-proven). Rippled through both bridges' `padTimeBound`/`budget_ge`/
+  `toInTimePoly`.
 - **`compileSeq_sound_physical_residue`** + `_traj` — residue `seq` composition.
 - **`Compile.sound_of_run_residue`** — residue run ⇒ `Compile_sound` shape.
 - **Threading toolkit** (now all in `Compile.lean`): `Cmd.eval_preserves_BitState`,
@@ -226,17 +248,39 @@ endgame restatement**:
 You build the gadgets the (pinned) contracts need. Build green per item;
 `#print axioms`-clean. Probe each machine end-to-end (`#eval`) before proving.
 
-1. **Build `Compile.padRegsTM` (THE pinned WALL gadget — interface already stubbed
-   in `Compile.lean`).** Discharge `padRegsTM_valid`/`_tapes`/`_sig`/`padRegsExit_lt`/
-   `padRegsTM_run`/`padRegsTM_traj`. Spec (true + buildable): map `encodeTape s` →
-   `encodeTape (s ++ replicate k [])`, head rewound to `0`, within `padBudget`, no
-   early halt. Suggested construction: `k`-fold `(stepRightTM ⨾ scanRightUntilTM 4
-   endMark ⨾ insertCarryTM 0 ⨾ rewindFromEndTM 4 endMark)` (each iteration inserts one
-   `0` delimiter before the trailing `endMark`). `#eval`-probe one iteration first.
-   Discharging these makes `paddedBitDecider_run` (already proven on top) axiom-clean,
-   which closes **both** decider bridges at once (`inNPLang → inNP` *and*
-   `inTimePolyLang → inTimePoly`, i.e. the live `sat_NP` decider half). **Highest
-   bottom-up value** — it is the single gadget under both assembled bridges.
+1. **Finish `Compile.padRegsTM_run` / `_traj` (THE pinned WALL gadget — machine now
+   REAL, shape facts PROVEN; only these two `sorry`s remain).** Closing them makes
+   `paddedBitDecider_run` axiom-clean ⇒ closes **both** decider bridges at once
+   (`inNPLang → inNP` *and* `inTimePolyLang → inTimePoly`, the live `sat_NP` decider
+   half). **Highest bottom-up value.** Concrete, validated plan:
+   - **(a) Prove `Compile.padBody_run`** (the reusable core): on `encodeTape s` (head 0,
+     `BitState s`), `padBody` halts at state `padBodyExit=14`, head 0, tape
+     `encodeTape (s ++ [[]])`, in `2·(encodeTape s).length + 7` steps. Build it bottom-up
+     as **three nested `composeFlatTM_run`** (inner `insertCarryTM⨾rewindFromEndTM`, then
+     `scanRightUntilTM⨾·`, then `stepRightTM⨾·`). Component run lemmas: `stepRightTM_run`,
+     `scanRightUntilTM_run_found` (gap = `|encodeRegs s|`, interior cells from
+     `encodeRegs_lt_four` + `encodeRegs_no_endMark`), `insertCarryTM_run`
+     (`pre = 3::encodeRegs s`, `suf = [3]`, `ins = 0`), `rewindFromEndTM_run` (on the
+     post-insert tape = `encodeTape (s++[[]])`, a `BitState`, reusing
+     `encodeTape_get_zero`/`_lt_four`/`_interior_ne_endMark`). Helper needed:
+     `encodeRegs (s ++ [[]]) = encodeRegs s ++ [0]` (induction on `s` via
+     `encodeRegs_cons`). The exact step sum `1+1+((|R|+1)+1+(2+1+(|R|+4)))` reduces to
+     `2·L+7` by `omega` + `encodeTape_length`.
+   - **(b) Prove `Compile.padBody_no_early_halt`** symmetrically via
+     `composeFlatTM_no_early_halt` (same nesting; each level consumes the inner run +
+     traj). The component trajectories: `stepRightTM_no_early_halt`,
+     `scanRightUntilTM`'s, `insertCarryTM`'s, `rewindFromEndTM`'s `_no_early_halt`.
+   - **(c) Induct on `k`** for `padRegsTM_run`: base `k=0` is `scanLeftUntilTM 4 3`
+     halting immediately on the leading sentinel (head already 0, `encodeTape (s++[]) =
+     encodeTape s`); step `k+1` = `composeFlatTM_run padBody (padRegsTM k) padBodyExit`
+     with (a)+(b) as M₁ and the IH as M₂ (note `(s ++ [[]]) ++ replicate k [] =
+     s ++ replicate (k+1) []`). `padRegsExit k` is always a halt state (base accept `1`;
+     shifted `+16` each level), so the exact-step run pads to `padBudget` via
+     `runFlatTM_extend`. The exact-step ≤ `padBudget` bound is the arithmetic the
+     corrected `padBudget` was sized for. `padRegsTM_traj` induct via
+     `composeFlatTM_no_early_halt` similarly.
+   The `#eval` probes in the session transcript confirm every number above
+   (`padRegsTM 3` on a 2-register input → the correct 5-register tape, exit state 49).
 2. **Task 1 — unary encodings + scratch operands** (gates all 7 ops). Restate
    `takeAt`/`dropAt`/`consLen` unary (length = the register's unary count, not
    `headD 0`); bump `consLen`'s `Op.cost`; add empty-scratch operands
