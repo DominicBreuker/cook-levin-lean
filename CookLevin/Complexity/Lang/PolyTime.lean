@@ -1803,11 +1803,11 @@ private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X
   have h1 : State.size (LangEncodable.encodeState x) ≤ 2 * encodable.size x + 1 := by
     rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
   have h2 : D.c.cost (LangEncodable.encodeState x) ≤ dBound (encodable.size x) := D.cost_le x
-  unfold DecidesLang'.padTimeBound Compile.padBudget
-  have hpad : (D.regBound + 1) * (2 * State.size (LangEncodable.encodeState x)
-        + 2 * (LangEncodable.encodeState x).length + 2 * D.regBound + 12)
-      ≤ (D.regBound + 1) * (4 * encodable.size x + 2 * D.regBound + 16) := by
-    apply Nat.mul_le_mul_left; omega
+  unfold DecidesLang'.padTimeBound
+  have hpb := Compile.padBudget_le D.regBound (LangEncodable.encodeState x)
+  have hpad : Compile.padBudget D.regBound (LangEncodable.encodeState x)
+      ≤ (D.regBound + 1) * (4 * encodable.size x + 2 * D.regBound + 16) :=
+    le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by rw [hw] at *; omega))
   have hps : Compile.physStepBudget (State.size (LangEncodable.encodeState x)
             + ((LangEncodable.encodeState x).length + D.regBound)
             + D.c.cost (LangEncodable.encodeState x) + 2)
@@ -1995,11 +1995,11 @@ private theorem DecidesLang.budget_ge {X : Type} [encodable X]
   have h1 : State.size (D.encodeIn x) ≤ costBound (encodable.size x) := D.encodeIn_size x
   have hw : (D.encodeIn x).length ≤ D.regBound := D.width_le x
   have h2 : D.c.cost (D.encodeIn x) ≤ costBound (encodable.size x) := D.cost_bound x
-  unfold DecidesLang.padTimeBound Compile.padBudget
-  have hpad : (D.regBound + 1) * (2 * State.size (D.encodeIn x)
-        + 2 * (D.encodeIn x).length + 2 * D.regBound + 12)
-      ≤ (D.regBound + 1) * (2 * costBound (encodable.size x) + 4 * D.regBound + 12) := by
-    apply Nat.mul_le_mul_left; omega
+  unfold DecidesLang.padTimeBound
+  have hpb := Compile.padBudget_le D.regBound (D.encodeIn x)
+  have hpad : Compile.padBudget D.regBound (D.encodeIn x)
+      ≤ (D.regBound + 1) * (2 * costBound (encodable.size x) + 4 * D.regBound + 12) :=
+    le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by omega))
   have hps : Compile.physStepBudget (State.size (D.encodeIn x)
             + ((D.encodeIn x).length + D.regBound)
             + D.c.cost (D.encodeIn x) + 2)
