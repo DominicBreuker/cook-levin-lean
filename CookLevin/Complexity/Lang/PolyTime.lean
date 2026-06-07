@@ -1784,7 +1784,7 @@ inner bit-decider's `physStepBudget (2n + dBound n + regBound + 4) (dBound n) + 
 `regBound` is a per-decider constant, so this is polynomial in `n`. -/
 private def DecidesLang'.padTimeBound {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (n : Nat) : Nat :=
-  (D.regBound + 1) * (2 * n + D.regBound + 4) + 1
+  (D.regBound + 1) * (4 * n + 2 * D.regBound + 16) + 1
     + (Compile.physStepBudget (2 * n + dBound n + D.regBound + 4) (dBound n) + 3)
 
 /-- The padded decider's actual run cost on `encodeState x` is dominated by the
@@ -1804,9 +1804,9 @@ private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X
     rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
   have h2 : D.c.cost (LangEncodable.encodeState x) ≤ dBound (encodable.size x) := D.cost_le x
   unfold DecidesLang'.padTimeBound Compile.padBudget
-  have hpad : (D.regBound + 1) * (State.size (LangEncodable.encodeState x)
-        + (LangEncodable.encodeState x).length + D.regBound + 2)
-      ≤ (D.regBound + 1) * (2 * encodable.size x + D.regBound + 4) := by
+  have hpad : (D.regBound + 1) * (2 * State.size (LangEncodable.encodeState x)
+        + 2 * (LangEncodable.encodeState x).length + 2 * D.regBound + 12)
+      ≤ (D.regBound + 1) * (4 * encodable.size x + 2 * D.regBound + 16) := by
     apply Nat.mul_le_mul_left; omega
   have hps : Compile.physStepBudget (State.size (LangEncodable.encodeState x)
             + ((LangEncodable.encodeState x).length + D.regBound)
@@ -1929,10 +1929,10 @@ theorem DecidesLang'.toInTimePoly {X : Type} [encodable X] [LangEncodable X]
   · -- `inOPoly`: a linear pad term + the `physStepBudget` term (dominated by its
     -- diagonal at `m = 2n + dBound n + regBound + 4`, poly) + constants.
     unfold DecidesLang'.padTimeBound
-    have hlin : inOPoly (fun n => (D.regBound + 1) * (2 * n + D.regBound + 4)) :=
+    have hlin : inOPoly (fun n => (D.regBound + 1) * (4 * n + 2 * D.regBound + 16)) :=
       inOPoly_mul (inOPoly_const _)
-        (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id)
-          (inOPoly_const _)) (inOPoly_const 4))
+        (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 4) inOPoly_id)
+          (inOPoly_const _)) (inOPoly_const 16))
     have hinner : inOPoly (fun n => 2 * n + dBound n + D.regBound + 4) :=
       inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) hpoly)
         (inOPoly_const _)) (inOPoly_const 4)
@@ -1952,8 +1952,8 @@ theorem DecidesLang'.toInTimePoly {X : Type} [encodable X] [LangEncodable X]
   · intro a b hab
     have hd : dBound a ≤ dBound b := hmono a b hab
     unfold DecidesLang'.padTimeBound
-    have h1 : (D.regBound + 1) * (2 * a + D.regBound + 4)
-        ≤ (D.regBound + 1) * (2 * b + D.regBound + 4) :=
+    have h1 : (D.regBound + 1) * (4 * a + 2 * D.regBound + 16)
+        ≤ (D.regBound + 1) * (4 * b + 2 * D.regBound + 16) :=
       Nat.mul_le_mul_left _ (by omega)
     have h2 : Compile.physStepBudget (2 * a + dBound a + D.regBound + 4) (dBound a)
         ≤ Compile.physStepBudget (2 * b + dBound b + D.regBound + 4) (dBound b) :=
@@ -1978,7 +1978,7 @@ step, and the inner bit-decider's `physStepBudget … + 3`. `regBound` is a
 per-decider constant, so this is polynomial in `n` whenever `costBound` is. -/
 private def DecidesLang.padTimeBound {X : Type} [encodable X]
     {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound) (n : Nat) : Nat :=
-  (D.regBound + 1) * (costBound n + 2 * D.regBound + 2) + 1
+  (D.regBound + 1) * (2 * costBound n + 4 * D.regBound + 12) + 1
     + (Compile.physStepBudget (2 * costBound n + 2 * D.regBound + 2) (costBound n) + 3)
 
 /-- The free-path padded decider's actual run cost on `encodeIn x` is dominated by
@@ -1996,9 +1996,9 @@ private theorem DecidesLang.budget_ge {X : Type} [encodable X]
   have hw : (D.encodeIn x).length ≤ D.regBound := D.width_le x
   have h2 : D.c.cost (D.encodeIn x) ≤ costBound (encodable.size x) := D.cost_bound x
   unfold DecidesLang.padTimeBound Compile.padBudget
-  have hpad : (D.regBound + 1) * (State.size (D.encodeIn x)
-        + (D.encodeIn x).length + D.regBound + 2)
-      ≤ (D.regBound + 1) * (costBound (encodable.size x) + 2 * D.regBound + 2) := by
+  have hpad : (D.regBound + 1) * (2 * State.size (D.encodeIn x)
+        + 2 * (D.encodeIn x).length + 2 * D.regBound + 12)
+      ≤ (D.regBound + 1) * (2 * costBound (encodable.size x) + 4 * D.regBound + 12) := by
     apply Nat.mul_le_mul_left; omega
   have hps : Compile.physStepBudget (State.size (D.encodeIn x)
             + ((D.encodeIn x).length + D.regBound)
@@ -2110,9 +2110,10 @@ theorem DecidesLang.toInTimePoly {X : Type} [encodable X]
   · -- `inOPoly`: a linear-in-`costBound` pad term + the `physStepBudget` term
     -- (dominated by its poly diagonal) + constants.
     unfold DecidesLang.padTimeBound
-    have hlin : inOPoly (fun n => (D.regBound + 1) * (costBound n + 2 * D.regBound + 2)) :=
+    have hlin : inOPoly (fun n => (D.regBound + 1) * (2 * costBound n + 4 * D.regBound + 12)) :=
       inOPoly_mul (inOPoly_const _)
-        (inOPoly_add (inOPoly_add hpoly (inOPoly_const _)) (inOPoly_const 2))
+        (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) hpoly)
+          (inOPoly_const _)) (inOPoly_const 12))
     have hinner : inOPoly (fun n => 2 * costBound n + 2 * D.regBound + 2) :=
       inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) hpoly)
         (inOPoly_const _)) (inOPoly_const 2)
@@ -2132,8 +2133,8 @@ theorem DecidesLang.toInTimePoly {X : Type} [encodable X]
   · intro a b hab
     have hd : costBound a ≤ costBound b := hmono a b hab
     unfold DecidesLang.padTimeBound
-    have h1 : (D.regBound + 1) * (costBound a + 2 * D.regBound + 2)
-        ≤ (D.regBound + 1) * (costBound b + 2 * D.regBound + 2) :=
+    have h1 : (D.regBound + 1) * (2 * costBound a + 4 * D.regBound + 12)
+        ≤ (D.regBound + 1) * (2 * costBound b + 4 * D.regBound + 12) :=
       Nat.mul_le_mul_left _ (by omega)
     have h2 : Compile.physStepBudget (2 * costBound a + 2 * D.regBound + 2) (costBound a)
         ≤ Compile.physStepBudget (2 * costBound b + 2 * D.regBound + 2) (costBound b) :=

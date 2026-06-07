@@ -9537,35 +9537,113 @@ the trailing `endMark`. Its validity/tapes/sig/exit are construction-shape facts
 only the behavioural `run`/`traj` are nontrivial. `Compile.paddedBitDecider_run`
 below is PROVEN from this interface, validating the composition design end-to-end. -/
 
-/-- **Empty-register padding machine (interface, BOTTOM-UP stub).** Grows the tape
-by `k` empty register blocks. See the section docstring for the construction. -/
-def Compile.padRegsTM (k : Nat) : FlatTM := sorry
+/-- **One padding-body iteration (the reusable core, REAL).** From head `0` on
+`encodeTape s` (the leading sentinel `3`): step right off the sentinel, scan right
+to the trailing terminator `3`, insert one `0` just before it, then rewind to the
+leading sentinel. Net effect (probe-validated, `#eval`): maps `encodeTape s` →
+`encodeTape (s ++ [[]])` (one extra empty register = one extra `0` before the
+terminator), head back to `0`. Halts in state `padBodyExit = 14` (the shifted
+`rewindFromEndTM` accept) in exactly `2·|encodeTape s| + 7` steps. -/
+def Compile.padBody : FlatTM :=
+  composeFlatTM (ScanLeft.stepRightTM 4)
+    (composeFlatTM (scanRightUntilTM 4 3)
+      (composeFlatTM (ShiftTape.insertCarryTM 0)
+        (ScanLeft.rewindFromEndTM 4 3) 5) 1) 1
 
-/-- The padding machine's halt/exit state. -/
-def Compile.padRegsExit (k : Nat) : Nat := sorry
+/-- `padBody`'s final halt state. -/
+def Compile.padBodyExit : Nat := 14
 
-theorem Compile.padRegsTM_valid (k : Nat) : validFlatTM (Compile.padRegsTM k) := sorry
-theorem Compile.padRegsTM_tapes (k : Nat) : (Compile.padRegsTM k).tapes = 1 := sorry
-theorem Compile.padRegsTM_sig (k : Nat) : (Compile.padRegsTM k).sig = 4 := sorry
+theorem Compile.padBody_states : Compile.padBody.states = 16 := rfl
+theorem Compile.padBody_tapes : Compile.padBody.tapes = 1 := rfl
+theorem Compile.padBody_sig : Compile.padBody.sig = 4 := rfl
+theorem Compile.padBody_start : Compile.padBody.start = 0 := rfl
+
+theorem Compile.padBody_valid : validFlatTM Compile.padBody :=
+  composeFlatTM_valid _ _ 1 (ScanLeft.stepRightTM_valid 4)
+    (composeFlatTM_valid _ _ 1 (scanRightUntilTM_valid 4 3 (by decide))
+      (composeFlatTM_valid _ _ 5 (ShiftTape.insertCarryTM_valid 0 (by decide))
+        (ScanLeft.rewindFromEndTM_valid 4 3 (by decide)) (by decide) rfl rfl)
+      (by decide) rfl rfl)
+    (by decide) rfl rfl
+
+/-- **Empty-register padding machine (REAL — the WALL gadget).** `padRegsTM k` is
+the `k`-fold static composition of `padBody` (recursion on `k`), with base
+`scanLeftUntilTM 4 3` (which, started on the leading sentinel, halts immediately
+with the head at `0`, leaving the tape unchanged — the `k = 0` no-op). It grows a
+narrow tape `encodeTape s` into `encodeTape (s ++ replicate k [])`. -/
+def Compile.padRegsTM : Nat → FlatTM
+  | 0     => ScanLeft.scanLeftUntilTM 4 3
+  | k + 1 => composeFlatTM Compile.padBody (Compile.padRegsTM k) Compile.padBodyExit
+
+/-- The padding machine's halt/exit state: `1` (base accept) shifted up by
+`padBody.states = 16` per iteration, i.e. `1 + 16·k`. -/
+def Compile.padRegsExit : Nat → Nat
+  | 0     => 1
+  | k + 1 => Compile.padRegsExit k + 16
+
+theorem Compile.padRegsTM_tapes (k : Nat) : (Compile.padRegsTM k).tapes = 1 := by
+  cases k with
+  | zero => rfl
+  | succ k =>
+      show (composeFlatTM Compile.padBody (Compile.padRegsTM k) Compile.padBodyExit).tapes = 1
+      rw [composeFlatTM_tapes, Compile.padBody_tapes]
+
+theorem Compile.padRegsTM_sig (k : Nat) : (Compile.padRegsTM k).sig = 4 := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+      show (composeFlatTM Compile.padBody (Compile.padRegsTM k) Compile.padBodyExit).sig = 4
+      rw [composeFlatTM_sig, Compile.padBody_sig, ih]; exact Nat.max_self 4
+
+theorem Compile.padRegsTM_states (k : Nat) :
+    (Compile.padRegsTM k).states = 3 + 16 * k := by
+  induction k with
+  | zero => rfl
+  | succ k ih =>
+      show (composeFlatTM Compile.padBody (Compile.padRegsTM k) Compile.padBodyExit).states
+          = 3 + 16 * (k + 1)
+      rw [composeFlatTM_states, Compile.padBody_states, ih]; ring
+
+theorem Compile.padRegsTM_valid (k : Nat) : validFlatTM (Compile.padRegsTM k) := by
+  induction k with
+  | zero => exact ScanLeft.scanLeftUntilTM_valid 4 3 (by decide)
+  | succ k ih =>
+      exact composeFlatTM_valid Compile.padBody (Compile.padRegsTM k) Compile.padBodyExit
+        Compile.padBody_valid ih (by rw [Compile.padBody_states]; decide)
+        Compile.padBody_tapes (Compile.padRegsTM_tapes k)
+
 theorem Compile.padRegsExit_lt (k : Nat) :
-    Compile.padRegsExit k < (Compile.padRegsTM k).states := sorry
+    Compile.padRegsExit k < (Compile.padRegsTM k).states := by
+  induction k with
+  | zero => show (1 : Nat) < (ScanLeft.scanLeftUntilTM 4 3).states; decide
+  | succ k ih =>
+      show Compile.padRegsExit k + 16
+          < (composeFlatTM Compile.padBody (Compile.padRegsTM k) Compile.padBodyExit).states
+      rw [composeFlatTM_states, Compile.padBody_states]; omega
 
 /-- Step budget for `padRegsTM k` on `encodeTape s` — polynomial in tape width and
-`k`. (Each of the `k` insertions is one `O(tapeLen)` pass.) -/
+`k`. Each of the `k` body iterations is a scan-right + rewind-left double pass over
+the (growing) tape: `padBody` costs `2·|tape| + 7` steps, so the honest total is
+`Θ(k·(size + s.length + k))`. The earlier `(k+1)·(size + s.length + k + 2)` was
+**too small** (it undercounts the `2·` double pass — `#eval`-validated); this is the
+corrected dominating bound. -/
 def Compile.padBudget (k : Nat) (s : State) : Nat :=
-  (k + 1) * (State.size s + s.length + k + 2)
+  (k + 1) * (2 * State.size s + 2 * s.length + 2 * k + 12)
 
-/-- **`padRegsTM` run (interface, BOTTOM-UP stub).** From the narrow tape
-`encodeTape s`, reach the exit with tape `encodeTape (s ++ replicate k [])`, head
-rewound to `0`, within `padBudget`. -/
+/-- **`padRegsTM` run (BOTTOM-UP — real machine, proof pending).** From the narrow
+tape `encodeTape s`, reach the exit with tape `encodeTape (s ++ replicate k [])`,
+head rewound to `0`, within `padBudget`. Proof: induction on `k` via
+`composeFlatTM_run`, consuming `padBody_run` (+`padBody_no_early_halt`); the base is
+`scanLeftUntilTM`'s immediate halt on the sentinel. -/
 theorem Compile.padRegsTM_run (k : Nat) (s : State) (hbit : Compile.BitState s) :
     runFlatTM (Compile.padBudget k s) (Compile.padRegsTM k)
         (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s])
       = some { state_idx := Compile.padRegsExit k,
                tapes := [([], 0, Compile.encodeTape (s ++ List.replicate k []))] } := sorry
 
-/-- **`padRegsTM` trajectory (interface, BOTTOM-UP stub).** It does not hit the exit
-or any halt state before `padBudget`. -/
+/-- **`padRegsTM` trajectory (BOTTOM-UP — real machine, proof pending).** It does not
+hit the exit or any halt state before `padBudget`. Proof: induction via
+`composeFlatTM_no_early_halt` + `padBody_no_early_halt`. -/
 theorem Compile.padRegsTM_traj (k : Nat) (s : State) (hbit : Compile.BitState s) :
     ∀ j, j < Compile.padBudget k s → ∀ ck,
       runFlatTM j (Compile.padRegsTM k)
