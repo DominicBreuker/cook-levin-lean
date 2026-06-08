@@ -9865,6 +9865,158 @@ theorem Compile.padBody_run (s : State) (hbit : Compile.BitState s) :
         = 1 + 1 + (2 * (Compile.encodeRegs s).length + 9) by omega]
   exact hrun
 
+/-! #### The trajectory tower (no-early-halt), mirroring the run tower. -/
+
+theorem Compile.padInner34_no_early_halt (s : State) (hbit : Compile.BitState s) :
+    ∀ j, j < (Compile.encodeRegs s).length + 7 → ∀ ck,
+      runFlatTM j Compile.padInner34
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs s).length, Compile.encodeTape s)] } = some ck →
+      haltingStateReached Compile.padInner34 ck = false := by
+  have hbit' : Compile.BitState (s ++ [[]]) := by
+    have := Compile.BitState_append_replicate_nil s 1 hbit
+    rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+  have hL : 1 + (Compile.encodeRegs s).length = (3 :: Compile.encodeRegs s).length := by
+    simp [Nat.add_comm]
+  have htape_s : Compile.encodeTape s = (3 :: Compile.encodeRegs s) ++ [3] := Compile.encodeTape_cons_form s
+  have htplen : (Compile.encodeTape (s ++ [[]])).length = (Compile.encodeRegs s).length + 3 := by
+    rw [Compile.encodeTape_length]
+    have hsz : State.size (s ++ [[]]) = State.size s := by
+      have := Compile.size_append_replicate_nil s 1
+      rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+    have hwlen : (s ++ [[]]).length = s.length + 1 := by simp
+    rw [hsz, hwlen, Compile.encodeRegs_length]; omega
+  have hins : runFlatTM 2 (ShiftTape.insertCarryTM 0)
+        { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs s).length, Compile.encodeTape s)] }
+      = some { state_idx := 5,
+               tapes := [([], (Compile.encodeRegs s).length + 2, Compile.encodeTape (s ++ [[]]))] } := by
+    have h := ShiftTape.insertCarryTM_run 0 [3] (3 :: Compile.encodeRegs s)
+      (by intro x hx; rcases List.mem_singleton.mp hx with rfl; decide)
+    rw [← hL, ← htape_s, Compile.padBody_tape_eq s] at h
+    rw [show (1 + (Compile.encodeRegs s).length + ([3] : List Nat).length)
+          = (Compile.encodeRegs s).length + 2 by simp; omega] at h
+    exact h
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), (Compile.encodeRegs s).length + 2,
+        Compile.encodeTape (s ++ [[]])) = some v
+      → v < max (ShiftTape.insertCarryTM 0).sig (ScanLeft.rewindFromEndTM 4 3).sig := by
+    intro v hv
+    rw [show max (ShiftTape.insertCarryTM 0).sig (ScanLeft.rewindFromEndTM 4 3).sig = 4 from by decide]
+    exact Compile.curSym_lt (Compile.encodeTape_lt_four (s ++ [[]]) hbit') _ v hv
+  intro j hj ck hck
+  refine composeFlatTM_no_early_halt (M₁ := ShiftTape.insertCarryTM 0)
+    (M₂ := ScanLeft.rewindFromEndTM 4 3) (exit := 5)
+    (t₂ := (Compile.encodeRegs s).length + 4)
+    (ShiftTape.insertCarryTM_valid 0 (by decide)) (ScanLeft.rewindFromEndTM_valid 4 3 (by decide))
+    (by decide)
+    { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs s).length, Compile.encodeTape s)] }
+    (by show (0 : Nat) < (ShiftTape.insertCarryTM 0).states; decide)
+    [] ((Compile.encodeRegs s).length + 2) (Compile.encodeTape (s ++ [[]])) hsym
+    hins
+    (by
+      intro k hk ck' hck'
+      have hnh : haltingStateReached (ShiftTape.insertCarryTM 0) ck' = false := by
+        have := ShiftTape.insertCarryTM_no_early_halt 0 [3] (3 :: Compile.encodeRegs s)
+          (by intro x hx; rcases List.mem_singleton.mp hx with rfl; decide) k (by simpa using hk) ck'
+        rw [← hL, ← htape_s] at this
+        exact this hck'
+      refine ⟨fun h => ?_, hnh⟩
+      have hb : haltingStateReached (ShiftTape.insertCarryTM 0) ck' = true := by
+        show (ShiftTape.insertCarryTM 0).halt.getD ck'.state_idx false = true
+        rw [h]; decide
+      rw [hb] at hnh; exact absurd hnh (by decide))
+    (by
+      have htraj := ScanLeft.rewindFromEndTM_no_early_halt 4 3 (by decide) []
+        (Compile.encodeTape (s ++ [[]])) ((Compile.encodeRegs s).length + 2) (by omega)
+        (Compile.encodeTape_get_zero (s ++ [[]]) (by omega)) (by omega) (by omega)
+        (Compile.encodeTape_lt_four (s ++ [[]]) hbit' _ (List.get_mem _ _))
+        (by
+          intro i hi_pos hi_lt
+          obtain ⟨hii, hne⟩ := Compile.encodeTape_interior_ne_endMark (s ++ [[]]) hbit' i hi_pos (by omega)
+          exact ⟨hii, Compile.encodeTape_lt_four (s ++ [[]]) hbit' _ (List.get_mem _ _), hne⟩)
+      intro k hk ck' hck'
+      exact htraj k (by omega) ck' hck')
+    j (by omega) ck hck
+
+theorem Compile.padInner234_no_early_halt (s : State) (hbit : Compile.BitState s) :
+    ∀ j, j < 2 * (Compile.encodeRegs s).length + 9 → ∀ ck,
+      runFlatTM j Compile.padInner234
+          { state_idx := 0, tapes := [([], 1, Compile.encodeTape s)] } = some ck →
+      haltingStateReached Compile.padInner234 ck = false := by
+  have hlen : (Compile.encodeTape s).length = (Compile.encodeRegs s).length + 2 := by
+    rw [Compile.encodeTape_length, Compile.encodeRegs_length]
+  have hscan := scanRightUntilTM_run_found 4 3 [] (Compile.encodeTape s)
+    (Compile.encodeRegs s).length 1 (by rw [hlen]; omega)
+    (by
+      have key : (Compile.encodeTape s)[1 + (Compile.encodeRegs s).length]? = some 3 := by
+        rw [Compile.encodeTape,
+            show 1 + (Compile.encodeRegs s).length = (Compile.encodeRegs s).length + 1 by omega,
+            List.getElem?_cons_succ, List.getElem?_append_right (Nat.le_refl _)]
+        simp [Compile.endMark]
+      rw [List.get_eq_getElem]
+      have hg := List.getElem?_eq_getElem
+        (show 1 + (Compile.encodeRegs s).length < (Compile.encodeTape s).length by rw [hlen]; omega)
+      rw [key] at hg
+      exact (Option.some.inj hg).symm)
+    (by
+      intro k hk
+      obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + k) (by omega) (by rw [hlen]; omega)
+      exact ⟨hi, Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _), hne⟩)
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 1 + (Compile.encodeRegs s).length,
+        Compile.encodeTape s) = some v
+      → v < max (scanRightUntilTM 4 3).sig Compile.padInner34.sig := by
+    intro v hv
+    rw [show max (scanRightUntilTM 4 3).sig Compile.padInner34.sig = 4 from by decide]
+    exact Compile.curSym_lt (Compile.encodeTape_lt_four s hbit) _ v hv
+  intro j hj ck hck
+  refine composeFlatTM_no_early_halt (M₁ := scanRightUntilTM 4 3) (M₂ := Compile.padInner34) (exit := 1)
+    (t₂ := (Compile.encodeRegs s).length + 7)
+    (scanRightUntilTM_valid 4 3 (by decide)) Compile.padInner34_valid (by decide)
+    { state_idx := 0, tapes := [([], 1, Compile.encodeTape s)] }
+    (by show (0 : Nat) < (scanRightUntilTM 4 3).states; decide)
+    [] (1 + (Compile.encodeRegs s).length) (Compile.encodeTape s) hsym
+    hscan
+    (by
+      intro k hk ck' hck'
+      have hpart := Compile.scanRight_partial 4 3 [] (Compile.encodeTape s) 1 (Compile.encodeRegs s).length
+        (by
+          intro m hm
+          obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + m) (by omega) (by rw [hlen]; omega)
+          exact ⟨hi, Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _), hne⟩)
+        k (by omega)
+      rw [hpart] at hck'
+      obtain rfl := Option.some.inj hck'
+      exact ⟨Nat.zero_ne_one, rfl⟩)
+    (fun k hk ck' hck' => Compile.padInner34_no_early_halt s hbit k (by omega) ck' hck')
+    j (by omega) ck hck
+
+theorem Compile.padBody_no_early_halt (s : State) (hbit : Compile.BitState s) :
+    ∀ j, j < 2 * (Compile.encodeTape s).length + 7 → ∀ ck,
+      runFlatTM j Compile.padBody (initFlatConfig Compile.padBody [Compile.encodeTape s]) = some ck →
+      haltingStateReached Compile.padBody ck = false := by
+  have hlen : (Compile.encodeTape s).length = (Compile.encodeRegs s).length + 2 := by
+    rw [Compile.encodeTape_length, Compile.encodeRegs_length]
+  have hinit : initFlatConfig Compile.padBody [Compile.encodeTape s]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := rfl
+  rw [hinit]
+  have hstep := ScanLeft.stepRightTM_run 4 [] (Compile.encodeTape s) 0 (by rw [hlen]; omega)
+    (by rw [Compile.encodeTape_get_zero s (by rw [hlen]; omega)]; decide)
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 1, Compile.encodeTape s) = some v
+      → v < max (ScanLeft.stepRightTM 4).sig Compile.padInner234.sig := by
+    intro v hv
+    rw [show max (ScanLeft.stepRightTM 4).sig Compile.padInner234.sig = 4 from by decide]
+    exact Compile.curSym_lt (Compile.encodeTape_lt_four s hbit) _ v hv
+  intro j hj ck hck
+  refine composeFlatTM_no_early_halt (M₁ := ScanLeft.stepRightTM 4) (M₂ := Compile.padInner234) (exit := 1)
+    (t₂ := 2 * (Compile.encodeRegs s).length + 9)
+    (ScanLeft.stepRightTM_valid 4) Compile.padInner234_valid (by decide)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] }
+    (by show (0 : Nat) < (ScanLeft.stepRightTM 4).states; decide)
+    [] 1 (Compile.encodeTape s) hsym
+    hstep
+    (fun k hk ck' hck' => ScanLeft.stepRightTM_no_early_halt 4 [] (Compile.encodeTape s) 0 k hk ck' hck')
+    (fun k hk ck' hck' => Compile.padInner234_no_early_halt s hbit k (by omega) ck' hck')
+    j (by omega) ck hck
+
 /-- **Empty-register padding machine (REAL — the WALL gadget).** `padRegsTM k` is
 the `k`-fold static composition of `padBody` (recursion on `k`), base `haltTM`
 (the `k = 0` no-op). Grows `encodeTape s` into `encodeTape (s ++ replicate k [])`. -/
@@ -9981,7 +10133,46 @@ theorem Compile.padRegsTM_run (k : Nat) (s : State) (hbit : Compile.BitState s) 
     runFlatTM (Compile.padBudget k s) (Compile.padRegsTM k)
         (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s])
       = some { state_idx := Compile.padRegsExit k,
-               tapes := [([], 0, Compile.encodeTape (s ++ List.replicate k []))] } := sorry
+               tapes := [([], 0, Compile.encodeTape (s ++ List.replicate k []))] } := by
+  induction k generalizing s with
+  | zero =>
+      show runFlatTM 0 Compile.haltTM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] }
+          = some { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s ++ List.replicate 0 []))] }
+      rw [List.replicate_zero, List.append_nil]; rfl
+  | succ k ih =>
+      have hbit' : Compile.BitState (s ++ [[]]) := by
+        have := Compile.BitState_append_replicate_nil s 1 hbit
+        rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+      have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape (s ++ [[]])) = some v
+          → v < max Compile.padBody.sig (Compile.padRegsTM k).sig := by
+        intro v hv
+        rw [show max Compile.padBody.sig (Compile.padRegsTM k).sig = 4 from by
+              rw [Compile.padRegsTM_sig k]; decide]
+        exact Compile.curSym_lt (Compile.encodeTape_lt_four (s ++ [[]]) hbit') _ v hv
+      have hcomp := composeFlatTM_run (M₁ := Compile.padBody) (M₂ := Compile.padRegsTM k)
+        (exit := Compile.padBodyExit)
+        Compile.padBody_valid (Compile.padRegsTM_valid k)
+        (by rw [Compile.padBody_states]; decide)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] }
+        (by show (0 : Nat) < Compile.padBody.states; decide)
+        [] 0 (Compile.encodeTape (s ++ [[]])) hsym
+        (Compile.padBody_run s hbit)
+        (by
+          intro m hm cm hcm
+          have hnh := Compile.padBody_no_early_halt s hbit m hm cm hcm
+          refine ⟨fun h => ?_, hnh⟩
+          have hb : haltingStateReached Compile.padBody cm = true := by
+            show Compile.padBody.halt.getD cm.state_idx false = true
+            rw [h]; decide
+          rw [hb] at hnh; exact absurd hnh (by decide))
+        (ih (s ++ [[]]) hbit')
+        (Compile.padRegsTM_halt k rfl)
+      obtain ⟨hrun, _⟩ := hcomp
+      have htape : (s ++ [[]]) ++ List.replicate k [] = s ++ List.replicate (k + 1) [] := by
+        rw [List.append_assoc]; simp [List.replicate_succ]
+      rw [Compile.padBody_states] at hrun
+      rw [← htape]
+      exact hrun
 
 /-- **`padRegsTM` trajectory.** It does not hit the exit or any halt state before
 `padBudget k s`. Induction via `composeFlatTM_no_early_halt` + `padBody`'s trajectory. -/
@@ -9990,7 +10181,43 @@ theorem Compile.padRegsTM_traj (k : Nat) (s : State) (hbit : Compile.BitState s)
       runFlatTM j (Compile.padRegsTM k)
           (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s]) = some ck →
       ck.state_idx ≠ Compile.padRegsExit k ∧
-      haltingStateReached (Compile.padRegsTM k) ck = false := sorry
+      haltingStateReached (Compile.padRegsTM k) ck = false := by
+  induction k generalizing s with
+  | zero => intro j hj ck _; exact absurd hj (Nat.not_lt_zero j)
+  | succ k ih =>
+      have hbit' : Compile.BitState (s ++ [[]]) := by
+        have := Compile.BitState_append_replicate_nil s 1 hbit
+        rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+      have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape (s ++ [[]])) = some v
+          → v < max Compile.padBody.sig (Compile.padRegsTM k).sig := by
+        intro v hv
+        rw [show max Compile.padBody.sig (Compile.padRegsTM k).sig = 4 from by
+              rw [Compile.padRegsTM_sig k]; decide]
+        exact Compile.curSym_lt (Compile.encodeTape_lt_four (s ++ [[]]) hbit') _ v hv
+      intro j hj ck hck
+      have hnh := composeFlatTM_no_early_halt (M₁ := Compile.padBody) (M₂ := Compile.padRegsTM k)
+        (exit := Compile.padBodyExit) (t₂ := Compile.padBudget k (s ++ [[]]))
+        Compile.padBody_valid (Compile.padRegsTM_valid k)
+        (by rw [Compile.padBody_states]; decide)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] }
+        (by show (0 : Nat) < Compile.padBody.states; decide)
+        [] 0 (Compile.encodeTape (s ++ [[]])) hsym
+        (Compile.padBody_run s hbit)
+        (by
+          intro m hm cm hcm
+          have hb := Compile.padBody_no_early_halt s hbit m hm cm hcm
+          refine ⟨fun h => ?_, hb⟩
+          have hh : haltingStateReached Compile.padBody cm = true := by
+            show Compile.padBody.halt.getD cm.state_idx false = true
+            rw [h]; decide
+          rw [hh] at hb; exact absurd hb (by decide))
+        (fun m hm cm hcm => (ih (s ++ [[]]) hbit' m hm cm hcm).2)
+        j hj ck hck
+      refine ⟨fun h => ?_, hnh⟩
+      have hh : haltingStateReached (Compile.padRegsTM (k + 1)) ck = true :=
+        Compile.padRegsTM_halt (k + 1) h
+      have hnh' : haltingStateReached (Compile.padRegsTM (k + 1)) ck = false := hnh
+      rw [hh] at hnh'; exact absurd hnh' (by decide)
 
 /-! ### The padded decider — `padRegsTM ⨾ bitDeciderTM` -/
 
