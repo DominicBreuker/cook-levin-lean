@@ -10321,3 +10321,112 @@ theorem Compile.paddedBitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
   refine ⟨{ state_idx := cfg2.state_idx + (Compile.padRegsTM k).states,
             tapes := cfg2.tapes }, hcrun, hchalt, ?_⟩
   rw [hstate2]
+
+/-! ## ★ The padded *compute* run — the function-side WALL resolution (2026-06-08)
+
+The reduction side (`PolyTimeComputableLang.toFrameworkWitness'` / `ComputesBy`) faces
+the **same WALL** the decider side did: `Compile_run_physical_residue` carries
+`k ≤ s.length`, unsatisfiable for a narrow reduction input whose program touches
+`regBound > s.length` registers. The fix is the *same* runtime register-width padding:
+`paddedComputeTM c k := padRegsTM k ⨾ Compile c` widens the tape first (exactly like
+`paddedBitDeciderTM`), but keeps the **full output tape** (no bit-test gadget) so a
+reduction can decode an arbitrary output register. `Cmd.eval_agree`/`cost_agree`
+transport the result/cost from the wide state back to `s`.
+
+This is the function-computation analogue of `Compile.paddedBitDecider_run`, PROVEN
+from the same `padRegsTM` interface + `Compile_run_physical_residue` (residual sorrys
+= the pinned leaf gadgets only). It is what the retargeted `toFrameworkWitness'`
+consumes in place of the (wrong-budget) `Compile_sound`. -/
+
+/-- The padded compute machine: pad the registers to width `≥ k`, then run `Compile c`. -/
+def Compile.paddedComputeTM (c : Cmd) (k : Nat) : FlatTM :=
+  composeFlatTM (Compile.padRegsTM k) (Compile c) (Compile.padRegsExit k)
+
+theorem Compile.paddedComputeTM_valid (c : Cmd) (k : Nat) :
+    validFlatTM (Compile.paddedComputeTM c k) :=
+  composeFlatTM_valid (Compile.padRegsTM k) (Compile c) (Compile.padRegsExit k)
+    (Compile.padRegsTM_valid k) (Compile_valid c) (Compile.padRegsExit_lt k)
+    (Compile.padRegsTM_tapes k) (Compile_tapes c)
+
+theorem Compile.paddedComputeTM_tapes (c : Cmd) (k : Nat) :
+    (Compile.paddedComputeTM c k).tapes = 1 := by
+  show (composeFlatTM (Compile.padRegsTM k) (Compile c) (Compile.padRegsExit k)).tapes = 1
+  rw [composeFlatTM_tapes, Compile.padRegsTM_tapes]
+
+/-- **★ The padded compute run (PROVEN from the `padRegsTM` interface +
+`Compile_run_physical_residue`).** Runs `paddedComputeTM c k` on the **narrow** input
+`encodeTape s` — **no `k ≤ s.length` hypothesis** — and halts at the compiler's exit
+(shifted by the padder's state count) with the tape `encodeTape (c.eval wide) ++ res`
+for the widened state `wide = s ++ replicate k []`. The pad makes `k ≤ wide.length`
+hold for the inner `Compile_run_physical_residue`; the caller transports the decoded
+output from `wide` back to `s` with `Cmd.eval_agree`. Budget: `padBudget k s + 1 +
+physStepBudget G (c.cost s)`, both `inOPoly` (`padBudget_le` / `physStepBudget_poly`). -/
+theorem Compile.paddedCompute_run (c : Cmd) (s : State) (k : Nat)
+    (hbitst : Compile.BitState s)
+    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c) :
+    ∃ (res : List Nat),
+      Compile.ValidResidue res ∧
+      runFlatTM (Compile.padBudget k s + 1 +
+            Compile.physStepBudget
+              (State.size s + (s.length + k) + c.cost s + 2) (c.cost s))
+          (Compile.paddedComputeTM c k)
+          (initFlatConfig (Compile.paddedComputeTM c k) [Compile.encodeTape s])
+        = some { state_idx := Compile.exit c + (Compile.padRegsTM k).states,
+                 tapes := [([], 0,
+                   Compile.encodeTape (c.eval (s ++ List.replicate k [])) ++ res)] } ∧
+      haltingStateReached (Compile.paddedComputeTM c k)
+          { state_idx := Compile.exit c + (Compile.padRegsTM k).states,
+            tapes := [([], 0,
+              Compile.encodeTape (c.eval (s ++ List.replicate k [])) ++ res)] } = true := by
+  set wide : State := s ++ List.replicate k [] with hwide
+  have hbit_w : Compile.BitState wide := Compile.BitState_append_replicate_nil s k hbitst
+  have hk_w : k ≤ wide.length := by
+    rw [hwide, List.length_append, List.length_replicate]; omega
+  have hcost : c.cost wide = c.cost s :=
+    (Cmd.cost_agree c k huses (Compile.agreeBelow_append_replicate_nil s k)).symm
+  have hsize : State.size wide = State.size s := Compile.size_append_replicate_nil s k
+  have hlenw : wide.length = s.length + k := by
+    rw [hwide, List.length_append, List.length_replicate]
+  -- inner residue run on the WIDE tape
+  obtain ⟨t1, res, hres, hrun2, _htraj2, ht1⟩ :=
+    Compile_run_physical_residue c k wide hbit_w hk_w huses hnc
+  rw [hcost, hsize, hlenw] at ht1
+  -- the inner exit is a halt state of `Compile c`
+  have hhalt2 : haltingStateReached (Compile c)
+      { state_idx := Compile.exit c,
+        tapes := [([], 0, Compile.encodeTape (c.eval wide) ++ res)] } = true := by
+    show (Compile c).halt.getD (Compile.exit c) false = true
+    have hex := (compileCmd c).exit_is_halt
+    show (compileCmd c).M.halt.getD (compileCmd c).exit false = true
+    simp only [List.getD, hex, Option.getD]
+  -- compose: pad (M₁) then `Compile c` (M₂), spliced at `padRegsExit`.
+  have hstate0 : (initFlatConfig (Compile.padRegsTM k)
+      [Compile.encodeTape s]).state_idx < (Compile.padRegsTM k).states :=
+    (Compile.padRegsTM_valid k).1
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape wide) = some v →
+        v < max (Compile.padRegsTM k).sig (Compile c).sig := by
+    intro v hv
+    have hces : currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape wide)
+        = some Compile.endMark := rfl
+    have hv2 : v = Compile.endMark := ((Option.some.injEq _ _).mp (hces.symm.trans hv)).symm
+    subst hv2
+    have h4 : (4 : Nat) ≤ max (Compile.padRegsTM k).sig (Compile c).sig :=
+      Nat.le_trans (Nat.le_of_eq (Compile_sig c).symm) (Nat.le_max_right _ _)
+    exact Nat.lt_of_lt_of_le (by decide : Compile.endMark < 4) h4
+  have hcomp := composeFlatTM_run (M₁ := Compile.padRegsTM k) (M₂ := Compile c)
+    (exit := Compile.padRegsExit k)
+    (Compile.padRegsTM_valid k) (Compile_valid c) (Compile.padRegsExit_lt k)
+    (initFlatConfig (Compile.padRegsTM k) [Compile.encodeTape s]) hstate0
+    [] 0 (Compile.encodeTape wide) hsym
+    (Compile.padRegsTM_run k s hbitst) (Compile.padRegsTM_traj k s hbitst)
+    hrun2 hhalt2
+  obtain ⟨hcrun, hchalt⟩ := hcomp
+  refine ⟨res, hres, ?_, hchalt⟩
+  -- pad the composed run out to the (poly) stated budget
+  obtain ⟨kpad, hkpad⟩ := Nat.le.dest ht1
+  have hbudget : Compile.padBudget k s + 1 +
+      Compile.physStepBudget (State.size s + (s.length + k) + c.cost s + 2) (c.cost s)
+      = (Compile.padBudget k s + 1 + t1) + kpad := by omega
+  rw [hbudget]
+  exact runFlatTM_extend (M := Compile.paddedComputeTM c k) hcrun hchalt
