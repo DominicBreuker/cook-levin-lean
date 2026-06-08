@@ -9703,7 +9703,78 @@ theorem Compile.padInner34_run (s : State) (hbit : Compile.BitState s) :
     runFlatTM ((Compile.encodeRegs s).length + 7) Compile.padInner34
         { state_idx := 0,
           tapes := [([], 1 + (Compile.encodeRegs s).length, Compile.encodeTape s)] }
-      = some { state_idx := 9, tapes := [([], 0, Compile.encodeTape (s ++ [[]]))] } := sorry
+      = some { state_idx := 9, tapes := [([], 0, Compile.encodeTape (s ++ [[]]))] } := by
+  have hbit' : Compile.BitState (s ++ [[]]) := by
+    have := Compile.BitState_append_replicate_nil s 1 hbit
+    rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+  have hL : 1 + (Compile.encodeRegs s).length = (3 :: Compile.encodeRegs s).length := by simp [Nat.add_comm]
+  have htape_s : Compile.encodeTape s = (3 :: Compile.encodeRegs s) ++ [3] := Compile.encodeTape_cons_form s
+  have htape_s' : (3 :: Compile.encodeRegs s) ++ (0 : Nat) :: [3] = Compile.encodeTape (s ++ [[]]) :=
+    Compile.padBody_tape_eq s
+  have htplen : (Compile.encodeTape (s ++ [[]])).length = (Compile.encodeRegs s).length + 3 := by
+    rw [Compile.encodeTape_length]
+    have hsz : State.size (s ++ [[]]) = State.size s := by
+      have := Compile.size_append_replicate_nil s 1
+      rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+    have hwlen : (s ++ [[]]).length = s.length + 1 := by simp
+    rw [hsz, hwlen, Compile.encodeRegs_length]; omega
+  -- M₁ = insertCarryTM 0 : insert a `0` before the trailing terminator.
+  have hins : runFlatTM 2 (ShiftTape.insertCarryTM 0)
+        { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs s).length, Compile.encodeTape s)] }
+      = some { state_idx := 5,
+               tapes := [([], (Compile.encodeRegs s).length + 2, Compile.encodeTape (s ++ [[]]))] } := by
+    have h := ShiftTape.insertCarryTM_run 0 [3] (3 :: Compile.encodeRegs s)
+      (by intro x hx; rcases List.mem_singleton.mp hx with rfl; decide)
+    rw [← hL, ← htape_s, htape_s'] at h
+    rw [show (1 + (Compile.encodeRegs s).length + ([3] : List Nat).length)
+          = (Compile.encodeRegs s).length + 2 by simp; omega] at h
+    exact h
+  -- M₂ = rewindFromEndTM 4 3 : rewind from the trailing terminator to the leading sentinel.
+  have hrew : runFlatTM ((Compile.encodeRegs s).length + 4) (ScanLeft.rewindFromEndTM 4 3)
+        { state_idx := 0, tapes := [([], (Compile.encodeRegs s).length + 2, Compile.encodeTape (s ++ [[]]))] }
+      = some { state_idx := 3, tapes := [([], 0, Compile.encodeTape (s ++ [[]]))] } := by
+    have h := ScanLeft.rewindFromEndTM_run 4 3 (by decide) [] (Compile.encodeTape (s ++ [[]]))
+      ((Compile.encodeRegs s).length + 2) (by omega)
+      (Compile.encodeTape_get_zero (s ++ [[]]) (by omega))
+      (by omega) (by omega)
+      (Compile.encodeTape_lt_four (s ++ [[]]) hbit' _ (List.get_mem _ _))
+      (by
+        intro i hi_pos hi_lt
+        obtain ⟨hii, hne⟩ := Compile.encodeTape_interior_ne_endMark (s ++ [[]]) hbit' i hi_pos (by omega)
+        exact ⟨hii, Compile.encodeTape_lt_four (s ++ [[]]) hbit' _ (List.get_mem _ _), hne⟩)
+    rw [show (1 : Nat) + 1 + ((Compile.encodeRegs s).length + 2) = (Compile.encodeRegs s).length + 4 by omega] at h
+    exact h
+  -- sym bound at the bridge (head on the post-insert tape).
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), (Compile.encodeRegs s).length + 2,
+        Compile.encodeTape (s ++ [[]])) = some v
+      → v < max (ShiftTape.insertCarryTM 0).sig (ScanLeft.rewindFromEndTM 4 3).sig := by
+    intro v hv
+    rw [show max (ShiftTape.insertCarryTM 0).sig (ScanLeft.rewindFromEndTM 4 3).sig = 4 from by decide]
+    exact Compile.curSym_lt (Compile.encodeTape_lt_four (s ++ [[]]) hbit') _ v hv
+  have hcomp := composeFlatTM_run (M₁ := ShiftTape.insertCarryTM 0)
+    (M₂ := ScanLeft.rewindFromEndTM 4 3) (exit := 5)
+    (ShiftTape.insertCarryTM_valid 0 (by decide)) (ScanLeft.rewindFromEndTM_valid 4 3 (by decide))
+    (by decide)
+    { state_idx := 0, tapes := [([], 1 + (Compile.encodeRegs s).length, Compile.encodeTape s)] }
+    (by show (0 : Nat) < (ShiftTape.insertCarryTM 0).states; decide)
+    [] ((Compile.encodeRegs s).length + 2) (Compile.encodeTape (s ++ [[]])) hsym
+    hins
+    (by
+      intro k hk ck hck
+      have hnh : haltingStateReached (ShiftTape.insertCarryTM 0) ck = false := by
+        have := ShiftTape.insertCarryTM_no_early_halt 0 [3] (3 :: Compile.encodeRegs s)
+          (by intro x hx; rcases List.mem_singleton.mp hx with rfl; decide) k (by simpa using hk) ck
+        rw [← hL, ← htape_s] at this
+        exact this hck
+      refine ⟨fun h => ?_, hnh⟩
+      have hb : haltingStateReached (ShiftTape.insertCarryTM 0) ck = true := by
+        show (ShiftTape.insertCarryTM 0).halt.getD ck.state_idx false = true
+        rw [h]; decide
+      rw [hb] at hnh; exact absurd hnh (by decide))
+    hrew (by show (ScanLeft.rewindFromEndTM 4 3).halt.getD 3 false = true; decide)
+  obtain ⟨hrun, _⟩ := hcomp
+  rw [show (Compile.encodeRegs s).length + 7 = 2 + 1 + ((Compile.encodeRegs s).length + 4) by omega]
+  exact hrun
 
 theorem Compile.padBody_run (s : State) (hbit : Compile.BitState s) :
     runFlatTM (2 * (Compile.encodeTape s).length + 7) Compile.padBody
