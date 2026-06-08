@@ -70,6 +70,12 @@ noncomputable def cliqueRelDecidesLang :
   cost_bound := by intro x; sorry      -- TODO(Part3.5-cost-bound)
   enc_bit := by intro x; sorry         -- TODO(C2, B′): BitState (cliqueRelEncode x);
     -- lay out `cliqueRelEncode` unary so it is bit-level. See HANDOFF.md Task 1.
+  -- WALL / register frame (free path). Concrete once `cliqueRelCmd`/`cliqueRelEncode`
+  -- are concrete; the layout uses a fixed working set of registers.
+  regBound := sorry                    -- TODO(C2, free path): the register count
+  usesBelow := by sorry                -- TODO(C2): Cmd.UsesBelow cliqueRelCmd regBound
+  width_le := by intro x; sorry        -- TODO(C2): (cliqueRelEncode x).length ≤ regBound
+  noConsLen := by sorry                -- TODO(C2): dropped once consLen is unary (Task 1)
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_cliqueRel :
