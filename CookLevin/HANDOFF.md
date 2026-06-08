@@ -46,8 +46,9 @@ sat_NP (EvalCnfTM.lean)
                                                                SORRY fields: encodeIn_size, enc_bit,
                                                                usesBelow, noConsLen — all BOTTOM-UP, Task 1)
 REAL REMAINING MATH under the assembly:
-  padRegsTM_run / _traj   (Compile.lean ~9650; SORRY — machine now REAL; valid/tapes/sig/
-                           states/padRegsExit_lt PROVEN; only run/traj remain — see below)
+  padRegsTM_run / _traj   (Compile.lean ~10130; ✅ PROVEN, sorry-free — the WALL gadget
+                           is COMPLETE. paddedBitDecider_run's residual sorryAx is now
+                           ONLY the leaf gadgets below, not padRegsTM)
   compileOp_sound_physical_residue   (Compile.lean:8238; 5/12 ops PROVEN, 7 SORRY)
   compileIfBit_sound_physical_residue  (Compile.lean ~9111; SORRY — gated on real compileTestBit)
   compileForBnd_sound_physical_residue (Compile.lean ~9164; SORRY — gated on real compileForBnd)
@@ -112,11 +113,12 @@ force a *second* framework change later. The ripple was clean (monotonicity disc
 revisit — polynomial is the final boundary.**
 
 **The remaining pinned obligations** (now identical for both bridges, all BOTTOM-UP):
-build `Compile.padRegsTM k` (interface `_valid`/`_tapes`/`_sig`/`padRegsExit_lt`/
-`_run`/`_traj`, all `sorry` in Compile.lean), the 7 leaf ops, and the two combinators
-— see the stream sections. For the FREE path specifically, `evalCnfDecidesLang` still
-owes its bottom-up encoding fields (`encodeIn_size`, `enc_bit`, `usesBelow`,
-`noConsLen`; `width_le` and `regBound=12` are done) — Task 1.
+✅ `Compile.padRegsTM` is **DONE** (run/traj/shape all proven sorry-free). What's left
+under the decider bridges is just the **7 leaf ops + 2 combinators** (`compileOp_/
+compileIfBit_/compileForBnd_sound_physical_residue`) — see the stream sections. For the
+FREE path specifically, `evalCnfDecidesLang` still owes its bottom-up encoding fields
+(`encodeIn_size`, `enc_bit`, `usesBelow`, `noConsLen`; `width_le` and `regBound=12` are
+done) — Task 1.
 
 ---
 
@@ -153,17 +155,21 @@ the 7 ops, the 2 combinators) and EvalCnf's bottom-up encoding fields. **Do not
 re-introduce an `overhead`-shaped budget** (not superadditive) and **do not re-tighten
 `encode_size`**.
 
-Then this session **switched to bottom-up** and built the WALL gadget machine:
+Then this session **switched to bottom-up** and **COMPLETED the WALL gadget** — the
+single obligation under both decider bridges:
 - Replaced the `sorry` `padRegsTM`/`padRegsExit` defs with the **real** recursive
-  construction (`padBody` k-fold), `#eval`-validated end-to-end. Proved 4/6 interface
-  lemmas sorry-free (`valid`/`tapes`/`sig`/`states`/`padRegsExit_lt`, + `padBody` shape).
-- **Found & fixed the `padBudget` bug** (too small by the `2·L` double-pass factor;
-  `#eval`-validated) and rippled the correction through both bridges.
-- `padInner34_run` (insert⨾rewind, the first run-tower lemma) is **PROVEN**; the exact
-  recursive `padBudget` + `padBudget_le` + `padRegsTM_halt` are **PROVEN**.
-  `padRegsTM_run`/`_traj` remain `sorry` — the remaining run-tower (`padInner234_run`,
-  `padBody_run`, the trajectory tower, the `k`-induction) is pinned in bottom-up §1 with
-  `padInner34_run` as the proven template.
+  construction (`padBody` k-fold, `haltTM` base), `#eval`-validated end-to-end.
+- **Found & fixed the `padBudget` bug** — it must be the **EXACT** recursive step count
+  (not an upper bound), because `composeFlatTM_run`'s `h_traj1` needs the exit reached at
+  *exactly* `t₁`; `padBudget_le` supplies the poly bound for the bridges.
+- **Proved the whole run + trajectory tower, all sorry-free:** helpers (`haltTM*`,
+  `encodeRegs_snoc_nil`, `run_succ`, `curSym_lt`, `scanRight_partial`, `padBody_tape_eq`);
+  run tower (`padInner34_run`, `padInner234_run`, `padBody_run`); trajectory tower
+  (`padInner34/234/padBody_no_early_halt`); shape facts (`padRegsTM_{tapes,sig,states,
+  valid}`, `padRegsExit_lt`, `padRegsTM_halt`); and the two `k`-inductions
+  **`padRegsTM_run` / `padRegsTM_traj`** (verified `[propext, Classical.choice, Quot.sound]`
+  — no `sorryAx`). `paddedBitDecider_run`'s residual `sorryAx` now comes **only** from the
+  leaf op gadgets, not `padRegsTM`.
 
 ---
 
@@ -186,20 +192,18 @@ Then this session **switched to bottom-up** and built the WALL gadget machine:
   `paddedBitDecider_run`. `inOPoly_of_le` (pointwise domination) helper.
 - **`DecidesBy.encode_size` is per-decider polynomial** (`encodeBound`+`_poly`+`_mono`);
   all constructors migrated. **Settled — do not re-tighten.**
-- **`Compile.padRegsTM` is a REAL machine** (Compile.lean ~9540): `k`-fold static
-  composition (recursion on `k`) of `Compile.padBody` (= `stepRightTM ⨾ scanRightUntilTM
-  4 3 ⨾ insertCarryTM 0 ⨾ rewindFromEndTM 4 3`), base `Compile.haltTM` (a trivial
-  immediate-halt machine — trivializes the `k=0` cases). Proven sorry-free:
-  `padBody_{states=16,tapes=1,sig=4,start=0,valid}`, `padBodyExit=14`,
-  `padRegsTM_{tapes,sig,states=1+16k,valid}`, `padRegsExit k = 16k`, `padRegsExit_lt`,
-  `padRegsTM_halt(_idx)`. **`#eval`-validated:** `padBody` on a length-`L` tape halts at
-  state 14, head 0, in exactly `2·L + 7` steps, mapping `encodeTape s → encodeTape (s ++ [[]])`.
-- **`Compile.padInner34_run` PROVEN** (the insert-then-rewind half of `padBody`): the
-  first real run-tower lemma, via two nested `composeFlatTM_run` (insertCarryTM ⨾
-  rewindFromEndTM). The template for the remaining tower (see bottom-up §1). Foundational
-  helpers also proven: `haltTM*`, `encodeRegs_snoc_nil`, `run_succ`, `curSym_lt`,
+- **★ `Compile.padRegsTM` — the WALL gadget — is COMPLETE and sorry-free** (Compile.lean
+  ~9540–10160): `k`-fold static composition (recursion on `k`) of `Compile.padBody`
+  (= `stepRightTM ⨾ scanRightUntilTM 4 3 ⨾ insertCarryTM 0 ⨾ rewindFromEndTM 4 3`), base
+  `Compile.haltTM` (trivial immediate-halt; trivializes `k=0`). **All interface lemmas
+  proven** (`[propext, Classical.choice, Quot.sound]`): shape (`padRegsTM_{tapes,sig,
+  states=1+16k,valid}`, `padRegsExit k = 16k`, `padRegsExit_lt`, `padRegsTM_halt`); run
+  tower (`padInner34_run`, `padInner234_run`, `padBody_run` — `2·|tape|+7` steps/body);
+  trajectory tower (`padInner34/234/padBody_no_early_halt`); and **`padRegsTM_run` /
+  `padRegsTM_traj`** (the `k`-inductions via `composeFlatTM_run`/`_no_early_halt`).
+  Reusable helpers: `haltTM*`, `encodeRegs_snoc_nil`, `run_succ`, `curSym_lt`,
   `scanRight_partial` (the previously-missing `scanRightUntilTM` trajectory),
-  `padBody_tape_eq`, `padInner34/234_valid`.
+  `padBody_tape_eq`, `padInner34/234_valid`. **`#eval`-validated** throughout.
 - **`Compile.padBudget` is the EXACT recursive step count** (`0` base;
   `(2·|tape|+7)+1+padBudget k (s++[[]])` step) — **required** because `composeFlatTM_run`'s
   `h_traj1` needs the exit reached at *exactly* `t₁` (a loose upper bound makes the
@@ -260,45 +264,10 @@ endgame restatement**:
 You build the gadgets the (pinned) contracts need. Build green per item;
 `#print axioms`-clean. Probe each machine end-to-end (`#eval`) before proving.
 
-1. **Finish `Compile.padRegsTM_run` / `_traj` (THE pinned WALL gadget — machine REAL,
-   shape facts + `padInner34_run` PROVEN; the rest of the run-tower + these two remain).**
-   Closing them makes `paddedBitDecider_run` axiom-clean ⇒ closes **both** decider bridges
-   at once (`inNPLang → inNP` *and* `inTimePolyLang → inTimePoly`, the live `sat_NP`
-   decider half). **Highest bottom-up value.** Concrete, validated plan — `padInner34_run`
-   is the proven **template** for every step:
-   - ✅ **`Compile.padInner34_run` DONE** (insert ⨾ rewind): `runFlatTM (|R|+7) padInner34
-     {0, ([], 1+|R|, encodeTape s)} = some {9, ([], 0, encodeTape (s++[[]]))}` where
-     `R = encodeRegs s`. Two nested `composeFlatTM_run`; reuses `insertCarryTM_run`
-     (`pre=3::R`, `suf=[3]`), `rewindFromEndTM_run` (on `encodeTape (s++[[]])` via
-     `encodeTape_get_zero`/`_lt_four`/`_interior_ne_endMark`/`_get_last`), `padBody_tape_eq`,
-     `encodeRegs_snoc_nil`. **Gotchas:** rewrite head `(3::R).length`↔`1+|R|` with `← hL`;
-     for the rewind start-cell `<4` use `encodeTape_lt_four … (List.get_mem …)` (NOT a
-     dependent index rewrite — that fails "motive not type correct"); `decide` on a goal
-     containing a free tape fails ("free variables") — `show` the closed `.halt.getD …`
-     form first.
-   - **(a) `Compile.padInner234_run`** = `composeFlatTM_run` of `scanRightUntilTM 4 3`
-     (run via `scanRightUntilTM_run_found`, gap=`|R|`, head 1→1+|R|; interior cells from
-     `encodeRegs_lt_four`+`encodeRegs_no_endMark`) ⨾ `padInner34_run`. Then
-     **`Compile.padBody_run`** = `composeFlatTM_run` of `stepRightTM 4`
-     (`stepRightTM_run`, head 0→1) ⨾ `padInner234_run`; budget `1+1+(|R|+1+1+(|R|+7))` =
-     `2·(encodeTape s).length+7`.
-   - **(b) The trajectory tower** `padInner34/234/padBody_no_early_halt` via
-     `composeFlatTM_no_early_halt` (same nesting; each consumes the inner run + traj).
-     Components: `stepRightTM_no_early_halt`, `Compile.scanRight_partial` (PROVEN — the
-     state-0 trajectory; for `k<gap+1` the config is state 0 ≠ exit 1, non-halting),
-     `insertCarryTM_no_early_halt`, `rewindFromEndTM_no_early_halt`. For the `≠ exit`
-     halves: the exit is a halt state, so "not halting" ⟹ "≠ exit" (see `padInner34_run`'s
-     traj1 arg for the idiom).
-   - **(c) Induct on `k`** for `padRegsTM_run`: base `k=0` is `haltTM` (run at step
-     `padBudget 0 s = 0`, `Compile.haltTM_run`); step `k+1` =
-     `composeFlatTM_run padBody (padRegsTM k) padBodyExit` with `padBody_run`+traj as M₁
-     and the IH as M₂ (note `(s++[[]])++replicate k [] = s++replicate (k+1) []`;
-     `padBudget` recursion matches `t₁+1+t₂` exactly). `padRegsTM_halt` gives `h_halt2`.
-     `padRegsTM_traj` induct via `composeFlatTM_no_early_halt` similarly (base `k=0`
-     vacuous: `padBudget 0 s = 0`). **No `runFlatTM_extend` needed** — `padBudget` is the
-     exact count, so the run lands at it directly.
-   The `#eval` probes confirm every number (`padRegsTM 3` on a 2-register input → the
-   correct 5-register tape, exit state `16·3 = 48`).
+1. ✅ **WALL gadget `Compile.padRegsTM` — DONE (sorry-free).** Run + trajectory + all
+   shape/helper lemmas proven (see the PROVEN list). `paddedBitDecider_run`'s residual
+   `sorryAx` is now **only** the leaf op gadgets below — so the **entire decider half of
+   `sat_NP` rests on Tasks 2–4 alone**. The remaining bottom-up work:
 2. **Task 1 — unary encodings + scratch operands** (gates all 7 ops). Restate
    `takeAt`/`dropAt`/`consLen` unary (length = the register's unary count, not
    `headD 0`); bump `consLen`'s `Op.cost`; add empty-scratch operands
