@@ -9625,23 +9625,24 @@ private theorem Compile.curSym_lt {tp : List Nat} (hb : ∀ x ∈ tp, x < 4) (he
   · rw [dif_neg h] at hv; exact absurd hv (by simp)
 
 /-- **Scan-right partial trajectory.** From `{0, head}` on a tape whose cells
-`head … head+j-1` are in range and `≠ target`, after `j` steps `scanRightUntilTM`
-is in state `0` with head at `head + j`. (The `j ≤ gap` prefix of
+`head … head+gap-1` are in range and `≠ target`, after `j ≤ gap` steps
+`scanRightUntilTM` is in state `0` with head at `head + j`. (The `j ≤ gap` prefix of
 `scanRightUntilTM_run_found`; gives the missing `no_early_halt`.) -/
 private theorem Compile.scanRight_partial
-    (sig target : Nat) (left right : List Nat) (head : Nat)
-    (hcells : ∀ k, ∃ (h : head + k < right.length),
+    (sig target : Nat) (left right : List Nat) (head gap : Nat)
+    (hcells : ∀ k, k < gap → ∃ (h : head + k < right.length),
         right.get ⟨head + k, h⟩ < sig ∧ right.get ⟨head + k, h⟩ ≠ target) :
-    ∀ j, runFlatTM j (scanRightUntilTM sig target)
+    ∀ j, j ≤ gap → runFlatTM j (scanRightUntilTM sig target)
         { state_idx := 0, tapes := [(left, head, right)] }
       = some { state_idx := 0, tapes := [(left, head + j, right)] } := by
   intro j
   induction j with
-  | zero => rfl
+  | zero => intro _; rfl
   | succ j ih =>
-      obtain ⟨hlt, hsymlt, hne⟩ := hcells j
+      intro hj
+      obtain ⟨hlt, hsymlt, hne⟩ := hcells j (by omega)
       have hstep := scanRightUntilTM_step_advance sig target left right (head + j) hlt hsymlt hne
-      rw [runFlatTM_compose (scanRightUntilTM sig target) j 1 _ _ ih,
+      rw [runFlatTM_compose (scanRightUntilTM sig target) j 1 _ _ (ih (by omega)),
           Compile.run_succ (scanRightUntilTM sig target) _ _ 0 (by rfl) hstep]
       rfl
 
@@ -9776,12 +9777,93 @@ theorem Compile.padInner34_run (s : State) (hbit : Compile.BitState s) :
   rw [show (Compile.encodeRegs s).length + 7 = 2 + 1 + ((Compile.encodeRegs s).length + 4) by omega]
   exact hrun
 
+theorem Compile.padInner234_run (s : State) (hbit : Compile.BitState s) :
+    runFlatTM (2 * (Compile.encodeRegs s).length + 9) Compile.padInner234
+        { state_idx := 0, tapes := [([], 1, Compile.encodeTape s)] }
+      = some { state_idx := 12, tapes := [([], 0, Compile.encodeTape (s ++ [[]]))] } := by
+  have hlen : (Compile.encodeTape s).length = (Compile.encodeRegs s).length + 2 := by
+    rw [Compile.encodeTape_length, Compile.encodeRegs_length]
+  -- scanRightUntilTM run: from head 1, scan to the trailing terminator at index 1 + |R|.
+  have hscan := scanRightUntilTM_run_found 4 3 [] (Compile.encodeTape s)
+    (Compile.encodeRegs s).length 1 (by rw [hlen]; omega)
+    (by
+      have key : (Compile.encodeTape s)[1 + (Compile.encodeRegs s).length]? = some 3 := by
+        rw [Compile.encodeTape,
+            show 1 + (Compile.encodeRegs s).length = (Compile.encodeRegs s).length + 1 by omega,
+            List.getElem?_cons_succ,
+            List.getElem?_append_right (Nat.le_refl _)]
+        simp [Compile.endMark]
+      rw [List.get_eq_getElem]
+      have hg := List.getElem?_eq_getElem
+        (show 1 + (Compile.encodeRegs s).length < (Compile.encodeTape s).length by rw [hlen]; omega)
+      rw [key] at hg
+      exact (Option.some.inj hg).symm)
+    (by
+      intro k hk
+      obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + k) (by omega) (by rw [hlen]; omega)
+      exact ⟨hi, Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _), hne⟩)
+  -- sym bound at the bridge.
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 1 + (Compile.encodeRegs s).length,
+        Compile.encodeTape s) = some v
+      → v < max (scanRightUntilTM 4 3).sig Compile.padInner34.sig := by
+    intro v hv
+    rw [show max (scanRightUntilTM 4 3).sig Compile.padInner34.sig = 4 from by decide]
+    exact Compile.curSym_lt (Compile.encodeTape_lt_four s hbit) _ v hv
+  have hcomp := composeFlatTM_run (M₁ := scanRightUntilTM 4 3) (M₂ := Compile.padInner34) (exit := 1)
+    (scanRightUntilTM_valid 4 3 (by decide)) Compile.padInner34_valid (by decide)
+    { state_idx := 0, tapes := [([], 1, Compile.encodeTape s)] }
+    (by show (0 : Nat) < (scanRightUntilTM 4 3).states; decide)
+    [] (1 + (Compile.encodeRegs s).length) (Compile.encodeTape s) hsym
+    hscan
+    (by
+      intro k hk ck hck
+      have hpart := Compile.scanRight_partial 4 3 [] (Compile.encodeTape s) 1 (Compile.encodeRegs s).length
+        (by
+          intro m hm
+          obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + m) (by omega) (by rw [hlen]; omega)
+          exact ⟨hi, Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _), hne⟩)
+        k (by omega)
+      rw [hpart] at hck
+      obtain rfl := Option.some.inj hck
+      exact ⟨Nat.zero_ne_one, rfl⟩)
+    (Compile.padInner34_run s hbit)
+    (by show Compile.padInner34.halt.getD 9 false = true; decide)
+  obtain ⟨hrun, _⟩ := hcomp
+  rw [show 2 * (Compile.encodeRegs s).length + 9
+        = ((Compile.encodeRegs s).length + 1) + 1 + ((Compile.encodeRegs s).length + 7) by omega]
+  exact hrun
+
 theorem Compile.padBody_run (s : State) (hbit : Compile.BitState s) :
     runFlatTM (2 * (Compile.encodeTape s).length + 7) Compile.padBody
         (initFlatConfig Compile.padBody [Compile.encodeTape s])
       = some { state_idx := Compile.padBodyExit,
                tapes := [([], 0, Compile.encodeTape (s ++ [[]]))] } := by
-  sorry
+  have hlen : (Compile.encodeTape s).length = (Compile.encodeRegs s).length + 2 := by
+    rw [Compile.encodeTape_length, Compile.encodeRegs_length]
+  have hinit : initFlatConfig Compile.padBody [Compile.encodeTape s]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] } := rfl
+  rw [hinit]
+  -- stepRightTM run: head 0 → 1 (off the leading sentinel).
+  have hstep := ScanLeft.stepRightTM_run 4 [] (Compile.encodeTape s) 0 (by rw [hlen]; omega)
+    (by rw [Compile.encodeTape_get_zero s (by rw [hlen]; omega)]; decide)
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 1, Compile.encodeTape s) = some v
+      → v < max (ScanLeft.stepRightTM 4).sig Compile.padInner234.sig := by
+    intro v hv
+    rw [show max (ScanLeft.stepRightTM 4).sig Compile.padInner234.sig = 4 from by decide]
+    exact Compile.curSym_lt (Compile.encodeTape_lt_four s hbit) _ v hv
+  have hcomp := composeFlatTM_run (M₁ := ScanLeft.stepRightTM 4) (M₂ := Compile.padInner234) (exit := 1)
+    (ScanLeft.stepRightTM_valid 4) Compile.padInner234_valid (by decide)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s)] }
+    (by show (0 : Nat) < (ScanLeft.stepRightTM 4).states; decide)
+    [] 1 (Compile.encodeTape s) hsym
+    hstep
+    (fun k hk ck hck => ScanLeft.stepRightTM_no_early_halt 4 [] (Compile.encodeTape s) 0 k hk ck hck)
+    (Compile.padInner234_run s hbit)
+    (by show Compile.padInner234.halt.getD 12 false = true; decide)
+  obtain ⟨hrun, _⟩ := hcomp
+  rw [show 2 * (Compile.encodeTape s).length + 7
+        = 1 + 1 + (2 * (Compile.encodeRegs s).length + 9) by omega]
+  exact hrun
 
 /-- **Empty-register padding machine (REAL — the WALL gadget).** `padRegsTM k` is
 the `k`-fold static composition of `padBody` (recursion on `k`), base `haltTM`
