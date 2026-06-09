@@ -213,22 +213,122 @@ theorem encodeState_bit (Na : cnf × assgn) : Compile.BitState (encodeState Na) 
   · exact encodeAssgn_bit a x hx
   all_goals simp at hx
 
-/-! ## Correctness and cost obligations -/
+/-! ## Size accounting (toward `encodeIn_size`)
 
-/-- Length of the unary CNF encoding (each literal `(pol,v)` contributes `v+3`
-cells, each clause one `0` terminator). The bound by `encodable.size` is a
-self-contained list-induction (TODO Part3.5-encode-size, step 2). -/
+Under the unary encoding the encoded length grows with the *magnitudes* of the
+variables, but `encodable.size Nat = id` charges exactly those magnitudes, so the
+total size stays **linear** in `encodable.size`. These lemmas package that. -/
+
+/-- `encodable.size` of a list, with the foldl accumulator unrolled to a foldr
+sum (so it splits cleanly over `cons`). -/
+private theorem foldl_encsize_acc {α : Type} [encodable α] :
+    ∀ (acc : Nat) (xs : List α),
+      xs.foldl (fun a x => a + encodable.size x + 1) acc
+        = acc + xs.foldr (fun x s => encodable.size x + 1 + s) 0
+  | acc, [] => by simp
+  | acc, x :: xs => by
+      simp only [List.foldl_cons, List.foldr_cons]
+      rw [foldl_encsize_acc (acc + encodable.size x + 1) xs]; omega
+
+private theorem encsize_list_foldr {α : Type} [encodable α] (xs : List α) :
+    encodable.size xs = xs.foldr (fun x s => encodable.size x + 1 + s) 0 := by
+  show xs.foldl (fun a x => a + encodable.size x + 1) 0 = _
+  rw [foldl_encsize_acc 0 xs]; omega
+
+private theorem length_le_encsize {α : Type} [encodable α] (xs : List α) :
+    xs.length ≤ encodable.size xs := by
+  rw [encsize_list_foldr xs]
+  induction xs with
+  | nil => simp
+  | cons x xs ih => simp only [List.foldr_cons, List.length_cons]; omega
+
+private theorem encodeLit_length (l : literal) : (encodeLit l).length = l.2 + 3 := by
+  rcases l with ⟨pol, v⟩
+  simp only [encodeLit, List.length_cons, List.length_append, List.length_replicate,
+    List.length_nil]
+
+private theorem encodeClause_inner_length (C : clause) :
+    (C.foldr (fun l acc => encodeLit l ++ acc) []).length
+      = C.foldr (fun l s => l.2 + 3 + s) 0 := by
+  induction C with
+  | nil => rfl
+  | cons l C ih =>
+      simp only [List.foldr_cons, List.length_append, encodeLit_length, ih]
+
+private theorem encodeClause_inner_le (C : clause) :
+    C.foldr (fun l s => l.2 + 3 + s) 0
+      ≤ 4 * C.foldr (fun l s => encodable.size l + 1 + s) 0 := by
+  induction C with
+  | nil => simp
+  | cons l C ih =>
+      -- `l.2 : var` is opaque to `omega`; bound it via explicit `Nat` lemmas.
+      have hl2 : l.2 ≤ encodable.size l :=
+        calc l.2 ≤ encodable.size l.1 + l.2 := Nat.le_add_left l.2 (encodable.size l.1)
+          _ ≤ encodable.size l.1 + l.2 + 1 := Nat.le_succ _
+          _ = encodable.size l := rfl
+      simp only [List.foldr_cons]
+      -- now reason about the (Nat-valued) `encodable.size l` and the foldr atoms.
+      calc l.2 + 3 + C.foldr (fun l s => l.2 + 3 + s) 0
+          ≤ encodable.size l + 3 + 4 * C.foldr (fun l s => encodable.size l + 1 + s) 0 :=
+            Nat.add_le_add (Nat.add_le_add_right hl2 3) ih
+        _ ≤ 4 * (encodable.size l + 1
+              + C.foldr (fun l s => encodable.size l + 1 + s) 0) := by omega
+
+private theorem encodeClause_length_le (C : clause) :
+    (encodeClause C).length ≤ 4 * encodable.size C + 1 := by
+  have h1 : (encodeClause C).length = C.foldr (fun l s => l.2 + 3 + s) 0 + 1 := by
+    simp only [encodeClause, List.length_append, List.length_cons, List.length_nil,
+      encodeClause_inner_length]
+  have h2 := encodeClause_inner_le C
+  rw [h1, encsize_list_foldr C]
+  omega
+
+/-- Linear length bound for the unary CNF encoding. -/
 theorem encodeCnf_length (N : cnf) :
-    (encodeCnf N).length ≤ 3 * encodable.size N + 1 := by
-  sorry  -- TODO(Part3.5-encode-size): unary accounting (see encodeIn_size plan)
+    (encodeCnf N).length ≤ 5 * encodable.size N := by
+  induction N with
+  | nil => simp [encodeCnf]
+  | cons C N ih =>
+      have hlen : (encodeCnf (C :: N)).length
+          = (encodeClause C).length + (encodeCnf N).length := by
+        simp [encodeCnf, List.foldr_cons, List.length_append]
+      have hsize : encodable.size (C :: N)
+          = encodable.size C + 1 + encodable.size N := by
+        rw [encsize_list_foldr (C :: N), encsize_list_foldr N, List.foldr_cons]
+      have hC := encodeClause_length_le C
+      rw [hlen, hsize]; omega
 
-/-- The encoded state's total size is linearly bounded by the input size. Under
-the unary encoding the constant grows with the variable magnitudes, but those are
-charged by `encodable.size` (`size Nat = id`), so the bound stays linear. The
-cubic cost bound `(n+1)^3` absorbs it. -/
+/-- Linear length bound for the unary assignment encoding. -/
+theorem encodeAssgn_length_le (a : assgn) :
+    (encodeAssgn a).length ≤ 2 * encodable.size a := by
+  induction a with
+  | nil => simp [encodeAssgn]
+  | cons u a ih =>
+      have hlen : (encodeAssgn (u :: a)).length = (u + 2) + (encodeAssgn a).length := by
+        simp only [encodeAssgn, List.foldr_cons, List.cons_append, List.length_cons,
+          List.length_append, List.length_replicate, List.length_nil]
+        omega
+      have hsize : encodable.size (u :: a) = u + 1 + encodable.size a := by
+        have hu : encodable.size u = u := rfl
+        rw [encsize_list_foldr (u :: a), encsize_list_foldr a, List.foldr_cons, hu]
+      rw [hlen, hsize]; omega
+
+/-- The encoded state's total size is **linearly** bounded by the input size
+(`≤ 6 · size`). The unary blow-up is charged by `encodable.size Nat = id`; the
+cubic cost bound `(n+1)^3` then absorbs it (see `EvalCnfTM.encodeIn_size`). -/
 theorem encodeState_size_bound (Na : cnf × assgn) :
-    State.size (encodeState Na) ≤ 5 * encodable.size Na + 20 := by
-  sorry  -- TODO(Part3.5-encode-size): unary accounting (see encodeIn_size plan)
+    State.size (encodeState Na) ≤ 6 * encodable.size Na := by
+  rcases Na with ⟨N, a⟩
+  have hsize : State.size (encodeState (N, a))
+      = N.length + (encodeCnf N).length + (encodeAssgn a).length := by
+    simp only [encodeState, State.size, List.map_cons, List.map_nil, List.foldr_cons,
+      List.foldr_nil, List.length_replicate, List.length_nil]
+    omega
+  have h1 := encodeCnf_length N
+  have h2 := encodeAssgn_length_le a
+  have h3 := length_le_encsize N
+  have hNa : encodable.size (N, a) = encodable.size N + encodable.size a + 1 := rfl
+  rw [hsize, hNa]; omega
 
 /-- **Correctness.** Running `evalCnfCmd` on the encoded input
 produces `[1]` in `OUTPUT` iff `satisfiesCnf a N`. -/
