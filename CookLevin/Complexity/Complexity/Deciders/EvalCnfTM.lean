@@ -20,10 +20,12 @@ routed through the higher-level `Lang` layer (Part 3 of
 3. `evalCnfDecidesLang : Lang.DecidesLang …` — DSL-level decider witness.
 4. `inTimePolyTM_evalCnf` — apply `Lang.inTimePolyLang_to_inTimePoly`.
 
-The original single `sorry` for `decider` is now decomposed into a
-handful of small, focused sorrys (the program itself, the encoding,
-encoding-size bound, correctness, cost bound). These are the actual
-content gaps Part 3.5 closes.
+**2026-06-09: every field of `evalCnfDecidesLang` is discharged.** The
+encoding facts are proven outright; the behaviour/cost/frame fields are
+proven from the pinned per-clause contracts in `EvalCnfCmd.lean`
+(`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`). The remaining
+content gap on this path is exactly those pins + the three inner-body
+`Cmd`s (bottom-up).
 
 Note: `inTimePolyTM_evalCnf` keeps its full name + signature so
 `sat_NP` (below) does not need to change.
@@ -33,20 +35,29 @@ namespace EvalCnfTM
 
 open Complexity.Lang
 
-/-- Polynomial time budget for `evalCnfTM`. -/
-def timeBound (n : Nat) : Nat := (n + 1) ^ 3
+/-- Polynomial time budget for `evalCnfTM`.
+
+**⚠ 2026-06-09 (top-down): quartic, NOT the old `(n+1)^3`.** The cubic was
+unprovable: the only loop-cost tool (`Cmd.cost_forBnd_le`) charges a *uniform*
+worst-case per-iteration bound, so the nested clause/slot/member loops compound
+to degree 4 (amortization over no-op slots is invisible to it). Downstream only
+needs `inOPoly`, so the degree is free — see `EvalCnfCmd.evalCnfCmd_cost_bound`
+for the derivation of the constant. -/
+def timeBound (n : Nat) : Nat := 200000 * (n + 1) ^ 4
 
 theorem timeBound_inOPoly : inOPoly timeBound := by
-  refine ⟨3, ⟨8, 1, ?_⟩⟩
+  refine ⟨4, ⟨3200000, 1, ?_⟩⟩
   intro n hn
   have hle : n + 1 ≤ n + n := Nat.add_le_add_left hn n
-  show (n + 1) ^ 3 ≤ 8 * n ^ 3
-  calc (n + 1) ^ 3
-      ≤ (n + n) ^ 3 := Nat.pow_le_pow_left hle 3
-    _ = 8 * n ^ 3 := by ring
+  show 200000 * (n + 1) ^ 4 ≤ 3200000 * n ^ 4
+  calc 200000 * (n + 1) ^ 4
+      ≤ 200000 * (n + n) ^ 4 :=
+        Nat.mul_le_mul_left 200000 (Nat.pow_le_pow_left hle 4)
+    _ = 3200000 * n ^ 4 := by ring
 
 theorem timeBound_monotonic : monotonic timeBound :=
-  fun _ _ h => Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 3
+  fun _ _ h =>
+    Nat.mul_le_mul_left 200000 (Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 4)
 
 /-! ## The verifier program in the layer
 
@@ -54,54 +65,50 @@ The concrete program and encoding live in
 `Deciders/EvalCnfCmd.lean`. This file ties them into the
 framework. -/
 
-/-- The Lang-level decider witness. The program and encoding are
-concrete (from `EvalCnfCmd`); the proofs are deferred to Part 3.5
-sub-steps. The `encodeIn_size` obligation currently uses the
-strict `≤ size + 1` bound from `DecidesLang`; relaxing that to
-`≤ costBound size` is one of the gaps recorded in
-`EvalCnfCmd.lean`. -/
+/-- The Lang-level decider witness. The program and encoding are concrete
+(from `EvalCnfCmd`), and **every field is discharged** (2026-06-09): the four
+behaviour/frame fields by the proven assembly in `EvalCnfCmd.lean`
+(`evalCnfCmd_decides` / `evalCnfCmd_cost_bound` / `evalCnfCmd_usesBelow` /
+`evalCnfCmd_noConsLen`), themselves proven from the **pinned per-clause
+contracts** (`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`). The
+residual `sorryAx` of this witness is exactly those pins + the three inner-body
+`Cmd`s — the bottom-up build targets. -/
 noncomputable def evalCnfDecidesLang :
     DecidesLang (fun Na : cnf × assgn => satisfiesCnf Na.2 Na.1) timeBound where
   c := EvalCnfCmd.evalCnfCmd
   encodeIn := EvalCnfCmd.encodeState
-  -- `State.size (encodeState x) ≤ timeBound (size x) = (size x + 1)^3`:
-  -- the linear bound `≤ 6·size` (the unary blow-up is charged by `size Nat = id`)
-  -- dominated by the cube.
+  -- `State.size (encodeState x) ≤ 6·size` (the unary blow-up is charged by
+  -- `size Nat = id`), dominated by the quartic budget.
   encodeIn_size := by
     intro x
     have h1 : State.size (EvalCnfCmd.encodeState x) ≤ 6 * encodable.size x :=
       EvalCnfCmd.encodeState_size_bound x
     have h2 : 6 * encodable.size x ≤ timeBound (encodable.size x) := by
-      show 6 * encodable.size x ≤ (encodable.size x + 1) ^ 3
-      have hexp : (encodable.size x + 1) ^ 3
-          = encodable.size x ^ 3 + 3 * encodable.size x ^ 2
-            + 3 * encodable.size x + 1 := by ring
-      rw [hexp]
-      nlinarith [Nat.le_self_pow (show (2 : ℕ) ≠ 0 by norm_num) (encodable.size x),
-        Nat.zero_le (encodable.size x ^ 3)]
+      show 6 * encodable.size x ≤ 200000 * (encodable.size x + 1) ^ 4
+      have hself : encodable.size x + 1 ≤ (encodable.size x + 1) ^ 4 :=
+        Nat.le_self_pow (by norm_num) _
+      omega
     exact h1.trans h2
   decides := EvalCnfCmd.evalCnfCmd_decides
   cost_bound := EvalCnfCmd.evalCnfCmd_cost_bound
   -- (C2, B′ — LIVE PATH) `Compile.BitState (encodeState x)`: discharged by the
-  -- now-UNARY encoding (variables as `1`-blocks, markers/separators in `{0,1}`).
+  -- UNARY encoding (variables as `1`-blocks, markers/separators in `{0,1}`).
   enc_bit := fun x => EvalCnfCmd.encodeState_bit x
-  -- WALL / register frame (free path). `evalCnfCmd` uses registers `0..11`
-  -- (`OUTPUT … INNER_IDX`), and `encodeState` lays out exactly those 12 registers.
-  regBound := 12
-  usesBelow := by sorry
-    -- TODO(C2, free path): `Cmd.UsesBelow evalCnfCmd 12`. Gated on the concrete
-    -- inner bodies (`processOneClause`/`processOneLiteral`/`memberCheck`, still
-    -- `sorry`); each uses only registers `0..11`. Discharge once they are concrete.
+  -- WALL / register frame. 16 (NOT 12 — the inner bodies need 4 scratch
+  -- registers beyond the encoded 12; see the register-layout finding in
+  -- `EvalCnfCmd.lean`). `encodeState` still lays out only 12 registers; the
+  -- runtime padding (`Compile.paddedBitDeciderTM`) widens to 16.
+  regBound := 16
+  usesBelow := EvalCnfCmd.evalCnfCmd_usesBelow
   width_le := by
     intro x; rcases x with ⟨N, a⟩
-    -- `encodeState (N, a)` is a 12-register literal, so its width is exactly 12.
-    show (EvalCnfCmd.encodeState (N, a)).length ≤ 12
+    -- `encodeState (N, a)` is a 12-register literal; `12 ≤ 16`.
+    show (EvalCnfCmd.encodeState (N, a)).length ≤ 16
     simp only [EvalCnfCmd.encodeState, List.length_cons, List.length_nil]
     omega
-  noConsLen := by sorry
-    -- TODO(C2, free path): `Cmd.NoConsLen evalCnfCmd`. Like the canonical
-    -- `c_noConsLen`, this is dropped entirely once `Op.consLen` is re-laid UNARY
-    -- (HANDOFF.md Task 1). Until then it is the witness's `NoConsLen` side-condition.
+  -- Like the canonical `c_noConsLen`, this field is dropped entirely once
+  -- `Op.consLen` is re-laid UNARY (HANDOFF.md bottom-up Task 4).
+  noConsLen := EvalCnfCmd.evalCnfCmd_noConsLen
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_evalCnf :
