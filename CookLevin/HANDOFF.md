@@ -122,46 +122,28 @@ done) — Task 1.
 
 ---
 
-## ✅ What this session (top-down, 2026-06-08) did — retarget the REDUCTION side
+## ✅ What this session (top-down, 2026-06-09) did — close layer composition / NP-routing
 
-The decider half was already on the residue/`physStepBudget` contract with the WALL
-resolved (`paddedBitDecider_run`). This session did the **analogue for the map/reduction
-half** (S3 migration, ROADMAP step 2) — `PolyTimeComputableLang.toFrameworkWitness'` was
-still on the **wrong-budget** `overhead` `Compile_sound`. It is now retargeted onto the
-residue contract, mirroring the decider side exactly:
+The decider + reduction bridges were already assembled on the residue contract (prior
+sessions). The composition layer still carried **two dead `sorry`s** masquerading as the
+"highest top-down value" — `PolyTimeComputableLang.comp` (free) and `red_inNP_via_lang`.
 
-- **Built the function-side WALL resolution** `Compile.paddedComputeTM` +
-  **`Compile.paddedCompute_run`** (Compile.lean, end of file) — the analogue of
-  `paddedBitDecider_run` but keeping the **full output tape** (no bit-test gadget), so a
-  reduction can decode an arbitrary output register. `padRegsTM k ⨾ Compile c` on the
-  narrow input, **no `k ≤ s.length`**; PROVEN sorry-free from the `padRegsTM` interface +
-  `Compile_run_physical_residue` (residual `sorryAx` = the pinned leaf gadgets only).
-- **Augmented `PolyTimeComputableLang`** with the WALL fields (mirrors `DecidesLang`):
-  `regBound`/`usesBelow`/`width_le`/`noConsLen` + **`decode_agree`** (decode is
-  insensitive to the `regBound` empty pad registers — the output register is `< regBound`,
-  so `Cmd.eval_agree` transports it).
-- **Retargeted `toFrameworkWitness'`** onto `paddedComputeTM` + a poly `padTimeBound` /
-  `budget_ge` (same shape as the decider's `DecidesLang.padTimeBound`). It now **bypasses
-  `Compile_sound` entirely** (just as `bitDecider_run` bypasses it on the decider side).
-  Sorry-free as written.
-- **`PolyTimeComputableLang'.toLang`** populates the new fields: `regBound`/`usesBelow`
-  from `W`; `width_le` via `Cmd.UsesBelow_pos` (`0 < regBound`); `decode_agree` via
-  `Cmd.eval_agree` at register `0`; `noConsLen` via a new pinned `PolyTimeComputableLang'.
-  c_noConsLen` sorry (the **same** consLen-unary obligation `DecidesLang'.c_noConsLen`
-  carries — Task 1 drops both).
-- Relocated `inOPoly_of_le` upstream so the reduction bridge can use it.
-- Build green (3358 jobs); `#print axioms CookLevin` unchanged
-  (`[propext, sorryAx, Classical.choice, Quot.sound]`); `paddedCompute_run` +
-  `toFrameworkWitness'` verified to depend only on `sorryAx` (via the pinned gadgets +
-  `c_noConsLen`), no new independent gaps.
+**Finding (risk-based):** both were **consumed by nothing** and **superseded** by the
+canonical route already proven: `PolyTimeComputableLang'.comp` (intra-layer, sorry-free) +
+`red_inNPLang` + `inNPLang_to_inNP` = `red_inNP_of_lang`. The *free* unprimed `comp`
+(arbitrary `encodeIn`/`decodeOut`) is **genuinely unneeded** — the reduction *chain*
+composes at the framework level via `reducesPolyMO_transitive`, so no consumer ever needs
+to fuse two free layer witnesses into one.
 
-**Net effect:** the reduction side no longer routes through the wrong-budget
-`Compile_sound` / `Compile_run_physical` / `Compile_polyBound` (overhead shape) — those
-are now **DEAD** (nothing consumes them; `Compile_sound`'s `overhead` budget is
-unprovable per Finding A — **do not try to prove them; they are superseded by the residue
-route**). Every residual sorry on **both** the decider and reduction halves is now a
-**pinned bottom-up gadget** (`padRegsTM` ✅ done; the 7 ops + 2 combinators) plus the
-shared consLen-unary `c_noConsLen` and EvalCnf's encoding fields.
+**Action taken (PolyTime.lean):**
+- **Deleted** the free `red_inNP_via_lang` (superseded by the proven `red_inNP_of_lang`).
+- **Replaced** the dead free `PolyTimeComputableLang.comp` with a **proven** canonical
+  `PolyTimeComputableLang.comp` taking primed witnesses: `(Wg.comp Wh).toLang`. This routes
+  an independent open gap through the proven canonical infrastructure — `sorryAx` now enters
+  only via the shared pinned `c_noConsLen` (verified: `#print axioms` of `comp` =
+  `[propext, sorryAx, Quot.sound]`, no new independent gap). Net: **−2 independent sorrys**.
+- Scrubbed the now-stale doc references (`comp_computes_of_bridge`, the C9 header).
+- Build green (3358 jobs); `#print axioms CookLevin` unchanged.
 
 ---
 
@@ -192,6 +174,13 @@ shared consLen-unary `c_noConsLen` and EvalCnf's encoding fields.
   (`regBound`/`usesBelow`/`width_le`/`noConsLen`/`decode_agree`); `toLang` populates them.
   ⇒ `Compile_sound` / `Compile_run_physical` / `Compile_polyBound` (overhead budget) are
   **DEAD/superseded — do not attempt to prove**.
+- **Layer composition + NP-routing CLOSED** (PolyTime.lean): `PolyTimeComputableLang'.comp`
+  (intra-layer, sorry-free) + `PolyTimeComputableLang.comp` (`(Wg.comp Wh).toLang`, bridges
+  to the free witness; sorry only via pinned `c_noConsLen`) + `red_inNPLang` +
+  `inNPLang_to_inNP` = `red_inNP_of_lang` (framework `inNP P` from a canonical layer
+  reduction + `inNPLang Q`). **The free `comp` / `red_inNP_via_lang` are gone** (unneeded:
+  the chain composes via `reducesPolyMO_transitive`). `comp_computes_of_bridge` retained as
+  the documented free-encoding gap. **Do not re-introduce a free `comp`.**
 - **`DecidesBy.encode_size` is per-decider polynomial** (`encodeBound`+`_poly`+`_mono`);
   all constructors migrated. **Settled — do not re-tighten.**
 - **★ `Compile.padRegsTM` — the WALL gadget — is COMPLETE and sorry-free** (Compile.lean
@@ -232,43 +221,51 @@ shared consLen-unary `c_noConsLen` and EvalCnf's encoding fields.
 You assemble final pieces and design their proofs; create `sorry` lemmas when
 provable; surface gaps early.
 
-✅ **Both decider AND reduction bridges are now assembled** on the residue/`physStepBudget`
+✅ **Both decider AND reduction bridges are assembled** on the residue/`physStepBudget`
 contract, the WALL is resolved on both (decider: `paddedBitDecider_run`; function/reduction:
-`paddedCompute_run`), and `encode_size` is settled (polynomial). Every residual sorry on the
-`sat_NP` decider path AND the `⪯p`/`toFrameworkWitness'` reduction path is now a **pinned
-bottom-up gadget** (+ the shared `c_noConsLen`). The top-down frontier moves to the layer
-**composition** lemmas and the **EvalCnf verifier** design:
+`paddedCompute_run`), `encode_size` is settled (polynomial), and **layer composition +
+NP-routing are now closed** (this session — see below). Every residual sorry on the `sat_NP`
+decider path AND the `⪯p`/`toFrameworkWitness'` reduction path is a **pinned bottom-up
+gadget** (+ the shared `c_noConsLen`). The top-down frontier is now the **EvalCnf verifier**
+(the LIVE `sat_NP` in-NP path) and the **layer-native `inNP` framework refinement**:
 
-1. **`PolyTimeComputableLang.comp` / `red_inNP_via_lang`** (PolyTime.lean, both `sorry`) —
-   the layer composition lemmas the S3 reduction chain needs (ROADMAP step 2's tail). Now
-   the **highest** top-down value. **Key leverage:** the *primed* `PolyTimeComputableLang'.
-   comp` (line ~700) is already **sorry-free** and `toLang` now supplies ALL WALL fields
-   (`regBound`/`usesBelow`/`width_le`/`noConsLen`/`decode_agree`) **generically** (e.g.
-   `decode_agree` via `Cmd.eval_agree` at register 0, for *any* canonical witness). So for
-   canonical-encoded types the unprimed `comp` can be obtained as
-   `(Wg'.comp Wh').toLang` — no new per-composite WALL reasoning needed. The remaining
-   genuine work is the *free* unprimed `comp` (arbitrary `encodeIn`/`decodeOut`): sequence
-   `Wh.c` then `Wg.c` with a register shuffle, thread the cost bound (`Wh.cost_bound +
-   Wg.cost_bound ∘ Wh.cost_bound`), and re-derive `decode_agree` for the composite's
-   `decodeOut`. `comp_computes_of_bridge` (PROVEN) already isolates the encoding-
-   compatibility gap (a real `comp` supplies `reEncode` from a canonical encoding) — prefer
-   routing through the primed/`toLang` path over re-deriving it.
-2. **Plan the EvalCnf inner bodies' contracts** (`processOneClause`/`processOneLiteral`/
-   `memberCheck`, EvalCnfCmd.lean, all `sorry` `Cmd`s). These gate `evalCnfCmd_decides`/
-   `_cost_bound`/`usesBelow`/`noConsLen`. Top-down: pin their `decides`/cost sub-contracts
-   so the bottom-up DSL author has targets. (Coupled with Task 1's unary re-encoding —
-   coordinate.) Also discharge `evalCnfDecidesLang`'s `usesBelow`/`noConsLen` once the inner
-   bodies are concrete (each touches only registers 0..11).
+1. **EvalCnf verifier design — now the HIGHEST top-down value (LIVE `sat_NP` path).**
+   `evalCnfDecidesLang` (EvalCnfTM.lean) owes 4 fields (`encodeIn_size`, `enc_bit`,
+   `usesBelow`, `noConsLen`), all gated on (a) the still-`sorry` inner bodies
+   (`processOneClause`/`processOneLiteral`/`memberCheck`, EvalCnfCmd.lean) and (b) the UNARY
+   re-encoding (bottom-up "Task 1"). Top-down work that **de-risks** the costly bottom-up build:
+   - **Design the UNARY `encodeState`/`encodeLit`/`encodeCnf` NOW** (variables as `1`-blocks,
+     markers in `{0,1}`) and pin `enc_bit`/`encodeIn_size` against the *new* layout, so the
+     bottom-up author hits a fixed target instead of a moving one. **⚠ Coordinate with
+     bottom-up "Task 1" — do not both rewrite `encodeState` in parallel.** This is the
+     top-down/bottom-up meeting point for the live path.
+   - **Pin the inner-body contracts** (`processOneLiteral` ORs literal-satisfaction into
+     `CLAUSE_SAT`; `memberCheck` sets `MEMBER_FOUND`; cost ≤ `|ASSGN|`/`|CNF_STREAM|`) as
+     explicit `sorry` lemmas so the DSL author has `decides`/cost targets. Each body touches
+     only registers `0..11` ⇒ discharges `usesBelow`/`noConsLen` once concrete.
+   - **⚠ Gap surfaced this session — `encodeIn_size` base cases.** The plan in EvalCnfTM.lean
+     (chain `encodeState_size_bound : ≤ 5n+20` with `5n+20 ≤ (n+1)^3`) is **broken for
+     `n < 3`**: `5·0+20 = 20 ≰ 1 = (0+1)^3`. The actual `State.size (encodeState ([],[]))`
+     is `1` (just the `[CLAUSE_END]` const cell), so the bound *holds*, but only via the
+     **concrete** small-input size, not the loose `5n+20`. Either prove the base cases from
+     the concrete `encodeState`, or pick a `costBound` dominating `5n+20` from `n=0`. (The
+     unary re-encoding will change `encodeCnf_length`/`encodeState_size_bound` anyway — fold
+     this in then.)
+2. **Framework `red_inNP` (NP.lean:291) — layer-native `inNP` refinement.** The one genuine
+   framework-side `sorry` for NP-routing. It is **blocked by design**: `inNP Q` exposes only
+   an opaque `FlatTM` decider (`inTimePoly`), from which no `Cmd` is recoverable, so the layer
+   engine has nothing to precompose. The fix is to make the framework's `inNP`/`inTimePoly`
+   **layer-native** (carry a `DecidesLang`), after which `red_inNP` collapses to the proven
+   `red_inNP_of_lang` (which already consumes the layer-native `inNPLang Q`). Deep S3-migration
+   item; design when the S3 retirement (ROADMAP step 2) is underway.
 3. **(validated, low priority) The `ifBit`/`forBnd` residue combinator interfaces**
    (`compileIfBit_sound_physical_residue` / `compileForBnd_sound_physical_residue`,
    Compile.lean ~9111/9164, both `sorry`) are **statement-validated**: `run_physical_
    residue_gen` typechecks its dispatch to them, so their budget/residue/W-invariant shapes
-   compose. No restatement needed — they are now purely BOTTOM-UP build targets.
+   compose. No restatement needed — purely BOTTOM-UP build targets.
 4. **(optional cleanup) Delete the dead `Compile_sound` / `Compile_run_physical` /
    `Compile_polyBound`** (overhead budget, superseded by the residue route, nothing
-   consumes them). Low priority; scrub their doc references (several in PolyTime.lean
-   headers still say "modulo the assumed `Compile_sound`" — now stale, the bridges consume
-   `Compile_run_physical_residue` via `paddedCompute_run`/`paddedBitDecider_run`).
+   consumes them). Low priority; scrub their stale doc references in PolyTime.lean headers.
 
 # ▶ BOTTOM-UP work stream — next steps
 
