@@ -100,7 +100,7 @@ structure DecidesLang {X : Type} [encodable X]
   *contents*, not spread across registers). -/
   width_le : ∀ x, (encodeIn x).length ≤ regBound
   /-- **(WALL, Risk C2 — bottom-up) `consLen`-free.** Until `Op.consLen` is re-laid
-  UNARY (Task 1), it breaks `BitState`; this field is the `NoConsLen` side-condition
+  UNARY (HANDOFF bottom-up Task 4), it breaks `BitState`; this field is the `NoConsLen` side-condition
   `Compile.paddedBitDecider_run` needs. Dropped entirely once `consLen` is unary. -/
   noConsLen : Cmd.NoConsLen c
 
@@ -143,7 +143,7 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   packed into register *contents*, not spread across registers). -/
   width_le : ∀ x, (encodeIn x).length ≤ regBound
   /-- **(WALL, Risk C2 — bottom-up) `consLen`-free** — mirrors `DecidesLang.noConsLen`;
-  dropped once `Op.consLen` is re-laid UNARY (Task 1). -/
+  dropped once `Op.consLen` is re-laid UNARY (HANDOFF bottom-up Task 4). -/
   noConsLen : Cmd.NoConsLen c
   /-- **(WALL, Risk C2) Decode is padding-insensitive.** Widening the input by
   `regBound` empty registers does not change the decoded output — the output register
@@ -743,7 +743,7 @@ def PolyTimeComputableLang'.comp
 
 /-- **(WALL, Risk C2 — bottom-up, pinned) The canonical program is `consLen`-free.**
 The reduction-side analogue of `DecidesLang'.c_noConsLen`: until `Op.consLen` is
-re-laid UNARY (Task 1) it breaks `BitState`, so the canonical witnesses owe this
+re-laid UNARY (HANDOFF bottom-up Task 4) it breaks `BitState`, so the canonical witnesses owe this
 side-condition. It is the same pinned obligation the decider path carries; it is
 dropped entirely once `consLen` is unary. -/
 private theorem PolyTimeComputableLang'.c_noConsLen
@@ -1045,7 +1045,7 @@ instance for free, discharging the `enc_bit` obligation of any canonical witness
 over them. `Bool`/`Unit`/`List Bool` qualify today. `Nat` (`[n]`), `List Nat`
 (`id`), and the product (length-prefix cell) do **not** — they must be re-laid
 **unary** before they can become `BitEncodable` (HANDOFF.md "The ordered plan",
-Task 1). -/
+HANDOFF bottom-up Task 4). -/
 
 /-- `Nat` is bit-level: unary `enc n = replicate n 1`, every cell is `1`. -/
 instance : BitEncodable Nat where
@@ -1307,7 +1307,7 @@ def PolyTimeComputableLang'.swap {X Y : Type} [encodable X] [encodable Y]
     decide
   -- TODO(C2, B′): the input type is `X × Y`; the product encoding must be re-laid
   -- UNARY before it is `BitState`, then this becomes `BitEncodable.enc_bit` (add
-  -- a `[BitEncodable (X × Y)]` instance hypothesis). See HANDOFF.md Task 1.
+  -- a `[BitEncodable (X × Y)]` instance hypothesis). See HANDOFF.md bottom-up Task 4.
   enc_bit := sorry
 
 /-! ### Verifier composition (toward `red_inNP`)
@@ -1719,7 +1719,7 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
       ⟨bk1, b0, bk2⟩, ⟨b0, b0, bk1⟩, bk, bk1, bk2⟩
   -- TODO(C2, B′): input type is `X × C`; the product encoding must be re-laid
   -- UNARY before it is `BitState`, then this becomes `BitEncodable.enc_bit` (add
-  -- a `[BitEncodable (X × C)]` instance hypothesis). See HANDOFF.md Task 1.
+  -- a `[BitEncodable (X × C)]` instance hypothesis). See HANDOFF.md bottom-up Task 4.
   enc_bit := sorry
 
 /-- **`map_snd` (the mirror of `map_fst`).** Lift `Wf : PolyTimeComputableLang' f`
@@ -1950,7 +1950,7 @@ private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X
     Compile.physStepBudget_mono (by omega) h2
   omega
 
-/-- ⚠ **WALL (consLen) — pinned bottom-up gap (Task 1).** The canonical product
+/-- ⚠ **WALL (consLen) — pinned bottom-up gap (HANDOFF bottom-up Task 4).** The canonical product
 machinery (`map_fst`) emits `Op.consLen`, which breaks `BitState`, so `NoConsLen D.c`
 is FALSE for composed verifiers until `consLen` is re-laid UNARY (after which
 `Cmd.eval_preserves_BitState`'s `NoConsLen` side-condition is dropped entirely). -/

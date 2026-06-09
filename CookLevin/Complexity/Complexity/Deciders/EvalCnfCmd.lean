@@ -492,7 +492,8 @@ theorem encodeAssgn_length_le (a : assgn) :
 
 /-- The encoded state's total size is **linearly** bounded by the input size
 (`≤ 6 · size`). The unary blow-up is charged by `encodable.size Nat = id`; the
-cubic cost bound `(n+1)^3` then absorbs it (see `EvalCnfTM.encodeIn_size`). -/
+quartic cost bound (`EvalCnfTM.timeBound`) then absorbs it (see
+`EvalCnfTM.encodeIn_size`). -/
 theorem encodeState_size_bound (Na : cnf × assgn) :
     State.size (encodeState Na) ≤ 6 * encodable.size Na := by
   rcases Na with ⟨N, a⟩
