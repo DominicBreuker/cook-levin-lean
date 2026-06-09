@@ -42,9 +42,10 @@ sat_NP (EvalCnfTM.lean)
                  → Compile.bitDecider_run                     (Compile.lean ~9486; physStepBudget)
                       → Compile_run_physical_residue          (Compile.lean ~9225; PROVEN from the assembly,
                                                                sorry only via the leaf gadgets below)
-       evalCnfDecidesLang : DecidesLang …                     (EvalCnfTM.lean; regBound=12, width_le PROVEN;
-                                                               SORRY fields: encodeIn_size, enc_bit,
-                                                               usesBelow, noConsLen — all BOTTOM-UP, Task 1)
+       evalCnfDecidesLang : DecidesLang …                     (EvalCnfTM.lean; regBound=12, width_le,
+                                                               enc_bit, encodeIn_size PROVEN (2026-06-09);
+                                                               SORRY fields: usesBelow, noConsLen, decides,
+                                                               cost_bound — all gated on the inner bodies)
 REAL REMAINING MATH under the assembly:
   padRegsTM_run / _traj   (Compile.lean ~10130; ✅ PROVEN, sorry-free — the WALL gadget
                            is COMPLETE. paddedBitDecider_run's residual sorryAx is now
@@ -122,28 +123,32 @@ done) — Task 1.
 
 ---
 
-## ✅ What this session (top-down, 2026-06-09) did — close layer composition / NP-routing
+## ✅ What this session (2026-06-09) did — comp cleanup (top-down) + EvalCnf encoding (bottom-up)
 
-The decider + reduction bridges were already assembled on the residue contract (prior
-sessions). The composition layer still carried **two dead `sorry`s** masquerading as the
-"highest top-down value" — `PolyTimeComputableLang.comp` (free) and `red_inNP_via_lang`.
+**(A) Top-down — closed layer composition / NP-routing.** The composition layer carried
+**two dead `sorry`s** billed as "highest top-down value": `PolyTimeComputableLang.comp`
+(free) and `red_inNP_via_lang`. Risk-based finding: both were **consumed by nothing** and
+**superseded** by the proven canonical route (`PolyTimeComputableLang'.comp` + `red_inNPLang`
++ `inNPLang_to_inNP` = `red_inNP_of_lang`). The *free* unprimed `comp` is **genuinely
+unneeded** — the reduction *chain* composes at the framework level via
+`reducesPolyMO_transitive`. Action: deleted `red_inNP_via_lang`; replaced the dead free
+`comp` with a **proven** canonical `PolyTimeComputableLang.comp = (Wg.comp Wh).toLang`
+(`sorryAx` now only via the shared pinned `c_noConsLen`). Net **−2 independent sorrys**.
 
-**Finding (risk-based):** both were **consumed by nothing** and **superseded** by the
-canonical route already proven: `PolyTimeComputableLang'.comp` (intra-layer, sorry-free) +
-`red_inNPLang` + `inNPLang_to_inNP` = `red_inNP_of_lang`. The *free* unprimed `comp`
-(arbitrary `encodeIn`/`decodeOut`) is **genuinely unneeded** — the reduction *chain*
-composes at the framework level via `reducesPolyMO_transitive`, so no consumer ever needs
-to fuse two free layer witnesses into one.
+**(B) Bottom-up — re-laid `EvalCnfCmd.encodeState` UNARY + discharged 2 live fields.** The
+LIVE `sat_NP` path's encoding was non-`BitState` (cells `v+3`, `CLAUSE_END=2`). **Key
+scoping finding:** the live path is genuinely **`consLen`/`takeAt`/`dropAt`-free** (those
+are *canonical product-toolkit* only — `swapCmd`/`mapFstCmd`), so the live keystone is just
+the EvalCnf encoding, NOT the big coupled consLen/product migration.
+- Re-laid the encoding fully bit-level & self-delimiting (`{0,1}` only; variables unary;
+  `#eval`-probed): literal `(pol,v) → [1,polBit] ++ replicate v 1 ++ [0]`; clause `→ lits ++
+  [0]`; assignment per-var `[1] ++ replicate u 1 ++ [0]`. No `CLAUSE_END` constant.
+- Proved `encodeLit_bit … encodeState_bit` ⇒ discharged **`evalCnfDecidesLang.enc_bit`**.
+- Proved the unary size accounting (`encsize_list_foldr`, `encodeCnf_length ≤ 5·size`,
+  `encodeAssgn_length_le ≤ 2·size`, `encodeState_size_bound ≤ 6·size`) ⇒ discharged
+  **`evalCnfDecidesLang.encodeIn_size`** (`6n ≤ (n+1)^3`). All axiom-clean.
 
-**Action taken (PolyTime.lean):**
-- **Deleted** the free `red_inNP_via_lang` (superseded by the proven `red_inNP_of_lang`).
-- **Replaced** the dead free `PolyTimeComputableLang.comp` with a **proven** canonical
-  `PolyTimeComputableLang.comp` taking primed witnesses: `(Wg.comp Wh).toLang`. This routes
-  an independent open gap through the proven canonical infrastructure — `sorryAx` now enters
-  only via the shared pinned `c_noConsLen` (verified: `#print axioms` of `comp` =
-  `[propext, sorryAx, Quot.sound]`, no new independent gap). Net: **−2 independent sorrys**.
-- Scrubbed the now-stale doc references (`comp_computes_of_bridge`, the C9 header).
-- Build green (3358 jobs); `#print axioms CookLevin` unchanged.
+Build green (3358 jobs); `#print axioms CookLevin` unchanged.
 
 ---
 
@@ -183,6 +188,16 @@ to fuse two free layer witnesses into one.
   the documented free-encoding gap. **Do not re-introduce a free `comp`.**
 - **`DecidesBy.encode_size` is per-decider polynomial** (`encodeBound`+`_poly`+`_mono`);
   all constructors migrated. **Settled — do not re-tighten.**
+- **★ EvalCnf UNARY encoding (LIVE `sat_NP`) — DONE (2026-06-09).** `EvalCnfCmd.encodeState`
+  is bit-level/self-delimiting (`{0,1}` only). Proven & axiom-clean: the BitState chain
+  `encodeLit_bit`/`encodeClause_bit`/`encodeCnf_bit`/`encodeAssgn_bit`/`encodeState_bit`
+  (⇒ `evalCnfDecidesLang.enc_bit`); the unary size accounting `encsize_list_foldr` /
+  `foldl_encsize_acc` / `length_le_encsize` (generic `encodable.size`-of-list helpers) +
+  `encodeCnf_length` (`≤5·size`) / `encodeAssgn_length_le` (`≤2·size`) /
+  `encodeState_size_bound` (`≤6·size`) (⇒ `evalCnfDecidesLang.encodeIn_size` via
+  `6n ≤ (n+1)^3`). **The live keystone scoping finding:** `evalCnfCmd` is genuinely
+  `consLen`/`takeAt`/`dropAt`-free — those are canonical-toolkit only — so the live path did
+  NOT need the (separate, larger) product/`consLen` unary migration.
 - **★ `Compile.padRegsTM` — the WALL gadget — is COMPLETE and sorry-free** (Compile.lean
   ~9540–10160): `k`-fold static composition (recursion on `k`) of `Compile.padBody`
   (= `stepRightTM ⨾ scanRightUntilTM 4 3 ⨾ insertCarryTM 0 ⨾ rewindFromEndTM 4 3`), base
@@ -229,28 +244,17 @@ decider path AND the `⪯p`/`toFrameworkWitness'` reduction path is a **pinned b
 gadget** (+ the shared `c_noConsLen`). The top-down frontier is now the **EvalCnf verifier**
 (the LIVE `sat_NP` in-NP path) and the **layer-native `inNP` framework refinement**:
 
-1. **EvalCnf verifier design — now the HIGHEST top-down value (LIVE `sat_NP` path).**
-   `evalCnfDecidesLang` (EvalCnfTM.lean) owes 4 fields (`encodeIn_size`, `enc_bit`,
-   `usesBelow`, `noConsLen`), all gated on (a) the still-`sorry` inner bodies
-   (`processOneClause`/`processOneLiteral`/`memberCheck`, EvalCnfCmd.lean) and (b) the UNARY
-   re-encoding (bottom-up "Task 1"). Top-down work that **de-risks** the costly bottom-up build:
-   - **Design the UNARY `encodeState`/`encodeLit`/`encodeCnf` NOW** (variables as `1`-blocks,
-     markers in `{0,1}`) and pin `enc_bit`/`encodeIn_size` against the *new* layout, so the
-     bottom-up author hits a fixed target instead of a moving one. **⚠ Coordinate with
-     bottom-up "Task 1" — do not both rewrite `encodeState` in parallel.** This is the
-     top-down/bottom-up meeting point for the live path.
-   - **Pin the inner-body contracts** (`processOneLiteral` ORs literal-satisfaction into
-     `CLAUSE_SAT`; `memberCheck` sets `MEMBER_FOUND`; cost ≤ `|ASSGN|`/`|CNF_STREAM|`) as
-     explicit `sorry` lemmas so the DSL author has `decides`/cost targets. Each body touches
-     only registers `0..11` ⇒ discharges `usesBelow`/`noConsLen` once concrete.
-   - **⚠ Gap surfaced this session — `encodeIn_size` base cases.** The plan in EvalCnfTM.lean
-     (chain `encodeState_size_bound : ≤ 5n+20` with `5n+20 ≤ (n+1)^3`) is **broken for
-     `n < 3`**: `5·0+20 = 20 ≰ 1 = (0+1)^3`. The actual `State.size (encodeState ([],[]))`
-     is `1` (just the `[CLAUSE_END]` const cell), so the bound *holds*, but only via the
-     **concrete** small-input size, not the loose `5n+20`. Either prove the base cases from
-     the concrete `encodeState`, or pick a `costBound` dominating `5n+20` from `n=0`. (The
-     unary re-encoding will change `encodeCnf_length`/`encodeState_size_bound` anyway — fold
-     this in then.)
+1. **EvalCnf verifier — pin the inner-body contracts (HIGHEST top-down value, LIVE `sat_NP`).**
+   The unary encoding + `enc_bit` + `encodeIn_size` are now **DONE** (2026-06-09, bottom-up).
+   `evalCnfDecidesLang` owes only `decides`/`cost_bound`/`usesBelow`/`noConsLen`, all gated on
+   the still-`sorry` inner bodies (`processOneClause`/`processOneLiteral`/`memberCheck`). The
+   top-down job is to **pin their sub-contracts** as explicit `sorry` lemmas so the bottom-up
+   DSL author has targets: `processOneLiteral` ORs literal-satisfaction into `CLAUSE_SAT`;
+   `memberCheck` sets `MEMBER_FOUND` from `eqBit`-ing the unary `LIT_VAR` against each unary
+   `ASSGN` block; per-body cost ≤ `|CNF_STREAM|`/`|ASSGN|`. Parse the stream per the "Notes for
+   the inner-body author" block now in EvalCnfCmd.lean (`1`=literal-follows / `0`=clause-end).
+   Each body touches only registers `0..11` and uses **no `consLen`**, so `usesBelow`/
+   `noConsLen` fall out once concrete. (Coordinate with bottom-up task 3.)
 2. **Framework `red_inNP` (NP.lean:291) — layer-native `inNP` refinement.** The one genuine
    framework-side `sorry` for NP-routing. It is **blocked by design**: `inNP Q` exposes only
    an opaque `FlatTM` decider (`inTimePoly`), from which no `Cmd` is recoverable, so the layer
@@ -281,23 +285,36 @@ halves at once.
    shape/helper lemmas proven (see the PROVEN list). `paddedBitDecider_run`'s residual
    `sorryAx` is now **only** the leaf op gadgets below — so the **entire decider half of
    `sat_NP` rests on Tasks 2–4 alone**. The remaining bottom-up work:
-2. **Task 1 — unary encodings + scratch operands** (gates all 7 ops). Restate
-   `takeAt`/`dropAt`/`consLen` unary (length = the register's unary count, not
-   `headD 0`); bump `consLen`'s `Op.cost`; add empty-scratch operands
-   (`copy`/`tail`/`concat` need 1, `eqBit` needs 2); re-lay `Nat`/product/`List`
-   encodings bit-level + `BitEncodable` instances; **re-lay `EvalCnfCmd.encodeState`
-   UNARY** (the LIVE `sat_NP` encoding, cells `v+3`/`2` today) and discharge its
-   `enc_bit` / `encodeIn_size`. After this, `consLen` preserves `BitState`, the
-   `NoConsLen` side-conditions (`DecidesLang'.c_noConsLen` **and** the free-path
-   `evalCnfDecidesLang.noConsLen`) are **dropped entirely**. Note the free path now
-   *also* owes `evalCnfDecidesLang.usesBelow : UsesBelow evalCnfCmd 12` — provable once
-   the inner bodies (Task 4 / EvalCnf) are concrete; each touches only registers 0..11.
-3. **The 7 op gadgets** in `compileOp_sound_physical_residue` (Compile.lean
-   ~8238): `copy`/`tail`/`concat` via `moveRegion2TM`; `eqBit` via compare-and-
-   delete (2 scratch); `takeAt`/`dropAt` via counter-bounded transfer over
-   `lenReg`; `consLen` unary. Each must establish the W-invariant ①
-   (`State.size(out) + |res_out| ≤ State.size s + |res_in| + Op.cost o s`).
-4. **The two stub machines (gate the `ifBit`/`forBnd` combinators):**
+2. ✅ **EvalCnf unary encoding — DONE (2026-06-09).** `EvalCnfCmd.encodeState` is now
+   bit-level/self-delimiting; `evalCnfDecidesLang.enc_bit` + `encodeIn_size` are PROVEN.
+   The BitState helpers + unary size accounting are reusable (see PROVEN list).
+3. **EvalCnf inner bodies — the LIVE `sat_NP` remainder** (`processOneClause`/
+   `processOneLiteral`/`memberCheck`, EvalCnfCmd.lean, still `sorry` `Cmd`s). These gate
+   the last 4 fields of `evalCnfDecidesLang` (`decides`, `cost_bound`, `usesBelow`,
+   `noConsLen`). Build them by parsing the unary stream with proven gadgets (see the
+   "Notes for the inner-body author" block in EvalCnfCmd.lean — `1`=literal-follows /
+   `0`=clause-end at a literal slot; `eqBit` the unary `LIT_VAR` against each unary `ASSGN`
+   block). Each body touches only registers `0..11` ⇒ `usesBelow`/`noConsLen` fall out once
+   concrete (no `consLen` is used, so `noConsLen` is immediate). Coordinate with TOP-DOWN
+   task 1 (pin the `decides`/cost sub-contracts first).
+4. **Canonical product-toolkit unary migration** (separate from the live path; needed for
+   S3 endgame, NOT for `sat_NP`). Restate `takeAt`/`dropAt`/`consLen` unary (count = the
+   register's unary length, not `headD 0`); bump `consLen`'s `Op.cost`; re-lay the `Nat`/
+   product/`List` canonical encodings bit-level (the product's single length-prefix cell →
+   unary block) + `BitEncodable` instances; re-derive `swapCmd`/`mapFstCmd` correctness.
+   After this, `consLen` preserves `BitState` and the `NoConsLen` side-conditions
+   (`DecidesLang'.c_noConsLen` + `PolyTimeComputableLang'.c_noConsLen`) are **dropped**.
+   ⚠ This ripples to the proven product-toolkit `normalizes`/cost proofs — sizeable;
+   schedule as its own batch.
+5. **The 7 op gadgets** in `compileOp_sound_physical_residue` (Compile.lean ~8238):
+   `copy`/`tail`/`concat` via `moveRegion2TM`; `eqBit` via compare-and-delete (2 scratch);
+   `takeAt`/`dropAt` via counter-bounded transfer over `lenReg`; `consLen` unary. (The
+   `copy`/`tail`/`concat`/`eqBit` ops need empty-scratch operands — fold into task 4.) Each
+   must establish the W-invariant ① (`State.size(out) + |res_out| ≤ State.size s + |res_in|
+   + Op.cost o s`). **Which ops the live path actually needs depends on the EvalCnf inner
+   bodies (task 3)** — likely `copy`/`tail`/`head`/`eqBit`/`nonEmpty`, not the value-as-
+   length trio; prioritise those.
+6. **The two stub machines (gate the `ifBit`/`forBnd` combinators):**
    - `compileTestBit t` (Compile.lean:1483): navigate to register `t` + `bitReadTM`,
      two-exit tester; then prove `compileIfBit_sound_physical_residue` via
      `branchComposeFlatTM_run` + `joinTwoHalts` + the rewind bracket.
