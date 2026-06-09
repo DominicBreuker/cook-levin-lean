@@ -188,30 +188,32 @@ theorem PolyTimeComputableLang.toFrameworkWitness
   intro x
   exact W.output_size_le x
 
-/-- **Composition (Part 4 / Part 3):** the layer is closed under
-`Cmd.seq`, so polynomially-bounded computable functions compose. -/
-noncomputable def PolyTimeComputableLang.comp
-    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
-    {g : Y → Z} {h : X → Y}
-    (Wg : PolyTimeComputableLang g) (Wh : PolyTimeComputableLang h) :
-    PolyTimeComputableLang (g ∘ h) := by
-  sorry  -- TODO(Part4.1): sequence Wh.c then Wg.c with a register-
-         -- shuffle in between; cost is bound by Wh.cost_bound +
-         -- Wg.cost_bound ∘ Wh.cost_bound.
+/-! ### Layer composition & NP-routing — pointers (the live, proven route)
 
-/-- **NP-style composition (Part 4):** if `P ⪯p Q` (via a
-poly-time reduction witnessed at the layer level) and `Q ∈ inNP`
-(via a layer-level verifier), then `P ∈ inNP`. This is the missing
-piece that closes the `red_inNP` TM-composition sorry. -/
-theorem red_inNP_via_lang
-    {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop)
-    (f : X → Y) (hf : PolyTimeComputableLang f)
-    (hf_correct : ∀ x, P x ↔ Q (f x))
-    (hQ : inNP Q) :
-    inNP P := by
-  sorry  -- TODO(Part4.2): destructure hQ, compose the verifier
-         -- with hf via Cmd.seq, repackage as inNP P.
+The layer is closed under `Cmd.seq`, so polynomially-bounded computable functions
+compose. The proven entry points (defined further down, after the canonical
+`PolyTimeComputableLang'` infrastructure) are:
+
+* **`PolyTimeComputableLang'.comp`** — *canonical-encoded* composition (no
+  re-encoding bridge needed; both programs share the canonical `State`
+  representation). Sorry-free.
+* **`PolyTimeComputableLang.comp`** — bridges `'.comp` back to the free witness
+  type via `toLang` (`(Wg.comp Wh).toLang`). Sorry-free modulo the shared pinned
+  `c_noConsLen`.
+* **`red_inNP_of_lang`** — NP-style composition: from a canonical layer reduction
+  `Wf : PolyTimeComputableLang' f` (with `P x ↔ Q (f x)`) and a layer-native
+  `inNPLang Q`, yields the framework's `inNP P` (composes `red_inNPLang` with the
+  decider bridge `inNPLang_to_inNP`).
+
+**Removed (superseded, were dead `sorry`s):** the free-encoding
+`PolyTimeComputableLang.comp` (arbitrary `encodeIn`/`decodeOut`) and
+`red_inNP_via_lang`. A *free* `comp` would need an explicit re-encoding `Cmd`
+(see `comp_computes_of_bridge`, which isolates exactly that gap) and is also
+**unneeded** — the reduction *chain* composes at the framework level via
+`reducesPolyMO_transitive` (each link bridged by `reducesPolyMO_of_lang`).
+`red_inNP_via_lang` took an abstract `inNP Q`, which exposes only an opaque
+`FlatTM` decider (no `Cmd` recoverable, nothing to precompose); routing requires
+the layer-native `inNPLang Q`, which is exactly what `red_inNP_of_lang` consumes. -/
 
 /-! ## S3-retirement probe (May 2026): a TM-backed `polyTimeComputable`
 
@@ -425,8 +427,9 @@ the input tape of `g`'s TM), because `ComputesBy.encode`/`decode` are
 free functions with no shared representation. That re-encoder is exactly
 what the **layer** avoids: `Cmd.seq` keeps everything in the single
 `State` representation, so the composite needs no bridge tape. Hence
-composition is tractable *only* at the layer level (`PolyTimeComputableLang.comp`,
-still sorry-bodied) — which is the ROADMAP's whole thesis.
+composition is tractable *only* at the layer level (`PolyTimeComputableLang'.comp`,
+proven; `PolyTimeComputableLang.comp` bridges it to the free witness type) — which
+is the ROADMAP's whole thesis.
 
 The remaining obstacle even at the layer is an **encoding-compatibility**
 gap: `PolyTimeComputableLang` carries `encodeIn`/`decodeOut` as
@@ -441,9 +444,10 @@ canonical per-type layer encoding (a `LangEncodable`-style class) so that
 `reEncode` (a `Cmd` mapping `Wh`'s output state to `Wg`'s input state).
 The `computes` law then follows definitionally from `Cmd.eval_seq`. This
 isolates the one missing ingredient (a canonical state encoding) without
-a sorry; a real `PolyTimeComputableLang.comp` is this with `reEncode`
-supplied by the canonical encoding and the cost bound assembled from the
-two polynomial bounds. -/
+a sorry. The canonical encoding **discharges** it: `PolyTimeComputableLang'.comp`
+needs no `reEncode` at all (both programs share the canonical `State`), and the
+proven `PolyTimeComputableLang.comp` (below) bridges that composite to the free
+witness type via `toLang`. -/
 theorem PolyTimeComputableLang.comp_computes_of_bridge
     {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
     {g : Y → Z} {h : X → Y}
@@ -517,10 +521,10 @@ theorem s1_witness_forces_decider
 /-! ## C9: canonical layer encoding (May 2026)
 
 The S3 probe surfaced the one remaining structural prerequisite: layer
-composition (`PolyTimeComputableLang.comp`, `red_inNP_via_lang`, `red_inNP`)
-could not even be *stated*, because `PolyTimeComputableLang.encodeIn` /
-`decodeOut` are **free functions** — one program's output state need not be
-the next program's input state.
+composition (`PolyTimeComputableLang'.comp`, `red_inNPLang`, `red_inNP_of_lang`)
+could not even be *stated* on the free witness, because
+`PolyTimeComputableLang.encodeIn` / `decodeOut` are **free functions** — one
+program's output state need not be the next program's input state.
 
 This block resolves C9. A `LangEncodable` class fixes a **canonical
 single-register** state encoding per type; a `PolyTimeComputableLang'`
@@ -790,6 +794,20 @@ theorem PolyTimeComputableLang'.toFrameworkWitness'
     {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
     {f : X → Y} (W : PolyTimeComputableLang' f) : polyTimeComputable' f :=
   W.toLang.toFrameworkWitness'
+
+/-- **Layer composition into the free witness type.** The canonical-normal-form
+witnesses compose (no re-encoding bridge — both share the canonical `State`
+representation), and the composite bridges back to the free `PolyTimeComputableLang`
+via `toLang`. This is the proven replacement for the deleted free-encoding
+`comp` (see the module note above for why the free version is unneeded). Sorry-free
+modulo the shared pinned `c_noConsLen` (inherited through `toLang`). -/
+def PolyTimeComputableLang.comp
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang' g) (Wh : PolyTimeComputableLang' h) :
+    PolyTimeComputableLang (g ∘ h) :=
+  (Wg.comp Wh).toLang
 
 /-! ### Inhabitants — the machinery is non-vacuous -/
 

@@ -64,23 +64,27 @@ noncomputable def evalCnfDecidesLang :
     DecidesLang (fun Na : cnf × assgn => satisfiesCnf Na.2 Na.1) timeBound where
   c := EvalCnfCmd.evalCnfCmd
   encodeIn := EvalCnfCmd.encodeState
-  encodeIn_size := by intro x; sorry
-    -- TODO(Part3.5-encode-size): obligation is
-    -- `State.size (encodeState x) ≤ timeBound (encodable.size x)
-    --  = (encodable.size x + 1)^3`.
-    -- Closing: combine `EvalCnfCmd.encodeState_size_bound`
-    -- (`≤ 5 · size + 20`) with `5 · n + 20 ≤ (n + 1)^3` for
-    -- `n ≥ 3`, plus a base-case check for `n < 3`.
+  -- `State.size (encodeState x) ≤ timeBound (size x) = (size x + 1)^3`:
+  -- the linear bound `≤ 6·size` (the unary blow-up is charged by `size Nat = id`)
+  -- dominated by the cube.
+  encodeIn_size := by
+    intro x
+    have h1 : State.size (EvalCnfCmd.encodeState x) ≤ 6 * encodable.size x :=
+      EvalCnfCmd.encodeState_size_bound x
+    have h2 : 6 * encodable.size x ≤ timeBound (encodable.size x) := by
+      show 6 * encodable.size x ≤ (encodable.size x + 1) ^ 3
+      have hexp : (encodable.size x + 1) ^ 3
+          = encodable.size x ^ 3 + 3 * encodable.size x ^ 2
+            + 3 * encodable.size x + 1 := by ring
+      rw [hexp]
+      nlinarith [Nat.le_self_pow (show (2 : ℕ) ≠ 0 by norm_num) (encodable.size x),
+        Nat.zero_le (encodable.size x ^ 3)]
+    exact h1.trans h2
   decides := EvalCnfCmd.evalCnfCmd_decides
   cost_bound := EvalCnfCmd.evalCnfCmd_cost_bound
-  enc_bit := by intro x; sorry
-    -- TODO(C2, B′ — LIVE PATH): `Compile.BitState (EvalCnfCmd.encodeState x)`.
-    -- `encodeState` currently lays cells `v+3` (variable values) and
-    -- `CLAUSE_END = 2`, so it is NOT bit-level. This is the live `sat_NP`
-    -- obligation: re-lay `encodeState` UNARY (variables as `1`-blocks, markers in
-    -- `{0,1}`) so it satisfies `BitState`, then discharge here. See HANDOFF.md
-    -- "The live path — EvalCnfCmd" — this, not a `LangEncodable (cnf × assgn)`
-    -- instance, is what `Compile_sound`/`DecidesLang.toDecidesBy` need.
+  -- (C2, B′ — LIVE PATH) `Compile.BitState (encodeState x)`: discharged by the
+  -- now-UNARY encoding (variables as `1`-blocks, markers/separators in `{0,1}`).
+  enc_bit := fun x => EvalCnfCmd.encodeState_bit x
   -- WALL / register frame (free path). `evalCnfCmd` uses registers `0..11`
   -- (`OUTPUT … INNER_IDX`), and `encodeState` lays out exactly those 12 registers.
   regBound := 12

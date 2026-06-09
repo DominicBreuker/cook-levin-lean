@@ -27,30 +27,42 @@ open Complexity.Lang
 
 /-! ## Encoding of the input -/
 
-/-- Encode one literal as a 2-cell block.
-- positive literal `(true, v)`  → `[0, v + 3]`
-- negative literal `(false, v)` → `[1, v + 3]`
+/-! ### UNARY, bit-level encoding (Risk C2, B′ — the LIVE `sat_NP` encoding)
 
-Polarity uses cells `{0, 1}`; variable values are shifted by `+3`
-to leave room for the polarity codes and the clause-end marker. -/
+Every cell is `0`/`1` so the encoded state is a `Compile.BitState` (the compiled
+machine's `sig = 4` alphabet only stays inside `{0,1}`-cells; see HANDOFF.md "The
+invariant: BitState"). Numbers (variable indices) are therefore **unary** blocks
+of `1`s, and every field is **self-delimiting** using only `0`/`1`:
+
+* **literal** `(pol, v)` → `[1, polBit] ++ replicate v 1 ++ [0]`: a leading `1`
+  sentinel ("a literal follows"), the polarity bit (`1` positive / `0` negative),
+  the variable index in unary, then a `0` terminator.
+* **clause** → `lit₀ ++ lit₁ ++ … ++ [0]`: the literal blocks, then a single `0`
+  clause-end marker. At a literal slot the parser reads one cell: `1` ⇒ a literal
+  follows; `0` ⇒ the clause is done (a literal always *starts* with `1`, so the
+  two cases are unambiguous).
+* **CNF** → the clauses concatenated (the outer loop bound `replicate N.length 1`
+  fixes the clause count, so no CNF-level terminator is needed).
+* **assignment** → per variable `u`: `[1] ++ replicate u 1 ++ [0]` (sentinel,
+  unary value, terminator), concatenated. -/
+
+/-- Encode one literal as a bit-level self-delimiting block
+`[1, polBit] ++ replicate v 1 ++ [0]`. Every cell is `0`/`1`. -/
 def encodeLit : literal → List Nat
-  | (true,  v) => [0, v + 3]
-  | (false, v) => [1, v + 3]
+  | (pol, v) => 1 :: (if pol then 1 else 0) :: (List.replicate v 1 ++ [0])
 
-/-- Sentinel value marking the end of a clause inside the encoded CNF. -/
-def CLAUSE_END : Nat := 2
-
-/-- Encode one clause as `lit_0 ++ lit_1 ++ … ++ [CLAUSE_END]`. -/
+/-- Encode one clause as `lit₀ ++ lit₁ ++ … ++ [0]` (a `0` clause-end marker). -/
 def encodeClause (C : clause) : List Nat :=
-  (C.foldr (fun l acc => encodeLit l ++ acc) []) ++ [CLAUSE_END]
+  (C.foldr (fun l acc => encodeLit l ++ acc) []) ++ [0]
 
 /-- Encode a CNF as the concatenation of encoded clauses. -/
 def encodeCnf (N : cnf) : List Nat :=
   N.foldr (fun C acc => encodeClause C ++ acc) []
 
-/-- Encode an assignment: shift each variable by `+3` to match the
-literal encoding's variable encoding. -/
-def encodeAssgn (a : assgn) : List Nat := a.map (· + 3)
+/-- Encode an assignment: each variable `u` → `[1] ++ replicate u 1 ++ [0]`
+(sentinel, unary value, terminator). Every cell is `0`/`1`. -/
+def encodeAssgn (a : assgn) : List Nat :=
+  a.foldr (fun u acc => (1 :: (List.replicate u 1 ++ [0])) ++ acc) []
 
 /-! ## Register layout
 
@@ -65,8 +77,10 @@ def encodeAssgn (a : assgn) : List Nat := a.map (· + 3)
 | 6        | current literal's variable cell                           |
 | 7        | scratch: assignment scan copy (destructively consumed)    |
 | 8        | scratch: member-check result (`[0]` or `[1]`)             |
-| 9–11     | reserved for constant comparisons (e.g. `[2]` for CLAUSE_END)|
--/
+| 9–11     | reserved scratch (loop indices / comparison temporaries)  |
+
+All cells across every register are `0`/`1`, so the state is a `Compile.BitState`
+(no `[CLAUSE_END]` constant is needed any more — a clause-end is a `0` cell). -/
 
 -- Symbolic register names; using `def` over `abbrev` so the proofs
 -- don't substitute them blindly.
@@ -79,11 +93,11 @@ def LIT_POL         : Var := 5
 def LIT_VAR         : Var := 6
 def ASSGN_COPY      : Var := 7
 def MEMBER_FOUND    : Var := 8
-def CONST_CE        : Var := 9   -- holds `[CLAUSE_END] = [2]`
+def CONST_SCRATCH   : Var := 9   -- reserved scratch (was the CLAUSE_END constant)
 def OUTER_IDX       : Var := 10  -- outer loop iteration index
 def INNER_IDX       : Var := 11  -- inner loop iteration index
 
-/-- The encoded input state. -/
+/-- The encoded input state. All 12 registers are bit-level (`Compile.BitState`). -/
 def encodeState : cnf × assgn → State
   | (N, a) =>
     [ []                                  -- 0: OUTPUT
@@ -95,7 +109,7 @@ def encodeState : cnf × assgn → State
     , []                                  -- 6: LIT_VAR
     , []                                  -- 7: ASSGN_COPY
     , []                                  -- 8: MEMBER_FOUND
-    , [CLAUSE_END]                        -- 9: CONST_CE
+    , []                                  -- 9: CONST_SCRATCH
     , []                                  -- 10: OUTER_IDX
     , []                                  -- 11: INNER_IDX
     ]
@@ -132,23 +146,189 @@ noncomputable def evalCnfCmd : Cmd :=
   -- 2. Outer loop: once per clause.
   Cmd.forBnd OUTER_IDX CLAUSE_TALLY processOneClause
 
-/-! ## Correctness and cost obligations -/
+/-! ## Bit-level (`Compile.BitState`) facts — every cell is `0`/`1`
 
+These discharge the live `sat_NP` path's `enc_bit` obligation
+(`Compile.BitState (encodeState x)`, see `EvalCnfTM.evalCnfDecidesLang`). -/
+
+theorem encodeLit_bit (l : literal) : ∀ x ∈ encodeLit l, x ≤ 1 := by
+  rcases l with ⟨pol, v⟩
+  intro x hx
+  simp only [encodeLit, List.mem_cons, List.mem_append, List.mem_replicate,
+    List.not_mem_nil, or_false] at hx
+  rcases hx with h | h | ⟨_, h⟩ | h
+  · omega
+  · cases pol <;> simp_all
+  · omega
+  · omega
+
+theorem encodeClause_bit (C : clause) : ∀ x ∈ encodeClause C, x ≤ 1 := by
+  intro x hx
+  simp only [encodeClause, List.mem_append, List.mem_singleton] at hx
+  rcases hx with hlits | h0
+  · -- inside the folded literal blocks
+    induction C with
+    | nil => simp at hlits
+    | cons l C ih =>
+      simp only [List.foldr_cons, List.mem_append] at hlits
+      rcases hlits with hl | hrest
+      · exact encodeLit_bit l x hl
+      · exact ih hrest
+  · subst h0; exact Nat.zero_le 1
+
+theorem encodeCnf_bit (N : cnf) : ∀ x ∈ encodeCnf N, x ≤ 1 := by
+  intro x hx
+  induction N with
+  | nil => simp [encodeCnf] at hx
+  | cons C N ih =>
+    simp only [encodeCnf, List.foldr_cons, List.mem_append] at hx
+    rcases hx with hC | hrest
+    · exact encodeClause_bit C x hC
+    · exact ih hrest
+
+theorem encodeAssgn_bit (a : assgn) : ∀ x ∈ encodeAssgn a, x ≤ 1 := by
+  intro x hx
+  induction a with
+  | nil => simp [encodeAssgn] at hx
+  | cons u a ih =>
+    simp only [encodeAssgn, List.foldr_cons] at hx
+    rw [List.mem_append] at hx
+    rcases hx with hblock | hrest
+    · simp only [List.mem_cons, List.mem_append, List.mem_replicate,
+        List.not_mem_nil, or_false] at hblock
+      rcases hblock with h | ⟨_, h⟩ | h <;> omega
+    · exact ih hrest
+
+/-- **`Compile.BitState` of the encoded state.** Every register holds only
+`0`/`1` cells: the tally and the unary blocks are `1`s, the markers/separators are
+`0`, the polarity bit is `0`/`1`, and the scratch registers are empty. -/
+theorem encodeState_bit (Na : cnf × assgn) : Compile.BitState (encodeState Na) := by
+  rcases Na with ⟨N, a⟩
+  intro reg hreg x hx
+  simp only [encodeState, List.mem_cons, List.not_mem_nil, or_false] at hreg
+  rcases hreg with h | h | h | h | h | h | h | h | h | h | h | h <;> subst h
+  · simp at hx
+  · simp only [List.mem_replicate] at hx; omega
+  · exact encodeCnf_bit N x hx
+  · exact encodeAssgn_bit a x hx
+  all_goals simp at hx
+
+/-! ## Size accounting (toward `encodeIn_size`)
+
+Under the unary encoding the encoded length grows with the *magnitudes* of the
+variables, but `encodable.size Nat = id` charges exactly those magnitudes, so the
+total size stays **linear** in `encodable.size`. These lemmas package that. -/
+
+/-- `encodable.size` of a list, with the foldl accumulator unrolled to a foldr
+sum (so it splits cleanly over `cons`). -/
+private theorem foldl_encsize_acc {α : Type} [encodable α] :
+    ∀ (acc : Nat) (xs : List α),
+      xs.foldl (fun a x => a + encodable.size x + 1) acc
+        = acc + xs.foldr (fun x s => encodable.size x + 1 + s) 0
+  | acc, [] => by simp
+  | acc, x :: xs => by
+      simp only [List.foldl_cons, List.foldr_cons]
+      rw [foldl_encsize_acc (acc + encodable.size x + 1) xs]; omega
+
+private theorem encsize_list_foldr {α : Type} [encodable α] (xs : List α) :
+    encodable.size xs = xs.foldr (fun x s => encodable.size x + 1 + s) 0 := by
+  show xs.foldl (fun a x => a + encodable.size x + 1) 0 = _
+  rw [foldl_encsize_acc 0 xs]; omega
+
+private theorem length_le_encsize {α : Type} [encodable α] (xs : List α) :
+    xs.length ≤ encodable.size xs := by
+  rw [encsize_list_foldr xs]
+  induction xs with
+  | nil => simp
+  | cons x xs ih => simp only [List.foldr_cons, List.length_cons]; omega
+
+private theorem encodeLit_length (l : literal) : (encodeLit l).length = l.2 + 3 := by
+  rcases l with ⟨pol, v⟩
+  simp only [encodeLit, List.length_cons, List.length_append, List.length_replicate,
+    List.length_nil]
+
+private theorem encodeClause_inner_length (C : clause) :
+    (C.foldr (fun l acc => encodeLit l ++ acc) []).length
+      = C.foldr (fun l s => l.2 + 3 + s) 0 := by
+  induction C with
+  | nil => rfl
+  | cons l C ih =>
+      simp only [List.foldr_cons, List.length_append, encodeLit_length, ih]
+
+private theorem encodeClause_inner_le (C : clause) :
+    C.foldr (fun l s => l.2 + 3 + s) 0
+      ≤ 4 * C.foldr (fun l s => encodable.size l + 1 + s) 0 := by
+  induction C with
+  | nil => simp
+  | cons l C ih =>
+      -- `l.2 : var` is opaque to `omega`; bound it via explicit `Nat` lemmas.
+      have hl2 : l.2 ≤ encodable.size l :=
+        calc l.2 ≤ encodable.size l.1 + l.2 := Nat.le_add_left l.2 (encodable.size l.1)
+          _ ≤ encodable.size l.1 + l.2 + 1 := Nat.le_succ _
+          _ = encodable.size l := rfl
+      simp only [List.foldr_cons]
+      -- now reason about the (Nat-valued) `encodable.size l` and the foldr atoms.
+      calc l.2 + 3 + C.foldr (fun l s => l.2 + 3 + s) 0
+          ≤ encodable.size l + 3 + 4 * C.foldr (fun l s => encodable.size l + 1 + s) 0 :=
+            Nat.add_le_add (Nat.add_le_add_right hl2 3) ih
+        _ ≤ 4 * (encodable.size l + 1
+              + C.foldr (fun l s => encodable.size l + 1 + s) 0) := by omega
+
+private theorem encodeClause_length_le (C : clause) :
+    (encodeClause C).length ≤ 4 * encodable.size C + 1 := by
+  have h1 : (encodeClause C).length = C.foldr (fun l s => l.2 + 3 + s) 0 + 1 := by
+    simp only [encodeClause, List.length_append, List.length_cons, List.length_nil,
+      encodeClause_inner_length]
+  have h2 := encodeClause_inner_le C
+  rw [h1, encsize_list_foldr C]
+  omega
+
+/-- Linear length bound for the unary CNF encoding. -/
 theorem encodeCnf_length (N : cnf) :
-    (encodeCnf N).length ≤ 3 * encodable.size N + 1 := by
-  sorry  -- TODO(Part3.5-encode-size)
+    (encodeCnf N).length ≤ 5 * encodable.size N := by
+  induction N with
+  | nil => simp [encodeCnf]
+  | cons C N ih =>
+      have hlen : (encodeCnf (C :: N)).length
+          = (encodeClause C).length + (encodeCnf N).length := by
+        simp [encodeCnf, List.foldr_cons, List.length_append]
+      have hsize : encodable.size (C :: N)
+          = encodable.size C + 1 + encodable.size N := by
+        rw [encsize_list_foldr (C :: N), encsize_list_foldr N, List.foldr_cons]
+      have hC := encodeClause_length_le C
+      rw [hlen, hsize]; omega
 
-theorem encodeAssgn_length (a : assgn) :
-    (encodeAssgn a).length = a.length := by
-  unfold encodeAssgn
-  exact List.length_map _
+/-- Linear length bound for the unary assignment encoding. -/
+theorem encodeAssgn_length_le (a : assgn) :
+    (encodeAssgn a).length ≤ 2 * encodable.size a := by
+  induction a with
+  | nil => simp [encodeAssgn]
+  | cons u a ih =>
+      have hlen : (encodeAssgn (u :: a)).length = (u + 2) + (encodeAssgn a).length := by
+        simp only [encodeAssgn, List.foldr_cons, List.cons_append, List.length_cons,
+          List.length_append, List.length_replicate, List.length_nil]
+        omega
+      have hsize : encodable.size (u :: a) = u + 1 + encodable.size a := by
+        have hu : encodable.size u = u := rfl
+        rw [encsize_list_foldr (u :: a), encsize_list_foldr a, List.foldr_cons, hu]
+      rw [hlen, hsize]; omega
 
-/-- The encoded state's total size is linearly bounded by the input
-size. (The exact constant doesn't matter — the cost bound
-`(n + 1) ^ 3` absorbs any linear blow-up.) -/
+/-- The encoded state's total size is **linearly** bounded by the input size
+(`≤ 6 · size`). The unary blow-up is charged by `encodable.size Nat = id`; the
+cubic cost bound `(n+1)^3` then absorbs it (see `EvalCnfTM.encodeIn_size`). -/
 theorem encodeState_size_bound (Na : cnf × assgn) :
-    State.size (encodeState Na) ≤ 5 * encodable.size Na + 20 := by
-  sorry  -- TODO(Part3.5-encode-size)
+    State.size (encodeState Na) ≤ 6 * encodable.size Na := by
+  rcases Na with ⟨N, a⟩
+  have hsize : State.size (encodeState (N, a))
+      = N.length + (encodeCnf N).length + (encodeAssgn a).length := by
+    simp only [encodeState, State.size, List.map_cons, List.map_nil, List.foldr_cons,
+      List.foldr_nil, List.length_replicate, List.length_nil]
+    omega
+  have h1 := encodeCnf_length N
+  have h2 := encodeAssgn_length_le a
+  have h3 := length_le_encsize N
+  have hNa : encodable.size (N, a) = encodable.size N + encodable.size a + 1 := rfl
+  rw [hsize, hNa]; omega
 
 /-- **Correctness.** Running `evalCnfCmd` on the encoded input
 produces `[1]` in `OUTPUT` iff `satisfiesCnf a N`. -/
@@ -165,37 +345,30 @@ theorem evalCnfCmd_cost_bound (Na : cnf × assgn) :
     evalCnfCmd.cost (encodeState Na) ≤ (encodable.size Na + 1) ^ 3 := by
   sorry  -- TODO(Part3.5-cost-bound)
 
-/-! ## Gaps surfaced by writing this file
+/-! ## Notes for the inner-body author (parsing the unary stream)
 
-The Cmd-level sketch is structurally clean (5 small sorrys for the
-inner bodies plus 4 sorrys for the bound/correctness obligations),
-but it surfaces three issues with the current DSL that are worth
-recording before we close the inner sorrys:
+The encoding is now **unary / bit-level** (`BitState`, discharged by
+`encodeState_bit`). When closing the inner bodies, parse the stream with the
+proven gadgets — every field is `{0,1}` and self-delimiting:
 
-1. **No conditional loop.** The inner clause loop must iterate over
-   `|CNF_STREAM|` cells (not just `|clause|` cells), with a
-   `clauseDone` flag toggled to no-op after we've seen the clause's
-   `CLAUSE_END`. With a `Cmd.while`-style guarded loop, this would
-   be cleaner and asymptotically faster.
+* **literal slot** (in `processOneClause`'s inner loop): read one cell from
+  `CNF_STREAM`. A `1` means "a literal follows" — then the next cell is the
+  polarity bit, then a run of `1`s is the variable (copy into `LIT_VAR` as a
+  unary block, terminated by the `0`). A `0` means the clause is finished.
+* **`memberCheck`**: `LIT_VAR` holds the variable in unary; scan a copy of
+  `ASSGN` block-by-block (`[1] ++ unary ++ [0]`) and `Op.eqBit` the extracted
+  unary block against `LIT_VAR`.
 
-2. **No primitive constant comparison.** To test "is the head of
-   `CNF_STREAM` equal to `CLAUSE_END`?" we have to preload `[2]`
-   into a register (here `CONST_CE`) and use `Op.eqBit`. Cheap, but
-   adds a register and a setup step per constant. A primitive
-   `Op.headEqVal dst src (n : Nat)` would compress every literal
-   parse from ~5 instructions to ~2.
+Two DSL conveniences would shorten these (optional, not required):
+1. **A conditional/guarded loop** (`Cmd.while`) — the inner clause loop currently
+   has to iterate over `|CNF_STREAM|` with a `clauseDone` no-op flag.
+2. **A primitive "head-equals-value" / scan-to-separator op** — would compress
+   the per-literal parse from several instructions to one or two.
 
-3. **`DecidesLang.encodeIn_size`'s bound was too tight.** ✅
-   Relaxed in this same pass: the field now reads
-   `State.size (encodeIn x) ≤ costBound (encodable.size x)`,
-   which makes any real linear encoding provable (the cost bound
-   is polynomial). `evalCnfTM.lean` still has one sorry for this
-   field — the obligation is `5·n + 20 ≤ (n+1)^3` for the input
-   size `n`, with a base-case check for small `n`.
-
-(1) and (2) are reasonable extensions to make before closing the
-per-clause / per-literal sorrys, since they significantly shorten
-the eventual Cmds.
--/
+`encodeIn_size` (size bound) is still open — see `encodeState_size_bound` /
+`encodeCnf_length` above; the obligation is `State.size (encodeState (N,a)) ≤
+(size (N,a) + 1)^3`, provable from the linear bound `State.size ≤ 3·size` (each
+literal `(pol,v)` contributes `v+3` cells, charged by `size Nat = id`; product
+`size ≥ 1` rules out the degenerate base case) dominated by the cube. -/
 
 end EvalCnfCmd
