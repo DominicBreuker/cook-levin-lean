@@ -3785,7 +3785,7 @@ private theorem Compile.BitState_get (s : State) (r : Var)
   refine hbit (s.get r) ?_ x hx
   rw [State.get, List.getElem?_eq_getElem hr]; exact List.getElem_mem hr
 
-/-- **`BitState` is preserved by every op except `consLen` (Task 1 — the
+/-- **`BitState` is preserved by every op except `consLen` (HANDOFF bottom-up Task 4 — the
 induction step the residue-tolerant compiler contract needs).**
 
 `Compile_run_physical_residue` is proved by induction on `Cmd`, and every
@@ -3799,10 +3799,10 @@ non-`BitState`"):** of the three value-as-length ops, only **`consLen`** actuall
 `≥ 2` whenever `lenSrc` holds `≥ 2` symbols (witness `Op.consLen_breaks_BitState`).
 `takeAt`/`dropAt` *preserve* `BitState` (their output is a sub-list of a bit-shaped
 register); they are merely *useless* under `BitState` (the length read from a
-`≤ 1` cell is `0` or `1`), not invariant-breaking. So Task 1's unary restatement is
+`≤ 1` cell is `0` or `1`), not invariant-breaking. So Task 4's unary restatement is
 required for **correctness** only for `consLen`; for `takeAt`/`dropAt` it is
 required only for **expressiveness**. The `hcons` hypothesis isolates exactly the
-`consLen` obligation: once Task 1 restates `consLen` to write a unary block, the
+`consLen` obligation: once HANDOFF bottom-up Task 4 restates `consLen` to write a unary block, the
 written head cell is `≤ 1` and `hcons` is discharged unconditionally. -/
 theorem Op.eval_preserves_BitState (o : Op) (s : State)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s)
@@ -3886,7 +3886,7 @@ theorem Op.eval_preserves_BitState (o : Op) (s : State)
 /-- **Machine-checked counterexample: `consLen` is the one op that breaks
 `BitState`.** With `s = [[1, 1]]` (a valid `BitState`) and `o = consLen 0 0 0`,
 the op writes `(s.get 0).length = 2` as a register cell, so the result `[[2,1,1]]`
-is *not* a `BitState`. This is why Task 1 must restate `consLen` to a unary block;
+is *not* a `BitState`. This is why HANDOFF bottom-up Task 4 must restate `consLen` to a unary block;
 the corresponding `hcons` hypothesis of `Op.eval_preserves_BitState` fails here
 (`(s.get 0).length = 2 > 1`). -/
 theorem Op.consLen_breaks_BitState :
@@ -8968,7 +8968,7 @@ theorem Op.inBounds_of_UsesBelow (o : Op) (k : Nat) (s : State)
 
 /-- An op other than `consLen`. `consLen` is the unique op that can break
 `BitState` (`Op.consLen_breaks_BitState`); this is the (temporary) syntactic
-condition under which `BitState` preservation is unconditional. Task 1 restates
+condition under which `BitState` preservation is unconditional. HANDOFF bottom-up Task 4 restates
 `consLen` to write a unary block, after which the side-condition is discharged
 for free and this predicate can be dropped. -/
 def Op.NotConsLen : Op → Prop
@@ -8993,7 +8993,7 @@ standalone de-risks that induction: the `forBnd` counter-write (`BitState_set_pa
 + width growth) and the `seq` width-carry both go through.
 
 The `Cmd.UsesBelow c k`/`k ≤ s.length` pair is the wellformedness hypothesis the
-obligation will carry; `NoConsLen` is the one piece Task 1 removes (by restating
+obligation will carry; `NoConsLen` is the one piece HANDOFF bottom-up Task 4 removes (by restating
 `consLen` unary). -/
 theorem Cmd.eval_preserves_BitState (c : Cmd) (k : Nat) (s : State)
     (huses : Cmd.UsesBelow c k) (hk : k ≤ s.length)
