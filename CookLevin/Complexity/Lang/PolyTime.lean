@@ -47,6 +47,15 @@ theorem Cmd.encodeTape_eval_length_le (c : Cmd) (k : Nat) (h : Cmd.UsesBelow c k
   have h2 := Cmd.eval_length_le c k h s
   omega
 
+/-- **`inOPoly` is closed under pointwise domination.** If `f ≤ g` pointwise and
+`g` is `inOPoly`, so is `f` (same degree/constant witnesses). The missing
+companion to `inOPoly_mono`-style reasoning for the `physStepBudget` budgets.
+(Relocated upstream so the reduction-side `toFrameworkWitness'` can use it too.) -/
+theorem inOPoly_of_le {f g : Nat → Nat} (hle : ∀ n, f n ≤ g n) (hg : inOPoly g) :
+    inOPoly f := by
+  obtain ⟨d, c, n0, h⟩ := hg
+  exact ⟨d, c, n0, fun n hn => Nat.le_trans (hle n) (h n hn)⟩
+
 /-- A program `c` *decides* a predicate `P` in cost bound `costBound`
 when run on the encoded input `encodeIn`.
 
@@ -72,6 +81,28 @@ structure DecidesLang {X : Type} [encodable X]
   /-- Cost bound: running `c` on `encodeIn x` costs at most
   `costBound (encodable.size x)` primitive operations. -/
   cost_bound : ∀ x, c.cost (encodeIn x) ≤ costBound (encodable.size x)
+  /-- **(B′, Risk C2) Bit-level encoding obligation.** The compiled machine has a
+  fixed 4-symbol alphabet (`Compile.sig = 4`); `encodeTape` only stays inside it
+  when every register cell is `0`/`1` (`Compile.BitState`). `Compile_sound`
+  therefore requires `BitState (encodeIn x)`, supplied here by the witness. Bit-
+  level (unary) encodings discharge it; see `BitEncodable` and HANDOFF.md. -/
+  enc_bit : ∀ x, Compile.BitState (encodeIn x)
+  /-- **(WALL, Risk C2) Register frame.** The program touches only registers
+  `< regBound`; the runtime tape-padding (`Compile.paddedBitDeciderTM`) widens the
+  narrow input to `regBound` so the per-op gadgets' `Op.inBounds` precondition holds
+  (see `DecidesLang.toDecidesBy` and HANDOFF.md "THE WALL"). -/
+  regBound : Nat
+  /-- The program only reads/writes registers below `regBound`. -/
+  usesBelow : Cmd.UsesBelow c regBound
+  /-- The input encoding fits within the register frame (so its width is bounded by
+  the per-decider constant `regBound`, keeping the framework `encode_size`
+  polynomial). Satisfiable by every layer encoding (data is packed into register
+  *contents*, not spread across registers). -/
+  width_le : ∀ x, (encodeIn x).length ≤ regBound
+  /-- **(WALL, Risk C2 — bottom-up) `consLen`-free.** Until `Op.consLen` is re-laid
+  UNARY (HANDOFF bottom-up Task 4), it breaks `BitState`; this field is the `NoConsLen` side-condition
+  `Compile.paddedBitDecider_run` needs. Dropped entirely once `consLen` is unary. -/
+  noConsLen : Cmd.NoConsLen c
 
 /-- `P` is in polynomial time *at the layer level*: there is a
 `DecidesLang` witness with polynomially bounded cost. -/
@@ -98,6 +129,30 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   /-- Output size is bounded by the output of `cost_bound` —
   i.e. polynomial-time output is polynomial-size. -/
   output_size_le : ∀ x, encodable.size (f x) ≤ cost_bound (encodable.size x)
+  /-- **(B′, Risk C2) Bit-level input obligation** — see `DecidesLang.enc_bit`. -/
+  enc_bit : ∀ x, Compile.BitState (encodeIn x)
+  /-- **(WALL, Risk C2) Register frame** — mirrors `DecidesLang.regBound`. The program
+  touches only registers `< regBound`; the runtime tape-padding (`paddedComputeTM`)
+  widens the narrow input to `regBound` so the per-op gadgets' `Op.inBounds` holds.
+  See `toFrameworkWitness'` and `Compile.paddedCompute_run`. -/
+  regBound : Nat
+  /-- The program only reads/writes registers below `regBound`. -/
+  usesBelow : Cmd.UsesBelow c regBound
+  /-- The input encoding fits within the register frame (keeps the padded budget
+  polynomial in `encodable.size x`). Satisfiable by every layer encoding (data is
+  packed into register *contents*, not spread across registers). -/
+  width_le : ∀ x, (encodeIn x).length ≤ regBound
+  /-- **(WALL, Risk C2 — bottom-up) `consLen`-free** — mirrors `DecidesLang.noConsLen`;
+  dropped once `Op.consLen` is re-laid UNARY (HANDOFF bottom-up Task 4). -/
+  noConsLen : Cmd.NoConsLen c
+  /-- **(WALL, Risk C2) Decode is padding-insensitive.** Widening the input by
+  `regBound` empty registers does not change the decoded output — the output register
+  is `< regBound`, so `Cmd.eval_agree` transports it. This is what lets the padded
+  machine's output (computed on the *wide* state) decode to `f x`. Discharged by
+  `toLang` from `Cmd.eval_agree` (the canonical `decodeState` reads register 0). -/
+  decode_agree : ∀ x,
+    decodeOut (c.eval (encodeIn x ++ List.replicate regBound []))
+      = decodeOut (c.eval (encodeIn x))
 
 /-! ## Bridges
 
@@ -105,33 +160,18 @@ These are the *main results* of Part 3 from the consumer's
 perspective. They are stated here with `sorry` bodies; the proofs
 follow mechanically from `Compile_sound` once that lands. -/
 
-/-- **Bridge 1 (Part 3.4):** a layer-level `DecidesLang` witness
-extends to a framework-level `DecidesBy` witness.
+/-! **Bridge 1 / Bridge 2 (Part 3.4)** — the free-encoding `DecidesLang` analogues
+of `DecidesLang'.toDecidesBy` / `toInTimePoly` (the live `sat_NP` path: see
+`EvalCnfTM.lean`). They are defined further down, next to the canonical bridge:
 
-NOTE (C6): the **canonical** analogue `DecidesLang'.toDecidesBy` (below) is now
-realized `sorry`-free modulo the `Compile` physical run contract — that is the
-bridge `inNPLang` actually uses. This general, free-encoding version stays
-`sorry` because an arbitrary `encodeIn` need not bound its register *count*, so
-`DecidesBy.encode_size` is not derivable here (the canonical single-register
-layout supplies that bound for free). -/
-theorem DecidesLang.toDecidesBy {X : Type} [encodable X]
-    {P : X → Prop} {costBound : Nat → Nat}
-    (D : DecidesLang P costBound)
-    (h_mono : monotonic costBound) :
-    Nonempty (DecidesBy P (fun n => Compile.overhead (2 * costBound n))) := by
-  -- The new bound matches the shape of `Compile_sound`:
-  -- `Compile.overhead (sizeIn + cost)` upper-bounds the TM steps,
-  -- and `cost c (encodeIn x) ≤ costBound (encodable.size x)` while
-  -- `State.size (encodeIn x) ≤ costBound (encodable.size x)`, so
-  -- `sizeIn + cost ≤ 2 * costBound n`. Then `Compile.overhead` is
-  -- monotonic.
-  sorry  -- TODO(Part3.5)
+* `DecidesLang.toDecidesBy : DecidesLang P costBound → DecidesBy P D.padTimeBound`
+* `inTimePolyLang_to_inTimePoly : inTimePolyLang P → inTimePoly P`
 
-/-- **Bridge 2 (Part 3.4):** `inTimePolyLang P` implies
-`inTimePoly P`. This is the headline consumer-facing fact. -/
-theorem inTimePolyLang_to_inTimePoly {X : Type} [encodable X]
-    {P : X → Prop} (h : inTimePolyLang P) : inTimePoly P := by
-  sorry  -- TODO(Part3.5): use DecidesLang.toDecidesBy + inOPoly_comp.
+The free path is now resolved by the same runtime tape-padding as the canonical one
+(`Compile.paddedBitDecider_run` — **no `k ≤ s.length`**), and the framework's
+`DecidesBy.encode_size` was loosened to a **per-decider polynomial** `encodeBound`
+(owner-decision 2026-06-07; see `DecidesBy` in `NP.lean`), so the multi-register
+`EvalCnfCmd.encodeState` (`≤ 5·size+20`) is admissible. -/
 
 /-- **Bridge 3 (Part 4.1):** a layer-level `PolyTimeComputableLang`
 witness extends to a framework-level `PolyTimeComputableWitness`. -/
@@ -148,30 +188,32 @@ theorem PolyTimeComputableLang.toFrameworkWitness
   intro x
   exact W.output_size_le x
 
-/-- **Composition (Part 4 / Part 3):** the layer is closed under
-`Cmd.seq`, so polynomially-bounded computable functions compose. -/
-noncomputable def PolyTimeComputableLang.comp
-    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
-    {g : Y → Z} {h : X → Y}
-    (Wg : PolyTimeComputableLang g) (Wh : PolyTimeComputableLang h) :
-    PolyTimeComputableLang (g ∘ h) := by
-  sorry  -- TODO(Part4.1): sequence Wh.c then Wg.c with a register-
-         -- shuffle in between; cost is bound by Wh.cost_bound +
-         -- Wg.cost_bound ∘ Wh.cost_bound.
+/-! ### Layer composition & NP-routing — pointers (the live, proven route)
 
-/-- **NP-style composition (Part 4):** if `P ⪯p Q` (via a
-poly-time reduction witnessed at the layer level) and `Q ∈ inNP`
-(via a layer-level verifier), then `P ∈ inNP`. This is the missing
-piece that closes the `red_inNP` TM-composition sorry. -/
-theorem red_inNP_via_lang
-    {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop)
-    (f : X → Y) (hf : PolyTimeComputableLang f)
-    (hf_correct : ∀ x, P x ↔ Q (f x))
-    (hQ : inNP Q) :
-    inNP P := by
-  sorry  -- TODO(Part4.2): destructure hQ, compose the verifier
-         -- with hf via Cmd.seq, repackage as inNP P.
+The layer is closed under `Cmd.seq`, so polynomially-bounded computable functions
+compose. The proven entry points (defined further down, after the canonical
+`PolyTimeComputableLang'` infrastructure) are:
+
+* **`PolyTimeComputableLang'.comp`** — *canonical-encoded* composition (no
+  re-encoding bridge needed; both programs share the canonical `State`
+  representation). Sorry-free.
+* **`PolyTimeComputableLang.comp`** — bridges `'.comp` back to the free witness
+  type via `toLang` (`(Wg.comp Wh).toLang`). Sorry-free modulo the shared pinned
+  `c_noConsLen`.
+* **`red_inNP_of_lang`** — NP-style composition: from a canonical layer reduction
+  `Wf : PolyTimeComputableLang' f` (with `P x ↔ Q (f x)`) and a layer-native
+  `inNPLang Q`, yields the framework's `inNP P` (composes `red_inNPLang` with the
+  decider bridge `inNPLang_to_inNP`).
+
+**Removed (superseded, were dead `sorry`s):** the free-encoding
+`PolyTimeComputableLang.comp` (arbitrary `encodeIn`/`decodeOut`) and
+`red_inNP_via_lang`. A *free* `comp` would need an explicit re-encoding `Cmd`
+(see `comp_computes_of_bridge`, which isolates exactly that gap) and is also
+**unneeded** — the reduction *chain* composes at the framework level via
+`reducesPolyMO_transitive` (each link bridged by `reducesPolyMO_of_lang`).
+`red_inNP_via_lang` took an abstract `inNP Q`, which exposes only an opaque
+`FlatTM` decider (no `Cmd` recoverable, nothing to precompose); routing requires
+the layer-native `inNPLang Q`, which is exactly what `red_inNP_of_lang` consumes. -/
 
 /-! ## S3-retirement probe (May 2026): a TM-backed `polyTimeComputable`
 
@@ -239,80 +281,142 @@ theorem polyTimeComputable'_to_polyTimeComputable
   obtain ⟨W⟩ := h
   exact ⟨W.toPolyTimeComputableWitness⟩
 
-/-- **(B) The real bridge — the headline result.** A layer-level
-`PolyTimeComputableLang f` extends to the TM-backed
-`PolyTimeComputableWitness' f`, *assuming `Compile_sound`* (used below as
-the in-scope, sorry-backed theorem). This is the honest content that the
-existing `PolyTimeComputableLang.toFrameworkWitness` fakes (it discards
-`computes`/`cost_le` and proves only the size bound). It goes through
-**cleanly**: the machine is `Compile W.c`, the time budget is
-`Compile.overhead` of the layer cost, and `Compile_sound` + `runFlatTM_extend`
-(budget padding) discharge the `computes` obligation. -/
+/-- The padded-compute time budget (numeric form), mirroring
+`DecidesLang.padTimeBound`: the runtime register-padding cost, the `+1` splice
+step, and the inner compiler's `physStepBudget`. `regBound` is a per-witness
+constant, so this is polynomial in `n` whenever `cost_bound` is. -/
+private def PolyTimeComputableLang.padTimeBound {X Y : Type} [encodable X] [encodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang f) (n : Nat) : Nat :=
+  (W.regBound + 1) * (4 * n + 4 * W.regBound + 14) + 1
+    + Compile.physStepBudget (2 * n + 2 * W.regBound + W.cost_bound n + 3) (W.cost_bound n)
+
+/-- The padded compute machine's actual run cost on `encodeIn x` is dominated by
+`padTimeBound (size x)`. (Uses `encodeIn_size`, `cost_le`, and `width_le`; resolves
+the register-count WALL via the runtime padding `Compile.paddedCompute_run`.) -/
+private theorem PolyTimeComputableLang.budget_ge {X Y : Type} [encodable X] [encodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang f) (x : X) :
+    Compile.padBudget W.regBound (W.encodeIn x) + 1
+        + Compile.physStepBudget (State.size (W.encodeIn x)
+              + ((W.encodeIn x).length + W.regBound)
+              + W.c.cost (W.encodeIn x) + 2) (W.c.cost (W.encodeIn x))
+      ≤ W.padTimeBound (encodable.size x) := by
+  have hsz : State.size (W.encodeIn x) ≤ 2 * encodable.size x + 1 := W.encodeIn_size x
+  have hw : (W.encodeIn x).length ≤ W.regBound := W.width_le x
+  have hc : W.c.cost (W.encodeIn x) ≤ W.cost_bound (encodable.size x) := W.cost_le x
+  unfold PolyTimeComputableLang.padTimeBound
+  have hpb := Compile.padBudget_le W.regBound (W.encodeIn x)
+  have hpad : Compile.padBudget W.regBound (W.encodeIn x)
+      ≤ (W.regBound + 1) * (4 * encodable.size x + 4 * W.regBound + 14) :=
+    le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by omega))
+  have hps : Compile.physStepBudget (State.size (W.encodeIn x)
+            + ((W.encodeIn x).length + W.regBound)
+            + W.c.cost (W.encodeIn x) + 2) (W.c.cost (W.encodeIn x))
+      ≤ Compile.physStepBudget (2 * encodable.size x + 2 * W.regBound
+          + W.cost_bound (encodable.size x) + 3) (W.cost_bound (encodable.size x)) :=
+    Compile.physStepBudget_mono (by omega) hc
+  omega
+
+/-- **(B) The real bridge — the headline result, NOW on the residue contract.**
+A layer-level `PolyTimeComputableLang f` extends to the TM-backed
+`PolyTimeComputableWitness' f`. This is the function-computation analogue of the
+decider side's `DecidesLang.toDecidesBy`: the machine is the runtime-padded
+`Compile.paddedComputeTM W.c W.regBound` (pad the narrow input to `regBound`
+registers, then run `Compile W.c`), the time budget is the polynomial
+`padTimeBound`, and `Compile.paddedCompute_run` + `runFlatTM_extend` discharge the
+`computes` obligation. The decode reads the output through `decodeTape` (residue-
+invisible, `decodeTape_encodeTape_append`) and transports it from the *wide* state
+back to the input via `decode_agree` (the WALL resolution). Sorry-free as written;
+residual sorrys = the pinned bottom-up leaf gadgets (via `paddedCompute_run`). -/
 theorem PolyTimeComputableLang.toFrameworkWitness'
     {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
     (W : PolyTimeComputableLang f) :
     polyTimeComputable' f := by
-  have htb_poly : inOPoly (fun n => Compile.overhead (n + n + 1 + W.cost_bound n)) := by
-    have hinner : inOPoly (fun n => n + n + 1 + W.cost_bound n) :=
-      inOPoly_add (inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 1))
-        W.cost_bound_poly
-    show inOPoly (Compile.overhead ∘ fun n => n + n + 1 + W.cost_bound n)
-    exact inOPoly_comp hinner Compile.overhead_poly
-  have htb_mono : monotonic (fun n => Compile.overhead (n + n + 1 + W.cost_bound n)) := by
+  have htb_poly : inOPoly W.padTimeBound := by
+    unfold PolyTimeComputableLang.padTimeBound
+    have hlin : inOPoly (fun n => (W.regBound + 1) * (4 * n + 4 * W.regBound + 14)) :=
+      inOPoly_mul (inOPoly_const _)
+        (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 4) inOPoly_id)
+          (inOPoly_const _)) (inOPoly_const 14))
+    have hinner : inOPoly (fun n => 2 * n + 2 * W.regBound + W.cost_bound n + 3) :=
+      inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id)
+        (inOPoly_const _)) W.cost_bound_poly) (inOPoly_const 3)
+    have hcomp : inOPoly ((fun m => Compile.physStepBudget m m)
+        ∘ (fun n => 2 * n + 2 * W.regBound + W.cost_bound n + 3)) :=
+      inOPoly_comp hinner Compile.physStepBudget_poly
+    have hphys : inOPoly (fun n =>
+        Compile.physStepBudget (2 * n + 2 * W.regBound + W.cost_bound n + 3) (W.cost_bound n)) := by
+      refine inOPoly_of_le ?_ hcomp
+      intro n
+      show Compile.physStepBudget (2 * n + 2 * W.regBound + W.cost_bound n + 3) (W.cost_bound n)
+          ≤ Compile.physStepBudget (2 * n + 2 * W.regBound + W.cost_bound n + 3)
+              (2 * n + 2 * W.regBound + W.cost_bound n + 3)
+      exact Compile.physStepBudget_mono (Nat.le_refl _) (by omega)
+    exact inOPoly_add (inOPoly_add hlin (inOPoly_const 1)) hphys
+  have htb_mono : monotonic W.padTimeBound := by
     intro a b hab
-    apply Compile.overhead_mono
-    have hcb : W.cost_bound a ≤ W.cost_bound b := W.cost_bound_mono a b hab
+    have hd : W.cost_bound a ≤ W.cost_bound b := W.cost_bound_mono a b hab
+    unfold PolyTimeComputableLang.padTimeBound
+    have h1 : (W.regBound + 1) * (4 * a + 4 * W.regBound + 14)
+        ≤ (W.regBound + 1) * (4 * b + 4 * W.regBound + 14) :=
+      Nat.mul_le_mul_left _ (by omega)
+    have h2 : Compile.physStepBudget (2 * a + 2 * W.regBound + W.cost_bound a + 3) (W.cost_bound a)
+        ≤ Compile.physStepBudget (2 * b + 2 * W.regBound + W.cost_bound b + 3) (W.cost_bound b) :=
+      Compile.physStepBudget_mono (by omega) hd
     omega
   refine ⟨{
     toPolyTimeComputableWitness :=
       ⟨W.cost_bound, W.cost_bound_poly, W.cost_bound_mono, W.output_size_le⟩
-    timeBound := fun n => Compile.overhead (n + n + 1 + W.cost_bound n)
+    timeBound := W.padTimeBound
     timeBound_poly := htb_poly
     timeBound_mono := htb_mono
     computer := ?_ }⟩
-  · -- ComputesBy: the machine is `Compile W.c`.
+  · -- ComputesBy: the machine is the runtime-padded `paddedComputeTM W.c W.regBound`.
     refine {
       encode := fun x => Compile.encodeTape (W.encodeIn x)
-      M := Compile W.c
-      M_valid := Compile_valid W.c
+      M := Compile.paddedComputeTM W.c W.regBound
+      M_valid := Compile.paddedComputeTM_valid W.c W.regBound
       M_tapes_pos := ?_
       decode := fun cfg => W.decodeOut (Compile.decodeTape cfg)
       computes := ?_ }
-    · rw [Compile_tapes]; exact Nat.one_pos
+    · rw [Compile.paddedComputeTM_tapes]; exact Nat.one_pos
     · intro x
-      obtain ⟨cfg, hrun, hhalt, hdec⟩ := Compile_sound W.c (W.encodeIn x)
-      refine ⟨cfg, ?_, hhalt, ?_⟩
+      have hbit_in : Compile.BitState (W.encodeIn x) := W.enc_bit x
+      obtain ⟨res, _hres, hrun, hhalt⟩ :=
+        Compile.paddedCompute_run W.c (W.encodeIn x) W.regBound hbit_in W.usesBelow W.noConsLen
+      set wide : State := W.encodeIn x ++ List.replicate W.regBound [] with hwide
+      have hbit_w : Compile.BitState wide := by
+        rw [hwide]; exact Compile.BitState_append_replicate_nil (W.encodeIn x) W.regBound hbit_in
+      have hk_w : W.regBound ≤ wide.length := by
+        rw [hwide, List.length_append, List.length_replicate]; omega
+      have hbit_out : Compile.BitState (W.c.eval wide) :=
+        Cmd.eval_preserves_BitState W.c W.regBound wide W.usesBelow hk_w W.noConsLen hbit_w
+      refine ⟨{ state_idx := Compile.exit W.c + (Compile.padRegsTM W.regBound).states,
+                tapes := [([], 0, Compile.encodeTape (W.c.eval wide) ++ res)] }, ?_, hhalt, ?_⟩
       · -- The single-tape `initialTapes` collapses to `[encodeTape …]`,
-        -- then pad the run budget up to `timeBound (size x)`.
+        -- then pad the actual run budget up to `padTimeBound (size x)`.
         have htapes :
-            initialTapes (Compile W.c) (Compile.encodeTape (W.encodeIn x))
+            initialTapes (Compile.paddedComputeTM W.c W.regBound)
+                (Compile.encodeTape (W.encodeIn x))
               = [Compile.encodeTape (W.encodeIn x)] := by
           unfold initialTapes
-          rw [Compile_tapes]; simp
-        show runFlatTM (Compile.overhead
-              (encodable.size x + encodable.size x + 1 + W.cost_bound (encodable.size x)))
-            (Compile W.c)
-            (initFlatConfig (Compile W.c)
-              (initialTapes (Compile W.c)
-                (Compile.encodeTape (W.encodeIn x)))) = some cfg
+          rw [Compile.paddedComputeTM_tapes]; simp
+        show runFlatTM (W.padTimeBound (encodable.size x))
+            (Compile.paddedComputeTM W.c W.regBound)
+            (initFlatConfig (Compile.paddedComputeTM W.c W.regBound)
+              (initialTapes (Compile.paddedComputeTM W.c W.regBound)
+                (Compile.encodeTape (W.encodeIn x)))) = some _
         rw [htapes]
-        have hle :
-            Compile.overhead (State.size (W.encodeIn x) + W.c.cost (W.encodeIn x))
-              ≤ Compile.overhead
-                  (encodable.size x + encodable.size x + 1
-                    + W.cost_bound (encodable.size x)) := by
-          apply Compile.overhead_mono
-          have h1 : State.size (W.encodeIn x) ≤ 2 * encodable.size x + 1 :=
-            W.encodeIn_size x
-          have h2 : W.c.cost (W.encodeIn x) ≤ W.cost_bound (encodable.size x) :=
-            W.cost_le x
-          omega
-        obtain ⟨k, hk⟩ := Nat.le.dest hle
+        obtain ⟨k, hk⟩ := Nat.le.dest (W.budget_ge x)
         rw [← hk]
         exact runFlatTM_extend hrun hhalt
-      · -- decode cfg = decodeOut (decodeTape cfg) = decodeOut (c.eval s) = f x
-        show W.decodeOut (Compile.decodeTape cfg) = f x
-        rw [hdec]; exact W.computes x
+      · -- decode: residue-invisible (`decodeTape_encodeTape_append`), then transport
+        -- from the wide state back to the input via `decode_agree`.
+        show W.decodeOut (Compile.decodeTape
+            { state_idx := Compile.exit W.c + (Compile.padRegsTM W.regBound).states,
+              tapes := [([], 0, Compile.encodeTape (W.c.eval wide) ++ res)] }) = f x
+        rw [Compile.decodeTape_encodeTape_append (W.c.eval wide) res _ _ hbit_out, hwide,
+          W.decode_agree x]
+        exact W.computes x
 
 /-! ## (C) Composition — where the difficulty concentrates
 
@@ -323,8 +427,9 @@ the input tape of `g`'s TM), because `ComputesBy.encode`/`decode` are
 free functions with no shared representation. That re-encoder is exactly
 what the **layer** avoids: `Cmd.seq` keeps everything in the single
 `State` representation, so the composite needs no bridge tape. Hence
-composition is tractable *only* at the layer level (`PolyTimeComputableLang.comp`,
-still sorry-bodied) — which is the ROADMAP's whole thesis.
+composition is tractable *only* at the layer level (`PolyTimeComputableLang'.comp`,
+proven; `PolyTimeComputableLang.comp` bridges it to the free witness type) — which
+is the ROADMAP's whole thesis.
 
 The remaining obstacle even at the layer is an **encoding-compatibility**
 gap: `PolyTimeComputableLang` carries `encodeIn`/`decodeOut` as
@@ -339,9 +444,10 @@ canonical per-type layer encoding (a `LangEncodable`-style class) so that
 `reEncode` (a `Cmd` mapping `Wh`'s output state to `Wg`'s input state).
 The `computes` law then follows definitionally from `Cmd.eval_seq`. This
 isolates the one missing ingredient (a canonical state encoding) without
-a sorry; a real `PolyTimeComputableLang.comp` is this with `reEncode`
-supplied by the canonical encoding and the cost bound assembled from the
-two polynomial bounds. -/
+a sorry. The canonical encoding **discharges** it: `PolyTimeComputableLang'.comp`
+needs no `reEncode` at all (both programs share the canonical `State`), and the
+proven `PolyTimeComputableLang.comp` (below) bridges that composite to the free
+witness type via `toLang`. -/
 theorem PolyTimeComputableLang.comp_computes_of_bridge
     {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
     {g : Y → Z} {h : X → Y}
@@ -415,10 +521,10 @@ theorem s1_witness_forces_decider
 /-! ## C9: canonical layer encoding (May 2026)
 
 The S3 probe surfaced the one remaining structural prerequisite: layer
-composition (`PolyTimeComputableLang.comp`, `red_inNP_via_lang`, `red_inNP`)
-could not even be *stated*, because `PolyTimeComputableLang.encodeIn` /
-`decodeOut` are **free functions** — one program's output state need not be
-the next program's input state.
+composition (`PolyTimeComputableLang'.comp`, `red_inNPLang`, `red_inNP_of_lang`)
+could not even be *stated* on the free witness, because
+`PolyTimeComputableLang.encodeIn` / `decodeOut` are **free functions** — one
+program's output state need not be the next program's input state.
 
 This block resolves C9. A `LangEncodable` class fixes a **canonical
 single-register** state encoding per type; a `PolyTimeComputableLang'`
@@ -477,6 +583,31 @@ theorem LangEncodable.encodeState_get_pos {X : Type} [encodable X] [LangEncodabl
   rw [List.getElem?_eq_none (show ([LangEncodable.enc x] : List (List Nat)).length ≤ r from hr)]
   rfl
 
+/-- **(B′, Risk C2) The bit-level encoding mixin.** A `LangEncodable` whose
+canonical encoding only ever produces `0`/`1` cells, i.e. its `encodeState` is a
+`Compile.BitState`. This is the once-per-type discharge of the `enc_bit`
+obligation that the canonical witnesses (`DecidesLang'`, `PolyTimeComputableLang'`)
+carry: prove `BitEncodable X` once and every canonical witness over `X` gets its
+`enc_bit` field for free. Bit-level (unary) encodings satisfy it; the legacy
+non-bit encodings (`Nat = [n]`, `List Nat = id`, the product length-prefix) do
+not and must be re-laid unary — see HANDOFF.md "The ordered plan". -/
+class BitEncodable (X : Type) [encodable X] [LangEncodable X] : Prop where
+  enc_bit : ∀ x : X, Compile.BitState (LangEncodable.encodeState x)
+
+/-- `encodeState x = [enc x]` is a `BitState` iff every cell of `enc x` is `0`/`1`.
+The single-register layout reduces the `BitState` obligation to the encoder. -/
+theorem BitState_encodeState_iff {X : Type} [encodable X] [LangEncodable X] (x : X) :
+    Compile.BitState (LangEncodable.encodeState x)
+      ↔ ∀ y ∈ LangEncodable.enc x, y ≤ 1 := by
+  constructor
+  · intro h y hy
+    exact h (LangEncodable.enc x)
+      (by simp [LangEncodable.encodeState]) y hy
+  · intro h reg hreg y hy
+    simp only [LangEncodable.encodeState, List.mem_singleton] at hreg
+    subst hreg
+    exact h y hy
+
 /-- A polynomial-time computable function **in canonical normal form**: the
 program maps `encodeState x` to `encodeState (f x)` exactly. This is the
 stronger contract that lets programs compose without a re-encoding bridge. -/
@@ -507,6 +638,9 @@ structure PolyTimeComputableLang' {X Y : Type} [encodable X] [encodable Y]
   Single-register witnesses set `regBound = 1`. -/
   regBound : Nat
   usesBelow : Cmd.UsesBelow c regBound
+  /-- **(B′, Risk C2) Bit-level input obligation** — `encodeState x` is a
+  `Compile.BitState`. Discharged once-per-type by `BitEncodable X`. -/
+  enc_bit : ∀ x : X, Compile.BitState (LangEncodable.encodeState x)
 
 /-- **Frame application (C5a).** Running the witness program on *any* state `s`
 preserves every register `≥ regBound` — so a value stashed at register
@@ -604,6 +738,19 @@ def PolyTimeComputableLang'.comp
   regBound := max Wh.regBound Wg.regBound
   usesBelow := ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wh.usesBelow,
     Cmd.UsesBelow_mono (Nat.le_max_right _ _) Wg.usesBelow⟩
+  -- Input type is `X` (= `Wh`'s input), so its bit-level guarantee is `Wh`'s.
+  enc_bit := Wh.enc_bit
+
+/-- **(WALL, Risk C2 — bottom-up, pinned) The canonical program is `consLen`-free.**
+The reduction-side analogue of `DecidesLang'.c_noConsLen`: until `Op.consLen` is
+re-laid UNARY (HANDOFF bottom-up Task 4) it breaks `BitState`, so the canonical witnesses owe this
+side-condition. It is the same pinned obligation the decider path carries; it is
+dropped entirely once `consLen` is unary. -/
+private theorem PolyTimeComputableLang'.c_noConsLen
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang' f) :
+    Cmd.NoConsLen W.c := by
+  sorry
 
 /-- A canonical witness is in particular a free-encoding
 `PolyTimeComputableLang` witness (using the canonical encode/decode). This
@@ -625,6 +772,20 @@ def PolyTimeComputableLang'.toLang
     exact LangEncodable.decodeState_encodeState (f x)
   cost_le := W.cost_le
   output_size_le := W.output_size_le
+  -- `encodeIn = encodeState`, so the bit-level guarantee is `W`'s canonical one.
+  enc_bit := W.enc_bit
+  -- WALL fields: the register frame is `W`'s; width is `1 ≤ regBound`
+  -- (`UsesBelow_pos`); `decode_agree` is `Cmd.eval_agree` at register `0`.
+  regBound := W.regBound
+  usesBelow := W.usesBelow
+  width_le := fun x => Cmd.UsesBelow_pos W.usesBelow
+  noConsLen := W.c_noConsLen
+  decode_agree := fun x => by
+    have hag := Cmd.eval_agree W.c W.regBound W.usesBelow
+      (Compile.agreeBelow_append_replicate_nil (LangEncodable.encodeState x) W.regBound)
+      0 (Cmd.UsesBelow_pos W.usesBelow)
+    simp only [LangEncodable.decodeState]
+    rw [← hag]
 
 /-- **C9 + S3 end-to-end:** a canonical layer witness yields a real TM-backed
 `polyTimeComputable'` (via `toLang` then the S3 bridge). Sorry-free modulo the
@@ -634,16 +795,34 @@ theorem PolyTimeComputableLang'.toFrameworkWitness'
     {f : X → Y} (W : PolyTimeComputableLang' f) : polyTimeComputable' f :=
   W.toLang.toFrameworkWitness'
 
+/-- **Layer composition into the free witness type.** The canonical-normal-form
+witnesses compose (no re-encoding bridge — both share the canonical `State`
+representation), and the composite bridges back to the free `PolyTimeComputableLang`
+via `toLang`. This is the proven replacement for the deleted free-encoding
+`comp` (see the module note above for why the free version is unneeded). Sorry-free
+modulo the shared pinned `c_noConsLen` (inherited through `toLang`). -/
+def PolyTimeComputableLang.comp
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    [LangEncodable X] [LangEncodable Y] [LangEncodable Z]
+    {g : Y → Z} {h : X → Y}
+    (Wg : PolyTimeComputableLang' g) (Wh : PolyTimeComputableLang' h) :
+    PolyTimeComputableLang (g ∘ h) :=
+  (Wg.comp Wh).toLang
+
 /-! ### Inhabitants — the machinery is non-vacuous -/
 
-/-- `Nat`: a number is one register `[n]`. -/
+/-- `Nat` in **UNARY** (Risk C2, B′): `n ↦ replicate n 1`, one bit-level register.
+The size law holds because `encodable.size Nat = id`, so unary length `= n = size`.
+This is the bit-level replacement for the legacy `[n]` (single non-bit cell). -/
 instance : LangEncodable Nat where
-  enc := fun n => [n]
-  dec := fun s => s.headD 0
-  dec_enc := fun _ => rfl
+  enc := fun n => List.replicate n 1
+  dec := fun s => s.length
+  dec_enc := fun n => by simp
   enc_size := fun n => by
-    show ([n] : List Nat).length ≤ 2 * encodable.size n + 1
-    simp
+    show (List.replicate n 1).length ≤ 2 * encodable.size n + 1
+    rw [List.length_replicate]
+    show n ≤ 2 * n + 1
+    omega
 
 /-- `List Nat` is the layer's native register type: its canonical encoding is
 the identity. (`enc_size`: a list's length never exceeds its `encodable.size`,
@@ -859,10 +1038,46 @@ instance {X Y : Type} [encodable X] [encodable Y]
     rw [List.length_append]
     omega
 
+/-! ### `BitEncodable` instances (Risk C2, B′)
+
+The types whose canonical encoding is **already** bit-level get a `BitEncodable`
+instance for free, discharging the `enc_bit` obligation of any canonical witness
+over them. `Bool`/`Unit`/`List Bool` qualify today. `Nat` (`[n]`), `List Nat`
+(`id`), and the product (length-prefix cell) do **not** — they must be re-laid
+**unary** before they can become `BitEncodable` (HANDOFF.md "The ordered plan",
+HANDOFF bottom-up Task 4). -/
+
+/-- `Nat` is bit-level: unary `enc n = replicate n 1`, every cell is `1`. -/
+instance : BitEncodable Nat where
+  enc_bit n := (BitState_encodeState_iff n).mpr (by
+    intro y hy
+    simp only [LangEncodable.enc, List.mem_replicate] at hy
+    omega)
+
+/-- `Bool` is bit-level: `enc b ∈ {[0], [1]}`. -/
+instance : BitEncodable Bool where
+  enc_bit b := (BitState_encodeState_iff b).mpr (by cases b <;> decide)
+
+/-- `Unit` is bit-level: `enc () = []`. -/
+instance : BitEncodable Unit where
+  enc_bit u := (BitState_encodeState_iff u).mpr (by simp [LangEncodable.enc])
+
+/-- `List Bool` is bit-level: each cell is `0`/`1`. -/
+instance : BitEncodable (List Bool) where
+  enc_bit bs := (BitState_encodeState_iff bs).mpr (by
+    intro y hy
+    simp only [LangEncodable.enc, List.mem_map] at hy
+    obtain ⟨b, _, rfl⟩ := hy
+    cases b <;> simp)
+
 /-- The identity is canonically computable: `copy 0 0` is a no-op on a
 single-register state. Witnesses that `PolyTimeComputableLang'` is inhabited;
-together with `comp` the canonical-computable functions form a category. -/
-def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X] :
+together with `comp` the canonical-computable functions form a category.
+
+Requires `[BitEncodable X]` (Risk C2, B′): the `enc_bit` field needs the input
+type's canonical encoding to be bit-level. -/
+def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X]
+    [BitEncodable X] :
     PolyTimeComputableLang' (id : X → X) where
   c := Cmd.op (Op.copy 0 0)
   -- Under the realistic cost model `copy 0 0` costs `|enc x| + 1 ≤ 2·size + 2`.
@@ -892,6 +1107,7 @@ def PolyTimeComputableLang'.id_witness {X : Type} [encodable X] [LangEncodable X
   output_size_le := fun x => by show encodable.size x ≤ encodable.size x + encodable.size x + 2; omega
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
+  enc_bit := BitEncodable.enc_bit
 
 /-! ### A non-trivial concrete witness — template for chain reductions
 
@@ -949,6 +1165,7 @@ def PolyTimeComputableLang'.constTrueBool :
     show 1 ≤ 3; omega
   regBound := 1
   usesBelow := ⟨Nat.one_pos, Nat.one_pos⟩
+  enc_bit := BitEncodable.enc_bit
 
 /-! ### A non-identity *pair-rearranging* witness — `swap`
 
@@ -1088,6 +1305,10 @@ def PolyTimeComputableLang'.swap {X Y : Type} [encodable X] [encodable Y]
     unfold swapCmd
     simp only [Cmd.UsesBelow, Op.UsesBelow]
     decide
+  -- TODO(C2, B′): the input type is `X × Y`; the product encoding must be re-laid
+  -- UNARY before it is `BitState`, then this becomes `BitEncodable.enc_bit` (add
+  -- a `[BitEncodable (X × Y)]` instance hypothesis). See HANDOFF.md bottom-up Task 4.
+  enc_bit := sorry
 
 /-! ### Verifier composition (toward `red_inNP`)
 
@@ -1109,6 +1330,9 @@ structure DecidesLang' {X : Type} [encodable X] [LangEncodable X]
   scratch), so its accept/reject — read off register `0` — must be frame-robust. -/
   regBound : Nat
   usesBelow : Cmd.UsesBelow c regBound
+  /-- **(B′, Risk C2) Bit-level input obligation** — `encodeState x` is a
+  `Compile.BitState`. Discharged once-per-type by `BitEncodable X`. -/
+  enc_bit : ∀ x : X, Compile.BitState (LangEncodable.encodeState x)
 
 /-- **Verifier composition.** Precomposing a canonical decider for `P` with a
 canonical computable map `g` yields a canonical decider for `P ∘ g`: run `g`,
@@ -1166,6 +1390,8 @@ def DecidesLang'.precompose
   regBound := max Wg.regBound D.regBound
   usesBelow := ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wg.usesBelow,
     Cmd.UsesBelow_mono (Nat.le_max_right _ _) D.usesBelow⟩
+  -- Result input type is `X` (= `Wg`'s input), so its bit guarantee is `Wg`'s.
+  enc_bit := Wg.enc_bit
 
 /-- **Assembling `red_inNP` at the layer.** From (a) the reduction lifted to
 the pair input — `Wf : PolyTimeComputableLang' (fun xc => (f xc.1, xc.2))` —
@@ -1491,6 +1717,10 @@ def PolyTimeComputableLang'.map_fst {X Y : Type} [encodable X] [encodable Y]
     unfold PolyTimeComputableLang'.mapFstCmd
     exact ⟨⟨bk, b0⟩, ⟨bk1, b0⟩, ⟨bk2, bk1, bk⟩, ⟨b0, bk1, bk⟩, hwf,
       ⟨bk1, b0, bk2⟩, ⟨b0, b0, bk1⟩, bk, bk1, bk2⟩
+  -- TODO(C2, B′): input type is `X × C`; the product encoding must be re-laid
+  -- UNARY before it is `BitState`, then this becomes `BitEncodable.enc_bit` (add
+  -- a `[BitEncodable (X × C)]` instance hypothesis). See HANDOFF.md bottom-up Task 4.
+  enc_bit := sorry
 
 /-- **`map_snd` (the mirror of `map_fst`).** Lift `Wf : PolyTimeComputableLang' f`
 to apply `f` to a pair's *second* component:
@@ -1647,9 +1877,11 @@ obligations are now discharged:
    while `enc c` is stashed at register `k+2`. It now discharges `red_inNPLang`'s
    former `map_fst` hypothesis internally.
 
-2. **The framework decider bridge `inNPLang Q → inNP Q`.** ✅ **Done**
+2. **The framework decider bridge `inNPLang Q → inNP Q`.** Assembled
    (`inNPLang_to_inNP`, below), modulo the `Compile` physical run contract
-   (`Compile_run_physical`). `DecidesBy` reads its answer from the TM **state
+   (`Compile_run_physical_residue`, now the `physStepBudget` shape) AND the two
+   pinned register-count/`consLen` `WALL` facts (`DecidesLang'.reg_width`,
+   `DecidesLang'.c_noConsLen`). `DecidesBy` reads its answer from the TM **state
    index** whereas `Compile` writes it to the **tape** (register `0`); the gap is
    closed by the **C6** tape→state bit-test gadget (`Compile.bitTestTM` +
    `Compile.bitDecider_run`, `Compile.lean`, `sorry`-free), composed after
@@ -1657,9 +1889,10 @@ obligations are now discharged:
    linear (`≤ 2·size + 3`), now admitted by the relaxed `DecidesBy.encode_size`.
    The realized bridge is the **canonical** `DecidesLang'.toDecidesBy` /
    `DecidesLang'.toInTimePoly` (which is exactly what `inNPLang`'s verifier
-   provides); the general, free-encoding `DecidesLang.toDecidesBy` above is left
-   `sorry` (it needs an extra bound on the encoder's register count, which the
-   canonical single-register layout supplies automatically). -/
+   provides). The general, free-encoding `DecidesLang.toDecidesBy` (further down)
+   is now realized the same way (runtime padding + the per-decider polynomial
+   `DecidesBy.encode_size`), using the witness's own `regBound`/`usesBelow`/
+   `width_le`/`noConsLen` fields. -/
 
 /-! ## C6 / framework bridge: `DecidesLang' → inTimePoly` and `inNPLang → inNP`
 
@@ -1670,111 +1903,376 @@ framework's `DecidesBy` (answer = TM **state index**) via the C6 bit-test gadget
 accept/reject *state*. The encoding length `(encodeTape ∘ encodeState)` is linear
 (`≤ 2·size + 3`), which the relaxed `DecidesBy.encode_size` now admits. This
 closes the framework decider bridge for the **canonical** layer (which is what
-`inNPLang` uses), and assembles `inNPLang → inNP`. Sorry-free modulo the
-`Compile` physical run contract (`Compile_run_physical`). -/
+`inNPLang` uses), and assembles `inNPLang → inNP`. Modulo the `Compile` physical
+run contract (`Compile_run_physical_residue`, `physStepBudget` shape) and the two
+pinned `WALL` facts (`reg_width`, `c_noConsLen`). -/
 
-/-- The padded TM-step budget bound: the bit-decider's actual run cost
-(`overhead (size (encodeState x) + cost) + 2`) is dominated by the canonical
-poly budget `overhead (size x + size x + 1 + dBound (size x)) + 2`. -/
+/-- The canonical `encodeState x` is a single register, so its width is `1`. -/
+private theorem DecidesLang'.encodeState_length {X : Type} [encodable X]
+    [LangEncodable X] (x : X) : (LangEncodable.encodeState x).length = 1 := rfl
+
+/-- The canonical padded-decider time budget (numeric form): the runtime
+register-padding cost `(regBound+1)·(2n+regBound+4)`, the `+1` splice step, and the
+inner bit-decider's `physStepBudget (2n + dBound n + regBound + 4) (dBound n) + 3`.
+`regBound` is a per-decider constant, so this is polynomial in `n`. -/
+private def DecidesLang'.padTimeBound {X : Type} [encodable X] [LangEncodable X]
+    {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (n : Nat) : Nat :=
+  (D.regBound + 1) * (4 * n + 2 * D.regBound + 16) + 1
+    + (Compile.physStepBudget (2 * n + dBound n + D.regBound + 4) (dBound n) + 3)
+
+/-- The padded decider's actual run cost on `encodeState x` is dominated by the
+canonical poly budget `padTimeBound (size x)`. (Resolves the register-count WALL:
+the runtime padding lets `Compile_run_physical_residue` run on the widened tape,
+while the *input* encoding stays the tight single register.) -/
 private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (x : X) :
-    Compile.overhead (State.size (LangEncodable.encodeState x)
-        + D.c.cost (LangEncodable.encodeState x)) + 3
-      ≤ Compile.overhead (encodable.size x + encodable.size x + 1 + dBound (encodable.size x)) + 3 := by
+    Compile.padBudget D.regBound (LangEncodable.encodeState x) + 1
+        + (Compile.physStepBudget (State.size (LangEncodable.encodeState x)
+              + ((LangEncodable.encodeState x).length + D.regBound)
+              + D.c.cost (LangEncodable.encodeState x) + 2)
+            (D.c.cost (LangEncodable.encodeState x)) + 3)
+      ≤ D.padTimeBound (encodable.size x) := by
+  have hw : (LangEncodable.encodeState x).length = 1 := DecidesLang'.encodeState_length x
   have h1 : State.size (LangEncodable.encodeState x) ≤ 2 * encodable.size x + 1 := by
     rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
   have h2 : D.c.cost (LangEncodable.encodeState x) ≤ dBound (encodable.size x) := D.cost_le x
-  have hle : State.size (LangEncodable.encodeState x) + D.c.cost (LangEncodable.encodeState x)
-      ≤ encodable.size x + encodable.size x + 1 + dBound (encodable.size x) := by omega
-  exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 3
+  unfold DecidesLang'.padTimeBound
+  have hpb := Compile.padBudget_le D.regBound (LangEncodable.encodeState x)
+  have hpad : Compile.padBudget D.regBound (LangEncodable.encodeState x)
+      ≤ (D.regBound + 1) * (4 * encodable.size x + 2 * D.regBound + 16) :=
+    le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by rw [hw] at *; omega))
+  have hps : Compile.physStepBudget (State.size (LangEncodable.encodeState x)
+            + ((LangEncodable.encodeState x).length + D.regBound)
+            + D.c.cost (LangEncodable.encodeState x) + 2)
+          (D.c.cost (LangEncodable.encodeState x))
+      ≤ Compile.physStepBudget (2 * encodable.size x + dBound (encodable.size x) + D.regBound + 4)
+          (dBound (encodable.size x)) :=
+    Compile.physStepBudget_mono (by omega) h2
+  omega
 
-/-- **C6 bridge:** a canonical layer decider `DecidesLang' P dBound` yields a
-framework-level `DecidesBy P` whose time budget is polynomial in `dBound`. The
-machine is `Compile.bitDeciderTM D.c`; correctness comes from `D.decides`
-(register `0` is `[1]`/`[0]`) carried through `Compile.bitDecider_run`. -/
+/-- ⚠ **WALL (consLen) — pinned bottom-up gap (HANDOFF bottom-up Task 4).** The canonical product
+machinery (`map_fst`) emits `Op.consLen`, which breaks `BitState`, so `NoConsLen D.c`
+is FALSE for composed verifiers until `consLen` is re-laid UNARY (after which
+`Cmd.eval_preserves_BitState`'s `NoConsLen` side-condition is dropped entirely). -/
+private theorem DecidesLang'.c_noConsLen {X : Type} [encodable X] [LangEncodable X]
+    {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) :
+    Cmd.NoConsLen D.c := by
+  sorry
+
+/-- **C6 bridge (WALL resolved):** a canonical layer decider `DecidesLang' P dBound`
+yields a framework-level `DecidesBy P` whose time budget is polynomial in `dBound`.
+The machine is `Compile.paddedBitDeciderTM D.c D.regBound` — it pads the tape to
+`regBound` registers **at runtime** (so the *input* encoding stays the tight single
+register, `encode_size ≤ 2·size+4`), then runs the bit-decider. Correctness comes
+from `D.decides` carried through `Compile.paddedBitDecider_run`, which needs **no
+`k ≤ s.length`**. The encoding/correctness/halting/budget parts are sorry-free; the
+only residual gaps are the pinned bottom-up obligations (`padRegsTM` + its run/traj,
+`c_noConsLen`). -/
 def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) :
-    DecidesBy P (fun n => Compile.overhead (n + n + 1 + dBound n) + 3) where
+    DecidesBy P D.padTimeBound where
   encode := fun x => Compile.encodeTape (LangEncodable.encodeState x)
+  encodeBound := fun n => 2 * n + 4
+  encodeBound_poly := inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) (inOPoly_const 4)
+  encodeBound_mono := fun a b h => by show 2 * a + 4 ≤ 2 * b + 4; omega
   encode_size := fun x => by
     have hlen : (Compile.encodeTape (LangEncodable.encodeState x)).length
         = (LangEncodable.enc x).length + 3 :=
       Compile.encodeTape_singleton_length (LangEncodable.enc x)
     have := LangEncodable.enc_size x
+    show (Compile.encodeTape (LangEncodable.encodeState x)).length ≤ 2 * encodable.size x + 4
     omega
-  M := Compile.bitDeciderTM D.c
-  M_valid := Compile.bitDeciderTM_valid D.c
-  M_tapes_pos := by rw [Compile.bitDeciderTM_tapes]; exact Nat.one_pos
-  acceptState := 1 + (Compile D.c).states
-  rejectState := 2 + (Compile D.c).states
-  halting_acc := (Compile.bitDeciderTM_halt_shift D.c 1).trans Compile.bitTestTM_halt_one
-  halting_rej := (Compile.bitDeciderTM_halt_shift D.c 2).trans Compile.bitTestTM_halt_two
+  M := Compile.paddedBitDeciderTM D.c D.regBound
+  M_valid := Compile.paddedBitDeciderTM_valid D.c D.regBound
+  M_tapes_pos := by rw [Compile.paddedBitDeciderTM_tapes]; exact Nat.one_pos
+  acceptState := 1 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
+  rejectState := 2 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
+  halting_acc :=
+    (Compile.paddedBitDeciderTM_halt_shift D.c D.regBound 1).trans Compile.bitTestTM_halt_one
+  halting_rej :=
+    (Compile.paddedBitDeciderTM_halt_shift D.c D.regBound 2).trans Compile.bitTestTM_halt_two
   accept_ne_reject := by omega
   decides_pos := fun x hPx => by
     have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [1] :=
       eq_of_beq ((D.decides x).1.mp hPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
-      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 1 (Or.inr rfl) hb
+      Compile.paddedBitDecider_run D.c (LangEncodable.encodeState x) 1 D.regBound
+        (D.enc_bit x) D.usesBelow D.c_noConsLen (Or.inr rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
-    · have hinit : initialTapes (Compile.bitDeciderTM D.c)
+    · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (LangEncodable.encodeState x))
           = [Compile.encodeTape (LangEncodable.encodeState x)] := by
         show Compile.encodeTape (LangEncodable.encodeState x)
-              :: List.replicate ((Compile.bitDeciderTM D.c).tapes - 1) [] = _
-        rw [Compile.bitDeciderTM_tapes]
+              :: List.replicate ((Compile.paddedBitDeciderTM D.c D.regBound).tapes - 1) [] = _
+        rw [Compile.paddedBitDeciderTM_tapes]
         rfl
       obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
-      show runFlatTM (Compile.overhead (encodable.size x + encodable.size x + 1
-              + dBound (encodable.size x)) + 3) (Compile.bitDeciderTM D.c)
-            (initFlatConfig (Compile.bitDeciderTM D.c)
-              (initialTapes (Compile.bitDeciderTM D.c)
+      show runFlatTM (D.padTimeBound (encodable.size x))
+            (Compile.paddedBitDeciderTM D.c D.regBound)
+            (initFlatConfig (Compile.paddedBitDeciderTM D.c D.regBound)
+              (initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
                 (Compile.encodeTape (LangEncodable.encodeState x)))) = some cfg
       rw [hinit, ← hk]
       exact runFlatTM_extend hrun hhalt
-    · show cfg.state_idx = 1 + (Compile D.c).states
+    · show cfg.state_idx
+          = 1 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
       rw [hstate]; norm_num
   decides_neg := fun x hnPx => by
     have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [0] :=
       eq_of_beq ((D.decides x).2.mp hnPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
-      Compile.bitDecider_run D.c (LangEncodable.encodeState x) 0 (Or.inl rfl) hb
+      Compile.paddedBitDecider_run D.c (LangEncodable.encodeState x) 0 D.regBound
+        (D.enc_bit x) D.usesBelow D.c_noConsLen (Or.inl rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
-    · have hinit : initialTapes (Compile.bitDeciderTM D.c)
+    · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (LangEncodable.encodeState x))
           = [Compile.encodeTape (LangEncodable.encodeState x)] := by
         show Compile.encodeTape (LangEncodable.encodeState x)
-              :: List.replicate ((Compile.bitDeciderTM D.c).tapes - 1) [] = _
-        rw [Compile.bitDeciderTM_tapes]
+              :: List.replicate ((Compile.paddedBitDeciderTM D.c D.regBound).tapes - 1) [] = _
+        rw [Compile.paddedBitDeciderTM_tapes]
         rfl
       obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
-      show runFlatTM (Compile.overhead (encodable.size x + encodable.size x + 1
-              + dBound (encodable.size x)) + 3) (Compile.bitDeciderTM D.c)
-            (initFlatConfig (Compile.bitDeciderTM D.c)
-              (initialTapes (Compile.bitDeciderTM D.c)
+      show runFlatTM (D.padTimeBound (encodable.size x))
+            (Compile.paddedBitDeciderTM D.c D.regBound)
+            (initFlatConfig (Compile.paddedBitDeciderTM D.c D.regBound)
+              (initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
                 (Compile.encodeTape (LangEncodable.encodeState x)))) = some cfg
       rw [hinit, ← hk]
       exact runFlatTM_extend hrun hhalt
-    · show cfg.state_idx = 2 + (Compile D.c).states
+    · show cfg.state_idx
+          = 2 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
       rw [hstate]; norm_num
 
+
 /-- `DecidesLang' P dBound` (with `dBound` polynomial & monotonic) puts `P` in
-`inTimePoly`. The headline framework bridge for the canonical layer. -/
+`inTimePoly`. The headline framework bridge for the canonical layer (now on the
+`physStepBudget` budget). -/
 theorem DecidesLang'.toInTimePoly {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound)
     (hpoly : inOPoly dBound) (hmono : monotonic dBound) :
     inTimePoly P := by
-  refine ⟨fun n => Compile.overhead (n + n + 1 + dBound n) + 3, ⟨D.toDecidesBy⟩, ?_, ?_⟩
-  · have hinner : inOPoly (fun n => n + n + 1 + dBound n) :=
-      inOPoly_add (inOPoly_add (inOPoly_add inOPoly_id inOPoly_id) (inOPoly_const 1)) hpoly
-    have hcomp : inOPoly (Compile.overhead ∘ fun n => n + n + 1 + dBound n) :=
-      inOPoly_comp hinner Compile.overhead_poly
-    exact inOPoly_add hcomp (inOPoly_const 3)
+  refine ⟨D.padTimeBound, ⟨D.toDecidesBy⟩, ?_, ?_⟩
+  · -- `inOPoly`: a linear pad term + the `physStepBudget` term (dominated by its
+    -- diagonal at `m = 2n + dBound n + regBound + 4`, poly) + constants.
+    unfold DecidesLang'.padTimeBound
+    have hlin : inOPoly (fun n => (D.regBound + 1) * (4 * n + 2 * D.regBound + 16)) :=
+      inOPoly_mul (inOPoly_const _)
+        (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 4) inOPoly_id)
+          (inOPoly_const _)) (inOPoly_const 16))
+    have hinner : inOPoly (fun n => 2 * n + dBound n + D.regBound + 4) :=
+      inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) hpoly)
+        (inOPoly_const _)) (inOPoly_const 4)
+    have hcomp : inOPoly ((fun m => Compile.physStepBudget m m)
+        ∘ (fun n => 2 * n + dBound n + D.regBound + 4)) :=
+      inOPoly_comp hinner Compile.physStepBudget_poly
+    have hphys : inOPoly (fun n =>
+        Compile.physStepBudget (2 * n + dBound n + D.regBound + 4) (dBound n)) := by
+      refine inOPoly_of_le ?_ hcomp
+      intro n
+      show Compile.physStepBudget (2 * n + dBound n + D.regBound + 4) (dBound n)
+          ≤ Compile.physStepBudget (2 * n + dBound n + D.regBound + 4)
+              (2 * n + dBound n + D.regBound + 4)
+      exact Compile.physStepBudget_mono (Nat.le_refl _) (by omega)
+    exact inOPoly_add (inOPoly_add hlin (inOPoly_const 1))
+      (inOPoly_add hphys (inOPoly_const 3))
   · intro a b hab
-    have h1 : dBound a ≤ dBound b := hmono a b hab
-    have hle : a + a + 1 + dBound a ≤ b + b + 1 + dBound b := by omega
-    show Compile.overhead (a + a + 1 + dBound a) + 3
-        ≤ Compile.overhead (b + b + 1 + dBound b) + 3
-    exact Nat.add_le_add_right (Compile.overhead_mono _ _ hle) 3
+    have hd : dBound a ≤ dBound b := hmono a b hab
+    unfold DecidesLang'.padTimeBound
+    have h1 : (D.regBound + 1) * (4 * a + 2 * D.regBound + 16)
+        ≤ (D.regBound + 1) * (4 * b + 2 * D.regBound + 16) :=
+      Nat.mul_le_mul_left _ (by omega)
+    have h2 : Compile.physStepBudget (2 * a + dBound a + D.regBound + 4) (dBound a)
+        ≤ Compile.physStepBudget (2 * b + dBound b + D.regBound + 4) (dBound b) :=
+      Compile.physStepBudget_mono (by omega) hd
+    omega
+
+/-! ## Free-path (live `sat_NP`) bridge: `DecidesLang → DecidesBy → inTimePoly`
+
+The free-encoding analogue of `DecidesLang'.toDecidesBy` / `toInTimePoly`. This is
+the bridge the **live `sat_NP` path** walks (`EvalCnfTM.lean`). It differs from the
+canonical bridge only in the input encoding: instead of the tight single canonical
+register, it uses the witness's own `encodeIn` (multi-register), bounded in size by
+`costBound` and in width by the per-decider `regBound`. The framework
+`encode_size` is now per-decider polynomial (`costBound + regBound + 2`), so the
+multi-register encoding is admissible; the runtime tape-padding
+(`paddedBitDecider_run`) handles the register-count WALL exactly as in the canonical
+case. -/
+
+/-- The free-path padded-decider time budget (numeric form), mirroring
+`DecidesLang'.padTimeBound`: the runtime register-padding cost, the `+1` splice
+step, and the inner bit-decider's `physStepBudget … + 3`. `regBound` is a
+per-decider constant, so this is polynomial in `n` whenever `costBound` is. -/
+private def DecidesLang.padTimeBound {X : Type} [encodable X]
+    {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound) (n : Nat) : Nat :=
+  (D.regBound + 1) * (2 * costBound n + 4 * D.regBound + 12) + 1
+    + (Compile.physStepBudget (2 * costBound n + 2 * D.regBound + 2) (costBound n) + 3)
+
+/-- The free-path padded decider's actual run cost on `encodeIn x` is dominated by
+`padTimeBound (size x)`. (Uses `encodeIn_size`, `cost_bound`, and the width bound
+`width_le`; resolves the register-count WALL via runtime padding.) -/
+private theorem DecidesLang.budget_ge {X : Type} [encodable X]
+    {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound) (x : X) :
+    Compile.padBudget D.regBound (D.encodeIn x) + 1
+        + (Compile.physStepBudget (State.size (D.encodeIn x)
+              + ((D.encodeIn x).length + D.regBound)
+              + D.c.cost (D.encodeIn x) + 2)
+            (D.c.cost (D.encodeIn x)) + 3)
+      ≤ D.padTimeBound (encodable.size x) := by
+  have h1 : State.size (D.encodeIn x) ≤ costBound (encodable.size x) := D.encodeIn_size x
+  have hw : (D.encodeIn x).length ≤ D.regBound := D.width_le x
+  have h2 : D.c.cost (D.encodeIn x) ≤ costBound (encodable.size x) := D.cost_bound x
+  unfold DecidesLang.padTimeBound
+  have hpb := Compile.padBudget_le D.regBound (D.encodeIn x)
+  have hpad : Compile.padBudget D.regBound (D.encodeIn x)
+      ≤ (D.regBound + 1) * (2 * costBound (encodable.size x) + 4 * D.regBound + 12) :=
+    le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by omega))
+  have hps : Compile.physStepBudget (State.size (D.encodeIn x)
+            + ((D.encodeIn x).length + D.regBound)
+            + D.c.cost (D.encodeIn x) + 2)
+          (D.c.cost (D.encodeIn x))
+      ≤ Compile.physStepBudget (2 * costBound (encodable.size x) + 2 * D.regBound + 2)
+          (costBound (encodable.size x)) :=
+    Compile.physStepBudget_mono (by omega) h2
+  omega
+
+/-- **Bridge 1 (free path, WALL resolved):** a free-encoding `DecidesLang P costBound`
+witness yields a framework `DecidesBy P` whose budget is polynomial in `costBound`.
+The machine is `Compile.paddedBitDeciderTM D.c D.regBound` (pad the tape to `regBound`
+registers at runtime, then bit-decide). The encoding is the witness's own multi-register
+`encodeIn`, admitted by the now-polynomial `DecidesBy.encode_size`
+(`encodeBound = costBound + regBound + 2`). The encoding/correctness/halting/budget
+parts are sorry-free; residual gaps are the pinned bottom-up obligations (`padRegsTM`
+run/traj, and — until `consLen` is unary — the witness's `noConsLen`). -/
+def DecidesLang.toDecidesBy {X : Type} [encodable X]
+    {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound)
+    (hpoly : inOPoly costBound) (hmono : monotonic costBound) :
+    DecidesBy P D.padTimeBound where
+  encode := fun x => Compile.encodeTape (D.encodeIn x)
+  encodeBound := fun n => costBound n + D.regBound + 2
+  encodeBound_poly :=
+    inOPoly_add (inOPoly_add hpoly (inOPoly_const D.regBound)) (inOPoly_const 2)
+  encodeBound_mono := fun a b h => by
+    have := hmono a b h
+    show costBound a + D.regBound + 2 ≤ costBound b + D.regBound + 2
+    omega
+  encode_size := fun x => by
+    have hlen : (Compile.encodeTape (D.encodeIn x)).length
+        = State.size (D.encodeIn x) + (D.encodeIn x).length + 2 :=
+      Compile.encodeTape_length (D.encodeIn x)
+    have h1 := D.encodeIn_size x
+    have hw := D.width_le x
+    show (Compile.encodeTape (D.encodeIn x)).length
+        ≤ costBound (encodable.size x) + D.regBound + 2
+    omega
+  M := Compile.paddedBitDeciderTM D.c D.regBound
+  M_valid := Compile.paddedBitDeciderTM_valid D.c D.regBound
+  M_tapes_pos := by rw [Compile.paddedBitDeciderTM_tapes]; exact Nat.one_pos
+  acceptState := 1 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
+  rejectState := 2 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
+  halting_acc :=
+    (Compile.paddedBitDeciderTM_halt_shift D.c D.regBound 1).trans Compile.bitTestTM_halt_one
+  halting_rej :=
+    (Compile.paddedBitDeciderTM_halt_shift D.c D.regBound 2).trans Compile.bitTestTM_halt_two
+  accept_ne_reject := by omega
+  decides_pos := fun x hPx => by
+    have hb : (D.c.eval (D.encodeIn x)).get 0 = [1] :=
+      eq_of_beq ((D.decides x).1.mp hPx)
+    obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
+      Compile.paddedBitDecider_run D.c (D.encodeIn x) 1 D.regBound
+        (D.enc_bit x) D.usesBelow D.noConsLen (Or.inr rfl) hb
+    refine ⟨cfg, ?_, hhalt, ?_⟩
+    · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
+            (Compile.encodeTape (D.encodeIn x))
+          = [Compile.encodeTape (D.encodeIn x)] := by
+        show Compile.encodeTape (D.encodeIn x)
+              :: List.replicate ((Compile.paddedBitDeciderTM D.c D.regBound).tapes - 1) [] = _
+        rw [Compile.paddedBitDeciderTM_tapes]
+        rfl
+      obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
+      show runFlatTM (D.padTimeBound (encodable.size x))
+            (Compile.paddedBitDeciderTM D.c D.regBound)
+            (initFlatConfig (Compile.paddedBitDeciderTM D.c D.regBound)
+              (initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
+                (Compile.encodeTape (D.encodeIn x)))) = some cfg
+      rw [hinit, ← hk]
+      exact runFlatTM_extend hrun hhalt
+    · show cfg.state_idx
+          = 1 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
+      rw [hstate]; norm_num
+  decides_neg := fun x hnPx => by
+    have hb : (D.c.eval (D.encodeIn x)).get 0 = [0] :=
+      eq_of_beq ((D.decides x).2.mp hnPx)
+    obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
+      Compile.paddedBitDecider_run D.c (D.encodeIn x) 0 D.regBound
+        (D.enc_bit x) D.usesBelow D.noConsLen (Or.inl rfl) hb
+    refine ⟨cfg, ?_, hhalt, ?_⟩
+    · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
+            (Compile.encodeTape (D.encodeIn x))
+          = [Compile.encodeTape (D.encodeIn x)] := by
+        show Compile.encodeTape (D.encodeIn x)
+              :: List.replicate ((Compile.paddedBitDeciderTM D.c D.regBound).tapes - 1) [] = _
+        rw [Compile.paddedBitDeciderTM_tapes]
+        rfl
+      obtain ⟨k, hk⟩ := Nat.le.dest (D.budget_ge x)
+      show runFlatTM (D.padTimeBound (encodable.size x))
+            (Compile.paddedBitDeciderTM D.c D.regBound)
+            (initFlatConfig (Compile.paddedBitDeciderTM D.c D.regBound)
+              (initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
+                (Compile.encodeTape (D.encodeIn x)))) = some cfg
+      rw [hinit, ← hk]
+      exact runFlatTM_extend hrun hhalt
+    · show cfg.state_idx
+          = 2 + (Compile D.c).states + (Compile.padRegsTM D.regBound).states
+      rw [hstate]; norm_num
+
+/-- **Bridge 2 (free path):** `DecidesLang P costBound` (with `costBound` polynomial
+& monotonic) puts `P` in `inTimePoly`. The headline fact the live `sat_NP` path
+consumes (via `inTimePolyLang_to_inTimePoly`). -/
+theorem DecidesLang.toInTimePoly {X : Type} [encodable X]
+    {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound)
+    (hpoly : inOPoly costBound) (hmono : monotonic costBound) :
+    inTimePoly P := by
+  refine ⟨D.padTimeBound, ⟨D.toDecidesBy hpoly hmono⟩, ?_, ?_⟩
+  · -- `inOPoly`: a linear-in-`costBound` pad term + the `physStepBudget` term
+    -- (dominated by its poly diagonal) + constants.
+    unfold DecidesLang.padTimeBound
+    have hlin : inOPoly (fun n => (D.regBound + 1) * (2 * costBound n + 4 * D.regBound + 12)) :=
+      inOPoly_mul (inOPoly_const _)
+        (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) hpoly)
+          (inOPoly_const _)) (inOPoly_const 12))
+    have hinner : inOPoly (fun n => 2 * costBound n + 2 * D.regBound + 2) :=
+      inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) hpoly)
+        (inOPoly_const _)) (inOPoly_const 2)
+    have hcomp : inOPoly ((fun m => Compile.physStepBudget m m)
+        ∘ (fun n => 2 * costBound n + 2 * D.regBound + 2)) :=
+      inOPoly_comp hinner Compile.physStepBudget_poly
+    have hphys : inOPoly (fun n =>
+        Compile.physStepBudget (2 * costBound n + 2 * D.regBound + 2) (costBound n)) := by
+      refine inOPoly_of_le ?_ hcomp
+      intro n
+      show Compile.physStepBudget (2 * costBound n + 2 * D.regBound + 2) (costBound n)
+          ≤ Compile.physStepBudget (2 * costBound n + 2 * D.regBound + 2)
+              (2 * costBound n + 2 * D.regBound + 2)
+      exact Compile.physStepBudget_mono (Nat.le_refl _) (by omega)
+    exact inOPoly_add (inOPoly_add hlin (inOPoly_const 1))
+      (inOPoly_add hphys (inOPoly_const 3))
+  · intro a b hab
+    have hd : costBound a ≤ costBound b := hmono a b hab
+    unfold DecidesLang.padTimeBound
+    have h1 : (D.regBound + 1) * (2 * costBound a + 4 * D.regBound + 12)
+        ≤ (D.regBound + 1) * (2 * costBound b + 4 * D.regBound + 12) :=
+      Nat.mul_le_mul_left _ (by omega)
+    have h2 : Compile.physStepBudget (2 * costBound a + 2 * D.regBound + 2) (costBound a)
+        ≤ Compile.physStepBudget (2 * costBound b + 2 * D.regBound + 2) (costBound b) :=
+      Compile.physStepBudget_mono (by omega) hd
+    omega
+
+/-- **Bridge 2 (headline, free path):** `inTimePolyLang P` implies `inTimePoly P`.
+The consumer-facing fact (`EvalCnfTM.lean` / `CliqueRelTM.lean`). -/
+theorem inTimePolyLang_to_inTimePoly {X : Type} [encodable X]
+    {P : X → Prop} (h : inTimePolyLang P) : inTimePoly P := by
+  obtain ⟨costBound, ⟨D⟩, hpoly, hmono⟩ := h
+  exact D.toInTimePoly hpoly hmono
 
 /-- **Framework decider bridge — headline.** `inNPLang Q → inNP Q`: a
 layer-native NP witness (canonical `DecidesLang'` verifier) yields a
@@ -1847,7 +2345,8 @@ witnesses for `f` and `g`. -/
 
 /-- **Identity is TM-backed poly-time computable.** Provided the type has a
 canonical layer encoding. -/
-theorem polyTimeComputable'_id {X : Type} [encodable X] [LangEncodable X] :
+theorem polyTimeComputable'_id {X : Type} [encodable X] [LangEncodable X]
+    [BitEncodable X] :
     polyTimeComputable' (id : X → X) :=
   PolyTimeComputableLang'.id_witness.toFrameworkWitness'
 
@@ -1912,6 +2411,7 @@ theorem reducesPolyMO'_to_reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
 /-- Reflexivity of `⪯p'` (needs `[LangEncodable X]` to construct the layer
 identity witness). -/
 theorem reducesPolyMO'_reflexive (X : Type) [encodable X] [LangEncodable X]
+    [BitEncodable X]
     (P : X → Prop) : P ⪯p' P :=
   ⟨⟨id, polyTimeComputable'_id, fun _ => Iff.rfl⟩⟩
 

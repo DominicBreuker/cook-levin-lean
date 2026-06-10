@@ -15,10 +15,10 @@ register before working.
 
 | | |
 |---|---|
-| `lake build` | ✅ green (3358 jobs) |
+| `lake build` | ✅ green (3357 jobs) |
 | `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`** (both the hardness and the in-NP halves reach a `sorry`). |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
-| Genuine `sorry`s on the proof path | ~30 (Group C — completion) |
+| Genuine `sorry`s on the proof path | ~31 (Group C — completion) |
 | `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~18K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~15–25K LOC** (see ROADMAP) |
@@ -96,12 +96,9 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 + `map_fst`/`swap`/`map_snd`/`forBnd` toolkit), all sorry-free **modulo one
 compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
 
-**Caveat surfaced (do not under-estimate C2):** as of 2026-06-10, 5 of 12
-`compileOp`s are fully proven against the residue-tolerant per-op contract
-(`appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`); 7 are still
-`compiledCmd_default` stubs, with the block-copy architecture for them
-probe-validated (`parked/ProbeMoveCopy.lean`). Historically, `Compile_sound`
-was false as stated for *three* reasons. (1) its budget ignored the register count; fixed by a tape-length
+**Caveat surfaced (do not under-estimate C2):** 10 of 12 `compileOp`s are still
+`compiledCmd_default` stubs. `Compile_sound` was false as stated for *three*
+reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
 **unit cost** but `concat`/`copy` grow the state **multiplicatively** (output
 size exponential in layer cost); **fixed** by a size-aware `Op.cost`, validated
