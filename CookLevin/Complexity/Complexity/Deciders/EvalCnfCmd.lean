@@ -9,17 +9,16 @@ This file contains the concrete `Lang.Cmd` that decides
 `fun (N, a) => satisfiesCnf a N` together with its input encoder
 and its correctness / cost statements.
 
-**Status (2026-06-09, top-down).** The encoding is concrete (unary/bit-level,
-proven `BitState`, linear size accounting). The verifier's outer scaffold is
-concrete, and its four consumer-facing theorems — `evalCnfCmd_decides`,
-`evalCnfCmd_cost_bound`, `evalCnfCmd_usesBelow`, `evalCnfCmd_noConsLen` (all
-four `evalCnfDecidesLang` fields) — are **PROVEN** from the **pinned
-per-clause contracts** (`processOneClause_run`/`_cost`/`_usesBelow`/
-`_noConsLen`). The remaining sorrys in this file are exactly those pins, the
-recommended lower-level pins (`processOneLiteral_*`, `memberCheck_*`), and the
-three body `Cmd`s — the bottom-up build targets. See the "Pinned inner-body
-contracts" section for the interface and the "Notes for the inner-body
-author" section for the intended construction.
+**Status (2026-06-10, bottom-up): COMPLETE — this file is sorry-free and
+axiom-clean.** The encoding is concrete (unary/bit-level, proven `BitState`,
+linear size accounting); the three inner bodies (`processOneClause`/
+`processOneLiteral`/`memberCheck`) are concrete `Cmd`s, `#eval`-probe-validated
+end-to-end and **proven** against the pinned contracts
+(`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen` and the lower-level
+quartets); the four consumer-facing theorems (`evalCnfCmd_decides`/
+`_cost_bound`/`_usesBelow`/`_noConsLen` — all four `evalCnfDecidesLang`
+fields) are proven from them. `EvalCnfTM.evalCnfDecidesLang` is axiom-clean;
+what `sat_NP` still owes is only the compiler gadgets (Risk C2, Compile.lean).
 -/
 
 namespace EvalCnfCmd
@@ -781,13 +780,12 @@ private theorem memberCheck_main (st : State) (v : Nat) (a : assgn)
 
 /-! ## Pinned inner-body contracts — the bottom-up ⇄ top-down interface
 
-**(2026-06-09, top-down session.)** These sorry lemmas are the *build targets*
-for the bottom-up stream. The assembly below (`evalCnfCmd_decides`,
-`evalCnfCmd_cost_bound`, `evalCnfCmd_usesBelow`, `evalCnfCmd_noConsLen` — all
-four remaining `evalCnfDecidesLang` obligations) is **proven** from the
-`processOneClause_*` quartet alone; the `processOneLiteral_*` / `memberCheck_*`
-pins are the recommended decomposition for *building* `processOneClause` and
-may be reshaped freely as long as the `processOneClause_*` quartet survives.
+**(Pinned 2026-06-09 top-down; DISCHARGED 2026-06-10 bottom-up.)** The
+assembly below (`evalCnfCmd_decides`, `evalCnfCmd_cost_bound`,
+`evalCnfCmd_usesBelow`, `evalCnfCmd_noConsLen` — all four `evalCnfDecidesLang`
+obligations) is proven from the `processOneClause_*` quartet alone; the
+`processOneLiteral_*` / `memberCheck_*` quartets are the (now proven)
+decomposition.
 
 Design notes baked into the statements (do not weaken silently):
 
@@ -844,6 +842,476 @@ theorem memberCheck_noConsLen : Cmd.NoConsLen memberCheck := by
   simp only [memberCheck, mcBody, mcSkip, Cmd.NoConsLen, Op.NotConsLen]
   trivial
 
+/-! ### `processOneLiteral`: the unary-variable extraction loop -/
+
+/-- The var-extraction loop invariant: through iteration `v` the loop is
+consuming the unary block (one cell per iteration) into `LIT_VAR`; at
+iteration `v` it consumes the `0` terminator and clears `IN_BLOCK`; afterwards
+it idles. `st` is the loop-entry state (frame reference). -/
+private def LVInv (v : Nat) (rest : List Nat) (st : State) (i : Nat) (s : State) :
+    Prop :=
+  (if i ≤ v then
+    s.get IN_BLOCK = [1] ∧ s.get LIT_VAR = List.replicate i 1
+      ∧ s.get CNF_STREAM = List.replicate (v - i) 1 ++ 0 :: rest
+  else
+    s.get IN_BLOCK = [] ∧ s.get LIT_VAR = List.replicate v 1
+      ∧ s.get CNF_STREAM = rest)
+  ∧ ∀ r : Var, r ∉ [CNF_STREAM, LIT_VAR, IN_BLOCK, HEAD_CELL, CMP_FLAG,
+      INNER_IDX] → s.get r = st.get r
+
+private theorem LVInv_step (v : Nat) (rest : List Nat) (st : State)
+    (i : Nat) (s : State) (h : LVInv v rest st i s) :
+    LVInv v rest st (i + 1)
+      (varExtractBody.eval (s.set INNER_IDX (List.replicate i 1))) := by
+  obtain ⟨hphase, hframe⟩ := h
+  by_cases hiv : i ≤ v
+  · rw [if_pos hiv] at hphase
+    obtain ⟨hIB, hLV, hCS⟩ := hphase
+    have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK = [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hIB
+    have hCS' : (s.set INNER_IDX (List.replicate i 1)).get CNF_STREAM
+        = List.replicate (v - i) 1 ++ 0 :: rest := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hCS
+    have hLV' : (s.set INNER_IDX (List.replicate i 1)).get LIT_VAR
+        = List.replicate i 1 := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hLV
+    have heval : varExtractBody.eval (s.set INNER_IDX (List.replicate i 1))
+        = (Cmd.op (.head HEAD_CELL CNF_STREAM) ;;
+           Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;
+           Cmd.ifBit HEAD_CELL (Cmd.op (.appendOne LIT_VAR))
+             (Cmd.op (.clear IN_BLOCK))).eval
+            (s.set INNER_IDX (List.replicate i 1)) := by
+      show (Cmd.ifBit IN_BLOCK _ _).eval _ = _
+      rw [Cmd.eval_ifBit_true _ _ _ _ hIB']
+    by_cases hiv2 : i < v
+    · -- interior `1` cell of the unary block
+      have hsplit : List.replicate (v - i) (1 : Nat) ++ 0 :: rest
+          = 1 :: (List.replicate (v - (i + 1)) 1 ++ 0 :: rest) := by
+        have hvi : v - i = (v - (i + 1)) + 1 := by omega
+        rw [hvi, List.replicate_succ, List.cons_append]
+      rw [hsplit] at hCS'
+      have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+          (s.set INNER_IDX (List.replicate i 1))
+          = (s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS']
+      have e2 : (Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval
+          ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1])
+          = ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).set
+              CNF_STREAM (List.replicate (v - (i + 1)) 1 ++ 0 :: rest) := by
+        rw [Cmd.eval_op]; simp only [Op.eval]
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS', List.tail_cons]
+      have hHC : (((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).set
+          CNF_STREAM (List.replicate (v - (i + 1)) 1 ++ 0 :: rest)).get HEAD_CELL
+          = [1] := by
+        rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_ifBit_true _ _ _ _ hHC,
+        Cmd.eval_op] at heval
+      simp only [Op.eval] at heval
+      rw [State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hLV, replicate_one_snoc] at heval
+      rw [heval]
+      constructor
+      · rw [if_pos (by omega : i + 1 ≤ v)]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hIB
+        · rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+      · intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+        obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hr
+        rw [State.get_set_ne _ _ _ _ h2, State.get_set_ne _ _ _ _ h1,
+          State.get_set_ne _ _ _ _ h4, State.get_set_ne _ _ _ _ h6]
+        exact hframe r (by simp [h1, h2, h3, h4, h5, h6])
+    · -- the `0` terminator (i = v)
+      have hiv3 : i = v := by omega
+      subst hiv3
+      have hsplit : List.replicate (i - i) (1 : Nat) ++ 0 :: rest
+          = 0 :: rest := by
+        rw [Nat.sub_self]; rfl
+      rw [hsplit] at hCS'
+      have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+          (s.set INNER_IDX (List.replicate i 1))
+          = (s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [0] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS']
+      have e2 : (Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval
+          ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [0])
+          = ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [0]).set
+              CNF_STREAM rest := by
+        rw [Cmd.eval_op]; simp only [Op.eval]
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS', List.tail_cons]
+      have hHC : (((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [0]).set
+          CNF_STREAM rest).get HEAD_CELL ≠ [1] := by
+        rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]; decide
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_ifBit_false _ _ _ _ hHC,
+        Cmd.eval_op] at heval
+      simp only [Op.eval] at heval
+      rw [heval]
+      constructor
+      · rw [if_neg (by omega : ¬ i + 1 ≤ i)]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hLV
+        · rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+      · intro r hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+        obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hr
+        rw [State.get_set_ne _ _ _ _ h3, State.get_set_ne _ _ _ _ h1,
+          State.get_set_ne _ _ _ _ h4, State.get_set_ne _ _ _ _ h6]
+        exact hframe r (by simp [h1, h2, h3, h4, h5, h6])
+  · -- idle phase
+    rw [if_neg hiv] at hphase
+    obtain ⟨hIB, hLV, hCS⟩ := hphase
+    have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK ≠ [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide), hIB]; decide
+    have heval : varExtractBody.eval (s.set INNER_IDX (List.replicate i 1))
+        = ((s.set INNER_IDX (List.replicate i 1)).set CMP_FLAG [1]) := by
+      show (Cmd.ifBit IN_BLOCK _ _).eval _ = _
+      rw [Cmd.eval_ifBit_false _ _ _ _ hIB', mcSkip_eval]
+    rw [heval]
+    constructor
+    · rw [if_neg (by omega : ¬ i + 1 ≤ v)]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hIB
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hLV
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hCS
+    · intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+      obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hr
+      rw [State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h6]
+      exact hframe r (by simp [h1, h2, h3, h4, h5, h6])
+
+/-- Uniform per-iteration cost of the var-extraction body. -/
+private theorem LVInv_cost (v : Nat) (rest : List Nat) (st : State)
+    (i : Nat) (s : State) (h : LVInv v rest st i s) :
+    varExtractBody.cost (s.set INNER_IDX (List.replicate i 1))
+      ≤ (v + 1 + rest.length) + 10 := by
+  obtain ⟨hphase, hframe⟩ := h
+  have hif : ∀ t : State, (Cmd.ifBit HEAD_CELL (Cmd.op (.appendOne LIT_VAR))
+      (Cmd.op (.clear IN_BLOCK))).cost t ≤ 2 := by
+    intro t
+    by_cases hb : t.get HEAD_CELL = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hb, Cmd.cost_op]; simp [Op.cost]
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hb, Cmd.cost_op]; simp [Op.cost]
+  by_cases hiv : i ≤ v
+  · rw [if_pos hiv] at hphase
+    obtain ⟨hIB, hLV, hCS⟩ := hphase
+    have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK = [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hIB
+    have hCS' : (s.set INNER_IDX (List.replicate i 1)).get CNF_STREAM
+        = List.replicate (v - i) 1 ++ 0 :: rest := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hCS
+    obtain ⟨c, tl, hct, htl⟩ : ∃ c tl,
+        (s.set INNER_IDX (List.replicate i 1)).get CNF_STREAM = c :: tl
+        ∧ tl.length = (v - i) + rest.length := by
+      rw [hCS']
+      cases hvi : v - i with
+      | zero => exact ⟨0, rest, rfl, by omega⟩
+      | succ k =>
+          refine ⟨1, List.replicate k 1 ++ 0 :: rest, by
+            rw [List.replicate_succ, List.cons_append], by
+            simp only [List.length_append, List.length_replicate,
+              List.length_cons]
+            omega⟩
+    have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+        (s.set INNER_IDX (List.replicate i 1))
+        = (s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [c] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]; rw [hct]
+    have hc1 : varExtractBody.cost (s.set INNER_IDX (List.replicate i 1))
+        = 1 + (Cmd.op (.head HEAD_CELL CNF_STREAM) ;;
+            Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;
+            Cmd.ifBit HEAD_CELL (Cmd.op (.appendOne LIT_VAR))
+              (Cmd.op (.clear IN_BLOCK))).cost
+            (s.set INNER_IDX (List.replicate i 1)) := by
+      show (Cmd.ifBit IN_BLOCK _ _).cost _ = _
+      rw [Cmd.cost_ifBit_true _ _ _ _ hIB']
+    have htlcost : Op.cost (.tail CNF_STREAM CNF_STREAM)
+        ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [c])
+        = tl.length + 2 := by
+      show (((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [c]).get
+        CNF_STREAM).length + 1 = _
+      rw [State.get_set_ne _ _ _ _ (by decide), hct]
+      simp
+    have hc2 : (Cmd.op (.head HEAD_CELL CNF_STREAM) ;;
+        Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;
+        Cmd.ifBit HEAD_CELL (Cmd.op (.appendOne LIT_VAR))
+          (Cmd.op (.clear IN_BLOCK))).cost
+        (s.set INNER_IDX (List.replicate i 1))
+        = 1 + 1 + (1 + (tl.length + 2)
+            + (Cmd.ifBit HEAD_CELL (Cmd.op (.appendOne LIT_VAR))
+                (Cmd.op (.clear IN_BLOCK))).cost
+                ((Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval
+                  ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [c]))) := by
+      rw [Cmd.cost_seq, e1, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op, htlcost]
+      simp only [Op.cost]
+    have := hif ((Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval
+      ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [c]))
+    rw [hc1, hc2]
+    omega
+  · rw [if_neg hiv] at hphase
+    have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK ≠ [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide), hphase.1]; decide
+    have hcost : varExtractBody.cost (s.set INNER_IDX (List.replicate i 1))
+        = 1 + 1 := by
+      show (Cmd.ifBit IN_BLOCK _ _).cost _ = _
+      rw [Cmd.cost_ifBit_false _ _ _ _ hIB', mcSkip_cost]
+    omega
+
+/-- Combined behaviour + cost for `processOneLiteral`, at explicit `(pol, v)`
+and a pre-normalized stream shape. -/
+private theorem processOneLiteral_main (st : State) (pol : Bool) (v : Nat)
+    (rest : List Nat) (a : assgn) (cs : Bool)
+    (hstream : st.get CNF_STREAM
+      = 1 :: (if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))
+    (hassgn : st.get ASSGN = encodeAssgn a)
+    (hsat : st.get CLAUSE_SAT = [if cs then 1 else 0]) :
+    ((processOneLiteral.eval st).get CLAUSE_SAT
+        = [if cs || evalLiteral a (pol, v) then 1 else 0])
+    ∧ ((processOneLiteral.eval st).get CNF_STREAM = rest)
+    ∧ (∀ r : Var,
+        r ∉ [CNF_STREAM, CLAUSE_SAT, LIT_POL, LIT_VAR, ASSGN_COPY,
+             MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG, IN_BLOCK,
+             BLOCK_ACC] →
+        (processOneLiteral.eval st).get r = st.get r)
+    ∧ processOneLiteral.cost st
+        ≤ 300 * ((st.get CNF_STREAM).length + (st.get ASSGN).length + 1) ^ 2 := by
+  -- prefix evaluation, op by op
+  have e1 : (Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval st = st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hstream, List.tail_cons]
+  have e2 : (Cmd.op (.head LIT_POL CNF_STREAM)).eval (st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))) = (st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_eq]
+  have hgetB : ((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).get CNF_STREAM
+      = (if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest) := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+  have e3 : (Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval ((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]) = ((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hgetB, List.tail_cons]
+  have e4 : (Cmd.op (.clear LIT_VAR)).eval (((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)) = (((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e5 : (Cmd.op (.clear IN_BLOCK)).eval ((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []) = ((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e6 : (Cmd.op (.appendOne IN_BLOCK)).eval (((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []) = (((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_eq, List.nil_append]
+  have eP : processOneLiteral.eval st
+      = (Cmd.forBnd INNER_IDX CNF_STREAM varExtractBody ;; memberCheck ;;
+       Cmd.op (.eqBit CMP_FLAG MEMBER_FOUND LIT_POL) ;;
+       Cmd.ifBit CMP_FLAG
+         (Cmd.op (.clear CLAUSE_SAT) ;; Cmd.op (.appendOne CLAUSE_SAT)) mcSkip).eval ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) := by
+    show (Cmd.eval (_ ;; _ ;; _ ;; _ ;; _ ;; _ ;; _) st) = _
+    rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+      Cmd.eval_seq, e5, Cmd.eval_seq, e6]
+  have hcost_eq : processOneLiteral.cost st
+      = 2 * v + 2 * rest.length + 17 + (Cmd.forBnd INNER_IDX CNF_STREAM varExtractBody ;; memberCheck ;;
+       Cmd.op (.eqBit CMP_FLAG MEMBER_FOUND LIT_POL) ;;
+       Cmd.ifBit CMP_FLAG
+         (Cmd.op (.clear CLAUSE_SAT) ;; Cmd.op (.appendOne CLAUSE_SAT)) mcSkip).cost ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) := by
+    show (Cmd.cost (_ ;; _ ;; _ ;; _ ;; _ ;; _ ;; _) st) = _
+    rw [Cmd.cost_seq, e1, Cmd.cost_seq, e2, Cmd.cost_seq, e3, Cmd.cost_seq, e4,
+      Cmd.cost_seq, e5, Cmd.cost_seq, e6, Cmd.cost_op, Cmd.cost_op, Cmd.cost_op,
+      Cmd.cost_op, Cmd.cost_op, Cmd.cost_op]
+    simp only [Op.cost]
+    rw [hstream, hgetB]
+    simp only [List.length_cons, List.length_append, List.length_replicate]
+    omega
+  -- the post-prefix register picture
+  have hCSF : ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get CNF_STREAM = List.replicate v 1 ++ 0 :: rest := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+  have hIBF : ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get IN_BLOCK = [1] := State.get_set_eq _ _ _
+  have hLVF : ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get LIT_VAR = List.replicate 0 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_eq]
+    rfl
+  have hLPF : ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get LIT_POL = [(if pol then 1 else 0)] := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_eq]
+  have hframeF : ∀ r : Var, r ∉ [CNF_STREAM, LIT_POL, LIT_VAR, IN_BLOCK] →
+      ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get r = st.get r := by
+    intro r hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+    obtain ⟨h1, h2, h3, h4⟩ := hr
+    rw [State.get_set_ne _ _ _ _ h4, State.get_set_ne _ _ _ _ h4,
+      State.get_set_ne _ _ _ _ h3, State.get_set_ne _ _ _ _ h1,
+      State.get_set_ne _ _ _ _ h2, State.get_set_ne _ _ _ _ h1]
+  have hnlen : (((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get CNF_STREAM).length = v + 1 + rest.length := by
+    rw [hCSF]
+    simp only [List.length_append, List.length_replicate, List.length_cons]
+    omega
+  -- the var-extraction loop
+  have base : LVInv v rest ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) 0 ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) := by
+    constructor
+    · rw [if_pos (Nat.zero_le v)]
+      refine ⟨hIBF, hLVF, ?_⟩
+      rw [Nat.sub_zero]
+      exact hCSF
+    · intro r _; rfl
+  have hfin := Cmd.foldlState_range_induct varExtractBody INNER_IDX
+    (((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]).get CNF_STREAM).length ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) (LVInv v rest ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1])) base
+    (fun i s _ h => LVInv_step v rest ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) i s h)
+  rw [hnlen] at hfin
+  rw [Cmd.eval_seq, Cmd.eval_forBnd, hnlen] at eP
+  obtain ⟨hphase7, hframe7⟩ := hfin
+  rw [if_neg (by omega : ¬ (v + 1 + rest.length ≤ v))] at hphase7
+  obtain ⟨hIB7, hLV7, hCS7⟩ := hphase7
+  have hassgn7 : (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1])).get ASSGN = encodeAssgn a := by
+    rw [hframe7 ASSGN (by decide), hframeF ASSGN (by decide)]
+    exact hassgn
+  obtain ⟨hMF8, hframe8, hcostMC⟩ := memberCheck_main (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1])) v a hLV7 hassgn7
+  rw [Cmd.eval_seq] at eP
+  have hCS8 : (memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))).get CNF_STREAM = rest :=
+    (hframe8 CNF_STREAM (by decide)).trans hCS7
+  have hLP8 : (memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))).get LIT_POL = [(if pol then 1 else 0)] :=
+    (hframe8 LIT_POL (by decide)).trans
+      ((hframe7 LIT_POL (by decide)).trans hLPF)
+  have hCSAT8 : (memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))).get CLAUSE_SAT = [if cs then 1 else 0] :=
+    (hframe8 CLAUSE_SAT (by decide)).trans
+      ((hframe7 CLAUSE_SAT (by decide)).trans
+        ((hframeF CLAUSE_SAT (by decide)).trans hsat))
+  have hsat_red : (if ([if evalVar a v then 1 else 0] : List Nat)
+      = [(if pol then 1 else 0)] then ([1] : List Nat) else [0])
+      = if evalLiteral a (pol, v) then [1] else [0] := by
+    cases hev : evalVar a v <;> cases pol <;> simp [evalLiteral, hev]
+  rw [Cmd.eval_seq, Cmd.eval_op] at eP
+  simp only [Op.eval] at eP
+  rw [hMF8, hLP8, hsat_red] at eP
+  have hrun : ((processOneLiteral.eval st).get CLAUSE_SAT
+        = [if cs || evalLiteral a (pol, v) then 1 else 0])
+      ∧ ((processOneLiteral.eval st).get CNF_STREAM = rest)
+      ∧ (∀ r : Var,
+          r ∉ [CNF_STREAM, CLAUSE_SAT, LIT_POL, LIT_VAR, ASSGN_COPY,
+               MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG, IN_BLOCK,
+               BLOCK_ACC] →
+          (processOneLiteral.eval st).get r = st.get r) := by
+    cases hlit : evalLiteral a (pol, v) with
+    | true =>
+        rw [hlit] at eP
+        rw [if_pos rfl] at eP
+        have hCMP9 : ((memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))).set CMP_FLAG [1]).get CMP_FLAG = [1] :=
+          State.get_set_eq _ _ _
+        rw [Cmd.eval_ifBit_true _ _ _ _ hCMP9, Cmd.eval_seq, Cmd.eval_op,
+          Cmd.eval_op] at eP
+        simp only [Op.eval] at eP
+        rw [State.get_set_eq, List.nil_append] at eP
+        rw [eP]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_eq]
+          simp
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hCS8
+        · intro r hr
+          simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+          obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := hr
+          rw [State.get_set_ne _ _ _ _ h2, State.get_set_ne _ _ _ _ h2,
+            State.get_set_ne _ _ _ _ h9,
+            hframe8 r (by
+              simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+              exact ⟨h5, h6, h7, h8, h9, h10, h11⟩),
+            hframe7 r (by
+              simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+              exact ⟨h1, h4, h10, h8, h9, h7⟩),
+            hframeF r (by
+              simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+              exact ⟨h1, h3, h4, h10⟩)]
+    | false =>
+        rw [hlit] at eP
+        rw [if_neg (by decide : ¬ ((false : Bool) = true))] at eP
+        have hCMP9 : ((memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))).set CMP_FLAG [0]).get CMP_FLAG ≠ [1] := by
+          rw [State.get_set_eq]; decide
+        rw [Cmd.eval_ifBit_false _ _ _ _ hCMP9, mcSkip_eval] at eP
+        rw [eP]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide), hCSAT8, Bool.or_false]
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hCS8
+        · intro r hr
+          simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+          obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := hr
+          rw [State.get_set_ne _ _ _ _ h9, State.get_set_ne _ _ _ _ h9,
+            hframe8 r (by
+              simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+              exact ⟨h5, h6, h7, h8, h9, h10, h11⟩),
+            hframe7 r (by
+              simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+              exact ⟨h1, h4, h10, h8, h9, h7⟩),
+            hframeF r (by
+              simp only [List.mem_cons, List.not_mem_nil, or_false, not_or]
+              exact ⟨h1, h3, h4, h10⟩)]
+  refine ⟨hrun.1, hrun.2.1, hrun.2.2, ?_⟩
+  -- the cost side
+  have hForCost : (Cmd.forBnd INNER_IDX CNF_STREAM varExtractBody).cost ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1])
+      ≤ 1 + (v + 1 + rest.length) * ((v + 1 + rest.length) + 10)
+        + (v + 1 + rest.length) * (v + 1 + rest.length) := by
+    have h := Cmd.cost_forBnd_le INNER_IDX CNF_STREAM varExtractBody ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1])
+      ((v + 1 + rest.length) + 10) (LVInv v rest ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1])) base
+      (fun i s _ h => LVInv_step v rest ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) i s h)
+      (fun i s _ h => LVInv_cost v rest ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]) i s h)
+    rwa [hnlen] at h
+  rw [hassgn7, hLV7, List.length_replicate] at hcostMC
+  have hIfCost : ∀ t : State, (Cmd.ifBit CMP_FLAG
+      (Cmd.op (.clear CLAUSE_SAT) ;; Cmd.op (.appendOne CLAUSE_SAT))
+      mcSkip).cost t ≤ 4 := by
+    intro t
+    by_cases hb : t.get CMP_FLAG = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hb, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+      simp only [Op.cost]
+      omega
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hb, mcSkip_cost]
+      omega
+  have hLst : (st.get CNF_STREAM).length = v + rest.length + 3 := by
+    rw [hstream]
+    simp only [List.length_cons, List.length_append, List.length_replicate]
+    omega
+  have hAst : (st.get ASSGN).length = (encodeAssgn a).length := by rw [hassgn]
+  rw [hcost_eq, hLst, hAst]
+  rw [Cmd.cost_seq, Cmd.eval_forBnd, hnlen, Cmd.cost_seq, Cmd.cost_seq,
+    Cmd.cost_op]
+  simp only [Op.cost]
+  have hif := hIfCost ((Cmd.op (.eqBit CMP_FLAG MEMBER_FOUND LIT_POL)).eval
+    (memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))))
+  -- arithmetic: everything against the budget base
+  have hXX : (v + rest.length + 3 + (encodeAssgn a).length + 1) ^ 2
+      = (v + rest.length + 3 + (encodeAssgn a).length + 1)
+        * (v + rest.length + 3 + (encodeAssgn a).length + 1) := by ring
+  rw [hXX]
+  have hForExp : (v + 1 + rest.length) * ((v + 1 + rest.length) + 10)
+      = (v + 1 + rest.length) * (v + 1 + rest.length)
+        + 10 * (v + 1 + rest.length) := by ring
+  rw [hForExp] at hForCost
+  have hP1 : (v + 1 + rest.length) * (v + 1 + rest.length)
+      ≤ (v + rest.length + 3 + (encodeAssgn a).length + 1)
+        * (v + rest.length + 3 + (encodeAssgn a).length + 1) :=
+    Nat.mul_le_mul (by omega) (by omega)
+  have hP3 : ((encodeAssgn a).length + v + 1) ^ 2
+      ≤ (v + rest.length + 3 + (encodeAssgn a).length + 1)
+        * (v + rest.length + 3 + (encodeAssgn a).length + 1) := by
+    calc ((encodeAssgn a).length + v + 1) ^ 2
+        ≤ (v + rest.length + 3 + (encodeAssgn a).length + 1) ^ 2 :=
+          Nat.pow_le_pow_left (by omega) 2
+      _ = _ := hXX
+  have h4X : 4 * (v + rest.length + 3 + (encodeAssgn a).length + 1)
+      ≤ (v + rest.length + 3 + (encodeAssgn a).length + 1)
+        * (v + rest.length + 3 + (encodeAssgn a).length + 1) :=
+    Nat.mul_le_mul (by omega) (Nat.le_refl _)
+  omega
+
 /-- **(pinned, bottom-up) `processOneLiteral` behaviour.** With one encoded
 literal at the head of `CNF_STREAM` and `CLAUSE_SAT` a boolean cell, it
 consumes exactly the literal block and ORs the literal's satisfaction into
@@ -862,7 +1330,13 @@ theorem processOneLiteral_run (st : State) (l : literal) (rest : List Nat)
              MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG, IN_BLOCK,
              BLOCK_ACC] →
         (processOneLiteral.eval st).get r = st.get r) := by
-  sorry  -- TODO(Part3.5-literal): gated on the concrete `processOneLiteral`
+  rcases l with ⟨pol, v⟩
+  have hstream' : st.get CNF_STREAM
+      = 1 :: (if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest) := by
+    rw [hstream]
+    simp [encodeLit, List.cons_append, List.append_assoc, List.nil_append]
+  obtain ⟨h1, h2, h3, _⟩ := processOneLiteral_main st pol v rest a cs hstream' hassgn hsat
+  exact ⟨h1, h2, h3⟩
 
 /-- **(pinned, bottom-up) `processOneLiteral` cost** — quadratic: the
 unary-variable extraction sub-loop is `O(len)` slots at `O(len)` worst-case
@@ -874,13 +1348,513 @@ theorem processOneLiteral_cost (st : State) (l : literal) (rest : List Nat)
     (hsat : st.get CLAUSE_SAT = [if cs then 1 else 0]) :
     processOneLiteral.cost st
       ≤ 300 * ((st.get CNF_STREAM).length + (st.get ASSGN).length + 1) ^ 2 := by
-  sorry  -- TODO(Part3.5-literal)
+  rcases l with ⟨pol, v⟩
+  have hstream' : st.get CNF_STREAM
+      = 1 :: (if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest) := by
+    rw [hstream]
+    simp [encodeLit, List.cons_append, List.append_assoc, List.nil_append]
+  exact (processOneLiteral_main st pol v rest a cs hstream' hassgn hsat).2.2.2
 
 theorem processOneLiteral_usesBelow : Cmd.UsesBelow processOneLiteral 16 := by
-  sorry  -- TODO(Part3.5-literal)
+  simp [processOneLiteral, varExtractBody, memberCheck, mcBody, mcSkip,
+    Cmd.UsesBelow, Op.UsesBelow, CNF_STREAM, ASSGN, CLAUSE_SAT, LIT_POL,
+    LIT_VAR, ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG,
+    IN_BLOCK, BLOCK_ACC]
 
 theorem processOneLiteral_noConsLen : Cmd.NoConsLen processOneLiteral := by
-  sorry  -- TODO(Part3.5-literal)
+  simp only [processOneLiteral, varExtractBody, memberCheck, mcBody, mcSkip,
+    Cmd.NoConsLen, Op.NotConsLen]
+  trivial
+
+/-! ### `processOneClause`: the clause scan loop -/
+
+/-- The literal blocks of a clause, without the clause-end marker. -/
+private def encodeLits (C : clause) : List Nat :=
+  C.foldr (fun l acc => encodeLit l ++ acc) []
+
+private theorem encodeClause_eq_lits (C : clause) :
+    encodeClause C = encodeLits C ++ [0] := rfl
+
+private theorem encodeLits_cons (l : literal) (C : clause) :
+    encodeLits (l :: C) = encodeLit l ++ encodeLits C := rfl
+
+private theorem encodeLits_append (A B : clause) :
+    encodeLits (A ++ B) = encodeLits A ++ encodeLits B := by
+  induction A with
+  | nil => rfl
+  | cons l A ih =>
+      rw [List.cons_append, encodeLits_cons, encodeLits_cons, ih,
+        List.append_assoc]
+
+private theorem encodeLits_length_ge (C : clause) :
+    C.length ≤ (encodeLits C).length := by
+  induction C with
+  | nil => simp [encodeLits]
+  | cons l C ih =>
+      rw [encodeLits_cons, List.length_append, List.length_cons]
+      have h1 : 1 ≤ (encodeLit l).length := by
+        rcases l with ⟨pol, w⟩
+        simp [encodeLit]
+      omega
+
+private theorem encodeLits_drop_length_le (C : clause) (i : Nat) :
+    (encodeLits (C.drop i)).length ≤ (encodeLits C).length := by
+  conv_rhs => rw [← List.take_append_drop i C]
+  rw [encodeLits_append, List.length_append]
+  omega
+
+private theorem evalClause_take_succ (a : assgn) (C : clause) (i : Nat)
+    (hi : i < C.length) :
+    evalClause a (C.take (i + 1))
+      = (evalClause a (C.take i) || evalLiteral a C[i]) := by
+  rw [List.take_succ_eq_append_getElem hi]
+  show ((C.take i) ++ [C[i]]).any _ = _
+  rw [List.any_append]
+  simp [evalClause]
+
+/-- The clause-scan loop invariant: through iteration `C.length` the loop has
+consumed `i` whole literal blocks (one per iteration) and ORed them into
+`CLAUSE_SAT`; at iteration `C.length` it consumes the clause-end `0`, folds
+`CLAUSE_SAT` into `OUTPUT` and sets `CLAUSE_DONE`; afterwards it idles. -/
+private def CInv (C : clause) (rest : List Nat) (a : assgn) (b : Bool)
+    (i : Nat) (s : State) : Prop :=
+  (if i ≤ C.length then
+    s.get CLAUSE_DONE = [0]
+    ∧ s.get CNF_STREAM = encodeLits (C.drop i) ++ 0 :: rest
+    ∧ s.get CLAUSE_SAT = [if evalClause a (C.take i) then 1 else 0]
+    ∧ s.get OUTPUT = [if b then 1 else 0]
+  else
+    s.get CLAUSE_DONE = [1]
+    ∧ s.get CNF_STREAM = rest
+    ∧ s.get OUTPUT = [if b && evalClause a C then 1 else 0])
+  ∧ s.get ASSGN = encodeAssgn a
+
+private theorem CInv_step (C : clause) (rest : List Nat) (a : assgn) (b : Bool)
+    (i : Nat) (s : State) (h : CInv C rest a b i s) :
+    CInv C rest a b (i + 1)
+      (clauseBody.eval (s.set INNER_IDX (List.replicate i 1))) := by
+  obtain ⟨hphase, hASS⟩ := h
+  by_cases hile : i ≤ C.length
+  · rw [if_pos hile] at hphase
+    obtain ⟨hCD, hCS, hCSAT, hOUT⟩ := hphase
+    have hCD' : (s.set INNER_IDX (List.replicate i 1)).get CLAUSE_DONE ≠ [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide), hCD]; decide
+    have heval : clauseBody.eval (s.set INNER_IDX (List.replicate i 1))
+        = (Cmd.op (.head HEAD_CELL CNF_STREAM) ;;
+           Cmd.ifBit HEAD_CELL
+             processOneLiteral
+             (Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;
+              Cmd.ifBit CLAUSE_SAT
+                mcSkip
+                (Cmd.op (.clear OUTPUT) ;; Cmd.op (.appendZero OUTPUT)) ;;
+              Cmd.op (.clear CLAUSE_DONE) ;; Cmd.op (.appendOne CLAUSE_DONE))).eval
+            (s.set INNER_IDX (List.replicate i 1)) := by
+      show (Cmd.ifBit CLAUSE_DONE _ _).eval _ = _
+      rw [Cmd.eval_ifBit_false _ _ _ _ hCD']
+    by_cases hlt : i < C.length
+    · -- a literal block: one `processOneLiteral` consumes it whole
+      have hdecomp : encodeLits (C.drop i) ++ 0 :: rest
+          = encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest) := by
+        rw [List.drop_eq_getElem_cons hlt, encodeLits_cons, List.append_assoc]
+      have hCS' : (s.set INNER_IDX (List.replicate i 1)).get CNF_STREAM
+          = encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest) := by
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS, hdecomp]
+      have hhead1 : ∃ tl, encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest)
+          = 1 :: tl := by
+        rcases hCi : C[i] with ⟨pol, w⟩
+        exact ⟨_, rfl⟩
+      obtain ⟨tl, htl⟩ := hhead1
+      have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+          (s.set INNER_IDX (List.replicate i 1))
+          = (s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS', htl]
+      have hHC : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          HEAD_CELL = [1] := State.get_set_eq _ _ _
+      rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_true _ _ _ _ hHC] at heval
+      -- the pinned literal contract
+      have hstream'' : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          CNF_STREAM = encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest) := by
+        rw [State.get_set_ne _ _ _ _ (by decide)]; exact hCS'
+      have hassgn'' : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          ASSGN = encodeAssgn a := by
+        rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hASS
+      have hsat'' : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          CLAUSE_SAT = [if evalClause a (C.take i) then 1 else 0] := by
+        rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hCSAT
+      obtain ⟨p1, p2, p3⟩ := processOneLiteral_run _ C[i]
+        (encodeLits (C.drop (i + 1)) ++ 0 :: rest) a (evalClause a (C.take i))
+        hstream'' hassgn'' hsat''
+      rw [heval]
+      constructor
+      · rw [if_pos (by omega : i + 1 ≤ C.length)]
+        refine ⟨?_, p2, ?_, ?_⟩
+        · rw [p3 CLAUSE_DONE (by decide), State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hCD
+        · rw [p1, evalClause_take_succ a C i hlt]
+        · rw [p3 OUTPUT (by decide), State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hOUT
+      · rw [p3 ASSGN (by decide), State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hASS
+    · -- the clause-end `0`: fold CLAUSE_SAT into OUTPUT, set CLAUSE_DONE
+      have hieq : i = C.length := by omega
+      subst hieq
+      have hCS0 : (s.set INNER_IDX (List.replicate C.length 1)).get CNF_STREAM
+          = 0 :: rest := by
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS, List.drop_length]
+        rfl
+      have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+          (s.set INNER_IDX (List.replicate C.length 1))
+          = (s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL [0] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS0]
+      have hHC : ((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL
+          [0]).get HEAD_CELL ≠ [1] := by
+        rw [State.get_set_eq]; decide
+      have e2 : (Cmd.op (.tail CNF_STREAM CNF_STREAM)).eval
+          ((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL [0])
+          = ((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL [0]).set
+              CNF_STREAM rest := by
+        rw [Cmd.eval_op]; simp only [Op.eval]
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS0, List.tail_cons]
+      have hCSAT3 : (((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL
+          [0]).set CNF_STREAM rest).get CLAUSE_SAT
+          = [if evalClause a C then 1 else 0] := by
+        rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide), hCSAT, List.take_length]
+      rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_false _ _ _ _ hHC, Cmd.eval_seq, e2,
+        Cmd.eval_seq] at heval
+      cases hsatC : evalClause a C with
+      | true =>
+          have hCSAT3' : (((s.set INNER_IDX (List.replicate C.length 1)).set
+              HEAD_CELL [0]).set CNF_STREAM rest).get CLAUSE_SAT = [1] := by
+            rw [hCSAT3, hsatC]
+            rfl
+          rw [Cmd.eval_ifBit_true _ _ _ _ hCSAT3', mcSkip_eval, Cmd.eval_seq,
+            Cmd.eval_op, Cmd.eval_op] at heval
+          simp only [Op.eval] at heval
+          rw [State.get_set_eq, List.nil_append] at heval
+          rw [heval]
+          constructor
+          · rw [if_neg (by omega : ¬ C.length + 1 ≤ C.length)]
+            refine ⟨?_, ?_, ?_⟩
+            · rw [State.get_set_eq]
+            · rw [State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+            · rw [State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide), hOUT, hsatC,
+                Bool.and_true]
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide)]
+            exact hASS
+      | false =>
+          have hCSAT3' : (((s.set INNER_IDX (List.replicate C.length 1)).set
+              HEAD_CELL [0]).set CNF_STREAM rest).get CLAUSE_SAT ≠ [1] := by
+            rw [hCSAT3, hsatC]; decide
+          rw [Cmd.eval_ifBit_false _ _ _ _ hCSAT3', Cmd.eval_seq, Cmd.eval_op,
+            Cmd.eval_op] at heval
+          simp only [Op.eval] at heval
+          rw [State.get_set_eq, List.nil_append] at heval
+          rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op] at heval
+          simp only [Op.eval] at heval
+          rw [State.get_set_eq, List.nil_append] at heval
+          rw [heval]
+          constructor
+          · rw [if_neg (by omega : ¬ C.length + 1 ≤ C.length)]
+            refine ⟨?_, ?_, ?_⟩
+            · rw [State.get_set_eq]
+            · rw [State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+            · rw [State.get_set_ne _ _ _ _ (by decide),
+                State.get_set_ne _ _ _ _ (by decide), State.get_set_eq,
+                hsatC, Bool.and_false]
+              rfl
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide)]
+            exact hASS
+  · -- idle iterations after the clause is done
+    rw [if_neg hile] at hphase
+    obtain ⟨hCD, hCS, hOUT⟩ := hphase
+    have hCD' : (s.set INNER_IDX (List.replicate i 1)).get CLAUSE_DONE = [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hCD
+    have heval : clauseBody.eval (s.set INNER_IDX (List.replicate i 1))
+        = ((s.set INNER_IDX (List.replicate i 1)).set CMP_FLAG [1]) := by
+      show (Cmd.ifBit CLAUSE_DONE _ _).eval _ = _
+      rw [Cmd.eval_ifBit_true _ _ _ _ hCD', mcSkip_eval]
+    rw [heval]
+    constructor
+    · rw [if_neg (by omega : ¬ i + 1 ≤ C.length)]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hCD
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hCS
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hOUT
+    · rw [State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide)]
+      exact hASS
+
+/-- Uniform per-iteration cost of the clause-scan body (the worst case is a
+whole-literal iteration: one `processOneLiteral`, quadratic). -/
+private theorem CInv_cost (C : clause) (rest : List Nat) (a : assgn) (b : Bool)
+    (i : Nat) (s : State) (h : CInv C rest a b i s) :
+    clauseBody.cost (s.set INNER_IDX (List.replicate i 1))
+      ≤ 300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 + ((encodeClause C).length + rest.length) + 20 := by
+  obtain ⟨hphase, hASS⟩ := h
+  by_cases hile : i ≤ C.length
+  · rw [if_pos hile] at hphase
+    obtain ⟨hCD, hCS, hCSAT, hOUT⟩ := hphase
+    have hCD' : (s.set INNER_IDX (List.replicate i 1)).get CLAUSE_DONE ≠ [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide), hCD]; decide
+    by_cases hlt : i < C.length
+    · -- literal iteration: 4 + one processOneLiteral
+      have hdecomp : encodeLits (C.drop i) ++ 0 :: rest
+          = encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest) := by
+        rw [List.drop_eq_getElem_cons hlt, encodeLits_cons, List.append_assoc]
+      have hCS' : (s.set INNER_IDX (List.replicate i 1)).get CNF_STREAM
+          = encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest) := by
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS, hdecomp]
+      have hhead1 : ∃ tl, encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest)
+          = 1 :: tl := by
+        rcases hCi : C[i] with ⟨pol, w⟩
+        exact ⟨_, rfl⟩
+      obtain ⟨tl, htl⟩ := hhead1
+      have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+          (s.set INNER_IDX (List.replicate i 1))
+          = (s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS', htl]
+      have hHC : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          HEAD_CELL = [1] := State.get_set_eq _ _ _
+      have hstream'' : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          CNF_STREAM = encodeLit C[i] ++ (encodeLits (C.drop (i + 1)) ++ 0 :: rest) := by
+        rw [State.get_set_ne _ _ _ _ (by decide)]; exact hCS'
+      have hassgn'' : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          ASSGN = encodeAssgn a := by
+        rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hASS
+      have hsat'' : ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          CLAUSE_SAT = [if evalClause a (C.take i) then 1 else 0] := by
+        rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hCSAT
+      have hpolcost := processOneLiteral_cost _ C[i]
+        (encodeLits (C.drop (i + 1)) ++ 0 :: rest) a (evalClause a (C.take i))
+        hstream'' hassgn'' hsat''
+      have hc : clauseBody.cost (s.set INNER_IDX (List.replicate i 1))
+          = 1 + (1 + 1 + (1 + processOneLiteral.cost
+              ((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]))) := by
+        show (Cmd.ifBit CLAUSE_DONE _ _).cost _ = _
+        rw [Cmd.cost_ifBit_false _ _ _ _ hCD', Cmd.cost_seq, Cmd.cost_op, e1,
+          Cmd.cost_ifBit_true _ _ _ _ hHC]
+        simp only [Op.cost]
+      -- the stream at this iteration is no longer than the whole clause block
+      have hlen : (((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          CNF_STREAM).length ≤ (encodeClause C).length + rest.length := by
+        rw [hstream'', ← hdecomp]
+        have h1 : (encodeClause C).length = (encodeLits C).length + 1 := by
+          rw [encodeClause_eq_lits, List.length_append]; rfl
+        have h2 := encodeLits_drop_length_le C i
+        simp only [List.length_append, List.length_cons]
+        omega
+      have hAlen : (((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          ASSGN).length = (encodeAssgn a).length := by rw [hassgn'']
+      have hmono : ((((s.set INNER_IDX (List.replicate i 1)).set HEAD_CELL [1]).get
+          CNF_STREAM).length + (((s.set INNER_IDX (List.replicate i 1)).set
+          HEAD_CELL [1]).get ASSGN).length + 1) ^ 2 ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 := by
+        refine Nat.pow_le_pow_left ?_ 2
+        rw [hAlen]
+        omega
+      rw [hc]
+      have h300 := Nat.mul_le_mul_left 300 hmono
+      omega
+    · -- the clause-end iteration
+      have hieq : i = C.length := by omega
+      subst hieq
+      have hCS0 : (s.set INNER_IDX (List.replicate C.length 1)).get CNF_STREAM
+          = 0 :: rest := by
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS, List.drop_length]
+        rfl
+      have e1 : (Cmd.op (.head HEAD_CELL CNF_STREAM)).eval
+          (s.set INNER_IDX (List.replicate C.length 1))
+          = (s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL [0] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS0]
+      have hHC : ((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL
+          [0]).get HEAD_CELL ≠ [1] := by
+        rw [State.get_set_eq]; decide
+      have htail : Op.cost (.tail CNF_STREAM CNF_STREAM)
+          ((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL [0])
+          = rest.length + 2 := by
+        show (((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL
+          [0]).get CNF_STREAM).length + 1 = _
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS0]
+        simp
+      have hIfC : ∀ t : State, (Cmd.ifBit CLAUSE_SAT mcSkip
+          (Cmd.op (.clear OUTPUT) ;; Cmd.op (.appendZero OUTPUT))).cost t ≤ 4 := by
+        intro t
+        by_cases hb : t.get CLAUSE_SAT = [1]
+        · rw [Cmd.cost_ifBit_true _ _ _ _ hb, mcSkip_cost]
+          omega
+        · rw [Cmd.cost_ifBit_false _ _ _ _ hb, Cmd.cost_seq, Cmd.cost_op,
+            Cmd.cost_op]
+          simp only [Op.cost]
+          omega
+      have hCDtail : ∀ t : State, (Cmd.op (.clear CLAUSE_DONE) ;;
+          Cmd.op (.appendOne CLAUSE_DONE)).cost t = 3 := by
+        intro t
+        rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+        simp only [Op.cost]
+      have hc : clauseBody.cost (s.set INNER_IDX (List.replicate C.length 1))
+          = 1 + (1 + 1 + (1 + (1 + (rest.length + 2)
+              + (1 + (Cmd.ifBit CLAUSE_SAT mcSkip
+                  (Cmd.op (.clear OUTPUT) ;; Cmd.op (.appendZero OUTPUT))).cost
+                  (((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL
+                    [0]).set CNF_STREAM rest)
+                + 3)))) := by
+        show (Cmd.ifBit CLAUSE_DONE _ _).cost _ = _
+        rw [Cmd.cost_ifBit_false _ _ _ _ hCD', Cmd.cost_seq, Cmd.cost_op, e1,
+          Cmd.cost_ifBit_false _ _ _ _ hHC, Cmd.cost_seq, Cmd.cost_op, htail,
+          Cmd.cost_seq, Cmd.eval_op]
+        simp only [Op.eval, Op.cost]
+        rw [State.get_set_ne _ _ _ _ (by decide), hCS0, List.tail_cons,
+          hCDtail]
+      rw [hc]
+      have := hIfC (((s.set INNER_IDX (List.replicate C.length 1)).set HEAD_CELL
+        [0]).set CNF_STREAM rest)
+      have hRle : rest.length ≤ (encodeClause C).length + rest.length := by omega
+      have hsq : 0 ≤ 300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 := Nat.zero_le _
+      omega
+  · -- idle
+    rw [if_neg hile] at hphase
+    have hCD' : (s.set INNER_IDX (List.replicate i 1)).get CLAUSE_DONE = [1] := by
+      rw [State.get_set_ne _ _ _ _ (by decide)]; exact hphase.1
+    have hc : clauseBody.cost (s.set INNER_IDX (List.replicate i 1)) = 1 + 1 := by
+      show (Cmd.ifBit CLAUSE_DONE _ _).cost _ = _
+      rw [Cmd.cost_ifBit_true _ _ _ _ hCD', mcSkip_cost]
+    rw [hc]
+    omega
+
+/-- Combined behaviour + cost for `processOneClause`. -/
+private theorem processOneClause_main (st : State) (C : clause) (rest : List Nat)
+    (a : assgn) (b : Bool)
+    (hstream : st.get CNF_STREAM = encodeClause C ++ rest)
+    (hassgn : st.get ASSGN = encodeAssgn a)
+    (hout : st.get OUTPUT = [if b then 1 else 0]) :
+    ((processOneClause.eval st).get OUTPUT
+        = [if b && evalClause a C then 1 else 0])
+    ∧ ((processOneClause.eval st).get CNF_STREAM = rest)
+    ∧ ((processOneClause.eval st).get ASSGN = encodeAssgn a)
+    ∧ processOneClause.cost st
+        ≤ 1000 * ((st.get CNF_STREAM).length + (st.get ASSGN).length + 1) ^ 3 := by
+  have eP : processOneClause.eval st
+      = (Cmd.forBnd INNER_IDX CNF_STREAM clauseBody).eval ((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]) := by
+    show (Cmd.eval (_ ;; _ ;; _ ;; _ ;; _) st) = _
+    simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, State.get_set_eq,
+      List.nil_append]
+  have hCSb : ((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]).get CNF_STREAM = encodeClause C ++ rest := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide)]
+    exact hstream
+  have hnlen : (((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]).get CNF_STREAM).length
+      = (encodeClause C).length + rest.length := by
+    rw [hCSb, List.length_append]
+  have base : CInv C rest a b 0 ((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]) := by
+    constructor
+    · rw [if_pos (Nat.zero_le _)]
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · rw [State.get_set_eq]
+      · rw [hCSb, List.drop_zero, encodeClause_eq_lits, List.append_assoc]
+        rfl
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide), State.get_set_eq,
+          List.take_zero]
+        rfl
+      · rw [State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide),
+          State.get_set_ne _ _ _ _ (by decide)]
+        exact hout
+    · rw [State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide)]
+      exact hassgn
+  have hfin := Cmd.foldlState_range_induct clauseBody INNER_IDX
+    (((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]).get CNF_STREAM).length ((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]) (CInv C rest a b) base
+    (fun i s _ h => CInv_step C rest a b i s h)
+  have hgtC : ¬ ((((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]).get CNF_STREAM).length ≤ C.length) := by
+    rw [hnlen]
+    have h1 : (encodeClause C).length = (encodeLits C).length + 1 := by
+      rw [encodeClause_eq_lits, List.length_append]; rfl
+    have h2 := encodeLits_length_ge C
+    omega
+  obtain ⟨hphase, hASSf⟩ := hfin
+  rw [if_neg hgtC] at hphase
+  obtain ⟨hCDf, hCSf, hOUTf⟩ := hphase
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [eP, Cmd.eval_forBnd]; exact hOUTf
+  · rw [eP, Cmd.eval_forBnd]; exact hCSf
+  · rw [eP, Cmd.eval_forBnd]; exact hASSf
+  · -- the cost side
+    have hcost_eq : processOneClause.cost st
+        = 8 + (Cmd.forBnd INNER_IDX CNF_STREAM clauseBody).cost ((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0]) := by
+      show (Cmd.cost (_ ;; _ ;; _ ;; _ ;; _) st) = _
+      simp only [Cmd.cost_seq, Cmd.cost_op, Cmd.eval_op, Op.eval, Op.cost,
+        State.get_set_eq, List.nil_append]
+      omega
+    have hB := Cmd.cost_forBnd_le INNER_IDX CNF_STREAM clauseBody ((((st.set CLAUSE_SAT []).set CLAUSE_SAT [0]).set CLAUSE_DONE []).set CLAUSE_DONE [0])
+      (300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 + ((encodeClause C).length + rest.length) + 20) (CInv C rest a b) base
+      (fun i s _ h => CInv_step C rest a b i s h)
+      (fun i s _ h => CInv_cost C rest a b i s h)
+    rw [hnlen] at hB
+    have hLst : (st.get CNF_STREAM).length
+        = (encodeClause C).length + rest.length := by
+      rw [hstream, List.length_append]
+    have hAst : (st.get ASSGN).length = (encodeAssgn a).length := by rw [hassgn]
+    rw [hcost_eq, hLst, hAst]
+    -- arithmetic against the cubic budget
+    have hBexp : ((encodeClause C).length + rest.length) * (300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 + ((encodeClause C).length + rest.length) + 20)
+        ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) * (300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 + ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) + 20) :=
+      Nat.mul_le_mul (by omega) (by omega)
+    have hMexp : ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) * (300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 + ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) + 20)
+        = 300 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 3 + ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 + 20 * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) := by ring
+    have hn2sq : ((encodeClause C).length + rest.length) * ((encodeClause C).length + rest.length) ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) :=
+      Nat.mul_le_mul (by omega) (by omega)
+    have hMM : ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) * ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) = ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 := by ring
+    have h23 : ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 2 ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 3 :=
+      Nat.pow_le_pow_right (by omega) (by omega)
+    have h13 : ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 3 := by
+      calc ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) = ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 1 := (pow_one _).symm
+        _ ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 3 := Nat.pow_le_pow_right (by omega) (by omega)
+    have h03 : 1 ≤ ((encodeClause C).length + rest.length + (encodeAssgn a).length + 1) ^ 3 := Nat.one_le_pow _ _ (by omega)
+    rw [hMexp] at hBexp
+    omega
 
 /-- **(pinned, bottom-up — THE interface) `processOneClause` behaviour.** This
 is the contract the proven assembly consumes (via the loop invariant
@@ -904,7 +1878,8 @@ theorem processOneClause_run (st : State) (C : clause) (rest : List Nat)
         = [if b && evalClause a C then 1 else 0])
     ∧ ((processOneClause.eval st).get CNF_STREAM = rest)
     ∧ ((processOneClause.eval st).get ASSGN = encodeAssgn a) := by
-  sorry  -- TODO(Part3.5-clause): gated on the concrete `processOneClause`
+  obtain ⟨h1, h2, h3, _⟩ := processOneClause_main st C rest a b hstream hassgn hout
+  exact ⟨h1, h2, h3⟩
 
 /-- **(pinned, bottom-up — THE interface) `processOneClause` cost** — cubic in
 the entry lengths (uniform-bound accounting: `|CNF_STREAM|` slots at
@@ -915,17 +1890,22 @@ theorem processOneClause_cost (st : State) (C : clause) (rest : List Nat)
     (hassgn : st.get ASSGN = encodeAssgn a)
     (hout : st.get OUTPUT = [if b then 1 else 0]) :
     processOneClause.cost st
-      ≤ 1000 * ((st.get CNF_STREAM).length + (st.get ASSGN).length + 1) ^ 3 := by
-  sorry  -- TODO(Part3.5-clause)
+      ≤ 1000 * ((st.get CNF_STREAM).length + (st.get ASSGN).length + 1) ^ 3 :=
+  (processOneClause_main st C rest a b hstream hassgn hout).2.2.2
 
 /-- **(pinned, bottom-up)** `processOneClause` touches only registers `0–15`. -/
 theorem processOneClause_usesBelow : Cmd.UsesBelow processOneClause 16 := by
-  sorry  -- TODO(Part3.5-clause): falls out of the concrete body
+  simp [processOneClause, clauseBody, processOneLiteral, varExtractBody,
+    memberCheck, mcBody, mcSkip, Cmd.UsesBelow, Op.UsesBelow, OUTPUT,
+    CNF_STREAM, ASSGN, CLAUSE_SAT, LIT_POL, LIT_VAR, ASSGN_COPY, MEMBER_FOUND,
+    CLAUSE_DONE, INNER_IDX, HEAD_CELL, CMP_FLAG, IN_BLOCK, BLOCK_ACC]
 
 /-- **(pinned, bottom-up)** `processOneClause` uses no `Op.consLen` (none is
 needed — the live path is `consLen`-free). -/
 theorem processOneClause_noConsLen : Cmd.NoConsLen processOneClause := by
-  sorry  -- TODO(Part3.5-clause)
+  simp only [processOneClause, clauseBody, processOneLiteral, varExtractBody,
+    memberCheck, mcBody, mcSkip, Cmd.NoConsLen, Op.NotConsLen]
+  trivial
 
 /-- The full SAT verifier. -/
 def evalCnfCmd : Cmd :=
@@ -1344,14 +2324,11 @@ theorem evalCnfCmd_noConsLen : Cmd.NoConsLen evalCnfCmd := by
   show Op.NotConsLen (.appendOne OUTPUT) ∧ Cmd.NoConsLen processOneClause
   exact ⟨trivial, processOneClause_noConsLen⟩
 
-/-! ## Notes for the inner-body author (parsing the unary stream)
+/-! ## Construction notes (parsing the unary stream) — as built & proven
 
 The encoding is **unary / bit-level** (`BitState`, discharged by
-`encodeState_bit`); every field is `{0,1}` and self-delimiting. The build
-targets are exactly the pinned sorry lemmas above — the assembly is already
-proven from the `processOneClause_*` quartet. Intended construction (the
-`processOneLiteral_*`/`memberCheck_*` pins; reshape freely as long as the
-quartet survives):
+`encodeState_bit`); every field is `{0,1}` and self-delimiting. The bodies
+above implement exactly this plan:
 
 * **`processOneClause`** = reset (`CLAUSE_SAT := [0]`, `CLAUSE_DONE := [0]`)
   `;;` `forBnd INNER_IDX CNF_STREAM` over the stream *cells* (`forBnd` reads
@@ -1378,9 +2355,9 @@ quartet survives):
   `IN_BLOCK`. (`v = 0` works: empty block vs. empty `LIT_VAR`, `eqBit [] []`.)
   Set `MEMBER_FOUND := [0]` initially so it is `[0]`/`[1]` in all cases.
 
-**Probe each body end-to-end with `#eval` (`Cmd.run` is computable on concrete
-states) before attempting its `_run`/`_cost` lemma** — the bodies are plain
-data; only the `sorry` stubs make the defs `noncomputable` today.
+The bodies were **probe-validated with `#eval` before proving** (exhaustive
+small-CNF sweep against `evalCnf`; contract-level probes with garbage scratch
+on entry; numeric cost-budget checks).
 
 Two DSL conveniences would shorten these (optional, not required):
 1. **A conditional/guarded loop** (`Cmd.while`) — the cell loops must iterate
