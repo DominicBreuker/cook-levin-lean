@@ -20,12 +20,11 @@ routed through the higher-level `Lang` layer (Part 3 of
 3. `evalCnfDecidesLang : Lang.DecidesLang …` — DSL-level decider witness.
 4. `inTimePolyTM_evalCnf` — apply `Lang.inTimePolyLang_to_inTimePoly`.
 
-**2026-06-09: every field of `evalCnfDecidesLang` is discharged.** The
-encoding facts are proven outright; the behaviour/cost/frame fields are
-proven from the pinned per-clause contracts in `EvalCnfCmd.lean`
-(`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`). The remaining
-content gap on this path is exactly those pins + the three inner-body
-`Cmd`s (bottom-up).
+**2026-06-10: `evalCnfDecidesLang` is COMPLETE and axiom-clean** (`[propext,
+Classical.choice, Quot.sound]`): the per-clause contracts and the three
+inner-body `Cmd`s are concrete and proven in `EvalCnfCmd.lean`. The remaining
+`sorryAx` on `sat_NP` is only the compiler gadget layer (Risk C2,
+Compile.lean).
 
 Note: `inTimePolyTM_evalCnf` keeps its full name + signature so
 `sat_NP` (below) does not need to change.
@@ -66,13 +65,11 @@ The concrete program and encoding live in
 framework. -/
 
 /-- The Lang-level decider witness. The program and encoding are concrete
-(from `EvalCnfCmd`), and **every field is discharged** (2026-06-09): the four
-behaviour/frame fields by the proven assembly in `EvalCnfCmd.lean`
+(from `EvalCnfCmd`), and **every field is PROVEN, axiom-clean** (2026-06-10):
+the four behaviour/frame fields by the proven assembly in `EvalCnfCmd.lean`
 (`evalCnfCmd_decides` / `evalCnfCmd_cost_bound` / `evalCnfCmd_usesBelow` /
-`evalCnfCmd_noConsLen`), themselves proven from the **pinned per-clause
-contracts** (`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`). The
-residual `sorryAx` of this witness is exactly those pins + the three inner-body
-`Cmd`s — the bottom-up build targets. -/
+`evalCnfCmd_noConsLen`), themselves proven from the per-clause contracts
+(`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`), all discharged. -/
 noncomputable def evalCnfDecidesLang :
     DecidesLang (fun Na : cnf × assgn => satisfiesCnf Na.2 Na.1) timeBound where
   c := EvalCnfCmd.evalCnfCmd
