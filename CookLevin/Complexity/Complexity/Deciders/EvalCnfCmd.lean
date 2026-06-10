@@ -138,21 +138,56 @@ def encodeState : cnf × assgn → State
 
 /-! ## The verifier program -/
 
-/-- Per-clause work: consume exactly one encoded clause from `CNF_STREAM` and
-AND its satisfaction into `OUTPUT`. The contract this `Cmd` must satisfy is
-**pinned** below (`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`) —
-those four lemmas are the ONLY facts the proven assembly consumes. Intended
-construction (see "Notes for the inner-body author"):
+/-- A unit-cost no-op (`CMP_FLAG := [1]` — `eqBit` of a register with itself).
+Used as the idle branch of flag-guarded loop bodies. `CMP_FLAG` is declared
+scratch in every contract below, and `eqBit` is unit cost regardless of the
+state (a `copy r r` "no-op" would cost `|r|+1` with `r` unconstrained garbage
+on the first iteration, breaking the uniform per-iteration cost bound). -/
+def mcSkip : Cmd := Cmd.op (.eqBit CMP_FLAG CMP_FLAG CMP_FLAG)
 
-1. Reset `CLAUSE_SAT := [0]`, `CLAUSE_DONE := [0]`.
-2. Inner `forBnd INNER_IDX CNF_STREAM` over the stream *cells* (the bound is
-   read once at loop entry, so destructive consumption inside is fine). Each
-   iteration, unless `CLAUSE_DONE`: peek the head cell — `1` ⇒ a literal
-   follows (run `processOneLiteral`); `0` ⇒ the clause is done (consume the
-   `0`, fold `OUTPUT := OUTPUT AND CLAUSE_SAT`, set `CLAUSE_DONE`).
+/-- One iteration of `memberCheck`'s scan: consume one cell of `ASSGN_COPY`
+into `HEAD_CELL` and step the block parser (`IN_BLOCK`/`BLOCK_ACC`; on a
+block-end `0`, compare the accumulated unary block against `LIT_VAR` and OR
+the result into `MEMBER_FOUND`). Spec: `mcStep`. -/
+def mcBody : Cmd :=
+  Cmd.op (.head HEAD_CELL ASSGN_COPY) ;;
+  Cmd.op (.tail ASSGN_COPY ASSGN_COPY) ;;
+  Cmd.ifBit IN_BLOCK
+    (Cmd.ifBit HEAD_CELL
+      (Cmd.op (.appendOne BLOCK_ACC))
+      (Cmd.op (.eqBit CMP_FLAG BLOCK_ACC LIT_VAR) ;;
+       Cmd.ifBit CMP_FLAG
+         (Cmd.op (.clear MEMBER_FOUND) ;; Cmd.op (.appendOne MEMBER_FOUND))
+         mcSkip ;;
+       Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendZero IN_BLOCK)))
+    (Cmd.ifBit HEAD_CELL
+      (Cmd.op (.clear BLOCK_ACC) ;;
+       Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendOne IN_BLOCK))
+      mcSkip)
 
-**Skeleton stub.** -/
-noncomputable def processOneClause : Cmd := sorry  -- TODO(Part3.5-clause)
+/-- Membership test "`LIT_VAR`'s unary value `∈ ASSGN`": scan a copy of `ASSGN`
+(`ASSGN_COPY`) cell-by-cell, accumulating each `[1] ++ unary ++ [0]` block into
+`BLOCK_ACC` (parse state in `IN_BLOCK`), `eqBit`-ing each completed block
+against `LIT_VAR`; sets `MEMBER_FOUND` to `[1]` on any match, `[0]` otherwise.
+Contract pinned below (`memberCheck_run`/`_cost`/…). -/
+def memberCheck : Cmd :=
+  Cmd.op (.copy ASSGN_COPY ASSGN) ;;
+  Cmd.op (.clear MEMBER_FOUND) ;; Cmd.op (.appendZero MEMBER_FOUND) ;;
+  Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendZero IN_BLOCK) ;;
+  Cmd.op (.clear BLOCK_ACC) ;;
+  Cmd.forBnd INNER_IDX ASSGN_COPY mcBody
+
+/-- One iteration of `processOneLiteral`'s unary-variable extraction: while
+`IN_BLOCK`, consume one cell of `CNF_STREAM` — a `1` extends `LIT_VAR`, the
+`0` terminator ends the block (clears `IN_BLOCK`). Idle otherwise. -/
+def varExtractBody : Cmd :=
+  Cmd.ifBit IN_BLOCK
+    (Cmd.op (.head HEAD_CELL CNF_STREAM) ;;
+     Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;
+     Cmd.ifBit HEAD_CELL
+       (Cmd.op (.appendOne LIT_VAR))
+       (Cmd.op (.clear IN_BLOCK)))
+    mcSkip
 
 /-- Per-literal work inside `processOneClause`'s inner loop: consume one whole
 literal block `[1, polBit] ++ replicate v 1 ++ [0]` from `CNF_STREAM` (its own
@@ -160,14 +195,589 @@ flag-guarded sub-loop extracts the unary variable into `LIT_VAR`), run
 `memberCheck`, and OR the literal's satisfaction (`eqBit` of `MEMBER_FOUND`
 against `LIT_POL` — satisfied iff `evalVar a v = pol`) into `CLAUSE_SAT`.
 Contract pinned below (`processOneLiteral_run`/`_cost`/…). -/
-noncomputable def processOneLiteral : Cmd := sorry  -- TODO(Part3.5-literal)
+def processOneLiteral : Cmd :=
+  Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;      -- consume the leading `1` sentinel
+  Cmd.op (.head LIT_POL CNF_STREAM) ;;          -- LIT_POL := [polBit]
+  Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;       -- consume the polarity bit
+  Cmd.op (.clear LIT_VAR) ;;
+  Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendOne IN_BLOCK) ;;
+  Cmd.forBnd INNER_IDX CNF_STREAM varExtractBody ;;
+  memberCheck ;;
+  Cmd.op (.eqBit CMP_FLAG MEMBER_FOUND LIT_POL) ;;
+  Cmd.ifBit CMP_FLAG
+    (Cmd.op (.clear CLAUSE_SAT) ;; Cmd.op (.appendOne CLAUSE_SAT))
+    mcSkip
 
-/-- Membership test "`LIT_VAR`'s unary value `∈ ASSGN`": scan a copy of `ASSGN`
-(`ASSGN_COPY`) cell-by-cell, accumulating each `[1] ++ unary ++ [0]` block into
-`BLOCK_ACC` (parse state in `IN_BLOCK`), `eqBit`-ing each completed block
-against `LIT_VAR`; sets `MEMBER_FOUND` to `[1]` on any match, `[0]` otherwise.
-Contract pinned below (`memberCheck_run`/`_cost`/…). -/
-noncomputable def memberCheck : Cmd := sorry  -- TODO(Part3.5-member)
+/-- One iteration of `processOneClause`'s scan: unless `CLAUSE_DONE`, peek the
+stream head — `1` ⇒ a literal follows (`processOneLiteral` consumes the whole
+block); `0` ⇒ the clause is done (consume it, AND `CLAUSE_SAT` into `OUTPUT`,
+set `CLAUSE_DONE`). Idle once done. -/
+def clauseBody : Cmd :=
+  Cmd.ifBit CLAUSE_DONE
+    mcSkip
+    (Cmd.op (.head HEAD_CELL CNF_STREAM) ;;
+     Cmd.ifBit HEAD_CELL
+       processOneLiteral
+       (Cmd.op (.tail CNF_STREAM CNF_STREAM) ;;
+        Cmd.ifBit CLAUSE_SAT
+          mcSkip
+          (Cmd.op (.clear OUTPUT) ;; Cmd.op (.appendZero OUTPUT)) ;;
+        Cmd.op (.clear CLAUSE_DONE) ;; Cmd.op (.appendOne CLAUSE_DONE)))
+
+/-- Per-clause work: consume exactly one encoded clause from `CNF_STREAM` and
+AND its satisfaction into `OUTPUT`. The contract this `Cmd` must satisfy is
+**pinned** below (`processOneClause_run`/`_cost`/`_usesBelow`/`_noConsLen`) —
+those four lemmas are the ONLY facts the proven assembly consumes.
+
+1. Reset `CLAUSE_SAT := [0]`, `CLAUSE_DONE := [0]`.
+2. Inner `forBnd INNER_IDX CNF_STREAM` over the stream *cells* (the bound is
+   read once at loop entry, so destructive consumption inside is fine), body
+   `clauseBody` — one literal block per active iteration. -/
+def processOneClause : Cmd :=
+  Cmd.op (.clear CLAUSE_SAT) ;; Cmd.op (.appendZero CLAUSE_SAT) ;;
+  Cmd.op (.clear CLAUSE_DONE) ;; Cmd.op (.appendZero CLAUSE_DONE) ;;
+  Cmd.forBnd INNER_IDX CNF_STREAM clauseBody
+
+/-! ## Inner-body proofs (bottom-up, 2026-06-10)
+
+The bodies above are proven against the pinned contracts below via per-iteration
+step lemmas (`mcBody_step`/`varExtractBody_step`/`clauseBody_step` — each a
+single case-bash over the branch conditions, giving the evaluated registers AND
+a uniform cost bound) plugged into the `Frame.lean` loop toolkit
+(`Cmd.foldlState_range_induct` for behaviour, `Cmd.cost_forBnd_le` for cost,
+sharing one invariant per loop). `memberCheck`'s loop is specified by a tiny
+parser automaton `mcStep` folded over the consumed cells. -/
+
+/-- `memberCheck`'s parser state: `(inBlock, accumulated unary length, found)`.
+One automaton step per consumed cell of the encoded assignment. -/
+private def mcStep (v : Nat) : Bool × Nat × Bool → Nat → Bool × Nat × Bool
+  | (true, acc, found), cell =>
+      if cell = 1 then (true, acc + 1, found)
+      else (false, acc, found || decide (acc = v))
+  | (false, acc, found), cell =>
+      if cell = 1 then (true, 0, found) else (false, acc, found)
+
+private theorem replicate_one_eq_iff {a b : Nat} :
+    (List.replicate a (1 : Nat) = List.replicate b 1) ↔ a = b := by
+  constructor
+  · intro h
+    have := congrArg List.length h
+    simpa using this
+  · rintro rfl; rfl
+
+private theorem replicate_one_snoc (n : Nat) :
+    List.replicate n (1 : Nat) ++ [1] = List.replicate (n + 1) 1 :=
+  List.replicate_succ'.symm
+
+/-- Folding the parser over a unary block's interior just counts it. -/
+private theorem mcStep_foldl_replicate (v : Nat) (f : Bool) :
+    ∀ (n acc : Nat),
+      (List.replicate n 1).foldl (mcStep v) (true, acc, f) = (true, acc + n, f)
+  | 0, acc => by simp
+  | n + 1, acc => by
+      rw [List.replicate_succ, List.foldl_cons]
+      show (List.replicate n 1).foldl (mcStep v) (true, acc + 1, f) = _
+      rw [mcStep_foldl_replicate v f n (acc + 1)]
+      have : acc + 1 + n = acc + (n + 1) := by omega
+      rw [this]
+
+/-- **The parser is correct**: folding `mcStep` over an encoded assignment from
+a block boundary ORs `evalVar a v` into the found-flag and returns to a block
+boundary. -/
+private theorem mcStep_foldl_encodeAssgn (v : Nat) :
+    ∀ (a : assgn) (acc : Nat) (f : Bool), ∃ accF,
+      (encodeAssgn a).foldl (mcStep v) (false, acc, f)
+        = (false, accF, f || evalVar a v)
+  | [], acc, f => ⟨acc, by simp [encodeAssgn, evalVar]⟩
+  | u :: a, acc, f => by
+      have hsplit : encodeAssgn (u :: a)
+          = 1 :: (List.replicate u 1 ++ ([0] ++ encodeAssgn a)) := by
+        show (1 :: (List.replicate u 1 ++ [0])) ++ encodeAssgn a = _
+        simp [List.append_assoc]
+      rw [hsplit, List.foldl_cons]
+      show ∃ accF, (List.replicate u 1 ++ ([0] ++ encodeAssgn a)).foldl
+          (mcStep v) (true, 0, f) = _
+      rw [List.foldl_append, mcStep_foldl_replicate v f u 0, List.foldl_append,
+        List.foldl_cons, List.foldl_nil, Nat.zero_add]
+      show ∃ accF, (encodeAssgn a).foldl (mcStep v)
+          (false, u, f || decide (u = v)) = _
+      obtain ⟨accF, hF⟩ := mcStep_foldl_encodeAssgn v a u (f || decide (u = v))
+      refine ⟨accF, hF.trans ?_⟩
+      have hor : ((f || decide (u = v)) || evalVar a v) = (f || evalVar (u :: a) v) := by
+        simp only [evalVar, List.mem_cons]
+        by_cases h1 : u = v
+        · subst h1; simp
+        · have h1' : ¬ (v = u) := fun h => h1 h.symm
+          simp [h1, h1']
+      rw [hor]
+
+/-- One parser step matches one more consumed cell. -/
+private theorem mcStep_take_succ (v : Nat) (L : List Nat) (i : Nat)
+    (hi : i < L.length) :
+    (L.take (i + 1)).foldl (mcStep v) (false, 0, false)
+      = mcStep v ((L.take i).foldl (mcStep v) (false, 0, false)) L[i] := by
+  rw [List.take_succ_eq_append_getElem hi, List.foldl_append]
+  rfl
+
+private theorem mcSkip_eval (s : State) : mcSkip.eval s = s.set CMP_FLAG [1] := by
+  show Op.eval (.eqBit CMP_FLAG CMP_FLAG CMP_FLAG) s = _
+  simp only [Op.eval]
+  rw [if_pos trivial]
+
+private theorem mcSkip_cost (s : State) : mcSkip.cost s = 1 := rfl
+
+/-- **One `mcBody` iteration = one `mcStep`** (plus its uniform cost bound and
+frame). The single case-bash over the branch conditions; everything above it
+is loop plumbing. -/
+private theorem mcBody_step (st : State) (cell : Nat) (restL : List Nat)
+    (inB : Bool) (acc : Nat) (found : Bool) (v : Nat)
+    (hcopy : st.get ASSGN_COPY = cell :: restL)
+    (hin : st.get IN_BLOCK = [if inB then 1 else 0])
+    (hacc : st.get BLOCK_ACC = List.replicate acc 1)
+    (hfound : st.get MEMBER_FOUND = [if found then 1 else 0])
+    (hvar : st.get LIT_VAR = List.replicate v 1) :
+    (mcBody.eval st).get ASSGN_COPY = restL
+    ∧ (mcBody.eval st).get IN_BLOCK
+        = [if (mcStep v (inB, acc, found) cell).1 then 1 else 0]
+    ∧ (mcBody.eval st).get BLOCK_ACC
+        = List.replicate (mcStep v (inB, acc, found) cell).2.1 1
+    ∧ (mcBody.eval st).get MEMBER_FOUND
+        = [if (mcStep v (inB, acc, found) cell).2.2 then 1 else 0]
+    ∧ (∀ r : Var, r ∉ [ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL,
+          CMP_FLAG, IN_BLOCK, BLOCK_ACC] → (mcBody.eval st).get r = st.get r)
+    ∧ mcBody.cost st ≤ restL.length + 20 := by
+  -- shared prefix: head + tail
+  have e1 : (Cmd.op (.head HEAD_CELL ASSGN_COPY)).eval st
+      = st.set HEAD_CELL [cell] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hcopy]
+  have e2 : (Cmd.op (.tail ASSGN_COPY ASSGN_COPY)).eval (st.set HEAD_CELL [cell])
+      = (st.set HEAD_CELL [cell]).set ASSGN_COPY restL := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ (by decide), hcopy, List.tail_cons]
+  -- gets at the branch point
+  have hIB2 : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get IN_BLOCK
+      = [if inB then 1 else 0] := by
+    rw [State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide)]; exact hin
+  have hHC2 : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get HEAD_CELL
+      = [cell] := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+  have hBA2 : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get BLOCK_ACC
+      = List.replicate acc 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide)]; exact hacc
+  have hLV2 : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get LIT_VAR
+      = List.replicate v 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide)]; exact hvar
+  have hMF2 : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get MEMBER_FOUND
+      = [if found then 1 else 0] := by
+    rw [State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide)]; exact hfound
+  have heval : mcBody.eval st
+      = (Cmd.ifBit IN_BLOCK
+          (Cmd.ifBit HEAD_CELL
+            (Cmd.op (.appendOne BLOCK_ACC))
+            (Cmd.op (.eqBit CMP_FLAG BLOCK_ACC LIT_VAR) ;;
+             Cmd.ifBit CMP_FLAG
+               (Cmd.op (.clear MEMBER_FOUND) ;; Cmd.op (.appendOne MEMBER_FOUND))
+               mcSkip ;;
+             Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendZero IN_BLOCK)))
+          (Cmd.ifBit HEAD_CELL
+            (Cmd.op (.clear BLOCK_ACC) ;;
+             Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendOne IN_BLOCK))
+            mcSkip)).eval ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL) := by
+    show (Cmd.eval (_ ;; _ ;; _) st) = _
+    rw [Cmd.eval_seq, Cmd.eval_seq, e1, e2]
+  have hcost : mcBody.cost st
+      = 1 + 1 + (1 + (restL.length + 2)
+          + (Cmd.ifBit IN_BLOCK
+              (Cmd.ifBit HEAD_CELL
+                (Cmd.op (.appendOne BLOCK_ACC))
+                (Cmd.op (.eqBit CMP_FLAG BLOCK_ACC LIT_VAR) ;;
+                 Cmd.ifBit CMP_FLAG
+                   (Cmd.op (.clear MEMBER_FOUND) ;; Cmd.op (.appendOne MEMBER_FOUND))
+                   mcSkip ;;
+                 Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendZero IN_BLOCK)))
+              (Cmd.ifBit HEAD_CELL
+                (Cmd.op (.clear BLOCK_ACC) ;;
+                 Cmd.op (.clear IN_BLOCK) ;; Cmd.op (.appendOne IN_BLOCK))
+                mcSkip)).cost ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL)) := by
+    show (Cmd.cost (_ ;; _ ;; _) st) = _
+    rw [Cmd.cost_seq, Cmd.cost_seq, e1, Cmd.cost_op, Cmd.cost_op, e2]
+    have htl : Op.cost (.tail ASSGN_COPY ASSGN_COPY) (st.set HEAD_CELL [cell])
+        = restL.length + 2 := by
+      show ((st.set HEAD_CELL [cell]).get ASSGN_COPY).length + 1 = _
+      rw [State.get_set_ne _ _ _ _ (by decide), hcopy]
+      simp
+    rw [htl]
+    show 1 + Op.cost (.head HEAD_CELL ASSGN_COPY) st + _ = _
+    simp only [Op.cost]
+  cases inB with
+  | true =>
+      -- in a block: a `1` extends the accumulator, a `0` closes the block
+      have hIB2t : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get IN_BLOCK
+          = [1] := by rw [hIB2]; rfl
+      rw [Cmd.eval_ifBit_true _ _ _ _ hIB2t] at heval
+      rw [Cmd.cost_ifBit_true _ _ _ _ hIB2t] at hcost
+      by_cases hc : cell = 1
+      · -- interior `1` cell
+        subst hc
+        rw [Cmd.eval_ifBit_true _ _ _ _ hHC2] at heval
+        rw [Cmd.cost_ifBit_true _ _ _ _ hHC2] at hcost
+        rw [Cmd.eval_op] at heval
+        simp only [Op.eval] at heval
+        rw [hBA2, replicate_one_snoc] at heval
+        have hstep : mcStep v (true, acc, found) 1 = (true, acc + 1, found) := by
+          simp [mcStep]
+        rw [heval, hstep]
+        refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ (by decide), hIB2]
+        · rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ (by decide)]; exact hMF2
+        · intro r hr
+          simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+          obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hr
+          rw [State.get_set_ne _ _ _ _ h7, State.get_set_ne _ _ _ _ h1,
+            State.get_set_ne _ _ _ _ h4]
+        · rw [hcost, Cmd.cost_op]
+          simp only [Op.cost]
+          omega
+      · -- block-end `0` cell: compare and fold into MEMBER_FOUND
+        have hHC2f : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get HEAD_CELL
+            ≠ [1] := by rw [hHC2]; simp [hc]
+        rw [Cmd.eval_ifBit_false _ _ _ _ hHC2f] at heval
+        rw [Cmd.cost_ifBit_false _ _ _ _ hHC2f] at hcost
+        rw [Cmd.eval_seq, Cmd.eval_op] at heval
+        simp only [Op.eval] at heval
+        rw [hBA2, hLV2] at heval
+        have hifred : (if List.replicate acc 1 = List.replicate v 1
+            then ([1] : List Nat) else [0]) = if acc = v then [1] else [0] := by
+          by_cases hav : acc = v
+          · rw [if_pos (replicate_one_eq_iff.mpr hav), if_pos hav]
+          · rw [if_neg (fun h => hav (replicate_one_eq_iff.mp h)), if_neg hav]
+        rw [hifred] at heval
+        -- the cost chain, normalized to the same branch point
+        rw [Cmd.cost_seq, Cmd.cost_op, Cmd.eval_op] at hcost
+        simp only [Op.eval, Op.cost] at hcost
+        rw [hBA2, hLV2, hifred] at hcost
+        have hstep : mcStep v (true, acc, found) cell
+            = (false, acc, found || decide (acc = v)) := by
+          simp [mcStep, hc]
+        rw [hstep]
+        by_cases hav : acc = v
+        · -- match: MEMBER_FOUND := [1]
+          rw [if_pos hav] at heval hcost
+          have hCMP : (((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).set CMP_FLAG
+              [1]).get CMP_FLAG = [1] := State.get_set_eq _ _ _
+          rw [Cmd.eval_seq, Cmd.eval_ifBit_true _ _ _ _ hCMP] at heval
+          rw [Cmd.cost_seq, Cmd.cost_ifBit_true _ _ _ _ hCMP] at hcost
+          rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op] at heval
+          simp only [Op.eval] at heval
+          rw [State.get_set_eq, List.nil_append] at heval
+          rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op] at heval
+          simp only [Op.eval] at heval
+          rw [State.get_set_eq, List.nil_append] at heval
+          rw [heval]
+          refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+          · rw [State.get_set_eq]; rfl
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide)]
+            exact hBA2
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+            simp [hav]
+          · intro r hr
+            simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+            obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hr
+            rw [State.get_set_ne _ _ _ _ h6, State.get_set_ne _ _ _ _ h6,
+              State.get_set_ne _ _ _ _ h2, State.get_set_ne _ _ _ _ h2,
+              State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h1,
+              State.get_set_ne _ _ _ _ h4]
+          · rw [hcost]
+            simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+            omega
+        · -- no match: MEMBER_FOUND unchanged (mcSkip)
+          rw [if_neg hav] at heval hcost
+          have hCMPf : (((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).set CMP_FLAG
+              [0]).get CMP_FLAG ≠ [1] := by rw [State.get_set_eq]; decide
+          rw [Cmd.eval_seq, Cmd.eval_ifBit_false _ _ _ _ hCMPf] at heval
+          rw [Cmd.cost_seq, Cmd.cost_ifBit_false _ _ _ _ hCMPf] at hcost
+          rw [mcSkip_eval] at heval
+          rw [mcSkip_cost] at hcost
+          rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op] at heval
+          simp only [Op.eval] at heval
+          rw [State.get_set_eq, List.nil_append] at heval
+          rw [heval]
+          refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+          · rw [State.get_set_eq]; rfl
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide)]
+            exact hBA2
+          · rw [State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide),
+              State.get_set_ne _ _ _ _ (by decide), hMF2]
+            simp [hav]
+          · intro r hr
+            simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+            obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hr
+            rw [State.get_set_ne _ _ _ _ h6, State.get_set_ne _ _ _ _ h6,
+              State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h5,
+              State.get_set_ne _ _ _ _ h1, State.get_set_ne _ _ _ _ h4]
+          · rw [hcost]
+            simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+            omega
+  | false =>
+      -- at a boundary: a `1` opens a block, a `0` is inert
+      have hIB2f : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get IN_BLOCK
+          ≠ [1] := by rw [hIB2]; decide
+      rw [Cmd.eval_ifBit_false _ _ _ _ hIB2f] at heval
+      rw [Cmd.cost_ifBit_false _ _ _ _ hIB2f] at hcost
+      by_cases hc : cell = 1
+      · -- block-open sentinel
+        subst hc
+        rw [Cmd.eval_ifBit_true _ _ _ _ hHC2] at heval
+        rw [Cmd.cost_ifBit_true _ _ _ _ hHC2] at hcost
+        rw [Cmd.eval_seq, Cmd.eval_op] at heval
+        simp only [Op.eval] at heval
+        rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op] at heval
+        simp only [Op.eval] at heval
+        rw [State.get_set_eq, List.nil_append] at heval
+        have hstep : mcStep v (false, acc, found) 1 = (true, 0, found) := by
+          simp [mcStep]
+        rw [heval, hstep]
+        refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+        · rw [State.get_set_eq]; rfl
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+          rfl
+        · rw [State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide),
+            State.get_set_ne _ _ _ _ (by decide)]
+          exact hMF2
+        · intro r hr
+          simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+          obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hr
+          rw [State.get_set_ne _ _ _ _ h6, State.get_set_ne _ _ _ _ h6,
+            State.get_set_ne _ _ _ _ h7, State.get_set_ne _ _ _ _ h1,
+            State.get_set_ne _ _ _ _ h4]
+        · rw [hcost]
+          simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+          omega
+      · -- inert `0` cell
+        have hHC2f : ((st.set HEAD_CELL [cell]).set ASSGN_COPY restL).get HEAD_CELL
+            ≠ [1] := by rw [hHC2]; simp [hc]
+        rw [Cmd.eval_ifBit_false _ _ _ _ hHC2f] at heval
+        rw [Cmd.cost_ifBit_false _ _ _ _ hHC2f] at hcost
+        rw [mcSkip_eval] at heval
+        rw [mcSkip_cost] at hcost
+        have hstep : mcStep v (false, acc, found) cell = (false, acc, found) := by
+          simp [mcStep, hc]
+        rw [heval, hstep]
+        refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ (by decide)]; exact hIB2
+        · rw [State.get_set_ne _ _ _ _ (by decide)]; exact hBA2
+        · rw [State.get_set_ne _ _ _ _ (by decide)]; exact hMF2
+        · intro r hr
+          simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+          obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hr
+          rw [State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h1,
+            State.get_set_ne _ _ _ _ h4]
+        · rw [hcost]
+          omega
+
+/-- The `memberCheck` scan-loop invariant: after `i` iterations the copy holds
+the unconsumed suffix and the parser registers mirror `mcStep` folded over the
+consumed prefix; everything outside the declared scratch is untouched. -/
+private def MCInv (v : Nat) (a : assgn) (st : State) (i : Nat) (s : State) : Prop :=
+  s.get ASSGN_COPY = (encodeAssgn a).drop i
+  ∧ s.get IN_BLOCK
+      = [if (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).1
+          then 1 else 0]
+  ∧ s.get BLOCK_ACC
+      = List.replicate
+          (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.1 1
+  ∧ s.get MEMBER_FOUND
+      = [if (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.2
+          then 1 else 0]
+  ∧ ∀ r : Var, r ∉ [ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG,
+        IN_BLOCK, BLOCK_ACC] → s.get r = st.get r
+
+/-- The loop step: `MCInv` is preserved by one (counter-set + `mcBody`) round. -/
+private theorem MCInv_step (v : Nat) (a : assgn) (st : State)
+    (hvar : st.get LIT_VAR = List.replicate v 1)
+    (i : Nat) (s : State) (hi : i < (encodeAssgn a).length) (h : MCInv v a st i s) :
+    MCInv v a st (i + 1) (mcBody.eval (s.set INNER_IDX (List.replicate i 1))) := by
+  obtain ⟨hAC, hIB, hBA, hMF, hframe⟩ := h
+  -- the counter write is invisible to every register the step lemma reads
+  have hAC' : (s.set INNER_IDX (List.replicate i 1)).get ASSGN_COPY
+      = (encodeAssgn a)[i] :: (encodeAssgn a).drop (i + 1) := by
+    rw [State.get_set_ne _ _ _ _ (by decide), hAC, List.drop_eq_getElem_cons hi]
+  have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK
+          = [if (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).1
+          then 1 else 0] := by
+    rw [State.get_set_ne _ _ _ _ (by decide)]; exact hIB
+  have hBA' : (s.set INNER_IDX (List.replicate i 1)).get BLOCK_ACC
+          = List.replicate
+          (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.1 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide)]; exact hBA
+  have hMF' : (s.set INNER_IDX (List.replicate i 1)).get MEMBER_FOUND
+          = [if (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.2
+          then 1 else 0] := by
+    rw [State.get_set_ne _ _ _ _ (by decide)]; exact hMF
+  have hLV' : (s.set INNER_IDX (List.replicate i 1)).get LIT_VAR
+      = List.replicate v 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide), hframe LIT_VAR (by decide)]
+    exact hvar
+  obtain ⟨c1, c2, c3, c4, c5, _⟩ := mcBody_step _ _ _ _ _ _ _ hAC' hIB' hBA' hMF' hLV'
+  refine ⟨c1, ?_, ?_, ?_, ?_⟩
+  · rw [c2, mcStep_take_succ v _ i hi]
+  · rw [c3, mcStep_take_succ v _ i hi]
+  · rw [c4, mcStep_take_succ v _ i hi]
+  · intro r hr
+    rw [c5 r hr, State.get_set_ne _ _ _ _ ?_, hframe r hr]
+    · simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+      exact hr.2.2.1
+
+/-- Combined behaviour + cost for `memberCheck` (the two pinned lemmas are
+projections of this). -/
+private theorem memberCheck_main (st : State) (v : Nat) (a : assgn)
+    (hvar : st.get LIT_VAR = List.replicate v 1)
+    (hassgn : st.get ASSGN = encodeAssgn a) :
+    ((memberCheck.eval st).get MEMBER_FOUND = [if evalVar a v then 1 else 0])
+    ∧ (∀ r : Var,
+        r ∉ [ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG,
+             IN_BLOCK, BLOCK_ACC] →
+        (memberCheck.eval st).get r = st.get r)
+    ∧ memberCheck.cost st
+        ≤ 100 * ((st.get ASSGN).length + (st.get LIT_VAR).length + 1) ^ 2 := by
+  -- the state after the init prefix, written out
+  have eP : memberCheck.eval st
+      = (Cmd.forBnd INNER_IDX ASSGN_COPY mcBody).eval
+          ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
+            MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC []) := by
+    show (Cmd.eval (_ ;; _ ;; _ ;; _ ;; _ ;; _ ;; _) st) = _
+    simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, State.get_set_eq,
+      List.nil_append, hassgn]
+  have hbound :
+      ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
+        MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC []).get
+        ASSGN_COPY = encodeAssgn a := by
+    rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+      State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+  have hbase : MCInv v a st 0
+      ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
+        MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC []) := by
+    refine ⟨by rw [hbound]; rfl, ?_, ?_, ?_, ?_⟩
+    · show _ = [(0 : Nat)]
+      rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · show _ = List.replicate 0 1
+      rw [State.get_set_eq]
+      rfl
+    · show _ = [(0 : Nat)]
+      rw [State.get_set_ne _ _ _ _ (by decide), State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · intro r hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false, not_or] at hr
+      obtain ⟨h1, h2, h3, h4, h5, h6, h7⟩ := hr
+      rw [State.get_set_ne _ _ _ _ h7, State.get_set_ne _ _ _ _ h6,
+        State.get_set_ne _ _ _ _ h6, State.get_set_ne _ _ _ _ h2,
+        State.get_set_ne _ _ _ _ h2, State.get_set_ne _ _ _ _ h1]
+  have hInv : MCInv v a st (encodeAssgn a).length (memberCheck.eval st) := by
+    rw [eP, Cmd.eval_forBnd, hbound]
+    exact Cmd.foldlState_range_induct mcBody INNER_IDX (encodeAssgn a).length _
+      (MCInv v a st) hbase (fun i s hi h => MCInv_step v a st hvar i s hi h)
+  obtain ⟨_, _, _, hMF, hframe⟩ := hInv
+  obtain ⟨accF, hspec⟩ := mcStep_foldl_encodeAssgn v a 0 false
+  refine ⟨?_, hframe, ?_⟩
+  · rw [List.take_length] at hMF
+    rw [hMF, hspec]
+    simp
+  · -- cost: prefix + uniform-bound loop
+    have hcost_eq : memberCheck.cost st
+        = (st.get ASSGN).length + 12
+          + (Cmd.forBnd INNER_IDX ASSGN_COPY mcBody).cost
+              ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
+                MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set
+                BLOCK_ACC []) := by
+      show (Cmd.cost (_ ;; _ ;; _ ;; _ ;; _ ;; _ ;; _) st) = _
+      simp only [Cmd.cost_seq, Cmd.cost_op, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Op.cost, State.get_set_eq, List.nil_append, hassgn]
+      omega
+    have hC : ∀ i s, i < (encodeAssgn a).length → MCInv v a st i s →
+        mcBody.cost (s.set INNER_IDX (List.replicate i 1))
+          ≤ (encodeAssgn a).length + 20 := by
+      intro i s hi h
+      obtain ⟨hAC, hIB, hBA, hMF, hframe⟩ := h
+      have hAC' : (s.set INNER_IDX (List.replicate i 1)).get ASSGN_COPY
+          = (encodeAssgn a)[i] :: (encodeAssgn a).drop (i + 1) := by
+        rw [State.get_set_ne _ _ _ _ (by decide), hAC,
+          List.drop_eq_getElem_cons hi]
+      have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK
+          = [if (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).1
+              then 1 else 0] := by
+        rw [State.get_set_ne _ _ _ _ (by decide)]; exact hIB
+      have hBA' : (s.set INNER_IDX (List.replicate i 1)).get BLOCK_ACC
+          = List.replicate
+              (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.1 1 := by
+        rw [State.get_set_ne _ _ _ _ (by decide)]; exact hBA
+      have hMF' : (s.set INNER_IDX (List.replicate i 1)).get MEMBER_FOUND
+          = [if (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.2
+              then 1 else 0] := by
+        rw [State.get_set_ne _ _ _ _ (by decide)]; exact hMF
+      have hLV' : (s.set INNER_IDX (List.replicate i 1)).get LIT_VAR
+          = List.replicate v 1 := by
+        rw [State.get_set_ne _ _ _ _ (by decide), hframe LIT_VAR (by decide)]
+        exact hvar
+      obtain ⟨_, _, _, _, _, hc⟩ :=
+        mcBody_step _ _ _ _ _ _ _ hAC' hIB' hBA' hMF' hLV'
+      refine hc.trans ?_
+      have : (List.drop (i + 1) (encodeAssgn a)).length
+          = (encodeAssgn a).length - (i + 1) := List.length_drop
+      omega
+    have hloop : (Cmd.forBnd INNER_IDX ASSGN_COPY mcBody).cost
+        ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
+          MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC [])
+        ≤ 1 + (encodeAssgn a).length * ((encodeAssgn a).length + 20)
+          + (encodeAssgn a).length * (encodeAssgn a).length := by
+      have h := Cmd.cost_forBnd_le INNER_IDX ASSGN_COPY mcBody
+        ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
+          MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC [])
+        ((encodeAssgn a).length + 20) (MCInv v a st) hbase
+        (fun i s hi h => MCInv_step v a st hvar i s (by rwa [hbound] at hi) h)
+        (fun i s hi h => hC i s (by rwa [hbound] at hi) h)
+      rwa [hbound] at h
+    -- assemble the arithmetic: 2n² + 21n + 13 ≤ 100(n + v' + 1)²
+    rw [hcost_eq, hassgn, hvar]
+    have hn := hloop
+    set n := (encodeAssgn a).length with hndef
+    rw [List.length_replicate]
+    have hmono : (n + 1) ^ 2 ≤ (n + v + 1) ^ 2 :=
+      Nat.pow_le_pow_left (by omega) 2
+    have hsq : (n + 1) ^ 2 = n * n + 2 * n + 1 := by ring
+    have hexp : n * (n + 20) = n * n + 20 * n := by ring
+    omega
 
 /-! ## Pinned inner-body contracts — the bottom-up ⇄ top-down interface
 
@@ -212,7 +822,8 @@ theorem memberCheck_run (st : State) (v : Nat) (a : assgn)
         r ∉ [ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG,
              IN_BLOCK, BLOCK_ACC] →
         (memberCheck.eval st).get r = st.get r) := by
-  sorry  -- TODO(Part3.5-member): gated on the concrete `memberCheck`
+  obtain ⟨h1, h2, _⟩ := memberCheck_main st v a hvar hassgn
+  exact ⟨h1, h2⟩
 
 /-- **(pinned, bottom-up) `memberCheck` cost** — quadratic in the entry
 lengths of the registers it reads (uniform-bound accounting: one pass over
@@ -222,14 +833,16 @@ theorem memberCheck_cost (st : State) (v : Nat) (a : assgn)
     (hvar : st.get LIT_VAR = List.replicate v 1)
     (hassgn : st.get ASSGN = encodeAssgn a) :
     memberCheck.cost st
-      ≤ 100 * ((st.get ASSGN).length + (st.get LIT_VAR).length + 1) ^ 2 := by
-  sorry  -- TODO(Part3.5-member)
+      ≤ 100 * ((st.get ASSGN).length + (st.get LIT_VAR).length + 1) ^ 2 :=
+  (memberCheck_main st v a hvar hassgn).2.2
 
 theorem memberCheck_usesBelow : Cmd.UsesBelow memberCheck 16 := by
-  sorry  -- TODO(Part3.5-member): falls out of the concrete body (registers 0–15)
+  simp only [memberCheck, mcBody, mcSkip, Cmd.UsesBelow, Op.UsesBelow]
+  decide
 
 theorem memberCheck_noConsLen : Cmd.NoConsLen memberCheck := by
-  sorry  -- TODO(Part3.5-member): immediate once concrete (no `consLen` needed)
+  simp only [memberCheck, mcBody, mcSkip, Cmd.NoConsLen, Op.NotConsLen]
+  trivial
 
 /-- **(pinned, bottom-up) `processOneLiteral` behaviour.** With one encoded
 literal at the head of `CNF_STREAM` and `CLAUSE_SAT` a boolean cell, it
@@ -314,9 +927,8 @@ needed — the live path is `consLen`-free). -/
 theorem processOneClause_noConsLen : Cmd.NoConsLen processOneClause := by
   sorry  -- TODO(Part3.5-clause)
 
-/-- The full SAT verifier. The outer scaffold is concrete; the
-per-clause / per-literal bodies are deferred to focused sorrys. -/
-noncomputable def evalCnfCmd : Cmd :=
+/-- The full SAT verifier. -/
+def evalCnfCmd : Cmd :=
   -- 1. Initialize OUTPUT := [1] (accept by default; reject on first
   --    unsatisfied clause).
   Cmd.op (.appendOne OUTPUT) ;;
