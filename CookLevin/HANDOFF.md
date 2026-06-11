@@ -38,24 +38,24 @@ sat_NP (EvalCnfTM.lean)
                                                                DecidesLang.toInTimePoly)
        → DecidesLang.toInTimePoly / .toDecidesBy (free enc.)  (PolyTime.lean; ✅ PROVEN — runtime-padded,
                                                                sorry only via the pinned gadgets below)
-            → Compile.paddedBitDecider_run                    (Compile.lean ~9654; ✅ PROVEN, no k ≤ s.length)
-                 → Compile.bitDecider_run                     (Compile.lean ~9486; physStepBudget)
-                      → Compile_run_physical_residue          (Compile.lean ~9225; PROVEN from the assembly,
+            → Compile.paddedBitDecider_run                    (Compile.lean ~11257; ✅ PROVEN, no k ≤ s.length)
+                 → Compile.bitDecider_run                     (Compile.lean ~10415; physStepBudget)
+                      → Compile_run_physical_residue          (Compile.lean ~10358; PROVEN from the assembly,
                                                                sorry only via the leaf gadgets below)
        evalCnfDecidesLang : DecidesLang …                     (EvalCnfTM.lean; ✅ COMPLETE & AXIOM-CLEAN
                                                                (2026-06-10): the verifier Cmd, its inner
                                                                bodies, and ALL contracts are PROVEN; budget
                                                                quartic 200000·(n+1)^4; regBound=16)
 REAL REMAINING MATH under the assembly:
-  padRegsTM_run / _traj   (Compile.lean ~10130; ✅ PROVEN, sorry-free — the WALL gadget
-                           is COMPLETE. paddedBitDecider_run's residual sorryAx is now
-                           ONLY the leaf gadgets below, not padRegsTM)
-  compileOp_sound_physical_residue   (Compile.lean ~9000; 5/12 ops PROVEN, 7 SORRY)
-  compileIfBit_sound_physical_residue  (Compile.lean ~10240; ✅ PROVEN 2026-06-11 —
+  padRegsTM_run / _traj   (Compile.lean ~11116; ✅ PROVEN, sorry-free — the WALL gadget
+                           is COMPLETE)
+  compileOp_sound_physical_residue   (Compile.lean ~9296; 5/12 ops PROVEN, 7 SORRY)
+  compileIfBit_sound_physical_residue  (Compile.lean ~9927; ✅ PROVEN —
                            real compileTestBit tester + branchCompose + joinTwoHalts)
-  compileForBnd_sound_physical_residue (Compile.lean ~10430; SORRY — ⚠ DESIGN GAP
-                           surfaced 2026-06-11: likely UNPROVABLE as pinned, see
-                           TOP-DOWN task 1)
+  compileForBnd_sound_physical_residue (Compile.lean ~10146; SORRY — ✅ interface
+                           RE-PINNED + probe-validated 2026-06-11 (static scratch
+                           registers); BUILDABLE bottom-up, gated only on the
+                           cursor-copy/tail op gadgets. See BOTTOM-UP tasks 1–2.)
 ```
 Both the **canonical** path (`DecidesLang'` / `inNPLang_to_inNP`) and the **free/live**
 path (`DecidesLang` / `inTimePolyLang_to_inTimePoly`) are now assembled and bridge the
@@ -125,59 +125,89 @@ only `tail`/`copy`/`eqBit` of the 7, plus both combinators.
 
 ---
 
-## ✅ What this session (2026-06-11, bottom-up) did — `ifBit` combinator CLOSED + op/forBnd design findings
+## ✅ What this session (2026-06-11b, top-down) did — `compileForBnd` interface RE-PINNED (scratch registers) + budget re-pin + dead-code purge
 
-**1. `compileIfBit_sound_physical_residue` is PROVEN (axiom-clean), and
-`compileTestBit` is REAL** (the `branchTester_default` stub is retired):
+**1. The `compileForBnd` snapshot-vs-clobber gap is CLOSED at the interface level
+(top-down task 1).** The compiler now assigns **static scratch registers**:
+`compileCmd : Nat → Cmd → CompiledCmd` takes a scratch base `sb` (so do
+`Compile sb c` / `Compile.exit sb c`); each `forBnd` at base `b` keeps its loop
+counts in `K1 = b` (remaining, snapshotted from `bound` at entry) and `K2 = b+1`
+(done, an **all-`1`s block** — exactly the `replicate i 1` the counter is rebuilt
+from each round), and compiles its body at `b + 2`. New `Cmd.loopDepth`
+(Syntax.lean): total register footprint `< sb + 2·loopDepth`. The pinned machine
+design + the validated W/budget accounting live in `compileForBnd`'s docstring
+(Compile.lean ~1881):
+`copy K1 bnd ⨾ loop{test K1 ⨾ copy cnt K2 ⨾ body ⨾ appendOne K2 ⨾ tail K1 K1} ⨾ clear K2`.
 
-- `Compile.exactOneOneTM` (4-state "register block = exactly `[2]`" reader) +
-  step/run/traj lemmas; `Compile.testBitInnerTM` (read ⨾ `justRewindTM` leaves);
-  `Compile.testBitRawTM t` (`navigateAndTestTM t` ⨾ inner / delim-rewind);
-  NEG leaves merged by `joinTwoHalts`. `#eval`-probe-validated FIRST
-  (17-state battery; observed ≤ 2·L+5 steps).
-- Packaged contracts **`Compile.testBitReg_run_pos` / `_run_neg`**: the tester
-  reaches `exitPos` iff `s.get t = [1]`, head back at `0`, **tape unchanged**
-  (so the chosen branch starts from its own `initFlatConfig`), traj avoids both
-  exits + halts, `T ≤ 3·L + 12`. Key structural fact making the single-phase
-  `justRewindTM` sound everywhere: every register block ends in its **own `0`
-  delimiter** (the leaf heads never sit on a `3`).
-- **Two pinned-interface gaps fixed (machine-checked necessity):** the `ifBit`
-  contract gained `(ht : t < s.length)` (the tester must physically navigate to
-  register `t`) and `(hG : size + s.length + |res0| + 2 ≤ G)` (the tester's step
-  count is linear in the tape length; without a tape bound the budget conjunct
-  is unprovable). Both are supplied at the single call site
-  (`run_physical_residue_gen`'s `ifBit` case: `huses.1` + its own `hG`).
-- Budget composes via `physStepBudget_seq G 0 c` (the tester + bridge steps fit
-  inside one extra `physStepBudget` unit: `3·G+12+2 ≤ 9G²+9G+33`).
+- **Threading:** `run_physical_residue_gen` / `Compile_run_physical_residue` /
+  `bitDecider_run` now carry `hscratch : ∀ r, k ≤ r → s.get r = []` and
+  `hk : k + 2·c.loopDepth ≤ s.length` (scratch-emptiness is preserved by
+  `Cmd.eval_get_frame`; the induction generalizes `k` — forBnd recurses at `k+2`).
+  `paddedBitDeciderTM`/`paddedComputeTM` pad to `k + 2·c.loopDepth` and gained
+  `hwle : s.length ≤ k` (input stays out of the scratch block), discharged at all
+  three bridges from `width_le`. `PolyTimeComputableLang.decode_agree` generalized
+  over the pad count. **No witness-structure fields changed** — `evalCnfDecidesLang`
+  and the EvalCnf layer were untouched.
+- **Probe-validated** (`probes/ForBndSkeletonProbe.lean`, all green): the machine
+  bookkeeping model = `(forBnd …).eval` for bodies that clobber `bound`/`counter`/
+  both, grow registers, nest loops, rewrite `bound` longer; W-① and budget-②
+  accounting hold for all `iters`.
 
-**2. ⚠⚠ Design findings (settle BEFORE building the remaining gadgets — they
-invalidate the previous session's Task-1/Task-2 plans):** see the stream
-sections below. In short: (a) the planned `moveRegion2TM`+scratch implementation
-of `copy`/`tail`/`eqBit` **violates the pinned W-invariant ①** and has **no
-scratch register** to use; the in-place **marking/cursor** design is forced (or
-an owner-approved `Op.cost` bump that ripples into the proven EvalCnf budgets);
-(b) the pinned `compileForBnd` contract is **likely unprovable as stated**
-(loop-count snapshot vs. clobbering bodies + existential residue) — a genuine
-interface-design task, now TOP-DOWN task 1.
+**2. `physStepBudget` RE-PINNED: `(9G²+9G+33)·(8·cost+8) + cost` — 8 budget units
+per cost item (machine-checked necessity).** The loop's per-iteration bookkeeping
+(~6 `O(G²)` passes: test, counter cursor-copy, appendOne, tail, seams) is paid
+from the `iters²` cost lump; at 1 unit/item that is **unsatisfiable for
+`iters ≤ 5`** (`6·iters ≰ iters² + 2` at small `iters`), at 8 units it clears for
+all `iters` with slack. Scaling the multiplier keeps the **exact**
+seq-superadditivity (the load-bearing property); `_poly` constant `103 → 817`.
+Downstream consumes only `_seq`/`_mono`/`_poly` — ripple was 6 bridge-budget
+proof endings.
 
-Build green (3358 jobs); new lemmas `[propext, Classical.choice, Quot.sound]`;
-`#print axioms CookLevin` unchanged (`sorryAx` via the remaining gadgets + the
-hardness half only).
+**3. ⚠ Bookkeeping-copy finding (binds BOTTOM-UP task 1).** A `moveRegionTM`-based
+per-iteration counter copy (joint size+residue growth `3i`/round) **violates the
+W-invariant ① from `iters = 2`** (`#eval`-checked). The in-place **cursor/marking
+copy** (residue growth `|dst₀|` only, joint `|src|`) is mandatory — the SAME gadget
+the `copy` op needs, and the forBnd combinator proof must consume the ops'
+**exact residue formulas** (the existential W-≤ of `compileOp_sound_physical_residue`
+is too weak: ① is exactly tight at `iters ∈ {1,2}`).
+
+**4. Dead code purged (10 sorrys removed):** the superseded `overhead`/exact-tape
+family (`compileOp/Seq/IfBit/ForBnd_sound{,_physical}`, `Compile_sound`,
+`Compile_polyBound`, `Compile_run_physical`, `Compile.sound_of_run_residue`,
+`Compile.overhead{,_poly,_mono}`). **Do not re-introduce.**
+
+**5. Gotcha (recorded in Conventions):** `omega` hits `whnf` **timeouts** on
+hypotheses whose product atoms multiply two-atom sums (`(regBound + 2·loopDepth + 1) * (…)`)
+— root-caused via a /tmp minimal repro; it is NOT specific to the new budget. Fix:
+end such proofs with explicit `Nat.add_le_add` terms instead of `omega`.
+
+Build green (3358 jobs); `#print axioms CookLevin` unchanged (`sorryAx` via the
+remaining gadgets + the hardness half only); new helper `Compile.get_of_length_le`
+axiom-clean.
 
 ---
 
 ## ✅ PROVEN, reusable — do not re-derive
 
-- **`Compile.run_physical_residue_gen`** (Compile.lean ~9225) — the residue
+- **`Compile.run_physical_residue_gen`** (Compile.lean ~10211) — the residue
   induction; `op`/`seq` cases proven, `ifBit`/`forBnd` dispatch to the two
-  combinators. W-invariant ① + `physStepBudget` budget ② both threaded.
-- **`physStepBudget`** + `_seq` (exact superadditivity) / `_mono` / `_poly`
-  (cubic diagonal) — the composable budget. **The only correct budget shape.**
+  combinators. W-invariant ① + `physStepBudget` budget ② + the **scratch
+  invariant** (`∀ r ≥ k, s.get r = []`, preserved via `Cmd.eval_get_frame`;
+  `k` generalized in the induction — forBnd recurses at `k+2`) all threaded.
+  ⚠ `compileCmd`/`Compile`/`Compile.exit` take the scratch base first:
+  `Compile k c`.
+- **`physStepBudget G cost = (9G²+9G+33)·(8·cost+8) + cost`** + `_seq` (exact
+  superadditivity) / `_mono` / `_poly` (cubic diagonal, const 817) — the
+  composable budget. **The only correct budget shape; 8 units/cost-item is
+  load-bearing for forBnd bookkeeping — do not re-tighten.**
 - **`Compile.bitDecider_run`** — decider boundary, now `physStepBudget`. Sorry-free
   except transitively via the leaf gadgets.
 - **`Compile.paddedBitDecider_run`** — the WALL resolution: pad-then-decide on a
   **narrow** input, **no `k ≤ s.length`**. Proven from the `padRegsTM` interface +
-  `bitDecider_run`. Plus the `*_append_replicate_nil` padding bookkeeping (sorry-free).
+  `bitDecider_run`. Pads to `k + 2·c.loopDepth` (program frame + compiler scratch)
+  and carries `hwle : s.length ≤ k` (from `width_le` at the bridges). Plus the
+  `*_append_replicate_nil` padding bookkeeping + `Compile.get_of_length_le`
+  (sorry-free).
 - **Both decider bridges** (PolyTime.lean), sorry-free as written (transitive sorrys =
   the pinned gadgets only): canonical `DecidesLang'.{padTimeBound,budget_ge,toDecidesBy,
   toInTimePoly}` + `inNPLang_to_inNP`; free/live `DecidesLang.{padTimeBound,budget_ge,
@@ -242,7 +272,6 @@ hardness half only).
   use `padBudget_le`. The old `(k+1)·(size+s.length+k+2)` was **doubly wrong** (too small
   AND not exact) — `#eval`-proven.
 - **`compileSeq_sound_physical_residue`** + `_traj` — residue `seq` composition.
-- **`Compile.sound_of_run_residue`** — residue run ⇒ `Compile_sound` shape.
 - **Threading toolkit** (now all in `Compile.lean`): `Cmd.eval_preserves_BitState`,
   `Op.inBounds_of_UsesBelow`, `Cmd.eval_length_ge`/`_le`, `Cmd.size_eval_le`,
   `State.set_length_ge`, `BitState_set_pad`.
@@ -250,9 +279,11 @@ hardness half only).
   transfer), `joinTwoHalts*`, `rewindBracket`/`_transport`, `bitReadTM`,
   `rewindTwoPhaseTM`, `deleteCarryTM`, `navigateAndTestTM`, `loopTM`(+`_run`/
   `_no_early_halt`), `loopBudget_le`. All axiom-clean. ⚠ The move gadgets are
-  **residue-costly** (each pass appends `|src|` zeros to the residue) — fine
-  inside `forBnd` bookkeeping (covered by the `iters²` cost lump), **not** usable
-  for the factor-1 W-invariant per-op contracts (see BOTTOM-UP task 1).
+  **residue-costly** (each pass appends `|src|` zeros to the residue) — **not**
+  usable for the factor-1 W-invariant per-op contracts, and (2026-06-11b probe)
+  **not even for the forBnd per-iteration counter copy** (joint growth `3i`/round
+  overdraws the `iters²` lump from `iters = 2`). One-shot entry/exit bookkeeping
+  only.
 - **★ `compileTestBit` is REAL + `compileIfBit_sound_physical_residue` PROVEN**
   (2026-06-11): `exactOneOneTM`/`testBitInnerTM`/`testBitRawTM` + the packaged
   tester contracts `testBitReg_run_pos`/`_run_neg` (head-0 exit, tape unchanged,
@@ -278,38 +309,11 @@ composition/NP-routing closed, and the EvalCnf verifier fully proven. Every
 residual sorry on the `sat_NP` decider path AND the `⪯p`/`toFrameworkWitness'`
 reduction path is a **compiler gadget**. The top-down frontier:
 
-1. **⚠ `compileForBnd` interface design (NEW 2026-06-11 — blocks the last
-   combinator; settle BEFORE any bottom-up forBnd build).** The pinned
-   `compileForBnd_sound_physical_residue` is **likely unprovable as stated**,
-   for two machine-independent reasons:
-   - **Snapshot vs. clobber.** `Cmd.run` snapshots `iters = |s.get bound|` at
-     loop **entry**; the body may legally clobber `bound` AND `counter`
-     mid-loop, yet the machine must still execute exactly `iters` iterations
-     and re-materialise `counter := replicate i 1` each round. A TM cannot hold
-     `iters` in finite control, and **no tape region survives the body
-     reliably**: registers can be clobbered by the body, and the body contract's
-     exit residue is **existential** (a conforming body could mangle any count
-     stored past the terminator).
-   - **The only sound storage is a register the body provably does not touch**
-     (the body's physical contract preserves *all* registers ≥ its `UsesBelow`
-     bound, as `encodeTape (body.eval s')` content). But `compileForBnd
-     counter bound rbody` has no static fresh register index to use.
-   **Design direction (validate, then re-pin):** compiler-assigned static
-   scratch registers (e.g. 2 per `forBnd` nesting level, above the program's
-   syntactic max register, threaded as a `compileCmd` parameter), plus an
-   interface extension: "scratch registers are `[]`" threaded through
-   `run_physical_residue_gen` (they start `[]` on the live path — `padRegsTM`
-   pads with `[]` — and each loop must restore them to `[]`), `UsesBelow`/
-   `regBound` widened accordingly (ripples: `evalCnfDecidesLang.regBound 16 →
-   16 + 2·depth`, mechanical). Loop bookkeeping (move one `1`-cell
-   `K1 → K2` per iteration, nondestructive `copy K2 → counter`) can use the
-   proven `moveRegionTM` family — their residue cost is covered by `forBnd`'s
-   `iters²` cost lump, which factor-1 per-op contracts don't have. ⚠ The
-   per-iteration `counter` copy ALSO needs the nondestructive-copy gadget
-   (BOTTOM-UP task 1) — design them together. Deliverable: a re-pinned
-   `compileForBnd` contract + gen patch that typechecks (`sorry` bodies fine),
-   plus an `#eval` probe of the loop skeleton.
-2. **CliqueRelTM — replicate the EvalCnf pattern (highest standalone top-down value).**
+✅ **Task 1 (`compileForBnd` interface design) is DONE (2026-06-11b)** — see the
+session block: scratch interface re-pinned, gen lemma threaded, probe green.
+The build is UNGATED for bottom-up. New frontier:
+
+1. **CliqueRelTM — replicate the EvalCnf pattern (highest standalone top-down value).**
    `Deciders/CliqueRelTM.lean` is still the pre-pattern skeleton: `cliqueRelCmd`/
    `cliqueRelEncode` are `sorry` **defs** and every witness field is a raw `sorry`
    (including `regBound`!). It gates `FlatClique_in_NP` → `Clique_complete` (a headline
@@ -321,7 +325,7 @@ reduction path is a **compiler gadget**. The top-down frontier:
    first, step-lemma + invariant + `cost_forBnd_le`). Design with the two known
    findings from the start: uniform-bound cost accounting fixes the degree (expect
    one degree per loop nest level); be generous with scratch registers.
-3. **Framework `red_inNP` (NP.lean:291) — layer-native `inNP` refinement.** The one genuine
+2. **Framework `red_inNP` (NP.lean:291) — layer-native `inNP` refinement.** The one genuine
    framework-side `sorry` for NP-routing (consumed by `inNP_kSAT`, hence on `CookLevin`'s
    path). It is **blocked by design**: `inNP Q` exposes only an opaque `FlatTM` decider
    (`inTimePoly`), from which no `Cmd` is recoverable, so the layer engine has nothing to
@@ -329,11 +333,11 @@ reduction path is a **compiler gadget**. The top-down frontier:
    (carry a `DecidesLang`), after which `red_inNP` collapses to the proven
    `red_inNP_of_lang`. Deep S3-migration item; design when the S3 retirement
    (ROADMAP step 2) is underway.
-4. **(optional cleanup) Delete the dead `Compile_sound` / `Compile_run_physical` /
-   `Compile_polyBound`** (overhead budget, superseded by the residue route, nothing
-   consumes them). Low priority; scrub their stale doc references in PolyTime.lean headers
-   (also stale: the `≤ 5·size+20` encodeState size quoted in NP.lean/PolyTime.lean
-   comments — the proven bound is `≤ 6·size`).
+3. **(optional cleanup)** ✅ The dead `overhead`/exact-tape family is DELETED
+   (2026-06-11b). Remaining doc scrubs: stale `Compile_sound`/`Compile_run_physical`
+   references in PolyTime.lean/Compile.lean header comments, and the stale
+   `≤ 5·size+20` encodeState size quoted in NP.lean/PolyTime.lean comments
+   (the proven bound is `≤ 6·size`). Low priority.
 
 # ▶ BOTTOM-UP work stream — next steps
 
@@ -348,7 +352,7 @@ gadgets below, so discharging Tasks 1–2 closes **both** halves of the live
 chain at once. Remaining: the **7 sorry ops** + the **`forBnd` combinator**.
 
 1. **The 3 live-path op gadgets** in `compileOp_sound_physical_residue`
-   (Compile.lean ~9000): **`tail`, `copy`, `eqBit`** (5/12 proven: `appendOne`/
+   (Compile.lean ~9296): **`tail`, `copy`, `eqBit`** (5/12 proven: `appendOne`/
    `appendZero`/`clear`/`nonEmpty`/`head`; `evalCnfCmd` needs only these three
    more, plus the combinators).
    **⚠⚠ 2026-06-11 DESIGN FINDING — the prior plan (two-phase transfer via
@@ -382,14 +386,28 @@ chain at once. Remaining: the **7 sorry ops** + the **`forBnd` combinator**.
    EvalCnf step-lemma constants (`100`/`300`/`1000`) and witness cost bounds.
    Then `concat` (same cursor machinery), and last the value-as-length trio
    `takeAt`/`dropAt`/`consLen` (canonical toolkit only — gated on Task 3).
-2. **`compileForBnd` build — GATED on the TOP-DOWN task-1 interface design**
-   (snapshot-vs-clobber: the loop count must live in compiler-assigned static
-   scratch registers; the pinned contract needs a scratch-emptiness extension).
-   Do NOT build a `loopTM`-over-`bound` machine against the current contract:
-   a body that clobbers `bound`/`counter` makes it wrong (machine-independent).
-   Once re-pinned: loop skeleton = `loopTM`, bookkeeping via `moveRegionTM` +
-   the task-1 nondestructive copy; budget via `loopBudget_le` against the
-   `iters²` cost lump.
+   **⚠ NEW (2026-06-11b): expose EXACT residue formulas.** The forBnd combinator
+   (Task 2) consumes the `copy`/`tail` gadgets for its per-iteration bookkeeping,
+   and its W-invariant is exactly tight (`(iters−1)(iters−2) = 0` at
+   `iters ∈ {1,2}`) — the existential W-≤ in `compileOp_sound_physical_residue`
+   is too weak there. Provide the underlying run lemmas with **explicit
+   residue values** (like `clearRegionTM_run`'s `res ++ replicate |dst₀| 0`):
+   cursor-copy `res' = res ++ replicate |dst₀| 0`; in-place `tail K1 K1`
+   (delete-head special case) `res' = res ++ [0]`.
+2. **`compileForBnd` build — NOW UNGATED (interface re-pinned + probe-validated
+   2026-06-11b).** Build exactly the machine pinned in `compileForBnd`'s
+   docstring (Compile.lean ~1881; probe model: `probes/ForBndSkeletonProbe.lean`):
+   `copy K1 bnd ⨾ loop{test K1 ⨾ copy cnt K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1 K1}
+   ⨾ clear K2` with `K1 = sb`, `K2 = sb + 1`. Loop skeleton = the proven `loopTM`
+   (two-exit body: `navigateAndTestTM K1` empty→done / content→iterate); the
+   bookkeeping reuses the op gadgets (`appendOne`/`clear` PROVEN; `copy`/`tail`
+   from Task 1 — **cursor copies only**, the moveRegionTM-based copy violates ①
+   from `iters = 2`). Prove against the re-pinned
+   `compileForBnd_sound_physical_residue` (Compile.lean ~10146): loop induction
+   over the iteration fold; per-iteration seq-compose the exact-residue op
+   contracts + the body contract (`hbody` at scratch base `sb+2`); budget via
+   `physStepBudget`'s 8-units-per-cost-item headroom (the α=8 accounting is in
+   the probe file; `loopBudget_le` for the skeleton).
 3. **Canonical product-toolkit unary migration** (separate from the live path; needed for
    S3 endgame, NOT for `sat_NP`). Restate `takeAt`/`dropAt`/`consLen` unary (count = the
    register's unary length, not `headD 0`); bump `consLen`'s `Op.cost`; re-lay the `Nat`/
@@ -414,6 +432,11 @@ chain at once. Remaining: the **7 sorry ops** + the **`forBnd` combinator**.
 - **Axiom-check** via a scratch file: `#print axioms <name>` — must show only
   `propext`/`Classical.choice`/`Quot.sound` for new sorry-free results.
 - **Budget:** only `physStepBudget` composes. Never an `overhead`/`(·+1)²` shape.
+- **`omega` hits `whnf`/`isDefEq` TIMEOUTS on product atoms multiplying
+  two-atom sums** (e.g. `(regBound + 2·loopDepth + 1) * (4n + …)` — both factors
+  non-literal). Root-caused 2026-06-11b with a /tmp minimal repro (not specific
+  to any def). End such proofs with explicit `Nat.add_le_add` terms, or
+  `generalize` the products first.
 - **Append a BIT `b`** = `appendAtTM (b+1)`. `deleteCarryTM` deletes the cell **left
   of the head**; `navigateAndTestTM src` lands the head **on** src's first content.
 - **`omega` can't see through `Var := Nat`** (use a `Nat`-typed param), record
