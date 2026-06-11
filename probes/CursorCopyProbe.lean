@@ -32,70 +32,19 @@ def mkE1 (s : Nat) (sym : Option Nat) (d : Nat) (w : Option Nat) (mv : TMMove) :
   { src_state := s, src_tape_vals := [sym], dst_state := d,
     dst_write_vals := [w], move_dirs := [mv] }
 
-/-- Read the cursor cell: `0` → exit `1` (done, no write); shifted bit `b+1` →
-write the mark `3`, exit `2+b` (Nmove — the head stays on the mark). -/
-def markReadTM : FlatTM where
-  sig := 4
-  tapes := 1
-  states := 4
-  trans := [mkE1 0 (some 0) 1 none .Nmove,
-            mkE1 0 (some 1) 2 (some 3) .Nmove,
-            mkE1 0 (some 2) 3 (some 3) .Nmove]
-  start := 0
-  halt := [false, true, true, true]
-
-/-- At the mark: restore the shifted bit (write `b+1`) and step right onto the
-next cursor cell. -/
-def restoreStepTM (b : Nat) : FlatTM where
-  sig := 4
-  tapes := 1
-  states := 2
-  trans := [mkE1 0 (some 3) 1 (some (b + 1)) .Rmove]
-  start := 0
-  halt := [false, true]
-
 /-- `(machine, exit)` sequential composition. -/
 def cseq : (FlatTM × Nat) → (FlatTM × Nat) → (FlatTM × Nat)
   | (m1, e1), (m2, e2) => (composeFlatTM m1 m2 e1, m1.states + e2)
 
-/-- The per-bit pipeline for bit `b`: from the freshly written mark, step left,
-scan left to the leading sentinel, append `b` to `dst`, scan left to the
-trailing terminator, step left, scan left to the mark, restore + step right. -/
-def pipelineTM (b dst : Nat) : FlatTM × Nat :=
-  cseq (cseq (cseq (cseq (cseq (cseq
-    (stepLeftTM 4, 1)
-    (scanLeftUntilTM 4 3, 1))
-    (appendAtTM (b + 1) dst, appendAtTM_exit dst))
-    (scanLeftUntilTM 4 3, 1))
-    (stepLeftTM 4, 1))
-    (scanLeftUntilTM 4 3, 1))
-    (restoreStepTM b, 1)
-
-/-- Loop body (3-way branch): done / copy-bit-0 / copy-bit-1. -/
-def copyBodyRawTM (dst : Nat) : FlatTM :=
-  branchComposeFlatTM markReadTM (pipelineTM 0 dst).1 (pipelineTM 1 dst).1 2 3
-
-def copyBody_done : Nat := 1
-def copyBody_iter0 (dst : Nat) : Nat := 4 + (pipelineTM 0 dst).2
-def copyBody_iter1 (dst : Nat) : Nat :=
-  4 + (pipelineTM 0 dst).1.states + (pipelineTM 1 dst).2
-
-/-- The two iterate exits merged (`joinTwoHalts` bridges iter1 → iter0). -/
-def copyBodyTM (dst : Nat) : FlatTM :=
-  Compile.joinTwoHalts (copyBodyRawTM dst) (copyBody_iter0 dst) (copyBody_iter1 dst)
-
-def copyLoopTM (dst : Nat) : FlatTM :=
-  loopTM (copyBodyTM dst) copyBody_done (copyBody_iter0 dst)
-
-def copyLoop_exit (dst : Nat) : Nat := (copyBodyTM dst).states
-
-/-- Full `copy dst src` machine (`dst ≠ src`). -/
+/-- The REAL compiled `copy` machine (`Compile.opCopy`, now defined in
+`Compile.lean` with the nested delimTest/markBit branch structure); the probe
+runs it end-to-end. -/
 def copyRegionTM (dst src : Nat) : FlatTM × Nat :=
-  cseq (cseq (cseq
-    (clearRegionTM dst, clearRegionTM_exit dst)
-    (navigateToRegTM src, navigateToRegTM_exit src))
-    (copyLoopTM dst, copyLoop_exit dst))
-    (justRewindTM, 1)
+  ((Compile.opCopy dst src).M, (Compile.opCopy dst src).exit)
+
+/-- The real cursor loop, probed in isolation too (against `copyLoop_run`'s
+statement shapes). -/
+def copyLoopTM (dst : Nat) : FlatTM := Compile.copyLoopTM dst
 
 /-! ## Tail machines -/
 
@@ -137,7 +86,7 @@ def idTM : FlatTM where
 def tailBranchRawTM (dst : Nat) : FlatTM :=
   branchComposeFlatTM skipReadTM (copyLoopTM dst) idTM 2 1
 
-def tailBranch_loopExit (dst : Nat) : Nat := 3 + copyLoop_exit dst
+def tailBranch_loopExit (dst : Nat) : Nat := 3 + Compile.copyLoopTM_exit dst
 def tailBranch_emptyExit (dst : Nat) : Nat := 3 + (copyLoopTM dst).states
 
 def tailBranchTM (dst : Nat) : FlatTM :=
