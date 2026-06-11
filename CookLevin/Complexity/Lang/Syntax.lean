@@ -102,6 +102,21 @@ inductive Cmd : Type where
 /-- Sequencing notation. -/
 infixr:30 " ;; " => Cmd.seq
 
+/-- **`forBnd` nesting depth** — the number of loop levels along the deepest
+path of the command. Drives the compiler's static scratch-register assignment
+(Risk C2/C3): a `forBnd` compiled at scratch base `sb` keeps its loop counts in
+the two scratch registers `sb`, `sb + 1` (which the machine requires empty at
+entry and restores to empty at exit) and compiles its body at scratch base
+`sb + 2`, so a program compiled at base `sb` touches registers
+`< sb + 2 * loopDepth` in total. Sequential/branching composition *reuses*
+scratch (each loop restores its pair to `[]`), so the depth — not the loop
+count — is what widens the register footprint. -/
+def Cmd.loopDepth : Cmd → Nat
+  | .op _               => 0
+  | .seq c1 c2          => max c1.loopDepth c2.loopDepth
+  | .ifBit _ cT cE      => max cT.loopDepth cE.loopDepth
+  | .forBnd _ _ body    => body.loopDepth + 1
+
 /-- Output convention: a state `s` is `accept` iff register 0
 contains exactly `[1]`. -/
 def State.isAccept (s : State) : Bool := s.get 0 == [1]
