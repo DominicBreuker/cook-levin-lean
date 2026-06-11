@@ -94,7 +94,9 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 …). The S3 layer→framework bridge is built (`toFrameworkWitness'`,
 `inNPLang`/`red_inNPLang`, the decider bridge `inNPLang_to_inNP`, `LangEncodable`
 + `map_fst`/`swap`/`map_snd`/`forBnd` toolkit), all sorry-free **modulo one
-compiler obligation** (`Compile_run_physical` / `Compile_sound`, Risk C2).
+compiler obligation** (`Compile_run_physical_residue`, Risk C2; the old
+`Compile_run_physical`/`Compile_sound` exact-tape forms were unsatisfiable and
+are deleted).
 
 **Caveat surfaced (do not under-estimate C2):** 10 of 12 `compileOp`s are still
 `compiledCmd_default` stubs. `Compile_sound` was false as stated for *three*
