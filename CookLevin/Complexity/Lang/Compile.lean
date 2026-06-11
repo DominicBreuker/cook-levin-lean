@@ -5691,7 +5691,381 @@ theorem Compile.navTestReg_traj_delim (s : State) (src : Var) (res : List Nat)
   exact ⟨ClearGadget.ne_of_not_halting (ClearGadget.navigateAndTestTM_exit_content_is_halt src) hh,
          ClearGadget.ne_of_not_halting (ClearGadget.navigateAndTestTM_exit_delim_is_halt src) hh, hh⟩
 
-/-! #### `moveBody`/`moveContent` loop-body scaffolding (Risk C2, Task 2). -/
+/-! #### `compileTestBit` run lemmas (Risk C2, bottom-up Task 2)
+
+The micro-steps of `exactOneOneTM`, the inner-tester composition, the raw
+three-leaf tester, and the two packaged contracts `Compile.testBitReg_run_pos` /
+`Compile.testBitReg_run_neg` that the `compileIfBit` residue combinator consumes:
+the tester reaches `exitPos` iff `s.get t = [1]`, with the head back at `0` and
+the tape **unchanged** (the branch bodies then start from their own
+`initFlatConfig`). -/
+
+/-- `exactOneOneTM` step, state 0 on a `1` cell (bit 0): → NEG, stay. -/
+private theorem Compile.exactOneOne_step0_b0 (left right : List Nat) (head : Nat)
+    (h : head < right.length) (hget : right.get ⟨head, h⟩ = 1) :
+    stepFlatTM Compile.exactOneOneTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 2, tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] }
+  have hSym' : cfg.tapes.map currentTapeSymbol = [some 1] := by
+    show [currentTapeSymbol (left, head, right)] = [some 1]
+    rw [currentTapeSymbol_in_range h, hget]
+  show Option.bind (Compile.exactOneOneTM.trans.find?
+        (fun entry => entryMatchesConfig entry cfg)) (applyTransitionEntry cfg) = _
+  have hMatch : entryMatchesConfig
+      { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = true := by
+    show ((0 : Nat) == cfg.state_idx &&
+        decide (([some 1] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = true
+    rw [hSym']; rfl
+  rw [show Compile.exactOneOneTM.trans.find? (fun entry => entryMatchesConfig entry cfg)
+        = some { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+                 dst_write_vals := [none], move_dirs := [TMMove.Nmove] } from by
+    show List.find? _ (_ :: _) = _
+    rw [List.find?_cons, hMatch]]
+  rfl
+
+/-- `exactOneOneTM` step, state 0 on a `2` cell (bit 1): → state 1, right. -/
+private theorem Compile.exactOneOne_step0_b1 (left right : List Nat) (head : Nat)
+    (h : head < right.length) (hget : right.get ⟨head, h⟩ = 2) :
+    stepFlatTM Compile.exactOneOneTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 0, tapes := [(left, head, right)] }
+  have hSym' : cfg.tapes.map currentTapeSymbol = [some 2] := by
+    show [currentTapeSymbol (left, head, right)] = [some 2]
+    rw [currentTapeSymbol_in_range h, hget]
+  show Option.bind (Compile.exactOneOneTM.trans.find?
+        (fun entry => entryMatchesConfig entry cfg)) (applyTransitionEntry cfg) = _
+  have hNo : entryMatchesConfig
+      { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+        dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = false := by
+    show ((0 : Nat) == cfg.state_idx &&
+        decide (([some 1] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = false
+    rw [hSym']
+    have h_ne : ([some 1] : List (Option Nat)) ≠ [some 2] := by decide
+    simp [h_ne]
+  have hMatch : entryMatchesConfig
+      { src_state := 0, src_tape_vals := [some 2], dst_state := 1,
+        dst_write_vals := [none], move_dirs := [TMMove.Rmove] } cfg = true := by
+    show ((0 : Nat) == cfg.state_idx &&
+        decide (([some 2] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = true
+    rw [hSym']; rfl
+  rw [show Compile.exactOneOneTM.trans.find? (fun entry => entryMatchesConfig entry cfg)
+        = some { src_state := 0, src_tape_vals := [some 2], dst_state := 1,
+                 dst_write_vals := [none], move_dirs := [TMMove.Rmove] } from by
+    show List.find? _ (_ :: _ :: _) = _
+    rw [List.find?_cons, hNo, List.find?_cons, hMatch]]
+  rfl
+
+/-- `exactOneOneTM` step, state 1 on a cell `v ∈ {0, 1, 2}` (the block-end `0`
+→ POS = 3; a bit cell → NEG = 2): stay. -/
+private theorem Compile.exactOneOne_step1 (left right : List Nat) (head : Nat) (v : Nat)
+    (hv : v ≤ 2) (h : head < right.length) (hget : right.get ⟨head, h⟩ = v) :
+    stepFlatTM Compile.exactOneOneTM { state_idx := 1, tapes := [(left, head, right)] }
+      = some { state_idx := if v = 0 then 3 else 2, tapes := [(left, head, right)] } := by
+  set cfg : FlatTMConfig := { state_idx := 1, tapes := [(left, head, right)] }
+  have hSym' : cfg.tapes.map currentTapeSymbol = [some v] := by
+    show [currentTapeSymbol (left, head, right)] = [some v]
+    rw [currentTapeSymbol_in_range h, hget]
+  have hNo0 : ∀ (sv : List (Option Nat)) (d : Nat) (w : List (Option Nat)) (m : List TMMove),
+      entryMatchesConfig
+        { src_state := 0, src_tape_vals := sv, dst_state := d,
+          dst_write_vals := w, move_dirs := m } cfg = false := by
+    intro sv d w m
+    show ((0 : Nat) == cfg.state_idx && _) = false
+    rfl
+  show Option.bind (Compile.exactOneOneTM.trans.find?
+        (fun entry => entryMatchesConfig entry cfg)) (applyTransitionEntry cfg) = _
+  interval_cases v
+  · have hMatch : entryMatchesConfig
+        { src_state := 1, src_tape_vals := [some 0], dst_state := 3,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = true := by
+      show ((1 : Nat) == cfg.state_idx &&
+          decide (([some 0] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = true
+      rw [hSym']; rfl
+    rw [show Compile.exactOneOneTM.trans.find? (fun entry => entryMatchesConfig entry cfg)
+          = some { src_state := 1, src_tape_vals := [some 0], dst_state := 3,
+                   dst_write_vals := [none], move_dirs := [TMMove.Nmove] } from by
+      show List.find? _ (_ :: _ :: _ :: _) = _
+      rw [List.find?_cons, hNo0, List.find?_cons, hNo0, List.find?_cons, hMatch]]
+    rfl
+  · have hNo2 : entryMatchesConfig
+        { src_state := 1, src_tape_vals := [some 0], dst_state := 3,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = false := by
+      show ((1 : Nat) == cfg.state_idx &&
+          decide (([some 0] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = false
+      rw [hSym']
+      have h_ne : ([some 0] : List (Option Nat)) ≠ [some 1] := by decide
+      simp [h_ne]
+    have hMatch : entryMatchesConfig
+        { src_state := 1, src_tape_vals := [some 1], dst_state := 2,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = true := by
+      show ((1 : Nat) == cfg.state_idx &&
+          decide (([some 1] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = true
+      rw [hSym']; rfl
+    rw [show Compile.exactOneOneTM.trans.find? (fun entry => entryMatchesConfig entry cfg)
+          = some { src_state := 1, src_tape_vals := [some 1], dst_state := 2,
+                   dst_write_vals := [none], move_dirs := [TMMove.Nmove] } from by
+      show List.find? _ (_ :: _ :: _ :: _ :: _) = _
+      rw [List.find?_cons, hNo0, List.find?_cons, hNo0, List.find?_cons, hNo2,
+          List.find?_cons, hMatch]]
+    rfl
+  · have hNo2 : entryMatchesConfig
+        { src_state := 1, src_tape_vals := [some 0], dst_state := 3,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = false := by
+      show ((1 : Nat) == cfg.state_idx &&
+          decide (([some 0] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = false
+      rw [hSym']
+      have h_ne : ([some 0] : List (Option Nat)) ≠ [some 2] := by decide
+      simp [h_ne]
+    have hNo3 : entryMatchesConfig
+        { src_state := 1, src_tape_vals := [some 1], dst_state := 2,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = false := by
+      show ((1 : Nat) == cfg.state_idx &&
+          decide (([some 1] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = false
+      rw [hSym']
+      have h_ne : ([some 1] : List (Option Nat)) ≠ [some 2] := by decide
+      simp [h_ne]
+    have hMatch : entryMatchesConfig
+        { src_state := 1, src_tape_vals := [some 2], dst_state := 2,
+          dst_write_vals := [none], move_dirs := [TMMove.Nmove] } cfg = true := by
+      show ((1 : Nat) == cfg.state_idx &&
+          decide (([some 2] : List (Option Nat)) = cfg.tapes.map currentTapeSymbol)) = true
+      rw [hSym']; rfl
+    rw [show Compile.exactOneOneTM.trans.find? (fun entry => entryMatchesConfig entry cfg)
+          = some { src_state := 1, src_tape_vals := [some 2], dst_state := 2,
+                   dst_write_vals := [none], move_dirs := [TMMove.Nmove] } from by
+      show List.find? _ (_ :: _ :: _ :: _ :: _) = _
+      rw [List.find?_cons, hNo0, List.find?_cons, hNo0, List.find?_cons, hNo2,
+          List.find?_cons, hNo3, List.find?_cons, hMatch]]
+    rfl
+
+/-- States `0`/`1` of `exactOneOneTM` are not halting. -/
+private theorem Compile.exactOneOne_not_halting (tapes : List (List Nat × Nat × List Nat))
+    (i : Nat) (hi : i ≤ 1) :
+    haltingStateReached Compile.exactOneOneTM { state_idx := i, tapes := tapes } = false := by
+  interval_cases i <;> rfl
+
+/-- `exactOneOneTM` run, NEG via bit `0` first cell: 1 step. -/
+private theorem Compile.exactOneOne_run_b0 (left right : List Nat) (head : Nat)
+    (h : head < right.length) (hget : right.get ⟨head, h⟩ = 1) :
+    runFlatTM 1 Compile.exactOneOneTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 2, tapes := [(left, head, right)] } := by
+  show (if haltingStateReached Compile.exactOneOneTM
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM Compile.exactOneOneTM
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _ | some cfg' => runFlatTM 0 Compile.exactOneOneTM cfg') = _
+  rw [show haltingStateReached Compile.exactOneOneTM
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      Compile.exactOneOne_step0_b0 left right head h hget]
+  rfl
+
+/-- `exactOneOneTM` run, two-cell read (`2` then `v ≤ 2`): 2 steps, head `+1`;
+exit POS (`3`) iff the second cell is the block-end `0`. -/
+private theorem Compile.exactOneOne_run_two (left right : List Nat) (head : Nat) (v : Nat)
+    (hv : v ≤ 2) (h : head < right.length) (hget : right.get ⟨head, h⟩ = 2)
+    (h1 : head + 1 < right.length) (hget1 : right.get ⟨head + 1, h1⟩ = v) :
+    runFlatTM 2 Compile.exactOneOneTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := if v = 0 then 3 else 2,
+               tapes := [(left, head + 1, right)] } := by
+  show (if haltingStateReached Compile.exactOneOneTM
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM Compile.exactOneOneTM
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _ | some cfg' => runFlatTM 1 Compile.exactOneOneTM cfg') = _
+  rw [show haltingStateReached Compile.exactOneOneTM
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      Compile.exactOneOne_step0_b1 left right head h hget]
+  show (if haltingStateReached Compile.exactOneOneTM
+            { state_idx := 1, tapes := [(left, head + 1, right)] } = true then _
+        else match stepFlatTM Compile.exactOneOneTM
+            { state_idx := 1, tapes := [(left, head + 1, right)] } with
+          | none => _ | some cfg' => runFlatTM 0 Compile.exactOneOneTM cfg') = _
+  rw [show haltingStateReached Compile.exactOneOneTM
+        { state_idx := 1, tapes := [(left, head + 1, right)] } = false from rfl,
+      Compile.exactOneOne_step1 left right (head + 1) v hv h1 hget1]
+  rfl
+
+/-- `exactOneOneTM` 1-step trajectory (avoids both exits, non-halting). -/
+private theorem Compile.exactOneOne_traj_one (left right : List Nat) (head : Nat) :
+    ∀ k, k < 1 → ∀ ck,
+      runFlatTM k Compile.exactOneOneTM
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      ck.state_idx ≠ Compile.exactOneOneTM_exitPos ∧
+      ck.state_idx ≠ Compile.exactOneOneTM_exitNeg ∧
+      haltingStateReached Compile.exactOneOneTM ck = false := by
+  intro k hk ck hck
+  have hk0 : k = 0 := by omega
+  subst hk0
+  obtain rfl : ck = { state_idx := 0, tapes := [(left, head, right)] } :=
+    (Option.some.inj hck).symm
+  exact ⟨show (0 : Nat) ≠ 3 by omega, show (0 : Nat) ≠ 2 by omega, rfl⟩
+
+/-- `exactOneOneTM` 2-step trajectory (avoids both exits, non-halting). -/
+private theorem Compile.exactOneOne_traj_two (left right : List Nat) (head : Nat)
+    (h : head < right.length) (hget : right.get ⟨head, h⟩ = 2) :
+    ∀ k, k < 2 → ∀ ck,
+      runFlatTM k Compile.exactOneOneTM
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      ck.state_idx ≠ Compile.exactOneOneTM_exitPos ∧
+      ck.state_idx ≠ Compile.exactOneOneTM_exitNeg ∧
+      haltingStateReached Compile.exactOneOneTM ck = false := by
+  intro k hk ck hck
+  interval_cases k
+  · obtain rfl : ck = { state_idx := 0, tapes := [(left, head, right)] } :=
+      (Option.some.inj hck).symm
+    exact ⟨show (0 : Nat) ≠ 3 by omega, show (0 : Nat) ≠ 2 by omega, rfl⟩
+  · have hrun1 : runFlatTM 1 Compile.exactOneOneTM
+        { state_idx := 0, tapes := [(left, head, right)] }
+          = some { state_idx := 1, tapes := [(left, head + 1, right)] } := by
+      show (if haltingStateReached Compile.exactOneOneTM
+                { state_idx := 0, tapes := [(left, head, right)] } = true then _
+            else match stepFlatTM Compile.exactOneOneTM
+                { state_idx := 0, tapes := [(left, head, right)] } with
+              | none => _ | some cfg' => runFlatTM 0 Compile.exactOneOneTM cfg') = _
+      rw [show haltingStateReached Compile.exactOneOneTM
+            { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+          Compile.exactOneOne_step0_b1 left right head h hget]
+      rfl
+    rw [hrun1] at hck
+    obtain rfl : ck = { state_idx := 1, tapes := [(left, head + 1, right)] } :=
+      (Option.some.inj hck).symm
+    exact ⟨show (1 : Nat) ≠ 3 by omega, show (1 : Nat) ≠ 2 by omega, rfl⟩
+
+/-- The `testBitInnerTM` symbol bound at the branch seam: any read cell value
+`< 4` is below the composed alphabet. -/
+private theorem Compile.testBitInner_sym_bound (left rest : List Nat) (head : Nat)
+    (hlt : head < (3 :: rest).length) (v0 : Nat) (hv0 : v0 < 4)
+    (hget : (3 :: rest).get ⟨head, hlt⟩ = v0) :
+    ∀ v, currentTapeSymbol (left, head, (3 : Nat) :: rest) = some v →
+      v < max Compile.exactOneOneTM.sig
+        (max ClearGadget.justRewindTM.sig ClearGadget.justRewindTM.sig) := by
+  intro v hv
+  rw [currentTapeSymbol_in_range hlt, hget] at hv
+  obtain rfl : v0 = v := Option.some.inj hv
+  calc v0 < 4 := hv0
+    _ = Compile.exactOneOneTM.sig := Compile.exactOneOneTM_sig.symm
+    _ ≤ _ := le_max_left _ _
+
+/-- Inner tester, NEG via first bit `0` (cell `1`): rewinds and exits at
+`testBitInner_exitNeg` in `1 + 1 + (head + 1)` steps, tape unchanged. -/
+private theorem Compile.testBitInner_run_b0 (left rest : List Nat) (head : Nat)
+    (hcell : (3 :: rest)[head]? = some 1)
+    (hcells : ∀ i, i < head → ∃ (hh : i < rest.length),
+      rest.get ⟨i, hh⟩ < 4 ∧ rest.get ⟨i, hh⟩ ≠ 3) :
+    runFlatTM (1 + 1 + (head + 1)) Compile.testBitInnerTM
+        { state_idx := 0, tapes := [(left, head, 3 :: rest)] }
+      = some { state_idx := Compile.testBitInner_exitNeg,
+               tapes := [(left, 0, 3 :: rest)] }
+    ∧ ∀ k, k < 1 + 1 + (head + 1) → ∀ ck,
+        runFlatTM k Compile.testBitInnerTM
+            { state_idx := 0, tapes := [(left, head, 3 :: rest)] } = some ck →
+        ck.state_idx ≠ Compile.testBitInner_exitPos ∧
+        ck.state_idx ≠ Compile.testBitInner_exitNeg ∧
+        haltingStateReached Compile.testBitInnerTM ck = false := by
+  have hlt : head < (3 :: rest).length := by
+    by_contra hge
+    rw [List.getElem?_eq_none (by omega)] at hcell
+    exact absurd hcell (by simp)
+  have hget : (3 :: rest).get ⟨head, hlt⟩ = 1 := by
+    rw [List.get_eq_getElem]
+    exact Option.some.inj ((List.getElem?_eq_getElem hlt).symm.trans hcell)
+  have hle : head ≤ rest.length := by
+    simp only [List.length_cons] at hlt; omega
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [(left, head, 3 :: rest)] }
+  have hrun1 := Compile.exactOneOne_run_b0 left (3 :: rest) head hlt hget
+  have htraj1 := Compile.exactOneOne_traj_one left (3 :: rest) head
+  have hrew := ScanLeft.rewindToStart_run 4 3 left rest head hle hcells
+  have hrew_traj := ScanLeft.rewindToStart_traj 4 3 left rest head hle hcells
+  have hsym := Compile.testBitInner_sym_bound left rest head hlt 1 (by omega) hget
+  have hneg := branchComposeFlatTM_run_neg (by decide)
+    Compile.exactOneOneTM_valid ClearGadget.justRewindTM_valid
+    ClearGadget.justRewindTM_valid (by decide) (by decide)
+    cfg0 (show (0 : Nat) < Compile.exactOneOneTM.states by decide) left head (3 :: rest) hsym hrun1 htraj1 hrew
+    (Compile.haltingStateReached_of_halt Compile.justRewindTM_exit_is_halt)
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg (by decide)
+    Compile.exactOneOneTM_valid ClearGadget.justRewindTM_valid
+    ClearGadget.justRewindTM_valid (by decide) (by decide)
+    cfg0 (show (0 : Nat) < Compile.exactOneOneTM.states by decide) left head (3 :: rest) hsym hrun1 htraj1
+    (fun k' hk' ck' hck' => (hrew_traj k' hk' ck' hck').2)
+  refine ⟨hneg.1, ?_⟩
+  intro k hk ck hck
+  have hh := hneg_traj k hk ck hck
+  exact ⟨ClearGadget.ne_of_not_halting Compile.testBitInner_exitPos_is_halt hh,
+         ClearGadget.ne_of_not_halting Compile.testBitInner_exitNeg_is_halt hh, hh⟩
+
+/-- Inner tester, two-cell read (`2` then `v`): POS (`v = 0`, register `= [1]`)
+or NEG (`v ∈ {1,2}`), rewinding from `head + 1`; `2 + 1 + (head + 1 + 1)` steps. -/
+private theorem Compile.testBitInner_run_two (left rest : List Nat) (head : Nat) (v : Nat)
+    (hv : v ≤ 2)
+    (hcell : (3 :: rest)[head]? = some 2)
+    (hcell1 : (3 :: rest)[head + 1]? = some v)
+    (hcells : ∀ i, i < head + 1 → ∃ (hh : i < rest.length),
+      rest.get ⟨i, hh⟩ < 4 ∧ rest.get ⟨i, hh⟩ ≠ 3) :
+    runFlatTM (2 + 1 + (head + 1 + 1)) Compile.testBitInnerTM
+        { state_idx := 0, tapes := [(left, head, 3 :: rest)] }
+      = some { state_idx := if v = 0 then Compile.testBitInner_exitPos
+                            else Compile.testBitInner_exitNeg,
+               tapes := [(left, 0, 3 :: rest)] }
+    ∧ ∀ k, k < 2 + 1 + (head + 1 + 1) → ∀ ck,
+        runFlatTM k Compile.testBitInnerTM
+            { state_idx := 0, tapes := [(left, head, 3 :: rest)] } = some ck →
+        ck.state_idx ≠ Compile.testBitInner_exitPos ∧
+        ck.state_idx ≠ Compile.testBitInner_exitNeg ∧
+        haltingStateReached Compile.testBitInnerTM ck = false := by
+  have hlt1 : head + 1 < (3 :: rest).length := by
+    by_contra hge
+    rw [List.getElem?_eq_none (by omega)] at hcell1
+    exact absurd hcell1 (by simp)
+  have hlt : head < (3 :: rest).length := by omega
+  have hget : (3 :: rest).get ⟨head, hlt⟩ = 2 := by
+    rw [List.get_eq_getElem]
+    exact Option.some.inj ((List.getElem?_eq_getElem hlt).symm.trans hcell)
+  have hget1 : (3 :: rest).get ⟨head + 1, hlt1⟩ = v := by
+    rw [List.get_eq_getElem]
+    exact Option.some.inj ((List.getElem?_eq_getElem hlt1).symm.trans hcell1)
+  have hle1 : head + 1 ≤ rest.length := by
+    simp only [List.length_cons] at hlt1; omega
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [(left, head, 3 :: rest)] }
+  have hrun1 := Compile.exactOneOne_run_two left (3 :: rest) head v hv hlt hget hlt1 hget1
+  have htraj1 := Compile.exactOneOne_traj_two left (3 :: rest) head hlt hget
+  have hrew := ScanLeft.rewindToStart_run 4 3 left rest (head + 1) hle1 hcells
+  have hrew_traj := ScanLeft.rewindToStart_traj 4 3 left rest (head + 1) hle1 hcells
+  have hsym := Compile.testBitInner_sym_bound left rest (head + 1) hlt1 v (by omega) hget1
+  by_cases hv0 : v = 0
+  · subst hv0
+    rw [if_pos rfl] at hrun1 ⊢
+    have hpos := branchComposeFlatTM_run_pos (by decide)
+      Compile.exactOneOneTM_valid ClearGadget.justRewindTM_valid
+      ClearGadget.justRewindTM_valid (by decide) (by decide)
+      cfg0 (show (0 : Nat) < Compile.exactOneOneTM.states by decide) left (head + 1) (3 :: rest) hsym hrun1 htraj1 hrew
+      (Compile.haltingStateReached_of_halt Compile.justRewindTM_exit_is_halt)
+    have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+      Compile.exactOneOneTM_valid ClearGadget.justRewindTM_valid
+      ClearGadget.justRewindTM_valid (by decide) (by decide)
+      cfg0 (show (0 : Nat) < Compile.exactOneOneTM.states by decide) left (head + 1) (3 :: rest) hsym hrun1 htraj1
+      (fun k' hk' ck' hck' => (hrew_traj k' hk' ck' hck').2)
+    refine ⟨hpos.1, ?_⟩
+    intro k hk ck hck
+    have hh := hpos_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting Compile.testBitInner_exitPos_is_halt hh,
+           ClearGadget.ne_of_not_halting Compile.testBitInner_exitNeg_is_halt hh, hh⟩
+  · rw [if_neg hv0] at hrun1 ⊢
+    have hneg := branchComposeFlatTM_run_neg (by decide)
+      Compile.exactOneOneTM_valid ClearGadget.justRewindTM_valid
+      ClearGadget.justRewindTM_valid (by decide) (by decide)
+      cfg0 (show (0 : Nat) < Compile.exactOneOneTM.states by decide) left (head + 1) (3 :: rest) hsym hrun1 htraj1 hrew
+      (Compile.haltingStateReached_of_halt Compile.justRewindTM_exit_is_halt)
+    have hneg_traj := branchComposeFlatTM_no_early_halt_neg (by decide)
+      Compile.exactOneOneTM_valid ClearGadget.justRewindTM_valid
+      ClearGadget.justRewindTM_valid (by decide) (by decide)
+      cfg0 (show (0 : Nat) < Compile.exactOneOneTM.states by decide) left (head + 1) (3 :: rest) hsym hrun1 htraj1
+      (fun k' hk' ck' hck' => (hrew_traj k' hk' ck' hck').2)
+    refine ⟨hneg.1, ?_⟩
+    intro k hk ck hck
+    have hh := hneg_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting Compile.testBitInner_exitPos_is_halt hh,
+           ClearGadget.ne_of_not_halting Compile.testBitInner_exitNeg_is_halt hh, hh⟩
 
 theorem Compile.moveContentExit0_lt (dst : Nat) :
     Compile.moveContentExit0 dst < (Compile.moveContentRawTM dst).states := by
