@@ -1479,9 +1479,228 @@ def branchTester_default : BranchTester where
   M_tapes := rfl
   M_sig := rfl
 
-/-- Compile a "test bit in register `t`" gadget. **Stub.** Replace
-with a real tester once register-navigation primitives land. -/
-def compileTestBit (_t : Var) : BranchTester := branchTester_default
+/-! ### The real bit tester `compileTestBit` (Risk C2, bottom-up Task 2)
+
+`ifBit t cT cE` branches on `s.get t = [1]` — register `t` holds **exactly** the
+single bit `1` (tape block `[2]`). The tester reads that and *restores* the
+machine to the branch bodies' expected start (head `0`, tape unchanged):
+
+- `navigateAndTestTM t` — head onto `t`'s first cell (content) or its `0`
+  delimiter (register empty → NEG);
+- content → `exactOneOneTM`: first cell `1` (bit 0) → NEG; `2` (bit 1) → step
+  right: `0` (block end) → POS; `1`/`2` (≥ 2 bits) → NEG;
+- every leaf rewinds to the leading sentinel with `justRewindTM`
+  (`scanLeftUntilTM 4 3` — sound because the head is never *on* a `3`: every
+  register block ends in its own `0` delimiter, and the leaf heads sit inside
+  the encoded region), leaving the tape unchanged;
+- the two NEG leaves merge through `Compile.joinTwoHalts`.
+
+`#eval`-validated end-to-end (17-state battery × test registers × residues;
+observed step counts ≤ 2·L + 5). Run lemmas: `Compile.testBitReg_run_pos` /
+`Compile.testBitReg_run_neg` (below the `navTestReg` block, where the
+`encodeTape` decomposition lemmas live). -/
+
+/-- Read "register block = exactly `[2]`" from the block's first cell: state 0
+reads the first cell (`1` → NEG, `2` → step right), state 1 reads the second
+cell (`0` → POS, `1`/`2` → NEG). Exits: `2` = NEG, `3` = POS. The block-end cell
+is always the register's own `0` delimiter (never the terminator `3`), so the
+two states need only the four bit/delimiter symbols. -/
+def Compile.exactOneOneTM : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 4
+  trans := [
+    { src_state := 0, src_tape_vals := [some 1], dst_state := 2,
+      dst_write_vals := [none], move_dirs := [TMMove.Nmove] },
+    { src_state := 0, src_tape_vals := [some 2], dst_state := 1,
+      dst_write_vals := [none], move_dirs := [TMMove.Rmove] },
+    { src_state := 1, src_tape_vals := [some 0], dst_state := 3,
+      dst_write_vals := [none], move_dirs := [TMMove.Nmove] },
+    { src_state := 1, src_tape_vals := [some 1], dst_state := 2,
+      dst_write_vals := [none], move_dirs := [TMMove.Nmove] },
+    { src_state := 1, src_tape_vals := [some 2], dst_state := 2,
+      dst_write_vals := [none], move_dirs := [TMMove.Nmove] }]
+  start := 0
+  halt := [false, false, true, true]
+
+def Compile.exactOneOneTM_exitNeg : Nat := 2
+def Compile.exactOneOneTM_exitPos : Nat := 3
+
+theorem Compile.exactOneOneTM_tapes : Compile.exactOneOneTM.tapes = 1 := rfl
+theorem Compile.exactOneOneTM_start : Compile.exactOneOneTM.start = 0 := rfl
+theorem Compile.exactOneOneTM_sig : Compile.exactOneOneTM.sig = 4 := rfl
+theorem Compile.exactOneOneTM_states : Compile.exactOneOneTM.states = 4 := rfl
+
+theorem Compile.exactOneOneTM_valid : validFlatTM Compile.exactOneOneTM := by
+  refine ⟨show (0 : Nat) < 4 from by decide, rfl, ?_⟩
+  intro entry hentry
+  fin_cases hentry <;>
+    exact ⟨by decide, by decide, rfl, rfl, rfl,
+      by intro x hx; simp only [List.mem_singleton] at hx; subst hx; decide,
+      by intro x hx; simp only [List.mem_singleton] at hx; subst hx; trivial⟩
+
+/-- `justRewindTM`'s (`= scanLeftUntilTM 4 3`) accept exit `1` is a halt. -/
+theorem Compile.justRewindTM_exit_is_halt :
+    ClearGadget.justRewindTM.halt[ClearGadget.justRewindTM_exit]? = some true := rfl
+
+/-- The inner content tester: `exactOneOneTM`, each exit followed by the
+left-rewind to the leading sentinel. States: `4 + 3 + 3 = 10`.
+Exits: POS = `4 + 1 = 5`, NEG = `4 + 3 + 1 = 8`. -/
+def Compile.testBitInnerTM : FlatTM :=
+  branchComposeFlatTM Compile.exactOneOneTM
+    ClearGadget.justRewindTM ClearGadget.justRewindTM
+    Compile.exactOneOneTM_exitPos Compile.exactOneOneTM_exitNeg
+
+def Compile.testBitInner_exitPos : Nat :=
+  Compile.exactOneOneTM.states + ClearGadget.justRewindTM_exit
+
+def Compile.testBitInner_exitNeg : Nat :=
+  Compile.exactOneOneTM.states + ClearGadget.justRewindTM.states
+    + ClearGadget.justRewindTM_exit
+
+theorem Compile.testBitInnerTM_tapes : Compile.testBitInnerTM.tapes = 1 := rfl
+theorem Compile.testBitInnerTM_sig : Compile.testBitInnerTM.sig = 4 := rfl
+theorem Compile.testBitInnerTM_states : Compile.testBitInnerTM.states = 10 := rfl
+theorem Compile.testBitInnerTM_start : Compile.testBitInnerTM.start = 0 := rfl
+
+theorem Compile.testBitInnerTM_valid : validFlatTM Compile.testBitInnerTM :=
+  branchComposeFlatTM_valid _ _ _ _ _ Compile.exactOneOneTM_valid
+    (ClearGadget.justRewindTM_valid) (ClearGadget.justRewindTM_valid)
+    (by decide) (by decide) rfl rfl rfl
+
+theorem Compile.testBitInner_exitPos_is_halt :
+    Compile.testBitInnerTM.halt[Compile.testBitInner_exitPos]? = some true :=
+  Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    ClearGadget.justRewindTM_valid (by decide) Compile.justRewindTM_exit_is_halt
+
+theorem Compile.testBitInner_exitNeg_is_halt :
+    Compile.testBitInnerTM.halt[Compile.testBitInner_exitNeg]? = some true :=
+  Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    ClearGadget.justRewindTM_valid Compile.justRewindTM_exit_is_halt
+
+/-- The raw three-leaf tester: navigate to register `t`, content → inner tester,
+empty → rewind (NEG). Exits: POS = `N + 5`, NEG (inner) = `N + 8`,
+NEG (delim) = `N + 10 + 1` with `N = (navigateAndTestTM t).states`. -/
+def Compile.testBitRawTM (t : Var) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.navigateAndTestTM t)
+    Compile.testBitInnerTM ClearGadget.justRewindTM
+    (ClearGadget.navigateAndTestTM_exit_content t)
+    (ClearGadget.navigateAndTestTM_exit_delim t)
+
+def Compile.testBitRaw_exitPos (t : Var) : Nat :=
+  (ClearGadget.navigateAndTestTM t).states + Compile.testBitInner_exitPos
+
+def Compile.testBitRaw_exitNeg (t : Var) : Nat :=
+  (ClearGadget.navigateAndTestTM t).states + Compile.testBitInner_exitNeg
+
+def Compile.testBitRaw_exitNegDelim (t : Var) : Nat :=
+  (ClearGadget.navigateAndTestTM t).states + Compile.testBitInnerTM.states
+    + ClearGadget.justRewindTM_exit
+
+theorem Compile.testBitRawTM_tapes (t : Var) : (Compile.testBitRawTM t).tapes = 1 := by
+  rw [Compile.testBitRawTM, branchComposeFlatTM_tapes]
+  exact ClearGadget.navigateAndTestTM_tapes t
+
+theorem Compile.testBitRawTM_sig (t : Var) : (Compile.testBitRawTM t).sig = 4 := by
+  rw [Compile.testBitRawTM, branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig]
+  rfl
+
+theorem Compile.testBitRawTM_states (t : Var) :
+    (Compile.testBitRawTM t).states = (ClearGadget.navigateAndTestTM t).states + 13 := by
+  rw [Compile.testBitRawTM, branchComposeFlatTM_states, Compile.testBitInnerTM_states]
+  rfl
+
+theorem Compile.testBitRawTM_start (t : Var) : (Compile.testBitRawTM t).start = 0 := by
+  rw [Compile.testBitRawTM, branchComposeFlatTM_start]
+  exact ClearGadget.navigateAndTestTM_start t
+
+theorem Compile.testBitRawTM_valid (t : Var) : validFlatTM (Compile.testBitRawTM t) :=
+  branchComposeFlatTM_valid _ _ _ _ _ (ClearGadget.navigateAndTestTM_valid t)
+    Compile.testBitInnerTM_valid ClearGadget.justRewindTM_valid
+    (ClearGadget.navigateAndTestTM_exit_content_lt t)
+    (ClearGadget.navigateAndTestTM_exit_delim_lt t)
+    (ClearGadget.navigateAndTestTM_tapes t) Compile.testBitInnerTM_tapes rfl
+
+theorem Compile.testBitRaw_exitPos_is_halt (t : Var) :
+    (Compile.testBitRawTM t).halt[Compile.testBitRaw_exitPos t]? = some true :=
+  Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    Compile.testBitInnerTM_valid (by rw [Compile.testBitInnerTM_states]; decide)
+    Compile.testBitInner_exitPos_is_halt
+
+theorem Compile.testBitRaw_exitNeg_is_halt (t : Var) :
+    (Compile.testBitRawTM t).halt[Compile.testBitRaw_exitNeg t]? = some true :=
+  Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    Compile.testBitInnerTM_valid (by rw [Compile.testBitInnerTM_states]; decide)
+    Compile.testBitInner_exitNeg_is_halt
+
+theorem Compile.testBitRaw_exitNegDelim_is_halt (t : Var) :
+    (Compile.testBitRawTM t).halt[Compile.testBitRaw_exitNegDelim t]? = some true :=
+  Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    Compile.testBitInnerTM_valid Compile.justRewindTM_exit_is_halt
+
+/-- Compile a "test register `t` = `[1]`" gadget — the **real** tester (the
+`branchTester_default` stub is retired). The two NEG leaves (inner / delim) are
+merged by demoting the delim leaf into the inner one. -/
+def compileTestBit (t : Var) : BranchTester where
+  M := Compile.joinTwoHalts (Compile.testBitRawTM t)
+        (Compile.testBitRaw_exitNeg t) (Compile.testBitRaw_exitNegDelim t)
+  exitPos := Compile.testBitRaw_exitPos t
+  exitNeg := Compile.testBitRaw_exitNeg t
+  exitPos_lt := by
+    rw [Compile.joinTwoHalts_states, Compile.testBitRawTM_states,
+        Compile.testBitRaw_exitPos]
+    have : Compile.testBitInner_exitPos = 5 := rfl
+    omega
+  exitNeg_lt := by
+    rw [Compile.joinTwoHalts_states, Compile.testBitRawTM_states,
+        Compile.testBitRaw_exitNeg]
+    have : Compile.testBitInner_exitNeg = 8 := rfl
+    omega
+  exit_distinct := by
+    rw [Compile.testBitRaw_exitPos, Compile.testBitRaw_exitNeg]
+    have h5 : Compile.testBitInner_exitPos = 5 := rfl
+    have h8 : Compile.testBitInner_exitNeg = 8 := rfl
+    omega
+  M_valid := Compile.joinTwoHalts_valid _ _ _ (Compile.testBitRawTM_valid t)
+    (by rw [Compile.testBitRawTM_states, Compile.testBitRaw_exitNeg]
+        have : Compile.testBitInner_exitNeg = 8 := rfl
+        omega)
+    (by rw [Compile.testBitRawTM_states, Compile.testBitRaw_exitNegDelim,
+            Compile.testBitInnerTM_states]
+        have : ClearGadget.justRewindTM_exit = 1 := rfl
+        omega)
+    (Compile.testBitRawTM_tapes t)
+  M_tapes := by rw [Compile.joinTwoHalts_tapes]; exact Compile.testBitRawTM_tapes t
+  M_sig := by rw [Compile.joinTwoHalts_sig]; exact Compile.testBitRawTM_sig t
+
+theorem compileTestBit_start (t : Var) : (compileTestBit t).M.start = 0 := by
+  show (Compile.joinTwoHalts (Compile.testBitRawTM t) _ _).start = 0
+  rw [Compile.joinTwoHalts_start]
+  exact Compile.testBitRawTM_start t
+
+/-- The POS exit survives the join untouched (it is neither `h1` nor `h2`). -/
+theorem compileTestBit_exitPos_is_halt (t : Var) :
+    (compileTestBit t).M.halt[(compileTestBit t).exitPos]? = some true := by
+  show ((Compile.testBitRawTM t).halt.set
+      (Compile.testBitRaw_exitNegDelim t) false)[Compile.testBitRaw_exitPos t]? = some true
+  rw [List.getElem?_set_ne (by
+    rw [Compile.testBitRaw_exitNegDelim, Compile.testBitRaw_exitPos,
+        Compile.testBitInnerTM_states]
+    have h5 : Compile.testBitInner_exitPos = 5 := rfl
+    have h1 : ClearGadget.justRewindTM_exit = 1 := rfl
+    omega)]
+  exact Compile.testBitRaw_exitPos_is_halt t
+
+/-- The NEG exit (the join's kept state `h1`) remains a halt. -/
+theorem compileTestBit_exitNeg_is_halt (t : Var) :
+    (compileTestBit t).M.halt[(compileTestBit t).exitNeg]? = some true :=
+  Compile.joinTwoHalts_h1_is_halt _ _ _
+    (by rw [Compile.testBitRaw_exitNeg, Compile.testBitRaw_exitNegDelim,
+            Compile.testBitInnerTM_states]
+        have h8 : Compile.testBitInner_exitNeg = 8 := rfl
+        have h1 : ClearGadget.justRewindTM_exit = 1 := rfl
+        omega)
+    (Compile.testBitRaw_exitNeg_is_halt t)
 
 /-- Helper: the halt states of `branchComposeFlatTM`, when both
 branches are `CompiledCmd`s with unique halts, are exactly the
