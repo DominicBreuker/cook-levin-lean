@@ -10243,7 +10243,13 @@ theorem compileIfBit_sound_physical_residue
     (t : Var) (rT rE : CompiledCmd)
     (evalT evalE : State → State) (costT costE : State → Nat)
     (G : Nat) (s : State) (res0 : List Nat)
+    -- `ht`/`hG` (added 2026-06-11): the tester must physically navigate to
+    -- register `t` (so it must exist), and its step count is linear in the tape
+    -- length, so the budget needs the tape bound `G`. Both are available at the
+    -- single call site (`run_physical_residue_gen`: `huses.1` + its own `hG`).
+    (ht : t < s.length)
     (hbit : Compile.BitState s) (hres0 : Compile.ValidResidue res0)
+    (hG : State.size s + s.length + res0.length + 2 ≤ G)
     (hT : s.get t = [1] →
       ∃ (tt : Nat) (res : List Nat),
         Compile.ValidResidue res ∧
@@ -10281,8 +10287,150 @@ theorem compileIfBit_sound_physical_residue
           ck.state_idx ≠ (compileIfBit t rT rE).exit ∧
           haltingStateReached (compileIfBit t rT rE).M ck = false) ∧
       tt ≤ Compile.physStepBudget G (1 + chosenCost) := by
-  sorry  -- GAP 1: build real `compileTestBit`, then `branchComposeFlatTM_run` +
-         -- `joinTwoHalts` + rewind bracket. See HANDOFF.md (bottom-up step 3).
+  -- The tester is REAL now (`compileTestBit`, 2026-06-11): navigate + read +
+  -- rewind, leaving the tape unchanged with the head at `0`, so the chosen
+  -- branch literally starts from its own `initFlatConfig`.
+  intro chosen chosenCost
+  set tester := compileTestBit t with htester
+  set branched := branchComposeFlatTM tester.M rT.M rE.M tester.exitPos tester.exitNeg
+    with hbranched
+  set haltE := tester.M.states + rT.M.states + rE.exit with hhaltE
+  set haltT := tester.M.states + rT.exit with hhaltT
+  have hMeq : (compileIfBit t rT rE).M = Compile.joinTwoHalts branched haltE haltT := rfl
+  have hexit_eq : (compileIfBit t rT rE).exit = haltE := rfl
+  have hstart : (compileIfBit t rT rE).M.start = 0 := by
+    rw [hMeq, Compile.joinTwoHalts_start, hbranched, branchComposeFlatTM_start]
+    exact compileTestBit_start t
+  have hinit : initFlatConfig (compileIfBit t rT rE).M [Compile.encodeTape s ++ res0]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res0)] } := by
+    simp only [initFlatConfig, hstart, List.map_cons, List.map_nil]
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res0)] }
+    with hcfg0
+  have hLG : (Compile.encodeTape s ++ res0).length ≤ G := by
+    rw [List.length_append, Compile.encodeTape_length]; omega
+  have hbudget0 : Compile.physStepBudget G 0 = 9 * G * G + 9 * G + 33 := by
+    simp only [Compile.physStepBudget]; omega
+  have hcfg0_lt : (0 : Nat) < tester.M.states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) tester.exitPos_lt
+  -- the seam symbol at head 0 is the leading sentinel `3`.
+  have hsym3 : ∀ (s' : State) (res' : List Nat),
+      currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s' ++ res') = some 3 := by
+    intro s' res'
+    rw [show Compile.encodeTape s' ++ res'
+        = 3 :: (Compile.encodeRegs s' ++ [Compile.endMark] ++ res') from by
+      rw [Compile.encodeTape]
+      simp only [Compile.endMark, List.cons_append, List.append_assoc]]
+    rfl
+  have hsymb : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res0) = some v →
+      v < max tester.M.sig (max rT.M.sig rE.M.sig) := by
+    intro v hv
+    rw [hsym3 s res0] at hv
+    obtain rfl : (3 : Nat) = v := Option.some.inj hv
+    calc (3 : Nat) < 4 := by omega
+      _ = tester.M.sig := tester.M_sig.symm
+      _ ≤ _ := le_max_left _ _
+  have hh1 : branched.halt[haltE]? = some true := by
+    rw [hbranched, hhaltE]
+    exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _ rT.M_valid rE.exit_is_halt
+  have hh2 : branched.halt[haltT]? = some true := by
+    rw [hbranched, hhaltT]
+    exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _ rT.M_valid rT.exit_lt
+      rT.exit_is_halt
+  have hne : haltE ≠ haltT := by
+    have := rT.exit_lt
+    rw [hhaltE, hhaltT]
+    omega
+  by_cases hb : s.get t = [1]
+  · -- TRUE branch: tester POS → `rT` → demoted `haltT` → bridge to `haltE`.
+    obtain ⟨tt, res, hres, hW, hrun, htraj, hbud⟩ := hT hb
+    obtain ⟨Tt, htest_run, htest_traj, htest_bud⟩ :=
+      Compile.testBitReg_run_pos t s res0 ht hbit hb
+    have hinitT : initFlatConfig rT.M [Compile.encodeTape s ++ res0]
+        = { state_idx := rT.M.start, tapes := [([], 0, Compile.encodeTape s ++ res0)] } := by
+      simp only [initFlatConfig, List.map_cons, List.map_nil]
+    rw [hinitT] at hrun htraj
+    have hraw := branchComposeFlatTM_run_pos tester.exit_distinct
+      tester.M_valid rT.M_valid rE.M_valid tester.exitPos_lt tester.exitNeg_lt
+      cfg0 hcfg0_lt [] 0 (Compile.encodeTape s ++ res0) hsymb
+      htest_run htest_traj hrun
+      (Compile.haltingStateReached_of_halt rT.exit_is_halt)
+    have hraw_traj := branchComposeFlatTM_no_early_halt_pos
+      tester.M_valid rT.M_valid rE.M_valid tester.exitPos_lt tester.exitNeg_lt
+      cfg0 hcfg0_lt [] 0 (Compile.encodeTape s ++ res0) hsymb
+      htest_run htest_traj
+      (fun k hk ck hck => (htraj k hk ck hck).2)
+    have hstate_eq : rT.exit + tester.M.states = haltT := by
+      rw [hhaltT]; omega
+    rw [hstate_eq] at hraw
+    obtain ⟨hjoin, hjoin_traj⟩ := Compile.joinTwoHalts_reaches_demoted branched haltE haltT
+      cfg0 (Tt + 1 + tt) [] (Compile.encodeTape (evalT s) ++ res) 0
+      hraw.1 (fun k hk ck hck => hraw_traj k hk ck hck) hh1 hh2 hne
+      (by
+        intro v hv
+        rw [hsym3 (evalT s) res] at hv
+        obtain rfl : (3 : Nat) = v := Option.some.inj hv
+        rw [hbranched, branchComposeFlatTM_sig, tester.M_sig, rT.M_sig, rE.M_sig]
+        decide)
+    refine ⟨Tt + 1 + tt + 1, res, hres, ?_, ?_, ?_, ?_⟩
+    · -- ① W-invariant.
+      show State.size chosen + res.length ≤ State.size s + res0.length + (1 + chosenCost)
+      simp only [chosen, chosenCost, if_pos hb]
+      omega
+    · -- run.
+      rw [hinit, hMeq, hexit_eq]
+      simp only [chosen, if_pos hb]
+      exact hjoin
+    · -- trajectory.
+      intro k hk ck hck
+      rw [hinit, hMeq] at hck
+      obtain ⟨hne1, hnh⟩ := hjoin_traj k hk ck hck
+      rw [hexit_eq, hMeq]
+      exact ⟨hne1, hnh⟩
+    · -- ② budget: tester (≤ 3·G+12) + bridges fit one extra `physStepBudget` unit.
+      simp only [chosenCost, if_pos hb]
+      rw [show (1 : Nat) + costT s = 1 + 0 + costT s from by omega,
+          ← Compile.physStepBudget_seq G 0 (costT s)]
+      omega
+  · -- FALSE branch: tester NEG → `rE` → the kept `haltE` directly.
+    obtain ⟨tt, res, hres, hW, hrun, htraj, hbud⟩ := hE hb
+    obtain ⟨Tt, htest_run, htest_traj, htest_bud⟩ :=
+      Compile.testBitReg_run_neg t s res0 ht hbit hb
+    have hinitE : initFlatConfig rE.M [Compile.encodeTape s ++ res0]
+        = { state_idx := rE.M.start, tapes := [([], 0, Compile.encodeTape s ++ res0)] } := by
+      simp only [initFlatConfig, List.map_cons, List.map_nil]
+    rw [hinitE] at hrun htraj
+    have hraw := branchComposeFlatTM_run_neg tester.exit_distinct
+      tester.M_valid rT.M_valid rE.M_valid tester.exitPos_lt tester.exitNeg_lt
+      cfg0 hcfg0_lt [] 0 (Compile.encodeTape s ++ res0) hsymb
+      htest_run htest_traj hrun
+      (Compile.haltingStateReached_of_halt rE.exit_is_halt)
+    have hraw_traj := branchComposeFlatTM_no_early_halt_neg tester.exit_distinct
+      tester.M_valid rT.M_valid rE.M_valid tester.exitPos_lt tester.exitNeg_lt
+      cfg0 hcfg0_lt [] 0 (Compile.encodeTape s ++ res0) hsymb
+      htest_run htest_traj
+      (fun k hk ck hck => (htraj k hk ck hck).2)
+    have hstate_eq : rE.exit + (tester.M.states + rT.M.states) = haltE := by
+      rw [hhaltE]; omega
+    rw [hstate_eq] at hraw
+    obtain ⟨hjoin, hjoin_traj⟩ := Compile.joinTwoHalts_reaches_kept branched haltE haltT
+      cfg0 (Tt + 1 + tt) ([], 0, Compile.encodeTape (evalE s) ++ res)
+      hraw.1 (fun k hk ck hck => hraw_traj k hk ck hck) hh1 hh2
+    refine ⟨Tt + 1 + tt, res, hres, ?_, ?_, ?_, ?_⟩
+    · show State.size chosen + res.length ≤ State.size s + res0.length + (1 + chosenCost)
+      simp only [chosen, chosenCost, if_neg hb]
+      omega
+    · rw [hinit, hMeq, hexit_eq]
+      simp only [chosen, if_neg hb]
+      exact hjoin
+    · intro k hk ck hck
+      rw [hinit, hMeq] at hck
+      obtain ⟨hne1, hnh⟩ := hjoin_traj k hk ck hck
+      rw [hexit_eq, hMeq]
+      exact ⟨hne1, hnh⟩
+    · simp only [chosenCost, if_neg hb]
+      rw [show (1 : Nat) + costE s = 1 + 0 + costE s from by omega,
+          ← Compile.physStepBudget_seq G 0 (costE s)]
+      omega
 
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — pinned interface, `sorry`).**
 The incoming-residue generalisation of `compileForBnd_sound_physical`
@@ -10436,8 +10584,10 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hE : s.get tt ≠ [1] → _ := fun hfalse =>
         ihE s res0 G hbit hk huses.2.2 hnc.2 hres0 (by
           have hc := Cmd.cost_ifBit_false tt cT cE s hfalse; rw [hc] at hG; omega)
+      have htlt : tt < s.length := Nat.lt_of_lt_of_le huses.1 hk
+      have hG' : State.size s + s.length + res0.length + 2 ≤ G := by omega
       have hcomb := compileIfBit_sound_physical_residue tt (compileCmd cT) (compileCmd cE)
-        cT.eval cE.eval cT.cost cE.cost G s res0 hbit hres0 hT hE
+        cT.eval cE.eval cT.cost cE.cost G s res0 htlt hbit hres0 hG' hT hE
       have heval : (Cmd.ifBit tt cT cE).eval s
           = if s.get tt = [1] then cT.eval s else cE.eval s := by
         by_cases hb : s.get tt = [1]
