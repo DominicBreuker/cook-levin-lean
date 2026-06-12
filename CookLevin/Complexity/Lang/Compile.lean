@@ -13904,7 +13904,72 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
           omega
         · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`.
           exact hbud
-  | tail dst src => sorry
+  | tail dst src =>
+      by_cases hds : dst = src
+      · subst hds
+        by_cases hemp : s.get dst = []
+        · -- in-place, done branch: tape unchanged, residue passes through.
+          obtain ⟨t, hrun, htraj, hbud⟩ :=
+            Compile.opTailSelf_run_done s dst hbnd.1 hbit hemp res_in hres_in
+          have heval : Op.eval (Op.tail dst dst) s = s := by
+            show s.set dst (s.get dst).tail = s
+            rw [hemp]
+            show s.set dst ([] : List Nat) = s
+            rw [← hemp]
+            exact Compile.set_get_self s dst hbnd.1
+          refine ⟨t, res_in, hres_in, ?_, ?_, htraj, ?_⟩
+          · rw [heval]
+            simp only [Op.cost]
+            omega
+          · rw [heval]
+            exact hrun
+          · -- `6L+13 ≤ (9L²+9L+30)·2 ≤ (9L²+9L+30)·(cost+1)`.
+            have h2 : (9 * (Compile.encodeTape s ++ res_in).length
+                  * (Compile.encodeTape s ++ res_in).length
+                  + 9 * (Compile.encodeTape s ++ res_in).length + 30) * 2
+                ≤ (9 * (Compile.encodeTape s ++ res_in).length
+                  * (Compile.encodeTape s ++ res_in).length
+                  + 9 * (Compile.encodeTape s ++ res_in).length + 30)
+                  * (Op.cost (Op.tail dst dst) s + 1) := by
+              refine Nat.mul_le_mul_left _ ?_
+              simp only [Op.cost]
+              omega
+            exact le_trans (le_trans hbud (by omega)) h2
+        · -- in-place, delete branch: exact residue `res_in ++ [0]`.
+          obtain ⟨t, hrun, htraj, hbud⟩ :=
+            Compile.opTailSelf_run_delete s dst hbnd.1 hbit hemp res_in hres_in
+          refine ⟨t, res_in ++ [0],
+            Compile.ValidResidue_append_replicate_zero res_in 1 hres_in, ?_, hrun, htraj, ?_⟩
+          · -- ① the deleted cell moves to the residue: `W` is unchanged.
+            have h := State.size_set_add s dst (s.get dst).tail
+            have hlen : (s.get dst).tail.length = (s.get dst).length - 1 := List.length_tail
+            have hpos : 0 < (s.get dst).length := List.length_pos_iff.mpr hemp
+            simp only [Op.eval, Op.cost, List.length_append, List.length_cons,
+              List.length_nil]
+            omega
+          · have h2 : (9 * (Compile.encodeTape s ++ res_in).length
+                  * (Compile.encodeTape s ++ res_in).length
+                  + 9 * (Compile.encodeTape s ++ res_in).length + 30) * 2
+                ≤ (9 * (Compile.encodeTape s ++ res_in).length
+                  * (Compile.encodeTape s ++ res_in).length
+                  + 9 * (Compile.encodeTape s ++ res_in).length + 30)
+                  * (Op.cost (Op.tail dst dst) s + 1) := by
+              refine Nat.mul_le_mul_left _ ?_
+              simp only [Op.cost]
+              omega
+            exact le_trans (le_trans hbud (by omega)) h2
+      · obtain ⟨t, hrun, htraj, hbud⟩ :=
+          Compile.opTail_run s dst src hds hbnd.1 hbnd.2 hbit res_in hres_in
+        refine ⟨t, res_in ++ List.replicate (State.get s dst).length 0,
+          Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj, ?_⟩
+        · -- ① the freed `|dst₀|` cells move to the residue; `dst` gains `|src| − 1`.
+          have h := State.size_set_add s dst (State.get s src).tail
+          have hlen : (State.get s src).tail.length = (State.get s src).length - 1 :=
+            List.length_tail
+          simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
+          omega
+        · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`.
+          exact hbud
   | head dst src =>
       obtain ⟨t, hrun, htraj, hbud⟩ :=
         Compile.opHead_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
