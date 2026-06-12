@@ -1372,11 +1372,406 @@ def Compile.opCopy (dst src : Var) : CompiledCmd :=
     M_tapes := Compile.copyRegionFullTM_tapes dst src
     M_sig := Compile.copyRegionFullTM_sig dst src }
 
-/-- Compile `Op.tail dst src`. **Stub for now** — the machines are probe-validated
-(`probes/CursorCopyProbe.lean`: `tailInPlaceTM` = one clear-style delete via
-`clearBodyRawTM` with joined exits for `dst = src`; `skipReadTM ⨾ copyLoopTM` for
-`dst ≠ src`); wiring them as a `CompiledCmd` follows the `opCopy` pattern. -/
-def Compile.opTail (_dst _src : Var) : CompiledCmd := compiledCmd_default
+/-! ### The `tail` op machines (`compileOp` dispatches here)
+
+`tail dst dst` (in-place) deletes register `dst`'s first cell: exactly ONE
+clear-style iteration — `clearBodyRawTM dst` (navigate+test; content →
+step-right + delete-left-cell + two-phase rewind; delimiter → just-rewind) with
+the content exit demoted into the kept done exit (`joinTwoHalts`), then composed
+with the trivial halt machine `idTM` so the two unreachable boundary halts are
+zeroed by `composedHalt` and exactly one halt remains.
+
+`tail dst src` (`dst ≠ src`) is the cursor-copy machine with a `skipReadTM`
+pre-stage stepping over `src`'s first cell before the (unchanged) cursor loop:
+`clearRegionTM dst ⨾ navigateToRegTM src ⨾ (skipReadTM ⨠ copyLoopTM dst /
+idTM, exits joined) ⨾ justRewindTM`, rewind boundary halt demoted — the
+`opCopy` assembly with one extra branch stage. Probe-validated end-to-end
+(`probes/CursorCopyProbe.lean`). -/
+
+/-- `clearBodyRawTM`'s sig, via the (defeq) `loopTM` wrapper's lemma. -/
+theorem Compile.clearBodyRawTM_sig (dst : Nat) : (ClearGadget.clearBodyRawTM dst).sig = 4 :=
+  ClearGadget.clearRegionTM_sig dst
+
+theorem Compile.clearBodyRawTM_tapes (dst : Nat) : (ClearGadget.clearBodyRawTM dst).tapes = 1 :=
+  ClearGadget.clearRegionTM_tapes dst
+
+theorem Compile.clearBodyRawTM_start (dst : Nat) : (ClearGadget.clearBodyRawTM dst).start = 0 :=
+  ClearGadget.clearRegionTM_start dst
+
+/-- `idTM`'s single state is its unique halt. -/
+theorem Compile.idTM_halt_unique : ∀ i, Compile.idTM.halt[i]? = some true → i = 0 := by
+  intro i hi
+  match i with
+  | 0 => rfl
+  | n + 1 => exact absurd hi (by simp [Compile.idTM])
+
+/-- In-place `tail dst dst`, raw: one clear-style delete with the content exit
+(`exitLoop`) demoted into the kept done exit (`exitDone`). -/
+def Compile.tailInPlaceRawTM (dst : Nat) : FlatTM :=
+  Compile.joinTwoHalts (ClearGadget.clearBodyRawTM dst)
+    (ClearGadget.clearBodyRawTM_exitDone dst) (ClearGadget.clearBodyRawTM_exitLoop dst)
+
+/-- The in-place `tail dst dst` machine: composing with `idTM` zeroes ALL the
+body's halt bits (incl. the two unreachable boundary halts), leaving the single
+halt at `idTM`'s (shifted) start. -/
+def Compile.tailInPlaceTM (dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.tailInPlaceRawTM dst) Compile.idTM
+    (ClearGadget.clearBodyRawTM_exitDone dst)
+
+def Compile.tailInPlaceTM_exit (dst : Nat) : Nat := (ClearGadget.clearBodyRawTM dst).states
+
+theorem Compile.tailInPlaceRawTM_states (dst : Nat) :
+    (Compile.tailInPlaceRawTM dst).states = (ClearGadget.clearBodyRawTM dst).states := rfl
+
+theorem Compile.tailInPlaceTM_states (dst : Nat) :
+    (Compile.tailInPlaceTM dst).states = (ClearGadget.clearBodyRawTM dst).states + 1 := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states]
+  rfl
+
+theorem Compile.tailInPlaceRawTM_valid (dst : Nat) :
+    validFlatTM (Compile.tailInPlaceRawTM dst) :=
+  Compile.joinTwoHalts_valid _ _ _ (ClearGadget.clearBodyRawTM_valid dst)
+    (ClearGadget.clearBodyRawTM_exitDone_lt dst) (ClearGadget.clearBodyRawTM_exitLoop_lt dst)
+    (Compile.clearBodyRawTM_tapes dst)
+
+theorem Compile.tailInPlaceTM_valid (dst : Nat) : validFlatTM (Compile.tailInPlaceTM dst) :=
+  composeFlatTM_valid _ _ _ (Compile.tailInPlaceRawTM_valid dst) Compile.idTM_valid
+    (ClearGadget.clearBodyRawTM_exitDone_lt dst) (Compile.clearBodyRawTM_tapes dst) rfl
+
+theorem Compile.tailInPlaceTM_tapes (dst : Nat) : (Compile.tailInPlaceTM dst).tapes = 1 :=
+  Compile.clearBodyRawTM_tapes dst
+
+theorem Compile.tailInPlaceTM_sig (dst : Nat) : (Compile.tailInPlaceTM dst).sig = 4 := by
+  show max (ClearGadget.clearBodyRawTM dst).sig Compile.idTM.sig = 4
+  rw [Compile.clearBodyRawTM_sig]
+  rfl
+
+theorem Compile.tailInPlaceTM_start (dst : Nat) : (Compile.tailInPlaceTM dst).start = 0 :=
+  Compile.clearBodyRawTM_start dst
+
+theorem Compile.tailInPlaceTM_halt_unique (dst : Nat) :
+    ∀ i, (Compile.tailInPlaceTM dst).halt[i]? = some true →
+      i = Compile.tailInPlaceTM_exit dst := by
+  intro i hi
+  have h := Compile.composeFlatTM_halt_unique (Compile.tailInPlaceRawTM dst) Compile.idTM 0
+    (ClearGadget.clearBodyRawTM_exitDone dst) Compile.idTM_halt_unique i hi
+  rw [Compile.tailInPlaceRawTM_states] at h
+  show i = (ClearGadget.clearBodyRawTM dst).states
+  omega
+
+theorem Compile.tailInPlaceTM_exit_is_halt (dst : Nat) :
+    (Compile.tailInPlaceTM dst).halt[Compile.tailInPlaceTM_exit dst]? = some true := by
+  have h := ScanLeft.composeFlatTM_halt_some_intro (Compile.tailInPlaceRawTM dst) Compile.idTM
+    (ClearGadget.clearBodyRawTM_exitDone dst) 0 rfl
+  exact h
+
+/-- The cursor loop's halt vector has its single `true` at `copyLoopTM_exit`. -/
+theorem Compile.copyLoopTM_exit_is_halt (dst : Nat) :
+    (Compile.copyLoopTM dst).halt[Compile.copyLoopTM_exit dst]? = some true := by
+  show (List.replicate (Compile.copyBodyTM dst).states false
+      ++ [true])[Compile.copyLoopTM_exit dst]? = some true
+  rw [show Compile.copyLoopTM_exit dst = (Compile.copyBodyTM dst).states from by
+        rw [Compile.copyBodyTM_states]; rfl,
+      List.getElem?_append_right (by rw [List.length_replicate]),
+      List.length_replicate, Nat.sub_self]
+  rfl
+
+theorem Compile.copyLoopTM_halt_unique (dst : Nat) :
+    ∀ i, (Compile.copyLoopTM dst).halt[i]? = some true → i = Compile.copyLoopTM_exit dst := by
+  intro i hi
+  show i = Compile.copyLoopTM_exit dst
+  rw [show Compile.copyLoopTM_exit dst = (Compile.copyBodyTM dst).states from by
+        rw [Compile.copyBodyTM_states]; rfl]
+  change (List.replicate (Compile.copyBodyTM dst).states false ++ [true])[i]? = some true at hi
+  by_cases hlt : i < (Compile.copyBodyTM dst).states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact hlt),
+        List.getElem?_replicate] at hi
+    split at hi <;> simp_all
+  · rw [Nat.not_lt] at hlt
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact hlt),
+        List.length_replicate] at hi
+    rcases hi' : i - (Compile.copyBodyTM dst).states with _ | n
+    · omega
+    · rw [hi'] at hi; simp at hi
+
+/-- `tail dst src` branch stage, raw: `skipReadTM` dispatches — content cell →
+step right onto `src`'s second cell and run the cursor loop; delimiter (`src`
+empty) → `idTM` (no-op). -/
+def Compile.tailBranchRawTM (dst : Nat) : FlatTM :=
+  branchComposeFlatTM Compile.skipReadTM (Compile.copyLoopTM dst) Compile.idTM
+    Compile.skipReadTM_exit_bit Compile.skipReadTM_exit_empty
+
+/-- The kept exit: the cursor loop's halt, shifted into the branch composite. -/
+def Compile.tailBranch_keptExit (dst : Nat) : Nat := 3 + Compile.copyLoopTM_exit dst
+
+/-- The empty-src exit (`idTM`'s start, shifted) — demoted into the kept exit. -/
+def Compile.tailBranch_emptyExit (dst : Nat) : Nat := 3 + (Compile.copyLoopTM dst).states
+
+def Compile.tailBranchTM (dst : Nat) : FlatTM :=
+  Compile.joinTwoHalts (Compile.tailBranchRawTM dst)
+    (Compile.tailBranch_keptExit dst) (Compile.tailBranch_emptyExit dst)
+
+theorem Compile.tailBranch_keptExit_eq (dst : Nat) :
+    Compile.tailBranch_keptExit dst = 58 + 6 * dst := by
+  show 3 + (55 + 6 * dst) = 58 + 6 * dst
+  omega
+
+theorem Compile.tailBranch_emptyExit_eq (dst : Nat) :
+    Compile.tailBranch_emptyExit dst = 59 + 6 * dst := by
+  rw [Compile.tailBranch_emptyExit, Compile.copyLoopTM_states]
+  omega
+
+theorem Compile.tailBranchRawTM_states (dst : Nat) :
+    (Compile.tailBranchRawTM dst).states = 60 + 6 * dst := by
+  show Compile.skipReadTM.states + (Compile.copyLoopTM dst).states + Compile.idTM.states = _
+  rw [Compile.skipReadTM_states, Compile.copyLoopTM_states]
+  show 3 + (56 + 6 * dst) + 1 = 60 + 6 * dst
+  omega
+
+theorem Compile.tailBranchTM_states (dst : Nat) :
+    (Compile.tailBranchTM dst).states = 60 + 6 * dst :=
+  Compile.tailBranchRawTM_states dst
+
+theorem Compile.tailBranchRawTM_valid (dst : Nat) : validFlatTM (Compile.tailBranchRawTM dst) :=
+  branchComposeFlatTM_valid _ _ _ _ _ Compile.skipReadTM_valid (Compile.copyLoopTM_valid dst)
+    Compile.idTM_valid
+    (by rw [Compile.skipReadTM_states]; show (2 : Nat) < 3; omega)
+    (by rw [Compile.skipReadTM_states]; show (1 : Nat) < 3; omega)
+    (Compile.skipReadTM_tapes) (Compile.copyLoopTM_tapes dst) rfl
+
+theorem Compile.tailBranchTM_valid (dst : Nat) : validFlatTM (Compile.tailBranchTM dst) :=
+  Compile.joinTwoHalts_valid _ _ _ (Compile.tailBranchRawTM_valid dst)
+    (by rw [Compile.tailBranchRawTM_states, Compile.tailBranch_keptExit_eq]; omega)
+    (by rw [Compile.tailBranchRawTM_states, Compile.tailBranch_emptyExit_eq]; omega)
+    Compile.skipReadTM_tapes
+
+theorem Compile.tailBranchTM_tapes (dst : Nat) : (Compile.tailBranchTM dst).tapes = 1 :=
+  Compile.skipReadTM_tapes
+
+theorem Compile.tailBranchRawTM_sig (dst : Nat) : (Compile.tailBranchRawTM dst).sig = 4 := by
+  show max Compile.skipReadTM.sig (max (Compile.copyLoopTM dst).sig Compile.idTM.sig) = 4
+  rw [Compile.copyLoopTM_sig]
+  rfl
+
+theorem Compile.tailBranchTM_sig (dst : Nat) : (Compile.tailBranchTM dst).sig = 4 :=
+  Compile.tailBranchRawTM_sig dst
+
+theorem Compile.tailBranchTM_start (dst : Nat) : (Compile.tailBranchTM dst).start = 0 := rfl
+
+/-- The kept exit is a halt of the raw branch composite (the loop's halt,
+`M₂`-shifted). -/
+theorem Compile.tailBranchRawTM_keptExit_is_halt (dst : Nat) :
+    (Compile.tailBranchRawTM dst).halt[Compile.tailBranch_keptExit dst]? = some true :=
+  Compile.branchComposeFlatTM_M2_halt_intro Compile.skipReadTM (Compile.copyLoopTM dst)
+    Compile.idTM Compile.skipReadTM_exit_bit Compile.skipReadTM_exit_empty
+    (Compile.copyLoopTM_exit dst) (Compile.copyLoopTM_valid dst)
+    (by rw [Compile.copyLoopTM_states]; show 55 + 6 * dst < 56 + 6 * dst; omega)
+    (Compile.copyLoopTM_exit_is_halt dst)
+
+/-- The empty-src exit is a halt of the raw branch composite (`idTM`'s halt,
+`M₃`-shifted). -/
+theorem Compile.tailBranchRawTM_emptyExit_is_halt (dst : Nat) :
+    (Compile.tailBranchRawTM dst).halt[Compile.tailBranch_emptyExit dst]? = some true :=
+  Compile.branchComposeFlatTM_M3_halt_intro Compile.skipReadTM (Compile.copyLoopTM dst)
+    Compile.idTM Compile.skipReadTM_exit_bit Compile.skipReadTM_exit_empty 0
+    (Compile.copyLoopTM_valid dst) rfl
+
+theorem Compile.tailBranchTM_keptExit_is_halt (dst : Nat) :
+    (Compile.tailBranchTM dst).halt[Compile.tailBranch_keptExit dst]? = some true :=
+  Compile.joinTwoHalts_h1_is_halt _ _ _
+    (by rw [Compile.tailBranch_keptExit_eq, Compile.tailBranch_emptyExit_eq]; omega)
+    (Compile.tailBranchRawTM_keptExit_is_halt dst)
+
+/-- The full `tail dst src` machine (`dst ≠ src`):
+`clearRegionTM dst ⨾ navigateToRegTM src ⨾ tailBranchTM dst ⨾ justRewindTM`. -/
+def Compile.tailRegionFullTM (dst src : Nat) : FlatTM :=
+  composeFlatTM
+    (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.tailBranchTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src))
+    ClearGadget.justRewindTM
+    ((ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (58 + 6 * dst))
+
+/-- States below the final `justRewindTM` block. -/
+def Compile.tailRegionPreStates (dst src : Nat) : Nat :=
+  (ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (60 + 6 * dst)
+
+/-- The kept exit: `justRewindTM`'s found state, shifted. -/
+def Compile.tailRegionFullTM_exit (dst src : Nat) : Nat :=
+  Compile.tailRegionPreStates dst src + 1
+
+/-- The (unreachable) boundary halt: `justRewindTM`'s reject state, shifted. -/
+def Compile.tailRegionFullTM_reject (dst src : Nat) : Nat :=
+  Compile.tailRegionPreStates dst src + 2
+
+theorem Compile.tailRegionFullTM_states (dst src : Nat) :
+    (Compile.tailRegionFullTM dst src).states = Compile.tailRegionPreStates dst src + 3 := by
+  show (composeFlatTM _ _ _).states = _
+  repeat rw [composeFlatTM_states]
+  rw [ClearGadget.navigateToRegTM_states, Compile.tailBranchTM_states]
+  show _ + (2 + 3 * src) + (60 + 6 * dst) + 3 = _
+  rfl
+
+theorem Compile.tailRegionFullTM_valid (dst src : Nat) :
+    validFlatTM (Compile.tailRegionFullTM dst src) := by
+  refine composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _
+      (ClearGadget.clearRegionTM_valid dst) (ClearGadget.navigateToRegTM_valid src)
+      ?_ (ClearGadget.clearRegionTM_tapes dst) (ClearGadget.navigateToRegTM_tapes src))
+      (Compile.tailBranchTM_valid dst) ?_ ?_ (Compile.tailBranchTM_tapes dst))
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide)) ?_ ?_ rfl
+  · -- clearRegionTM_exit < clearRegionTM.states
+    rw [ClearGadget.clearRegionTM_states]
+    show (ClearGadget.clearBodyRawTM dst).states < (ClearGadget.clearBodyRawTM dst).states + 1
+    omega
+  · -- nav exit < composed states
+    rw [composeFlatTM_states, ClearGadget.navigateToRegTM_states]
+    have := ClearGadget.navigateToRegTM_exit_lt src
+    rw [ClearGadget.navigateToRegTM_states] at this
+    omega
+  · show (composeFlatTM _ _ _).tapes = 1
+    show (ClearGadget.clearRegionTM dst).tapes = 1
+    exact ClearGadget.clearRegionTM_tapes dst
+  · -- kept branch exit < composed states
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.tailBranchTM_states]
+    omega
+  · show (composeFlatTM _ _ _).tapes = 1
+    show (composeFlatTM _ _ _).tapes = 1
+    show (ClearGadget.clearRegionTM dst).tapes = 1
+    exact ClearGadget.clearRegionTM_tapes dst
+
+theorem Compile.tailRegionFullTM_sig (dst src : Nat) :
+    (Compile.tailRegionFullTM dst src).sig = 4 := by
+  show max (max (max (ClearGadget.clearRegionTM dst).sig
+      (ClearGadget.navigateToRegTM src).sig) (Compile.tailBranchTM dst).sig)
+      ClearGadget.justRewindTM.sig = 4
+  rw [ClearGadget.clearRegionTM_sig, ClearGadget.navigateToRegTM_sig,
+      Compile.tailBranchTM_sig]
+  rfl
+
+theorem Compile.tailRegionFullTM_tapes (dst src : Nat) :
+    (Compile.tailRegionFullTM dst src).tapes = 1 :=
+  ClearGadget.clearRegionTM_tapes dst
+
+/-- Halt characterization of the full chain: only `justRewindTM`'s two halt
+states (shifted) are halting (`composedHalt` zeroes every `M₁` halt bit). -/
+theorem Compile.tailRegionFullTM_halt_only (dst src : Nat) :
+    ∀ i, (Compile.tailRegionFullTM dst src).halt[i]? = some true →
+      i = Compile.tailRegionFullTM_exit dst src ∨
+      i = Compile.tailRegionFullTM_reject dst src := by
+  intro i hi
+  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp _ _ _ i hi
+  have honly := ScanLeft.scanLeftUntilTM_halt_only 4 3 (i - _) hh
+  have hpre : (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.tailBranchTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src)).states
+      = Compile.tailRegionPreStates dst src := by
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.tailBranchTM_states]
+    rfl
+  rw [hpre] at hge hh honly
+  rcases honly with h | h
+  · left; show i = Compile.tailRegionPreStates dst src + 1; omega
+  · right; show i = Compile.tailRegionPreStates dst src + 2; omega
+
+/-- `justRewindTM`'s found state `1`, shifted, IS a halt of the full chain. -/
+theorem Compile.tailRegionFullTM_exit_is_halt (dst src : Nat) :
+    (Compile.tailRegionFullTM dst src).halt[Compile.tailRegionFullTM_exit dst src]?
+      = some true := by
+  have h := ScanLeft.composeFlatTM_halt_some_intro
+    (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.tailBranchTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src))
+    ClearGadget.justRewindTM
+    ((ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (58 + 6 * dst))
+    1 (by rfl)
+  have hpre : (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.tailBranchTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src)).states
+      = Compile.tailRegionPreStates dst src := by
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.tailBranchTM_states]
+    rfl
+  rw [hpre] at h
+  exact h
+
+/-- The (unreachable) boundary halt IS a halt of the full chain. -/
+theorem Compile.tailRegionFullTM_reject_is_halt (dst src : Nat) :
+    (Compile.tailRegionFullTM dst src).halt[Compile.tailRegionFullTM_reject dst src]?
+      = some true := by
+  have h := ScanLeft.composeFlatTM_halt_some_intro
+    (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.tailBranchTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src))
+    ClearGadget.justRewindTM
+    ((ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (58 + 6 * dst))
+    2 (by rfl)
+  have hpre : (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.tailBranchTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src)).states
+      = Compile.tailRegionPreStates dst src := by
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.tailBranchTM_states]
+    rfl
+  rw [hpre] at h
+  exact h
+
+/-- Compile `Op.tail dst src`: the in-place delete for `dst = src`, the
+skip-then-cursor-copy machine for `dst ≠ src` (rewind boundary halt demoted,
+following the `opCopy` pattern). -/
+def Compile.opTail (dst src : Var) : CompiledCmd :=
+  if dst = src then
+    { M := Compile.tailInPlaceTM dst
+      exit := Compile.tailInPlaceTM_exit dst
+      exit_lt := by
+        rw [Compile.tailInPlaceTM_states]
+        show (ClearGadget.clearBodyRawTM dst).states < (ClearGadget.clearBodyRawTM dst).states + 1
+        omega
+      exit_is_halt := Compile.tailInPlaceTM_exit_is_halt dst
+      halt_unique := Compile.tailInPlaceTM_halt_unique dst
+      M_valid := Compile.tailInPlaceTM_valid dst
+      M_tapes := Compile.tailInPlaceTM_tapes dst
+      M_sig := Compile.tailInPlaceTM_sig dst }
+  else
+    { M := Compile.joinTwoHalts (Compile.tailRegionFullTM dst src)
+        (Compile.tailRegionFullTM_exit dst src) (Compile.tailRegionFullTM_reject dst src)
+      exit := Compile.tailRegionFullTM_exit dst src
+      exit_lt := by
+        show _ < (Compile.joinTwoHalts _ _ _).states
+        rw [Compile.joinTwoHalts_states, Compile.tailRegionFullTM_states]
+        show Compile.tailRegionPreStates dst src + 1 < Compile.tailRegionPreStates dst src + 3
+        omega
+      exit_is_halt :=
+        Compile.joinTwoHalts_h1_is_halt _ _ _
+          (by show Compile.tailRegionPreStates dst src + 1
+                ≠ Compile.tailRegionPreStates dst src + 2
+              omega)
+          (Compile.tailRegionFullTM_exit_is_halt dst src)
+      halt_unique :=
+        Compile.joinTwoHalts_halt_unique _ _ _ (Compile.tailRegionFullTM_halt_only dst src)
+      M_valid := Compile.joinTwoHalts_valid _ _ _ (Compile.tailRegionFullTM_valid dst src)
+        (by rw [Compile.tailRegionFullTM_states]
+            show Compile.tailRegionPreStates dst src + 1 < Compile.tailRegionPreStates dst src + 3
+            omega)
+        (by rw [Compile.tailRegionFullTM_states]
+            show Compile.tailRegionPreStates dst src + 2 < Compile.tailRegionPreStates dst src + 3
+            omega)
+        (Compile.tailRegionFullTM_tapes dst src)
+      M_tapes := Compile.tailRegionFullTM_tapes dst src
+      M_sig := Compile.tailRegionFullTM_sig dst src }
 
 /-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
 def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
