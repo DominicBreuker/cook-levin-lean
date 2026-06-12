@@ -9995,6 +9995,23 @@ theorem Compile.restoreStepTM_step (b : Nat) (hb : b ≤ 1) (left right : List N
       entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol,
       moveTapeHead]
 
+/-- `restoreStepTM_step` in `runFlatTM` form. -/
+theorem Compile.restoreStepTM_run (b : Nat) (hb : b ≤ 1) (left right : List Nat)
+    (head : Nat) (hlt : head < right.length) (hget : right.get ⟨head, hlt⟩ = 3) :
+    runFlatTM 1 (Compile.restoreStepTM b) { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 1,
+               tapes := [(left, head + 1,
+                          right.take head ++ (b + 1) :: right.drop (head + 1))] } := by
+  show (if haltingStateReached (Compile.restoreStepTM b)
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM (Compile.restoreStepTM b)
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _ | some cfg' => runFlatTM 0 (Compile.restoreStepTM b) cfg') = _
+  rw [show haltingStateReached (Compile.restoreStepTM b)
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      Compile.restoreStepTM_step b hb left right head hlt hget]
+  rfl
+
 /-- `restoreStepTM` never halts before its single step. -/
 theorem Compile.restoreStepTM_no_early_halt (b : Nat) (left right : List Nat) (head : Nat) :
     ∀ k, k < 1 → ∀ ck,
@@ -10097,6 +10114,50 @@ private theorem Compile.markedTape_getElem_off (q : State) (src : Var) (hsrc : s
     obtain ⟨j, hj⟩ : ∃ j, i - P = j + 1 := ⟨i - P - 1, by omega⟩
     rw [hj, List.getElem?_cons_succ, List.getElem?_cons_succ]
 
+/-- **Re-marking bridge**: overwriting the cursor cell of the cursor tape with
+`c' + 1` (the take/cons/drop form `markBitTM`/`restoreStepTM` produce) yields
+the cursor tape for `c'`. -/
+private theorem Compile.markedTape_take_drop (q : State) (src : Var) (hsrc : src < q.length)
+    (w₁ w₂ : List Nat) (c c' : Nat) (res : List Nat) :
+    (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).take
+        (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+      ++ (c' + 1) :: (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).drop
+        (1 + (Compile.encodeRegs (q.take src)).length + w₁.length + 1)
+      = Compile.encodeTape (State.set q src (w₁ ++ c' :: w₂)) ++ res := by
+  set P := 1 + (Compile.encodeRegs (q.take src)).length + w₁.length with hP
+  set X := (3 : Nat) :: (Compile.encodeRegs (q.take src) ++ Compile.shiftReg w₁) with hX
+  set W := Compile.shiftReg w₂
+      ++ (0 :: (Compile.encodeRegs (q.drop (src + 1)) ++ (3 :: res))) with hW
+  have hXlen : X.length = P := Compile.cursorPrefix_length q src w₁
+  rw [Compile.encodeTape_set_cell_res q src hsrc w₁ w₂ c res,
+      Compile.encodeTape_set_cell_res q src hsrc w₁ w₂ c' res, ← hX, ← hW]
+  have htake : (X ++ (c + 1) :: W).take P = X := by
+    rw [← hXlen]; exact List.take_left
+  have hsplit2 : X ++ (c + 1) :: W = (X ++ [c + 1]) ++ W := by
+    simp [List.append_assoc]
+  have hdrop : (X ++ (c + 1) :: W).drop (P + 1) = W := by
+    rw [hsplit2]
+    exact List.drop_left' (by rw [List.length_append, hXlen]; rfl)
+  rw [htake, hdrop]
+
+/-- `appendAtTM_exit` in closed form. -/
+private theorem Compile.appendAtTM_exit_eq :
+    ∀ d, AppendGadget.appendAtTM_exit d = 8 + 3 * d
+  | 0 => rfl
+  | d + 1 => by
+      show 3 + AppendGadget.appendAtTM_exit d = _
+      rw [Compile.appendAtTM_exit_eq d]; omega
+
+/-- Generic seam symbol bound: every cell `< 4` ⇒ the current symbol is `< 4`. -/
+private theorem Compile.sym_bound_of_lt_four (tape : List Nat) (hall : ∀ x ∈ tape, x < 4)
+    (hd : Nat) : ∀ v, currentTapeSymbol (([] : List Nat), hd, tape) = some v → v < 4 := by
+  intro v hv
+  by_cases hlt : hd < tape.length
+  · rw [currentTapeSymbol_in_range hlt] at hv
+    exact (Option.some_inj.mp hv) ▸ hall _ (List.get_mem tape ⟨hd, hlt⟩)
+  · rw [show currentTapeSymbol (([] : List Nat), hd, tape) = none from dif_neg hlt] at hv
+    exact absurd hv (by simp)
+
 /-- A register write with `≤ 2`-valued content keeps every register `≤ 2`
 (the marked-state analogue of `BitState_set`). -/
 private theorem Compile.le_two_set (s : State) (dst : Var) (v : List Nat)
@@ -10188,6 +10249,175 @@ private theorem Compile.markedTape_interior_cell (q : State) (src : Var)
   obtain ⟨hi', hne3⟩ := Compile.encodeTape_interior_ne_endMark q hbit i hi0 hilen'
   refine ⟨Compile.encodeTape_lt_four q hbit _ (List.get_mem _ _), ?_⟩
   exact hne3
+
+/-- **`appendAtTM` on an encoded tape with residue (cursor-copy stage 3).**
+For a `≤ 2`-valued state `p` (the marked loop state) and a shifted symbol
+`v + 1` (`v ≤ 2`), the gadget started at head `0` on `encodeTape p ++ res`
+appends `v` to register `dst`, exits at its unique halt `appendAtTM_exit dst`
+with the head on the LAST cell of the output tape (index
+`|encodeTape p| + |res|`), never halting earlier, within `2·L + 3` steps
+(`L` the input tape length). The leading sentinel is folded into the first
+marker-free block exactly as in `appendBit_sound`; the residue rides in `post`
+(its cells are `< 4`, which is all the gadget needs). -/
+private theorem Compile.appendAt_encTape_run (v : Nat) (hv : v ≤ 2)
+    (p : State) (dst : Var) (hdst : dst < p.length)
+    (hp : ∀ reg ∈ p, ∀ x ∈ reg, x ≤ 2)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (AppendGadget.appendAtTM (v + 1) dst)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape p ++ res)] }
+        = some { state_idx := AppendGadget.appendAtTM_exit dst,
+                 tapes := [([], (Compile.encodeTape p).length + res.length,
+                            Compile.encodeTape (State.set p dst (State.get p dst ++ [v]))
+                              ++ res)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (AppendGadget.appendAtTM (v + 1) dst)
+              { state_idx := 0, tapes := [([], 0, Compile.encodeTape p ++ res)] } = some ck →
+          ck.state_idx ≠ AppendGadget.appendAtTM_exit dst ∧
+          haltingStateReached (AppendGadget.appendAtTM (v + 1) dst) ck = false)
+      ∧ t ≤ 2 * (Compile.encodeTape p ++ res).length + 3 := by
+  have h_ins : v + 1 < 4 := by omega
+  set post₀ : List Nat := Compile.encodeRegs (p.drop (dst + 1)) ++ [Compile.endMark]
+    with hpost₀
+  set post : List Nat := post₀ ++ res with hpost
+  set skipped : List (List Nat) := (p.take dst).map Compile.shiftReg with hskip
+  set body : List Nat := Compile.shiftReg (State.get p dst) with hbody
+  have hget_mem : State.get p dst ∈ p := by
+    rw [State.get, List.getElem?_eq_getElem hdst]; exact List.getElem_mem hdst
+  have hshift_lt : ∀ (r : List Nat), (∀ x ∈ r, x ≤ 2) →
+      ∀ x ∈ Compile.shiftReg r, x < 4 := by
+    intro r hr x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, hy, rfl⟩ := hx
+    have := hr y hy; omega
+  have hshift_ne : ∀ (r : List Nat), ∀ x ∈ Compile.shiftReg r, x ≠ 0 := by
+    intro r x hx
+    rw [Compile.shiftReg, List.mem_map] at hx
+    obtain ⟨y, _, rfl⟩ := hx; omega
+  have hlen : skipped.length = dst := by
+    rw [hskip, List.length_map, List.length_take, Nat.min_eq_left (le_of_lt hdst)]
+  have h_pre : ∀ x ∈ ([] : List Nat), x < 4 := by intro x hx; cases hx
+  have h_skip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4) := by
+    intro b hbm
+    rw [hskip, List.mem_map] at hbm
+    obtain ⟨r, hr, rfl⟩ := hbm
+    exact ⟨hshift_ne r, hshift_lt r (fun x hx => hp r (List.mem_of_mem_take hr) x hx)⟩
+  have hbody_ne : ∀ x ∈ body, x ≠ 0 := by rw [hbody]; exact hshift_ne _
+  have hbody_lt : ∀ x ∈ body, x < 4 := by
+    rw [hbody]; exact hshift_lt _ (fun x hx => hp _ hget_mem x hx)
+  have hpost_lt : ∀ x ∈ post, x < 4 := by
+    rw [hpost, hpost₀]; intro x hx
+    rw [List.mem_append, List.mem_append] at hx
+    rcases hx with (hx | hx) | hx
+    · exact Compile.encodeRegs_lt_four_le_two _
+        (fun b hbm y hy => hp b (List.mem_of_mem_drop hbm) y hy) x hx
+    · simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; subst hx; decide
+    · exact (hres x hx).1
+  -- Fold the leading sentinel into the first marker-free block.
+  have key : ∃ (sk : List (List Nat)) (bd : List Nat),
+      sk.length = dst ∧
+      (∀ b ∈ sk, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4)) ∧
+      (∀ x ∈ bd, x ≠ 0) ∧ (∀ x ∈ bd, x < 4) ∧
+      AppendGadget.regBlocks sk ++ bd
+        = Compile.endMark :: (AppendGadget.regBlocks skipped ++ body) := by
+    cases hsk : skipped with
+    | nil =>
+        refine ⟨[], Compile.endMark :: body, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [← hlen, hsk]
+        · intro b hb; cases hb
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_ne x h
+        · intro x hx
+          rcases List.mem_cons.mp hx with h | h
+          · subst h; decide
+          · exact hbody_lt x h
+        · simp [AppendGadget.regBlocks_nil]
+    | cons hd tl =>
+        refine ⟨(Compile.endMark :: hd) :: tl, body, ?_, ?_, hbody_ne, hbody_lt, ?_⟩
+        · rw [hsk] at hlen; simpa using hlen
+        · intro b hb
+          rcases List.mem_cons.mp hb with h | h
+          · subst h
+            refine ⟨?_, ?_⟩
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).1 x h0
+            · intro x hx
+              rcases List.mem_cons.mp hx with h0 | h0
+              · subst h0; decide
+              · exact (h_skip hd (by rw [hsk]; exact List.mem_cons_self ..)).2 x h0
+          · exact h_skip b (by rw [hsk]; exact List.mem_cons_of_mem _ h)
+        · simp [AppendGadget.regBlocks_cons]
+  obtain ⟨sk, bd, hlen_sk, h_skip_sk, hbd_ne, hbd_lt, hsfold⟩ := key
+  -- The sentinel-free split, with the residue attached.
+  have hsplit0 : AppendGadget.regBlocks skipped ++ body ++ 0 :: post₀
+      = Compile.encodeRegs p ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost₀]; exact Compile.encodeTape_split p dst hdst
+  have hsplit : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post
+      = Compile.encodeTape p ++ res := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, hpost]
+    rw [show Compile.endMark :: (AppendGadget.regBlocks skipped ++ body) ++ 0 :: (post₀ ++ res)
+          = Compile.endMark :: ((AppendGadget.regBlocks skipped ++ body ++ 0 :: post₀) ++ res)
+        from by simp [List.append_assoc], hsplit0]
+    simp [List.append_assoc]
+  -- The output tape with the inserted symbol.
+  have htape0 : AppendGadget.regBlocks skipped ++ body ++ (v + 1) :: 0 :: post₀
+      = Compile.encodeRegs (State.set p dst (State.get p dst ++ [v]))
+          ++ [Compile.endMark] := by
+    rw [hskip, hbody, hpost₀, Compile.regBlocks_map_shiftReg]
+    rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop p dst _ hdst,
+        Compile.encodeRegs_append, Compile.encodeRegs_cons, Compile.shiftReg_append]
+    simp [List.append_assoc]
+  have htape : ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ (v + 1) :: 0 :: post
+      = Compile.encodeTape (State.set p dst (State.get p dst ++ [v])) ++ res := by
+    rw [Compile.encodeTape, List.nil_append, hsfold, hpost]
+    rw [show Compile.endMark :: (AppendGadget.regBlocks skipped ++ body)
+            ++ (v + 1) :: 0 :: (post₀ ++ res)
+          = Compile.endMark
+            :: ((AppendGadget.regBlocks skipped ++ body ++ (v + 1) :: 0 :: post₀) ++ res)
+        from by simp [List.append_assoc], htape0]
+    simp [List.append_assoc]
+  -- The run, trajectory, and step bound.
+  have hrun := AppendGadget.appendAt_run_exit (v + 1) h_ins dst [] sk bd post hlen_sk
+    h_pre h_skip_sk hbd_ne hbd_lt hpost_lt
+  have htraj := AppendGadget.appendAt_no_early_halt (v + 1) h_ins dst [] sk bd post hlen_sk
+    h_pre h_skip_sk hbd_ne hbd_lt hpost_lt
+  -- The exit head equals the input tape length.
+  have hhead : ([] : List Nat).length + (AppendGadget.regBlocks sk).length + bd.length
+      + ((0 : Nat) :: post).length = (Compile.encodeTape p).length + res.length := by
+    have hL := congrArg List.length hsplit
+    simp only [List.length_append, List.length_cons, List.length_nil] at hL ⊢
+    omega
+  have hstep_le : AppendGadget.appendAt_steps sk bd post
+      ≤ 2 * (Compile.encodeTape p ++ res).length + 3 := by
+    have hb' := AppendGadget.appendAt_steps_le sk bd post
+    have hL : (AppendGadget.regBlocks sk ++ bd ++ 0 :: post).length
+        = (Compile.encodeTape p ++ res).length := by
+      rw [show AppendGadget.regBlocks sk ++ bd ++ 0 :: post
+            = ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post from by simp,
+          hsplit]
+    rw [hL] at hb'; exact hb'
+  refine ⟨AppendGadget.appendAt_steps sk bd post, ?_, ?_, hstep_le⟩
+  · rw [show ({ state_idx := 0, tapes := [([], 0, Compile.encodeTape p ++ res)] }
+          : FlatTMConfig)
+        = { state_idx := 0,
+            tapes := [([], ([] : List Nat).length,
+              ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post)] }
+      from by rw [hsplit]; rfl]
+    rw [hrun, htape, hhead]
+  · intro k hk ck hck
+    rw [show ({ state_idx := 0, tapes := [([], 0, Compile.encodeTape p ++ res)] }
+          : FlatTMConfig)
+        = { state_idx := 0,
+            tapes := [([], ([] : List Nat).length,
+              ([] : List Nat) ++ AppendGadget.regBlocks sk ++ bd ++ 0 :: post)] }
+      from by rw [hsplit]; rfl] at hck
+    have hh := htraj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (AppendGadget.appendAtTM_exit_is_halt (v + 1) dst) hh,
+           hh⟩
 
 /-- The symbol under the cursor is below the body's alphabet bound `4`. -/
 private theorem Compile.copyBody_sym_bound (dst : Nat) (H : Nat) (tape : List Nat)
