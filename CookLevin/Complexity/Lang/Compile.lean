@@ -12940,6 +12940,180 @@ theorem Compile.tailLoop_run (s : State) (dst src : Var)
   · exact Compile.loopBudget_le tIter 2
       (5 * (Compile.encodeTape (s.set dst cs) ++ res).length + 23) m (by omega) h_iter_bnd
 
+/-- **The `tail` branch stage (`tailBranchTM dst`).** Entered with `dst`
+pre-cleared and the head ON register `src`'s first cell, it lands at the kept
+exit with `dst = (src content).tail` and the head on `src`'s delimiter:
+nonempty `src` → `skipReadTM` steps onto the second cell and the cursor loop
+runs (kept exit directly); empty `src` → `skipReadTM` reads the delimiter, the
+`idTM` no-op branch fires and the demoted empty exit bridges to the kept exit
+(tape unchanged). -/
+theorem Compile.tailBranch_run (q : State) (dst src : Var)
+    (hne : dst ≠ src) (hdst : dst < q.length) (hsrc : src < q.length)
+    (hbit : Compile.BitState q) (hdst_empty : State.get q dst = [])
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ T,
+      runFlatTM T (Compile.tailBranchTM dst)
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length,
+                       Compile.encodeTape q ++ res)] }
+        = some { state_idx := Compile.tailBranch_keptExit dst,
+                 tapes := [([],
+                   1 + (Compile.encodeRegs
+                       ((q.set dst (State.get q src).tail).take src)).length
+                     + (State.get q src).length,
+                   Compile.encodeTape (q.set dst (State.get q src).tail) ++ res)] }
+      ∧ (∀ k, k < T → ∀ ck,
+          runFlatTM k (Compile.tailBranchTM dst)
+              { state_idx := 0,
+                tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length,
+                           Compile.encodeTape q ++ res)] } = some ck →
+          ck.state_idx ≠ Compile.tailBranch_keptExit dst ∧
+          haltingStateReached (Compile.tailBranchTM dst) ck = false)
+      ∧ T ≤ (State.get q src).length
+              * (5 * (Compile.encodeTape (q.set dst (State.get q src).tail) ++ res).length
+                  + 23) + 3 := by
+  have hq_lt4 : ∀ x ∈ Compile.encodeTape q ++ res, x < 4 :=
+    Compile.encodeTape_append_res_lt_four _ res hbit hres
+  have hexitne : Compile.skipReadTM_exit_bit ≠ Compile.skipReadTM_exit_empty := by
+    show (2 : Nat) ≠ 1; decide
+  have hcfg_lt : (0 : Nat) < Compile.skipReadTM.states := by
+    rw [Compile.skipReadTM_states]; omega
+  have hpos_lt : Compile.skipReadTM_exit_bit < Compile.skipReadTM.states := by
+    rw [Compile.skipReadTM_states]; show (2 : Nat) < 3; omega
+  have hneg_lt : Compile.skipReadTM_exit_empty < Compile.skipReadTM.states := by
+    rw [Compile.skipReadTM_states]; show (1 : Nat) < 3; omega
+  have hkept := Compile.tailBranchRawTM_keptExit_is_halt dst
+  have hempty := Compile.tailBranchRawTM_emptyExit_is_halt dst
+  have hne_ke : Compile.tailBranch_keptExit dst ≠ Compile.tailBranch_emptyExit dst := by
+    rw [Compile.tailBranch_keptExit_eq, Compile.tailBranch_emptyExit_eq]; omega
+  rcases hu : State.get q src with _ | ⟨b₀, cs⟩
+  · -- ### empty src: the delimiter branch (idTM), demoted exit bridges to kept.
+    obtain ⟨hlt, hcell⟩ := Compile.cursor_cell q src hsrc res 0 (Nat.zero_le _)
+    rw [hu] at hcell
+    rw [dif_neg (by simp)] at hcell
+    have hskip := Compile.skipReadTM_run_delim []
+      (Compile.encodeTape q ++ res) (1 + (Compile.encodeRegs (q.take src)).length) hlt hcell
+    have hsymB : ∀ v, currentTapeSymbol (([] : List Nat),
+        1 + (Compile.encodeRegs (q.take src)).length, Compile.encodeTape q ++ res) = some v →
+        v < max Compile.skipReadTM.sig
+            (max (Compile.copyLoopTM dst).sig Compile.idTM.sig) := by
+      intro v hv
+      rw [show max Compile.skipReadTM.sig
+            (max (Compile.copyLoopTM dst).sig Compile.idTM.sig) = 4 from by
+        rw [Compile.copyLoopTM_sig]; rfl]
+      exact Compile.sym_bound_of_lt_four _ hq_lt4 _ v hv
+    have hid : runFlatTM 0 Compile.idTM
+        { state_idx := 0,
+          tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                     Compile.encodeTape q ++ res)] }
+        = some { state_idx := 0,
+                 tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                            Compile.encodeTape q ++ res)] } := rfl
+    have hneg := branchComposeFlatTM_run_neg hexitne Compile.skipReadTM_valid
+      (Compile.copyLoopTM_valid dst) Compile.idTM_valid hpos_lt hneg_lt
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                   Compile.encodeTape q ++ res)] }
+      hcfg_lt [] (1 + (Compile.encodeRegs (q.take src)).length) (Compile.encodeTape q ++ res)
+      hsymB hskip (Compile.skipReadTM_no_early_halt _ _ _) hid rfl
+    have htrajneg := branchComposeFlatTM_no_early_halt_neg hexitne Compile.skipReadTM_valid
+      (Compile.copyLoopTM_valid dst) Compile.idTM_valid hpos_lt hneg_lt
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                   Compile.encodeTape q ++ res)] }
+      hcfg_lt [] (1 + (Compile.encodeRegs (q.take src)).length) (Compile.encodeTape q ++ res)
+      hsymB (t₂ := 0) hskip (Compile.skipReadTM_no_early_halt _ _ _)
+      (fun k hk ck hck => absurd hk (by omega))
+    have hstate_eq : (0 : Nat) + (Compile.skipReadTM.states + (Compile.copyLoopTM dst).states)
+        = Compile.tailBranch_emptyExit dst := by
+      rw [Compile.skipReadTM_states, Compile.tailBranch_emptyExit]
+      omega
+    have hrun_raw := hneg.1
+    rw [hstate_eq] at hrun_raw
+    obtain ⟨hjrun, hjtraj⟩ := Compile.joinTwoHalts_reaches_demoted
+      (Compile.tailBranchRawTM dst) (Compile.tailBranch_keptExit dst)
+      (Compile.tailBranch_emptyExit dst)
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                   Compile.encodeTape q ++ res)] }
+      (1 + 1 + 0) [] (Compile.encodeTape q ++ res)
+      (1 + (Compile.encodeRegs (q.take src)).length)
+      hrun_raw (fun k hk ck hck => htrajneg k hk ck hck) hkept hempty hne_ke
+      (fun v hv => by
+        rw [Compile.tailBranchRawTM_sig]
+        exact Compile.sym_bound_of_lt_four _ hq_lt4 _ v hv)
+    have hsetq : q.set dst ([] : List Nat).tail = q := by
+      show q.set dst ([] : List Nat) = q
+      rw [← hdst_empty]
+      exact Compile.set_get_self q dst hdst
+    refine ⟨1 + 1 + 0 + 1, ?_, ?_, ?_⟩
+    · rw [hsetq]
+      simp only [List.length_nil, Nat.add_zero]
+      exact hjrun
+    · exact hjtraj
+    · simp only [List.length_nil]
+      omega
+  · -- ### nonempty src: skip the head bit, run the cursor loop (kept exit).
+    have hsrc_mem : State.get q src ∈ q := by
+      rw [State.get, List.getElem?_eq_getElem hsrc]; exact List.getElem_mem hsrc
+    have hb₀ : b₀ ≤ 1 :=
+      hbit _ hsrc_mem b₀ (by rw [hu]; exact List.mem_cons_self ..)
+    obtain ⟨hlt, hcell⟩ := Compile.cursor_cell q src hsrc res 0 (Nat.zero_le _)
+    rw [hu] at hcell
+    rw [dif_pos (by simp)] at hcell
+    simp only [List.getElem_cons_zero] at hcell
+    have hskip := Compile.skipReadTM_run_bit b₀ hb₀ []
+      (Compile.encodeTape q ++ res) (1 + (Compile.encodeRegs (q.take src)).length) hlt hcell
+    obtain ⟨Tl, hloop_run, hloop_traj, hloop_le⟩ :=
+      Compile.tailLoop_run q dst src hne hdst hsrc hbit hdst_empty b₀ cs hu res hres
+    have hsymB : ∀ v, currentTapeSymbol (([] : List Nat),
+        1 + (Compile.encodeRegs (q.take src)).length + 1, Compile.encodeTape q ++ res)
+          = some v →
+        v < max Compile.skipReadTM.sig
+            (max (Compile.copyLoopTM dst).sig Compile.idTM.sig) := by
+      intro v hv
+      rw [show max Compile.skipReadTM.sig
+            (max (Compile.copyLoopTM dst).sig Compile.idTM.sig) = 4 from by
+        rw [Compile.copyLoopTM_sig]; rfl]
+      exact Compile.sym_bound_of_lt_four _ hq_lt4 _ v hv
+    have hpos := branchComposeFlatTM_run_pos hexitne Compile.skipReadTM_valid
+      (Compile.copyLoopTM_valid dst) Compile.idTM_valid hpos_lt hneg_lt
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                   Compile.encodeTape q ++ res)] }
+      hcfg_lt [] (1 + (Compile.encodeRegs (q.take src)).length + 1)
+      (Compile.encodeTape q ++ res)
+      hsymB hskip (Compile.skipReadTM_no_early_halt _ _ _) hloop_run
+      (Compile.haltingStateReached_of_halt (Compile.copyLoopTM_exit_is_halt dst))
+    have htrajpos := branchComposeFlatTM_no_early_halt_pos Compile.skipReadTM_valid
+      (Compile.copyLoopTM_valid dst) Compile.idTM_valid hpos_lt hneg_lt
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                   Compile.encodeTape q ++ res)] }
+      hcfg_lt [] (1 + (Compile.encodeRegs (q.take src)).length + 1)
+      (Compile.encodeTape q ++ res)
+      hsymB hskip (Compile.skipReadTM_no_early_halt _ _ _)
+      (fun k hk ck hck => (hloop_traj k hk ck hck).2)
+    have hstate_eq : Compile.copyLoopTM_exit dst + Compile.skipReadTM.states
+        = Compile.tailBranch_keptExit dst := by
+      rw [Compile.skipReadTM_states, Compile.tailBranch_keptExit]
+      omega
+    have hrun_raw := hpos.1
+    rw [hstate_eq] at hrun_raw
+    obtain ⟨hjrun, hjtraj⟩ := Compile.joinTwoHalts_reaches_kept
+      (Compile.tailBranchRawTM dst) (Compile.tailBranch_keptExit dst)
+      (Compile.tailBranch_emptyExit dst)
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 1 + (Compile.encodeRegs (q.take src)).length,
+                   Compile.encodeTape q ++ res)] }
+      (1 + 1 + Tl) _ hrun_raw (fun k hk ck hck => htrajpos k hk ck hck) hkept hempty
+    refine ⟨1 + 1 + Tl, ?_, ?_, ?_⟩
+    · simp only [List.tail_cons, List.length_cons]
+      exact hjrun
+    · exact hjtraj
+    · simp only [List.tail_cons, List.length_cons]
+      omega
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
