@@ -814,30 +814,103 @@ theorem Compile.appendAtTM_states (ins : Nat) :
       rw [composeFlatTM_states, Compile.appendAtTM_states ins d]
       show 3 + (9 + 3 * d) = 9 + 3 * (d + 1); omega
 
-/-- The per-bit pipeline (head starts ON the freshly written mark):
+/-- Pipeline stage 1–2: step off the mark, scan left to the leading sentinel.
+States `5`, exit `3` (the scan's found state, shifted). -/
+def Compile.copyRet1TM : FlatTM :=
+  composeFlatTM (ScanLeft.stepLeftTM 4) (ScanLeft.scanLeftUntilTM 4 3) 1
+
+theorem Compile.copyRet1TM_states : Compile.copyRet1TM.states = 5 := rfl
+theorem Compile.copyRet1TM_start : Compile.copyRet1TM.start = 0 := rfl
+theorem Compile.copyRet1TM_tapes : Compile.copyRet1TM.tapes = 1 := rfl
+theorem Compile.copyRet1TM_sig : Compile.copyRet1TM.sig = 4 := rfl
+
+theorem Compile.copyRet1TM_valid : validFlatTM Compile.copyRet1TM :=
+  composeFlatTM_valid _ _ _ (ScanLeft.stepLeftTM_valid 4)
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide)) (by decide) rfl rfl
+
+/-- Pipeline stages 1–3: … then `appendAtTM (b+1) dst` (append the bit to
+`dst`'s end). States `14 + 3·dst`, exit `5 + appendAtTM_exit dst = 13 + 3·dst`. -/
+def Compile.copyPipeA2TM (b dst : Nat) : FlatTM :=
+  composeFlatTM Compile.copyRet1TM (AppendGadget.appendAtTM (b + 1) dst) 3
+
+theorem Compile.copyPipeA2TM_states (b dst : Nat) :
+    (Compile.copyPipeA2TM b dst).states = 14 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyRet1TM_states, Compile.appendAtTM_states]
+  omega
+
+theorem Compile.copyPipeA2TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA2TM b dst) :=
+  composeFlatTM_valid _ _ _ Compile.copyRet1TM_valid
+    (AppendGadget.appendAtTM_valid (b + 1) (by omega) dst)
+    (by rw [Compile.copyRet1TM_states]; decide) Compile.copyRet1TM_tapes
+    (AppendGadget.appendAtTM_tapes _ dst)
+
+/-- Stages 1–4: … then scan left from the tape end to the trailing terminator.
+States `17 + 3·dst`, exit `15 + 3·dst`. -/
+def Compile.copyPipeA3TM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA2TM b dst) (ScanLeft.scanLeftUntilTM 4 3) (13 + 3 * dst)
+
+theorem Compile.copyPipeA3TM_states (b dst : Nat) :
+    (Compile.copyPipeA3TM b dst).states = 17 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA2TM_states]
+  rfl
+
+theorem Compile.copyPipeA3TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA3TM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA2TM_valid b dst hb)
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide))
+    (by rw [Compile.copyPipeA2TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- Stages 1–5: … then step left off the trailing terminator.
+States `19 + 3·dst`, exit `18 + 3·dst`. -/
+def Compile.copyPipeA4TM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA3TM b dst) (ScanLeft.stepLeftTM 4) (15 + 3 * dst)
+
+theorem Compile.copyPipeA4TM_states (b dst : Nat) :
+    (Compile.copyPipeA4TM b dst).states = 19 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA3TM_states]
+  rfl
+
+theorem Compile.copyPipeA4TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA4TM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA3TM_valid b dst hb)
+    (ScanLeft.stepLeftTM_valid 4)
+    (by rw [Compile.copyPipeA3TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- Stages 1–6: … then scan left to the mark (the only interior `3`).
+States `22 + 3·dst`, exit `20 + 3·dst`. -/
+def Compile.copyPipeA5TM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA4TM b dst) (ScanLeft.scanLeftUntilTM 4 3) (18 + 3 * dst)
+
+theorem Compile.copyPipeA5TM_states (b dst : Nat) :
+    (Compile.copyPipeA5TM b dst).states = 22 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA4TM_states]
+  rfl
+
+theorem Compile.copyPipeA5TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA5TM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA4TM_valid b dst hb)
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide))
+    (by rw [Compile.copyPipeA4TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- The full per-bit pipeline (head starts ON the freshly written mark):
 `stepLeft ⨾ scanLeft₃ ⨾ appendAtTM (b+1) dst ⨾ scanLeft₃ ⨾ stepLeft ⨾
-scanLeft₃ ⨾ restoreStep b`. States: `24 + 3·dst`; exit `23 + 3·dst`. -/
+scanLeft₃ ⨾ restoreStep b`. States: `24 + 3·dst`; exit `23 + 3·dst`
+(`restoreStepTM`'s halt, shifted — the unique halt state). -/
 def Compile.copyPipeTM (b dst : Nat) : FlatTM :=
-  composeFlatTM
-    (composeFlatTM
-      (composeFlatTM
-        (composeFlatTM
-          (composeFlatTM
-            (composeFlatTM (ScanLeft.stepLeftTM 4) (ScanLeft.scanLeftUntilTM 4 3) 1)
-            (AppendGadget.appendAtTM (b + 1) dst) 3)
-          (ScanLeft.scanLeftUntilTM 4 3) (13 + 3 * dst))
-        (ScanLeft.stepLeftTM 4) (15 + 3 * dst))
-      (ScanLeft.scanLeftUntilTM 4 3) (18 + 3 * dst))
-    (Compile.restoreStepTM b) (20 + 3 * dst)
+  composeFlatTM (Compile.copyPipeA5TM b dst) (Compile.restoreStepTM b) (20 + 3 * dst)
 
 def Compile.copyPipeTM_exit (dst : Nat) : Nat := 23 + 3 * dst
 
 theorem Compile.copyPipeTM_states (b dst : Nat) :
     (Compile.copyPipeTM b dst).states = 24 + 3 * dst := by
   show (composeFlatTM _ _ _).states = _
-  repeat rw [composeFlatTM_states]
-  rw [Compile.appendAtTM_states]
-  show 2 + 3 + (9 + 3 * dst) + 3 + 2 + 3 + 2 = 24 + 3 * dst; omega
+  rw [composeFlatTM_states, Compile.copyPipeA5TM_states]
+  rfl
 
 theorem Compile.copyPipeTM_tapes (b dst : Nat) : (Compile.copyPipeTM b dst).tapes = 1 := rfl
 theorem Compile.copyPipeTM_start (b dst : Nat) : (Compile.copyPipeTM b dst).start = 0 := rfl
@@ -849,36 +922,36 @@ theorem Compile.copyPipeTM_sig (b dst : Nat) : (Compile.copyPipeTM b dst).sig = 
   rfl
 
 theorem Compile.copyPipeTM_valid (b dst : Nat) (hb : b ≤ 1) :
-    validFlatTM (Compile.copyPipeTM b dst) := by
-  have hap := AppendGadget.appendAtTM_valid (b + 1) (by omega) dst
-  have hsl := ScanLeft.scanLeftUntilTM_valid 4 3 (by decide)
-  have hst := ScanLeft.stepLeftTM_valid 4
-  refine composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _
-    (composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _
-      hst hsl (by decide) rfl rfl)
-      hap ?_ rfl (AppendGadget.appendAtTM_tapes _ dst)) hsl ?_ ?_ rfl) hst ?_ ?_ rfl)
-      hsl ?_ ?_ rfl) (Compile.restoreStepTM_valid b hb) ?_ ?_ rfl
-  · show 3 < (composeFlatTM (ScanLeft.stepLeftTM 4) (ScanLeft.scanLeftUntilTM 4 3) 1).states
-    rw [composeFlatTM_states]; decide
-  · show 13 + 3 * dst < (composeFlatTM _ _ _).states
-    rw [composeFlatTM_states, composeFlatTM_states, Compile.appendAtTM_states]
-    show 13 + 3 * dst < 2 + 3 + (9 + 3 * dst); omega
-  · show (composeFlatTM _ _ _).tapes = 1; rfl
-  · show 15 + 3 * dst < (composeFlatTM _ _ _).states
-    repeat rw [composeFlatTM_states]
-    rw [Compile.appendAtTM_states]
-    show 15 + 3 * dst < 2 + 3 + (9 + 3 * dst) + 3; omega
-  · show (composeFlatTM _ _ _).tapes = 1; rfl
-  · show 18 + 3 * dst < (composeFlatTM _ _ _).states
-    repeat rw [composeFlatTM_states]
-    rw [Compile.appendAtTM_states]
-    show 18 + 3 * dst < 2 + 3 + (9 + 3 * dst) + 3 + 2; omega
-  · show (composeFlatTM _ _ _).tapes = 1; rfl
-  · show 20 + 3 * dst < (composeFlatTM _ _ _).states
-    repeat rw [composeFlatTM_states]
-    rw [Compile.appendAtTM_states]
-    show 20 + 3 * dst < 2 + 3 + (9 + 3 * dst) + 3 + 2 + 3; omega
-  · show (composeFlatTM _ _ _).tapes = 1; rfl
+    validFlatTM (Compile.copyPipeTM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA5TM_valid b dst hb)
+    (Compile.restoreStepTM_valid b hb)
+    (by rw [Compile.copyPipeA5TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- The pipeline's exit is a halt state (`restoreStepTM`'s halt `1`, shifted by
+`copyPipeA5TM.states = 22 + 3·dst`). -/
+theorem Compile.copyPipeTM_exit_is_halt (b dst : Nat) :
+    (Compile.copyPipeTM b dst).halt[Compile.copyPipeTM_exit dst]? = some true := by
+  have h := AppendGadget.composeFlatTM_shifted_is_halt
+    (Compile.copyPipeA5TM b dst) (Compile.restoreStepTM b) (20 + 3 * dst) 1 (by rfl)
+  rw [Compile.copyPipeA5TM_states] at h
+  show (Compile.copyPipeTM b dst).halt[23 + 3 * dst]? = some true
+  rw [show 23 + 3 * dst = 22 + 3 * dst + 1 from by omega]
+  exact h
+
+/-- The pipeline's halt is unique (only `restoreStepTM`'s halt survives the
+`composedHalt` zeroing). -/
+theorem Compile.copyPipeTM_halt_unique (b dst : Nat) :
+    ∀ i, (Compile.copyPipeTM b dst).halt[i]? = some true →
+      i = Compile.copyPipeTM_exit dst := by
+  intro i hi
+  have h := Compile.composeFlatTM_halt_unique (Compile.copyPipeA5TM b dst)
+    (Compile.restoreStepTM b) 1 (20 + 3 * dst)
+    (by intro j hj
+        change ([false, true] : List Bool)[j]? = some true at hj
+        rcases j with _ | _ | j <;> simp_all) i hi
+  rw [Compile.copyPipeA5TM_states] at h
+  show i = 23 + 3 * dst
+  omega
 
 /-- The content half of the cursor-loop body, raw: `markBitTM` branched into
 the two per-bit pipelines. States: `3 + 2·(24 + 3·dst) = 51 + 6·dst`. -/
