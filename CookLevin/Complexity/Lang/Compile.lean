@@ -814,6 +814,67 @@ theorem Compile.appendAtTM_states (ins : Nat) :
       rw [composeFlatTM_states, Compile.appendAtTM_states ins d]
       show 3 + (9 + 3 * d) = 9 + 3 * (d + 1); omega
 
+/-- A `branchComposeFlatTM` of two unique-halt sub-machines has exactly the two
+shifted branch exits as halt states. -/
+theorem Compile.branchComposeFlatTM_halt_only (M₁ M₂ M₃ : FlatTM) (ep en e₂ e₃ : Nat)
+    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂)
+    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃) :
+    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
+      i = M₁.states + e₂ ∨ i = M₁.states + M₂.states + e₃ := by
+  intro i hi
+  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  rw [List.append_assoc] at hi
+  by_cases h1 : i < M₁.states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
+        List.getElem?_replicate] at hi
+    simp [h1] at hi
+  · rw [Nat.not_lt] at h1
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
+        List.length_replicate] at hi
+    by_cases h2lt : i - M₁.states < M₂.states
+    · left
+      rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
+      have := h2 _ hi; omega
+    · rw [Nat.not_lt] at h2lt
+      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
+      have := h3 _ hi; omega
+
+/-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
+branch composite (positive branch). -/
+theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
+    (h2v : validFlatTM M₂) (he : e₂ < M₂.states) (h : M₂.halt[e₂]? = some true) :
+    (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[M₁.states + e₂]? = some true := by
+  change (composedBranchHalt M₁ M₂ M₃)[M₁.states + e₂]? = some true
+  unfold composedBranchHalt
+  rw [List.append_assoc,
+      List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel_left,
+      List.getElem?_append_left (by rw [h2v.2.1]; exact he)]
+  exact h
+
+/-- A halt state of `M₃` shifts to a halt of the branch composite (negative
+branch). -/
+theorem Compile.branchComposeFlatTM_M3_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₃ : Nat)
+    (h2v : validFlatTM M₂) (h : M₃.halt[e₃]? = some true) :
+    (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[M₁.states + M₂.states + e₃]? = some true := by
+  change (composedBranchHalt M₁ M₂ M₃)[M₁.states + M₂.states + e₃]? = some true
+  unfold composedBranchHalt
+  have hlen : (List.replicate M₁.states false ++ M₂.halt).length = M₁.states + M₂.states := by
+    rw [List.length_append, List.length_replicate, h2v.2.1]
+  rw [List.getElem?_append_right (by rw [hlen]; omega), hlen,
+      show M₁.states + M₂.states + e₃ - (M₁.states + M₂.states) = e₃ by omega]
+  exact h
+
+/-- `composeFlatTM` inherits a unique halt from `M₂`'s unique halt. -/
+theorem Compile.composeFlatTM_halt_unique (M₁ M₂ : FlatTM) (e₂ exit : Nat)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂) :
+    ∀ i, (composeFlatTM M₁ M₂ exit).halt[i]? = some true → i = M₁.states + e₂ := by
+  intro i hi
+  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp M₁ M₂ exit i hi
+  have := h2 _ hh; omega
+
 /-- Pipeline stage 1–2: step off the mark, scan left to the leading sentinel.
 States `5`, exit `3` (the scan's found state, shifted). -/
 def Compile.copyRet1TM : FlatTM :=
@@ -855,7 +916,7 @@ theorem Compile.copyPipeA3TM_states (b dst : Nat) :
     (Compile.copyPipeA3TM b dst).states = 17 + 3 * dst := by
   show (composeFlatTM _ _ _).states = _
   rw [composeFlatTM_states, Compile.copyPipeA2TM_states]
-  rfl
+  show 14 + 3 * dst + 3 = 17 + 3 * dst; omega
 
 theorem Compile.copyPipeA3TM_valid (b dst : Nat) (hb : b ≤ 1) :
     validFlatTM (Compile.copyPipeA3TM b dst) :=
@@ -872,7 +933,7 @@ theorem Compile.copyPipeA4TM_states (b dst : Nat) :
     (Compile.copyPipeA4TM b dst).states = 19 + 3 * dst := by
   show (composeFlatTM _ _ _).states = _
   rw [composeFlatTM_states, Compile.copyPipeA3TM_states]
-  rfl
+  show 17 + 3 * dst + 2 = 19 + 3 * dst; omega
 
 theorem Compile.copyPipeA4TM_valid (b dst : Nat) (hb : b ≤ 1) :
     validFlatTM (Compile.copyPipeA4TM b dst) :=
@@ -889,7 +950,7 @@ theorem Compile.copyPipeA5TM_states (b dst : Nat) :
     (Compile.copyPipeA5TM b dst).states = 22 + 3 * dst := by
   show (composeFlatTM _ _ _).states = _
   rw [composeFlatTM_states, Compile.copyPipeA4TM_states]
-  rfl
+  show 19 + 3 * dst + 3 = 22 + 3 * dst; omega
 
 theorem Compile.copyPipeA5TM_valid (b dst : Nat) (hb : b ≤ 1) :
     validFlatTM (Compile.copyPipeA5TM b dst) :=
@@ -910,15 +971,34 @@ theorem Compile.copyPipeTM_states (b dst : Nat) :
     (Compile.copyPipeTM b dst).states = 24 + 3 * dst := by
   show (composeFlatTM _ _ _).states = _
   rw [composeFlatTM_states, Compile.copyPipeA5TM_states]
-  rfl
+  show 22 + 3 * dst + 2 = 24 + 3 * dst; omega
 
 theorem Compile.copyPipeTM_tapes (b dst : Nat) : (Compile.copyPipeTM b dst).tapes = 1 := rfl
 theorem Compile.copyPipeTM_start (b dst : Nat) : (Compile.copyPipeTM b dst).start = 0 := rfl
 
-theorem Compile.copyPipeTM_sig (b dst : Nat) : (Compile.copyPipeTM b dst).sig = 4 := by
-  show max _ _ = 4
-  repeat rw [composeFlatTM_sig]
+theorem Compile.copyPipeA2TM_sig (b dst : Nat) : (Compile.copyPipeA2TM b dst).sig = 4 := by
+  show max Compile.copyRet1TM.sig (AppendGadget.appendAtTM (b + 1) dst).sig = 4
   rw [AppendGadget.appendAtTM_sig]
+  rfl
+
+theorem Compile.copyPipeA3TM_sig (b dst : Nat) : (Compile.copyPipeA3TM b dst).sig = 4 := by
+  show max (Compile.copyPipeA2TM b dst).sig (ScanLeft.scanLeftUntilTM 4 3).sig = 4
+  rw [Compile.copyPipeA2TM_sig]
+  rfl
+
+theorem Compile.copyPipeA4TM_sig (b dst : Nat) : (Compile.copyPipeA4TM b dst).sig = 4 := by
+  show max (Compile.copyPipeA3TM b dst).sig (ScanLeft.stepLeftTM 4).sig = 4
+  rw [Compile.copyPipeA3TM_sig]
+  rfl
+
+theorem Compile.copyPipeA5TM_sig (b dst : Nat) : (Compile.copyPipeA5TM b dst).sig = 4 := by
+  show max (Compile.copyPipeA4TM b dst).sig (ScanLeft.scanLeftUntilTM 4 3).sig = 4
+  rw [Compile.copyPipeA4TM_sig]
+  rfl
+
+theorem Compile.copyPipeTM_sig (b dst : Nat) : (Compile.copyPipeTM b dst).sig = 4 := by
+  show max (Compile.copyPipeA5TM b dst).sig (Compile.restoreStepTM b).sig = 4
+  rw [Compile.copyPipeA5TM_sig]
   rfl
 
 theorem Compile.copyPipeTM_valid (b dst : Nat) (hb : b ≤ 1) :
@@ -1307,72 +1387,11 @@ dst ⨠ append answer-bit)`. Each branch's clear-then-append reuses the proven
 a single exit by `joinTwoHalts` (bridge `delimExit → contentExit`). Validated
 end-to-end by `#eval` (incl. `dst = src`). -/
 
-/-- `composeFlatTM` inherits a unique halt from `M₂`'s unique halt. -/
-theorem Compile.composeFlatTM_halt_unique (M₁ M₂ : FlatTM) (e₂ exit : Nat)
-    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂) :
-    ∀ i, (composeFlatTM M₁ M₂ exit).halt[i]? = some true → i = M₁.states + e₂ := by
-  intro i hi
-  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp M₁ M₂ exit i hi
-  have := h2 _ hh; omega
-
 /-- `M₂`'s halt state shifts to a halt of `composeFlatTM` (intro). -/
 theorem Compile.composeFlatTM_halt_intro (M₁ M₂ : FlatTM) (e₂ exit : Nat)
     (h : M₂.halt[e₂]? = some true) :
     (composeFlatTM M₁ M₂ exit).halt[M₁.states + e₂]? = some true :=
   ScanLeft.composeFlatTM_halt_some_intro M₁ M₂ exit e₂ h
-
-/-- A `branchComposeFlatTM` of two unique-halt sub-machines has exactly the two
-shifted branch exits as halt states. -/
-theorem Compile.branchComposeFlatTM_halt_only (M₁ M₂ M₃ : FlatTM) (ep en e₂ e₃ : Nat)
-    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
-    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂)
-    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃) :
-    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
-      i = M₁.states + e₂ ∨ i = M₁.states + M₂.states + e₃ := by
-  intro i hi
-  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
-  unfold composedBranchHalt at hi
-  rw [List.append_assoc] at hi
-  by_cases h1 : i < M₁.states
-  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
-        List.getElem?_replicate] at hi
-    simp [h1] at hi
-  · rw [Nat.not_lt] at h1
-    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
-        List.length_replicate] at hi
-    by_cases h2lt : i - M₁.states < M₂.states
-    · left
-      rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
-      have := h2 _ hi; omega
-    · rw [Nat.not_lt] at h2lt
-      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
-      have := h3 _ hi; omega
-
-/-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
-branch composite (positive branch). -/
-theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
-    (h2v : validFlatTM M₂) (he : e₂ < M₂.states) (h : M₂.halt[e₂]? = some true) :
-    (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[M₁.states + e₂]? = some true := by
-  change (composedBranchHalt M₁ M₂ M₃)[M₁.states + e₂]? = some true
-  unfold composedBranchHalt
-  rw [List.append_assoc,
-      List.getElem?_append_right (by rw [List.length_replicate]; omega),
-      List.length_replicate, Nat.add_sub_cancel_left,
-      List.getElem?_append_left (by rw [h2v.2.1]; exact he)]
-  exact h
-
-/-- A halt state of `M₃` shifts to a halt of the branch composite (negative
-branch). -/
-theorem Compile.branchComposeFlatTM_M3_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₃ : Nat)
-    (h2v : validFlatTM M₂) (h : M₃.halt[e₃]? = some true) :
-    (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[M₁.states + M₂.states + e₃]? = some true := by
-  change (composedBranchHalt M₁ M₂ M₃)[M₁.states + M₂.states + e₃]? = some true
-  unfold composedBranchHalt
-  have hlen : (List.replicate M₁.states false ++ M₂.halt).length = M₁.states + M₂.states := by
-    rw [List.length_append, List.length_replicate, h2v.2.1]
-  rw [List.getElem?_append_right (by rw [hlen]; omega), hlen,
-      show M₁.states + M₂.states + e₃ - (M₁.states + M₂.states) = e₃ by omega]
-  exact h
 
 /-- `joinTwoHalts` only demotes `h2`; it never *adds* a halt, so a non-halting
 config of `M` stays non-halting. -/
@@ -10119,8 +10138,7 @@ private theorem Compile.copyBody_sym_bound (dst : Nat) (H : Nat) (tape : List Na
   by_cases hlt : H < tape.length
   · rw [currentTapeSymbol_in_range hlt] at hv
     exact (Option.some_inj.mp hv) ▸ hall _ (List.get_mem tape ⟨H, hlt⟩)
-  · rw [show currentTapeSymbol (([] : List Nat), H, tape) = none from by
-        unfold currentTapeSymbol; rw [List.getElem?_eq_none (by omega)]] at hv
+  · rw [show currentTapeSymbol (([] : List Nat), H, tape) = none from dif_neg hlt] at hv
     exact absurd hv (by simp)
 
 /-- All cells of `encodeTape q ++ res` are `< 4` (bit state + valid residue). -/
@@ -10195,12 +10213,12 @@ theorem Compile.copyBody_run_done (q : State) (dst src : Var)
     Compile.idTM_valid
     (by rw [ClearGadget.delimTestTM_states]; decide)
     (by rw [ClearGadget.delimTestTM_states]; decide)
-    cfg0 hcfg_lt [] H tape hsym hrun1 htraj1
+    cfg0 hcfg_lt [] H tape hsym (t₂ := 0) hrun1 htraj1
     (fun k hk ck hck => absurd hk (by omega))
   have hstate_eq : (0 : Nat) + ((ClearGadget.delimTestTM 4).states
       + (Compile.copyContentTM dst).states) = Compile.copyBody_exitDone dst := by
     rw [ClearGadget.delimTestTM_states, Compile.copyContentTM_states]
-    show 0 + (3 + (51 + 6 * dst)) = 54 + 6 * dst; omega
+    show 0 + (3 + (51 + 6 * dst)) = 54 + 6 * dst; ring
   refine ⟨?_, ?_⟩
   · have h := hneg.1
     rw [hstate_eq] at h
