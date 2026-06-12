@@ -10006,6 +10006,218 @@ theorem Compile.restoreStepTM_no_early_halt (b : Nat) (left right : List Nat) (h
   subst hk0
   simp [runFlatTM] at hck; subst hck; rfl
 
+/-! #### Marked-tape structure helpers (cursor-copy lemma stack)
+
+The cursor loop's working tape is `encodeTape (q.set src (w₁ ++ c :: w₂)) ++ res`
+(`c = 2` is the mark — encoding to the cell `3` — and `c = b ≤ 1` the restored
+bit). The helpers below pin its explicit list shape, length, the mark cell, the
+off-mark cell agreement, the interior cell facts (`< 4`, `≠ 3`) the scans need,
+and the take/drop re-marking bridge consumed by `markBitTM`/`restoreStepTM`. -/
+
+/-- Explicit shape of the cursor tape with residue: an opaque prefix `X` of
+length `1 + |encodeRegs (q.take src)| + |w₁|`, the (shifted) cursor cell
+`c + 1`, and an opaque suffix `Z` (independent of `c`). Packaged this way so
+`getElem?_append_left/right` rewrites are unambiguous. -/
+private theorem Compile.encodeTape_set_cell_res (q : State) (src : Var)
+    (hsrc : src < q.length) (w₁ w₂ : List Nat) (c : Nat) (res : List Nat) :
+    Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res
+      = ((3 : Nat) :: (Compile.encodeRegs (q.take src) ++ Compile.shiftReg w₁))
+        ++ ((c + 1) :: (Compile.shiftReg w₂
+              ++ (0 :: (Compile.encodeRegs (q.drop (src + 1)) ++ (3 :: res))))) := by
+  rw [(Compile.encodeTape_reg_decomp_at q src hsrc).1 (w₁ ++ c :: w₂)]
+  rw [show Compile.shiftReg (w₁ ++ c :: w₂)
+        = Compile.shiftReg w₁ ++ (c + 1) :: Compile.shiftReg w₂ from by
+      simp [Compile.shiftReg]]
+  show (Compile.endMark :: _) ++ _ ++ _ = _
+  simp [Compile.endMark, List.append_assoc]
+
+/-- Length of the prefix up to the cursor cell. -/
+private theorem Compile.cursorPrefix_length (q : State) (src : Var) (w₁ : List Nat) :
+    ((3 : Nat) :: (Compile.encodeRegs (q.take src) ++ Compile.shiftReg w₁)).length
+      = 1 + (Compile.encodeRegs (q.take src)).length + w₁.length := by
+  simp only [List.length_cons, List.length_append, Compile.shiftReg, List.length_map]
+  omega
+
+/-- Length of the cursor tape (independent of the cursor cell value `c`). -/
+private theorem Compile.encodeTape_set_cell_length (q : State) (src : Var)
+    (hsrc : src < q.length) (w₁ w₂ : List Nat) (c : Nat) :
+    (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂))).length
+      = 1 + (Compile.encodeRegs (q.take src)).length + w₁.length
+        + (w₂.length + (Compile.encodeRegs (q.drop (src + 1))).length + 3) := by
+  have h := congrArg List.length
+    (Compile.encodeTape_set_cell_res q src hsrc w₁ w₂ c [])
+  rw [List.append_nil] at h
+  rw [h]
+  simp only [List.length_append, List.length_cons, Compile.shiftReg, List.length_map,
+    List.length_nil]
+  omega
+
+/-- The cursor cell itself: cell `1 + |encodeRegs (q.take src)| + |w₁|` of the
+cursor tape is the shifted value `c + 1`. -/
+private theorem Compile.markedTape_get_mark (q : State) (src : Var) (hsrc : src < q.length)
+    (w₁ w₂ : List Nat) (c : Nat) (res : List Nat) :
+    ∃ (h : 1 + (Compile.encodeRegs (q.take src)).length + w₁.length
+        < (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).length),
+      (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).get
+          ⟨1 + (Compile.encodeRegs (q.take src)).length + w₁.length, h⟩ = c + 1 := by
+  set P := 1 + (Compile.encodeRegs (q.take src)).length + w₁.length with hP
+  set X := (3 : Nat) :: (Compile.encodeRegs (q.take src) ++ Compile.shiftReg w₁) with hX
+  set Z := (c + 1) :: (Compile.shiftReg w₂
+      ++ (0 :: (Compile.encodeRegs (q.drop (src + 1)) ++ (3 :: res)))) with hZ
+  have hshape : Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res = X ++ Z :=
+    Compile.encodeTape_set_cell_res q src hsrc w₁ w₂ c res
+  have hXlen : X.length = P := Compile.cursorPrefix_length q src w₁
+  have hkey : (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res)[P]?
+      = some (c + 1) := by
+    rw [hshape, List.getElem?_append_right (by omega), hXlen, Nat.sub_self, hZ,
+        List.getElem?_cons_zero]
+  obtain ⟨hlt, hget⟩ := List.getElem?_eq_some_iff.mp hkey
+  refine ⟨hlt, ?_⟩
+  rw [List.get_eq_getElem]
+  exact hget
+
+/-- Off the cursor cell, the cursor tapes for any two cell values agree. -/
+private theorem Compile.markedTape_getElem_off (q : State) (src : Var) (hsrc : src < q.length)
+    (w₁ w₂ : List Nat) (c c' : Nat) (res : List Nat) :
+    ∀ i, i ≠ 1 + (Compile.encodeRegs (q.take src)).length + w₁.length →
+      (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res)[i]?
+        = (Compile.encodeTape (State.set q src (w₁ ++ c' :: w₂)) ++ res)[i]? := by
+  intro i hi
+  set P := 1 + (Compile.encodeRegs (q.take src)).length + w₁.length with hP
+  set X := (3 : Nat) :: (Compile.encodeRegs (q.take src) ++ Compile.shiftReg w₁) with hX
+  set W := Compile.shiftReg w₂
+      ++ (0 :: (Compile.encodeRegs (q.drop (src + 1)) ++ (3 :: res))) with hW
+  have hXlen : X.length = P := Compile.cursorPrefix_length q src w₁
+  rw [Compile.encodeTape_set_cell_res q src hsrc w₁ w₂ c res,
+      Compile.encodeTape_set_cell_res q src hsrc w₁ w₂ c' res, ← hX, ← hW]
+  rcases Nat.lt_or_ge i P with hlt | hge
+  · rw [List.getElem?_append_left (by omega), List.getElem?_append_left (by omega)]
+  · have hgt : P < i := lt_of_le_of_ne hge (fun h => hi h.symm)
+    rw [List.getElem?_append_right (by omega), List.getElem?_append_right (by omega), hXlen]
+    obtain ⟨j, hj⟩ : ∃ j, i - P = j + 1 := ⟨i - P - 1, by omega⟩
+    rw [hj, List.getElem?_cons_succ, List.getElem?_cons_succ]
+
+/-- A register write with `≤ 2`-valued content keeps every register `≤ 2`
+(the marked-state analogue of `BitState_set`). -/
+private theorem Compile.le_two_set (s : State) (dst : Var) (v : List Nat)
+    (h : Compile.BitState s) (hdst : dst < s.length) (hv : ∀ x ∈ v, x ≤ 2) :
+    ∀ reg ∈ State.set s dst v, ∀ x ∈ reg, x ≤ 2 := by
+  rw [State.set, if_pos hdst, Compile.list_set_eq_take_cons_drop s dst _ hdst]
+  intro reg hreg x hx
+  simp only [List.mem_append, List.mem_cons] at hreg
+  rcases hreg with hr | hr | hr
+  · exact le_trans (h reg (List.mem_of_mem_take hr) x hx) (by omega)
+  · subst hr; exact hv x hx
+  · exact le_trans (h reg (List.mem_of_mem_drop hr) x hx) (by omega)
+
+/-- `encodeRegs` of a `≤ 2`-valued state has all cells `< 4`. -/
+private theorem Compile.encodeRegs_lt_four_le_two (t : State)
+    (h : ∀ b ∈ t, ∀ x ∈ b, x ≤ 2) : ∀ y ∈ Compile.encodeRegs t, y < 4 := by
+  induction t with
+  | nil => intro y hy; simp [Compile.encodeRegs] at hy
+  | cons r t ih =>
+      intro y hy
+      rw [Compile.encodeRegs_cons, List.mem_append, List.mem_append] at hy
+      rcases hy with (hy | hy) | hy
+      · rw [Compile.shiftReg, List.mem_map] at hy
+        obtain ⟨z, hz, rfl⟩ := hy
+        have := h r (List.mem_cons_self ..) z hz; omega
+      · simp only [List.mem_cons, List.not_mem_nil, or_false] at hy; omega
+      · exact ih (fun b hb x hx => h b (List.mem_cons_of_mem _ hb) x hx) y hy
+
+/-- All cells of `encodeTape t ++ res` for a `≤ 2`-valued `t` are `< 4`. -/
+private theorem Compile.encodeTape_append_res_lt_four_le_two (t : State) (res : List Nat)
+    (h : ∀ b ∈ t, ∀ x ∈ b, x ≤ 2) (hres : Compile.ValidResidue res) :
+    ∀ x ∈ Compile.encodeTape t ++ res, x < 4 := by
+  intro x hx
+  rcases List.mem_append.mp hx with hx | hx
+  · rw [Compile.encodeTape, List.mem_cons, List.mem_append, List.mem_singleton] at hx
+    rcases hx with hx | hx | hx
+    · subst hx; decide
+    · exact Compile.encodeRegs_lt_four_le_two t h x hx
+    · subst hx; decide
+  · exact (hres x hx).1
+
+/-- **Interior cells of the cursor tape, off the cursor.** Every cell `0 < i`
+that is neither the cursor cell nor in the trailing-terminator-plus-residue
+region is `< 4` and `≠ 3` — it agrees with the corresponding cell of the
+*unmarked* `encodeTape q ++ res`, whose interior is sentinel-free. -/
+private theorem Compile.markedTape_interior_cell (q : State) (src : Var)
+    (hsrc : src < q.length) (hbit : Compile.BitState q) (w₁ w₂ : List Nat) (b : Nat)
+    (hsplit : State.get q src = w₁ ++ b :: w₂) (c : Nat) (res : List Nat) :
+    ∀ i, 0 < i → i ≠ 1 + (Compile.encodeRegs (q.take src)).length + w₁.length →
+      i + 1 < (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂))).length →
+      ∃ (h : i < (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).length),
+        (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).get ⟨i, h⟩ < 4 ∧
+        (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).get ⟨i, h⟩ ≠ 3 := by
+  intro i hi0 hiP hilen
+  have hq : State.set q src (w₁ ++ b :: w₂) = q := by
+    rw [← hsplit]; exact Compile.set_get_self q src hsrc
+  have hlt : i < (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).length := by
+    rw [List.length_append]; omega
+  refine ⟨hlt, ?_⟩
+  -- the cell agrees with the unmarked tape's cell `i`.
+  have hoff := Compile.markedTape_getElem_off q src hsrc w₁ w₂ c b res i hiP
+  rw [hq] at hoff
+  -- length transfer marked ↔ unmarked.
+  have hlen_eq : (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂))).length
+      = (Compile.encodeTape q).length := by
+    conv_rhs => rw [← hq]
+    rw [Compile.encodeTape_set_cell_length q src hsrc w₁ w₂ c,
+        Compile.encodeTape_set_cell_length q src hsrc w₁ w₂ b]
+  have hilen' : i + 1 < (Compile.encodeTape q).length := by omega
+  have hltq : i < (Compile.encodeTape q ++ res).length := by
+    rw [List.length_append]; omega
+  have hgetq : (Compile.encodeTape (State.set q src (w₁ ++ c :: w₂)) ++ res).get ⟨i, hlt⟩
+      = (Compile.encodeTape q ++ res).get ⟨i, hltq⟩ := by
+    rw [List.get_eq_getElem, List.get_eq_getElem]
+    exact Option.some_inj.mp (by
+      rw [← List.getElem?_eq_getElem hlt, ← List.getElem?_eq_getElem hltq]; exact hoff)
+  rw [hgetq]
+  -- the unmarked cell is inside `encodeTape q`'s interior.
+  have hilt_e : i < (Compile.encodeTape q).length := by omega
+  have hkey : (Compile.encodeTape q ++ res)[i]?
+      = some ((Compile.encodeTape q).get ⟨i, hilt_e⟩) := by
+    rw [List.getElem?_append_left hilt_e, List.getElem?_eq_getElem hilt_e,
+        List.get_eq_getElem]
+  have hgetin : (Compile.encodeTape q ++ res).get ⟨i, hltq⟩
+      = (Compile.encodeTape q).get ⟨i, hilt_e⟩ := by
+    rw [List.get_eq_getElem]
+    exact Option.some_inj.mp ((List.getElem?_eq_getElem hltq).symm.trans hkey)
+  rw [hgetin]
+  obtain ⟨hi', hne3⟩ := Compile.encodeTape_interior_ne_endMark q hbit i hi0 hilen'
+  refine ⟨Compile.encodeTape_lt_four q hbit _ (List.get_mem _ _), ?_⟩
+  exact hne3
+
+/-- The symbol under the cursor is below the body's alphabet bound `4`. -/
+private theorem Compile.copyBody_sym_bound (dst : Nat) (H : Nat) (tape : List Nat)
+    (hall : ∀ x ∈ tape, x < 4) :
+    ∀ v, currentTapeSymbol (([] : List Nat), H, tape) = some v →
+      v < max (ClearGadget.delimTestTM 4).sig
+            (max (Compile.copyContentTM dst).sig Compile.idTM.sig) := by
+  intro v hv
+  have hmax : max (ClearGadget.delimTestTM 4).sig
+      (max (Compile.copyContentTM dst).sig Compile.idTM.sig) = 4 := by
+    rw [ClearGadget.delimTestTM_sig]
+    show max 4 (max (Compile.copyContentRawTM dst).sig 4) = 4
+    rw [Compile.copyContentRawTM_sig]
+    rfl
+  rw [hmax]
+  by_cases hlt : H < tape.length
+  · rw [currentTapeSymbol_in_range hlt] at hv
+    exact (Option.some_inj.mp hv) ▸ hall _ (List.get_mem tape ⟨H, hlt⟩)
+  · rw [show currentTapeSymbol (([] : List Nat), H, tape) = none from dif_neg hlt] at hv
+    exact absurd hv (by simp)
+
+/-- All cells of `encodeTape q ++ res` are `< 4` (bit state + valid residue). -/
+private theorem Compile.encodeTape_append_res_lt_four (q : State) (res : List Nat)
+    (hbit : Compile.BitState q) (hres : Compile.ValidResidue res) :
+    ∀ x ∈ Compile.encodeTape q ++ res, x < 4 := by
+  intro x hx
+  rcases List.mem_append.mp hx with h | h
+  · exact Compile.encodeTape_lt_four q hbit x h
+  · exact (hres x h).1
+
 /-- **One cursor-copy pipeline pass (`copyPipeTM b dst`).** Started with the head
 ON the freshly written mark (src's cell `i = |w₁|`, the only interior `3`), the
 pipeline rewinds to the sentinel, appends `b` to `dst` (`appendAtTM (b+1)`),
@@ -10120,35 +10332,6 @@ private theorem Compile.cursor_cell (q : State) (src : Var) (hsrc : src < q.leng
   have h2 := hcell?.trans hmid
   rw [List.getElem?_eq_getElem hlt] at h2
   exact Option.some_inj.mp h2
-
-/-- The symbol under the cursor is below the body's alphabet bound `4`. -/
-private theorem Compile.copyBody_sym_bound (dst : Nat) (H : Nat) (tape : List Nat)
-    (hall : ∀ x ∈ tape, x < 4) :
-    ∀ v, currentTapeSymbol (([] : List Nat), H, tape) = some v →
-      v < max (ClearGadget.delimTestTM 4).sig
-            (max (Compile.copyContentTM dst).sig Compile.idTM.sig) := by
-  intro v hv
-  have hmax : max (ClearGadget.delimTestTM 4).sig
-      (max (Compile.copyContentTM dst).sig Compile.idTM.sig) = 4 := by
-    rw [ClearGadget.delimTestTM_sig]
-    show max 4 (max (Compile.copyContentRawTM dst).sig 4) = 4
-    rw [Compile.copyContentRawTM_sig]
-    rfl
-  rw [hmax]
-  by_cases hlt : H < tape.length
-  · rw [currentTapeSymbol_in_range hlt] at hv
-    exact (Option.some_inj.mp hv) ▸ hall _ (List.get_mem tape ⟨H, hlt⟩)
-  · rw [show currentTapeSymbol (([] : List Nat), H, tape) = none from dif_neg hlt] at hv
-    exact absurd hv (by simp)
-
-/-- All cells of `encodeTape q ++ res` are `< 4` (bit state + valid residue). -/
-private theorem Compile.encodeTape_append_res_lt_four (q : State) (res : List Nat)
-    (hbit : Compile.BitState q) (hres : Compile.ValidResidue res) :
-    ∀ x ∈ Compile.encodeTape q ++ res, x < 4 := by
-  intro x hx
-  rcases List.mem_append.mp hx with h | h
-  · exact Compile.encodeTape_lt_four q hbit x h
-  · exact (hres x h).1
 
 /-- **Cursor-loop body, DONE contract.** With the cursor ON src's `0` delimiter
 (`i = |src|` — src exhausted), `delimTestTM` reads `0` (1 step) and the branch
