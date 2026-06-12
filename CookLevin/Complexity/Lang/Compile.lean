@@ -11575,7 +11575,192 @@ theorem Compile.copyLoop_run (s : State) (dst src : Var)
           haltingStateReached (Compile.copyLoopTM dst) ck = false)
       ∧ T ≤ ((State.get s src).length + 1)
               * (5 * (Compile.encodeTape (s.set dst (State.get s src)) ++ res).length + 23) := by
-  sorry
+  set u := State.get s src with hu
+  set n := u.length with hn
+  -- the loop tape after `n − j` copied bits.
+  set T : Nat → (List Nat × Nat × List Nat) := fun j =>
+    ([], 1 + (Compile.encodeRegs ((s.set dst (u.take (n - j))).take src)).length + (n - j),
+     Compile.encodeTape (s.set dst (u.take (n - j))) ++ res) with hTdef
+  have hu_le : ∀ x ∈ u, x ≤ 1 := by
+    rw [hu]
+    intro x hx
+    have hmem : State.get s src ∈ s := by
+      rw [State.get, List.getElem?_eq_getElem hsrc]; exact List.getElem_mem hsrc
+    exact hbit _ hmem x hx
+  have hset_nil : s.set dst ([] : List Nat) = s := by
+    rw [← hdst_empty]; exact Compile.set_get_self s dst hdst
+  -- per-`j` shared facts.
+  have hbit_j : ∀ k, Compile.BitState (s.set dst (u.take k)) := fun k =>
+    Compile.BitState_set s dst _ hbit hdst (fun x hx => hu_le x (List.mem_of_mem_take hx))
+  have hlen_j : ∀ v : List Nat, (s.set dst v).length = s.length := fun v =>
+    Compile.length_set s dst v hdst
+  have hT_lt4 : ∀ j x, x ∈ (T j).2.2 → x < 4 := by
+    intro j x hx
+    simp only [hTdef] at hx
+    exact Compile.encodeTape_append_res_lt_four _ res (hbit_j _) hres x hx
+  have h_sym : ∀ m v, currentTapeSymbol (T m) = some v → v < (Compile.copyBodyTM dst).sig := by
+    intro m v hv
+    rw [Compile.copyBodyTM_sig]
+    have hmem : v ∈ (T m).2.2 := by
+      simp only [currentTapeSymbol] at hv
+      split at hv
+      · injection hv with e; rw [← e]; exact List.get_mem _ _
+      · exact absurd hv (by simp)
+    exact hT_lt4 m v hmem
+  -- tape lengths are monotone in the copied prefix (`dst` starts empty).
+  have hLen_le : ∀ k, k ≤ n →
+      (Compile.encodeTape (s.set dst (u.take k)) ++ res).length
+        ≤ (Compile.encodeTape (s.set dst u) ++ res).length := by
+    intro k hk
+    have h1 := Compile.encodeTape_set_length s dst (u.take k) hdst
+    have h2 := Compile.encodeTape_set_length s dst u hdst
+    have h3 : (u.take k).length = k := by rw [List.length_take]; omega
+    simp only [List.length_append]
+    omega
+  -- ### done contract at `T 0`... i.e. `j = 0`: `T 0` is the FINISHED tape.
+  have hdone0 := Compile.copyBody_run_done (s.set dst u) dst src hne
+    (by rw [hlen_j]; exact hdst) (by rw [hlen_j]; exact hsrc)
+    (Compile.BitState_set s dst u hbit hdst hu_le) res hres
+  have hget_src_set : State.get (s.set dst u) src = u := by
+    rw [Compile.get_set_ne s dst u src hdst (Ne.symm hne), hu]
+  have hT0 : T 0 = ([],
+      1 + (Compile.encodeRegs ((s.set dst u).take src)).length + n,
+      Compile.encodeTape (s.set dst u) ++ res) := by
+    simp only [hTdef, Nat.sub_zero]
+    rw [show u.take n = u from by rw [hn]; exact List.take_length]
+  have h_done_full :
+      runFlatTM 2 (Compile.copyBodyTM dst)
+          { state_idx := (Compile.copyBodyTM dst).start, tapes := [T 0] }
+        = some { state_idx := Compile.copyBody_exitDone dst, tapes := [T 0] } ∧
+      (∀ k, k < 2 → ∀ ck,
+          runFlatTM k (Compile.copyBodyTM dst)
+              { state_idx := (Compile.copyBodyTM dst).start, tapes := [T 0] } = some ck →
+          ck.state_idx ≠ Compile.copyBody_exitDone dst ∧
+          ck.state_idx ≠ Compile.copyBody_exitLoop dst ∧
+          haltingStateReached (Compile.copyBodyTM dst) ck = false) := by
+    rw [hT0]
+    have hdr := hdone0.1
+    have hdt := hdone0.2
+    rw [hget_src_set] at hdr hdt
+    rw [show (Compile.copyBodyTM dst).start = 0 from rfl]
+    exact ⟨by rw [← hn] at hdr; exact hdr, by rw [← hn] at hdt; exact hdt⟩
+  -- ### iteration contract `T (j+1) → T j` for `j < n`.
+  have hiter_ex : ∀ j, j < n → ∃ t,
+      runFlatTM t (Compile.copyBodyTM dst)
+          { state_idx := (Compile.copyBodyTM dst).start, tapes := [T (j + 1)] }
+        = some { state_idx := Compile.copyBody_exitLoop dst, tapes := [T j] } ∧
+      (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.copyBodyTM dst)
+              { state_idx := (Compile.copyBodyTM dst).start, tapes := [T (j + 1)] } = some ck →
+          ck.state_idx ≠ Compile.copyBody_exitDone dst ∧
+          ck.state_idx ≠ Compile.copyBody_exitLoop dst ∧
+          haltingStateReached (Compile.copyBodyTM dst) ck = false) ∧
+      t ≤ 5 * (Compile.encodeTape (s.set dst u) ++ res).length + 21 := by
+    intro j hj
+    -- the cursor sits at bit `k₀ := n − j − 1` of `u`.
+    have hk₀ : n - (j + 1) < u.length := by rw [← hn]; omega
+    have hsplit_j : State.get (s.set dst (u.take (n - (j + 1)))) src
+        = u.take (n - (j + 1)) ++ u[n - (j + 1)] :: u.drop (n - (j + 1) + 1) := by
+      rw [Compile.get_set_ne s dst _ src hdst (Ne.symm hne), ← hu,
+          ← List.drop_eq_getElem_cons hk₀, List.take_append_drop]
+    obtain ⟨t, hrun, htraj, hbnd⟩ := Compile.copyBody_run_iter
+      (s.set dst (u.take (n - (j + 1)))) dst src hne
+      (by rw [hlen_j]; exact hdst) (by rw [hlen_j]; exact hsrc)
+      (hbit_j _) u[n - (j + 1)]
+      (hu_le _ (List.getElem_mem hk₀))
+      (u.take (n - (j + 1))) (u.drop (n - (j + 1) + 1)) hsplit_j res hres
+    -- rewrite the body's output state to `T j`'s state.
+    have hstate_eq : (s.set dst (u.take (n - (j + 1)))).set dst
+          (State.get (s.set dst (u.take (n - (j + 1)))) dst ++ [u[n - (j + 1)]])
+        = s.set dst (u.take (n - j)) := by
+      rw [Compile.get_set_eq s dst _ hdst, Compile.set_set s dst _ _ hdst,
+          show u.take (n - (j + 1)) ++ [u[n - (j + 1)]] = u.take (n - (j + 1) + 1) from by
+            rw [List.take_add_one, List.getElem?_eq_getElem hk₀]; rfl,
+          show n - (j + 1) + 1 = n - j from by omega]
+    rw [hstate_eq] at hrun hbnd
+    -- align the heads with `T (j+1)` / `T j` (`|u.take k| = k`).
+    have hhead_in : 1 + (Compile.encodeRegs ((s.set dst
+          (u.take (n - (j + 1)))).take src)).length + (u.take (n - (j + 1))).length
+        = 1 + (Compile.encodeRegs ((s.set dst
+          (u.take (n - (j + 1)))).take src)).length + (n - (j + 1)) := by
+      rw [List.length_take]; omega
+    have hhead_out : 1 + (Compile.encodeRegs ((s.set dst
+          (u.take (n - j))).take src)).length + (u.take (n - (j + 1))).length + 1
+        = 1 + (Compile.encodeRegs ((s.set dst
+          (u.take (n - j))).take src)).length + (n - j) := by
+      rw [List.length_take]; omega
+    rw [hhead_in, hhead_out] at hrun
+    rw [hhead_in] at htraj
+    refine ⟨t, ?_, ?_, ?_⟩
+    · rw [show (Compile.copyBodyTM dst).start = 0 from rfl]
+      simp only [hTdef]
+      exact hrun
+    · rw [show (Compile.copyBodyTM dst).start = 0 from rfl]
+      simp only [hTdef]
+      exact htraj
+    · have hmono := hLen_le (n - j) (by omega)
+      omega
+  -- ### assemble with `loopTM_run` / `loopTM_no_early_halt`.
+  set tIter : Nat → Nat := fun j => if hj : j < n then (hiter_ex j hj).choose else 0
+    with htIter
+  have h_ne_exits : Compile.copyBody_exitDone dst ≠ Compile.copyBody_exitLoop dst := by
+    show (54 + 6 * dst : Nat) ≠ 29 + 3 * dst; omega
+  have h_done_lt : Compile.copyBody_exitDone dst < (Compile.copyBodyTM dst).states := by
+    rw [Compile.copyBodyTM_states]
+    show (54 + 6 * dst : Nat) < 55 + 6 * dst; omega
+  have h_loop_lt : Compile.copyBody_exitLoop dst < (Compile.copyBodyTM dst).states := by
+    rw [Compile.copyBodyTM_states]
+    show (29 + 3 * dst : Nat) < 55 + 6 * dst; omega
+  have h_iter_full : ∀ j, j < n →
+      runFlatTM (tIter j) (Compile.copyBodyTM dst)
+          { state_idx := (Compile.copyBodyTM dst).start, tapes := [T (j + 1)] }
+        = some { state_idx := Compile.copyBody_exitLoop dst, tapes := [T j] } ∧
+      (∀ k, k < tIter j → ∀ ck,
+          runFlatTM k (Compile.copyBodyTM dst)
+              { state_idx := (Compile.copyBodyTM dst).start, tapes := [T (j + 1)] }
+            = some ck →
+          ck.state_idx ≠ Compile.copyBody_exitDone dst ∧
+          ck.state_idx ≠ Compile.copyBody_exitLoop dst ∧
+          haltingStateReached (Compile.copyBodyTM dst) ck = false) := by
+    intro j hj
+    have hspec := (hiter_ex j hj).choose_spec
+    simp only [htIter, dif_pos hj]
+    exact ⟨hspec.1, hspec.2.1⟩
+  have h_iter_bnd : ∀ j, j < n → tIter j + 1
+      ≤ 5 * (Compile.encodeTape (s.set dst u) ++ res).length + 23 := by
+    intro j hj
+    have hb := (hiter_ex j hj).choose_spec.2.2
+    simp only [htIter, dif_pos hj]
+    omega
+  have hmain := loopTM_run (Compile.copyBodyTM dst) (Compile.copyBody_exitDone dst)
+    (Compile.copyBody_exitLoop dst) (Compile.copyBodyTM_valid dst) h_done_lt h_loop_lt
+    h_ne_exits T h_sym tIter 2 h_done_full n h_iter_full
+  have hmain_traj := loopTM_no_early_halt (Compile.copyBodyTM dst)
+    (Compile.copyBody_exitDone dst) (Compile.copyBody_exitLoop dst)
+    (Compile.copyBodyTM_valid dst) h_done_lt h_loop_lt
+    h_ne_exits T h_sym tIter 2 h_done_full n h_iter_full
+  have hTn : T n = ([], 1 + (Compile.encodeRegs (s.take src)).length,
+      Compile.encodeTape s ++ res) := by
+    simp only [hTdef, Nat.sub_self, List.take_zero, hset_nil, Nat.add_zero]
+  have hexit_halt : (Compile.copyLoopTM dst).halt[Compile.copyLoopTM_exit dst]?
+      = some true := by
+    show (List.replicate (Compile.copyBodyTM dst).states false
+        ++ [true])[Compile.copyLoopTM_exit dst]? = some true
+    rw [show Compile.copyLoopTM_exit dst = (Compile.copyBodyTM dst).states from by
+          rw [Compile.copyBodyTM_states]; rfl,
+        List.getElem?_append_right (by rw [List.length_replicate]),
+        List.length_replicate, Nat.sub_self]
+    rfl
+  have hex : (Compile.copyBodyTM dst).states = Compile.copyLoopTM_exit dst := by
+    rw [Compile.copyBodyTM_states]; rfl
+  rw [hex, hTn, hT0, show (Compile.copyBodyTM dst).start = 0 from rfl] at hmain
+  rw [hTn, show (Compile.copyBodyTM dst).start = 0 from rfl] at hmain_traj
+  refine ⟨loopBudget tIter 2 n, hmain, ?_, ?_⟩
+  · intro k hk ck hck
+    have hh := hmain_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting hexit_halt hh, hh⟩
+  · exact Compile.loopBudget_le tIter 2
+      (5 * (Compile.encodeTape (s.set dst u) ++ res).length + 23) n (by omega) h_iter_bnd
 
 /-- **The `copy` op's exact-residue run lemma** (`dst ≠ src`): the full machine
 `clear ⨾ navigate ⨾ cursor loop ⨾ rewind`, with the boundary halt demoted. The
