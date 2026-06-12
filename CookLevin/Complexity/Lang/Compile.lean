@@ -11147,7 +11147,278 @@ theorem Compile.copyBody_run_iter (q : State) (dst src : Var)
           ck.state_idx ≠ Compile.copyBody_exitLoop dst ∧
           haltingStateReached (Compile.copyBodyTM dst) ck = false)
       ∧ T ≤ 5 * (Compile.encodeTape (q.set dst (State.get q dst ++ [b])) ++ res).length + 21 := by
-  sorry
+  have hq : State.set q src (w₁ ++ b :: w₂) = q := by
+    rw [← hsplit]; exact Compile.set_get_self q src hsrc
+  -- work on the `set`-form of the input tape (the marked-tape helpers' shape).
+  rw [show Compile.encodeTape q = Compile.encodeTape (State.set q src (w₁ ++ b :: w₂))
+    from by rw [hq]]
+  obtain ⟨hHlt, hHget⟩ := Compile.markedTape_get_mark q src hsrc w₁ w₂ b res
+  -- bit-shape facts for the cell bounds
+  have hw : ∀ y ∈ w₁ ++ b :: w₂, y ≤ 1 := by
+    rw [← hsplit]
+    intro y hy
+    have hmem : State.get q src ∈ q := by
+      rw [State.get, List.getElem?_eq_getElem hsrc]; exact List.getElem_mem hsrc
+    exact hbit _ hmem y hy
+  have hin_le2 : ∀ reg ∈ State.set q src (w₁ ++ b :: w₂), ∀ x ∈ reg, x ≤ 2 :=
+    Compile.le_two_set q src _ hbit hsrc (fun x hx => le_trans (hw x hx) (by omega))
+  have hTin_lt4 : ∀ x ∈ Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res,
+      x < 4 := Compile.encodeTape_append_res_lt_four_le_two _ res hin_le2 hres
+  have hqM_le2 : ∀ reg ∈ State.set q src (w₁ ++ 2 :: w₂), ∀ x ∈ reg, x ≤ 2 := by
+    refine Compile.le_two_set q src _ hbit hsrc ?_
+    intro x hx
+    rcases List.mem_append.mp hx with h | h
+    · exact le_trans (hw x (List.mem_append_left _ h)) (by omega)
+    · rcases List.mem_cons.mp h with h0 | h0
+      · omega
+      · exact le_trans (hw x (List.mem_append_right _ (List.mem_cons_of_mem _ h0)))
+          (by omega)
+  have hTm_lt4 : ∀ x ∈ Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res,
+      x < 4 := Compile.encodeTape_append_res_lt_four_le_two _ res hqM_le2 hres
+  have hbit' : Compile.BitState (State.set q dst (State.get q dst ++ [b])) := by
+    refine Compile.BitState_set q dst _ hbit hdst ?_
+    intro x hx
+    have hu_mem : State.get q dst ∈ q := by
+      rw [State.get, List.getElem?_eq_getElem hdst]; exact List.getElem_mem hdst
+    rcases List.mem_append.mp hx with h | h
+    · exact hbit _ hu_mem x h
+    · rcases List.mem_cons.mp h with h0 | h0
+      · subst h0; exact hb
+      · cases h0
+  have hTout_lt4 : ∀ x ∈ Compile.encodeTape (State.set q dst (State.get q dst ++ [b]))
+      ++ res, x < 4 := Compile.encodeTape_append_res_lt_four _ res hbit' hres
+  -- ### the `markBitTM` step: write the mark over the cursor bit
+  have hmark_run := Compile.markBitTM_run b hb []
+    (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)
+    (1 + (Compile.encodeRegs (q.take src)).length + w₁.length) hHlt hHget
+  have hmark_eq : (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res).take
+        (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+      ++ 3 :: (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res).drop
+        (1 + (Compile.encodeRegs (q.take src)).length + w₁.length + 1)
+      = Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res := by
+    have h := Compile.markedTape_take_drop q src hsrc w₁ w₂ b 2 res
+    rw [show ((2 : Nat) + 1) = 3 from rfl] at h
+    exact h
+  rw [hmark_eq] at hmark_run
+  -- ### the per-bit pipeline run on the marked tape
+  obtain ⟨Tp, hpipe_run, hpipe_traj, hpipe_le⟩ :=
+    Compile.copyPipe_run b hb q dst src hne hdst hsrc hbit w₁ w₂ hsplit res hres
+  -- ### the content machine (markBit ⨾ branch into the two pipelines, joined)
+  have hsym_content : ∀ v, currentTapeSymbol
+      ([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+        Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res) = some v →
+      v < max Compile.markBitTM.sig
+            (max (Compile.copyPipeTM 0 dst).sig (Compile.copyPipeTM 1 dst).sig) := by
+    intro v hv
+    rw [show max Compile.markBitTM.sig
+          (max (Compile.copyPipeTM 0 dst).sig (Compile.copyPipeTM 1 dst).sig) = 4 from by
+      rw [Compile.markBitTM_sig, Compile.copyPipeTM_sig, Compile.copyPipeTM_sig]; rfl]
+    exact Compile.sym_bound_of_lt_four _ hTm_lt4 _ v hv
+  have hmark_traj : ∀ k, k < 1 → ∀ ck,
+      runFlatTM k Compile.markBitTM
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                       Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)] }
+        = some ck →
+      ck.state_idx ≠ Compile.markBitTM_exit 0 ∧ ck.state_idx ≠ Compile.markBitTM_exit 1 ∧
+      haltingStateReached Compile.markBitTM ck = false := by
+    intro k hk ck hck
+    have hk0 : k = 0 := by omega
+    subst hk0
+    simp [runFlatTM] at hck; subst hck
+    exact ⟨show (0 : Nat) ≠ Compile.markBitTM_exit 0 from by decide,
+           show (0 : Nat) ≠ Compile.markBitTM_exit 1 from by decide, rfl⟩
+  have hh1 : (Compile.copyContentRawTM dst).halt[Compile.copyContent_exit0 dst]?
+      = some true := by
+    have h := Compile.branchComposeFlatTM_M2_halt_intro Compile.markBitTM
+      (Compile.copyPipeTM 0 dst) (Compile.copyPipeTM 1 dst)
+      (Compile.markBitTM_exit 0) (Compile.markBitTM_exit 1) (Compile.copyPipeTM_exit dst)
+      (Compile.copyPipeTM_valid 0 dst (by decide))
+      (by rw [Compile.copyPipeTM_states]
+          show (23 + 3 * dst : Nat) < 24 + 3 * dst; omega)
+      (Compile.copyPipeTM_exit_is_halt 0 dst)
+    rw [Compile.markBitTM_states] at h
+    exact h
+  have hh2 : (Compile.copyContentRawTM dst).halt[Compile.copyContent_exit1 dst]?
+      = some true := by
+    have h := Compile.branchComposeFlatTM_M3_halt_intro Compile.markBitTM
+      (Compile.copyPipeTM 0 dst) (Compile.copyPipeTM 1 dst)
+      (Compile.markBitTM_exit 0) (Compile.markBitTM_exit 1) (Compile.copyPipeTM_exit dst)
+      (Compile.copyPipeTM_valid 0 dst (by decide))
+      (Compile.copyPipeTM_exit_is_halt 1 dst)
+    rw [Compile.markBitTM_states, Compile.copyPipeTM_states] at h
+    exact h
+  have hexne : Compile.copyContent_exit0 dst ≠ Compile.copyContent_exit1 dst := by
+    show (3 + (23 + 3 * dst) : Nat) ≠ 3 + (24 + 3 * dst) + (23 + 3 * dst); omega
+  -- per-bit case split: assemble the joined content run.
+  have hContent : ∃ Tc,
+      runFlatTM Tc (Compile.copyContentTM dst)
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                       Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)] }
+        = some { state_idx := Compile.copyContent_exit0 dst,
+                 tapes := [([],
+                   1 + (Compile.encodeRegs ((q.set dst (State.get q dst ++ [b])).take
+                     src)).length + w₁.length + 1,
+                   Compile.encodeTape (q.set dst (State.get q dst ++ [b])) ++ res)] }
+      ∧ (∀ k, k < Tc → ∀ ck,
+          runFlatTM k (Compile.copyContentTM dst)
+              { state_idx := 0,
+                tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                           Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)] }
+            = some ck →
+          ck.state_idx ≠ Compile.copyContent_exit0 dst ∧
+          haltingStateReached (Compile.copyContentTM dst) ck = false)
+      ∧ Tc ≤ Tp + 3 := by
+    rcases Nat.le_one_iff_eq_zero_or_eq_one.mp hb with hb0 | hb1
+    · -- b = 0: positive branch of the raw content machine, exit kept by the join.
+      subst hb0
+      have hraw := branchComposeFlatTM_run_pos
+        (show Compile.markBitTM_exit 0 ≠ Compile.markBitTM_exit 1 from by decide)
+        Compile.markBitTM_valid (Compile.copyPipeTM_valid 0 dst (by decide))
+        (Compile.copyPipeTM_valid 1 dst (by decide))
+        (by rw [Compile.markBitTM_states]; decide)
+        (by rw [Compile.markBitTM_states]; decide)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                     Compile.encodeTape (State.set q src (w₁ ++ 0 :: w₂)) ++ res)] }
+        (by show (0 : Nat) < Compile.markBitTM.states; rw [Compile.markBitTM_states]; omega)
+        [] (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+        (Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res)
+        hsym_content hmark_run hmark_traj
+        (by rw [Compile.copyPipeTM_start]; exact hpipe_run)
+        (Compile.haltingStateReached_of_halt (Compile.copyPipeTM_exit_is_halt 0 dst))
+      have hraw_traj := branchComposeFlatTM_no_early_halt_pos
+        Compile.markBitTM_valid (Compile.copyPipeTM_valid 0 dst (by decide))
+        (Compile.copyPipeTM_valid 1 dst (by decide))
+        (by rw [Compile.markBitTM_states]; decide)
+        (by rw [Compile.markBitTM_states]; decide)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                     Compile.encodeTape (State.set q src (w₁ ++ 0 :: w₂)) ++ res)] }
+        (by show (0 : Nat) < Compile.markBitTM.states; rw [Compile.markBitTM_states]; omega)
+        [] (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+        (Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res)
+        hsym_content hmark_run hmark_traj
+        (fun k hk ck hck => ((hpipe_traj k hk ck
+          (by rw [Compile.copyPipeTM_start] at hck; exact hck)).2))
+      have hst : Compile.copyPipeTM_exit dst + Compile.markBitTM.states
+          = Compile.copyContent_exit0 dst := by
+        rw [Compile.markBitTM_states]
+        show (23 + 3 * dst : Nat) + 3 = 3 + (23 + 3 * dst); omega
+      rw [hst] at hraw
+      obtain ⟨hjrun, hjtraj⟩ := Compile.joinTwoHalts_reaches_kept
+        (Compile.copyContentRawTM dst) (Compile.copyContent_exit0 dst)
+        (Compile.copyContent_exit1 dst) _ _ _ hraw.1
+        (fun k hk ck hck => hraw_traj k hk ck hck) hh1 hh2
+      exact ⟨_, hjrun, hjtraj, by omega⟩
+    · -- b = 1: negative branch, demoted exit, one extra join bridge step.
+      subst hb1
+      have hraw := branchComposeFlatTM_run_neg
+        (show Compile.markBitTM_exit 0 ≠ Compile.markBitTM_exit 1 from by decide)
+        Compile.markBitTM_valid (Compile.copyPipeTM_valid 0 dst (by decide))
+        (Compile.copyPipeTM_valid 1 dst (by decide))
+        (by rw [Compile.markBitTM_states]; decide)
+        (by rw [Compile.markBitTM_states]; decide)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                     Compile.encodeTape (State.set q src (w₁ ++ 1 :: w₂)) ++ res)] }
+        (by show (0 : Nat) < Compile.markBitTM.states; rw [Compile.markBitTM_states]; omega)
+        [] (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+        (Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res)
+        hsym_content hmark_run hmark_traj
+        (by rw [Compile.copyPipeTM_start]; exact hpipe_run)
+        (Compile.haltingStateReached_of_halt (Compile.copyPipeTM_exit_is_halt 1 dst))
+      have hraw_traj := branchComposeFlatTM_no_early_halt_neg
+        (show Compile.markBitTM_exit 0 ≠ Compile.markBitTM_exit 1 from by decide)
+        Compile.markBitTM_valid (Compile.copyPipeTM_valid 0 dst (by decide))
+        (Compile.copyPipeTM_valid 1 dst (by decide))
+        (by rw [Compile.markBitTM_states]; decide)
+        (by rw [Compile.markBitTM_states]; decide)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                     Compile.encodeTape (State.set q src (w₁ ++ 1 :: w₂)) ++ res)] }
+        (by show (0 : Nat) < Compile.markBitTM.states; rw [Compile.markBitTM_states]; omega)
+        [] (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+        (Compile.encodeTape (State.set q src (w₁ ++ 2 :: w₂)) ++ res)
+        hsym_content hmark_run hmark_traj
+        (fun k hk ck hck => ((hpipe_traj k hk ck
+          (by rw [Compile.copyPipeTM_start] at hck; exact hck)).2))
+      have hst : Compile.copyPipeTM_exit dst
+            + (Compile.markBitTM.states + (Compile.copyPipeTM 0 dst).states)
+          = Compile.copyContent_exit1 dst := by
+        rw [Compile.markBitTM_states, Compile.copyPipeTM_states]
+        show (23 + 3 * dst : Nat) + (3 + (24 + 3 * dst))
+            = 3 + (24 + 3 * dst) + (23 + 3 * dst)
+        omega
+      rw [hst] at hraw
+      have hsym_final : ∀ v, currentTapeSymbol
+          ([], 1 + (Compile.encodeRegs ((q.set dst (State.get q dst ++ [1])).take
+              src)).length + w₁.length + 1,
+            Compile.encodeTape (q.set dst (State.get q dst ++ [1])) ++ res) = some v →
+          v < (Compile.copyContentRawTM dst).sig := by
+        intro v hv
+        rw [Compile.copyContentRawTM_sig]
+        exact Compile.sym_bound_of_lt_four _ hTout_lt4 _ v hv
+      obtain ⟨hjrun, hjtraj⟩ := Compile.joinTwoHalts_reaches_demoted
+        (Compile.copyContentRawTM dst) (Compile.copyContent_exit0 dst)
+        (Compile.copyContent_exit1 dst) _ _ _ _ _ hraw.1
+        (fun k hk ck hck => hraw_traj k hk ck hck) hh1 hh2 hexne hsym_final
+      exact ⟨_, hjrun, hjtraj, by omega⟩
+  obtain ⟨Tc, hcontent_run, hcontent_traj, hTc_le⟩ := hContent
+  -- ### the outer branch: delimiter test (content) ⨾ content machine
+  have hdelim_run := ClearGadget.delimTestTM_run_content 4 (by decide) []
+    (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)
+    (1 + (Compile.encodeRegs (q.take src)).length + w₁.length) (b + 1) hHlt hHget
+    (by omega) (by omega)
+  have hsym_outer := Compile.copyBody_sym_bound dst
+    (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+    (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res) hTin_lt4
+  have houter := branchComposeFlatTM_run_pos
+    (show ClearGadget.delimTestTM_exit_content ≠ ClearGadget.delimTestTM_exit_delim
+      from by decide)
+    (ClearGadget.delimTestTM_valid 4 (by decide)) (Compile.copyContentTM_valid dst)
+    Compile.idTM_valid
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    { state_idx := 0,
+      tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                 Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)] }
+    (by show (0 : Nat) < (ClearGadget.delimTestTM 4).states
+        rw [ClearGadget.delimTestTM_states]; omega)
+    [] (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+    (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)
+    hsym_outer hdelim_run
+    (fun k hk ck hck => ClearGadget.delimTestTM_no_early_halt 4 _ _ _ k hk ck hck)
+    hcontent_run
+    (Compile.haltingStateReached_of_halt (Compile.copyContentTM_exit_is_halt dst))
+  have houter_traj := branchComposeFlatTM_no_early_halt_pos
+    (ClearGadget.delimTestTM_valid 4 (by decide)) (Compile.copyContentTM_valid dst)
+    Compile.idTM_valid
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    { state_idx := 0,
+      tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                 Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)] }
+    (by show (0 : Nat) < (ClearGadget.delimTestTM 4).states
+        rw [ClearGadget.delimTestTM_states]; omega)
+    [] (1 + (Compile.encodeRegs (q.take src)).length + w₁.length)
+    (Compile.encodeTape (State.set q src (w₁ ++ b :: w₂)) ++ res)
+    hsym_outer hdelim_run
+    (fun k hk ck hck => ClearGadget.delimTestTM_no_early_halt 4 _ _ _ k hk ck hck)
+    (fun k hk ck hck => (hcontent_traj k hk ck hck).2)
+  have hstout : Compile.copyContent_exit0 dst + (ClearGadget.delimTestTM 4).states
+      = Compile.copyBody_exitLoop dst := by
+    rw [ClearGadget.delimTestTM_states]
+    show (3 + (23 + 3 * dst) : Nat) + 3 = 29 + 3 * dst
+    omega
+  rw [hstout] at houter
+  refine ⟨_, houter.1, ?_, ?_⟩
+  · intro k hk ck hck
+    have hh := houter_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.copyBodyTM_exitDone_is_halt dst) hh,
+           ClearGadget.ne_of_not_halting (Compile.copyBodyTM_exitLoop_is_halt dst) hh, hh⟩
+  · omega
 
 /-- **The cursor cell.** Cell `1 + |encodeRegs (q.take src)| + i` of
 `encodeTape q ++ res` is register `src`'s cell `i`: the shifted bit
