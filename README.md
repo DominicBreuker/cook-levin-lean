@@ -100,9 +100,9 @@ are deleted).
 
 **Caveat surfaced (do not under-estimate C2):** 6 of 12 `compileOp`s still lack
 a discharged soundness case (`tail`/`eqBit`/`concat`/`takeAt`/`dropAt`/`consLen`;
-real machines + proven cases exist for `appendOne`/`appendZero`/`clear`/
-`nonEmpty`/`head`, and `copy`'s machine is real with its case discharged onto a
-probe-pinned run lemma, 2026-06-12). `Compile_sound` was false as stated for *three*
+real machines + FULLY PROVEN cases exist for `appendOne`/`appendZero`/`clear`/
+`nonEmpty`/`head`/`copy` — the cursor-copy run-lemma stack was completed
+axiom-clean 2026-06-12b). `Compile_sound` was false as stated for *three*
 reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
 **unit cost** but `concat`/`copy` grow the state **multiplicatively** (output
