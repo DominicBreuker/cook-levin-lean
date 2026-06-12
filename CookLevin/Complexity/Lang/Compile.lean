@@ -640,38 +640,179 @@ def Compile.opAppendOne (dst : Var) : CompiledCmd :=
 def Compile.opAppendZero (dst : Var) : CompiledCmd :=
   Compile.opAppendBitRewind 1 (by decide) dst
 
-/-- Compile `Op.copy dst src`. **Stub.** -/
-def Compile.opCopy (_dst _src : Var) : CompiledCmd := compiledCmd_default
+/-! ### Class-A op machinery: `copy`/`tail` — the in-place cursor-copy gadget
 
-/-- Compile `Op.tail dst src`. **Stub.** -/
-def Compile.opTail (_dst _src : Var) : CompiledCmd := compiledCmd_default
+The W-invariant ① forbids move-based copying (every `moveRegionTM` pass appends
+`|src|` zeros to the residue), and the pinned per-op contract has no scratch
+register. The forced — and `#eval`-probe-validated (`probes/CursorCopyProbe.lean`,
+2026-06-11) — design is the **in-place marking/cursor read**:
 
-/-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
-def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
+`copyRegionFullTM dst src` (`dst ≠ src`) =
+  `clearRegionTM dst ⨾ navigateToRegTM src ⨾ loopTM(cursor body) ⨾ justRewind`
 
-/-! ### Class-A op machinery: `nonEmpty` (`compileOp` dispatches here)
+The cursor body starts with the head ON the next unprocessed cell of `src`
+(`markReadTM`): a `0` delimiter → the DONE exit; a shifted bit `b+1` → overwrite
+it with the mark `endMark = 3` and run the per-bit pipeline `copyPipeTM b dst`:
+step left off the mark, scan left to the leading sentinel, `appendAtTM (b+1) dst`
+(its existing run lemmas tolerate the interior `3` verbatim: `skipped` blocks and
+`post` only need `≠ 0` / `< 4`), then return — scan left from the tape end to the
+*trailing terminator*, step left, scan left to the *mark* (the only interior `3`),
+restore `b+1` over it and step right onto the next cursor. The marked tape is
+`encodeTape` of a state with one `2`-valued cell, so the `encodeTape` structure
+lemmas apply; the loop adds NO residue (insertions grow the encoded region).
 
-`nonEmpty dst src` reads register `src`, branches, and writes a single answer bit
-to (a freshly cleared) register `dst`. The machine reads `src` FIRST (so it is
-correct even when `dst = src`): `navigateAndTest src ⨠ branch ⨠ (rewind ⨠ clear
-dst ⨠ append answer-bit)`. Each branch's clear-then-append reuses the proven
-`opClear`/`opAppendBitRewind` `CompiledCmd`s. The two branch exits are merged into
-a single exit by `joinTwoHalts` (bridge `delimExit → contentExit`). Validated
-end-to-end by `#eval` (incl. `dst = src`). -/
+Residue: exactly the clear phase's `replicate |dst₀| 0`.
+`copy dst dst` is a compile-time no-op (`compiledCmd_default`); `tail dst dst`
+is one clear-style delete (`clearBodyRawTM` with both exits joined); `tail dst
+src` (`dst ≠ src`) is the same machine with a `skipReadTM` pre-stage stepping
+over `src`'s first cell before entering the cursor loop. -/
 
-/-- `composeFlatTM` inherits a unique halt from `M₂`'s unique halt. -/
-theorem Compile.composeFlatTM_halt_unique (M₁ M₂ : FlatTM) (e₂ exit : Nat)
-    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂) :
-    ∀ i, (composeFlatTM M₁ M₂ exit).halt[i]? = some true → i = M₁.states + e₂ := by
-  intro i hi
-  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp M₁ M₂ exit i hi
-  have := h2 _ hh; omega
+/-- `markBitTM` entry: shifted bit `b+1` → write the mark `3`, exit `1+b`. -/
+private def Compile.markBitEntry (b : Nat) : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some (b + 1)], dst_state := 1 + b,
+    dst_write_vals := [some 3], move_dirs := [TMMove.Nmove] }
 
-/-- `M₂`'s halt state shifts to a halt of `composeFlatTM` (intro). -/
-theorem Compile.composeFlatTM_halt_intro (M₁ M₂ : FlatTM) (e₂ exit : Nat)
-    (h : M₂.halt[e₂]? = some true) :
-    (composeFlatTM M₁ M₂ exit).halt[M₁.states + e₂]? = some true :=
-  ScanLeft.composeFlatTM_halt_some_intro M₁ M₂ exit e₂ h
+/-- Read a CONTENT cursor cell (head ON it; the delimiter case is dispatched by
+an outer `delimTestTM` branch): shifted bit `b+1` → write the mark `3` over it,
+exit `1+b`. Head does not move. The marking analogue of `bitReadTM`. -/
+def Compile.markBitTM : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 3
+  trans := [Compile.markBitEntry 0, Compile.markBitEntry 1]
+  start := 0
+  halt := [false, true, true]
+
+def Compile.markBitTM_exit (b : Nat) : Nat := 1 + b
+
+theorem Compile.markBitTM_tapes : Compile.markBitTM.tapes = 1 := rfl
+theorem Compile.markBitTM_start : Compile.markBitTM.start = 0 := rfl
+theorem Compile.markBitTM_sig : Compile.markBitTM.sig = 4 := rfl
+theorem Compile.markBitTM_states : Compile.markBitTM.states = 3 := rfl
+
+theorem Compile.markBitTM_valid : validFlatTM Compile.markBitTM := by
+  refine ⟨show (0 : Nat) < 3 from by decide, rfl, ?_⟩
+  intro entry hentry
+  rcases List.mem_cons.mp hentry with h1 | hrest'
+  · subst h1
+    refine ⟨show (0:Nat) < 3 from by decide, show (1:Nat) < 3 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [Compile.markBitEntry] at hx; subst hx; decide
+    · intro x hx; simp [Compile.markBitEntry] at hx; subst hx; decide
+  · rcases List.mem_cons.mp hrest' with h2 | hnil
+    · subst h2
+      refine ⟨show (0:Nat) < 3 from by decide, show (2:Nat) < 3 from by decide,
+        rfl, rfl, rfl, ?_, ?_⟩
+      · intro x hx; simp [Compile.markBitEntry] at hx; subst hx; decide
+      · intro x hx; simp [Compile.markBitEntry] at hx; subst hx; decide
+    · exact absurd hnil (by simp)
+
+/-- The trivial immediate-halt machine (a branch body that does nothing —
+its start state IS its unique halt state). -/
+def Compile.idTM : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 1
+  trans := []
+  start := 0
+  halt := [true]
+
+theorem Compile.idTM_valid : validFlatTM Compile.idTM := by
+  refine ⟨by decide, rfl, ?_⟩
+  intro entry hentry
+  exact absurd hentry (by simp [Compile.idTM])
+
+/-- `restoreStepTM b` entry: at the mark `3`, write `b+1` back and move right. -/
+private def Compile.restoreStepEntry (b : Nat) : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some 3], dst_state := 1,
+    dst_write_vals := [some (b + 1)], move_dirs := [TMMove.Rmove] }
+
+/-- At the mark: restore the shifted bit `b+1` over the `3` and step right onto
+the next cursor cell. -/
+def Compile.restoreStepTM (b : Nat) : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 2
+  trans := [Compile.restoreStepEntry b]
+  start := 0
+  halt := [false, true]
+
+theorem Compile.restoreStepTM_tapes (b : Nat) : (Compile.restoreStepTM b).tapes = 1 := rfl
+theorem Compile.restoreStepTM_states (b : Nat) : (Compile.restoreStepTM b).states = 2 := rfl
+
+theorem Compile.restoreStepTM_valid (b : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.restoreStepTM b) := by
+  refine ⟨show (0 : Nat) < 2 from by decide, rfl, ?_⟩
+  intro entry hentry
+  rcases List.mem_cons.mp hentry with h0 | hnil
+  · subst h0
+    refine ⟨show (0:Nat) < 2 from by decide, show (1:Nat) < 2 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [Compile.restoreStepEntry] at hx; subst hx
+      show (3 : Nat) < 4; decide
+    · intro x hx; simp [Compile.restoreStepEntry] at hx; subst hx
+      show b + 1 < 4; omega
+  · exact absurd hnil (by simp)
+
+/-- `skipReadTM` entry: `0` delimiter → exit `1` (src empty, no move). -/
+private def Compile.skipReadDelimEntry : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some 0], dst_state := 1,
+    dst_write_vals := [none], move_dirs := [TMMove.Nmove] }
+
+/-- `skipReadTM` entry: content cell `v ∈ {1,2}` → step right, exit `2`. -/
+private def Compile.skipReadBitEntry (v : Nat) : FlatTMTransEntry :=
+  { src_state := 0, src_tape_vals := [some v], dst_state := 2,
+    dst_write_vals := [none], move_dirs := [TMMove.Rmove] }
+
+/-- Skip `src`'s first cell (for `tail`): `0` → exit `1` (src empty); a content
+cell → step right onto the second cell, exit `2`. -/
+def Compile.skipReadTM : FlatTM where
+  sig := 4
+  tapes := 1
+  states := 3
+  trans := [Compile.skipReadDelimEntry, Compile.skipReadBitEntry 1,
+            Compile.skipReadBitEntry 2]
+  start := 0
+  halt := [false, true, true]
+
+def Compile.skipReadTM_exit_empty : Nat := 1
+def Compile.skipReadTM_exit_bit : Nat := 2
+
+theorem Compile.skipReadTM_tapes : Compile.skipReadTM.tapes = 1 := rfl
+theorem Compile.skipReadTM_states : Compile.skipReadTM.states = 3 := rfl
+
+theorem Compile.skipReadTM_valid : validFlatTM Compile.skipReadTM := by
+  refine ⟨show (0 : Nat) < 3 from by decide, rfl, ?_⟩
+  intro entry hentry
+  rcases List.mem_cons.mp hentry with h0 | hrest
+  · subst h0
+    refine ⟨show (0:Nat) < 3 from by decide, show (1:Nat) < 3 from by decide,
+      rfl, rfl, rfl, ?_, ?_⟩
+    · intro x hx; simp [Compile.skipReadDelimEntry] at hx; subst hx; decide
+    · intro x hx; simp [Compile.skipReadDelimEntry] at hx; subst hx; trivial
+  · rcases List.mem_cons.mp hrest with h1 | hrest'
+    · subst h1
+      refine ⟨show (0:Nat) < 3 from by decide, show (2:Nat) < 3 from by decide,
+        rfl, rfl, rfl, ?_, ?_⟩
+      · intro x hx; simp [Compile.skipReadBitEntry] at hx; subst hx; decide
+      · intro x hx; simp [Compile.skipReadBitEntry] at hx; subst hx; trivial
+    · rcases List.mem_cons.mp hrest' with h2 | hnil
+      · subst h2
+        refine ⟨show (0:Nat) < 3 from by decide, show (2:Nat) < 3 from by decide,
+          rfl, rfl, rfl, ?_, ?_⟩
+        · intro x hx; simp [Compile.skipReadBitEntry] at hx; subst hx; decide
+        · intro x hx; simp [Compile.skipReadBitEntry] at hx; subst hx; trivial
+      · exact absurd hnil (by simp)
+
+/-- `appendAtTM`'s state count: `9` (scanner `3` + inserter `6`) plus `3` per
+skipped register. So `appendAtTM_exit dst = 8 + 3·dst` is its last state. -/
+theorem Compile.appendAtTM_states (ins : Nat) :
+    ∀ dst, (AppendGadget.appendAtTM ins dst).states = 9 + 3 * dst
+  | 0     => rfl
+  | d + 1 => by
+      show (composeFlatTM _ (AppendGadget.appendAtTM ins d) _).states = _
+      rw [composeFlatTM_states, Compile.appendAtTM_states ins d]
+      show 3 + (9 + 3 * d) = 9 + 3 * (d + 1); omega
 
 /-- A `branchComposeFlatTM` of two unique-halt sub-machines has exactly the two
 shifted branch exits as halt states. -/
@@ -725,6 +866,532 @@ theorem Compile.branchComposeFlatTM_M3_halt_intro (M₁ M₂ M₃ : FlatTM) (ep 
   rw [List.getElem?_append_right (by rw [hlen]; omega), hlen,
       show M₁.states + M₂.states + e₃ - (M₁.states + M₂.states) = e₃ by omega]
   exact h
+
+/-- `composeFlatTM` inherits a unique halt from `M₂`'s unique halt. -/
+theorem Compile.composeFlatTM_halt_unique (M₁ M₂ : FlatTM) (e₂ exit : Nat)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂) :
+    ∀ i, (composeFlatTM M₁ M₂ exit).halt[i]? = some true → i = M₁.states + e₂ := by
+  intro i hi
+  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp M₁ M₂ exit i hi
+  have := h2 _ hh; omega
+
+/-- Pipeline stage 1–2: step off the mark, scan left to the leading sentinel.
+States `5`, exit `3` (the scan's found state, shifted). -/
+def Compile.copyRet1TM : FlatTM :=
+  composeFlatTM (ScanLeft.stepLeftTM 4) (ScanLeft.scanLeftUntilTM 4 3) 1
+
+theorem Compile.copyRet1TM_states : Compile.copyRet1TM.states = 5 := rfl
+theorem Compile.copyRet1TM_start : Compile.copyRet1TM.start = 0 := rfl
+theorem Compile.copyRet1TM_tapes : Compile.copyRet1TM.tapes = 1 := rfl
+theorem Compile.copyRet1TM_sig : Compile.copyRet1TM.sig = 4 := rfl
+
+theorem Compile.copyRet1TM_valid : validFlatTM Compile.copyRet1TM :=
+  composeFlatTM_valid _ _ _ (ScanLeft.stepLeftTM_valid 4)
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide)) (by decide) rfl rfl
+
+/-- Pipeline stages 1–3: … then `appendAtTM (b+1) dst` (append the bit to
+`dst`'s end). States `14 + 3·dst`, exit `5 + appendAtTM_exit dst = 13 + 3·dst`. -/
+def Compile.copyPipeA2TM (b dst : Nat) : FlatTM :=
+  composeFlatTM Compile.copyRet1TM (AppendGadget.appendAtTM (b + 1) dst) 3
+
+theorem Compile.copyPipeA2TM_states (b dst : Nat) :
+    (Compile.copyPipeA2TM b dst).states = 14 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyRet1TM_states, Compile.appendAtTM_states]
+  omega
+
+theorem Compile.copyPipeA2TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA2TM b dst) :=
+  composeFlatTM_valid _ _ _ Compile.copyRet1TM_valid
+    (AppendGadget.appendAtTM_valid (b + 1) (by omega) dst)
+    (by rw [Compile.copyRet1TM_states]; decide) Compile.copyRet1TM_tapes
+    (AppendGadget.appendAtTM_tapes _ dst)
+
+/-- Stages 1–4: … then scan left from the tape end to the trailing terminator.
+States `17 + 3·dst`, exit `15 + 3·dst`. -/
+def Compile.copyPipeA3TM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA2TM b dst) (ScanLeft.scanLeftUntilTM 4 3) (13 + 3 * dst)
+
+theorem Compile.copyPipeA3TM_states (b dst : Nat) :
+    (Compile.copyPipeA3TM b dst).states = 17 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA2TM_states]
+  show 14 + 3 * dst + 3 = 17 + 3 * dst; omega
+
+theorem Compile.copyPipeA3TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA3TM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA2TM_valid b dst hb)
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide))
+    (by rw [Compile.copyPipeA2TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- Stages 1–5: … then step left off the trailing terminator.
+States `19 + 3·dst`, exit `18 + 3·dst`. -/
+def Compile.copyPipeA4TM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA3TM b dst) (ScanLeft.stepLeftTM 4) (15 + 3 * dst)
+
+theorem Compile.copyPipeA4TM_states (b dst : Nat) :
+    (Compile.copyPipeA4TM b dst).states = 19 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA3TM_states]
+  show 17 + 3 * dst + 2 = 19 + 3 * dst; omega
+
+theorem Compile.copyPipeA4TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA4TM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA3TM_valid b dst hb)
+    (ScanLeft.stepLeftTM_valid 4)
+    (by rw [Compile.copyPipeA3TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- Stages 1–6: … then scan left to the mark (the only interior `3`).
+States `22 + 3·dst`, exit `20 + 3·dst`. -/
+def Compile.copyPipeA5TM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA4TM b dst) (ScanLeft.scanLeftUntilTM 4 3) (18 + 3 * dst)
+
+theorem Compile.copyPipeA5TM_states (b dst : Nat) :
+    (Compile.copyPipeA5TM b dst).states = 22 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA4TM_states]
+  show 19 + 3 * dst + 3 = 22 + 3 * dst; omega
+
+theorem Compile.copyPipeA5TM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeA5TM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA4TM_valid b dst hb)
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide))
+    (by rw [Compile.copyPipeA4TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- The full per-bit pipeline (head starts ON the freshly written mark):
+`stepLeft ⨾ scanLeft₃ ⨾ appendAtTM (b+1) dst ⨾ scanLeft₃ ⨾ stepLeft ⨾
+scanLeft₃ ⨾ restoreStep b`. States: `24 + 3·dst`; exit `23 + 3·dst`
+(`restoreStepTM`'s halt, shifted — the unique halt state). -/
+def Compile.copyPipeTM (b dst : Nat) : FlatTM :=
+  composeFlatTM (Compile.copyPipeA5TM b dst) (Compile.restoreStepTM b) (20 + 3 * dst)
+
+def Compile.copyPipeTM_exit (dst : Nat) : Nat := 23 + 3 * dst
+
+theorem Compile.copyPipeTM_states (b dst : Nat) :
+    (Compile.copyPipeTM b dst).states = 24 + 3 * dst := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, Compile.copyPipeA5TM_states]
+  show 22 + 3 * dst + 2 = 24 + 3 * dst; omega
+
+theorem Compile.copyPipeTM_tapes (b dst : Nat) : (Compile.copyPipeTM b dst).tapes = 1 := rfl
+theorem Compile.copyPipeTM_start (b dst : Nat) : (Compile.copyPipeTM b dst).start = 0 := rfl
+
+theorem Compile.copyPipeA2TM_sig (b dst : Nat) : (Compile.copyPipeA2TM b dst).sig = 4 := by
+  show max Compile.copyRet1TM.sig (AppendGadget.appendAtTM (b + 1) dst).sig = 4
+  rw [AppendGadget.appendAtTM_sig]
+  rfl
+
+theorem Compile.copyPipeA3TM_sig (b dst : Nat) : (Compile.copyPipeA3TM b dst).sig = 4 := by
+  show max (Compile.copyPipeA2TM b dst).sig (ScanLeft.scanLeftUntilTM 4 3).sig = 4
+  rw [Compile.copyPipeA2TM_sig]
+  rfl
+
+theorem Compile.copyPipeA4TM_sig (b dst : Nat) : (Compile.copyPipeA4TM b dst).sig = 4 := by
+  show max (Compile.copyPipeA3TM b dst).sig (ScanLeft.stepLeftTM 4).sig = 4
+  rw [Compile.copyPipeA3TM_sig]
+  rfl
+
+theorem Compile.copyPipeA5TM_sig (b dst : Nat) : (Compile.copyPipeA5TM b dst).sig = 4 := by
+  show max (Compile.copyPipeA4TM b dst).sig (ScanLeft.scanLeftUntilTM 4 3).sig = 4
+  rw [Compile.copyPipeA4TM_sig]
+  rfl
+
+theorem Compile.copyPipeTM_sig (b dst : Nat) : (Compile.copyPipeTM b dst).sig = 4 := by
+  show max (Compile.copyPipeA5TM b dst).sig (Compile.restoreStepTM b).sig = 4
+  rw [Compile.copyPipeA5TM_sig]
+  rfl
+
+theorem Compile.copyPipeTM_valid (b dst : Nat) (hb : b ≤ 1) :
+    validFlatTM (Compile.copyPipeTM b dst) :=
+  composeFlatTM_valid _ _ _ (Compile.copyPipeA5TM_valid b dst hb)
+    (Compile.restoreStepTM_valid b hb)
+    (by rw [Compile.copyPipeA5TM_states]; omega) Compile.copyRet1TM_tapes rfl
+
+/-- The pipeline's exit is a halt state (`restoreStepTM`'s halt `1`, shifted by
+`copyPipeA5TM.states = 22 + 3·dst`). -/
+theorem Compile.copyPipeTM_exit_is_halt (b dst : Nat) :
+    (Compile.copyPipeTM b dst).halt[Compile.copyPipeTM_exit dst]? = some true := by
+  have h := AppendGadget.composeFlatTM_shifted_is_halt
+    (Compile.copyPipeA5TM b dst) (Compile.restoreStepTM b) (20 + 3 * dst) 1 (by rfl)
+  rw [Compile.copyPipeA5TM_states] at h
+  show (Compile.copyPipeTM b dst).halt[23 + 3 * dst]? = some true
+  rw [show 23 + 3 * dst = 22 + 3 * dst + 1 from by omega]
+  exact h
+
+/-- The pipeline's halt is unique (only `restoreStepTM`'s halt survives the
+`composedHalt` zeroing). -/
+theorem Compile.copyPipeTM_halt_unique (b dst : Nat) :
+    ∀ i, (Compile.copyPipeTM b dst).halt[i]? = some true →
+      i = Compile.copyPipeTM_exit dst := by
+  intro i hi
+  have h := Compile.composeFlatTM_halt_unique (Compile.copyPipeA5TM b dst)
+    (Compile.restoreStepTM b) 1 (20 + 3 * dst)
+    (by intro j hj
+        change ([false, true] : List Bool)[j]? = some true at hj
+        rcases j with _ | _ | j <;> simp_all) i hi
+  rw [Compile.copyPipeA5TM_states] at h
+  show i = 23 + 3 * dst
+  omega
+
+/-- The content half of the cursor-loop body, raw: `markBitTM` branched into
+the two per-bit pipelines. States: `3 + 2·(24 + 3·dst) = 51 + 6·dst`. -/
+def Compile.copyContentRawTM (dst : Nat) : FlatTM :=
+  branchComposeFlatTM Compile.markBitTM
+    (Compile.copyPipeTM 0 dst) (Compile.copyPipeTM 1 dst)
+    (Compile.markBitTM_exit 0) (Compile.markBitTM_exit 1)
+
+/-- The bit-0 pipeline's exit (the kept exit after the join). -/
+def Compile.copyContent_exit0 (dst : Nat) : Nat := 3 + Compile.copyPipeTM_exit dst
+/-- The bit-1 pipeline's exit (demoted into `copyContent_exit0` by the join). -/
+def Compile.copyContent_exit1 (dst : Nat) : Nat :=
+  3 + (24 + 3 * dst) + Compile.copyPipeTM_exit dst
+
+theorem Compile.copyContentRawTM_states (dst : Nat) :
+    (Compile.copyContentRawTM dst).states = 51 + 6 * dst := by
+  show (branchComposeFlatTM _ _ _ _ _).states = _
+  rw [branchComposeFlatTM_states, Compile.markBitTM_states,
+      Compile.copyPipeTM_states, Compile.copyPipeTM_states]
+  omega
+
+theorem Compile.copyContentRawTM_valid (dst : Nat) :
+    validFlatTM (Compile.copyContentRawTM dst) :=
+  branchComposeFlatTM_valid _ _ _ _ _ Compile.markBitTM_valid
+    (Compile.copyPipeTM_valid 0 dst (by decide)) (Compile.copyPipeTM_valid 1 dst (by decide))
+    (by rw [Compile.markBitTM_states]; decide) (by rw [Compile.markBitTM_states]; decide)
+    Compile.markBitTM_tapes (Compile.copyPipeTM_tapes 0 dst) (Compile.copyPipeTM_tapes 1 dst)
+
+theorem Compile.copyContentRawTM_sig (dst : Nat) : (Compile.copyContentRawTM dst).sig = 4 := by
+  show max Compile.markBitTM.sig
+    (max (Compile.copyPipeTM 0 dst).sig (Compile.copyPipeTM 1 dst).sig) = 4
+  rw [Compile.markBitTM_sig, Compile.copyPipeTM_sig, Compile.copyPipeTM_sig]
+  rfl
+
+theorem Compile.copyContentRawTM_tapes (dst : Nat) : (Compile.copyContentRawTM dst).tapes = 1 :=
+  Compile.markBitTM_tapes
+
+/-- The content half with the two pipeline exits merged (`exit1 → exit0`). -/
+def Compile.copyContentTM (dst : Nat) : FlatTM :=
+  Compile.joinTwoHalts (Compile.copyContentRawTM dst)
+    (Compile.copyContent_exit0 dst) (Compile.copyContent_exit1 dst)
+
+theorem Compile.copyContentTM_states (dst : Nat) :
+    (Compile.copyContentTM dst).states = 51 + 6 * dst := Compile.copyContentRawTM_states dst
+
+theorem Compile.copyContentTM_valid (dst : Nat) : validFlatTM (Compile.copyContentTM dst) :=
+  Compile.joinTwoHalts_valid _ _ _ (Compile.copyContentRawTM_valid dst)
+    (by rw [Compile.copyContentRawTM_states]
+        show 3 + (23 + 3 * dst) < 51 + 6 * dst; omega)
+    (by rw [Compile.copyContentRawTM_states]
+        show 3 + (24 + 3 * dst) + (23 + 3 * dst) < 51 + 6 * dst; omega)
+    (Compile.copyContentRawTM_tapes dst)
+
+/-- The cursor-loop body: outer `delimTestTM` branch — content cell → the
+marked-copy pass (`copyContentTM`, M₂ slot), delimiter (src exhausted) → the
+trivial `idTM` (M₃ slot). States: `3 + (51 + 6·dst) + 1 = 55 + 6·dst`. The two
+`loopTM` exits: ITERATE = `29 + 3·dst` (contentTM's kept exit, shifted), DONE =
+`54 + 6·dst` (`idTM`'s start/halt, shifted). -/
+def Compile.copyBodyTM (dst : Nat) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.delimTestTM 4) (Compile.copyContentTM dst) Compile.idTM
+    ClearGadget.delimTestTM_exit_content ClearGadget.delimTestTM_exit_delim
+
+def Compile.copyBody_exitLoop (dst : Nat) : Nat := 29 + 3 * dst
+def Compile.copyBody_exitDone (dst : Nat) : Nat := 54 + 6 * dst
+
+theorem Compile.copyBodyTM_states (dst : Nat) :
+    (Compile.copyBodyTM dst).states = 55 + 6 * dst := by
+  show (branchComposeFlatTM _ _ _ _ _).states = _
+  rw [branchComposeFlatTM_states, ClearGadget.delimTestTM_states,
+      Compile.copyContentTM_states]
+  show 3 + (51 + 6 * dst) + 1 = 55 + 6 * dst; omega
+
+theorem Compile.copyBodyTM_valid (dst : Nat) : validFlatTM (Compile.copyBodyTM dst) :=
+  branchComposeFlatTM_valid _ _ _ _ _ (ClearGadget.delimTestTM_valid 4 (by decide))
+    (Compile.copyContentTM_valid dst) Compile.idTM_valid
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    (ClearGadget.delimTestTM_tapes 4) (Compile.copyContentRawTM_tapes dst) rfl
+
+theorem Compile.copyBodyTM_sig (dst : Nat) : (Compile.copyBodyTM dst).sig = 4 := by
+  show max (ClearGadget.delimTestTM 4).sig
+    (max (Compile.copyContentTM dst).sig Compile.idTM.sig) = 4
+  rw [ClearGadget.delimTestTM_sig]
+  show max 4 (max (Compile.copyContentRawTM dst).sig 4) = 4
+  rw [Compile.copyContentRawTM_sig]
+  rfl
+
+theorem Compile.copyBodyTM_tapes (dst : Nat) : (Compile.copyBodyTM dst).tapes = 1 :=
+  ClearGadget.delimTestTM_tapes 4
+
+/-- `copyContentTM`'s kept exit is a halt state (pipe-0's exit, shifted past
+`markBitTM`, surviving the join). -/
+theorem Compile.copyContentTM_exit_is_halt (dst : Nat) :
+    (Compile.copyContentTM dst).halt[Compile.copyContent_exit0 dst]? = some true := by
+  refine Compile.joinTwoHalts_h1_is_halt _ _ _ ?_ ?_
+  · show 3 + (23 + 3 * dst) ≠ 3 + (24 + 3 * dst) + (23 + 3 * dst); omega
+  · have h := Compile.branchComposeFlatTM_M2_halt_intro Compile.markBitTM
+      (Compile.copyPipeTM 0 dst) (Compile.copyPipeTM 1 dst)
+      (Compile.markBitTM_exit 0) (Compile.markBitTM_exit 1)
+      (Compile.copyPipeTM_exit dst)
+      (Compile.copyPipeTM_valid 0 dst (by decide))
+      (by rw [Compile.copyPipeTM_states]
+          show 23 + 3 * dst < 24 + 3 * dst; omega)
+      (Compile.copyPipeTM_exit_is_halt 0 dst)
+    rw [Compile.markBitTM_states] at h
+    exact h
+
+/-- `copyContentRawTM`'s halts are exactly the two pipeline exits. -/
+theorem Compile.copyContentRawTM_halt_only (dst : Nat) :
+    ∀ i, (Compile.copyContentRawTM dst).halt[i]? = some true →
+      i = Compile.copyContent_exit0 dst ∨ i = Compile.copyContent_exit1 dst := by
+  intro i hi
+  have h := Compile.branchComposeFlatTM_halt_only Compile.markBitTM
+    (Compile.copyPipeTM 0 dst) (Compile.copyPipeTM 1 dst)
+    (Compile.markBitTM_exit 0) (Compile.markBitTM_exit 1)
+    (Compile.copyPipeTM_exit dst) (Compile.copyPipeTM_exit dst)
+    (Compile.copyPipeTM_valid 0 dst (by decide)) (Compile.copyPipeTM_valid 1 dst (by decide))
+    (Compile.copyPipeTM_halt_unique 0 dst) (Compile.copyPipeTM_halt_unique 1 dst) i hi
+  rw [Compile.markBitTM_states, Compile.copyPipeTM_states] at h
+  exact h
+
+/-- `copyContentTM`'s halt is unique after the join. -/
+theorem Compile.copyContentTM_halt_unique (dst : Nat) :
+    ∀ i, (Compile.copyContentTM dst).halt[i]? = some true →
+      i = Compile.copyContent_exit0 dst :=
+  Compile.joinTwoHalts_halt_unique _ _ _ (Compile.copyContentRawTM_halt_only dst)
+
+/-- The body's ITERATE exit is a halt state (`copyContentTM`'s kept exit,
+shifted past `delimTestTM`). -/
+theorem Compile.copyBodyTM_exitLoop_is_halt (dst : Nat) :
+    (Compile.copyBodyTM dst).halt[Compile.copyBody_exitLoop dst]? = some true := by
+  have h := Compile.branchComposeFlatTM_M2_halt_intro (ClearGadget.delimTestTM 4)
+    (Compile.copyContentTM dst) Compile.idTM
+    ClearGadget.delimTestTM_exit_content ClearGadget.delimTestTM_exit_delim
+    (Compile.copyContent_exit0 dst)
+    (Compile.copyContentTM_valid dst)
+    (by rw [Compile.copyContentTM_states]
+        show 3 + (23 + 3 * dst) < 51 + 6 * dst; omega)
+    (Compile.copyContentTM_exit_is_halt dst)
+  rw [ClearGadget.delimTestTM_states] at h
+  show (Compile.copyBodyTM dst).halt[29 + 3 * dst]? = some true
+  rw [show 29 + 3 * dst = 3 + (3 + (23 + 3 * dst)) from by omega]
+  exact h
+
+/-- The body's DONE exit is a halt state (`idTM`'s halt, shifted). -/
+theorem Compile.copyBodyTM_exitDone_is_halt (dst : Nat) :
+    (Compile.copyBodyTM dst).halt[Compile.copyBody_exitDone dst]? = some true := by
+  have h := Compile.branchComposeFlatTM_M3_halt_intro (ClearGadget.delimTestTM 4)
+    (Compile.copyContentTM dst) Compile.idTM
+    ClearGadget.delimTestTM_exit_content ClearGadget.delimTestTM_exit_delim
+    0 (Compile.copyContentTM_valid dst) (by rfl)
+  rw [ClearGadget.delimTestTM_states, Compile.copyContentTM_states] at h
+  show (Compile.copyBodyTM dst).halt[54 + 6 * dst]? = some true
+  rw [show 54 + 6 * dst = 3 + (51 + 6 * dst) + 0 from by omega]
+  exact h
+
+/-- The cursor-copy loop: iterate the body until `src` is exhausted. The loop's
+dedicated halt state is `copyBodyTM.states = 55 + 6·dst`. -/
+def Compile.copyLoopTM (dst : Nat) : FlatTM :=
+  loopTM (Compile.copyBodyTM dst) (Compile.copyBody_exitDone dst)
+    (Compile.copyBody_exitLoop dst)
+
+def Compile.copyLoopTM_exit (dst : Nat) : Nat := 55 + 6 * dst
+
+theorem Compile.copyLoopTM_states (dst : Nat) :
+    (Compile.copyLoopTM dst).states = 56 + 6 * dst := by
+  show (loopTM _ _ _).states = _
+  rw [loopTM_states, Compile.copyBodyTM_states]
+  omega
+
+theorem Compile.copyLoopTM_tapes (dst : Nat) : (Compile.copyLoopTM dst).tapes = 1 :=
+  Compile.copyBodyTM_tapes dst
+
+theorem Compile.copyLoopTM_sig (dst : Nat) : (Compile.copyLoopTM dst).sig = 4 :=
+  Compile.copyBodyTM_sig dst
+
+theorem Compile.copyLoopTM_valid (dst : Nat) : validFlatTM (Compile.copyLoopTM dst) :=
+  loopTM_valid _ _ _ (Compile.copyBodyTM_valid dst)
+    (by rw [Compile.copyBodyTM_states]
+        show 54 + 6 * dst < 55 + 6 * dst; omega)
+    (by rw [Compile.copyBodyTM_states]
+        show 29 + 3 * dst < 55 + 6 * dst; omega)
+    (Compile.copyBodyTM_tapes dst)
+
+/-- The full `copy dst src` machine (`dst ≠ src`):
+`clearRegionTM dst ⨾ navigateToRegTM src ⨾ copyLoopTM dst ⨾ justRewindTM`. -/
+def Compile.copyRegionFullTM (dst src : Nat) : FlatTM :=
+  composeFlatTM
+    (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.copyLoopTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src))
+    ClearGadget.justRewindTM
+    ((ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (55 + 6 * dst))
+
+/-- States below the final `justRewindTM` block. -/
+def Compile.copyRegionPreStates (dst src : Nat) : Nat :=
+  (ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (56 + 6 * dst)
+
+/-- The kept exit: `justRewindTM`'s found state, shifted. -/
+def Compile.copyRegionFullTM_exit (dst src : Nat) : Nat :=
+  Compile.copyRegionPreStates dst src + 1
+
+/-- The (unreachable) boundary halt: `justRewindTM`'s reject state, shifted. -/
+def Compile.copyRegionFullTM_reject (dst src : Nat) : Nat :=
+  Compile.copyRegionPreStates dst src + 2
+
+theorem Compile.copyRegionFullTM_states (dst src : Nat) :
+    (Compile.copyRegionFullTM dst src).states = Compile.copyRegionPreStates dst src + 3 := by
+  show (composeFlatTM _ _ _).states = _
+  repeat rw [composeFlatTM_states]
+  rw [ClearGadget.navigateToRegTM_states, Compile.copyLoopTM_states]
+  show _ + (2 + 3 * src) + (56 + 6 * dst) + 3 = _
+  rfl
+
+theorem Compile.copyRegionFullTM_valid (dst src : Nat) :
+    validFlatTM (Compile.copyRegionFullTM dst src) := by
+  refine composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _ (composeFlatTM_valid _ _ _
+      (ClearGadget.clearRegionTM_valid dst) (ClearGadget.navigateToRegTM_valid src)
+      ?_ (ClearGadget.clearRegionTM_tapes dst) (ClearGadget.navigateToRegTM_tapes src))
+      (Compile.copyLoopTM_valid dst) ?_ ?_ (Compile.copyLoopTM_tapes dst))
+    (ScanLeft.scanLeftUntilTM_valid 4 3 (by decide)) ?_ ?_ rfl
+  · -- clearRegionTM_exit < clearRegionTM.states
+    rw [ClearGadget.clearRegionTM_states]
+    show (ClearGadget.clearBodyRawTM dst).states < (ClearGadget.clearBodyRawTM dst).states + 1
+    omega
+  · -- nav exit < composed states
+    rw [composeFlatTM_states, ClearGadget.navigateToRegTM_states]
+    have := ClearGadget.navigateToRegTM_exit_lt src
+    rw [ClearGadget.navigateToRegTM_states] at this
+    omega
+  · show (composeFlatTM _ _ _).tapes = 1
+    show (ClearGadget.clearRegionTM dst).tapes = 1
+    exact ClearGadget.clearRegionTM_tapes dst
+  · -- loop exit < composed states
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.copyLoopTM_states]
+    omega
+  · show (composeFlatTM _ _ _).tapes = 1
+    show (composeFlatTM _ _ _).tapes = 1
+    show (ClearGadget.clearRegionTM dst).tapes = 1
+    exact ClearGadget.clearRegionTM_tapes dst
+
+theorem Compile.copyRegionFullTM_sig (dst src : Nat) :
+    (Compile.copyRegionFullTM dst src).sig = 4 := by
+  show max (max (max (ClearGadget.clearRegionTM dst).sig
+      (ClearGadget.navigateToRegTM src).sig) (Compile.copyLoopTM dst).sig)
+      ClearGadget.justRewindTM.sig = 4
+  rw [ClearGadget.clearRegionTM_sig, ClearGadget.navigateToRegTM_sig,
+      Compile.copyLoopTM_sig]
+  rfl
+
+theorem Compile.copyRegionFullTM_tapes (dst src : Nat) :
+    (Compile.copyRegionFullTM dst src).tapes = 1 :=
+  ClearGadget.clearRegionTM_tapes dst
+
+/-- Halt characterization of the full chain: only `justRewindTM`'s two halt
+states (shifted) are halting (`composedHalt` zeroes every `M₁` halt bit). -/
+theorem Compile.copyRegionFullTM_halt_only (dst src : Nat) :
+    ∀ i, (Compile.copyRegionFullTM dst src).halt[i]? = some true →
+      i = Compile.copyRegionFullTM_exit dst src ∨
+      i = Compile.copyRegionFullTM_reject dst src := by
+  intro i hi
+  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp _ _ _ i hi
+  have honly := ScanLeft.scanLeftUntilTM_halt_only 4 3 (i - _) hh
+  have hpre : (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.copyLoopTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src)).states
+      = Compile.copyRegionPreStates dst src := by
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.copyLoopTM_states]
+    rfl
+  rw [hpre] at hge hh honly
+  rcases honly with h | h
+  · left; show i = Compile.copyRegionPreStates dst src + 1; omega
+  · right; show i = Compile.copyRegionPreStates dst src + 2; omega
+
+/-- `justRewindTM`'s found state `1`, shifted, IS a halt of the full chain. -/
+theorem Compile.copyRegionFullTM_exit_is_halt (dst src : Nat) :
+    (Compile.copyRegionFullTM dst src).halt[Compile.copyRegionFullTM_exit dst src]?
+      = some true := by
+  have h := ScanLeft.composeFlatTM_halt_some_intro
+    (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.copyLoopTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src))
+    ClearGadget.justRewindTM
+    ((ClearGadget.clearRegionTM dst).states + (2 + 3 * src) + (55 + 6 * dst))
+    1 (by rfl)
+  have hpre : (composeFlatTM
+      (composeFlatTM (ClearGadget.clearRegionTM dst) (ClearGadget.navigateToRegTM src)
+        (ClearGadget.clearRegionTM_exit dst))
+      (Compile.copyLoopTM dst)
+      ((ClearGadget.clearRegionTM dst).states + ClearGadget.navigateToRegTM_exit src)).states
+      = Compile.copyRegionPreStates dst src := by
+    rw [composeFlatTM_states, composeFlatTM_states, ClearGadget.navigateToRegTM_states,
+        Compile.copyLoopTM_states]
+    rfl
+  rw [hpre] at h
+  exact h
+
+/-- Compile `Op.copy dst src`: the cursor-copy machine, with the rewind's
+boundary halt demoted (`joinTwoHalts`) for `halt_unique`. `dst = src` is a
+compile-time no-op (`Op.eval` leaves the state unchanged). -/
+def Compile.opCopy (dst src : Var) : CompiledCmd :=
+  if dst = src then compiledCmd_default else
+  { M := Compile.joinTwoHalts (Compile.copyRegionFullTM dst src)
+      (Compile.copyRegionFullTM_exit dst src) (Compile.copyRegionFullTM_reject dst src)
+    exit := Compile.copyRegionFullTM_exit dst src
+    exit_lt := by
+      show _ < (Compile.joinTwoHalts _ _ _).states
+      rw [Compile.joinTwoHalts_states, Compile.copyRegionFullTM_states]
+      show Compile.copyRegionPreStates dst src + 1 < Compile.copyRegionPreStates dst src + 3
+      omega
+    exit_is_halt :=
+      Compile.joinTwoHalts_h1_is_halt _ _ _
+        (by show Compile.copyRegionPreStates dst src + 1 ≠ Compile.copyRegionPreStates dst src + 2
+            omega)
+        (Compile.copyRegionFullTM_exit_is_halt dst src)
+    halt_unique :=
+      Compile.joinTwoHalts_halt_unique _ _ _ (Compile.copyRegionFullTM_halt_only dst src)
+    M_valid := Compile.joinTwoHalts_valid _ _ _ (Compile.copyRegionFullTM_valid dst src)
+      (by rw [Compile.copyRegionFullTM_states]
+          show Compile.copyRegionPreStates dst src + 1 < Compile.copyRegionPreStates dst src + 3
+          omega)
+      (by rw [Compile.copyRegionFullTM_states]
+          show Compile.copyRegionPreStates dst src + 2 < Compile.copyRegionPreStates dst src + 3
+          omega)
+      (Compile.copyRegionFullTM_tapes dst src)
+    M_tapes := Compile.copyRegionFullTM_tapes dst src
+    M_sig := Compile.copyRegionFullTM_sig dst src }
+
+/-- Compile `Op.tail dst src`. **Stub for now** — the machines are probe-validated
+(`probes/CursorCopyProbe.lean`: `tailInPlaceTM` = one clear-style delete via
+`clearBodyRawTM` with joined exits for `dst = src`; `skipReadTM ⨾ copyLoopTM` for
+`dst ≠ src`); wiring them as a `CompiledCmd` follows the `opCopy` pattern. -/
+def Compile.opTail (_dst _src : Var) : CompiledCmd := compiledCmd_default
+
+/-- Compile `Op.eqBit dst src1 src2`. **Stub.** -/
+def Compile.opEqBit (_dst _src1 _src2 : Var) : CompiledCmd := compiledCmd_default
+
+/-! ### Class-A op machinery: `nonEmpty` (`compileOp` dispatches here)
+
+`nonEmpty dst src` reads register `src`, branches, and writes a single answer bit
+to (a freshly cleared) register `dst`. The machine reads `src` FIRST (so it is
+correct even when `dst = src`): `navigateAndTest src ⨠ branch ⨠ (rewind ⨠ clear
+dst ⨠ append answer-bit)`. Each branch's clear-then-append reuses the proven
+`opClear`/`opAppendBitRewind` `CompiledCmd`s. The two branch exits are merged into
+a single exit by `joinTwoHalts` (bridge `delimExit → contentExit`). Validated
+end-to-end by `#eval` (incl. `dst = src`). -/
+
+/-- `M₂`'s halt state shifts to a halt of `composeFlatTM` (intro). -/
+theorem Compile.composeFlatTM_halt_intro (M₁ M₂ : FlatTM) (e₂ exit : Nat)
+    (h : M₂.halt[e₂]? = some true) :
+    (composeFlatTM M₁ M₂ exit).halt[M₁.states + e₂]? = some true :=
+  ScanLeft.composeFlatTM_halt_some_intro M₁ M₂ exit e₂ h
 
 /-- `joinTwoHalts` only demotes `h2`; it never *adds* a halt, so a non-halting
 config of `M` stays non-halting. -/
@@ -9263,6 +9930,360 @@ theorem Compile.opHead_run (s : State) (dst src : Var) (res_in : List Nat)
       have hL := hLge
       omega
 
+/-! ### Cursor-copy run lemmas (`copy` op, Risk C2 — bottom-up task 1)
+
+The lemma stack for the `#eval`-probe-validated cursor-copy machine
+(`probes/CursorCopyProbe.lean`): step lemmas for the two custom machines, the
+per-bit pipeline pass (`copyPipe_run`), the loop-body contracts in `loopTM_run`
+form (`copyBody_run_iter`/`copyBody_run_done`), the loop (`copyLoop_run`), and
+the per-op exact-residue lemma `opCopy_run` consumed by the contract case (and,
+with its EXACT residue formula `res ++ replicate |dst₀| 0`, by the future
+`compileForBnd` combinator — HANDOFF bottom-up task 2). -/
+
+/-- `markBitTM` on a shifted bit `b+1`: write the mark `3` over it, step to
+exit `1+b`, head unchanged. -/
+theorem Compile.markBitTM_step (b : Nat) (hb : b ≤ 1) (left right : List Nat)
+    (head : Nat) (hlt : head < right.length) (hget : right.get ⟨head, hlt⟩ = b + 1) :
+    stepFlatTM Compile.markBitTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 1 + b,
+               tapes := [(left, head, right.take head ++ 3 :: right.drop (head + 1))] } := by
+  have hsym : currentTapeSymbol (left, head, right) = some (b + 1) := by
+    rw [currentTapeSymbol_in_range hlt, hget]
+  interval_cases b <;>
+    simp_all [stepFlatTM, Compile.markBitTM, Compile.markBitEntry,
+      entryMatchesConfig, applyTransitionEntry, tapeStep,
+      writeCurrentTapeSymbol, moveTapeHead]
+
+/-- `markBitTM_step` in `runFlatTM` form. -/
+theorem Compile.markBitTM_run (b : Nat) (hb : b ≤ 1) (left right : List Nat)
+    (head : Nat) (hlt : head < right.length) (hget : right.get ⟨head, hlt⟩ = b + 1) :
+    runFlatTM 1 Compile.markBitTM { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 1 + b,
+               tapes := [(left, head, right.take head ++ 3 :: right.drop (head + 1))] } := by
+  show (if haltingStateReached Compile.markBitTM
+            { state_idx := 0, tapes := [(left, head, right)] } = true then _
+        else match stepFlatTM Compile.markBitTM
+            { state_idx := 0, tapes := [(left, head, right)] } with
+          | none => _ | some cfg' => runFlatTM 0 Compile.markBitTM cfg') = _
+  rw [show haltingStateReached Compile.markBitTM
+        { state_idx := 0, tapes := [(left, head, right)] } = false from rfl,
+      Compile.markBitTM_step b hb left right head hlt hget]
+  rfl
+
+/-- `markBitTM` never halts before its single step (state `0` is non-halting). -/
+theorem Compile.markBitTM_no_early_halt (left right : List Nat) (head : Nat) :
+    ∀ k, k < 1 → ∀ ck,
+      runFlatTM k Compile.markBitTM
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      haltingStateReached Compile.markBitTM ck = false := by
+  intro k hk ck hck
+  have hk0 : k = 0 := by omega
+  subst hk0
+  simp [runFlatTM] at hck; subst hck; rfl
+
+/-- `restoreStepTM b` at the mark: restore the shifted bit `b+1` and step right. -/
+theorem Compile.restoreStepTM_step (b : Nat) (hb : b ≤ 1) (left right : List Nat)
+    (head : Nat) (hlt : head < right.length) (hget : right.get ⟨head, hlt⟩ = 3) :
+    stepFlatTM (Compile.restoreStepTM b) { state_idx := 0, tapes := [(left, head, right)] }
+      = some { state_idx := 1,
+               tapes := [(left, head + 1,
+                          right.take head ++ (b + 1) :: right.drop (head + 1))] } := by
+  have hsym : currentTapeSymbol (left, head, right) = some 3 := by
+    rw [currentTapeSymbol_in_range hlt, hget]
+  interval_cases b <;>
+    simp_all [stepFlatTM, Compile.restoreStepTM, Compile.restoreStepEntry,
+      entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol,
+      moveTapeHead]
+
+/-- `restoreStepTM` never halts before its single step. -/
+theorem Compile.restoreStepTM_no_early_halt (b : Nat) (left right : List Nat) (head : Nat) :
+    ∀ k, k < 1 → ∀ ck,
+      runFlatTM k (Compile.restoreStepTM b)
+          { state_idx := 0, tapes := [(left, head, right)] } = some ck →
+      haltingStateReached (Compile.restoreStepTM b) ck = false := by
+  intro k hk ck hck
+  have hk0 : k = 0 := by omega
+  subst hk0
+  simp [runFlatTM] at hck; subst hck; rfl
+
+/-- **One cursor-copy pipeline pass (`copyPipeTM b dst`).** Started with the head
+ON the freshly written mark (src's cell `i = |w₁|`, the only interior `3`), the
+pipeline rewinds to the sentinel, appends `b` to `dst` (`appendAtTM (b+1)`),
+returns to the mark via scan-left-from-the-end (trailing terminator, step left,
+mark), restores `b+1` over the mark and steps right onto the next cursor cell.
+`q` is the un-marked loop-invariant state; `dst ≠ src`; the marked tape is
+`encodeTape (q.set src (w₁ ++ 2 :: w₂))` (cell value `2` encodes to the mark `3`).
+The residue passes through untouched. Budget: `≤ 5·L + 16` over the *final*
+tape (`L = |encodeTape (q.set dst …) ++ res|`, one cell longer than the input). -/
+theorem Compile.copyPipe_run (b : Nat) (hb : b ≤ 1) (q : State) (dst src : Var)
+    (hne : dst ≠ src) (hdst : dst < q.length) (hsrc : src < q.length)
+    (hbit : Compile.BitState q) (w₁ w₂ : List Nat)
+    (hsplit : State.get q src = w₁ ++ b :: w₂)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ T,
+      runFlatTM T (Compile.copyPipeTM b dst)
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                       Compile.encodeTape (q.set src (w₁ ++ 2 :: w₂)) ++ res)] }
+        = some { state_idx := Compile.copyPipeTM_exit dst,
+                 tapes := [([],
+                   1 + (Compile.encodeRegs ((q.set dst (State.get q dst ++ [b])).take src)).length
+                     + w₁.length + 1,
+                   Compile.encodeTape (q.set dst (State.get q dst ++ [b])) ++ res)] }
+      ∧ (∀ k, k < T → ∀ ck,
+          runFlatTM k (Compile.copyPipeTM b dst)
+              { state_idx := 0,
+                tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                           Compile.encodeTape (q.set src (w₁ ++ 2 :: w₂)) ++ res)] } = some ck →
+          ck.state_idx ≠ Compile.copyPipeTM_exit dst ∧
+          haltingStateReached (Compile.copyPipeTM b dst) ck = false)
+      ∧ T ≤ 5 * (Compile.encodeTape (q.set dst (State.get q dst ++ [b])) ++ res).length + 16 := by
+  sorry
+
+/-- **Cursor-loop body, ITERATE contract** (`loopTM_run`'s iteration shape).
+From the un-marked cursor config (head ON src's cell `i = |w₁|`, a bit `b`),
+`copyBodyTM dst` tests it (`delimTestTM`, content branch), marks it
+(`markBitTM`), branch-bridges into `copyPipeTM b dst`, and (for `b = 1`, via
+the extra `joinTwoHalts` bridge) lands at the merged iterate exit
+`copyBody_exitLoop dst` on the next cursor config. -/
+theorem Compile.copyBody_run_iter (q : State) (dst src : Var)
+    (hne : dst ≠ src) (hdst : dst < q.length) (hsrc : src < q.length)
+    (hbit : Compile.BitState q) (b : Nat) (hb : b ≤ 1) (w₁ w₂ : List Nat)
+    (hsplit : State.get q src = w₁ ++ b :: w₂)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ T,
+      runFlatTM T (Compile.copyBodyTM dst)
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                       Compile.encodeTape q ++ res)] }
+        = some { state_idx := Compile.copyBody_exitLoop dst,
+                 tapes := [([],
+                   1 + (Compile.encodeRegs ((q.set dst (State.get q dst ++ [b])).take src)).length
+                     + w₁.length + 1,
+                   Compile.encodeTape (q.set dst (State.get q dst ++ [b])) ++ res)] }
+      ∧ (∀ k, k < T → ∀ ck,
+          runFlatTM k (Compile.copyBodyTM dst)
+              { state_idx := 0,
+                tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length + w₁.length,
+                           Compile.encodeTape q ++ res)] } = some ck →
+          ck.state_idx ≠ Compile.copyBody_exitDone dst ∧
+          ck.state_idx ≠ Compile.copyBody_exitLoop dst ∧
+          haltingStateReached (Compile.copyBodyTM dst) ck = false)
+      ∧ T ≤ 5 * (Compile.encodeTape (q.set dst (State.get q dst ++ [b])) ++ res).length + 21 := by
+  sorry
+
+/-- **The cursor cell.** Cell `1 + |encodeRegs (q.take src)| + i` of
+`encodeTape q ++ res` is register `src`'s cell `i`: the shifted bit
+`(q.get src)[i] + 1` for `i < |q.get src|`, and the register's `0` delimiter
+for `i = |q.get src|`. -/
+private theorem Compile.cursor_cell (q : State) (src : Var) (hsrc : src < q.length)
+    (res : List Nat) (i : Nat) (hi : i ≤ (State.get q src).length) :
+    ∃ (hlt : 1 + (Compile.encodeRegs (q.take src)).length + i
+        < (Compile.encodeTape q ++ res).length),
+      (Compile.encodeTape q ++ res).get
+          ⟨1 + (Compile.encodeRegs (q.take src)).length + i, hlt⟩
+        = if h : i < (State.get q src).length then (State.get q src)[i] + 1 else 0 := by
+  have hdec := (Compile.encodeTape_reg_decomp_at q src hsrc).2
+  set A := Compile.encodeRegs (q.take src) with hA
+  set u := State.get q src with hu
+  set R := Compile.encodeRegs (q.drop (src + 1)) ++ [Compile.endMark] with hR
+  have htape : Compile.encodeTape q ++ res
+      = ((3 : Nat) :: A) ++ (Compile.shiftReg u ++ 0 :: (R ++ res)) := by
+    rw [hdec]
+    show (Compile.endMark :: A) ++ (Compile.shiftReg u ++ (0 :: R)) ++ res = _
+    simp [Compile.endMark, List.append_assoc]
+  have hslen : (Compile.shiftReg u).length = u.length := by
+    rw [Compile.shiftReg, List.length_map]
+  have hmidlen : i < (Compile.shiftReg u ++ 0 :: (R ++ res)).length := by
+    simp only [List.length_append, List.length_cons, hslen]; omega
+  have hprelen : ((3 : Nat) :: A).length = 1 + A.length := by
+    simp [Nat.add_comm]
+  have hlt : 1 + A.length + i < (Compile.encodeTape q ++ res).length := by
+    rw [htape, List.length_append, hprelen]
+    omega
+  refine ⟨hlt, ?_⟩
+  have hcell? : (Compile.encodeTape q ++ res)[1 + A.length + i]?
+      = (Compile.shiftReg u ++ 0 :: (R ++ res))[i]? := by
+    rw [htape, List.getElem?_append_right (by rw [hprelen]; omega), hprelen,
+        show 1 + A.length + i - (1 + A.length) = i from by omega]
+  have hmid : (Compile.shiftReg u ++ 0 :: (R ++ res))[i]?
+      = some (if h : i < u.length then u[i] + 1 else 0) := by
+    by_cases h : i < u.length
+    · rw [List.getElem?_append_left (by rw [hslen]; exact h), dif_pos h]
+      rw [Compile.shiftReg, List.getElem?_map, List.getElem?_eq_getElem h]
+      rfl
+    · have hieq : i = u.length := by omega
+      rw [List.getElem?_append_right (by rw [hslen]; omega), dif_neg h, hslen, hieq,
+          Nat.sub_self]
+      rfl
+  rw [List.get_eq_getElem]
+  have h2 := hcell?.trans hmid
+  rw [List.getElem?_eq_getElem hlt] at h2
+  exact Option.some_inj.mp h2
+
+/-- The symbol under the cursor is below the body's alphabet bound `4`. -/
+private theorem Compile.copyBody_sym_bound (dst : Nat) (H : Nat) (tape : List Nat)
+    (hall : ∀ x ∈ tape, x < 4) :
+    ∀ v, currentTapeSymbol (([] : List Nat), H, tape) = some v →
+      v < max (ClearGadget.delimTestTM 4).sig
+            (max (Compile.copyContentTM dst).sig Compile.idTM.sig) := by
+  intro v hv
+  have hmax : max (ClearGadget.delimTestTM 4).sig
+      (max (Compile.copyContentTM dst).sig Compile.idTM.sig) = 4 := by
+    rw [ClearGadget.delimTestTM_sig]
+    show max 4 (max (Compile.copyContentRawTM dst).sig 4) = 4
+    rw [Compile.copyContentRawTM_sig]
+    rfl
+  rw [hmax]
+  by_cases hlt : H < tape.length
+  · rw [currentTapeSymbol_in_range hlt] at hv
+    exact (Option.some_inj.mp hv) ▸ hall _ (List.get_mem tape ⟨H, hlt⟩)
+  · rw [show currentTapeSymbol (([] : List Nat), H, tape) = none from dif_neg hlt] at hv
+    exact absurd hv (by simp)
+
+/-- All cells of `encodeTape q ++ res` are `< 4` (bit state + valid residue). -/
+private theorem Compile.encodeTape_append_res_lt_four (q : State) (res : List Nat)
+    (hbit : Compile.BitState q) (hres : Compile.ValidResidue res) :
+    ∀ x ∈ Compile.encodeTape q ++ res, x < 4 := by
+  intro x hx
+  rcases List.mem_append.mp hx with h | h
+  · exact Compile.encodeTape_lt_four q hbit x h
+  · exact (hres x h).1
+
+/-- **Cursor-loop body, DONE contract.** With the cursor ON src's `0` delimiter
+(`i = |src|` — src exhausted), `delimTestTM` reads `0` (1 step) and the branch
+bridge lands on `idTM`'s start = the done exit (1 step); tape and head
+unchanged. -/
+theorem Compile.copyBody_run_done (q : State) (dst src : Var)
+    (hne : dst ≠ src) (hdst : dst < q.length) (hsrc : src < q.length)
+    (hbit : Compile.BitState q)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    runFlatTM 2 (Compile.copyBodyTM dst)
+        { state_idx := 0,
+          tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length
+                          + (State.get q src).length,
+                     Compile.encodeTape q ++ res)] }
+      = some { state_idx := Compile.copyBody_exitDone dst,
+               tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length
+                              + (State.get q src).length,
+                          Compile.encodeTape q ++ res)] }
+    ∧ (∀ k, k < 2 → ∀ ck,
+        runFlatTM k (Compile.copyBodyTM dst)
+            { state_idx := 0,
+              tapes := [([], 1 + (Compile.encodeRegs (q.take src)).length
+                              + (State.get q src).length,
+                         Compile.encodeTape q ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.copyBody_exitDone dst ∧
+        ck.state_idx ≠ Compile.copyBody_exitLoop dst ∧
+        haltingStateReached (Compile.copyBodyTM dst) ck = false) := by
+  set H := 1 + (Compile.encodeRegs (q.take src)).length + (State.get q src).length with hHdef
+  set tape := Compile.encodeTape q ++ res with htapedef
+  obtain ⟨hlt, hcell⟩ := Compile.cursor_cell q src hsrc res (State.get q src).length le_rfl
+  rw [dif_neg (lt_irrefl _)] at hcell
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], H, tape)] } with hcfg0
+  -- M₁ (delimTestTM) runs 1 step to the delimiter exit.
+  have hrun1 : runFlatTM 1 (ClearGadget.delimTestTM 4) cfg0
+      = some { state_idx := ClearGadget.delimTestTM_exit_delim, tapes := [([], H, tape)] } :=
+    ClearGadget.delimTestTM_run_delim 4 (by decide) [] tape H hlt hcell
+  have htraj1 : ∀ k, k < 1 → ∀ ck, runFlatTM k (ClearGadget.delimTestTM 4) cfg0 = some ck →
+      ck.state_idx ≠ ClearGadget.delimTestTM_exit_content ∧
+      ck.state_idx ≠ ClearGadget.delimTestTM_exit_delim ∧
+      haltingStateReached (ClearGadget.delimTestTM 4) ck = false :=
+    fun k hk ck hck => ClearGadget.delimTestTM_no_early_halt 4 [] tape H k hk ck hck
+  -- M₃ (idTM) halts immediately.
+  have hrun3 : runFlatTM 0 Compile.idTM
+      { state_idx := Compile.idTM.start, tapes := [([], H, tape)] }
+      = some { state_idx := 0, tapes := [([], H, tape)] } := rfl
+  have hhalt3 : haltingStateReached Compile.idTM
+      { state_idx := 0, tapes := [([], H, tape)] } = true := rfl
+  have hsym := Compile.copyBody_sym_bound dst H tape
+    (Compile.encodeTape_append_res_lt_four q res hbit hres)
+  have hexitne : ClearGadget.delimTestTM_exit_content ≠ ClearGadget.delimTestTM_exit_delim := by
+    decide
+  have hcfg_lt : cfg0.state_idx < (ClearGadget.delimTestTM 4).states := by
+    rw [ClearGadget.delimTestTM_states]; show 0 < 3; omega
+  have hneg := branchComposeFlatTM_run_neg hexitne
+    (ClearGadget.delimTestTM_valid 4 (by decide)) (Compile.copyContentTM_valid dst)
+    Compile.idTM_valid
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    cfg0 hcfg_lt [] H tape hsym hrun1 htraj1 hrun3 hhalt3
+  have htrajneg := branchComposeFlatTM_no_early_halt_neg hexitne
+    (ClearGadget.delimTestTM_valid 4 (by decide)) (Compile.copyContentTM_valid dst)
+    Compile.idTM_valid
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    (by rw [ClearGadget.delimTestTM_states]; decide)
+    cfg0 hcfg_lt [] H tape hsym (t₂ := 0) hrun1 htraj1
+    (fun k hk ck hck => absurd hk (by omega))
+  have hstate_eq : (0 : Nat) + ((ClearGadget.delimTestTM 4).states
+      + (Compile.copyContentTM dst).states) = Compile.copyBody_exitDone dst := by
+    rw [ClearGadget.delimTestTM_states, Compile.copyContentTM_states]
+    show 0 + (3 + (51 + 6 * dst)) = 54 + 6 * dst; ring
+  refine ⟨?_, ?_⟩
+  · have h := hneg.1
+    rw [hstate_eq] at h
+    exact h
+  · intro k hk ck hck
+    have hh := htrajneg k (by omega) ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.copyBodyTM_exitDone_is_halt dst) hh,
+           ClearGadget.ne_of_not_halting (Compile.copyBodyTM_exitLoop_is_halt dst) hh, hh⟩
+
+/-- **The cursor-copy loop (`copyLoopTM dst`), assembled by `loopTM_run`.**
+Entered with `dst` already cleared and the head on src's first cell, the loop
+copies src bit-by-bit and halts at its dedicated halt state with the head on
+src's delimiter. Tape sequence `T j = ([], cursor (n−j), encodeTape (s.set dst
+(u.take (n−j))) ++ res)` (`u = s.get src`, `n = |u|`). -/
+theorem Compile.copyLoop_run (s : State) (dst src : Var)
+    (hne : dst ≠ src) (hdst : dst < s.length) (hsrc : src < s.length)
+    (hbit : Compile.BitState s) (hdst_empty : State.get s dst = [])
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ T,
+      runFlatTM T (Compile.copyLoopTM dst)
+          { state_idx := 0,
+            tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                       Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.copyLoopTM_exit dst,
+                 tapes := [([],
+                   1 + (Compile.encodeRegs ((s.set dst (State.get s src)).take src)).length
+                     + (State.get s src).length,
+                   Compile.encodeTape (s.set dst (State.get s src)) ++ res)] }
+      ∧ (∀ k, k < T → ∀ ck,
+          runFlatTM k (Compile.copyLoopTM dst)
+              { state_idx := 0,
+                tapes := [([], 1 + (Compile.encodeRegs (s.take src)).length,
+                           Compile.encodeTape s ++ res)] } = some ck →
+          ck.state_idx ≠ Compile.copyLoopTM_exit dst ∧
+          haltingStateReached (Compile.copyLoopTM dst) ck = false)
+      ∧ T ≤ ((State.get s src).length + 1)
+              * (5 * (Compile.encodeTape (s.set dst (State.get s src)) ++ res).length + 23) := by
+  sorry
+
+/-- **The `copy` op's exact-residue run lemma** (`dst ≠ src`): the full machine
+`clear ⨾ navigate ⨾ cursor loop ⨾ rewind`, with the boundary halt demoted. The
+residue formula is EXACT — `res_in ++ replicate |s.get dst| 0`, all of it from
+the clear phase (the cursor loop adds none) — which is what the `compileForBnd`
+combinator's tight W-invariant needs (HANDOFF bottom-up task 2). -/
+theorem Compile.opCopy_run (s : State) (dst src : Var) (hne : dst ≠ src)
+    (hdst : dst < s.length) (hsrc : src < s.length)
+    (hbit : Compile.BitState s)
+    (res_in : List Nat) (hres_in : Compile.ValidResidue res_in) :
+    ∃ t,
+      runFlatTM t (Compile.opCopy dst src).M
+          (initFlatConfig (Compile.opCopy dst src).M [Compile.encodeTape s ++ res_in])
+        = some { state_idx := (Compile.opCopy dst src).exit,
+                 tapes := [([], 0, Compile.encodeTape (s.set dst (State.get s src))
+                            ++ (res_in ++ List.replicate (State.get s dst).length 0))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.opCopy dst src).M
+            (initFlatConfig (Compile.opCopy dst src).M [Compile.encodeTape s ++ res_in])
+          = some ck →
+        ck.state_idx ≠ (Compile.opCopy dst src).exit ∧
+        haltingStateReached (Compile.opCopy dst src).M ck = false)
+    ∧ t ≤ (9 * (Compile.encodeTape s ++ res_in).length * (Compile.encodeTape s ++ res_in).length
+            + 9 * (Compile.encodeTape s ++ res_in).length + 30)
+          * ((State.get s src).length + 2) := by
+  sorry
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
@@ -9292,7 +10313,17 @@ them; the budget is loosened to the quadratic `9·tapeLen² + 9` (constant gener
 tunable when the gadgets land). This composes fine: `compileSeq_sound_physical`
 uses the *additive* budget `t₁+1+t₂` (no linearity assumed), so summing per-op
 quadratics over `≤ cost` fragments (each tape `≤` the global max) gives a
-polynomial total — `toFrameworkWitness'` only needs `inOPoly`. -/
+polynomial total — `toFrameworkWitness'` only needs `inOPoly`.
+
+**⚠ 2026-06-11c — budget is COST-SCALED: `(9·L²+9·L+30)·(cost+1)`.** The
+multi-cell ops are *compositions* of quadratic phases: `copy dst src` is
+`clear dst` (whose own proven black-box bound is `9·L²+9`) plus a `|src|`-round
+cursor loop (each round `O(L)`), so the unscaled `9·L²+9·L+30` is unprovable for
+it (the clear phase alone exhausts it). Scaling by `Op.cost o s + 1` funds the
+loop rounds (`cost = |src|+1` for `copy`/`tail`) and is free for the consumer:
+`run_physical_residue_gen`'s ② discharge pays `physStepBudget`'s
+`(9G²+9G+33)·(8·cost+8)`, and `(9G²+9G+30)·(cost+1)` sits under it termwise
+(`#eval`-validated against the real machines in `probes/CursorCopyProbe.lean`). -/
 theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s)
     (hres_in : Compile.ValidResidue res_in) :
@@ -9312,9 +10343,10 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
-      ∧ t ≤ 9 * (Compile.encodeTape s ++ res_in).length
-              * (Compile.encodeTape s ++ res_in).length
-              + 9 * (Compile.encodeTape s ++ res_in).length + 30 := by
+      ∧ t ≤ (9 * (Compile.encodeTape s ++ res_in).length
+               * (Compile.encodeTape s ++ res_in).length
+               + 9 * (Compile.encodeTape s ++ res_in).length + 30)
+            * (Op.cost o s + 1) := by
   cases o with
   | appendOne dst =>
       -- `res_out = res_in`: the append grows `encodeTape s` by one cell; residue passes through.
@@ -9323,13 +10355,15 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
         Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
       exact ⟨t, res_in, hres_in,
         (by have := Op.size_eval_le (Op.appendOne dst) s; omega), hrun, htraj,
-        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)) (by omega)⟩
+        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in))
+          (by show _ ≤ _ * (1 + 1); omega)⟩
   | appendZero dst =>
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
       exact ⟨t, res_in, hres_in,
         (by have := Op.size_eval_le (Op.appendZero dst) s; omega), hrun, htraj,
-        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in)) (by omega)⟩
+        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in))
+          (by show _ ≤ _ * (1 + 1); omega)⟩
   -- The 9 cross-register stub ops still need their gadgets (`copyBlockTM`, see ROADMAP C2.c).
   | clear dst =>
       -- `clearRegionTM_run` (step 5b) provides the run + no-early-halt trajectory; the loop
@@ -9341,7 +10375,8 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
           = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } := by
         simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, ?_, le_trans hbud (by omega)⟩
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, ?_,
+        le_trans hbud (by show _ ≤ _ * (1 + 1); omega)⟩
       · -- ① the freed `|dst|` cells move into the residue: `W` is unchanged (cost ≥ 0).
         have h := State.size_set_add s dst ([] : List Nat)
         simp only [List.length_nil, Nat.add_zero] at h
@@ -9351,13 +10386,41 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
       · intro k hk ck hck
         rw [hinit] at hck
         exact htraj k hk ck hck
-  | copy dst src => sorry
+  | copy dst src =>
+      by_cases hds : dst = src
+      · -- compile-time no-op: `Op.eval` is the identity, the machine is the
+        -- 1-state immediate halt (`compiledCmd_default`), `t = 0`.
+        subst hds
+        have hM : compileOp (Op.copy dst dst) = compiledCmd_default := by
+          show Compile.opCopy dst dst = compiledCmd_default
+          rw [Compile.opCopy, if_pos rfl]
+        have heval : Op.eval (Op.copy dst dst) s = s := by
+          show s.set dst (State.get s dst) = s
+          exact Compile.set_get_self s dst hbnd.1
+        refine ⟨0, res_in, hres_in, ?_, ?_, ?_, ?_⟩
+        · rw [heval]; simp only [Op.cost]; omega
+        · rw [hM, heval]
+          show some _ = some _
+          rfl
+        · intro k hk ck hck; omega
+        · omega
+      · obtain ⟨t, hrun, htraj, hbud⟩ :=
+          Compile.opCopy_run s dst src hds hbnd.1 hbnd.2 hbit res_in hres_in
+        refine ⟨t, res_in ++ List.replicate (State.get s dst).length 0,
+          Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj, ?_⟩
+        · -- ① the freed `|dst₀|` cells move to the residue; `dst` gains `|src|`.
+          have h := State.size_set_add s dst (State.get s src)
+          simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
+          omega
+        · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`.
+          exact hbud
   | tail dst src => sorry
   | head dst src =>
       obtain ⟨t, hrun, htraj, hbud⟩ :=
         Compile.opHead_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj, hbud⟩
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj,
+        le_trans hbud (by show _ ≤ _ * (1 + 1); omega)⟩
       · -- ① `head` writes `≤ 1` cell to `dst`; freed cells go to residue.
         rcases hsrc : s.get src with _ | ⟨x, xs⟩
         · have h := State.size_set_add s dst ([] : List Nat)
@@ -9373,7 +10436,8 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
       obtain ⟨t, hrun, htraj, hbud⟩ :=
         Compile.opNonEmpty_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
-        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj, hbud⟩
+        Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj,
+        le_trans hbud (by show _ ≤ _ * (1 + 1); omega)⟩
       · -- ① `nonEmpty` writes exactly `1` cell to `dst`; freed cells go to residue.
         have h := State.size_set_add s dst (if (s.get src).isEmpty then ([0] : List Nat) else [1])
         have hv : (if (s.get src).isEmpty then ([0] : List Nat) else [1]).length = 1 := by
@@ -10237,19 +11301,25 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       obtain ⟨t, res_out, hres, hW, hrun, htraj, hbud⟩ :=
         compileOp_sound_physical_residue o s res0 hbit hbnd hres0
       refine ⟨t, res_out, hres, hW, hrun, htraj, ?_⟩
-      · -- ② budget: `9·L²+9·L+30 ≤ physStepBudget G (Op.cost o s)`, since `L ≤ G`.
+      · -- ② budget: `(9·L²+9·L+30)·(cost+1) ≤ physStepBudget G (Op.cost o s)`, since
+        -- `L ≤ G` and `(9G²+9G+30)·(cost+1)` sits termwise under `(9G²+9G+33)·(8·cost+8)`.
+        -- Explicit `Nat.*` monotonicity terms throughout: `omega`/`gcongr` hit `whnf`
+        -- timeouts on products of two-atom sums (the recorded gotcha).
         have hL : (Compile.encodeTape s ++ res0).length ≤ G := by
           rw [List.length_append, Compile.encodeTape_length]; omega
-        have h1 : 9 * (Compile.encodeTape s ++ res0).length * (Compile.encodeTape s ++ res0).length
-                    + 9 * (Compile.encodeTape s ++ res0).length + 30 ≤ 9 * G * G + 9 * G + 30 := by
-          gcongr <;> omega
-        have h2 : 9 * G * G + 9 * G + 30 ≤ Compile.physStepBudget G (Op.cost o s) := by
-          unfold Compile.physStepBudget
-          have hge : (9 * G * G + 9 * G + 33) * 8
-              ≤ (9 * G * G + 9 * G + 33) * (8 * Op.cost o s + 8) := by gcongr <;> omega
-          omega
-        have : t ≤ Compile.physStepBudget G (Op.cost o s) := by omega
-        exact this
+        set L := (Compile.encodeTape s ++ res0).length with hLdef
+        have h1 : (9 * L * L + 9 * L + 30) * (Op.cost o s + 1)
+                  ≤ (9 * G * G + 9 * G + 30) * (Op.cost o s + 1) :=
+          Nat.mul_le_mul_right _
+            (Nat.add_le_add
+              (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 9 hL) hL)
+                (Nat.mul_le_mul_left 9 hL)) (Nat.le_refl 30))
+        have h2 : (9 * G * G + 9 * G + 30) * (Op.cost o s + 1)
+                  ≤ (9 * G * G + 9 * G + 33) * (8 * Op.cost o s + 8) :=
+          Nat.mul_le_mul (by omega) (by omega)
+        show t ≤ Compile.physStepBudget G (Op.cost o s)
+        rw [Compile.physStepBudget]
+        exact le_trans (le_trans hbud (le_trans h1 h2)) (Nat.le_add_right _ _)
   | seq c1 c2 ih1 ih2 =>
       -- thread residue `res0 → res1 → res2` through both fragments.
       simp only [Cmd.loopDepth] at hk
