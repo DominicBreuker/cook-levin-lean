@@ -197,3 +197,75 @@ def budgetOK (dst src : Nat) (s : State) (res : List Nat) : Bool × Nat × Nat :
 #eval budgetOK 0 1 [[1], [1, 0, 1, 1, 0, 1]] []
 #eval budgetOK 2 0 [[1, 1], [0], [1, 0, 1], [0, 0]] []
 #eval budgetOK 0 1 [[1, 0, 1, 1], []] []
+
+/-! ## Lemma-statement validation (2026-06-12): the pinned `copyPipe_run` /
+`copyBody_run_iter` / `copyBody_run_done` / `copyLoop_run` statements, checked
+against the real machines — exit state, EXACT head position formula, exact
+tape, and the stated budgets. -/
+
+/-- `copyBody_run_iter`'s statement: from the unmarked cursor config (head ON
+src's cell `i = |w₁|`), the body reaches `copyBody_exitLoop` on the predicted
+next-cursor config within the stated budget. -/
+def chkBodyIter (q : State) (dst src b : Nat) (w1 w2 res : List Nat) : Bool :=
+  -- precondition: State.get q src = w1 ++ b :: w2
+  (State.get q src == w1 ++ b :: w2) &&
+  let H := 1 + (Compile.encodeRegs (q.take src)).length + w1.length
+  let q' := State.set q dst (State.get q dst ++ [b])
+  let H' := 1 + (Compile.encodeRegs (q'.take src)).length + w1.length + 1
+  let M := Compile.copyBodyTM dst
+  match stepsToHalt M 100000 { state_idx := 0, tapes := [([], H, Compile.encodeTape q ++ res)] } 0 with
+  | some (t, c) =>
+      c.state_idx == Compile.copyBody_exitLoop dst &&
+      c.tapes == [([], H', Compile.encodeTape q' ++ res)] &&
+      t ≤ 5 * (Compile.encodeTape q' ++ res).length + 21
+  | none => false
+
+/-- `copyPipe_run`'s statement: from the marked cursor config, the pipeline
+reaches its exit on the predicted config within `5·L' + 16`. -/
+def chkPipe (q : State) (dst src b : Nat) (w1 w2 res : List Nat) : Bool :=
+  (State.get q src == w1 ++ b :: w2) &&
+  let H := 1 + (Compile.encodeRegs (q.take src)).length + w1.length
+  let qM := State.set q src (w1 ++ 2 :: w2)
+  let q' := State.set q dst (State.get q dst ++ [b])
+  let H' := 1 + (Compile.encodeRegs (q'.take src)).length + w1.length + 1
+  let M := Compile.copyPipeTM b dst
+  match stepsToHalt M 100000 { state_idx := 0, tapes := [([], H, Compile.encodeTape qM ++ res)] } 0 with
+  | some (t, c) =>
+      c.state_idx == Compile.copyPipeTM_exit dst &&
+      c.tapes == [([], H', Compile.encodeTape q' ++ res)] &&
+      t ≤ 5 * (Compile.encodeTape q' ++ res).length + 16
+  | none => false
+
+/-- `copyLoop_run`'s statement: dst pre-cleared, head on src's first cell →
+loop halt with head on src's delimiter, dst = src, stated budget. -/
+def chkLoop (q : State) (dst src : Nat) (res : List Nat) : Bool :=
+  (State.get q dst == []) &&
+  let H := 1 + (Compile.encodeRegs (q.take src)).length
+  let u := State.get q src
+  let q' := State.set q dst u
+  let H' := 1 + (Compile.encodeRegs (q'.take src)).length + u.length
+  let M := Compile.copyLoopTM dst
+  match stepsToHalt M 100000 { state_idx := 0, tapes := [([], H, Compile.encodeTape q ++ res)] } 0 with
+  | some (t, c) =>
+      c.state_idx == Compile.copyLoopTM_exit dst &&
+      c.tapes == [([], H', Compile.encodeTape q' ++ res)] &&
+      t ≤ (u.length + 1) * (5 * (Compile.encodeTape q' ++ res).length + 23)
+  | none => false
+
+-- iter: dst before src / after src / first bit / last bit / b=0 / b=1 / residue
+#eval chkBodyIter [[], [1,0,1]] 0 1 1 [] [0,1] []        -- b=1, first bit, dst<src
+#eval chkBodyIter [[1], [1,0,1]] 0 1 0 [1] [1] [0,2]     -- b=0, middle bit, residue
+#eval chkBodyIter [[1,0], [1,0,1]] 0 1 1 [1,0] [] []     -- b=1, last bit
+#eval chkBodyIter [[1,0,1], [1]] 1 0 1 [] [0,1] [1]      -- dst>src, first bit
+#eval chkBodyIter [[1,0,1], [0]] 1 0 1 [1,0] [] []       -- dst>src, last bit
+#eval chkBodyIter [[0], [1,1], [0,0]] 2 0 0 [] [] [0]    -- middle, singleton src
+-- pipe directly (marked-tape entry)
+#eval chkPipe [[], [1,0,1]] 0 1 1 [] [0,1] []
+#eval chkPipe [[1], [1,0,1]] 0 1 0 [1] [1] [0,2]
+#eval chkPipe [[1,0,1], [1]] 1 0 1 [] [0,1] [1]
+#eval chkPipe [[0], [1,1], [0,0]] 2 0 0 [] [] [0]
+-- loop end-to-end
+#eval chkLoop [[], [1,0,1]] 0 1 []
+#eval chkLoop [[1,0,1], []] 1 0 [0,1]   -- empty src (zero iterations)... dst must be [] though
+#eval chkLoop [[], [1,1,0,1]] 0 1 [2]
+#eval chkLoop [[1], [], [0,1]] 1 2 []   -- dst=1 pre-cleared? get=[] ✓ src=2
