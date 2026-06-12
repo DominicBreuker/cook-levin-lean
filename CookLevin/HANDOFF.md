@@ -49,16 +49,18 @@ sat_NP (EvalCnfTM.lean)
 REAL REMAINING MATH under the assembly:
   padRegsTM_run / _traj   (Compile.lean ~11116; ✅ PROVEN, sorry-free — the WALL gadget
                            is COMPLETE)
-  compileOp_sound_physical_residue   (Compile.lean ~10240; 5/12 ops PROVEN; the COPY case
-                           is DISCHARGED onto the pinned `opCopy_run` (machine REAL +
-                           probe-validated, lemma stack part-proven — see BOTTOM-UP task 1);
-                           6 ops still raw SORRY)
-  compileIfBit_sound_physical_residue  (Compile.lean ~9927; ✅ PROVEN —
+  compileOp_sound_physical_residue   (Compile.lean ~12299; **6/12 ops FULLY PROVEN**
+                           (appendOne/appendZero/clear/nonEmpty/head/**copy** — the
+                           copy lemma stack `copyPipe_run → copyBody_run_iter →
+                           copyLoop_run → opCopy_run` was completed & axiom-clean
+                           2026-06-12b); 6 ops still raw SORRY
+                           (tail/eqBit/concat/takeAt/dropAt/consLen))
+  compileIfBit_sound_physical_residue  (Compile.lean ~12420; ✅ PROVEN —
                            real compileTestBit tester + branchCompose + joinTwoHalts)
-  compileForBnd_sound_physical_residue (Compile.lean ~10146; SORRY — ✅ interface
+  compileForBnd_sound_physical_residue (Compile.lean ~13182; SORRY — interface
                            RE-PINNED + probe-validated 2026-06-11 (static scratch
-                           registers); BUILDABLE bottom-up, gated only on the
-                           cursor-copy/tail op gadgets. See BOTTOM-UP tasks 1–2.)
+                           registers); BUILDABLE bottom-up, gated only on the `tail`
+                           op gadget now that `copy` is DONE. See BOTTOM-UP tasks 1–2.)
 ```
 Both the **canonical** path (`DecidesLang'` / `inNPLang_to_inNP`) and the **free/live**
 path (`DecidesLang` / `inTimePolyLang_to_inTimePoly`) are now assembled and bridge the
@@ -128,55 +130,59 @@ only `tail`/`copy`/`eqBit` of the 7, plus both combinators.
 
 ---
 
-## ✅ What this session (2026-06-12, bottom-up) did — the cursor-copy machine is REAL; copy case discharged; lemma stack probe-pinned
+## ✅ What this session (2026-06-12b, bottom-up) did — **the `copy` op is FULLY PROVEN (task 1 CLOSED)**
 
-**1. The `copy` op gadget exists** (`Compile.opCopy dst src`, Compile.lean ~1100):
-`clearRegionTM dst ⨾ navigateToRegTM src ⨾ loopTM(cursor body) ⨾ justRewind`,
-boundary halt demoted; ALL `CompiledCmd` invariants proven. The cursor body is
-the **nested public-combinator (opHead) pattern** — outer `delimTestTM` branch
-(content / src-exhausted→`idTM`), inner `markBitTM` branch (per-bit pipelines,
-`joinTwoHalts`-merged). The per-bit pipeline `copyPipeTM b dst` (named stages
-`copyRet1TM`/`copyPipeA2..A5TM`, each with states/sig/valid lemmas) implements
-the marking/cursor read: mark `3` over the cursor bit, rewind to sentinel,
-`appendAtTM (b+1) dst`, return via scan-left-from-end (trailing terminator →
-step left → mark), restore, step right. `copy dst dst` = `compiledCmd_default`
-(no-op; `Op.eval` is the identity there via `set_get_self`).
-**`probes/CursorCopyProbe.lean` runs the REAL machine end-to-end: 24 functional
-checks + 14 NEW lemma-statement checks ALL GREEN** — exit states, the EXACT
-head-position formulas, exact tapes, and the budgets of the sorry'd run lemmas
-are machine-validated, so the next session can prove against them without
-statement risk.
+**The whole pinned cursor-copy lemma stack is now PROVEN & axiom-clean**
+(`[propext, Classical.choice, Quot.sound]` each):
 
-**2. The contract budget is COST-SCALED (settled):**
-`compileOp_sound_physical_residue` now ends `t ≤ (9L²+9L+30)·(Op.cost o s + 1)`.
-The unscaled bound was UNPROVABLE for `copy` (its clear phase's proven black-box
-bound alone is `9L²+9`); the consumer (`run_physical_residue_gen` ②) absorbs the
-scaling termwise under `physStepBudget`'s `(9G²+9G+33)·(8·cost+8)` — proven with
-explicit `Nat.mul_le_mul` terms (omega/gcongr whnf-timeout gotcha). The 5
-previously-proven cases relax by `·(1+1)`. **Do not revert to the unscaled bound.**
+1. **`Compile.copyPipe_run`** — the per-bit pipeline pass, six `composeFlatTM`
+   seams (stepLeft ⨾ scanLeft-to-sentinel ⨾ `appendAtTM (b+1) dst` ⨾
+   scanLeft-to-terminator ⨾ stepLeft ⨾ scanLeft-to-mark ⨾ restore+step).
+2. **`Compile.copyBody_run_iter`** — the loop body's ITERATE contract:
+   `delimTestTM` (content) ⨾ `markBitTM` ⨾ pipeline; `b = 0` through the
+   positive raw branch + `joinTwoHalts_reaches_kept`, `b = 1` through the
+   negative branch + the demoted-exit bridge step (`_reaches_demoted`).
+3. **`Compile.copyLoop_run`** — `loopTM_run`/`loopTM_no_early_halt` over
+   `T j = (cursor (n−j), encodeTape (s.set dst (u.take (n−j))) ++ res)`;
+   iteration j = `copyBody_run_iter` at the `u.take`-split (`set_set` collapses
+   the dst chain, `List.take_add_one`/`drop_eq_getElem_cons` do the splits).
+4. **`Compile.opCopy_run`** — clear ⨾ navigate ⨾ loop ⨾ rewind, three
+   `composeFlatTM` seams + `joinTwoHalts_reaches_kept`; **exact residue**
+   `res_in ++ replicate |dst₀| 0`; budget `(9L²+9L+30)·(n+2)` via explicit
+   `Nat.mul_le_mul`/`Nat.le_mul_of_pos_right` bridges + `ring` expansion.
 
-**3. The copy case of the contract is DISCHARGED** (both `dst = src` no-op and
-`dst ≠ src` onto `Compile.opCopy_run`), with the EXACT residue formula
-`res_in ++ replicate |dst₀| 0` and ① via `State.size_set_add`.
+**New reusable helper layer** (the *marked-tape toolkit*, Compile.lean ~10010,
+all `private` but in-file usable): `encodeTape_set_cell_res` (the cursor tape as
+an opaque `X ++ (c+1) :: Z` with `|X| = 1+|encodeRegs (q.take src)|+|w₁|`),
+`cursorPrefix_length`, `encodeTape_set_cell_length`, `markedTape_get_mark`,
+`markedTape_getElem_off`, `markedTape_take_drop` (the re-marking bridge
+`markBitTM`/`restoreStepTM` consume), `markedTape_interior_cell` (scan
+side-conditions via off-mark agreement with the unmarked BitState tape),
+`le_two_set`/`encodeRegs_lt_four_le_two`/`encodeTape_append_res_lt_four_le_two`
+(≤2-valued marked states), `encodeTape_append_getElem_last` (trailing
+terminator under residue), `appendAtTM_exit_eq` (= `8+3·dst`),
+`sym_bound_of_lt_four` (generic seam symbol bound), **`appendAt_encTape_run`**
+(appendAtTM on any encoded ≤2-state with residue: exact exit state/head, traj,
+`≤ 2L+3`), **`copyRet1_encTape_run`**, and `restoreStepTM_run`.
 
-**4. Lemma stack status** (all statements pinned + probe-validated 2026-06-12):
-- ✅ PROVEN: `markBitTM`/`restoreStepTM`/`skipReadTM` machines + step/run/traj
-  lemmas; `cursor_cell` (register-block cell under the cursor); pipeline/content/
-  body halt characterization (`copyPipeTM_exit_is_halt`/`_halt_unique`,
-  `copyContentTM_*`, `copyBodyTM_exitLoop/exitDone_is_halt`);
-  **`copyBody_run_done`** (the loop's done contract, via
-  `branchComposeFlatTM_run_neg`); all axiom-clean.
-- ⏳ SORRY (statements final): `copyPipe_run` → `copyBody_run_iter` →
-  `copyLoop_run` → `opCopy_run` (bottom-up task 1 below).
+The `copy` case of `compileOp_sound_physical_residue` is therefore sorry-free
+end-to-end; **6/12 ops fully proven**. `tail` is UNBLOCKED (its `dst ≠ src`
+machine reuses `copyLoopTM` + the proven `copyLoop_run`); `compileForBnd` is
+gated only on `tail`.
 
-**5. Gotchas hit (now recorded):** `Var`-typed args make `omega` fail even on
-pure-`Nat`-looking goals (use `ring`/explicit lemmas, or take `Nat` params);
-grep-ing build output for errors masks the exit code — **always check the build
-result line**; helper lemmas must be ABOVE their first use (the staged-pipeline
-block forced relocating `composeFlatTM_halt_unique` + the three
-`branchComposeFlatTM_*halt*` lemmas).
+**Gotchas refined this session (recorded below):** the `Var`-omega failure is
+about the **goal's elaborated type** — a bare `show 13 + 3*dst = …` elaborates
+the equality at type `Var` and omega gives "no usable constraints"; ascribe
+`show (13 + 3*dst : Nat) = …` and omega works. Implicit-argument by-blocks
+(e.g. `composeFlatTM_run`'s `h_exit_lt`) elaborate **before** the run argument
+pins the metavariable — pin it yourself with a `show`. `rw`'s rfl-extension
+closes `a ≤ a` goals, so a trailing `exact Nat.le_refl _` can die with "no
+goals". omega never splits `(l ++ r).length` — hand it `List.length_append`
+facts explicitly. Dependent `Fin`-index rewrites (`rw` under `.get ⟨i, h⟩`)
+fail with "motive is not type correct" — route through `getElem?` +
+`List.getElem?_eq_getElem`/`Option.some_inj` instead.
 
-Build green (3358 jobs); new results `#print axioms`-clean.
+Build green; all four new results `#print axioms`-clean.
 
 ---
 
@@ -286,19 +292,24 @@ Build green (3358 jobs); new results `#print axioms`-clean.
   cells are always the register's own `0` delimiter, never `3`); join transport
   for a run ending at a *non-`h1`* kept halt = `joinTwoHalts_run_eq` + a
   `∀ k ≤ T, ≠ h2` argument (`testBitReg_run_pos`'s ending).
-- **5/12 ops PROVEN** in `compileOp_sound_physical_residue`: `appendOne`,
-  `appendZero`, `clear`, `nonEmpty`, `head` (each carries the W-invariant ①);
-  **+ the `copy` case DISCHARGED** onto the pinned `opCopy_run` (2026-06-12).
-- **★ The cursor-copy machine layer (2026-06-12)** — `Compile.opCopy` (REAL
-  `CompiledCmd`, all invariants proven) and its parts: `markBitTM`/
-  `restoreStepTM`/`skipReadTM` (+ step/run/traj lemmas), the staged pipeline
-  `copyRet1TM`/`copyPipeA2..A5TM`/`copyPipeTM` (+ per-stage states/sig/valid),
-  `copyContentRawTM`/`copyContentTM`/`copyBodyTM`/`copyLoopTM`/
-  `copyRegionFullTM` (+ halt characterization: `copyPipeTM_exit_is_halt`/
-  `_halt_unique`, `copyContentTM_*`, `copyBodyTM_exitLoop/exitDone_is_halt`),
-  `cursor_cell` (the cell under the cursor), and **`copyBody_run_done` PROVEN**
-  (the loop's done contract). All axiom-clean. The per-op budget is
-  **cost-scaled**: `(9L²+9L+30)·(Op.cost+1)` — settled, do not revert.
+- **6/12 ops FULLY PROVEN** in `compileOp_sound_physical_residue`: `appendOne`,
+  `appendZero`, `clear`, `nonEmpty`, `head`, **`copy`** (each carries the
+  W-invariant ①). The per-op budget is **cost-scaled**:
+  `(9L²+9L+30)·(Op.cost+1)` — settled, do not revert.
+- **★ The cursor-copy layer is COMPLETE (2026-06-12/12b)** — `Compile.opCopy`
+  (REAL `CompiledCmd`, all invariants proven), its parts (`markBitTM`/
+  `restoreStepTM`/`skipReadTM`, the staged pipeline `copyRet1TM`/
+  `copyPipeA2..A5TM`/`copyPipeTM`, `copyContentRawTM`/`copyContentTM`/
+  `copyBodyTM`/`copyLoopTM`/`copyRegionFullTM`, halt characterizations,
+  `cursor_cell`), and the FULL run-lemma stack **PROVEN & axiom-clean**:
+  `copyPipe_run`, `copyBody_run_iter`, `copyBody_run_done`, `copyLoop_run`,
+  `opCopy_run` (exact residue `res ++ replicate |dst₀| 0`). Plus the
+  **marked-tape toolkit** (`encodeTape_set_cell_res`, `markedTape_get_mark`/
+  `_getElem_off`/`_take_drop`/`_interior_cell`, `appendAt_encTape_run`,
+  `copyRet1_encTape_run`, `sym_bound_of_lt_four`, `appendAtTM_exit_eq`,
+  `restoreStepTM_run`, the ≤2-valued `le_two_set` family,
+  `encodeTape_append_getElem_last`) — reuse these for `tail`/`eqBit`/`concat`;
+  they make every cursor-style scan/mark/append proof mechanical.
 
 ---
 
@@ -349,65 +360,37 @@ You build the gadgets the (pinned) contracts need. Build green per item;
 `#print axioms`-clean. Probe each machine end-to-end (`#eval`) before proving.
 
 ✅ "EvalCnf inner bodies" CLOSED (2026-06-10); ✅ `compileTestBit`/`ifBit`
-combinator CLOSED (2026-06-11); ✅ **the `copy` MACHINE + contract case CLOSED
-modulo its pinned lemma stack (2026-06-12)**. Everything left bottom-up is
-TM-level compiler work in Compile.lean. Both the decider half (`sat_NP`) and
-the reduction half (`⪯p`/`toFrameworkWitness'`) rest on the SAME gadgets, so
-Tasks 1–2 + 5 close **both** halves of the live chain at once. Remaining:
-the copy lemma stack, the `tail`/`eqBit` ops, the `forBnd` combinator (+ the
-non-live `concat`/`takeAt`/`dropAt`/`consLen`).
+combinator CLOSED (2026-06-11); ✅ **the `copy` op CLOSED end-to-end
+(2026-06-12b: machine + full lemma stack + contract case, axiom-clean)**.
+Everything left bottom-up is TM-level compiler work in Compile.lean. Both the
+decider half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`)
+rest on the SAME gadgets, so Tasks 1 + 3 close **both** halves of the live
+chain at once. Remaining: the `tail`/`eqBit` ops, the `forBnd` combinator
+(+ the non-live `concat`/`takeAt`/`dropAt`/`consLen`).
 
-1. **Finish the `copy` lemma stack (statements FINAL — probe-validated
-   2026-06-12, `probes/CursorCopyProbe.lean` checks exit/head/tape/budget of
-   each statement against the real machine; prove in this order):**
-   - **`Compile.copyPipe_run`** (Compile.lean ~9980) — the heart: six
-     `composeFlatTM_run`+`composeFlatTM_no_early_halt` seams over the marked
-     tape `encodeTape (q.set src (w₁ ++ 2 :: w₂)) ++ res` (the mark is the
-     `2`-valued cell). Stage facts all exist: `stepLeftTM_run`,
-     `scanLeftToMark_run` (mid-tape target — sentinel/terminator/mark),
-     `appendAt_run_steps`/`appendAt_no_early_halt`/`appendAt_steps_le` (their
-     `≠0`/`<4` hypotheses tolerate the mark in `skipped`/`post` VERBATIM —
-     fold the sentinel like `appendBit_sound` does, decompose the marked state
-     at `dst` via `encodeTape_reg_decomp_at`), `restoreStepTM_step`. The
-     scanned-region side conditions come from `cursor_cell`-style getElem
-     reasoning (only `3`s: sentinel, terminator, the mark).
-   - **`Compile.copyBody_run_iter`** — `delimTestTM_run_content` (1 step) ⨾
-     bridge ⨾ `markBitTM_run` (1 step, produces the marked tape: prove
-     `take H ++ 3 :: drop (H+1)` of `encodeTape q ++ res` =
-     `encodeTape (q.set src (w₁ ++ 2 :: w₂)) ++ res` via
-     `encodeTape_reg_decomp_at` + `shiftReg` split) ⨾ `copyPipe_run`,
-     assembled by the inner `branchComposeFlatTM_run_pos/_neg` (+ 
-     `joinTwoHalts_reaches_kept`/`_reaches_demoted` for b=0/b=1), then the
-     outer `branchComposeFlatTM_run_pos`; `≠`-exit conjuncts via
-     `ne_of_not_halting` + the proven body exit-halt lemmas (the
-     `copyBody_run_done` proof at ~10160 is the template).
-   - **`Compile.copyLoop_run`** — `loopTM_run`/`loopTM_no_early_halt` with
-     `T j = ([], cursor (n−j), encodeTape (s.set dst (u.take (n−j))) ++ res)`;
-     iteration j instantiates `copyBody_run_iter` at `q := s.set dst (u.take
-     (n−j−1))`, `w₁ := u.take (n−j−1)`-indexed split (`set_set` collapses the
-     dst chain); done contract = `copyBody_run_done`; budget via
-     `loopBudget_le` (`M := 5·L_F + 23`, tapes grow to `L_F = L₀ + n`).
-   - **`Compile.opCopy_run`** — `clearRegionTM_run` ⨾ `navigateToRegTM_run`
-     (package like `navTestReg_run_content` at register `src` of the cleared
-     state) ⨾ `copyLoop_run` ⨾ `scanLeft_run` (final rewind; no mark left, the
-     sentinel is the first `3`), three `composeFlatTM_run` seams + the final
-     `joinTwoHalts_reaches_kept` (reject never visited). Budget arithmetic per
-     the docstring: `9L²+9 + (n+2)(10L+23) + 3L + c ≤ (9L²+9L+30)(n+2)` —
-     mind the `Var`-omega gotcha (use `Nat.mul_le_mul`/`ring`).
-   **⚠ gotchas already hit:** `Var`-typed `dst`/`src` break `omega` even on
-   linear goals (use `ring` or explicit `Nat.*` lemmas); helper lemmas must sit
-   ABOVE the staged-pipeline block (file order).
-2. **`tail` op — machines pinned & probe-green (2026-06-11/12), wire + prove.**
-   `tail dst dst` = `clearBodyRawTM dst` with the content exit demoted into the
-   kept done exit (`joinTwoHalts` ×3 to also demote the two unreachable
-   boundary halts) — its run lemma is a DIRECT transport of the PROVEN
-   `clearBody_delete_run`/`clearBody_done_run` (exact residues `res ++ [0]` /
-   `res`). `tail dst src` (`dst ≠ src`) = `clear ⨾ nav ⨾ skipReadTM ⨾ the same
-   copyLoopTM ⨾ rewind` (probe `tailRegionTM`; reuses `copyLoop_run` with the
-   cursor started at `u.drop 1` — exact residue `res ++ replicate |dst₀| 0`).
-   Replace the `opTail` stub (`compileOp` dispatches on `dst = src`), discharge
-   the contract case like `copy`'s.
-3. **`eqBit` design + probe (then build).** `Op.cost eqBit = 1` ⇒ ZERO residue
+1. **`tail` op — machines pinned & probe-green (2026-06-11/12), wire + prove.
+   This is the HIGHEST-VALUE next item: it is the last gadget gating the
+   `forBnd` combinator (Task 3).**
+   - `tail dst dst` = `clearBodyRawTM dst` with the content exit demoted into
+     the kept done exit (`joinTwoHalts` ×3 to also demote the two unreachable
+     boundary halts) — its run lemma is a DIRECT transport of the PROVEN
+     `clearBody_delete_run`/`clearBody_done_run` (exact residues `res ++ [0]` /
+     `res`).
+   - `tail dst src` (`dst ≠ src`) = `clear ⨾ nav ⨾ skipReadTM ⨾ the same
+     copyLoopTM ⨾ rewind` (probe `tailRegionTM`; **reuses the now-PROVEN
+     `copyLoop_run`** — instantiate it at the state whose src content is
+     `u.drop 1` after `skipReadTM` steps over the first cell; exact residue
+     `res ++ replicate |dst₀| 0`). The `opCopy_run` proof is the assembly
+     template (same clear/nav/rewind seams + one extra `skipReadTM` stage —
+     `skipReadTM` has step lemmas but no run lemma yet, mimic
+     `markBitTM_run`).
+   - Replace the `opTail` stub (`compileOp` dispatches on `dst = src`),
+     discharge the contract case exactly like `copy`'s (~12320: no-op route
+     via `set_get_self` does NOT apply — `tail dst dst` is a real machine).
+   - Reuse the marked/encoded-tape toolkit (session block above) — in
+     particular `appendAt_encTape_run`, `sym_bound_of_lt_four`, and the
+     `opCopy_run` budget-bridge pattern.
+2. **`eqBit` design + probe (then build).** `Op.cost eqBit = 1` ⇒ ZERO residue
    beyond clear's `|dst₀|` — read-only two-mark ping-pong (marks only ever sit
    on BITS, never delimiters): special-case empties via `navigateAndTest`
    pre-branches; both nonempty → mark src1's bit, rewind, navigate src2, mark
@@ -421,26 +404,26 @@ non-live `concat`/`takeAt`/`dropAt`/`consLen`).
    owner-approved `Op.cost eqBit` bump (ripples into EvalCnf constants).
    Then `concat` (cursor machinery, cost `|src1|+|src2|+1` is generous), and
    last the value-as-length trio `takeAt`/`dropAt`/`consLen` (canonical
-   toolkit only — gated on Task 5).
-4. **Exact-residue formulas for forBnd (binding).** The forBnd combinator
-   consumes `copy`/`tail` via the underlying run lemmas (NOT the existential
-   contract): `opCopy_run` already states `res' = res ++ replicate |dst₀| 0`
-   exactly; keep the `tail` lemmas exact likewise (`res ++ [0]` in-place).
-5. **`compileForBnd` build — UNGATED once Task 1–2 land (interface re-pinned +
-   probe-validated 2026-06-11b).** Build exactly the machine pinned in `compileForBnd`'s
+   toolkit only — gated on Task 4).
+3. **`compileForBnd` build — UNGATED once Task 1 lands (interface re-pinned +
+   probe-validated 2026-06-11b; `copy` side DONE 2026-06-12b).** Build exactly
+   the machine pinned in `compileForBnd`'s
    docstring (Compile.lean ~1881; probe model: `probes/ForBndSkeletonProbe.lean`):
    `copy K1 bnd ⨾ loop{test K1 ⨾ copy cnt K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1 K1}
    ⨾ clear K2` with `K1 = sb`, `K2 = sb + 1`. Loop skeleton = the proven `loopTM`
    (two-exit body: `navigateAndTestTM K1` empty→done / content→iterate); the
-   bookkeeping reuses the op gadgets (`appendOne`/`clear` PROVEN; `copy`/`tail`
+   bookkeeping reuses the op gadgets (`appendOne`/`clear`/`copy` PROVEN; `tail`
    from Task 1 — **cursor copies only**, the moveRegionTM-based copy violates ①
-   from `iters = 2`). Prove against the re-pinned
-   `compileForBnd_sound_physical_residue` (Compile.lean ~10146): loop induction
+   from `iters = 2`). The combinator must consume the EXACT-residue run lemmas
+   (NOT the existential contract): `opCopy_run` already states
+   `res' = res ++ replicate |dst₀| 0` exactly; keep the `tail` lemmas exact
+   likewise (`res ++ [0]` in-place). Prove against the re-pinned
+   `compileForBnd_sound_physical_residue` (Compile.lean ~13182): loop induction
    over the iteration fold; per-iteration seq-compose the exact-residue op
    contracts + the body contract (`hbody` at scratch base `sb+2`); budget via
    `physStepBudget`'s 8-units-per-cost-item headroom (the α=8 accounting is in
    the probe file; `loopBudget_le` for the skeleton).
-6. **Canonical product-toolkit unary migration** (separate from the live path; needed for
+4. **Canonical product-toolkit unary migration** (separate from the live path; needed for
    S3 endgame, NOT for `sat_NP`). Restate `takeAt`/`dropAt`/`consLen` unary (count = the
    register's unary length, not `headD 0`); bump `consLen`'s `Op.cost`; re-lay the `Nat`/
    product/`List` canonical encodings bit-level (the product's single length-prefix cell →
@@ -471,11 +454,22 @@ non-live `concat`/`takeAt`/`dropAt`/`consLen`).
   `generalize` the products first.
 - **Append a BIT `b`** = `appendAtTM (b+1)`. `deleteCarryTM` deletes the cell **left
   of the head**; `navigateAndTestTM src` lands the head **on** src's first content.
-- **`omega` can't see through `Var := Nat`** (use a `Nat`-typed param), record
-  projections / `def`-constants (`show` the reduced form first), nor a `set x := e`
-  for hyps created *after* the `set`. **Avoid nested `set`/`let` over `State.set`/
+- **`omega` can't see through `Var := Nat`** — root cause refined 2026-06-12b:
+  it is the **goal's elaborated type**. A bare `show 13 + 3*dst = …` with
+  `dst : Var` elaborates the `=`/`<` at type `Var` and omega bails; ascribe
+  **`show (13 + 3*dst : Nat) = …`** and it works. Also: implicit-arg by-blocks
+  (`composeFlatTM_run`'s `h_exit_lt` etc.) elaborate BEFORE the run argument
+  pins `?exit` — pin it with the `show`. omega never splits `(l ++ r).length` —
+  hand it `List.length_append` facts. `rw`'s rfl-extension closes `a ≤ a`, so a
+  trailing `exact Nat.le_refl _` can die with "no goals". Record projections /
+  `def`-constants need `show` of the reduced form first; `set x := e` hyps
+  created *after* the `set` stay raw (convert with `rw [← hxdef]`).
+  **Avoid nested `set`/`let` over `State.set`/
   `.get`** (`isDefEq` blows up ×8/level — flatten with `simp only [Cmd.eval_op, Op.eval]`).
   **`.get` mis-resolves on `State` literals** — write `State.get s r` explicitly.
+  **Dependent `Fin`-index rewrites** (`rw` under `.get ⟨i, h⟩`) fail with
+  "motive is not type correct" — route through `getElem?` +
+  `List.getElem?_eq_getElem`/`Option.some_inj`.
 - **A polymorphic structure field over `encodeState` needs `∀ x : X`** (annotate the
   binder) or inference loops.
 - **`Cmd`-level proof engineering** (EvalCnfCmd.lean patterns): compute register reads
