@@ -13114,6 +13114,201 @@ theorem Compile.tailBranch_run (q : State) (dst src : Var)
     · simp only [List.tail_cons, List.length_cons]
       omega
 
+/-- **`tail dst dst` (in-place), delete case** (`s.get dst ≠ []`): one
+clear-style delete, exact residue `res ++ [0]`. The raw body run is
+`clearBody_delete_run` (reaching the demoted content exit, bridged into the
+kept done exit), then the `idTM` compose seam supplies the unique halt. -/
+theorem Compile.opTailSelf_run_delete (s : State) (dst : Var)
+    (hdst : dst < s.length) (hbit : Compile.BitState s) (hne : s.get dst ≠ [])
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.opTail dst dst).M
+          (initFlatConfig (Compile.opTail dst dst).M [Compile.encodeTape s ++ res])
+        = some { state_idx := (Compile.opTail dst dst).exit,
+                 tapes := [([], 0,
+                   Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.opTail dst dst).M
+              (initFlatConfig (Compile.opTail dst dst).M [Compile.encodeTape s ++ res])
+            = some ck →
+          ck.state_idx ≠ (Compile.opTail dst dst).exit ∧
+          haltingStateReached (Compile.opTail dst dst).M ck = false)
+      ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 14 := by
+  have hM : (Compile.opTail dst dst).M = Compile.tailInPlaceTM dst := by
+    rw [Compile.opTail, if_pos rfl]
+  have hexit : (Compile.opTail dst dst).exit = Compile.tailInPlaceTM_exit dst := by
+    rw [Compile.opTail, if_pos rfl]
+  have hstart : (Compile.opTail dst dst).M.start = 0 := by
+    rw [hM]; exact Compile.tailInPlaceTM_start dst
+  have hinit : initFlatConfig (Compile.opTail dst dst).M [Compile.encodeTape s ++ res]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    simp only [initFlatConfig, hstart, List.map_cons, List.map_nil]
+  rw [hinit, hM, hexit]
+  obtain ⟨T, hraw_run, hraw_traj, hraw_le⟩ :=
+    Compile.clearBody_delete_run s dst res hdst hbit hne hres
+  -- output tape cell bound (for the bridge/seam symbol side-conditions)
+  have hbit_out : Compile.BitState (s.set dst (s.get dst).tail) :=
+    Compile.BitState_set_tail s dst hbit hdst
+  have hres_out : Compile.ValidResidue (res ++ [0]) :=
+    Compile.ValidResidue_append_replicate_zero res 1 hres
+  have hout_lt4 : ∀ x ∈ Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]),
+      x < 4 := Compile.encodeTape_append_res_lt_four _ _ hbit_out hres_out
+  -- demote the content exit into the kept done exit
+  have hne_exits : ClearGadget.clearBodyRawTM_exitDone dst
+      ≠ ClearGadget.clearBodyRawTM_exitLoop dst := by
+    show (ClearGadget.navigateAndTestTM dst).states + ClearGadget.stepDeleteRewindRawTM.states
+          + ClearGadget.justRewindTM_exit
+        ≠ (ClearGadget.navigateAndTestTM dst).states + ClearGadget.stepDeleteRewindTM_exit
+    show _ + 19 + 1 ≠ _ + 17
+    omega
+  obtain ⟨hjrun, hjtraj⟩ := Compile.joinTwoHalts_reaches_demoted
+    (ClearGadget.clearBodyRawTM dst) (ClearGadget.clearBodyRawTM_exitDone dst)
+    (ClearGadget.clearBodyRawTM_exitLoop dst)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    T [] (Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])) 0
+    hraw_run (fun k hk ck hck => (hraw_traj k hk ck hck).2.2)
+    (ClearGadget.clearBodyRawTM_exitDone_is_halt dst)
+    (ClearGadget.clearBodyRawTM_exitLoop_is_halt dst)
+    hne_exits
+    (fun v hv => by
+      rw [Compile.clearBodyRawTM_sig]
+      exact Compile.sym_bound_of_lt_four _ hout_lt4 _ v hv)
+  -- compose with `idTM` (the unique-halt seam)
+  have hid : runFlatTM 0 Compile.idTM
+      { state_idx := 0,
+        tapes := [(([] : List Nat), 0,
+                   Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))] }
+      = some { state_idx := 0,
+               tapes := [(([] : List Nat), 0,
+                          Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))] } :=
+    rfl
+  have hsymC : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0])) = some v →
+      v < max (Compile.tailInPlaceRawTM dst).sig Compile.idTM.sig := by
+    intro v hv
+    rw [show max (Compile.tailInPlaceRawTM dst).sig Compile.idTM.sig = 4 from by
+      show max (ClearGadget.clearBodyRawTM dst).sig Compile.idTM.sig = 4
+      rw [Compile.clearBodyRawTM_sig]; rfl]
+    exact Compile.sym_bound_of_lt_four _ hout_lt4 _ v hv
+  have hstart_lt : (0 : Nat) < (Compile.tailInPlaceRawTM dst).states := by
+    have h := (Compile.tailInPlaceRawTM_valid dst).1
+    rwa [show (Compile.tailInPlaceRawTM dst).start = 0
+      from Compile.clearBodyRawTM_start dst] at h
+  have hcomp := composeFlatTM_run (Compile.tailInPlaceRawTM_valid dst) Compile.idTM_valid
+    (show ClearGadget.clearBodyRawTM_exitDone dst < (Compile.tailInPlaceRawTM dst).states
+      from ClearGadget.clearBodyRawTM_exitDone_lt dst)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hstart_lt
+    [] 0 (Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))
+    hsymC hjrun hjtraj hid rfl
+  have htrajC := composeFlatTM_no_early_halt (Compile.tailInPlaceRawTM_valid dst)
+    Compile.idTM_valid
+    (show ClearGadget.clearBodyRawTM_exitDone dst < (Compile.tailInPlaceRawTM dst).states
+      from ClearGadget.clearBodyRawTM_exitDone_lt dst)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hstart_lt
+    [] 0 (Compile.encodeTape (s.set dst (s.get dst).tail) ++ (res ++ [0]))
+    hsymC hjrun hjtraj (t₂ := 0)
+    (fun k hk ck hck => absurd hk (by omega))
+  have hfix : (0 : Nat) + (Compile.tailInPlaceRawTM dst).states
+      = Compile.tailInPlaceTM_exit dst := by
+    rw [Compile.tailInPlaceRawTM_states]
+    show (0 : Nat) + (ClearGadget.clearBodyRawTM dst).states
+        = (ClearGadget.clearBodyRawTM dst).states
+    omega
+  have hcrun := hcomp.1
+  rw [hfix] at hcrun
+  refine ⟨T + 1 + 1 + 0, hcrun, ?_, ?_⟩
+  · intro k hk ck hck
+    have hh := htrajC k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.tailInPlaceTM_exit_is_halt dst) hh, hh⟩
+  · omega
+
+/-- **`tail dst dst` (in-place), done case** (`s.get dst = []`): the body's
+delimiter branch fires, the tape is unchanged, residue passes through. -/
+theorem Compile.opTailSelf_run_done (s : State) (dst : Var)
+    (hdst : dst < s.length) (hbit : Compile.BitState s) (hemp : s.get dst = [])
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.opTail dst dst).M
+          (initFlatConfig (Compile.opTail dst dst).M [Compile.encodeTape s ++ res])
+        = some { state_idx := (Compile.opTail dst dst).exit,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.opTail dst dst).M
+              (initFlatConfig (Compile.opTail dst dst).M [Compile.encodeTape s ++ res])
+            = some ck →
+          ck.state_idx ≠ (Compile.opTail dst dst).exit ∧
+          haltingStateReached (Compile.opTail dst dst).M ck = false)
+      ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 13 := by
+  have hM : (Compile.opTail dst dst).M = Compile.tailInPlaceTM dst := by
+    rw [Compile.opTail, if_pos rfl]
+  have hexit : (Compile.opTail dst dst).exit = Compile.tailInPlaceTM_exit dst := by
+    rw [Compile.opTail, if_pos rfl]
+  have hstart : (Compile.opTail dst dst).M.start = 0 := by
+    rw [hM]; exact Compile.tailInPlaceTM_start dst
+  have hinit : initFlatConfig (Compile.opTail dst dst).M [Compile.encodeTape s ++ res]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    simp only [initFlatConfig, hstart, List.map_cons, List.map_nil]
+  rw [hinit, hM, hexit]
+  obtain ⟨T, hraw_run, hraw_traj, hraw_le⟩ :=
+    Compile.clearBody_done_run s dst res hdst hbit hemp hres
+  have hin_lt4 : ∀ x ∈ Compile.encodeTape s ++ res, x < 4 :=
+    Compile.encodeTape_append_res_lt_four _ res hbit hres
+  -- kept route through the join (the done exit is the kept `h1`)
+  obtain ⟨hjrun, hjtraj⟩ := Compile.joinTwoHalts_reaches_kept
+    (ClearGadget.clearBodyRawTM dst) (ClearGadget.clearBodyRawTM_exitDone dst)
+    (ClearGadget.clearBodyRawTM_exitLoop dst)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    T ([], 0, Compile.encodeTape s ++ res)
+    hraw_run (fun k hk ck hck => (hraw_traj k hk ck hck).2.2)
+    (ClearGadget.clearBodyRawTM_exitDone_is_halt dst)
+    (ClearGadget.clearBodyRawTM_exitLoop_is_halt dst)
+  have hid : runFlatTM 0 Compile.idTM
+      { state_idx := 0, tapes := [(([] : List Nat), 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := 0,
+               tapes := [(([] : List Nat), 0, Compile.encodeTape s ++ res)] } := rfl
+  have hsymC : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res)
+      = some v → v < max (Compile.tailInPlaceRawTM dst).sig Compile.idTM.sig := by
+    intro v hv
+    rw [show max (Compile.tailInPlaceRawTM dst).sig Compile.idTM.sig = 4 from by
+      show max (ClearGadget.clearBodyRawTM dst).sig Compile.idTM.sig = 4
+      rw [Compile.clearBodyRawTM_sig]; rfl]
+    exact Compile.sym_bound_of_lt_four _ hin_lt4 _ v hv
+  have hstart_lt : (0 : Nat) < (Compile.tailInPlaceRawTM dst).states := by
+    have h := (Compile.tailInPlaceRawTM_valid dst).1
+    rwa [show (Compile.tailInPlaceRawTM dst).start = 0
+      from Compile.clearBodyRawTM_start dst] at h
+  have hcomp := composeFlatTM_run (Compile.tailInPlaceRawTM_valid dst) Compile.idTM_valid
+    (show ClearGadget.clearBodyRawTM_exitDone dst < (Compile.tailInPlaceRawTM dst).states
+      from ClearGadget.clearBodyRawTM_exitDone_lt dst)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hstart_lt
+    [] 0 (Compile.encodeTape s ++ res)
+    hsymC hjrun hjtraj hid rfl
+  have htrajC := composeFlatTM_no_early_halt (Compile.tailInPlaceRawTM_valid dst)
+    Compile.idTM_valid
+    (show ClearGadget.clearBodyRawTM_exitDone dst < (Compile.tailInPlaceRawTM dst).states
+      from ClearGadget.clearBodyRawTM_exitDone_lt dst)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hstart_lt
+    [] 0 (Compile.encodeTape s ++ res)
+    hsymC hjrun hjtraj (t₂ := 0)
+    (fun k hk ck hck => absurd hk (by omega))
+  have hfix : (0 : Nat) + (Compile.tailInPlaceRawTM dst).states
+      = Compile.tailInPlaceTM_exit dst := by
+    rw [Compile.tailInPlaceRawTM_states]
+    show (0 : Nat) + (ClearGadget.clearBodyRawTM dst).states
+        = (ClearGadget.clearBodyRawTM dst).states
+    omega
+  have hcrun := hcomp.1
+  rw [hfix] at hcrun
+  refine ⟨T + 1 + 0, hcrun, ?_, ?_⟩
+  · intro k hk ck hck
+    have hh := htrajC k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.tailInPlaceTM_exit_is_halt dst) hh, hh⟩
+  · omega
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
