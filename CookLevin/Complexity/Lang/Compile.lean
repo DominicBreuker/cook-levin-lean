@@ -14736,6 +14736,287 @@ theorem compileIfBit_sound_physical_residue
           ← Compile.physStepBudget_seq G 0 (costE s)]
       omega
 
+/-! ### The `forBnd` loop-body bookkeeping chain (`forBndIterate`)
+
+The per-iteration work of the pinned `compileForBnd` machine, expressed as a
+`CompiledCmd` built by `compileSeq` from the PROVEN op gadgets. One iteration
+(`K1 = sb` holds the remaining count, `K2 = sb + 1` the done count):
+
+```
+copy counter K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1 K1
+```
+
+(`copy counter K2` re-materialises `counter` from the done count, `rbody` runs one
+body iteration, `appendOne K2` increments the done count, `tail K1 K1` decrements
+the remaining count.) `forBndIterate_run` discharges its TM-level run from the four
+op run lemmas via `compileSeq_sound_physical_residue`, validating the **W-invariant
+① accounting** (joint size+residue grows by ≤ the iteration's cost contribution
+`|K2| + body.cost + 1`) at the *machine* level — the claim the
+`ForBndSkeletonProbe` only checked arithmetically.
+
+⚠ **The loop body machine** (next bottom-up session) wraps this chain behind the
+`navigateAndTestTM K1` guard: the guard leaves the head in the tape **interior**
+(`navigateAndTestTM_run_content` ends at index `1 + |regBlocks|`, NOT `0`), but
+`forBndIterate`'s first op (`opCopy`) navigates from head `0`, so the content
+branch must **rewind to the leading sentinel** first (`justRewindTM =
+scanLeftUntilTM 4 3` from the interior lands on index `0`; the only `3` to the
+head's left). I.e. `Mcontent = composeFlatTM justRewindTM (forBndIterate …).M …`,
+`Mdelim = justRewindTM` — the `clearBodyRawTM` branch shape with the work chain in
+the content slot. -/
+
+/-- The per-iteration output state of `forBndIterate` (= the loop fold's
+`body.eval (st.set counter (replicate i 1))` followed by the bookkeeping, when
+`State.get s (sb+1) = replicate i 1`; matches `ForBndSkeletonProbe.machineModel`'s
+`go` body). -/
+def Compile.forBndIterateState (counter sb : Var) (body : Cmd) (s : State) : State :=
+  let s1 := s.set counter (State.get s (sb + 1))
+  let s2 := body.eval s1
+  let s3 := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1])
+  s3.set sb (State.get s3 sb).tail
+
+/-- The per-iteration bookkeeping chain `copy counter K2 ⨾ rbody ⨾ appendOne K2 ⨾
+tail K1 K1`, as a `CompiledCmd` (`K1 = sb`, `K2 = sb + 1`). -/
+def Compile.forBndIterate (counter sb : Var) (rbody : CompiledCmd) : CompiledCmd :=
+  compileSeq (Compile.opCopy counter (sb + 1))
+    (compileSeq rbody
+      (compileSeq (Compile.opAppendBitRewind (1 + 1) (by omega) (sb + 1))
+        (Compile.opTail sb sb)))
+
+/-- **★ Per-iteration run of the `forBnd` bookkeeping chain (TM-level W-invariant
+validation).** On a `BitState` input whose `K1 = sb` register is nonempty (the
+guard passed), `forBndIterate` reaches its exit on `forBndIterateState …`, with a
+residue whose joint size+length growth is bounded by the iteration's cost
+contribution `|K2| + body.cost (s.set counter K2) + 1` (the **W-invariant ①** — the
+key accounting claim) and a cubic step budget. Discharged from the four PROVEN op
+run lemmas (`opCopy_run` / the body contract `hbody` / `opAppendBit_physical_residue`
+/ `opTailSelf_run_delete`) composed by `compileSeq_sound_physical_residue`. The
+body contract `hbody` is verbatim `compileForBnd_sound_physical_residue`'s, so the
+loop assembly threads it straight through. -/
+theorem Compile.forBndIterate_run
+    (counter sb : Var) (rbody : CompiledCmd) (body : Cmd)
+    (s : State) (res : List Nat) (G : Nat)
+    (hbit : Compile.BitState s)
+    (hcnt : counter < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (hsbne : State.get s sb ≠ [])
+    (hres : Compile.ValidResidue res)
+    (huses_body : Cmd.UsesBelow body sb)
+    (hnc_body : Cmd.NoConsLen body)
+    (hscr : ∀ r, sb + 2 ≤ r → State.get s r = [])
+    (hG : State.size s + s.length + res.length
+            + ((State.get s (sb + 1)).length
+               + body.cost (s.set counter (State.get s (sb + 1))) + 1) + 2 ≤ G)
+    (hbody : ∀ (s' : State) (res' : List Nat) (G' : Nat),
+      Compile.BitState s' → sb + 2 + 2 * body.loopDepth ≤ s'.length →
+      (∀ r, sb + 2 ≤ r → State.get s' r = []) →
+      Compile.ValidResidue res' →
+      State.size s' + s'.length + res'.length + body.cost s' + 2 ≤ G' →
+      ∃ (tt : Nat) (resb : List Nat),
+        Compile.ValidResidue resb ∧
+        State.size (body.eval s') + resb.length ≤ State.size s' + res'.length + body.cost s' ∧
+        runFlatTM tt rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res'])
+          = some { state_idx := rbody.exit,
+                   tapes := [([], 0, Compile.encodeTape (body.eval s') ++ resb)] } ∧
+        (∀ kk, kk < tt → ∀ ck,
+            runFlatTM kk rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res']) = some ck →
+            ck.state_idx ≠ rbody.exit ∧ haltingStateReached rbody.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G' (body.cost s')) :
+    ∃ (t : Nat) (res' : List Nat),
+      Compile.ValidResidue res' ∧
+      State.size (Compile.forBndIterateState counter sb body s) + res'.length
+        ≤ State.size s + res.length
+          + ((State.get s (sb + 1)).length
+             + body.cost (s.set counter (State.get s (sb + 1))) + 1) ∧
+      runFlatTM t (Compile.forBndIterate counter sb rbody).M
+          (initFlatConfig (Compile.forBndIterate counter sb rbody).M [Compile.encodeTape s ++ res])
+        = some { state_idx := (Compile.forBndIterate counter sb rbody).exit,
+                 tapes := [([], 0,
+                   Compile.encodeTape (Compile.forBndIterateState counter sb body s) ++ res')] } ∧
+      (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.forBndIterate counter sb rbody).M
+              (initFlatConfig (Compile.forBndIterate counter sb rbody).M
+                [Compile.encodeTape s ++ res]) = some ck →
+          ck.state_idx ≠ (Compile.forBndIterate counter sb rbody).exit ∧
+          haltingStateReached (Compile.forBndIterate counter sb rbody).M ck = false) ∧
+      t ≤ (9 * G * G + 9 * G + 30) * (G + 2)
+          + Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1))))
+          + 9 * G + 25 := by
+  -- ### length facts (every op writes a register `< s.length`, so widths are constant `= s.length`)
+  -- (`sb`/`counter : Var` are opaque to `omega`; derive the order facts with `Nat.*` lemmas)
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  -- BitState of a register read in range
+  have hbit_reg : ∀ (r : Var), r < s.length → ∀ x ∈ State.get s r, x ≤ 1 := by
+    intro r hr x hx
+    refine hbit (State.get s r) ?_ x hx
+    rw [State.get, List.getElem?_eq_getElem hr]; exact List.getElem_mem hr
+  -- ### s1 := copy counter K2
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hbit1 : Compile.BitState s1 :=
+    Compile.BitState_set s counter _ hbit hcnt_lt (hbit_reg (sb + 1) hsb1_lt)
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  have hget1_sb : State.get s1 sb = State.get s sb :=
+    Compile.get_set_ne s counter _ sb hcnt_lt (Ne.symm (Nat.ne_of_lt hcnt))
+  have hsize1 : State.size s1 + (State.get s counter).length
+      = State.size s + (State.get s (sb + 1)).length := State.size_set_add s counter _
+  -- residue after copy
+  have hres1 : Compile.ValidResidue (res ++ List.replicate (State.get s counter).length 0) :=
+    Compile.ValidResidue_append_replicate_zero res _ hres
+  -- ### body contract instantiation at (s1, res1, G)
+  have hlen1' : sb + 2 + 2 * body.loopDepth ≤ s1.length := by rw [hlen1]; exact hlen
+  have hscr1 : ∀ r, sb + 2 ≤ r → State.get s1 r = [] := by
+    intro r hr
+    rw [hs1def, Compile.get_set_ne s counter _ r hcnt_lt
+      (Ne.symm (Nat.ne_of_lt (Nat.lt_of_lt_of_le hcnt (Nat.le_trans (Nat.le_add_right sb 2) hr))))]
+    exact hscr r hr
+  have hbodyG : State.size s1 + s1.length
+      + (res ++ List.replicate (State.get s counter).length 0).length + body.cost s1 + 2 ≤ G := by
+    rw [hlen1, List.length_append, List.length_replicate]
+    -- `omega` from `hsize1` (State.size s1 balance) + `hG`; all atoms are `Nat` (no bare `sb`)
+    omega
+  obtain ⟨tb, resb, hresb, hWbody, hrunb, htrajb, hbudb⟩ :=
+    hbody s1 (res ++ List.replicate (State.get s counter).length 0) G
+      hbit1 hlen1' hscr1 hres1 hbodyG
+  -- ### s2 := body.eval s1
+  set s2 : State := body.eval s1 with hs2def
+  have hbit2 : Compile.BitState s2 :=
+    Cmd.eval_preserves_BitState body sb s1 huses_body
+      (by rw [hlen1]; exact Nat.le_of_lt hsb_lt) hnc_body hbit1
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  have hget2_sb : State.get s2 sb = State.get s sb := by
+    rw [hs2def, Cmd.eval_get_frame body sb huses_body s1 sb (Nat.le_refl _), hget1_sb]
+  have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
+  -- ### s3 := appendOne K2  (= s2.set (sb+1) (s2.get (sb+1) ++ [1]))
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  have hbit2_reg : ∀ x ∈ State.get s2 (sb + 1), x ≤ 1 := by
+    intro x hx
+    refine hbit2 (State.get s2 (sb + 1)) ?_ x hx
+    rw [State.get, List.getElem?_eq_getElem hsb1_lt2]; exact List.getElem_mem hsb1_lt2
+  have hbit3 : Compile.BitState s3 := by
+    rw [hs3def]
+    exact Compile.BitState_set s2 (sb + 1) _ hbit2 hsb1_lt2
+      (by intro x hx; rcases List.mem_append.mp hx with h | h
+          · exact hbit2_reg x h
+          · simp only [List.mem_cons, List.not_mem_nil, or_false] at h; omega)
+  have hsize3 : State.size s3 + (State.get s2 (sb + 1)).length
+      = State.size s2 + (State.get s2 (sb + 1) ++ [1]).length := by
+    rw [hs3def]; exact State.size_set_add s2 (sb + 1) _
+  have hget3_sb : State.get s3 sb = State.get s sb := by
+    rw [hs3def, Compile.get_set_ne s2 (sb + 1) _ sb hsb1_lt2
+      (Nat.ne_of_lt (Nat.lt_succ_self sb)), hget2_sb]
+  have hsb_lt3 : sb < s3.length := by
+    rw [hs3def]
+    refine Nat.lt_of_lt_of_le hsb_lt ?_
+    have h1 : s.length ≤ s2.length := hlen1 ▸ hs2len_ge
+    exact Nat.le_trans h1 (State.set_length_ge s2 (sb + 1) _)
+  -- ### s4 := tail K1 K1  (= s3.set sb (s3.get sb).tail)
+  have hsbne3 : State.get s3 sb ≠ [] := by rw [hget3_sb]; exact hsbne
+  -- the four op runs ------------------------------------------------------------
+  -- (A) copy counter (sb+1)
+  obtain ⟨tA, hrunA, htrajA, hbudA⟩ :=
+    Compile.opCopy_run s counter (sb + 1)
+      (Nat.ne_of_lt (Nat.lt_trans hcnt (Nat.lt_succ_self sb))) hcnt_lt hsb1_lt hbit res hres
+  -- (C) appendOne (sb+1) on s2
+  obtain ⟨tC, hrunC, htrajC, hbudC⟩ :=
+    Compile.opAppendBit_physical_residue 1 (by omega) s2 (sb + 1) hbit2 hsb1_lt2 resb hresb
+  -- (D) tail sb sb on s3
+  obtain ⟨tD, hrunD, htrajD, hbudD⟩ :=
+    Compile.opTailSelf_run_delete s3 sb hsb_lt3 hbit3 hsbne3 resb hresb
+  -- output state equalities
+  have hs4def : Compile.forBndIterateState counter sb body s
+      = s3.set sb (State.get s3 sb).tail := rfl
+  -- halts of the inner exits (for `compileSeq` `h_halt2`)
+  have hhaltD : haltingStateReached (Compile.opTail sb sb).M
+      { state_idx := (Compile.opTail sb sb).exit,
+        tapes := [([], 0, Compile.encodeTape (s3.set sb (State.get s3 sb).tail) ++ (resb ++ [0]))] }
+      = true := by
+    have hex := (Compile.opTail sb sb).exit_is_halt
+    show (Compile.opTail sb sb).M.halt.getD (Compile.opTail sb sb).exit false = true
+    simp only [List.getD, hex, Option.getD]
+  -- compose D-level inner `appendOne ⨾ tail` (input s2)
+  set CD := compileSeq (Compile.opAppendBitRewind (1 + 1) (by omega) (sb + 1))
+    (Compile.opTail sb sb) with hCDdef
+  obtain ⟨hrunCD, hhaltCD⟩ :=
+    compileSeq_sound_physical_residue
+      (Compile.opAppendBitRewind (1 + 1) (by omega) (sb + 1)) (Compile.opTail sb sb)
+      s2 s3 (s3.set sb (State.get s3 sb).tail) resb resb (resb ++ [0])
+      hbit3 hresb hrunC htrajC hrunD hhaltD
+  have htrajCD := compileSeq_traj_physical_residue
+      (Compile.opAppendBitRewind (1 + 1) (by omega) (sb + 1)) (Compile.opTail sb sb)
+      s2 s3 resb resb hbit3 hresb hrunC htrajC htrajD
+  -- compose B-level `rbody ⨾ CD` (input s1)
+  set BCD := compileSeq rbody CD with hBCDdef
+  obtain ⟨hrunBCD, hhaltBCD⟩ :=
+    compileSeq_sound_physical_residue rbody CD
+      s1 s2 (s3.set sb (State.get s3 sb).tail)
+      (res ++ List.replicate (State.get s counter).length 0) resb (resb ++ [0])
+      hbit2 hresb hrunb htrajb hrunCD hhaltCD
+  have htrajBCD := compileSeq_traj_physical_residue rbody CD
+      s1 s2 (res ++ List.replicate (State.get s counter).length 0) resb
+      hbit2 hresb hrunb htrajb htrajCD
+  -- compose A-level `copy ⨾ BCD` (input s)
+  obtain ⟨hrunAll, hhaltAll⟩ :=
+    compileSeq_sound_physical_residue (Compile.opCopy counter (sb + 1)) BCD
+      s s1 (s3.set sb (State.get s3 sb).tail)
+      res (res ++ List.replicate (State.get s counter).length 0) (resb ++ [0])
+      hbit1 hres1 hrunA htrajA hrunBCD hhaltBCD
+  have htrajAll := compileSeq_traj_physical_residue (Compile.opCopy counter (sb + 1)) BCD
+      s s1 res (res ++ List.replicate (State.get s counter).length 0)
+      hbit1 hres1 hrunA htrajA htrajBCD
+  -- ### assemble the existential
+  refine ⟨tA + 1 + (tb + 1 + (tC + 1 + tD)), resb ++ [0],
+    Compile.ValidResidue_append_replicate_zero resb 1 hresb, ?_, ?_, ?_, ?_⟩
+  · -- ① W-invariant telescoping
+    rw [hs4def, List.length_append, List.length_singleton]
+    -- size after tail
+    have hsize4 : State.size (s3.set sb (State.get s3 sb).tail) + (State.get s3 sb).length
+        = State.size s3 + (State.get s3 sb).tail.length := State.size_set_add s3 sb _
+    have htail_len : (State.get s3 sb).tail.length + 1 = (State.get s3 sb).length := by
+      rw [List.length_tail]
+      have : 1 ≤ (State.get s3 sb).length := by
+        rcases hsbne3' : State.get s3 sb with _ | ⟨a, l⟩
+        · exact absurd hsbne3' hsbne3
+        · simp
+      omega
+    rw [List.length_append, List.length_replicate] at hWbody
+    -- equations: hsize1, hsize3, hsize4, htail_len, hWbody (le); all atoms `Nat` (no bare `sb`)
+    have e3 := hsize3
+    rw [List.length_append, List.length_singleton] at e3
+    omega
+  · -- run
+    rw [hs4def]
+    exact hrunAll
+  · -- trajectory
+    exact htrajAll
+  · -- ② budget: each op tape `≤ G`, then sum (all atoms `Nat`)
+    rw [List.length_append, List.length_replicate] at hWbody
+    have hslen2 : s2.length ≤ s.length := by
+      rw [hs2def]
+      exact Nat.le_trans (Cmd.eval_length_le body sb huses_body s1)
+        (by rw [hlen1]; exact Nat.max_le.mpr ⟨Nat.le_refl _, Nat.le_of_lt hsb_lt⟩)
+    have hslen3 : s3.length ≤ s.length := by
+      rw [hs3def]
+      exact Nat.le_trans (State.set_length_le s2 (sb + 1) _)
+        (Nat.max_le.mpr ⟨hslen2, hsb1_lt⟩)
+    have e3 := hsize3
+    rw [List.length_append, List.length_singleton] at e3
+    have hL : (Compile.encodeTape s ++ res).length ≤ G := by
+      rw [List.length_append, Compile.encodeTape_length]; omega
+    have hsrc_le : (State.get s (sb + 1)).length + 2 ≤ G + 2 := by omega
+    have hbA : tA ≤ (9 * G * G + 9 * G + 30) * (G + 2) :=
+      Nat.le_trans hbudA (Nat.mul_le_mul
+        (Nat.add_le_add (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 9 hL) hL)
+          (Nat.mul_le_mul_left 9 hL)) (Nat.le_refl 30)) hsrc_le)
+    have hLa : (Compile.encodeTape s2 ++ resb).length ≤ G := by
+      rw [List.length_append, Compile.encodeTape_length]; omega
+    have hbC : tC ≤ 3 * G + 8 := Nat.le_trans hbudC (by omega)
+    have hLt : (Compile.encodeTape s3 ++ resb).length ≤ G := by
+      rw [List.length_append, Compile.encodeTape_length]; omega
+    have hbD : tD ≤ 6 * G + 14 := Nat.le_trans hbudD (by omega)
+    omega
+
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — RE-PINNED 2026-06-11,
 `sorry`).** The scratch-register fix for the snapshot-vs-clobber gap: the previous
 pinning (no scratch interface) was **unprovable** — `Cmd.run` snapshots
