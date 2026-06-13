@@ -15416,6 +15416,296 @@ theorem Compile.forBndBody_done_run (counter sb : Var) (rbody : CompiledCmd)
            hh⟩
   · omega
 
+/-- **★ `forBnd` loop body — ITERATE branch (the `loopTM_run` `h_iter` contract).**
+When register `K1 = sb` is nonempty (the guard passed), the loop body navigates to
+it (content branch), the content machine `forBndContentTM` rewinds to the leading
+sentinel and runs the per-iteration bookkeeping chain `forBndIterate`, landing at
+`forBndBodyTM_exitLoop` on `forBndIterateState counter sb body s` (the decremented
+loop state) with a residue whose joint size+length growth is bounded by the
+iteration's cost contribution (the **W-invariant ①**). Mirrors
+`clearBody_delete_run`, but the content M₂ slot is `forBndContentTM` (a
+`composeFlatTM justRewindTM (forBndIterate …).M`), so its run/trajectory are built
+by `composeFlatTM_run`/`composeFlatTM_no_early_halt` from `rewindToStart_run`
+(`justRewindTM`) and the proven `forBndIterate_run`. Takes the verbatim
+`compileForBnd_sound_physical_residue` body contract `hbody`, threaded straight
+through to `forBndIterate_run`. -/
+theorem Compile.forBndBody_iterate_run
+    (counter sb : Var) (rbody : CompiledCmd) (body : Cmd)
+    (s : State) (res : List Nat) (G : Nat)
+    (hbit : Compile.BitState s)
+    (hcnt : counter < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (hsbne : State.get s sb ≠ [])
+    (hres : Compile.ValidResidue res)
+    (huses_body : Cmd.UsesBelow body sb)
+    (hnc_body : Cmd.NoConsLen body)
+    (hscr : ∀ r, sb + 2 ≤ r → State.get s r = [])
+    (hG : State.size s + s.length + res.length
+            + ((State.get s (sb + 1)).length
+               + body.cost (s.set counter (State.get s (sb + 1))) + 1) + 2 ≤ G)
+    (hbody : ∀ (s' : State) (res' : List Nat) (G' : Nat),
+      Compile.BitState s' → sb + 2 + 2 * body.loopDepth ≤ s'.length →
+      (∀ r, sb + 2 ≤ r → State.get s' r = []) →
+      Compile.ValidResidue res' →
+      State.size s' + s'.length + res'.length + body.cost s' + 2 ≤ G' →
+      ∃ (tt : Nat) (resb : List Nat),
+        Compile.ValidResidue resb ∧
+        State.size (body.eval s') + resb.length ≤ State.size s' + res'.length + body.cost s' ∧
+        runFlatTM tt rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res'])
+          = some { state_idx := rbody.exit,
+                   tapes := [([], 0, Compile.encodeTape (body.eval s') ++ resb)] } ∧
+        (∀ kk, kk < tt → ∀ ck,
+            runFlatTM kk rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res']) = some ck →
+            ck.state_idx ≠ rbody.exit ∧ haltingStateReached rbody.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G' (body.cost s')) :
+    ∃ (t : Nat) (res' : List Nat),
+      Compile.ValidResidue res' ∧
+      State.size (Compile.forBndIterateState counter sb body s) + res'.length
+        ≤ State.size s + res.length
+          + ((State.get s (sb + 1)).length
+             + body.cost (s.set counter (State.get s (sb + 1))) + 1) ∧
+      runFlatTM t (Compile.forBndBodyTM counter sb rbody)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.forBndBodyTM_exitLoop counter sb rbody,
+                 tapes := [([], 0,
+                   Compile.encodeTape (Compile.forBndIterateState counter sb body s) ++ res')] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.forBndBodyTM counter sb rbody)
+              { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+          ck.state_idx ≠ Compile.forBndBodyTM_exitDone counter sb rbody ∧
+          ck.state_idx ≠ Compile.forBndBodyTM_exitLoop counter sb rbody ∧
+          haltingStateReached (Compile.forBndBodyTM counter sb rbody) ck = false)
+      ∧ t ≤ (9 * G * G + 9 * G + 30) * (G + 2)
+          + Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1))))
+          + 12 * G + 32 := by
+  -- length facts (`sb`/`counter : Var` opaque to omega; use `Nat.*` lemmas)
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  -- tape decomposition at the (nonempty) register `sb` (copy of `clearBody_delete_run`)
+  obtain ⟨c0, cs, hcons⟩ : ∃ c0 cs, s.get sb = c0 :: cs := by
+    cases hg : s.get sb with
+    | nil => exact absurd hg hsbne
+    | cons c0 cs => exact ⟨c0, cs, rfl⟩
+  obtain ⟨hv, hs⟩ := Compile.encodeTape_reg_decomp_at s sb hsb_lt
+  have hc0le : c0 ≤ 1 := by
+    have hmem : s.get sb ∈ s := by
+      rw [State.get, List.getElem?_eq_getElem hsb_lt]; exact List.getElem_mem hsb_lt
+    exact hbit _ hmem c0 (by rw [hcons]; exact List.mem_cons_self ..)
+  have hbit_take : Compile.BitState (s.take sb) :=
+    fun reg hreg => hbit reg (List.mem_of_mem_take hreg)
+  set skipped : List (List Nat) := (s.take sb).map Compile.shiftReg with hskdef
+  have hregBlocks : AppendGadget.regBlocks skipped = Compile.encodeRegs (s.take sb) :=
+    Compile.regBlocks_map_shiftReg (s.take sb)
+  have hsklen : skipped.length = sb := by
+    rw [hskdef, List.length_map, List.length_take, Nat.min_eq_left (Nat.le_of_lt hsb_lt)]
+  have hskip : ∀ b ∈ skipped, (∀ x ∈ b, x ≠ 0) ∧ (∀ x ∈ b, x < 4) := by
+    rw [hskdef]; intro b hb
+    rw [List.mem_map] at hb
+    obtain ⟨reg, hreg, rfl⟩ := hb
+    have hregmem : reg ∈ s := List.mem_of_mem_take hreg
+    refine ⟨fun x hx => ?_, fun x hx => ?_⟩
+    · rw [Compile.shiftReg, List.mem_map] at hx; obtain ⟨y, _, rfl⟩ := hx; omega
+    · rw [Compile.shiftReg, List.mem_map] at hx; obtain ⟨y, hy, rfl⟩ := hx
+      have : y ≤ 1 := hbit reg hregmem y hy; omega
+  set midSuf : List Nat :=
+    Compile.shiftReg cs ++ 0 :: (Compile.encodeRegs (s.drop (sb + 1)) ++ [Compile.endMark] ++ res)
+    with hmidSufdef
+  have hshift : Compile.shiftReg (c0 :: cs) = (c0 + 1) :: Compile.shiftReg cs := by
+    simp [Compile.shiftReg]
+  have htape_nav : Compile.encodeTape s ++ res
+      = (3 : Nat) :: (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf) := by
+    rw [hs, hcons, hshift, hregBlocks, hmidSufdef]; simp [Compile.endMark, List.append_assoc]
+  have htape4 : ∀ x ∈ Compile.encodeTape s ++ res, x < 4 := by
+    intro x hx; rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeTape_lt_four s hbit x hx
+    · exact (hres x hx).1
+  have hrb : ∀ x ∈ AppendGadget.regBlocks skipped, x < 4 ∧ x ≠ 3 := by
+    rw [hregBlocks]; intro x hx
+    exact ⟨Compile.encodeRegs_lt_four (s.take sb) hbit_take x hx,
+           Compile.encodeRegs_no_endMark (s.take sb) hbit_take x hx⟩
+  have hpref : ∀ x ∈ AppendGadget.regBlocks skipped ++ [c0 + 1], x < 4 ∧ x ≠ 3 := by
+    intro x hx; rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact hrb x hx
+    · simp only [List.mem_singleton] at hx; subst hx; exact ⟨by omega, by omega⟩
+  have hrestsplit : AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf
+      = (AppendGadget.regBlocks skipped ++ [c0 + 1]) ++ midSuf := by simp [List.append_assoc]
+  have h_rb_le : (AppendGadget.regBlocks skipped).length + 2 ≤ (Compile.encodeTape s ++ res).length := by
+    rw [htape_nav]; simp only [List.length_cons, List.length_append]; omega
+  have h_nav_le : ClearGadget.navSteps skipped ≤ 2 * (AppendGadget.regBlocks skipped).length + 1 :=
+    ClearGadget.navSteps_le skipped
+  have hLG : (Compile.encodeTape s ++ res).length ≤ G := by
+    rw [List.length_append, Compile.encodeTape_length]; omega
+  -- ### the per-iteration bookkeeping run (forBndIterate), from head 0
+  obtain ⟨ti, resi, hresi, hWi, hruni, htraji, hbudi⟩ :=
+    Compile.forBndIterate_run counter sb rbody body s res G hbit hcnt hlen hsbne hres
+      huses_body hnc_body hscr hG hbody
+  -- ### the content machine `forBndContentTM` = rewind ⨾ forBndIterate, via composeFlatTM
+  -- (i) the rewind (`justRewindTM = scanLeftUntilTM 4 3`) from the interior head to 0
+  have h_rewind := ScanLeft.rewindToStart_run 4 3 []
+    (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf) (1 + (AppendGadget.regBlocks skipped).length)
+    (by rw [hrestsplit]; simp only [List.length_append, List.length_cons]; omega)
+    (fun i hi => by
+      have hi' : i < (AppendGadget.regBlocks skipped ++ [c0 + 1]).length := by
+        simp only [List.length_append, List.length_cons, List.length_nil]; omega
+      have hir : i < (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf).length := by
+        rw [hrestsplit, List.length_append]; omega
+      have hget? : (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf)[i]?
+          = (AppendGadget.regBlocks skipped ++ [c0 + 1])[i]? := by
+        rw [hrestsplit, List.getElem?_append_left hi']
+      have hget : (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf).get ⟨i, hir⟩
+          = (AppendGadget.regBlocks skipped ++ [c0 + 1])[i]'hi' := by
+        rw [List.get_eq_getElem]
+        rw [List.getElem?_eq_getElem hir, List.getElem?_eq_getElem hi'] at hget?
+        exact Option.some.inj hget?
+      exact ⟨hir, by rw [hget]; exact (hpref _ (List.getElem_mem hi')).1,
+                     by rw [hget]; exact (hpref _ (List.getElem_mem hi')).2⟩)
+  rw [← htape_nav] at h_rewind
+  have h_rewind_traj := ScanLeft.rewindToStart_traj 4 3 []
+    (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf) (1 + (AppendGadget.regBlocks skipped).length)
+    (by rw [hrestsplit]; simp only [List.length_append, List.length_cons]; omega)
+    (fun i hi => by
+      have hi' : i < (AppendGadget.regBlocks skipped ++ [c0 + 1]).length := by
+        simp only [List.length_append, List.length_cons, List.length_nil]; omega
+      have hir : i < (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf).length := by
+        rw [hrestsplit, List.length_append]; omega
+      have hget? : (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf)[i]?
+          = (AppendGadget.regBlocks skipped ++ [c0 + 1])[i]? := by
+        rw [hrestsplit, List.getElem?_append_left hi']
+      have hget : (AppendGadget.regBlocks skipped ++ (c0 + 1) :: midSuf).get ⟨i, hir⟩
+          = (AppendGadget.regBlocks skipped ++ [c0 + 1])[i]'hi' := by
+        rw [List.get_eq_getElem]
+        rw [List.getElem?_eq_getElem hir, List.getElem?_eq_getElem hi'] at hget?
+        exact Option.some.inj hget?
+      exact ⟨hir, by rw [hget]; exact (hpref _ (List.getElem_mem hi')).1,
+                     by rw [hget]; exact (hpref _ (List.getElem_mem hi')).2⟩)
+  rw [← htape_nav] at h_rewind_traj
+  -- sym-bound at the seam (head 0 reads the leading sentinel `3`)
+  have h_sym_seam : ∀ w, currentTapeSymbol ([], 0, Compile.encodeTape s ++ res) = some w →
+      w < max ClearGadget.justRewindTM.sig (Compile.forBndIterate counter sb rbody).M.sig := by
+    intro w hw
+    have hlen0 : (0 : Nat) < (Compile.encodeTape s ++ res).length := by rw [htape_nav]; simp
+    rw [currentTapeSymbol_in_range hlen0, List.get_eq_getElem] at hw
+    rw [show max ClearGadget.justRewindTM.sig (Compile.forBndIterate counter sb rbody).M.sig = 4 from by
+        rw [(Compile.forBndIterate counter sb rbody).M_sig]; rfl, (Option.some.inj hw).symm]
+    exact htape4 _ (List.getElem_mem hlen0)
+  -- halt of forBndIterate's exit config
+  have h_iterate_halt : haltingStateReached (Compile.forBndIterate counter sb rbody).M
+      { state_idx := (Compile.forBndIterate counter sb rbody).exit,
+        tapes := [([], 0,
+          Compile.encodeTape (Compile.forBndIterateState counter sb body s) ++ resi)] } = true := by
+    have hex := (Compile.forBndIterate counter sb rbody).exit_is_halt
+    show (Compile.forBndIterate counter sb rbody).M.halt.getD
+        (Compile.forBndIterate counter sb rbody).exit false = true
+    simp only [List.getD, hex, Option.getD]
+  -- assemble the content run (composeFlatTM justRewindTM forBndIterate.M)
+  have h_content := composeFlatTM_run
+    ClearGadget.justRewindTM_valid (Compile.forBndIterate counter sb rbody).M_valid
+    (show ClearGadget.justRewindTM_exit < ClearGadget.justRewindTM.states from by decide)
+    { state_idx := 0,
+      tapes := [([], 1 + (AppendGadget.regBlocks skipped).length, Compile.encodeTape s ++ res)] }
+    (show (0 : Nat) < ClearGadget.justRewindTM.states from by decide)
+    [] 0 (Compile.encodeTape s ++ res)
+    h_sym_seam h_rewind h_rewind_traj hruni h_iterate_halt
+  have h_content_traj := composeFlatTM_no_early_halt
+    ClearGadget.justRewindTM_valid (Compile.forBndIterate counter sb rbody).M_valid
+    (show ClearGadget.justRewindTM_exit < ClearGadget.justRewindTM.states from by decide)
+    { state_idx := 0,
+      tapes := [([], 1 + (AppendGadget.regBlocks skipped).length, Compile.encodeTape s ++ res)] }
+    (show (0 : Nat) < ClearGadget.justRewindTM.states from by decide)
+    [] 0 (Compile.encodeTape s ++ res)
+    h_sym_seam h_rewind h_rewind_traj
+    (fun k hk ck hck => (htraji k hk ck hck).2)
+  -- ### the outer branch (navigate K1 — content branch)
+  have h_run1nav : runFlatTM (ClearGadget.navSteps skipped + 1 + 1) (ClearGadget.navigateAndTestTM sb)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := ClearGadget.navigateAndTestTM_exit_content sb,
+               tapes := [([], 1 + (AppendGadget.regBlocks skipped).length,
+                          Compile.encodeTape s ++ res)] } := by
+    have hn := ClearGadget.navigateAndTestTM_run_content skipped (c0 + 1) midSuf hskip
+      (by omega) (by omega)
+    rw [← htape_nav, hsklen] at hn; exact hn
+  have h_cfg0_lt : (0 : Nat) < (ClearGadget.navigateAndTestTM sb).states := by
+    rw [ClearGadget.navigateAndTestTM_states]; omega
+  have h_sym : ∀ w, currentTapeSymbol ([], 1 + (AppendGadget.regBlocks skipped).length,
+        Compile.encodeTape s ++ res) = some w →
+      w < max (ClearGadget.navigateAndTestTM sb).sig
+        (max (Compile.forBndContentTM counter sb rbody).sig ClearGadget.justRewindTM.sig) := by
+    intro w hw
+    have hr : 1 + (AppendGadget.regBlocks skipped).length < (Compile.encodeTape s ++ res).length := by
+      rw [htape_nav]; simp [List.length_append]; omega
+    rw [currentTapeSymbol_in_range hr, List.get_eq_getElem] at hw
+    rw [show max (ClearGadget.navigateAndTestTM sb).sig
+          (max (Compile.forBndContentTM counter sb rbody).sig ClearGadget.justRewindTM.sig) = 4 from by
+        rw [ClearGadget.navigateAndTestTM_sig, Compile.forBndContentTM_sig]; rfl,
+        (Option.some.inj hw).symm]
+    exact htape4 _ (List.getElem_mem hr)
+  have h_traj1nav : ∀ k, k < ClearGadget.navSteps skipped + 1 + 1 → ∀ ck,
+      runFlatTM k (ClearGadget.navigateAndTestTM sb)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ ClearGadget.navigateAndTestTM_exit_content sb ∧
+      ck.state_idx ≠ ClearGadget.navigateAndTestTM_exit_delim sb ∧
+      haltingStateReached (ClearGadget.navigateAndTestTM sb) ck = false := by
+    intro k hk ck hck
+    have hh : haltingStateReached (ClearGadget.navigateAndTestTM sb) ck = false := by
+      have hnh := ClearGadget.navigateAndTestTM_no_early_halt skipped (c0 + 1) midSuf hskip
+        (by omega) k hk ck
+      rw [hsklen, ← htape_nav] at hnh; exact hnh hck
+    exact ⟨ClearGadget.ne_of_not_halting (ClearGadget.navigateAndTestTM_exit_content_is_halt sb) hh,
+           ClearGadget.ne_of_not_halting (ClearGadget.navigateAndTestTM_exit_delim_is_halt sb) hh,
+           hh⟩
+  have h_ne : ClearGadget.navigateAndTestTM_exit_content sb
+      ≠ ClearGadget.navigateAndTestTM_exit_delim sb := by
+    show (ClearGadget.navigateToRegTM sb).states + 1
+        ≠ (ClearGadget.navigateToRegTM sb).states + 2
+    omega
+  refine ⟨(ClearGadget.navSteps skipped + 1 + 1) + 1
+      + (((1 + (AppendGadget.regBlocks skipped).length) + 1) + 1 + ti), resi, hresi, hWi, ?_, ?_, ?_⟩
+  · -- run
+    rw [show Compile.forBndBodyTM counter sb rbody
+        = branchComposeFlatTM (ClearGadget.navigateAndTestTM sb)
+            (Compile.forBndContentTM counter sb rbody) ClearGadget.justRewindTM
+            (ClearGadget.navigateAndTestTM_exit_content sb)
+            (ClearGadget.navigateAndTestTM_exit_delim sb) from rfl,
+      show Compile.forBndBodyTM_exitLoop counter sb rbody
+        = ((Compile.forBndIterate counter sb rbody).exit + ClearGadget.justRewindTM.states)
+            + (ClearGadget.navigateAndTestTM sb).states from by
+          show (ClearGadget.navigateAndTestTM sb).states
+                + (ClearGadget.justRewindTM.states + (Compile.forBndIterate counter sb rbody).exit)
+            = ((Compile.forBndIterate counter sb rbody).exit + ClearGadget.justRewindTM.states)
+                + (ClearGadget.navigateAndTestTM sb).states
+          omega]
+    exact (branchComposeFlatTM_run_pos h_ne
+      (ClearGadget.navigateAndTestTM_valid sb) (Compile.forBndContentTM_valid counter sb rbody)
+      ClearGadget.justRewindTM_valid
+      (ClearGadget.navigateAndTestTM_exit_content_lt sb)
+      (ClearGadget.navigateAndTestTM_exit_delim_lt sb)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      h_cfg0_lt
+      [] (1 + (AppendGadget.regBlocks skipped).length) (Compile.encodeTape s ++ res)
+      h_sym h_run1nav h_traj1nav h_content.1 h_content.2).1
+  · -- no-early-halt
+    intro k hk ck hck
+    have hh := branchComposeFlatTM_no_early_halt_pos
+      (ClearGadget.navigateAndTestTM_valid sb) (Compile.forBndContentTM_valid counter sb rbody)
+      ClearGadget.justRewindTM_valid
+      (ClearGadget.navigateAndTestTM_exit_content_lt sb)
+      (ClearGadget.navigateAndTestTM_exit_delim_lt sb)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      h_cfg0_lt
+      [] (1 + (AppendGadget.regBlocks skipped).length) (Compile.encodeTape s ++ res)
+      h_sym h_run1nav h_traj1nav h_content_traj
+      k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.forBndBodyTM_exitDone_is_halt counter sb rbody) hh,
+           ClearGadget.ne_of_not_halting (Compile.forBndBodyTM_exitLoop_is_halt counter sb rbody) hh,
+           hh⟩
+  · -- budget
+    set A := (9 * G * G + 9 * G + 30) * (G + 2) with hA
+    set B := Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1)))) with hB
+    omega
+
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — RE-PINNED 2026-06-11,
 `sorry`).** The scratch-register fix for the snapshot-vs-clobber gap: the previous
 pinning (no scratch interface) was **unprovable** — `Cmd.run` snapshots
