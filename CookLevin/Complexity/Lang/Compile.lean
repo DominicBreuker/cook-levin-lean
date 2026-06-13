@@ -15017,6 +15017,106 @@ theorem Compile.forBndIterate_run
     have hbD : tD ≤ 6 * G + 14 := Nat.le_trans hbudD (by omega)
     omega
 
+/-! ### `forBndIterateState` fold invariants (for the loop induction)
+
+The loop induction (`compileForBnd_sound_physical_residue`, GAP 1d) threads the
+preconditions of `forBndBody_iterate_run` / `forBndBody_done_run` along the state
+fold `A 0 = s`, `A (i+1) = forBndIterateState counter sb body (A i)`. These lemmas
+discharge the inductive step: each iteration **decrements `K1 = sb` by exactly one
+cell** (so `|K1|` counts down to the done branch) and **leaves every scratch
+register `≥ sb + 2` untouched** (so the body contract `hbody` re-applies, and the
+nested loops' scratch survives). `length`/`BitState` preservation are derived
+inline in `forBndIterate_run`; re-export here for the induction. -/
+
+/-- One iteration decrements `K1 = sb` by its head cell (the loop counter). -/
+theorem Compile.forBndIterateState_get_sb (counter sb : Var) (body : Cmd) (s : State)
+    (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) :
+    State.get (Compile.forBndIterateState counter sb body s) sb = (State.get s sb).tail := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  have hget1_sb : State.get s1 sb = State.get s sb :=
+    Compile.get_set_ne s counter _ sb hcnt_lt (Ne.symm (Nat.ne_of_lt hcnt))
+  have hget2_sb : State.get s2 sb = State.get s sb := by
+    rw [hs2def, Cmd.eval_get_frame body sb huses_body s1 sb (Nat.le_refl _), hget1_sb]
+  have hget3_sb : State.get s3 sb = State.get s sb := by
+    have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
+    rw [hs3def, Compile.get_set_ne s2 (sb + 1) _ sb hsb1_lt2 (Nat.ne_of_lt (Nat.lt_succ_self sb)),
+        hget2_sb]
+  have hsb_lt3 : sb < s3.length := by
+    rw [hs3def]
+    exact Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le hsb_lt (hlen1 ▸ hs2len_ge))
+      (State.set_length_ge s2 (sb + 1) _)
+  show State.get (s3.set sb (State.get s3 sb).tail) sb = (State.get s sb).tail
+  rw [Compile.get_set_eq s3 sb _ hsb_lt3, hget3_sb]
+
+/-- One iteration leaves every scratch register `≥ sb + 2` empty (it writes only
+`counter < sb`, `K1 = sb`, `K2 = sb + 1`, and the body's registers `< sb`). -/
+theorem Compile.forBndIterateState_scratch (counter sb : Var) (body : Cmd) (s : State)
+    (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb)
+    (hscr : ∀ r, sb + 2 ≤ r → State.get s r = []) :
+    ∀ r, sb + 2 ≤ r → State.get (Compile.forBndIterateState counter sb body s) r = [] := by
+  intro r hr
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  -- `r` differs from each written register (`Var` is opaque to omega — use `Nat.*`)
+  have hsb_le_r : sb ≤ r := Nat.le_trans (Nat.le_add_right sb 2) hr
+  have hcnt_lt_r : counter < r := Nat.lt_of_lt_of_le hcnt hsb_le_r
+  have hsb_lt_r : sb < r :=
+    Nat.lt_of_lt_of_le (Nat.lt_succ_self sb)
+      (Nat.le_trans (Nat.succ_le_succ (Nat.le_add_right sb 1)) hr)
+  have hsb1_lt_r : sb + 1 < r := Nat.lt_of_lt_of_le (Nat.lt_succ_self (sb + 1)) hr
+  have hr_ne_cnt : r ≠ counter := Ne.symm (Nat.ne_of_lt hcnt_lt_r)
+  have hr_ne_sb : r ≠ sb := Ne.symm (Nat.ne_of_lt hsb_lt_r)
+  have hr_ne_sb1 : r ≠ sb + 1 := Ne.symm (Nat.ne_of_lt hsb1_lt_r)
+  have hget1_r : State.get s1 r = State.get s r :=
+    Compile.get_set_ne s counter _ r hcnt_lt hr_ne_cnt
+  have hget2_r : State.get s2 r = State.get s r := by
+    rw [hs2def, Cmd.eval_get_frame body sb huses_body s1 r hsb_le_r, hget1_r]
+  have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
+  have hget3_r : State.get s3 r = State.get s r := by
+    rw [hs3def, Compile.get_set_ne s2 (sb + 1) _ r hsb1_lt2 hr_ne_sb1, hget2_r]
+  have hsb_lt3 : sb < s3.length := by
+    rw [hs3def]
+    exact Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le hsb_lt (hlen1 ▸ hs2len_ge))
+      (State.set_length_ge s2 (sb + 1) _)
+  show State.get (s3.set sb (State.get s3 sb).tail) r = []
+  rw [Compile.get_set_ne s3 sb _ r hsb_lt3 hr_ne_sb, hget3_r]
+  exact hscr r hr
+
+/-- One iteration cannot shrink the register count (every write is in range). -/
+theorem Compile.forBndIterateState_length_ge (counter sb : Var) (body : Cmd) (s : State)
+    (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length) :
+    s.length ≤ (Compile.forBndIterateState counter sb body s).length := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  show s.length ≤ (s3.set sb (State.get s3 sb).tail).length
+  refine Nat.le_trans ?_ (State.set_length_ge s3 sb _)
+  rw [hs3def]
+  exact Nat.le_trans (hlen1 ▸ hs2len_ge) (State.set_length_ge s2 (sb + 1) _)
+
 /-! ### The `forBnd` loop-body machine (`forBndBodyTM`) and loop (`forBndLoopTM`)
 
 `forBndBodyTM counter sb rbody` is the `loopTM` body for the pinned `compileForBnd`
