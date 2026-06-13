@@ -15104,6 +15104,38 @@ theorem Compile.forBndIterateState_scratch (counter sb : Var) (body : Cmd) (s : 
   rw [Compile.get_set_ne s3 sb _ r hsb_lt3 hr_ne_sb, hget3_r]
   exact hscr r hr
 
+/-- One iteration appends `[1]` to `K2 = sb+1` (the done count). With `K2` empty at
+loop entry this gives `|K2_i| = i` (the `i`-th iteration's copy-source length) — the
+explicit factor the loop budget sum needs. -/
+theorem Compile.forBndIterateState_get_sb1 (counter sb : Var) (body : Cmd) (s : State)
+    (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) :
+    State.get (Compile.forBndIterateState counter sb body s) (sb + 1)
+      = State.get s (sb + 1) ++ [1] := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  have hget1_sb1 : State.get s1 (sb + 1) = State.get s (sb + 1) :=
+    Compile.get_set_ne s counter _ (sb + 1) hcnt_lt
+      (Ne.symm (Nat.ne_of_lt (Nat.lt_trans hcnt (Nat.lt_succ_self sb))))
+  have hget2_sb1 : State.get s2 (sb + 1) = State.get s (sb + 1) := by
+    rw [hs2def, Cmd.eval_get_frame body sb huses_body s1 (sb + 1) (Nat.le_succ sb), hget1_sb1]
+  have hget3_sb1 : State.get s3 (sb + 1) = State.get s (sb + 1) ++ [1] := by
+    rw [hs3def, Compile.get_set_eq s2 (sb + 1) _ hsb1_lt2, hget2_sb1]
+  have hsb_lt3 : sb < s3.length := by
+    rw [hs3def]
+    exact Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le hsb_lt (hlen1 ▸ hs2len_ge))
+      (State.set_length_ge s2 (sb + 1) _)
+  show State.get (s3.set sb (State.get s3 sb).tail) (sb + 1) = State.get s (sb + 1) ++ [1]
+  rw [Compile.get_set_ne s3 sb _ (sb + 1) hsb_lt3 (Nat.succ_ne_self sb), hget3_sb1]
+
 /-- One iteration cannot shrink the register count (every write is in range). -/
 theorem Compile.forBndIterateState_length_ge (counter sb : Var) (body : Cmd) (s : State)
     (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length) :
@@ -15168,6 +15200,53 @@ theorem Compile.forBndIterateState_bitState (counter sb : Var) (body : Cmd) (s :
     rw [State.get, List.getElem?_eq_getElem hsb_lt3]; exact List.getElem_mem hsb_lt3
   show Compile.BitState (s3.set sb (State.get s3 sb).tail)
   exact Compile.BitState_set s3 sb _ hbit3 hsb_lt3 hbit3_sb
+
+/-- **★ The fold-invariant induction (for `forBndLoop_run`).** Along the loop's
+state fold `A i = (forBndIterateState …)^[i] s`, for every `i ≤ iters` (where
+`iters = |K1| = (s.get sb).length`): `A i` is a `BitState` with scratch `≥ sb+2`
+empty, register count `≥ sb+2+2·loopDepth`, `K1` of length `iters−i` (counts down
+to the done branch at `i = iters`), and `K2` of length `i` (the `i`-th iteration's
+copy-source length — the explicit factor the budget sum needs). Discharged by the
+five `forBndIterateState_*` fold invariants. `K2` empty at entry (`hk2`) is what
+makes `|K2_i| = i`. -/
+theorem Compile.forBndLoop_invariant (counter sb : Var) (body : Cmd) (s : State)
+    (hbit : Compile.BitState s) (hcnt : counter < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (hscr : ∀ r, sb + 2 ≤ r → State.get s r = [])
+    (hk2 : State.get s (sb + 1) = []) :
+    ∀ i, i ≤ (State.get s sb).length →
+      Compile.BitState ((Compile.forBndIterateState counter sb body)^[i] s) ∧
+      (∀ r, sb + 2 ≤ r →
+        State.get ((Compile.forBndIterateState counter sb body)^[i] s) r = []) ∧
+      sb + 2 + 2 * body.loopDepth
+        ≤ ((Compile.forBndIterateState counter sb body)^[i] s).length ∧
+      (State.get ((Compile.forBndIterateState counter sb body)^[i] s) sb).length
+        = (State.get s sb).length - i ∧
+      (State.get ((Compile.forBndIterateState counter sb body)^[i] s) (sb + 1)).length = i := by
+  intro i
+  induction i with
+  | zero =>
+      intro _
+      simp only [Function.iterate_zero, id_eq]
+      exact ⟨hbit, hscr, hlen, by omega, by rw [hk2]; rfl⟩
+  | succ i ih =>
+      intro hi
+      obtain ⟨hb, hsc, hl, hk1, hk2i⟩ := ih (Nat.le_of_succ_le hi)
+      set a := (Compile.forBndIterateState counter sb body)^[i] s with hadef
+      have hstep : (Compile.forBndIterateState counter sb body)^[i + 1] s
+          = Compile.forBndIterateState counter sb body a := by
+        rw [Function.iterate_succ_apply', ← hadef]
+      rw [hstep]
+      refine ⟨?_, ?_, ?_, ?_, ?_⟩
+      · exact Compile.forBndIterateState_bitState counter sb body a hb hcnt hl huses_body hnc_body
+      · exact Compile.forBndIterateState_scratch counter sb body a hcnt hl huses_body hsc
+      · exact Nat.le_trans hl (Compile.forBndIterateState_length_ge counter sb body a hcnt hl)
+      · rw [Compile.forBndIterateState_get_sb counter sb body a hcnt hl huses_body,
+            List.length_tail, hk1]
+        omega
+      · rw [Compile.forBndIterateState_get_sb1 counter sb body a hcnt hl huses_body]
+        simp [hk2i]
 
 /-! ### The `forBnd` loop-body machine (`forBndBodyTM`) and loop (`forBndLoopTM`)
 
