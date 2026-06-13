@@ -15117,6 +15117,53 @@ theorem Compile.forBndIterateState_length_ge (counter sb : Var) (body : Cmd) (s 
   rw [hs3def]
   exact Nat.le_trans (hlen1 ▸ hs2len_ge) (State.set_length_ge s2 (sb + 1) _)
 
+/-- One iteration preserves `BitState` (every write stores a `≤ 1`-valued list, and
+the body preserves it by `Cmd.eval_preserves_BitState`). -/
+theorem Compile.forBndIterateState_bitState (counter sb : Var) (body : Cmd) (s : State)
+    (hbit : Compile.BitState s) (hcnt : counter < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body) :
+    Compile.BitState (Compile.forBndIterateState counter sb body s) := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  have hbit_reg : ∀ (rr : Var), rr < s.length → ∀ x ∈ State.get s rr, x ≤ 1 := by
+    intro rr hrr x hx
+    refine hbit (State.get s rr) ?_ x hx
+    rw [State.get, List.getElem?_eq_getElem hrr]; exact List.getElem_mem hrr
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hbit1 : Compile.BitState s1 :=
+    Compile.BitState_set s counter _ hbit hcnt_lt (hbit_reg (sb + 1) hsb1_lt)
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hbit2 : Compile.BitState s2 :=
+    Cmd.eval_preserves_BitState body sb s1 huses_body
+      (by rw [hlen1]; exact Nat.le_of_lt hsb_lt) hnc_body hbit1
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  have hbit2_reg : ∀ x ∈ State.get s2 (sb + 1), x ≤ 1 := by
+    intro x hx
+    refine hbit2 (State.get s2 (sb + 1)) ?_ x hx
+    rw [State.get, List.getElem?_eq_getElem hsb1_lt2]; exact List.getElem_mem hsb1_lt2
+  have hbit3 : Compile.BitState s3 := by
+    rw [hs3def]
+    exact Compile.BitState_set s2 (sb + 1) _ hbit2 hsb1_lt2
+      (by intro x hx; rcases List.mem_append.mp hx with h | h
+          · exact hbit2_reg x h
+          · simp only [List.mem_cons, List.not_mem_nil, or_false] at h; omega)
+  have hsb_lt3 : sb < s3.length := by
+    rw [hs3def]
+    exact Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le hsb_lt (hlen1 ▸ hs2len_ge))
+      (State.set_length_ge s2 (sb + 1) _)
+  have hbit3_sb : ∀ x ∈ (State.get s3 sb).tail, x ≤ 1 := by
+    intro x hx
+    refine hbit3 (State.get s3 sb) ?_ x (List.mem_of_mem_tail hx)
+    rw [State.get, List.getElem?_eq_getElem hsb_lt3]; exact List.getElem_mem hsb_lt3
+  show Compile.BitState (s3.set sb (State.get s3 sb).tail)
+  exact Compile.BitState_set s3 sb _ hbit3 hsb_lt3 hbit3_sb
+
 /-! ### The `forBnd` loop-body machine (`forBndBodyTM`) and loop (`forBndLoopTM`)
 
 `forBndBodyTM counter sb rbody` is the `loopTM` body for the pinned `compileForBnd`
