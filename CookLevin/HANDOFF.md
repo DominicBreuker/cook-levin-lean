@@ -58,10 +58,13 @@ REAL REMAINING MATH under the assembly:
   compileIfBit_sound_physical_residue  (✅ PROVEN —
                            real compileTestBit tester + branchCompose + joinTwoHalts)
   compileForBnd_sound_physical_residue (SORRY — interface RE-PINNED 2026-06-11; the
-                           per-iteration body chain `forBndIterate_run` is now PROVEN
-                           (2026-06-13, axiom-clean). Remaining: loop-body machine +
-                           loopTM/entry/exit assembly + loop induction. THE bottom-up
-                           task — see BOTTOM-UP task 1.)
+                           per-iteration chain `forBndIterate_run`, the loop machine
+                           `forBndBodyTM`/`forBndLoopTM` + structural lemmas, and the
+                           `loopTM` DONE contract `forBndBody_done_run` are PROVEN
+                           (2026-06-13b, axiom-clean). Remaining: the ITERATE contract
+                           `forBndBody_iterate_run` + the loop induction + the
+                           def-reordering to wire the real machine into `compileForBnd`.
+                           THE bottom-up task — see BOTTOM-UP task 1.)
 ```
 Both the **canonical** path (`DecidesLang'` / `inNPLang_to_inNP`) and the **free/live**
 path (`DecidesLang` / `inTimePolyLang_to_inTimePoly`) are now assembled and bridge the
@@ -131,54 +134,47 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-13, bottom-up) did — **`forBndIterate_run` PROVEN: the `forBnd` loop-body bookkeeping chain (the keystone of `compileForBnd`)**
+## ✅ What this session (2026-06-13b, bottom-up) did — **the `compileForBnd` loop MACHINE + its `loopTM` done contract (task (a) + half of (b))**
 
-**The per-iteration bookkeeping chain is real, composed, and its run is
-discharged — the W-invariant ①/budget ② accounting is now validated at the TM
-level (not just the `ForBndSkeletonProbe` arithmetic).** Axiom-clean
-(`[propext, Classical.choice, Quot.sound]`). Build green (3358 jobs).
+**The `forBnd` loop machine is now built and structurally validated; the
+`loopTM_run` done-branch contract is proven.** Axiom-clean
+(`[propext, Classical.choice, Quot.sound]`). Build green (3358 jobs). All new
+machines **probe-validated end-to-end** (`/tmp` `#eval` on real `encodeTape`s)
+*before* proving: content branch → `exitLoop` with exact output tape, delim
+branch → `exitDone`, tape unchanged.
 
-1. **`Compile.forBndIterate counter sb rbody`** (Compile.lean ~14780) — the one
-   iteration `copy counter K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1 K1` as a
-   `CompiledCmd`, built by **`compileSeq` from the PROVEN op gadgets**
-   (`opCopy`/`rbody`/`opAppendBitRewind 2`/`opTail sb sb`; `K1 = sb`,
-   `K2 = sb+1`). No new TM construction — pure reuse. Output state
-   `Compile.forBndIterateState` (matches `machineModel`'s `go` body).
-2. **`Compile.forBndIterate_run`** — given a `BitState` input with `K1` nonempty
-   (guard passed) and the **verbatim** `compileForBnd_sound_physical_residue`
-   body contract `hbody`, the chain reaches its exit on `forBndIterateState …`
-   with: **① W-invariant** joint size+residue growth `≤ |K2| + body.cost(s1) + 1`
-   (the keystone — discharged by op-level `State.size_set_add` balances +
-   `hbody`'s W-bound, telescoped by `omega`); the residue-tolerant run +
-   trajectory; **② budget** `≤ (9G²+9G+30)(G+2) + physStepBudget G (body.cost s1)
-   + 9G + 25`. Proof = three `compileSeq_sound_physical_residue` +
-   `compileSeq_traj_physical_residue` compositions of the four op run lemmas.
-3. **Key facts threaded** (reuse in the loop assembly): every op writes a
-   register `< s.length` (`counter<sb<sb+1<s.length`), so **all intermediate
-   widths stay `= s.length`** (⇒ every op tape `≤ G` from one `hG` bound);
-   **`body.eval` preserves `K1`/`K2`** (`UsesBelow body sb` ⇒ `Cmd.eval_get_frame`
-   at `r ≥ sb`) even though the body's *compiled* scratch base is `sb+2`.
+1. **`Compile.forBndContentTM counter sb rbody`** (Compile.lean, after
+   `forBndIterate_run` ~15020) — the content branch
+   `composeFlatTM justRewindTM (forBndIterate …).M justRewindTM_exit`: rewind to
+   the leading sentinel (navtest leaves the head in the interior), then run the
+   proven per-iteration chain.
+2. **`Compile.forBndBodyTM counter sb rbody`** — the `loopTM` body =
+   `branchComposeFlatTM (navigateAndTestTM sb) forBndContentTM justRewindTM …`,
+   mirroring `ClearGadget.clearBodyRawTM` **exactly**. A *bare* branch machine
+   (NO `joinTwoHalts` — `loopTM` tolerates the two unreachable `justRewindTM`
+   boundary halts). Full structural lemmas proven: `_states`/`_tapes`/`_sig`/
+   `_start`/`_valid` (content+body), and the `exitLoop`/`exitDone` defs + `_lt` +
+   `_is_halt` + `_ne` (the exact `clearBodyRawTM` lemma family).
+3. **`Compile.forBndLoopTM counter sb rbody := loopTM forBndBodyTM exitDone
+   exitLoop`** + `_valid`/`_sig`/`_tapes`/`_start` + `forBndLoopTM_exit`.
+4. **`Compile.forBndBody_done_run`** — the `loopTM_run` **done contract** (`K1=sb`
+   empty ⇒ navigate+rewind, land at `exitDone`, tape unchanged). A near-copy of
+   `clearBody_done_run` with the content slot swapped to `forBndContentTM`. Run +
+   no-early-halt + linear budget `≤ 6L+12`.
 
-**★ Structural finding surfaced (the loop body needs a rewind).**
-`navigateAndTestTM` leaves the head in the tape **interior**
-(`navigateAndTestTM_run_content` ends at index `1+|regBlocks|`, NOT `0`), but
-`forBndIterate`'s first op (`opCopy`) navigates from head `0`. So the loop-body
-machine's content branch must **rewind to the leading sentinel first**:
-`Mcontent = composeFlatTM justRewindTM (forBndIterate …).M …`,
-`Mdelim = justRewindTM` — the `clearBodyRawTM` `branchComposeFlatTM` shape with
-the work chain in the content slot (`justRewindTM = scanLeftUntilTM 4 3` from the
-interior lands on index `0`; the only `3` to the head's left). See BOTTOM-UP
-task 1.
+*Prior session (2026-06-13): `forBndIterate` + `forBndIterate_run` — the
+per-iteration bookkeeping chain `copy cnt K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1 K1`
+and its exact-residue run (W-invariant ①, cubic budget, takes the verbatim
+`hbody`). See PROVEN list + git log.*
 
 **Gotcha (recorded below):** `sb counter : Var` are **opaque to `omega`** even
 though `Var := Nat` (abbrev) — `omega` reports "No usable constraints found" for
 a bare `sb`. Fix: `simp only [Var] at *; omega`, OR derive order facts with
-explicit `Nat.*` lemmas (`Nat.le_trans`/`Nat.lt_trans`/`Nat.ne_of_lt`). Atoms of
-the form `(State.get s r).length` are fine (opaque `Nat`, no bare `sb`).
-
-*Prior session (2026-06-12c): the `tail` op was fully proven (machines +
-run-lemma stack + contract case, axiom-clean); 7/12 ops done — see the PROVEN
-list below and git log.*
+explicit `Nat.*` lemmas. `(State.get s r).length` atoms are fine.
+**New gotcha:** `justRewindTM.states`/`.sig` reduce to `3`/`4` only by `rfl`/
+defeq — after `rw`-ing the other `max`/`<` operands, close `max 4 4 = 4` with a
+trailing `rfl`, and feed `omega` explicit `justRewindTM_exit = 1`/`.states = 3`
+facts (they are otherwise opaque atoms).
 
 ---
 
@@ -302,6 +298,16 @@ list below and git log.*
   pattern = 3× `compileSeq_sound_physical_residue` + `_traj`; the W-telescope is
   `State.size_set_add` balances + `omega` (all atoms `Nat`; **no bare `sb`** —
   `Var` is opaque to `omega`, use `Nat.*` lemmas or `simp only [Var] at *`).
+- **★ The `forBnd` loop MACHINE (2026-06-13b)** — `Compile.forBndContentTM`
+  (content branch = `justRewindTM`-rewind ⨾ `forBndIterate.M`),
+  `Compile.forBndBodyTM` (`= branchComposeFlatTM (navigateAndTestTM sb)
+  forBndContentTM justRewindTM …`, the `clearBodyRawTM` shape), and
+  `Compile.forBndLoopTM := loopTM forBndBodyTM exitDone exitLoop`, with the FULL
+  structural-lemma family (`_states`/`_tapes`/`_sig`/`_start`/`_valid`, the
+  `exitLoop`/`exitDone` defs + `_lt`/`_is_halt`/`_ne`) and the `loopTM_run` DONE
+  contract `Compile.forBndBody_done_run` (delim branch; near-copy of
+  `clearBody_done_run`). All axiom-clean, probe-validated end-to-end. Reuse the
+  `clearBody_delete_run` pattern for the remaining ITERATE contract.
 - **★ The cursor-copy layer is COMPLETE (2026-06-12/12b)** — `Compile.opCopy`
   (REAL `CompiledCmd`, all invariants proven), its parts (`markBitTM`/
   `restoreStepTM`/`skipReadTM`, the staged pipeline `copyRet1TM`/
@@ -377,54 +383,68 @@ You build the gadgets the (pinned) contracts need. Build green per item;
 
 ✅ "EvalCnf inner bodies" CLOSED (2026-06-10); ✅ `compileTestBit`/`ifBit`
 combinator CLOSED (2026-06-11); ✅ the `copy`/`tail` ops CLOSED (2026-06-12b/c);
-✅ **the `forBnd` per-iteration chain CLOSED (2026-06-13: `forBndIterate_run`,
-axiom-clean)** — the loop body, loopTM assembly + loop induction remain (task 1).
+✅ the `forBnd` per-iteration chain CLOSED (2026-06-13: `forBndIterate_run`);
+✅ **the `forBnd` loop MACHINE + `loopTM` done contract CLOSED (2026-06-13b:
+`forBndBodyTM`/`forBndLoopTM` + `forBndBody_done_run`, axiom-clean)** — the
+ITERATE contract + loop induction + def-wiring remain (task 1).
 Everything left bottom-up is TM-level compiler work in Compile.lean. Both the
 decider half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest
 on the SAME gadgets, so Tasks 1 + 2 close **both** halves of the live chain at
 once. Remaining: the `forBnd` loop assembly, the `eqBit` op (+ the non-live
 `concat`/`takeAt`/`dropAt`/`consLen`).
 
-1. **`compileForBnd` — THE highest-value item. Per-iteration chain DONE
-   (2026-06-13: `Compile.forBndIterate` + `forBndIterate_run`, axiom-clean).
-   Remaining: the loop-body machine + the loopTM/entry/exit assembly + the loop
-   induction.** The pinned program is
+1. **`compileForBnd` — THE highest-value item. Machine + done contract DONE
+   (2026-06-13b: `forBndBodyTM`/`forBndLoopTM` + structural lemmas +
+   `forBndBody_done_run`, axiom-clean). Remaining: the ITERATE contract, the loop
+   induction, and the def-reordering.** The pinned program is
    `copy K1 bnd ⨾ loop{test K1 ⨾ copy cnt K2 ⨾ rbody ⨾ appendOne K2 ⨾
    tail K1 K1} ⨾ clear K2` (`K1 = sb`, `K2 = sb + 1`; docstring at
    `compileForBnd` ~Compile.lean 2947; probe `probes/ForBndSkeletonProbe.lean`).
-   The `{copy cnt K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1 K1}` body is now
-   `Compile.forBndIterate counter sb rbody` with its run lemma **PROVEN**
-   (exact-residue, W-invariant ①, budget ②). **Concrete remaining steps:**
-   - **(a) loop-body machine `forBndBodyTM counter sb rbody`** — `branchComposeFlatTM
-     (navigateAndTestTM sb) Mcontent (justRewindTM) (navigateAndTestTM_exit_content sb)
-     (navigateAndTestTM_exit_delim sb)` where `Mcontent = composeFlatTM justRewindTM
-     (forBndIterate counter sb rbody).M justRewindTM_exit` (⚠ the content branch
-     MUST rewind first — navtest leaves the head in the interior; see this
-     session's finding). **Mirror `ClearGadget.clearBodyRawTM` exactly** (same
-     branchCompose shape; copy its `valid`/`exitLoop`/`exitDone`/`_lt`/`_is_halt`
-     structural lemmas). `exitLoop` = content path, `exitDone` = delim path.
-   - **(b) body run lemmas for `loopTM_run`** — the iteration contract (`T(m+1) →
-     T(m)` via `navigateAndTestTM_run_content ⨾ justRewindTM-rewind ⨾
-     forBndIterate_run`) and the done contract (`T(0) → T(0)` via
-     `navigateAndTestTM_run_delim ⨾ justRewindTM`). Define `T : Nat → tape`,
-     `T(m) = encodeTape (loop state with m remaining) ++ residue(m)`; tie the
-     state-with-`m`-remaining to `Cmd.foldlState` via
-     `Cmd.foldlState_range_induct` (`K2 = replicate (iters−m) 1`, the invariant
-     that makes `forBndIterateState = ` the fold step — `ForBndSkeletonProbe`
-     confirms `machineModel = forBnd.eval`).
-   - **(c) `forBndLoopTM = loopTM forBndBodyTM exitDone exitLoop`** (assemble run
-     via `loopTM_run`/`loopTM_no_early_halt`), then
-     `compileForBnd = (opCopy sb bnd) ⨾ forBndLoopTM ⨾ (opClear (sb+1))` as a
-     `CompiledCmd` (composeFlatTM, then `joinTwoHalts`-demote stray halts like
-     `opCopy`/`opTail`). Wire it into the `compileForBnd` def (currently a stub).
-   - **(d) `compileForBnd_sound_physical_residue`** (Compile.lean ~15046, the
-     SORRY): entry `opCopy_run` (`copy K1 bnd`) → loop induction (`loopTM_run` +
-     per-iteration `forBndIterate_run`) → exit `clearRegionTM_run` (`clear K2`).
-     **W-invariant ①** telescopes the per-iteration `|K2|+body.cost+1` into
-     `forBnd.cost = 1 + Σ body.cost + iters²` (the `Σ(i+1) ≤ iters²+1` probe
-     arithmetic, tight at `iters∈{1,2}`); **budget ②** via `physStepBudget`'s
-     8-units headroom + `loopBudget`. Use `Cmd.cost_forBnd_le`/`Cmd.eval_forBnd`.
-   Expect ~2 sessions: (a)+(b) machines+body runs first, (c)+(d) assembly next.
+   The loop body is `Compile.forBndBodyTM counter sb rbody` (built this session).
+   **Concrete remaining steps:**
+   - **(b-rest) the ITERATE contract `forBndBody_iterate_run`** (the `loopTM_run`
+     `h_iter`). Mirror `Compile.clearBody_delete_run` (the content branch via
+     `branchComposeFlatTM_run_pos`), but the M₂ slot is `forBndContentTM`, so
+     feed `run_pos`'s `h_run2` a **`forBndContentTM_run` helper** =
+     `composeFlatTM_run` of (i) `ScanLeft.rewindToStart_run 4 3` on the interior
+     head `1+|regBlocks skipped|` (justRewindTM rewinds → head 0, tape unchanged —
+     copy the `clearBody_done_run` rewind-cell hyps verbatim) and (ii)
+     `Compile.forBndIterate_run` from head 0 (threading the `hbody` body
+     contract). The result state is `forBndContentTM.exit + nav.states`; check it
+     `=` `forBndBodyTM_exitLoop` (= `nav.states + justRewindTM.states +
+     forBndIterate.exit`; `composeFlatTM_run` lands at `justRewindTM.states +
+     forBndIterate.exit`). Output residue is `forBndIterate_run`'s existential
+     `res'`. **Take `hbody` + the `forBndIterate` preconditions as hypotheses**
+     (verbatim `forBndIterate_run`'s) — thread them straight through.
+   - **(d) the loop induction in `compileForBnd_sound_physical_residue`**
+     (Compile.lean ~15250, the SORRY): entry `opCopy_run` (`copy K1 bnd`) →
+     `loopTM_run`/`loopTM_no_early_halt` on `forBndBodyTM` (fed
+     `forBndBody_done_run` as `h_done` and `forBndBody_iterate_run` as `h_iter`)
+     → exit `clearRegionTM_run` (`clear K2`). ⚠ **The residue-trajectory design
+     (the genuine open risk — `loopTM_run` needs a FIXED `T : Nat → tape`):** the
+     loop STATES are deterministic (`St 0 = entry`, `St(i+1) =
+     forBndIterateState counter sb body (St i)` — a closed-form fold, tie to
+     `Cmd.foldlState` via `Cmd.foldlState_range_induct`, `K2 = replicate i 1`),
+     but the per-iteration RESIDUE is **existential** (each `forBndBody_iterate_run`
+     produces an existential `res'`). So define a residue trajectory `R : Nat →
+     List Nat` by recursion using the iterate contract's **`.choose`** (residue is
+     deterministic given input state+residue), proving by induction that the
+     iterate preconditions hold at each `St i`; then `T m := ([], 0, encodeTape
+     (St (iters−m)) ++ R (iters−m))` and `loopTM_run` closes the loop. **W-invariant
+     ①** telescopes the per-iteration `|K2|+body.cost+1` into `forBnd.cost = 1 + Σ
+     body.cost + iters²` (probe arithmetic `Σ(i+1) ≤ iters²+1`, tight at
+     `iters∈{1,2}`); **budget ②** via `physStepBudget`'s 8-unit headroom +
+     `loopBudget`. Use `Cmd.cost_forBnd_le`/`Cmd.eval_forBnd`.
+   - **(c) def-reordering + wiring.** `forBndIterate`/`forBndBodyTM`/`forBndLoopTM`
+     are defined LATE (after the `opCopy`/`opTail` *run lemmas*), but the
+     `compileForBnd` DEF (Compile.lean 2947, used by `compileCmd`) is EARLY. The
+     DEFS only need `opCopy`/`opTail`/`opAppendBitRewind`/`compileSeq`/the loop
+     combinators (all before 2947), so **move the machine DEFS (not their run
+     lemmas) above line 2947**, then set `compileForBnd counter bnd sb rbody :=
+     (opCopy sb bnd) ⨾ forBndLoopTM ⨾ (opClear (sb+1))` as a `CompiledCmd`
+     (`composeFlatTM`, then `joinTwoHalts`-demote stray halts as `opCopy`/`opTail`
+     do). Do this LAST (it touches `compileCmd`'s output type — rebuild everything).
+   Expect ~1–2 sessions: (b-rest)+(d) is the keystone; (c) is mechanical but wide.
 2. **`eqBit` design + probe (then build).** `Op.cost eqBit = 1` ⇒ ZERO residue
    beyond clear's `|dst₀|` — read-only two-mark ping-pong (marks only ever sit
    on BITS, never delimiters): special-case empties via `navigateAndTest`
