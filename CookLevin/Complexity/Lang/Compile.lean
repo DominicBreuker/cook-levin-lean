@@ -14838,7 +14838,7 @@ theorem Compile.forBndIterate_run
                 [Compile.encodeTape s ++ res]) = some ck →
           ck.state_idx ≠ (Compile.forBndIterate counter sb rbody).exit ∧
           haltingStateReached (Compile.forBndIterate counter sb rbody).M ck = false) ∧
-      t ≤ (9 * G * G + 9 * G + 30) * (G + 2)
+      t ≤ (9 * G * G + 9 * G + 30) * ((State.get s (sb + 1)).length + 2)
           + Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1))))
           + 9 * G + 25 := by
   -- ### length facts (every op writes a register `< s.length`, so widths are constant `= s.length`)
@@ -15004,17 +15004,22 @@ theorem Compile.forBndIterate_run
     rw [List.length_append, List.length_singleton] at e3
     have hL : (Compile.encodeTape s ++ res).length ≤ G := by
       rw [List.length_append, Compile.encodeTape_length]; omega
-    have hsrc_le : (State.get s (sb + 1)).length + 2 ≤ G + 2 := by omega
-    have hbA : tA ≤ (9 * G * G + 9 * G + 30) * (G + 2) :=
+    -- ⚠ keep the copy SOURCE length `|K2| = (s.get (sb+1)).length` explicit (do NOT
+    -- bound it by `G`): the loop sum `Σ_{i<iters}(|K2_i|+2) = Σ(i+2) ~ iters²/2`
+    -- fits under `physStepBudget`'s `8·iters²` headroom, whereas a per-iteration
+    -- `(G+2)` factor sums to `iters·G³` and overdraws (see `forBndLoop_run`).
+    have hbA : tA ≤ (9 * G * G + 9 * G + 30) * ((State.get s (sb + 1)).length + 2) :=
       Nat.le_trans hbudA (Nat.mul_le_mul
         (Nat.add_le_add (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 9 hL) hL)
-          (Nat.mul_le_mul_left 9 hL)) (Nat.le_refl 30)) hsrc_le)
+          (Nat.mul_le_mul_left 9 hL)) (Nat.le_refl 30)) (Nat.le_refl _))
     have hLa : (Compile.encodeTape s2 ++ resb).length ≤ G := by
       rw [List.length_append, Compile.encodeTape_length]; omega
     have hbC : tC ≤ 3 * G + 8 := Nat.le_trans hbudC (by omega)
     have hLt : (Compile.encodeTape s3 ++ resb).length ≤ G := by
       rw [List.length_append, Compile.encodeTape_length]; omega
     have hbD : tD ≤ 6 * G + 14 := Nat.le_trans hbudD (by omega)
+    set A := (9 * G * G + 9 * G + 30) * ((State.get s (sb + 1)).length + 2) with hAdef
+    set B := Compile.physStepBudget G (body.cost s1) with hBdef
     omega
 
 /-! ### `forBndIterateState` fold invariants (for the loop induction)
@@ -15622,7 +15627,7 @@ theorem Compile.forBndBody_iterate_run
           ck.state_idx ≠ Compile.forBndBodyTM_exitDone counter sb rbody ∧
           ck.state_idx ≠ Compile.forBndBodyTM_exitLoop counter sb rbody ∧
           haltingStateReached (Compile.forBndBodyTM counter sb rbody) ck = false)
-      ∧ t ≤ (9 * G * G + 9 * G + 30) * (G + 2)
+      ∧ t ≤ (9 * G * G + 9 * G + 30) * ((State.get s (sb + 1)).length + 2)
           + Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1))))
           + 12 * G + 32 := by
   -- length facts (`sb`/`counter : Var` opaque to omega; use `Nat.*` lemmas)
@@ -15848,8 +15853,8 @@ theorem Compile.forBndBody_iterate_run
     exact ⟨ClearGadget.ne_of_not_halting (Compile.forBndBodyTM_exitDone_is_halt counter sb rbody) hh,
            ClearGadget.ne_of_not_halting (Compile.forBndBodyTM_exitLoop_is_halt counter sb rbody) hh,
            hh⟩
-  · -- budget
-    set A := (9 * G * G + 9 * G + 30) * (G + 2) with hA
+  · -- budget (`|K2|`-explicit, so the loop sum closes — see `forBndIterate_run`)
+    set A := (9 * G * G + 9 * G + 30) * ((State.get s (sb + 1)).length + 2) with hA
     set B := Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1)))) with hB
     omega
 
