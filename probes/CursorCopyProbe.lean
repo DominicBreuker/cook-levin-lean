@@ -252,6 +252,33 @@ def chkLoop (q : State) (dst src : Nat) (res : List Nat) : Bool :=
       t ≤ (u.length + 1) * (5 * (Compile.encodeTape q' ++ res).length + 23)
   | none => false
 
+/-! ## The REAL `Compile.opTail` machines (2026-06-12c): probe the wired
+`CompiledCmd` end-to-end against the contract-shaped expectations (exit state,
+head 0, exact tape incl. residue). The local `tailInPlaceTM`/`tailRegionTM`
+above are the historical design probes; `Compile.opTail` is the live machine
+(in-place: joined `clearBodyRawTM` ⨾ `idTM`; `dst ≠ src`: clear ⨾ nav ⨾
+(skipRead ⨠ copyLoop/idTM joined) ⨾ rewind, boundary demoted). -/
+
+def chkTailReal (dst src : Nat) (s : State) (res : List Nat) :
+    Bool × Nat × Nat × List (List Nat × Nat × List Nat) :=
+  chk ((Compile.opTail dst src).M, (Compile.opTail dst src).exit)
+    (Compile.encodeTape s ++ res) (expectTail dst src s res)
+
+def chkTailIPReal (dst : Nat) (s : State) (res : List Nat) :
+    Bool × Nat × Nat × List (List Nat × Nat × List Nat) :=
+  chk ((Compile.opTail dst dst).M, (Compile.opTail dst dst).exit)
+    (Compile.encodeTape s ++ res) (expectTailIP dst s res)
+
+#eval chkTailReal 0 1 [[1, 0], [1, 1, 0]] []
+#eval chkTailReal 1 0 [[1, 0], [1, 1, 0]] []
+#eval chkTailReal 0 1 [[1, 0], []] []          -- empty src
+#eval chkTailReal 0 1 [[1, 0], [1]] [0, 1]     -- singleton src, residue
+#eval chkTailReal 2 0 [[1, 1], [0], [1]] []
+#eval chkTailIPReal 0 [[1, 0, 1], [1]] []
+#eval chkTailIPReal 1 [[1, 0], [0, 1]] [1, 0]
+#eval chkTailIPReal 0 [[], [1]] []             -- empty register
+#eval chkTailIPReal 1 [[0], [1]] []            -- singleton
+
 -- iter: dst before src / after src / first bit / last bit / b=0 / b=1 / residue
 #eval chkBodyIter [[], [1,0,1]] 0 1 1 [] [0,1] []        -- b=1, first bit, dst<src
 #eval chkBodyIter [[1], [1,0,1]] 0 1 0 [1] [1] [0,2]     -- b=0, middle bit, residue
