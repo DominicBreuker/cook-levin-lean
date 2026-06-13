@@ -15017,6 +15017,209 @@ theorem Compile.forBndIterate_run
     have hbD : tD ≤ 6 * G + 14 := Nat.le_trans hbudD (by omega)
     omega
 
+/-! ### The `forBnd` loop-body machine (`forBndBodyTM`) and loop (`forBndLoopTM`)
+
+`forBndBodyTM counter sb rbody` is the `loopTM` body for the pinned `compileForBnd`
+machine: a `branchComposeFlatTM (navigateAndTestTM sb) …` mirroring
+`ClearGadget.clearBodyRawTM` exactly, but with the per-iteration bookkeeping chain
+`forBndIterate` in the content slot. The guard `navigateAndTestTM sb` leaves the
+head in the tape **interior**, so the content branch first **rewinds** to the
+leading sentinel (`justRewindTM`) before running `forBndIterate` (whose first op
+navigates from head `0`) — the structural finding of the prior session. The
+delimiter branch is a bare `justRewindTM` (register `K1 = sb` empty ⇒ stop).
+
+Like `clearBodyRawTM`, this is a *bare* branch machine (no `joinTwoHalts`): `loopTM`
+tolerates the two extra unreachable boundary halts (`justRewindTM`'s reject in each
+slot), never triggered on a terminator-free residue. **Probe-validated end-to-end**
+(content → `exitLoop`, delim → `exitDone`; exact output tapes), see
+`forBndIterate_run` for the per-iteration contract this body wraps. -/
+
+/-- Content branch: rewind to the leading sentinel, then run the per-iteration
+chain `forBndIterate`. -/
+def Compile.forBndContentTM (counter sb : Var) (rbody : CompiledCmd) : FlatTM :=
+  composeFlatTM ClearGadget.justRewindTM (Compile.forBndIterate counter sb rbody).M
+    ClearGadget.justRewindTM_exit
+
+/-- The `forBnd` loop body (the `loopTM` body machine). -/
+def Compile.forBndBodyTM (counter sb : Var) (rbody : CompiledCmd) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.navigateAndTestTM sb)
+    (Compile.forBndContentTM counter sb rbody) ClearGadget.justRewindTM
+    (ClearGadget.navigateAndTestTM_exit_content sb) (ClearGadget.navigateAndTestTM_exit_delim sb)
+
+/-- `exitLoop`: the content-branch exit (one iteration done, continue the loop). -/
+def Compile.forBndBodyTM_exitLoop (counter sb : Var) (rbody : CompiledCmd) : Nat :=
+  (ClearGadget.navigateAndTestTM sb).states
+    + (ClearGadget.justRewindTM.states + (Compile.forBndIterate counter sb rbody).exit)
+
+/-- `exitDone`: the delimiter-branch exit (`K1` empty, stop the loop). -/
+def Compile.forBndBodyTM_exitDone (counter sb : Var) (rbody : CompiledCmd) : Nat :=
+  (ClearGadget.navigateAndTestTM sb).states + (Compile.forBndContentTM counter sb rbody).states
+    + ClearGadget.justRewindTM_exit
+
+/-! #### Content-branch structural lemmas -/
+
+theorem Compile.forBndContentTM_states (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndContentTM counter sb rbody).states
+      = ClearGadget.justRewindTM.states + (Compile.forBndIterate counter sb rbody).M.states := by
+  rw [Compile.forBndContentTM, composeFlatTM_states]
+
+theorem Compile.forBndContentTM_tapes (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndContentTM counter sb rbody).tapes = 1 := by
+  rw [Compile.forBndContentTM, composeFlatTM_tapes]; exact ClearGadget.justRewindTM_tapes
+
+theorem Compile.forBndContentTM_sig (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndContentTM counter sb rbody).sig = 4 := by
+  show max ClearGadget.justRewindTM.sig (Compile.forBndIterate counter sb rbody).M.sig = 4
+  rw [(Compile.forBndIterate counter sb rbody).M_sig]; rfl
+
+theorem Compile.forBndContentTM_valid (counter sb : Var) (rbody : CompiledCmd) :
+    validFlatTM (Compile.forBndContentTM counter sb rbody) :=
+  composeFlatTM_valid ClearGadget.justRewindTM (Compile.forBndIterate counter sb rbody).M
+    ClearGadget.justRewindTM_exit ClearGadget.justRewindTM_valid
+    (Compile.forBndIterate counter sb rbody).M_valid (by decide)
+    ClearGadget.justRewindTM_tapes (Compile.forBndIterate counter sb rbody).M_tapes
+
+/-! #### Loop-body structural lemmas -/
+
+theorem Compile.forBndBodyTM_tapes (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndBodyTM counter sb rbody).tapes = 1 := by
+  rw [Compile.forBndBodyTM, branchComposeFlatTM_tapes]; exact ClearGadget.navigateAndTestTM_tapes sb
+
+theorem Compile.forBndBodyTM_start (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndBodyTM counter sb rbody).start = 0 := by
+  rw [Compile.forBndBodyTM, branchComposeFlatTM_start]; exact ClearGadget.navigateAndTestTM_start sb
+
+theorem Compile.forBndBodyTM_sig (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndBodyTM counter sb rbody).sig = 4 := by
+  rw [Compile.forBndBodyTM, branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig,
+      Compile.forBndContentTM_sig]; rfl
+
+theorem Compile.forBndBodyTM_states (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndBodyTM counter sb rbody).states
+      = (ClearGadget.navigateAndTestTM sb).states
+        + (Compile.forBndContentTM counter sb rbody).states + ClearGadget.justRewindTM.states := by
+  rw [Compile.forBndBodyTM, branchComposeFlatTM_states]
+
+theorem Compile.forBndBodyTM_valid (counter sb : Var) (rbody : CompiledCmd) :
+    validFlatTM (Compile.forBndBodyTM counter sb rbody) :=
+  branchComposeFlatTM_valid (ClearGadget.navigateAndTestTM sb)
+    (Compile.forBndContentTM counter sb rbody) ClearGadget.justRewindTM
+    (ClearGadget.navigateAndTestTM_exit_content sb) (ClearGadget.navigateAndTestTM_exit_delim sb)
+    (ClearGadget.navigateAndTestTM_valid sb) (Compile.forBndContentTM_valid counter sb rbody)
+    ClearGadget.justRewindTM_valid
+    (ClearGadget.navigateAndTestTM_exit_content_lt sb) (ClearGadget.navigateAndTestTM_exit_delim_lt sb)
+    (ClearGadget.navigateAndTestTM_tapes sb) (Compile.forBndContentTM_tapes counter sb rbody)
+    ClearGadget.justRewindTM_tapes
+
+theorem Compile.forBndBodyTM_exitLoop_lt (counter sb : Var) (rbody : CompiledCmd) :
+    Compile.forBndBodyTM_exitLoop counter sb rbody
+      < (Compile.forBndBodyTM counter sb rbody).states := by
+  rw [Compile.forBndBodyTM_exitLoop, Compile.forBndBodyTM_states, Compile.forBndContentTM_states]
+  have := (Compile.forBndIterate counter sb rbody).exit_lt
+  omega
+
+theorem Compile.forBndBodyTM_exitDone_lt (counter sb : Var) (rbody : CompiledCmd) :
+    Compile.forBndBodyTM_exitDone counter sb rbody
+      < (Compile.forBndBodyTM counter sb rbody).states := by
+  rw [Compile.forBndBodyTM_exitDone, Compile.forBndBodyTM_states]
+  have h1 : ClearGadget.justRewindTM_exit = 1 := rfl
+  have h2 : ClearGadget.justRewindTM.states = 3 := rfl
+  omega
+
+theorem Compile.forBndBodyTM_exitDone_ne_exitLoop (counter sb : Var) (rbody : CompiledCmd) :
+    Compile.forBndBodyTM_exitDone counter sb rbody
+      ≠ Compile.forBndBodyTM_exitLoop counter sb rbody := by
+  rw [Compile.forBndBodyTM_exitDone, Compile.forBndBodyTM_exitLoop, Compile.forBndContentTM_states]
+  have := (Compile.forBndIterate counter sb rbody).exit_lt
+  have h1 : ClearGadget.justRewindTM_exit = 1 := rfl
+  have h2 : ClearGadget.justRewindTM.states = 3 := rfl
+  omega
+
+/-- `exitLoop` (the content-branch exit, in the `forBndContentTM` M₂ slot) IS a
+halt state of the loop body. -/
+theorem Compile.forBndBodyTM_exitLoop_is_halt (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndBodyTM counter sb rbody).halt[
+        Compile.forBndBodyTM_exitLoop counter sb rbody]? = some true := by
+  have hc : (Compile.forBndContentTM counter sb rbody).halt[
+      ClearGadget.justRewindTM.states + (Compile.forBndIterate counter sb rbody).exit]?
+        = some true :=
+    ScanLeft.composeFlatTM_halt_some_intro ClearGadget.justRewindTM
+      (Compile.forBndIterate counter sb rbody).M ClearGadget.justRewindTM_exit
+      (Compile.forBndIterate counter sb rbody).exit
+      (Compile.forBndIterate counter sb rbody).exit_is_halt
+  show (List.replicate (ClearGadget.navigateAndTestTM sb).states false
+        ++ (Compile.forBndContentTM counter sb rbody).halt ++ ClearGadget.justRewindTM.halt)[
+        (ClearGadget.navigateAndTestTM sb).states
+          + (ClearGadget.justRewindTM.states + (Compile.forBndIterate counter sb rbody).exit)]?
+        = some true
+  have hlen : (Compile.forBndContentTM counter sb rbody).halt.length
+      = (Compile.forBndContentTM counter sb rbody).states :=
+    (Compile.forBndContentTM_valid counter sb rbody).2.1
+  rw [List.append_assoc,
+      List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel_left,
+      List.getElem?_append_left (by
+        rw [hlen, Compile.forBndContentTM_states]
+        have := (Compile.forBndIterate counter sb rbody).exit_lt; omega)]
+  exact hc
+
+/-- `exitDone` (the delimiter-branch exit, `justRewindTM`'s found halt `1` in the
+M₃ slot) IS a halt state of the loop body. -/
+theorem Compile.forBndBodyTM_exitDone_is_halt (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndBodyTM counter sb rbody).halt[
+        Compile.forBndBodyTM_exitDone counter sb rbody]? = some true := by
+  show (List.replicate (ClearGadget.navigateAndTestTM sb).states false
+        ++ (Compile.forBndContentTM counter sb rbody).halt ++ ClearGadget.justRewindTM.halt)[
+        (ClearGadget.navigateAndTestTM sb).states
+          + (Compile.forBndContentTM counter sb rbody).states + ClearGadget.justRewindTM_exit]?
+        = some true
+  have hlen : (Compile.forBndContentTM counter sb rbody).halt.length
+      = (Compile.forBndContentTM counter sb rbody).states :=
+    (Compile.forBndContentTM_valid counter sb rbody).2.1
+  rw [List.getElem?_append_right (by rw [List.length_append, List.length_replicate, hlen]; omega),
+      List.length_append, List.length_replicate, hlen,
+      show (ClearGadget.navigateAndTestTM sb).states
+            + (Compile.forBndContentTM counter sb rbody).states + ClearGadget.justRewindTM_exit
+          - ((ClearGadget.navigateAndTestTM sb).states
+            + (Compile.forBndContentTM counter sb rbody).states)
+          = ClearGadget.justRewindTM_exit from by omega]
+  rfl
+
+/-! #### The loop machine `forBndLoopTM = loopTM forBndBodyTM exitDone exitLoop` -/
+
+/-- The pinned `forBnd` loop: `loopTM` of the body, with `exitDone` (register empty)
+the done exit and `exitLoop` the per-iteration continue exit. -/
+def Compile.forBndLoopTM (counter sb : Var) (rbody : CompiledCmd) : FlatTM :=
+  loopTM (Compile.forBndBodyTM counter sb rbody)
+    (Compile.forBndBodyTM_exitDone counter sb rbody)
+    (Compile.forBndBodyTM_exitLoop counter sb rbody)
+
+/-- The loop halts at its dedicated halt state `(forBndBodyTM …).states`. -/
+def Compile.forBndLoopTM_exit (counter sb : Var) (rbody : CompiledCmd) : Nat :=
+  (Compile.forBndBodyTM counter sb rbody).states
+
+theorem Compile.forBndLoopTM_tapes (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndLoopTM counter sb rbody).tapes = 1 :=
+  Compile.forBndBodyTM_tapes counter sb rbody
+
+theorem Compile.forBndLoopTM_sig (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndLoopTM counter sb rbody).sig = 4 :=
+  Compile.forBndBodyTM_sig counter sb rbody
+
+theorem Compile.forBndLoopTM_start (counter sb : Var) (rbody : CompiledCmd) :
+    (Compile.forBndLoopTM counter sb rbody).start = 0 :=
+  Compile.forBndBodyTM_start counter sb rbody
+
+theorem Compile.forBndLoopTM_valid (counter sb : Var) (rbody : CompiledCmd) :
+    validFlatTM (Compile.forBndLoopTM counter sb rbody) :=
+  loopTM_valid (Compile.forBndBodyTM counter sb rbody)
+    (Compile.forBndBodyTM_exitDone counter sb rbody)
+    (Compile.forBndBodyTM_exitLoop counter sb rbody)
+    (Compile.forBndBodyTM_valid counter sb rbody)
+    (Compile.forBndBodyTM_exitDone_lt counter sb rbody)
+    (Compile.forBndBodyTM_exitLoop_lt counter sb rbody)
+    (Compile.forBndBodyTM_tapes counter sb rbody)
+
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — RE-PINNED 2026-06-11,
 `sorry`).** The scratch-register fix for the snapshot-vs-clobber gap: the previous
 pinning (no scratch interface) was **unprovable** — `Cmd.run` snapshots
