@@ -133,76 +133,63 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-14b, bottom-up) did — **`eqBit` design SETTLED + build decomposed (the highest-value live-path item)**
+## ✅ What this session (2026-06-14c, bottom-up) did — **`eqBit` build SETTLED: design (A) at `cost=1`, the budget question RESOLVED (no cost bump, no new copy lemma)**
 
-A **design / de-risking session** on `eqBit` (BOTTOM-UP task 1 — the ONLY op the
-live `sat_NP` decider still needs). No new proof closed; instead the structure
-was nailed down against the *proven* toolkit so the next bottom-up session builds
-a known-correct machine instead of discovering structure mid-proof. Three
-load-bearing facts were **machine-verified** against the codebase:
+A **de-risking session** on `eqBit` (BOTTOM-UP task 1 — the ONLY op the live
+`sat_NP` decider still needs). The prior session left ONE open question — does
+design (A) (scratch-consume) fit the `cost=1` per-op budget or force an
+`Op.cost eqBit` bump? **It is now answered, with a measurement probe
+(`probes/CompareRegsBudgetProbe.lean`, `#eval`-validated): design (A) fits
+`cost=1` cleanly. Build it. No cost bump.** The two retained design facts:
 
 1. **★ The `eqBit` WRAPPER is the proven `nonEmptyRawM` template, verbatim.**
    `nonEmptyRawM dst src = branchComposeFlatTM (navigateAndTestTM src)
    (nonEmptyBranchBody dst 2) (nonEmptyBranchBody dst 1) …` then `joinTwoHalts`.
    For `eqBit`, replace **only** the tester `navigateAndTestTM src` with a
-   comparison machine `compareRegsTM src1 src2` that halts in two states
-   **EQ / NEQ** with the tape **restored**; the two branch bodies are *identical*
-   (`nonEmptyBranchBody dst 2` for EQ→`[1]`, `…dst 1` for NEQ→`[0]`: each rewinds
-   then clears `dst` and appends the answer bit). ⇒ the entire `opNonEmpty_run`
-   proof (`joinTwoHalts` merge, per-branch `clearAppendM_run`, the W-invariant ①,
-   the answer-`≤1`-cell residue bookkeeping, budget) **transfers verbatim**; the
-   ONLY novel obligation is `compareRegsTM` + its run lemma. **Build `eqBit` as
-   this wrapper; do not hand-roll the clear/append/branch-merge.**
+   comparison machine `compareRegsTM src1 src2` halting in **EQ / NEQ** with the
+   tape **restored**; the two branch bodies are *identical* (`nonEmptyBranchBody
+   dst 2` for EQ→`[1]`, `…dst 1` for NEQ→`[0]`). ⇒ the whole `opNonEmpty_run`
+   proof (joinTwoHalts merge, per-branch `clearAppendM_run`, W-invariant ①,
+   answer-`≤1`-cell residue, budget) **transfers verbatim**; the ONLY novel
+   obligation is `compareRegsTM` + its run lemma.
 
-2. **★ `loopTM` has exactly ONE terminal halt** (`loopHalt B = replicate
-   B.states false ++ [true]`, a single halt at index `B.states`; every *body*
-   state is non-halting — a third body-halt would make `loopTM` **stuck**, not
-   exit). So the comparison loop **must be a clean 2-outcome body** (ITERATE /
-   DONE) — EQ-vs-NEQ canNOT be two distinct loop exits.
-   **Resolution (the key design unlock):** make the loop **consume-and-compare**
-   and recover the verdict *after* the loop from register emptiness —
-   **EQ ⟺ (both operands empty after the loop)**: the body ITERATEs only while
-   *both heads exist AND are equal* (deleting both heads), and DONEs on first
-   mismatch *or* either-empty. Then `r1=r2` ⟺ both empty at DONE (mismatch leaves
-   both nonempty; length-diff empties one first; equal empties both together).
-   The post-loop "both empty?" is two proven `navigateAndTestTM`s feeding the
-   EQ/NEQ branch — **no on-tape flag / no scratch flag register needed.**
+2. **★ `loopTM` has exactly ONE terminal halt** ⇒ the comparison loop is a clean
+   **2-outcome body** (ITERATE / DONE); EQ-vs-NEQ is recovered AFTER the loop.
+   Design (A): **consume-and-compare two scratch COPIES** — body ITERATEs while
+   *both heads exist AND are equal* (deleting both), DONEs on first mismatch *or*
+   either-empty; then **EQ ⟺ both scratch empty at DONE** (proven for all inputs:
+   `probes/EqBitProbe.lean#eqVerdict_correct`). Post-loop verdict = two proven
+   `navigateAndTestTM`s feeding the EQ/NEQ branch — no flag register.
 
-3. **★ `padRegsTM_run` (the proven tape-grow) is EXACT-tape, no residue param**
-   (`encodeTape s → encodeTape (s ++ replicate k [])`, head 0). So a scratch-based
-   comparison (consume *copies*, leaving src1/src2 intact) needs **new**
-   residue-tolerant grow + a brand-new "shrink trailing empty regs" gadget — a
-   real cost. The in-place alternative avoids both.
+### ★ THE BUDGET QUESTION — RESOLVED (the key finding; corrects the prior block)
 
-**⇒ Two candidate `compareRegsTM` designs, both feed the same wrapper (fact 1)
-and the same 2-outcome loop (fact 2). Probe one, build it.**
+The prior session feared design (A)'s two copies cost `~9L²` each (busting the
+`cost=1` budget `(9L²+9L+30)·2 ≈ 18L²`) and "likely forces an `Op.cost eqBit`
+bump (ripples into EvalCnf's `timeBound` **constant** only)". **Both halves of
+that were wrong:**
 
-- **(A) Scratch-consume (max reuse, likely needs a cost bump).** Grow 2 empty
-  scratch regs `sc1,sc2`; `copy src1→sc1`, `copy src2→sc2` (proven `copyLoop_run`);
-  the clean 2-outcome consume loop (`loopTM` of `navAndTest sc1 / navAndTest sc2 /
-  bitRead sc1 / bitRead sc2 / tail sc1 / tail sc2 / rewind` — ALL proven gadgets);
-  post-loop test both `sc` empty → EQ/NEQ; clear `sc1,sc2`; **shrink** the 2 regs.
-  *Pro:* the loop body and copies are entirely proven, #eval-validated gadgets.
-  *Con:* needs residue-tolerant grow + a new shrink; and 2 full copies push the
-  step count toward ~15–20 scan-passes/bit vs the `(9L²+9L+30)·(cost+1)` budget at
-  `cost=1` (≈18L²) — **likely forces the owner-approved `Op.cost eqBit` bump**
-  (ripples into EvalCnf's `timeBound` constant only).
-- **(B) In-place caterpillar (fits `cost=1`, no grow/shrink, harder loop body).**
-  Two cursors walked by the copy op's **mark-relocation trick** (the unique
-  interior `3`, found by scan-from-end); carry the last-matched bit in the loop
-  FSM to *restore* the previous marks (sig=4 leaves no value-preserving mark).
-  Same clean 2-outcome loop (ITERATE while both have a next bit AND it matches;
-  DONE otherwise) + a post-loop "both cursors at register end?" test + mark
-  restore. *Pro:* one new hard gadget, no scratch, no cost bump (~6–8 scans/bit
-  ≈ 8L² < 18L²). *Con:* the mark/value-carry body is the hardest to prove.
+- **The copies are cheap.** A copy's REAL cost is `Θ(|src|·L)` (LINEAR per bit),
+  and the **tight** budget is ALREADY PROVEN — `Compile.copyLoop_run`:
+  `(|src|+1)·(5L+23)`. The prior worry came from reusing `Compile.opCopy_run`,
+  whose `(9L²+9L+30)·(|src|+2)` is a LOOSE re-wrap to the per-op CONTRACT shape,
+  NOT the copy's real cost. **Reuse `copyLoop_run` (NOT `opCopy_run`) for the two
+  copies** ⇒ `2·(|src|+1)(5L+23) ≤ ~5L²`, leaving ~13L² for the consume loop.
+  Probe (`twoTightCopiesFitHalfBudget`, `looseCopyBustsBudget`): tight fits with
+  ~62% headroom; loose busts — exactly the trap to avoid.
+- **`cost=1` is the FAITHFUL choice; a bump would be the hack.** `eqBit` is
+  genuinely a `Θ(L²)` op (like `clear`/`nonEmpty`/`head`, all `cost=1`). A
+  data-aware `Op.cost eqBit = |s1|+|s2|+1` would OVER-charge it to `Θ(L³)`, AND
+  the ripple is **NOT a constant**: `eqBit BLOCK_ACC LIT_VAR` (EvalCnfCmd.lean
+  ~157) compares `Θ(n)`-length unary var-indices nested in `forBnd` loops, so a
+  data-aware cost re-opens the finished, axiom-clean EvalCnf **quartic** cost
+  proof (likely a degree bump). **Keep `Op.cost eqBit = 1`; do not bump.**
 
-**RECOMMENDED next bottom-up step:** **PROBE design (A)'s consume loop first**
-(`probes/` pattern, `#eval` the `loopTM` body on two scratch regs holding copies)
-— it is built entirely from already-`#eval`-validated proven gadgets, so it
-reaches a working comparison core fastest and *measures* the real budget,
-settling the cost-bump question definitively. If the bump is unwanted, fall back
-to (B). Either way the wrapper (fact 1) and the 2-outcome loop shape (fact 2) are
-fixed. **Decomposed build plan in BOTTOM-UP task 1 below.**
+⇒ **Build design (A) at `cost=1`, reusing `copyLoop_run` for the copies.** The
+only genuinely new gadgets are the scratch grow/shrink lifecycle, the consume
+loop (body + run lemma), and the verdict — all from proven pieces. Decomposed
+plan in BOTTOM-UP task 1 below. (Design B, the in-place caterpillar, is now
+*superseded* — it was only attractive under the false cost-bump pressure; it
+adds a delicate mark/value-carry body for no benefit. Do not pursue it.)
 
 ---
 
@@ -440,53 +427,55 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~14114; raw `sorry`s a
    the entire live decider chain `sat_NP → … → Compile_run_physical_residue`
    **sorry-free**. The **design is settled** (see this session's block above — read
    it first). `Op.cost eqBit = 1`; residue beyond `clear`'s `|dst₀|` is ZERO; output
-   is exactly `[answer]` (1 cell). **Decomposed build plan:**
+   is exactly `[answer]` (1 cell). **Decomposed build plan (build (d2) first, then
+   the (d1) wrapper):**
 
-   **(d1) WRAPPER — reuse `nonEmptyRawM` verbatim.** Define
+   **(d2) `compareRegsTM src1 src2` — design (A), `cost=1` (budget SETTLED this
+   session — see the session block; reuse `copyLoop_run`, NOT `opCopy_run`).**
+   Runs on `encodeTape s ++ res`, leaves the tape **restored**, halts in EQ or NEQ
+   with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
+   copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
+   Build & prove bottom-up:
+   - **(d2a) consume-loop body `B` + run lemma (the core; hardest piece).** Build
+     the clean **2-outcome** body: nested `branchComposeFlatTM` over
+     `navigateAndTestTM sc1` → (delim ⇒ DONE) / (content ⇒ `navigateAndTestTM sc2`
+     → (delim ⇒ DONE) / (content ⇒ `bitReadTM sc1`; nav `sc2`; `bitReadTM`; equal ⇒
+     `opTail sc1 sc1 ⨾ opTail sc2 sc2 ⨾ rewind` ⇒ ITERATE; differ ⇒ DONE)). Exactly
+     TWO body halts (DONE, ITERATE) — merge the multiple DONE paths via
+     `joinTwoHalts` (mirror `clearBodyRawTM`/`forBndBodyTM`). Then `loopTM B DONE
+     ITERATE`; prove its run lemma by the **`forBndLoop_run`/`copyLoop_run`
+     pattern** (a `T : Nat → tape` family indexed by remaining matched-bit-pairs;
+     `loopTM_run` with per-iteration `tIter` + the no-early-halt trajectory). The
+     loop's **decision contract** ("equal ⟺ both `sc` empty at DONE") is PROVEN for
+     all inputs in `probes/EqBitProbe.lean` (`eqVerdict_correct`, axiom-clean) — the
+     run lemma reproduces it on tape. **`#eval` the assembled `loopTM B …` before
+     proving** (probes/ pattern), confirming it matches `consumeLoop`.
+   - **(d2b) verdict.** Post-loop: two `navigateAndTestTM`s (sc1 empty? sc2 empty?)
+     feeding the EQ/NEQ branch via `joinTwoHalts` — no flag register.
+   - **(d2c) scratch lifecycle `growTwoEmpty`/`shrinkTwoEmpty`.** Place `sc1,sc2` at
+     the register-list END. `padRegsTM_run` is exact-tape (no residue), so build a
+     small residue-tolerant pair: insert/delete a `0` delimiter before the `3`
+     terminator via `insertCarryTM`/`deleteCarryTM` (the proven carry gadgets; see
+     `padRegsTM`'s `padBody` for the navigate-to-terminator pattern). Each is `O(L)`.
+   - **Budget (settled, `cost=1` ≈ 18L²):** the two copies use the **tight**
+     `copyLoop_run` budget `(|src|+1)(5L+23)` ⇒ `≤ ~5L²` total; the consume loop is
+     `Θ(L²)` (a few passes/bit on shrinking scratch) ⇒ `≤ ~8L²`; grow/shrink/verdict
+     `O(L)`. Total `~13L² < 18L²`. Probe `CompareRegsBudgetProbe.lean` confirms
+     `2·copyLoop_run ≤ ½·18L²`. **Do NOT reuse `opCopy_run` (loose `9L²·|src|` busts
+     the budget). Do NOT bump `Op.cost eqBit`.**
+   - **Reuse heavily:** `navigateAndTestTM`/`bitReadTM`/`opTail`/`copyLoop_run`/
+     `clear`/`insertCarryTM`/`deleteCarryTM` (all proven + `#eval`-validated),
+     `branchComposeFlatTM`/`joinTwoHalts`/`loopTM` run-lemma stacks, and
+     `clearBodyRawTM`/`forBndLoop_run`/`opNonEmpty_run` as proof templates.
+
+   **(d1) WRAPPER — reuse `nonEmptyRawM` verbatim — LAST, after (d2).** Define
    `opEqBit dst src1 src2 := joinTwoHalts (branchComposeFlatTM (compareRegsTM
    src1 src2) (nonEmptyBranchBody dst 2 _) (nonEmptyBranchBody dst 1 _) EQ NEQ) …`
    — structurally identical to `Compile.nonEmptyRawM`/`opNonEmpty` with
    `compareRegsTM` swapped in for `navigateAndTestTM`. The shape/valid/halt lemmas
-   and the `opEqBit_run` proof are a **mechanical port of `opNonEmpty`'s** (the
-   `joinTwoHalts` merge, per-branch `clearAppendM_run`, the answer-≤1-cell residue,
-   the budget); the `eqBit` contract case is then a copy of the `nonEmpty` case at
-   Compile.lean ~14287 (residue `res_in ++ replicate |dst₀| 0`, W-invariant via
-   `State.size_set_add`). **Do this LAST, after (d2).**
-
-   **(d2) `compareRegsTM src1 src2` — the ONE novel gadget.** Runs on
-   `encodeTape s ++ res`, leaves the tape **restored**, halts in EQ or NEQ with
-   `EQ ⟺ s.get src1 = s.get src2`. Must be a clean **2-outcome `loopTM`** (fact 2
-   above) + a post-loop "both ended?" test feeding EQ/NEQ. **PROBE design (A)
-   first** (recommended — max reuse, measures the budget):
-   - **(d2a)** Build + `#eval` the consume-loop **body** `B` on two scratch regs
-     `sc1 sc2` (holding copies): nested `branchComposeFlatTM` over
-     `navigateAndTestTM sc1` → (delim ⇒ DONE) / (content ⇒ `navigateAndTestTM sc2`
-     → (delim ⇒ DONE) / (content ⇒ `bitReadTM sc1`; `navigate sc2`; `bitReadTM`;
-     equal ⇒ `opTail sc1 sc1 ⨾ opTail sc2 sc2 ⨾ rewind` ⇒ ITERATE; differ ⇒
-     DONE)). Exactly TWO body halts (DONE, ITERATE). Then `loopTM B DONE ITERATE`,
-     prove its run lemma by the `copyLoop_run`/`forBndLoop_run` pattern (induction
-     on `min |sc1| |sc2|`-ish; the loop ends with at least one `sc` empty). The
-     loop's **decision contract** ("operands equal ⟺ both `sc` empty at DONE") is
-     already PROVEN for all inputs in `probes/EqBitProbe.lean`
-     (`eqVerdict_correct`, axiom-clean) — the run lemma must reproduce it on tape.
-   - **(d2b)** Post-loop: `navigateAndTestTM sc1` ⨾ branch on (sc1 empty ∧ sc2
-     empty) → EQ else NEQ (two `navigateAndTest`s + a `joinTwoHalts`).
-   - **(d2c)** Scratch lifecycle: grow 2 empty regs before, shrink after. NOTE
-     `padRegsTM_run` is exact-tape (no residue) — either thread residue through a
-     local grow lemma, or (cleaner) place `sc1,sc2` at the END and build a small
-     `growTwoEmpty`/`shrinkTwoEmpty` pair (insert/delete a `0` before the
-     terminator via `insertCarryTM`/`deleteCarryTM`). The copies use
-     `copyLoop_run` (proven).
-   - **Budget:** `#eval` the assembled machine vs `(9L²+9L+30)·2 ≈ 18L²`. If it
-     overshoots (≈15–20 scan-passes/bit from the 2 copies), take the
-     **owner-approved `Op.cost eqBit` bump** (the ONLY ripple is EvalCnf's
-     `timeBound` constant `200000·(n+1)^4` — bump the constant, re-run
-     `evalCnfDecidesLang`'s cost arithmetic). If avoiding the bump matters, switch
-     to design (B) in-place caterpillar (fits `cost=1`, no scratch; mark/value-carry
-     body — reuse `markBitTM`/`restoreStepTM`/`copyPipe`-style relocation).
-   - **Reuse heavily:** `navigateAndTestTM`/`bitReadTM`/`opTail`/`copyLoop_run`
-     (all proven + `#eval`-validated), `branchComposeFlatTM`/`joinTwoHalts`/`loopTM`
-     run-lemma stacks, and `opCopy`/`opNonEmpty`/`forBndLoop` as proof templates.
+   and `opEqBit_run` are a **mechanical port of `opNonEmpty`'s**; the `eqBit`
+   contract case is then a copy of the `nonEmpty` case at Compile.lean ~14287
+   (residue `res_in ++ replicate |dst₀| 0`, W-invariant via `State.size_set_add`).
 
 2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
    `concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`. = `clear dst ⨾
