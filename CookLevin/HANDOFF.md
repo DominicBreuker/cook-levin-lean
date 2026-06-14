@@ -133,61 +133,76 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-14, bottom-up) did — **`compileForBnd` is fully PROVEN; the forBnd loop is CLOSED**
+## ✅ What this session (2026-06-14b, bottom-up) did — **`eqBit` design SETTLED + build decomposed (the highest-value live-path item)**
 
-`compileForBnd_sound_physical_residue` is now **sorry-free & axiom-clean**
-(`[propext, Classical.choice, Quot.sound]`; build green, 3358 jobs). This
-discharges the last `forBnd` obligation — the compiled counted loop is assembled
-end-to-end. New reusable, axiom-clean results (all in `Compile.lean`, except none
-in Frame — it lacks Finset):
+A **design / de-risking session** on `eqBit` (BOTTOM-UP task 1 — the ONLY op the
+live `sat_NP` decider still needs). No new proof closed; instead the structure
+was nailed down against the *proven* toolkit so the next bottom-up session builds
+a known-correct machine instead of discovering structure mid-proof. Three
+load-bearing facts were **machine-verified** against the codebase:
 
-1. **`Compile.forBndLoop_run`** — the loop-fragment run (the d2 centerpiece;
-   mirrors `clearRegionTM_run`). The residue/step-count fold is built by a clean
-   **tactic induction** `Compile.forBndLoop_fold` (NOT a `.choose`-fold — far less
-   fiddly: prove `∃ Rf Tf, …` by induction on the prefix length, extending with
-   `if i = N+1 then … else …`), then fed to `loopTM_run`/`loopTM_no_early_halt`.
-   The **W-invariant and budget are exposed as `Finset` sums** over the fold
-   states; the budget's superadditive collapse uses **`physStepBudget_sum_le`**
-   (`∑ physStepBudget G (c j) ≤ physStepBudget G (∑ c j + n)`) and
-   **`loopBudget_eq_sum`**.
-2. **`Compile.forBndLoop_agree`** — the machine↔pure-fold agreement (`AgreeBelow sb
-   (A i) (F i)` ∧ `K2 = replicate i 1`), extracted from `forBndLoop_eval`'s `key`.
-3. **`Cmd.cost_forBnd_eq`** — `(forBnd).cost s = 1 + (∑_{i<iters} body.cost((F i).set
-   cnt (replicate i 1))) + iters²` (cost as a `Finset` sum over pure fold states;
-   the counterpart of `eval_forBnd`). Bridges the loop's machine body-cost sum
-   (via `forBndLoop_agree` + `Cmd.cost_agree`) to `(forBnd).cost s`.
-4. **`Compile.forBndBudget_arith`** — the three-leg budget inequality (entry
-   `opCopy` + loop + exit `opClear`) `≤ physStepBudget G ((forBnd).cost s)`. Proven
-   by the **exact superadditivity** decomposition `physStepBudget G(SC+iters) + 1 +
-   physStepBudget G(iters²−iters) = physStepBudget G(cost)` (the loop's PHI fits
-   the headroom), then `nlinarith` on the residual `G,iters` polynomial after
-   substituting `q := iters²−iters` (clears the truncated subtraction).
-5. The assembly `compileForBnd_sound_physical_residue` itself: 3× `compileSeq`
-   stitch, W-telescope, final state via `forBndLoop_eval`.
+1. **★ The `eqBit` WRAPPER is the proven `nonEmptyRawM` template, verbatim.**
+   `nonEmptyRawM dst src = branchComposeFlatTM (navigateAndTestTM src)
+   (nonEmptyBranchBody dst 2) (nonEmptyBranchBody dst 1) …` then `joinTwoHalts`.
+   For `eqBit`, replace **only** the tester `navigateAndTestTM src` with a
+   comparison machine `compareRegsTM src1 src2` that halts in two states
+   **EQ / NEQ** with the tape **restored**; the two branch bodies are *identical*
+   (`nonEmptyBranchBody dst 2` for EQ→`[1]`, `…dst 1` for NEQ→`[0]`: each rewinds
+   then clears `dst` and appends the answer bit). ⇒ the entire `opNonEmpty_run`
+   proof (`joinTwoHalts` merge, per-branch `clearAppendM_run`, the W-invariant ①,
+   the answer-`≤1`-cell residue bookkeeping, budget) **transfers verbatim**; the
+   ONLY novel obligation is `compareRegsTM` + its run lemma. **Build `eqBit` as
+   this wrapper; do not hand-roll the clear/append/branch-merge.**
 
-**⚠⚠ TWO contract gaps surfaced + fixed (risk-based win).** The pinned
-`compileForBnd_sound_physical_residue` was **missing three hypotheses** it cannot
-be proven without — `(huses_body : UsesBelow body sb)`, `(hnc_body : NoConsLen
-body)`, and the tape bound `(hG : State.size s + s.length + |res0| + (forBnd).cost
-s + 2 ≤ G)`. All three are available at the sole call site (the `forBnd` case of
-`run_physical_residue_gen`: `huses.2.2`, `hnc`, `hG`) and are now threaded. **If you
-re-pin any combinator contract, double-check it carries the frame hyps + the `hG`
-tape bound the sibling `compileIfBit` already had.**
+2. **★ `loopTM` has exactly ONE terminal halt** (`loopHalt B = replicate
+   B.states false ++ [true]`, a single halt at index `B.states`; every *body*
+   state is non-halting — a third body-halt would make `loopTM` **stuck**, not
+   exit). So the comparison loop **must be a clean 2-outcome body** (ITERATE /
+   DONE) — EQ-vs-NEQ canNOT be two distinct loop exits.
+   **Resolution (the key design unlock):** make the loop **consume-and-compare**
+   and recover the verdict *after* the loop from register emptiness —
+   **EQ ⟺ (both operands empty after the loop)**: the body ITERATEs only while
+   *both heads exist AND are equal* (deleting both heads), and DONEs on first
+   mismatch *or* either-empty. Then `r1=r2` ⟺ both empty at DONE (mismatch leaves
+   both nonempty; length-diff empties one first; equal empties both together).
+   The post-loop "both empty?" is two proven `navigateAndTestTM`s feeding the
+   EQ/NEQ branch — **no on-tape flag / no scratch flag register needed.**
 
-**Gotchas (new this session):**
-- **`set x := lambda` does NOT fold raw `(f)^[i] e` terms** produced from a
-  theorem statement (they're applications, not the lambda). Don't `set A := fun i
-  => …^[i] e`; inline the raw form and convert succ-steps with
-  `Function.iterate_succ_apply' f N e` (matches the raw `f^[N+1] e` syntactically).
-- **eta + `set` ⇒ omega atom splits.** After `set cc := fun i => body.cost …`,
-  `∑ i, cc i` (`fun i => cc i`) and `(range n).sum cc` (eta-reduced) are *distinct*
-  omega atoms, and a hyp obtained AFTER the `set` keeps the raw `body.cost` form.
-  Fix: `simp only [hccdef] at hbud` to unfold `cc` back to `body.cost` so the
-  budget hyps share one atom before `omega`.
-- `Finset.sum_range_reflect f n : ∑_{j<n} f (n-1-j) = ∑_{j<n} f j` (loop index
-  `iters-(m+1)=iters-1-m` reindex); `Finset.sum_range_id_mul_two`; the W/budget
-  sum-splits via `Finset.sum_add_distrib`/`Finset.sum_const`/`Finset.card_range`/
-  `smul_eq_mul`.
+3. **★ `padRegsTM_run` (the proven tape-grow) is EXACT-tape, no residue param**
+   (`encodeTape s → encodeTape (s ++ replicate k [])`, head 0). So a scratch-based
+   comparison (consume *copies*, leaving src1/src2 intact) needs **new**
+   residue-tolerant grow + a brand-new "shrink trailing empty regs" gadget — a
+   real cost. The in-place alternative avoids both.
+
+**⇒ Two candidate `compareRegsTM` designs, both feed the same wrapper (fact 1)
+and the same 2-outcome loop (fact 2). Probe one, build it.**
+
+- **(A) Scratch-consume (max reuse, likely needs a cost bump).** Grow 2 empty
+  scratch regs `sc1,sc2`; `copy src1→sc1`, `copy src2→sc2` (proven `copyLoop_run`);
+  the clean 2-outcome consume loop (`loopTM` of `navAndTest sc1 / navAndTest sc2 /
+  bitRead sc1 / bitRead sc2 / tail sc1 / tail sc2 / rewind` — ALL proven gadgets);
+  post-loop test both `sc` empty → EQ/NEQ; clear `sc1,sc2`; **shrink** the 2 regs.
+  *Pro:* the loop body and copies are entirely proven, #eval-validated gadgets.
+  *Con:* needs residue-tolerant grow + a new shrink; and 2 full copies push the
+  step count toward ~15–20 scan-passes/bit vs the `(9L²+9L+30)·(cost+1)` budget at
+  `cost=1` (≈18L²) — **likely forces the owner-approved `Op.cost eqBit` bump**
+  (ripples into EvalCnf's `timeBound` constant only).
+- **(B) In-place caterpillar (fits `cost=1`, no grow/shrink, harder loop body).**
+  Two cursors walked by the copy op's **mark-relocation trick** (the unique
+  interior `3`, found by scan-from-end); carry the last-matched bit in the loop
+  FSM to *restore* the previous marks (sig=4 leaves no value-preserving mark).
+  Same clean 2-outcome loop (ITERATE while both have a next bit AND it matches;
+  DONE otherwise) + a post-loop "both cursors at register end?" test + mark
+  restore. *Pro:* one new hard gadget, no scratch, no cost bump (~6–8 scans/bit
+  ≈ 8L² < 18L²). *Con:* the mark/value-carry body is the hardest to prove.
+
+**RECOMMENDED next bottom-up step:** **PROBE design (A)'s consume loop first**
+(`probes/` pattern, `#eval` the `loopTM` body on two scratch regs holding copies)
+— it is built entirely from already-`#eval`-validated proven gadgets, so it
+reaches a working comparison core fastest and *measures* the real budget,
+settling the cost-bump question definitively. If the bump is unwanted, fall back
+to (B). Either way the wrapper (fact 1) and the 2-outcome loop shape (fact 2) are
+fixed. **Decomposed build plan in BOTTOM-UP task 1 below.**
 
 ---
 
@@ -419,37 +434,68 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~14114; raw `sorry`s a
 `eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, ~14286–14303). Both the decider half
 (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
-1. **`eqBit` — THE highest-value item: it is the ONLY op the LIVE `sat_NP` decider
-   chain still needs.** `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so once
-   `eqBit`'s case of `compileOp_sound_physical_residue` is discharged, the entire
-   live decider chain (`sat_NP → … → Compile_run_physical_residue`) is **sorry-free**.
-   `Op.cost eqBit = 1` ⇒ the per-op budget `(9·L²+9·L+30)·(cost+1)` is generous and
-   the residue beyond clear's `|dst₀|` is ZERO — read-only two-mark ping-pong (marks
-   only ever sit on BITS, never delimiters): special-case empties via
-   `navigateAndTest` pre-branches; both nonempty → mark src1's bit, rewind, navigate
-   src2, mark its bit, compare in FSM; on match restore + read-mark next cells,
-   iterate; first mismatch/exhaustion decides; cleanup restores both marks, then
-   `clear dst ⨾ append answer`. **PROBE FIRST** (`probes/CursorCopyProbe.lean`
-   pattern, `#eval` on real `encodeTape`s); fallback = owner-approved `Op.cost eqBit`
-   bump (ripples into EvalCnf constants). **Reuse heavily**: the proven cursor/mark
-   toolkit (`markBitTM`/`restoreStepTM`/`skipReadTM`, `bitReadTM`, the marked-tape
-   helpers `encodeTape_set_cell_res`/`markedTape_*`), the `joinTwoHalts` branch-merge
-   engine, and the `opCopy`/`opTail` run-lemma stacks as templates.
-2. **`eqBit` design + probe (then build).** `Op.cost eqBit = 1` ⇒ ZERO residue
-   beyond clear's `|dst₀|` — read-only two-mark ping-pong (marks only ever sit
-   on BITS, never delimiters): special-case empties via `navigateAndTest`
-   pre-branches; both nonempty → mark src1's bit, rewind, navigate src2, mark
-   its bit, compare in FSM (pipelines carry the bit pair); on match restore
-   M2 + read-mark its next cell, scan to M1 (compile-time order picks the scan
-   direction), restore + read-mark next, iterate; first mismatch/exhaustion
-   decides; cleanup restores both marks (values carried in the pipeline
-   branch), then `clear dst ⨾ append answer`. An exhausted side is never
-   marked (delimiters unmarkable) — at most one round runs with an exhausted
-   side, and it decides. PROBE FIRST (`CursorCopyProbe` pattern); fallback =
-   owner-approved `Op.cost eqBit` bump (ripples into EvalCnf constants).
-   Then `concat` (cursor machinery, cost `|src1|+|src2|+1` is generous), and
-   last the value-as-length trio `takeAt`/`dropAt`/`consLen` (canonical
-   toolkit only — gated on Task 3).
+1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
+   needs).** `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so discharging the
+   `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean ~14286) makes
+   the entire live decider chain `sat_NP → … → Compile_run_physical_residue`
+   **sorry-free**. The **design is settled** (see this session's block above — read
+   it first). `Op.cost eqBit = 1`; residue beyond `clear`'s `|dst₀|` is ZERO; output
+   is exactly `[answer]` (1 cell). **Decomposed build plan:**
+
+   **(d1) WRAPPER — reuse `nonEmptyRawM` verbatim.** Define
+   `opEqBit dst src1 src2 := joinTwoHalts (branchComposeFlatTM (compareRegsTM
+   src1 src2) (nonEmptyBranchBody dst 2 _) (nonEmptyBranchBody dst 1 _) EQ NEQ) …`
+   — structurally identical to `Compile.nonEmptyRawM`/`opNonEmpty` with
+   `compareRegsTM` swapped in for `navigateAndTestTM`. The shape/valid/halt lemmas
+   and the `opEqBit_run` proof are a **mechanical port of `opNonEmpty`'s** (the
+   `joinTwoHalts` merge, per-branch `clearAppendM_run`, the answer-≤1-cell residue,
+   the budget); the `eqBit` contract case is then a copy of the `nonEmpty` case at
+   Compile.lean ~14287 (residue `res_in ++ replicate |dst₀| 0`, W-invariant via
+   `State.size_set_add`). **Do this LAST, after (d2).**
+
+   **(d2) `compareRegsTM src1 src2` — the ONE novel gadget.** Runs on
+   `encodeTape s ++ res`, leaves the tape **restored**, halts in EQ or NEQ with
+   `EQ ⟺ s.get src1 = s.get src2`. Must be a clean **2-outcome `loopTM`** (fact 2
+   above) + a post-loop "both ended?" test feeding EQ/NEQ. **PROBE design (A)
+   first** (recommended — max reuse, measures the budget):
+   - **(d2a)** Build + `#eval` the consume-loop **body** `B` on two scratch regs
+     `sc1 sc2` (holding copies): nested `branchComposeFlatTM` over
+     `navigateAndTestTM sc1` → (delim ⇒ DONE) / (content ⇒ `navigateAndTestTM sc2`
+     → (delim ⇒ DONE) / (content ⇒ `bitReadTM sc1`; `navigate sc2`; `bitReadTM`;
+     equal ⇒ `opTail sc1 sc1 ⨾ opTail sc2 sc2 ⨾ rewind` ⇒ ITERATE; differ ⇒
+     DONE)). Exactly TWO body halts (DONE, ITERATE). Then `loopTM B DONE ITERATE`,
+     prove its run lemma by the `copyLoop_run`/`forBndLoop_run` pattern (induction
+     on `min |sc1| |sc2|`-ish; the loop ends with at least one `sc` empty). The
+     loop's **decision contract** ("operands equal ⟺ both `sc` empty at DONE") is
+     already PROVEN for all inputs in `probes/EqBitProbe.lean`
+     (`eqVerdict_correct`, axiom-clean) — the run lemma must reproduce it on tape.
+   - **(d2b)** Post-loop: `navigateAndTestTM sc1` ⨾ branch on (sc1 empty ∧ sc2
+     empty) → EQ else NEQ (two `navigateAndTest`s + a `joinTwoHalts`).
+   - **(d2c)** Scratch lifecycle: grow 2 empty regs before, shrink after. NOTE
+     `padRegsTM_run` is exact-tape (no residue) — either thread residue through a
+     local grow lemma, or (cleaner) place `sc1,sc2` at the END and build a small
+     `growTwoEmpty`/`shrinkTwoEmpty` pair (insert/delete a `0` before the
+     terminator via `insertCarryTM`/`deleteCarryTM`). The copies use
+     `copyLoop_run` (proven).
+   - **Budget:** `#eval` the assembled machine vs `(9L²+9L+30)·2 ≈ 18L²`. If it
+     overshoots (≈15–20 scan-passes/bit from the 2 copies), take the
+     **owner-approved `Op.cost eqBit` bump** (the ONLY ripple is EvalCnf's
+     `timeBound` constant `200000·(n+1)^4` — bump the constant, re-run
+     `evalCnfDecidesLang`'s cost arithmetic). If avoiding the bump matters, switch
+     to design (B) in-place caterpillar (fits `cost=1`, no scratch; mark/value-carry
+     body — reuse `markBitTM`/`restoreStepTM`/`copyPipe`-style relocation).
+   - **Reuse heavily:** `navigateAndTestTM`/`bitReadTM`/`opTail`/`copyLoop_run`
+     (all proven + `#eval`-validated), `branchComposeFlatTM`/`joinTwoHalts`/`loopTM`
+     run-lemma stacks, and `opCopy`/`opNonEmpty`/`forBndLoop` as proof templates.
+
+2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
+   `concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`. = `clear dst ⨾
+   copy-append src1 ⨾ copy-append src2`. The copy op's `copyLoop` already appends
+   `src` to `dst`'s end — but `copyLoop_run` assumes **`dst` empty**; `concat`'s
+   second append needs a **`copyLoop_run` generalized to nonempty `dst`** (gives
+   `s.set dst (dst ++ src)`). Generalize that one lemma, then `concat` is two
+   `copyLoop`s. Cost `|src1|+|src2|+1` is generous. Then the value-as-length trio
+   `takeAt`/`dropAt`/`consLen` (canonical toolkit only — gated on Task 3).
 3. **Canonical product-toolkit unary migration** (separate from the live path; needed for
    S3 endgame, NOT for `sat_NP`). Restate `takeAt`/`dropAt`/`consLen` unary (count = the
    register's unary length, not `headD 0`); bump `consLen`'s `Op.cost`; re-lay the `Nat`/
