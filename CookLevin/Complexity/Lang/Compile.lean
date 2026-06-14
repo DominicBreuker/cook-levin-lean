@@ -75,6 +75,7 @@ The intended compilation, once the helpers are real:
 namespace Complexity.Lang
 
 open TMPrimitives
+open scoped BigOperators
 
 /-! ## The `CompiledCmd` record
 
@@ -16194,6 +16195,408 @@ theorem Compile.forBndLoop_eval (counter bound : Var) (sb : Nat) (body : Cmd) (s
       intro l h; rw [State.get, List.getElem?_eq_getElem h, Option.getD_some]
     rw [e1 _ h1, e1 _ h2]
     exact hgetall idx
+
+/-! ### The `forBnd` loop run (the `loopTM_run` assembly for `compileForBnd`)
+
+`forBndLoop_run` is the loop-fragment run (mirrors `clearRegionTM_run`): a
+`.choose`-free residue/step-count fold (`forBndLoop_fold`) feeds `loopTM_run` /
+`loopTM_no_early_halt`. The W-invariant and the budget are exposed as `Finset`
+sums over the fold states; the budget collapse uses the superadditive
+`physStepBudget_sum_le`. Consumed by `compileForBnd_sound_physical_residue`. -/
+
+theorem Compile.physStepBudget_sum_le (G : Nat) (cc : Nat → Nat) :
+    ∀ n, (∑ j ∈ Finset.range n, Compile.physStepBudget G (cc j))
+      ≤ Compile.physStepBudget G ((∑ j ∈ Finset.range n, cc j) + n) := by
+  intro n
+  induction n with
+  | zero => simp [Compile.physStepBudget]
+  | succ n ih =>
+      rw [Finset.sum_range_succ, Finset.sum_range_succ]
+      have hsuper : Compile.physStepBudget G ((∑ j ∈ Finset.range n, cc j) + n)
+            + Compile.physStepBudget G (cc n)
+          ≤ Compile.physStepBudget G ((∑ j ∈ Finset.range n, cc j) + cc n + (n + 1)) := by
+        have := Compile.physStepBudget_seq G ((∑ j ∈ Finset.range n, cc j) + n) (cc n)
+        have hmono : Compile.physStepBudget G (1 + ((∑ j ∈ Finset.range n, cc j) + n) + cc n)
+            ≤ Compile.physStepBudget G ((∑ j ∈ Finset.range n, cc j) + cc n + (n + 1)) :=
+          Compile.physStepBudget_mono (le_refl _) (by omega)
+        omega
+      have := Nat.add_le_add_right ih (Compile.physStepBudget G (cc n))
+      omega
+
+theorem Compile.loopBudget_eq_sum (tIter : Nat → Nat) (tDone : Nat) :
+    ∀ n, loopBudget tIter tDone n = (∑ j ∈ Finset.range n, (tIter j + 1)) + (tDone + 1) := by
+  intro n
+  induction n with
+  | zero => simp [loopBudget]
+  | succ n ih =>
+      have hstep : loopBudget tIter tDone (n + 1) = tIter n + 1 + loopBudget tIter tDone n := rfl
+      rw [hstep, ih, Finset.sum_range_succ]; omega
+
+-- the existence of the residue/step-count fold for the loop
+
+-- The residue/step-count fold for the loop body, by induction on the prefix length.
+theorem Compile.forBndLoop_fold (counter sb : Var) (rbody : CompiledCmd) (body : Cmd)
+    (e : State) (res_in : List Nat) (G : Nat)
+    (hbit : Compile.BitState e) (hcnt : counter < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ e.length)
+    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (hscr : ∀ r, sb + 2 ≤ r → State.get e r = [])
+    (hk2 : State.get e (sb + 1) = [])
+    (hres_in : Compile.ValidResidue res_in)
+    (hG : State.size e + e.length + res_in.length
+        + (∑ j ∈ Finset.range (State.get e sb).length,
+            (j + body.cost (((Compile.forBndIterateState counter sb body)^[j] e).set counter
+                (State.get ((Compile.forBndIterateState counter sb body)^[j] e) (sb + 1))) + 1)) + 2 ≤ G)
+    (hbody : ∀ (s' : State) (res' : List Nat) (G' : Nat),
+      Compile.BitState s' → sb + 2 + 2 * body.loopDepth ≤ s'.length →
+      (∀ r, sb + 2 ≤ r → State.get s' r = []) →
+      Compile.ValidResidue res' →
+      State.size s' + s'.length + res'.length + body.cost s' + 2 ≤ G' →
+      ∃ (tt : Nat) (resb : List Nat),
+        Compile.ValidResidue resb ∧
+        State.size (body.eval s') + resb.length ≤ State.size s' + res'.length + body.cost s' ∧
+        runFlatTM tt rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res'])
+          = some { state_idx := rbody.exit,
+                   tapes := [([], 0, Compile.encodeTape (body.eval s') ++ resb)] } ∧
+        (∀ kk, kk < tt → ∀ ck,
+            runFlatTM kk rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res']) = some ck →
+            ck.state_idx ≠ rbody.exit ∧ haltingStateReached rbody.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G' (body.cost s')) :
+    ∀ N, N ≤ (State.get e sb).length →
+      ∃ (Rf : Nat → List Nat) (Tf : Nat → Nat),
+        Rf 0 = res_in ∧
+        (∀ i, i ≤ N → Compile.ValidResidue (Rf i)) ∧
+        State.size ((Compile.forBndIterateState counter sb body)^[N] e) + (Rf N).length
+          ≤ State.size e + res_in.length
+            + (∑ j ∈ Finset.range N,
+                (j + body.cost (((Compile.forBndIterateState counter sb body)^[j] e).set counter
+                  (State.get ((Compile.forBndIterateState counter sb body)^[j] e) (sb + 1))) + 1)) ∧
+        (∀ i, i < N →
+          runFlatTM (Tf i) (Compile.forBndBodyTM counter sb rbody)
+              { state_idx := 0, tapes := [([], 0,
+                Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[i] e) ++ Rf i)] }
+            = some { state_idx := Compile.forBndBodyTM_exitLoop counter sb rbody,
+                     tapes := [([], 0,
+                       Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[i+1] e) ++ Rf (i+1))] }
+          ∧ (∀ k, k < Tf i → ∀ ck,
+              runFlatTM k (Compile.forBndBodyTM counter sb rbody)
+                  { state_idx := 0, tapes := [([], 0,
+                    Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[i] e) ++ Rf i)] } = some ck →
+              ck.state_idx ≠ Compile.forBndBodyTM_exitDone counter sb rbody ∧
+              ck.state_idx ≠ Compile.forBndBodyTM_exitLoop counter sb rbody ∧
+              haltingStateReached (Compile.forBndBodyTM counter sb rbody) ck = false)
+          ∧ Tf i ≤ (9 * G * G + 9 * G + 30) * (i + 2)
+              + Compile.physStepBudget G (body.cost (((Compile.forBndIterateState counter sb body)^[i] e).set counter
+                  (State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1))))
+              + 12 * G + 32) := by
+  set iters := (State.get e sb).length with hiters
+  set Wterm : Nat → Nat := fun j =>
+    j + body.cost ((((Compile.forBndIterateState counter sb body)^[j] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[j] e) (sb + 1))) + 1 with hWtermdef
+  have hinv := Compile.forBndLoop_invariant counter sb body e hbit hcnt hlen huses_body hnc_body hscr hk2
+  have hAlen : ∀ i, i ≤ iters → ((Compile.forBndIterateState counter sb body)^[i] e).length = e.length := by
+    intro i
+    induction i with
+    | zero => intro _; simp only [Function.iterate_zero, id_eq]
+    | succ i ih =>
+        intro hi
+        have hi' : i ≤ iters := Nat.le_of_succ_le hi
+        have hlenAi : sb + 2 + 2 * body.loopDepth ≤ ((Compile.forBndIterateState counter sb body)^[i] e).length := by rw [ih hi']; exact hlen
+        rw [Function.iterate_succ_apply' (Compile.forBndIterateState counter sb body) i e,
+          Compile.forBndIterateState_length_eq counter sb body ((Compile.forBndIterateState counter sb body)^[i] e) hcnt hlenAi huses_body, ih hi']
+  intro N
+  induction N with
+  | zero =>
+      intro _
+      refine ⟨fun _ => res_in, fun _ => 0, rfl, ?_, ?_, ?_⟩
+      · intro i hi; exact hres_in
+      · simp only [Function.iterate_zero, id_eq, Finset.range_zero, Finset.sum_empty,
+          Nat.add_zero, Nat.le_refl]
+      · intro i hi; exact absurd hi (Nat.not_lt_zero i)
+  | succ N ih =>
+      intro hN1
+      have hN : N ≤ iters := Nat.le_of_succ_le hN1
+      have hNlt : N < iters := hN1
+      obtain ⟨Rf, Tf, hRf0, hvalidAll, hWN, hsteps⟩ := ih hN
+      obtain ⟨hbitN, hscrN, hlgeN, hK1N, hK2N⟩ := hinv N hN
+      have hlenAN : sb + 2 + 2 * body.loopDepth ≤ ((Compile.forBndIterateState counter sb body)^[N] e).length := by rw [hAlen N hN]; exact hlen
+      have hsbneN : State.get ((Compile.forBndIterateState counter sb body)^[N] e) sb ≠ [] := by
+        intro hc
+        have hz : (State.get ((Compile.forBndIterateState counter sb body)^[N] e) sb).length = 0 := by rw [hc]; rfl
+        rw [hK1N] at hz; omega
+      have hsub : Finset.range (N + 1) ⊆ Finset.range iters := by
+        intro x hx; rw [Finset.mem_range] at hx ⊢; omega
+      have hsum_succ : (∑ j ∈ Finset.range N, Wterm j) + Wterm N
+          = ∑ j ∈ Finset.range (N + 1), Wterm j := (Finset.sum_range_succ Wterm N).symm
+      have hWtN : Wterm N = N + body.cost ((((Compile.forBndIterateState counter sb body)^[N] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[N] e) (sb + 1))) + 1 := by
+        rw [hWtermdef]
+      have hGN : State.size ((Compile.forBndIterateState counter sb body)^[N] e) + ((Compile.forBndIterateState counter sb body)^[N] e).length + (Rf N).length
+            + ((State.get ((Compile.forBndIterateState counter sb body)^[N] e) (sb + 1)).length
+               + body.cost ((((Compile.forBndIterateState counter sb body)^[N] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[N] e) (sb + 1))) + 1) + 2 ≤ G := by
+        have hsum_le : (∑ j ∈ Finset.range (N + 1), Wterm j) ≤ ∑ j ∈ Finset.range iters, Wterm j :=
+          Finset.sum_le_sum_of_subset hsub
+        have hcomb : State.size ((Compile.forBndIterateState counter sb body)^[N] e) + (Rf N).length + Wterm N
+            ≤ State.size e + res_in.length + ∑ j ∈ Finset.range iters, Wterm j := by
+          calc State.size ((Compile.forBndIterateState counter sb body)^[N] e) + (Rf N).length + Wterm N
+              ≤ (State.size e + res_in.length + ∑ j ∈ Finset.range N, Wterm j) + Wterm N :=
+                Nat.add_le_add_right hWN _
+            _ = State.size e + res_in.length + (∑ j ∈ Finset.range (N + 1), Wterm j) := by
+                rw [← hsum_succ]; ring
+            _ ≤ State.size e + res_in.length + ∑ j ∈ Finset.range iters, Wterm j :=
+                Nat.add_le_add_left hsum_le _
+        rw [hK2N, hAlen N hN]
+        rw [hWtN] at hcomb
+        have hGe : State.size e + e.length + res_in.length
+            + (∑ j ∈ Finset.range iters, Wterm j) + 2 ≤ G := hG
+        omega
+      obtain ⟨tN, resN, hresN, hWstep, hrunN, htrajN, hbudN⟩ :=
+        Compile.forBndBody_iterate_run counter sb rbody body ((Compile.forBndIterateState counter sb body)^[N] e) (Rf N) G
+          hbitN hcnt hlenAN hsbneN (hvalidAll N (le_refl N)) huses_body hnc_body hscrN hGN hbody
+      refine ⟨fun i => if i = N + 1 then resN else Rf i,
+              fun i => if i = N then tN else Tf i, ?_, ?_, ?_, ?_⟩
+      · simp only [if_neg (by omega : (0 : Nat) ≠ N + 1)]; exact hRf0
+      · intro i hi
+        by_cases hiN1 : i = N + 1
+        · simp only [hiN1, if_pos rfl]; exact hresN
+        · simp only [if_neg hiN1]; exact hvalidAll i (by omega)
+      · simp only [if_pos rfl]
+        rw [Function.iterate_succ_apply' (Compile.forBndIterateState counter sb body) N e]
+        have hWstep' : State.size (Compile.forBndIterateState counter sb body ((Compile.forBndIterateState counter sb body)^[N] e)) + resN.length
+            ≤ State.size ((Compile.forBndIterateState counter sb body)^[N] e) + (Rf N).length + Wterm N := by
+          have he : (State.get ((Compile.forBndIterateState counter sb body)^[N] e) (sb + 1)).length
+              + body.cost ((((Compile.forBndIterateState counter sb body)^[N] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[N] e) (sb + 1))) + 1 = Wterm N := by
+            rw [hWtN, hK2N]
+          rw [he] at hWstep; exact hWstep
+        calc State.size (Compile.forBndIterateState counter sb body ((Compile.forBndIterateState counter sb body)^[N] e)) + resN.length
+            ≤ State.size ((Compile.forBndIterateState counter sb body)^[N] e) + (Rf N).length + Wterm N := hWstep'
+          _ ≤ (State.size e + res_in.length + ∑ j ∈ Finset.range N, Wterm j) + Wterm N :=
+              Nat.add_le_add_right hWN _
+          _ = State.size e + res_in.length + ∑ j ∈ Finset.range (N + 1), Wterm j := by
+              rw [← hsum_succ]; ring
+      · intro i hi
+        by_cases hiN : i = N
+        · subst hiN
+          simp only [if_pos rfl, if_neg (by omega : i ≠ i + 1)]
+          rw [Function.iterate_succ_apply' (Compile.forBndIterateState counter sb body) i e]
+          refine ⟨hrunN, htrajN, ?_⟩
+          calc tN ≤ (9 * G * G + 9 * G + 30) * ((State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1)).length + 2)
+                  + Compile.physStepBudget G (body.cost ((((Compile.forBndIterateState counter sb body)^[i] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1))))
+                  + 12 * G + 32 := hbudN
+            _ = (9 * G * G + 9 * G + 30) * (i + 2)
+                  + Compile.physStepBudget G (body.cost ((((Compile.forBndIterateState counter sb body)^[i] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1))))
+                  + 12 * G + 32 := by rw [hK2N]
+        · have hilt : i < N := by omega
+          have hold := hsteps i hilt
+          simp only [if_neg (by omega : i ≠ N), if_neg (by omega : i ≠ N + 1),
+            if_neg (by omega : i + 1 ≠ N + 1)]
+          exact hold
+
+theorem Compile.forBndLoop_run (counter sb : Var) (rbody : CompiledCmd) (body : Cmd)
+    (e : State) (res_in : List Nat) (G : Nat)
+    (hbit : Compile.BitState e) (hcnt : counter < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ e.length)
+    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (hscr : ∀ r, sb + 2 ≤ r → State.get e r = [])
+    (hk2 : State.get e (sb + 1) = [])
+    (hres_in : Compile.ValidResidue res_in)
+    (hG : State.size e + e.length + res_in.length
+        + (∑ j ∈ Finset.range (State.get e sb).length,
+            (j + body.cost (((Compile.forBndIterateState counter sb body)^[j] e).set counter
+                (State.get ((Compile.forBndIterateState counter sb body)^[j] e) (sb + 1))) + 1)) + 2 ≤ G)
+    (hbody : ∀ (s' : State) (res' : List Nat) (G' : Nat),
+      Compile.BitState s' → sb + 2 + 2 * body.loopDepth ≤ s'.length →
+      (∀ r, sb + 2 ≤ r → State.get s' r = []) →
+      Compile.ValidResidue res' →
+      State.size s' + s'.length + res'.length + body.cost s' + 2 ≤ G' →
+      ∃ (tt : Nat) (resb : List Nat),
+        Compile.ValidResidue resb ∧
+        State.size (body.eval s') + resb.length ≤ State.size s' + res'.length + body.cost s' ∧
+        runFlatTM tt rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res'])
+          = some { state_idx := rbody.exit,
+                   tapes := [([], 0, Compile.encodeTape (body.eval s') ++ resb)] } ∧
+        (∀ kk, kk < tt → ∀ ck,
+            runFlatTM kk rbody.M (initFlatConfig rbody.M [Compile.encodeTape s' ++ res']) = some ck →
+            ck.state_idx ≠ rbody.exit ∧ haltingStateReached rbody.M ck = false) ∧
+        tt ≤ Compile.physStepBudget G' (body.cost s')) :
+    ∃ (t : Nat) (res_out : List Nat),
+      Compile.ValidResidue res_out ∧
+      State.size ((Compile.forBndIterateState counter sb body)^[(State.get e sb).length] e) + res_out.length
+        ≤ State.size e + res_in.length
+          + (∑ j ∈ Finset.range (State.get e sb).length,
+              (j + body.cost (((Compile.forBndIterateState counter sb body)^[j] e).set counter
+                (State.get ((Compile.forBndIterateState counter sb body)^[j] e) (sb + 1))) + 1)) ∧
+      runFlatTM t (Compile.forBndLoopCmd counter sb rbody).M
+          (initFlatConfig (Compile.forBndLoopCmd counter sb rbody).M [Compile.encodeTape e ++ res_in])
+        = some { state_idx := (Compile.forBndLoopCmd counter sb rbody).exit,
+                 tapes := [([], 0, Compile.encodeTape
+                   ((Compile.forBndIterateState counter sb body)^[(State.get e sb).length] e) ++ res_out)] } ∧
+      (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.forBndLoopCmd counter sb rbody).M
+              (initFlatConfig (Compile.forBndLoopCmd counter sb rbody).M
+                [Compile.encodeTape e ++ res_in]) = some ck →
+          ck.state_idx ≠ (Compile.forBndLoopCmd counter sb rbody).exit ∧
+          haltingStateReached (Compile.forBndLoopCmd counter sb rbody).M ck = false) ∧
+      t ≤ (9 * G * G + 9 * G + 30) * (∑ i ∈ Finset.range (State.get e sb).length, (i + 2))
+          + Compile.physStepBudget G ((∑ i ∈ Finset.range (State.get e sb).length,
+              body.cost (((Compile.forBndIterateState counter sb body)^[i] e).set counter
+                (State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1)))) + (State.get e sb).length)
+          + (State.get e sb).length * (12 * G + 33) + (6 * G + 13) := by
+  set iters := (State.get e sb).length with hiters
+  -- invariant + exact length
+  have hinv := Compile.forBndLoop_invariant counter sb body e hbit hcnt hlen huses_body hnc_body hscr hk2
+  have hAlen : ∀ i, i ≤ iters → ((Compile.forBndIterateState counter sb body)^[i] e).length = e.length := by
+    intro i
+    induction i with
+    | zero => intro _; simp only [Function.iterate_zero, id_eq]
+    | succ i ih =>
+        intro hi
+        have hi' : i ≤ iters := Nat.le_of_succ_le hi
+        have hlenAi : sb + 2 + 2 * body.loopDepth ≤ ((Compile.forBndIterateState counter sb body)^[i] e).length := by rw [ih hi']; exact hlen
+        rw [Function.iterate_succ_apply' (Compile.forBndIterateState counter sb body) i e,
+          Compile.forBndIterateState_length_eq counter sb body ((Compile.forBndIterateState counter sb body)^[i] e) hcnt hlenAi huses_body, ih hi']
+  -- the residue/step fold at N = iters
+  obtain ⟨Rf, Tf, hRf0, hvalidAll, hWN, hsteps⟩ :=
+    Compile.forBndLoop_fold counter sb rbody body e res_in G hbit hcnt hlen huses_body hnc_body hscr hk2
+      hres_in hG hbody iters (Nat.le_refl _)
+  -- the loop tape sequence: remaining `m` ↔ fold index `iters - m`
+  set T : Nat → (List Nat × Nat × List Nat) := fun m =>
+    ([], 0, Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[iters - m] e) ++ Rf (iters - m)) with hTdef
+  have hT_val : ∀ n, ∀ x ∈ (T n).2.2, x < 4 := by
+    intro n x hx
+    simp only [hTdef] at hx
+    rw [List.mem_append] at hx
+    rcases hx with hx | hx
+    · exact Compile.encodeTape_lt_four _ ((hinv (iters - n) (by omega)).1) x hx
+    · exact (hvalidAll (iters - n) (by omega) x hx).1
+  have h_sym : ∀ n v, currentTapeSymbol (T n) = some v → v < (Compile.forBndBodyTM counter sb rbody).sig := by
+    intro n v hv
+    rw [Compile.forBndBodyTM_sig]
+    have hmem : v ∈ (T n).2.2 := by
+      simp only [currentTapeSymbol] at hv
+      split at hv
+      · injection hv with e'; rw [← e']; exact List.get_mem _ _
+      · exact absurd hv (by simp)
+    exact hT_val n v hmem
+  have hBstart : (Compile.forBndBodyTM counter sb rbody).start = 0 := Compile.forBndBodyTM_start counter sb rbody
+  -- done branch (fold index iters; K1 empty)
+  have hsbiters : State.get ((Compile.forBndIterateState counter sb body)^[iters] e) sb = [] := by
+    have h0 : (State.get ((Compile.forBndIterateState counter sb body)^[iters] e) sb).length = 0 := by
+      rw [(hinv iters (Nat.le_refl _)).2.2.2.1]; omega
+    exact List.eq_nil_of_length_eq_zero h0
+  obtain ⟨tDone, hdr, hdt, hdb⟩ := Compile.forBndBody_done_run counter sb rbody ((Compile.forBndIterateState counter sb body)^[iters] e) (Rf iters)
+    (by rw [hAlen iters (Nat.le_refl _)]
+        exact Nat.lt_of_lt_of_le (by omega) (Nat.le_trans (Nat.le_add_right (sb+2) (2*body.loopDepth)) hlen))
+    ((hinv iters (Nat.le_refl _)).1) hsbiters (hvalidAll iters (Nat.le_refl _))
+  have hT0 : T 0 = ([], 0, Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[iters] e) ++ Rf iters) := by
+    simp only [hTdef, Nat.sub_zero]
+  have h_done_full :
+      runFlatTM tDone (Compile.forBndBodyTM counter sb rbody) { state_idx := (Compile.forBndBodyTM counter sb rbody).start, tapes := [T 0] }
+        = some { state_idx := (Compile.forBndBodyTM_exitDone counter sb rbody), tapes := [T 0] } ∧
+      (∀ k, k < tDone → ∀ ck,
+          runFlatTM k (Compile.forBndBodyTM counter sb rbody) { state_idx := (Compile.forBndBodyTM counter sb rbody).start, tapes := [T 0] } = some ck →
+          ck.state_idx ≠ (Compile.forBndBodyTM_exitDone counter sb rbody) ∧ ck.state_idx ≠ (Compile.forBndBodyTM_exitLoop counter sb rbody) ∧
+          haltingStateReached (Compile.forBndBodyTM counter sb rbody) ck = false) := by
+    refine ⟨?_, ?_⟩
+    · rw [hBstart, hT0]; exact hdr
+    · rw [hBstart, hT0]; exact hdt
+  -- iteration step counts
+  set tIter : Nat → Nat := fun m => Tf (iters - (m + 1)) with htIter
+  have h_iter_full : ∀ m, m < iters →
+      runFlatTM (tIter m) (Compile.forBndBodyTM counter sb rbody) { state_idx := (Compile.forBndBodyTM counter sb rbody).start, tapes := [T (m + 1)] }
+        = some { state_idx := (Compile.forBndBodyTM_exitLoop counter sb rbody), tapes := [T m] } ∧
+      (∀ k, k < tIter m → ∀ ck,
+          runFlatTM k (Compile.forBndBodyTM counter sb rbody) { state_idx := (Compile.forBndBodyTM counter sb rbody).start, tapes := [T (m + 1)] } = some ck →
+          ck.state_idx ≠ (Compile.forBndBodyTM_exitDone counter sb rbody) ∧ ck.state_idx ≠ (Compile.forBndBodyTM_exitLoop counter sb rbody) ∧
+          haltingStateReached (Compile.forBndBodyTM counter sb rbody) ck = false) := by
+    intro m hm
+    have hfi : iters - (m + 1) < iters := by omega
+    obtain ⟨hrun, htraj, _⟩ := hsteps (iters - (m + 1)) hfi
+    have hidx : iters - (m + 1) + 1 = iters - m := by omega
+    rw [hidx] at hrun
+    have hTm1 : T (m + 1) = ([], 0, Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[iters - (m+1)] e) ++ Rf (iters - (m + 1))) := by
+      simp only [hTdef]
+    have hTmm : T m = ([], 0, Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[iters - m] e) ++ Rf (iters - m)) := by
+      simp only [hTdef]
+    refine ⟨?_, ?_⟩
+    · rw [hBstart, hTm1, hTmm, htIter]; exact hrun
+    · rw [hBstart, hTm1, htIter]; intro k hk ck hck; exact htraj k hk ck hck
+  -- assemble via loopTM_run / loopTM_no_early_halt
+  have hmain := loopTM_run (Compile.forBndBodyTM counter sb rbody) (Compile.forBndBodyTM_exitDone counter sb rbody) (Compile.forBndBodyTM_exitLoop counter sb rbody)
+    (Compile.forBndBodyTM_valid counter sb rbody)
+    (Compile.forBndBodyTM_exitDone_lt counter sb rbody)
+    (Compile.forBndBodyTM_exitLoop_lt counter sb rbody)
+    (Compile.forBndBodyTM_exitDone_ne_exitLoop counter sb rbody)
+    T h_sym tIter tDone h_done_full iters h_iter_full
+  have hmain_traj := loopTM_no_early_halt (Compile.forBndBodyTM counter sb rbody) (Compile.forBndBodyTM_exitDone counter sb rbody) (Compile.forBndBodyTM_exitLoop counter sb rbody)
+    (Compile.forBndBodyTM_valid counter sb rbody)
+    (Compile.forBndBodyTM_exitDone_lt counter sb rbody)
+    (Compile.forBndBodyTM_exitLoop_lt counter sb rbody)
+    (Compile.forBndBodyTM_exitDone_ne_exitLoop counter sb rbody)
+    T h_sym tIter tDone h_done_full iters h_iter_full
+  -- T iters = start tape, T 0 = end tape
+  have hTiters : T iters = ([], 0, Compile.encodeTape e ++ res_in) := by
+    simp only [hTdef, Nat.sub_self, Function.iterate_zero, id_eq, hRf0]
+  rw [hBstart, hTiters, hT0] at hmain
+  rw [hBstart, hTiters] at hmain_traj
+  -- forBndLoopCmd packaging
+  have hMeq : (Compile.forBndLoopCmd counter sb rbody).M
+      = loopTM (Compile.forBndBodyTM counter sb rbody) (Compile.forBndBodyTM_exitDone counter sb rbody) (Compile.forBndBodyTM_exitLoop counter sb rbody) := rfl
+  have hExeq : (Compile.forBndLoopCmd counter sb rbody).exit = (Compile.forBndBodyTM counter sb rbody).states := rfl
+  have hinit : initFlatConfig (Compile.forBndLoopCmd counter sb rbody).M [Compile.encodeTape e ++ res_in]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape e ++ res_in)] } := by
+    simp only [initFlatConfig, hMeq, loopTM_start, hBstart, List.map_cons, List.map_nil]
+  refine ⟨loopBudget tIter tDone iters, Rf iters, hvalidAll iters (Nat.le_refl _), hWN, ?_, ?_, ?_⟩
+  · rw [hinit, hMeq, hExeq]; exact hmain
+  · rw [hinit]
+    intro k hk ck hck
+    rw [hMeq] at hck
+    have hh := hmain_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.forBndLoopCmd counter sb rbody).exit_is_halt hh, hh⟩
+  · -- budget
+    set cc : Nat → Nat := fun i =>
+      body.cost (((Compile.forBndIterateState counter sb body)^[i] e).set counter (State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1))) with hccdef
+    rw [Compile.loopBudget_eq_sum tIter tDone iters]
+    have hL : (Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[iters] e) ++ Rf iters).length ≤ G := by
+      rw [List.length_append, Compile.encodeTape_length, hAlen iters (Nat.le_refl _)]; omega
+    have hdone1 : tDone + 1 ≤ 6 * G + 13 := by
+      have h6 : 6 * (Compile.encodeTape ((Compile.forBndIterateState counter sb body)^[iters] e) ++ Rf iters).length + 12 ≤ 6 * G + 12 :=
+        Nat.add_le_add_right (Nat.mul_le_mul_left 6 hL) 12
+      omega
+    have href : (∑ m ∈ Finset.range iters, (tIter m + 1))
+        = (∑ i ∈ Finset.range iters, Tf i) + iters := by
+      have hcong : (∑ m ∈ Finset.range iters, tIter m)
+          = ∑ m ∈ Finset.range iters, Tf (iters - 1 - m) := by
+        apply Finset.sum_congr rfl
+        intro m _
+        simp only [htIter]
+        rw [show iters - (m + 1) = iters - 1 - m from by omega]
+      rw [Finset.sum_add_distrib, Finset.sum_const, Finset.card_range, smul_eq_mul, Nat.mul_one,
+        hcong, Finset.sum_range_reflect]
+    rw [href]
+    have hTfsum : (∑ i ∈ Finset.range iters, Tf i)
+        ≤ ∑ i ∈ Finset.range iters,
+            ((9 * G * G + 9 * G + 30) * (i + 2) + Compile.physStepBudget G (cc i) + 12 * G + 32) := by
+      apply Finset.sum_le_sum
+      intro i hi
+      exact (hsteps i (Finset.mem_range.mp hi)).2.2
+    have hsplit : (∑ i ∈ Finset.range iters,
+            ((9 * G * G + 9 * G + 30) * (i + 2) + Compile.physStepBudget G (cc i) + 12 * G + 32))
+        = (9 * G * G + 9 * G + 30) * (∑ i ∈ Finset.range iters, (i + 2))
+          + (∑ i ∈ Finset.range iters, Compile.physStepBudget G (cc i)) + iters * (12 * G + 32) := by
+      rw [Finset.sum_add_distrib, Finset.sum_add_distrib, Finset.sum_add_distrib,
+        ← Finset.mul_sum, Finset.sum_const, Finset.sum_const, Finset.card_range, smul_eq_mul]
+      ring
+    have hTf2 : (∑ i ∈ Finset.range iters, Tf i)
+        ≤ (9 * G * G + 9 * G + 30) * (∑ i ∈ Finset.range iters, (i + 2))
+          + (∑ i ∈ Finset.range iters, Compile.physStepBudget G (cc i)) + iters * (12 * G + 32) :=
+      le_trans hTfsum (le_of_eq hsplit)
+    have hphys := Compile.physStepBudget_sum_le G cc iters
+    have hmul : iters * (12 * G + 32) + iters = iters * (12 * G + 33) := by ring
+    set P2 := (9 * G * G + 9 * G + 30) * (∑ i ∈ Finset.range iters, (i + 2)) with hP2def
+    set SP := ∑ i ∈ Finset.range iters, Compile.physStepBudget G (cc i) with hSPdef
+    set PHI := Compile.physStepBudget G ((∑ i ∈ Finset.range iters, cc i) + iters) with hPHIdef
+    set Q32 := iters * (12 * G + 32) with hQ32def
+    set Q33 := iters * (12 * G + 33) with hQ33def
+    omega
 
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — RE-PINNED 2026-06-11,
 `sorry`).** The scratch-register fix for the snapshot-vs-clobber gap: the previous
