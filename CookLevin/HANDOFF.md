@@ -57,17 +57,16 @@ REAL REMAINING MATH under the assembly:
                            (eqBit/concat/takeAt/dropAt/consLen))
   compileIfBit_sound_physical_residue  (✅ PROVEN —
                            real compileTestBit tester + branchCompose + joinTwoHalts)
-  compileForBnd_sound_physical_residue (SORRY — interface RE-PINNED 2026-06-11; the
-                           per-iteration chain `forBndIterate_run`, the loop machine
-                           `forBndBodyTM`/`forBndLoopTM` + structural lemmas, BOTH
-                           `loopTM` contracts (`forBndBody_done_run` + `_iterate_run`),
-                           all five fold invariants + the **fold-invariant induction
-                           `forBndLoop_invariant`**, AND the **tightened per-iteration
-                           budgets** (`|K2|`-explicit, so the loop sum closes) are PROVEN
-                           & axiom-clean (2026-06-13c). Remaining: the ASSEMBLY — the
-                           `.choose` loop run via `loopTM_run` + the entry `opCopy`/exit
-                           `opClear` wiring — done inside `compileForBnd_sound` after the
-                           def-reordering. THE bottom-up task — see BOTTOM-UP task 1.)
+  compileForBnd_sound_physical_residue (SORRY — but the machine is now REAL and the
+                           semantic core is PROVEN. `compileForBnd` is a real `CompiledCmd`
+                           `opCopy sb bound ⨾ forBndLoopCmd ⨾ opClear (sb+1)` (def-reorder
+                           (c) DONE 2026-06-14); the **semantic connection
+                           `Compile.forBndLoop_eval`** — machine fold (cleared) =
+                           `(forBnd).eval s` — is PROVEN & axiom-clean (2026-06-14).
+                           Remaining: the TM-level loop run (`.choose` residue fold +
+                           `loopTM_run`, mirroring `clearRegionTM_run`) with the
+                           W-invariant/budget telescoping, then the 3× `compileSeq` stitch.
+                           THE bottom-up task — see BOTTOM-UP task 1.)
 ```
 Both the **canonical** path (`DecidesLang'` / `inNPLang_to_inNP`) and the **free/live**
 path (`DecidesLang` / `inTimePolyLang_to_inTimePoly`) are now assembled and bridge the
@@ -137,43 +136,50 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-13c, bottom-up) did — **the ITERATE contract, the complete fold-invariant layer, and the BUDGET FIX**
+## ✅ What this session (2026-06-14, bottom-up) did — **`compileForBnd` is now a REAL machine + the semantic connection is PROVEN**
 
-**`compileForBnd` now has every per-iteration and fold-level building block its
-loop run needs, plus the budget tightened so the loop sum closes.** All
-axiom-clean, build green (3358 jobs). What's left is the *assembly* (the loop run
-+ entry/exit wiring), which intertwines with `forBnd.cost`/`eval` and so belongs
-inside `compileForBnd_sound` after the def-wiring (BOTTOM-UP task 1).
+Two committable, axiom-clean, build-green (3358 jobs) milestones that discharge
+the two hardest *conceptual* halves of the `compileForBnd` assembly (BOTTOM-UP
+task 1). What remains is the TM-level loop run + budget bookkeeping (mechanical,
+all contracts proven).
 
-1. **`Compile.forBndBody_iterate_run`** (Compile.lean ~15580) — the `loopTM_run`
-   `h_iter` contract (`K1=sb` nonempty ⇒ navigate-content → `forBndContentTM`
-   rewind+`forBndIterate` → land at `exitLoop` on `forBndIterateState …` + W-inv).
-   Mirrors `clearBody_delete_run`; the content M₂ slot is `forBndContentTM`, so
-   `h_run2`/`h_traj2` come from `composeFlatTM_run`/`composeFlatTM_no_early_halt`
-   of `rewindToStart_run` + `forBndIterate_run`.
-2. **`Compile.forBndIterateState_{get_sb, get_sb1, scratch, length_ge, bitState}`**
-   + **`Compile.forBndLoop_invariant`** (Compile.lean ~15040–15250) — the fold
-   invariants AND their `∀ i ≤ iters` induction along `A i =
-   (forBndIterateState …)^[i] s`: `BitState`, scratch `≥ sb+2` empty, length
-   `≥ sb+2+2·loopDepth`, **`|K1_i| = iters−i`** (counts down to the done branch),
-   **`|K2_i| = i`** (K2 empty at entry + `get_sb1` appends `[1]` ⇒ `K2_i =
-   replicate i 1`). This is the precondition-threading the loop run consumes.
-3. **★ BUDGET FINDING + FIX (the key risk surfaced & resolved).** Summing
-   `forBndIterate_run`'s **loose** `(G+2)` copy-cost factor over `iters`
-   iterations gives `~iters·G³`, which **overdraws** `physStepBudget G
-   (forBnd.cost)` once `iters > 8` (since `G ≥ forBnd.cost ≥ iters²`). **Fix:**
-   keep the copy SOURCE length **`|K2_i| = (s.get (sb+1)).length`** explicit (do
-   NOT bound it by `G`). Then the loop sum is `Σ_{i<iters}(|K2_i|+2) = Σ(i+2) ~
-   iters²/2`, which fits comfortably under `physStepBudget`'s `8·iters²` headroom.
-   Tightened both `forBndIterate_run` and `forBndBody_iterate_run` budgets to
-   `(9G²+9G+30)·((s.get (sb+1)).length + 2) + physStepBudget G (body.cost …) + …`.
+1. **Prereq (c) DONE — `compileForBnd` is a real `CompiledCmd`.** The `forBnd`
+   loop-machine **defs** (`forBndIterateState`/`forBndIterate`/`forBndContentTM`/
+   `forBndBodyTM`/`forBndLoopTM` + the exit defs + their structural lemmas) were
+   relocated above `compileCmd`, `forBndLoopTM` was wrapped as a `CompiledCmd`
+   **`Compile.forBndLoopCmd`** (mirrors `opClear`'s `loopTM` wrapping;
+   `forBndLoopTM_states` added), and
+   ```
+   compileForBnd counter bound sb rbody :=
+     compileSeq (opCopy sb bound) (compileSeq (forBndLoopCmd counter sb rbody) (opClear (sb+1)))
+   ```
+   ⚠ **Finding:** no circular dependency — `forBndIterate` uses only
+   `compileSeq`/`opCopy`/`opAppendBitRewind`/`opTail`, all already above
+   `compileForBnd`. The run/structural lemmas that depend on later run lemmas
+   (`forBndIterate_run`, `forBndBody_{done,iterate}_run`, `forBndLoop_invariant`)
+   **stayed in place**; only defs + TM-shape lemmas moved. `compileSeq` is reused
+   for the 3-way composition (cleaner than the manual `composeFlatTM`+`joinTwoHalts`
+   the old plan suggested).
+2. **★ The semantic connection `Compile.forBndLoop_eval` (the gap-prone core) DONE.**
+   `((forBndIterateState counter sb body)^[iters] (s.set sb (s.get bound))).set (sb+1) []
+   = (Cmd.forBnd counter bound body).eval s`. Proven by a joint state-fold induction
+   (`AgreeBelow sb (A i) (F i)` ∧ `(A i).get (sb+1) = replicate i 1` ∧
+   `(A i).length = s.length`) tying the machine fold to the pure `foldlState`
+   (`Cmd.eval_forBnd`), then a register-by-register `List.ext_getElem` (both sides
+   `= []` for every `r ≥ sb`, `AgreeBelow` for `r < sb`). New reusable helpers (all
+   axiom-clean): `Cmd.foldlState_length`, `Compile.forBndIterateState_get_below`
+   (effect on `r < sb`), `Compile.forBndIterateState_length_eq` (exact, vs the
+   `_ge`-only proven before). **This was the key correctness risk** — the K1/K2
+   scratch algebra lines up exactly (the `Cmd.eval_agree` + `foldlState_frame`
+   route is clean).
 
-**Gotchas reconfirmed:** `sb counter : Var` opaque to `omega` (use `Nat.*`
-lemmas or `simp only [Var] at *; omega`); the budget product
-`(9*G*G+9*G+30)*(…)` must be `set`-abstracted before `omega` (whnf timeout).
-After `set s1 := …`, the budget's `body.cost (s.set …)` displays as
-`body.cost s1` — `set B := … (body.cost s1)`. `justRewindTM = scanLeftUntilTM
-4 3` (defeq), `_exit=1`, `.states=3`, `.sig=4`.
+**Gotchas reconfirmed/new:** `State := List (List Nat)`; two states equal via
+`List.ext_getElem` (length + getElem), and `State.get l i = l[i]` for `i < length`
+(`rw [State.get, List.getElem?_eq_getElem h, Option.getD_some]`). For `r : Var`
+vs `sb : Nat` comparisons, `Nat.lt_of_le_of_ne`/`Nat.ne_of_lt`/`Nat.lt_succ_of_lt`
+sidestep omega's Var opacity (sb is genuine `Nat`, so `(by omega : sb < sb+2)`
+works). `Function.iterate_succ_apply'` for the fold step; `List.replicate_succ'`
+(`replicate (n+1) = replicate n ++ [a]`) for the K2 value.
 
 ---
 
@@ -309,9 +315,20 @@ After `set s1 := …`, the budget's `body.cost (s.set …)` displays as
   scratch, length_ge, bitState}` AND their `∀ i ≤ iters` induction
   `Compile.forBndLoop_invariant` (gives `BitState`/scratch/length/`|K1_i|=iters−i`/
   `|K2_i|=i` along `A i = (forBndIterateState …)^[i] s`). All axiom-clean,
-  probe-validated. **What remains for `compileForBnd`:** the assembly (loop run via
-  `loopTM_run` + entry/exit wiring) inside `compileForBnd_sound` — see BOTTOM-UP
-  task 1.
+  probe-validated.
+- **★ `compileForBnd` is a REAL `CompiledCmd` + the semantic connection is PROVEN
+  (2026-06-14)** — `compileForBnd = compileSeq (opCopy sb bound) (compileSeq
+  (forBndLoopCmd …) (opClear (sb+1)))`; `Compile.forBndLoopCmd` wraps `forBndLoopTM`
+  (a `loopTM`) as a `CompiledCmd` (mirrors `opClear`; `forBndLoopTM_states` added).
+  **`Compile.forBndLoop_eval`**: `((forBndIterateState counter sb body)^[(s.get
+  bound).length] (s.set sb (s.get bound))).set (sb+1) [] = (Cmd.forBnd counter bound
+  body).eval s` — the machine fold (K2-cleared) reproduces the semantics; proven by
+  a joint `AgreeBelow sb (A i) (F i)` ∧ `K2=replicate i 1` ∧ `length` induction tying
+  `A i` to the pure `foldlState` (`Cmd.eval_forBnd`) + register-by-register
+  `List.ext_getElem`. Helpers: `Cmd.foldlState_length`,
+  `Compile.forBndIterateState_{get_below,length_eq}`. All axiom-clean.
+  **What remains for `compileForBnd`:** the TM loop run (`.choose` fold +
+  `loopTM_run`) + budget + the 3× `compileSeq` stitch — see BOTTOM-UP task 1.
 - **★ The cursor-copy layer is COMPLETE (2026-06-12/12b)** — `Compile.opCopy`
   (REAL `CompiledCmd`, all invariants proven), its parts (`markBitTM`/
   `restoreStepTM`/`skipReadTM`, the staged pipeline `copyRet1TM`/
@@ -387,70 +404,68 @@ You build the gadgets the (pinned) contracts need. Build green per item;
 
 ✅ "EvalCnf inner bodies" CLOSED (2026-06-10); ✅ `compileTestBit`/`ifBit`
 combinator CLOSED (2026-06-11); ✅ the `copy`/`tail` ops CLOSED (2026-06-12b/c);
-✅ the `forBnd` per-iteration chain CLOSED (2026-06-13: `forBndIterate_run`);
-✅ the `forBnd` loop MACHINE + structural lemmas CLOSED (2026-06-13b);
-✅ **BOTH `loopTM` contracts + all five fold invariants + the fold-invariant
-induction `forBndLoop_invariant` + the BUDGET FIX CLOSED (2026-06-13c,
-axiom-clean)** — only the loop-run ASSEMBLY remains (task 1).
-Everything left bottom-up is TM-level compiler work in Compile.lean. Both the
-decider half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest
-on the SAME gadgets, so Tasks 1 + 2 close **both** halves of the live chain at
-once. Remaining: the `forBnd` loop-run assembly, the `eqBit` op (+ the non-live
-`concat`/`takeAt`/`dropAt`/`consLen`).
+✅ the `forBnd` per-iteration chain + loop machine + BOTH `loopTM` contracts +
+fold invariants + budget fix CLOSED (2026-06-13/b/c); ✅ **`compileForBnd` is now
+a REAL `CompiledCmd` (def-reorder (c)) + the semantic connection
+`forBndLoop_eval` is PROVEN (2026-06-14)** — only the TM-level loop run + budget
++ stitch remain (task 1). Everything left bottom-up is TM-level compiler work in
+Compile.lean. Both the decider half (`sat_NP`) and the reduction half
+(`⪯p`/`toFrameworkWitness'`) rest on the SAME gadgets, so Tasks 1 + 2 close
+**both** halves of the live chain at once. Remaining: the `forBnd` loop-run
+assembly, the `eqBit` op (+ the non-live `concat`/`takeAt`/`dropAt`/`consLen`).
 
-1. **`compileForBnd` — THE highest-value item. ALL per-iteration/fold building
-   blocks DONE (2026-06-13b/c, axiom-clean): BOTH `loopTM` contracts (with
-   `|K2|`-explicit budgets), the five fold invariants, `forBndLoop_invariant`, and
-   the budget tightening. Remaining: the ASSEMBLY — the `.choose` loop run + the
-   entry/exit wiring, done inside `compileForBnd_sound` after the def-reordering.**
-   The pinned program is `copy K1 bnd ⨾ loop{test K1 ⨾ copy cnt K2 ⨾ rbody ⨾
-   appendOne K2 ⨾ tail K1 K1} ⨾ clear K2` (`K1 = sb`, `K2 = sb + 1`; docstring at
-   `compileForBnd` ~Compile.lean 2947). The loop body is
-   `Compile.forBndBodyTM counter sb rbody`; its contracts are
-   `Compile.forBndBody_{done,iterate}_run`. **⚠ Finding (this session): the loop
-   run does NOT cleanly stand alone — its W-invariant and budget intertwine with
-   `(forBnd …).cost`/`eval` and the `clear K2` step, so build it INSIDE
-   `compileForBnd_sound` (after the def-wiring (c)), where those are in scope.**
-   **Concrete remaining steps:**
-   - **(c) def-reordering FIRST.** Move the machine DEFS
-     (`forBndIterate`/`forBndContentTM`/`forBndBodyTM`/`forBndLoopTM` — NOT their
-     run lemmas) above line 2947, then set `compileForBnd counter bnd sb rbody :=
-     (opCopy sb bnd) ⨾ forBndLoopTM ⨾ (opClear (sb+1))` as a `CompiledCmd`
-     (`composeFlatTM`, `joinTwoHalts`-demote stray halts as `opCopy`/`opTail` do).
-     Rebuild everything (it touches `compileCmd`'s output value).
-   - **(d) the loop run + assembly in `compileForBnd_sound_physical_residue`**
-     (the SORRY, ~Compile.lean 15920). Structure: entry `opCopy_run` (`copy K1 bnd`,
-     establishing `A 0` with `K1` = snapshot, `K2 = []`) → the `loopTM_run` loop →
-     exit `clearRegionTM_run` (`clear K2`). For the loop:
-     - **State fold** `A i = (forBndIterateState counter sb body)^[i] s0`,
-       `iters = (s0.get sb).length`. `Compile.forBndLoop_invariant` (PROVEN) gives
-       `BitState`/scratch/length/`|K1_i|=iters−i`/`|K2_i|=i` at every `i ≤ iters` —
-       feed these to `forBndBody_iterate_run` (`i < iters`, K1 nonempty) and
-       `forBndBody_done_run` (`i = iters`, K1 empty).
-     - **Residue fold** `R i` via `.choose` of `forBndBody_iterate_run` at
-       `(A i, R i)`, guarded by a `dite` on the bundled preconditions (use
-       `Classical.propDecidable`); prove `∀ i ≤ iters, Pre (A i) (R i)` by a single
-       induction (`Pre` = the invariant + `ValidResidue (R i)` + the per-iteration
-       `hG`). `tIter i := (… ).choose` step count. **Mirror
-       `clearRegionTM_run`** (Compile.lean ~5775, the analogous variable-length
-       loop) for the `tIter`-via-`.choose` + `loopTM_run`/`loopTM_no_early_halt`
-       wiring; the ONLY difference is `A`/`R` are folds (not closed forms).
-     - **`T m := ([], 0, encodeTape (A (iters−m)) ++ R (iters−m))`**; `h_done` =
-       `forBndBody_done_run` at `T 0`, `h_iter j` = `forBndBody_iterate_run` at
-       `T(j+1)→T(j)`. `loopTM_run`/`_no_early_halt` close the loop run + trajectory.
-     - **W-invariant**: the per-iteration W (`forBndBody_iterate_run`'s) telescopes
-       to `State.size (A iters) + |R iters| ≤ State.size s0 + |R 0| + Σ_{i<iters}
-       (|K2_i| + body.cost(A i .set cnt K2_i) + 1)`. With `|K2_i| = i` and
-       `Cmd.eval_forBnd`/`cost_forBnd_le` (`K2_i = replicate i 1` ⇒ the semantic
-       step matches), this ties `A iters` (minus the K2 scratch, cleared next) to
-       `(forBnd …).eval s` and the sum to `(forBnd …).cost s`.
-     - **Budget**: `loopBudget tIter tDone iters ≤ physStepBudget G (forBnd.cost)`.
-       The per-iteration budget is now `|K2|`-explicit (`Σ(|K2_i|+2) = Σ(i+2) ~
-       iters²/2`), so it fits under `physStepBudget`'s `8·iters²` headroom (the
-       BUDGET FIX — see this session's block). Done branch ≤ `6L+12 ≤ 6G+12`.
-   Expect ~1 session: (c) is mechanical-but-wide; (d) is the keystone, but every
-   contract/invariant/budget it needs is now PROVEN — it is assembly, not
-   structural unknowns.
+1. **`compileForBnd` — THE highest-value item; ~½ session left. The machine is
+   REAL and the semantic core is PROVEN; what remains is the TM loop run + budget
+   + the 3× `compileSeq` stitch (mechanical, all contracts proven).** The def is
+   `compileForBnd counter bound sb rbody := compileSeq (opCopy sb bound)
+   (compileSeq (forBndLoopCmd counter sb rbody) (opClear (sb+1)))` (Compile.lean
+   ~3241). The remaining sorry is `compileForBnd_sound_physical_residue`
+   (~Compile.lean 16224). **DONE this session:** the def-reorder/`forBndLoopCmd`
+   wrapper; **`Compile.forBndLoop_eval`** (the keystone semantic fact:
+   `((forBndIterateState …)^[iters] (s.set sb (s.get bound))).set (sb+1) []
+   = (forBnd …).eval s`). **Concrete remaining steps for the sorry (do INSIDE
+   `compileForBnd_sound_physical_residue`, the W-invariant/budget intertwine):**
+   - **(d1) entry `opCopy_run`** at `(s, res0)` for `opCopy sb bound` → `s_entry =
+     s.set sb (s.get bound)`, residue `res0 ++ replicate |s.get sb| 0 = res0`
+     (`s.get sb = []` by `hscratch sb`). `iters = (s.get bound).length =
+     (s_entry.get sb).length`. (`opCopy_run` needs `sb ≠ bound` (✓ `hbnd`),
+     `sb < s.length`, `bound < s.length`.)
+   - **(d2) the loop run** for `forBndLoopCmd.M = forBndLoopTM` from `s_entry`,
+     **mirror `clearRegionTM_run`** (Compile.lean ~5775). The ONLY new difficulty
+     vs `clear` is the **residue is a `.choose` fold** (clear's was closed-form):
+     define `R : Nat → List Nat` by `Nat.rec res0 (fun i Ri => dite (Pre i Ri)
+     (fun h => (forBndBody_iterate_run … Ri (from h)).choose-of-the-residue)
+     (fun _ => Ri))` (`classical`; `Pre i Ri` = the `forBndLoop_invariant` facts at
+     `A i` (PROVEN, all `i ≤ iters`) + `ValidResidue Ri` + the `hG` budget bound on
+     `A i,Ri`), then prove `∀ i ≤ iters, Pre i (R i)` by induction. Set
+     `A i = (forBndIterateState counter sb body)^[i] s_entry`,
+     `T m = ([], 0, encodeTape (A (iters−m)) ++ R (iters−m))`,
+     `tIter j = (forBndBody_iterate_run at (A j, R j)).choose`; feed `T`, `tIter`,
+     `forBndBody_done_run` (at `i=iters`, `K1` empty via `|K1_iters|=0`),
+     `forBndBody_iterate_run` (at `j<iters`, `K1` nonempty via `|K1_j|=iters−j>0`)
+     to `loopTM_run`/`loopTM_no_early_halt`. Yields `A iters`, residue `R iters`.
+   - **(d3) exit `opClear (sb+1)` / `clearRegionTM_run`** on `A iters` → `(A iters).set
+     (sb+1) []`, residue `R iters ++ replicate |A iters.get (sb+1)| 0` (=
+     `replicate iters 0` since `|K2_iters| = iters`).
+   - **(d4) stitch**: `compileSeq_sound_physical_residue` twice (outer `opCopy` ⨾
+     inner; inner `forBndLoopCmd` ⨾ `opClear`) + `compileSeq_traj_physical_residue`
+     for the trajectory. Rewrite the final state with **`forBndLoop_eval`** to get
+     `(forBnd …).eval s`.
+   - **(d5) W-invariant ①**: telescope `forBndBody_iterate_run`'s per-iteration W
+     `|K2_i| + body.cost(A_i.set cnt (replicate i 1)) + 1` over `i<iters`. Tie the
+     body-cost sum to `(forBnd).cost` via `Cmd.cost_forBnd_le`/the `costFold` and
+     **`Cmd.cost_agree`** (`A_i` and `F_i` agree below `sb` ⇒ equal body costs —
+     `forBndLoop_eval`'s `key` already proves `AgreeBelow sb (A i) (F i)`; re-export
+     it or re-run the same induction). `Σ|K2_i| = Σi = iters(iters−1)/2 ≤ iters²`.
+   - **(d6) budget ②**: `loopBudget tIter tDone iters ≤ physStepBudget G
+     ((forBnd).cost s)`. Per-iteration budget is `|K2|`-explicit (`Σ(i+2) ~
+     iters²/2`), fits `physStepBudget`'s `8·iters²` headroom; done branch ≤ `6G+12`;
+     plus the `opCopy`/`opClear` ends (each `≤ (9G²+9G+30)·…`). Use
+     `physStepBudget_seq` to split the three `compileSeq` legs.
+   ⚠ The `.choose`-fold (d2) is the only fiddly part; everything it needs is PROVEN.
+   `cost_agree` may need locating/confirming (handoff "Threading toolkit" mentions
+   `Cmd.eval_preserves_BitState` etc.; cost-agree analogue is in Frame.lean near
+   `Cmd.eval_agree`).
 2. **`eqBit` design + probe (then build).** `Op.cost eqBit = 1` ⇒ ZERO residue
    beyond clear's `|dst₀|` — read-only two-mark ping-pong (marks only ever sit
    on BITS, never delimiters): special-case empties via `navigateAndTest`
