@@ -15986,6 +15986,215 @@ theorem Compile.forBndBody_iterate_run
     set B := Compile.physStepBudget G (body.cost (s.set counter (State.get s (sb + 1)))) with hB
     omega
 
+/-- **The pure state fold `foldlState` preserves the register count.** Every
+iteration writes `counter < k ≤ s.length` (in range) and runs `body` (`UsesBelow
+body k`, length-preserving in range), so the width stays `= s.length`. -/
+theorem Cmd.foldlState_length (body : Cmd) (counter : Var) (n : Nat) (s : State) (k : Nat)
+    (hcnt : counter < k) (huses : Cmd.UsesBelow body k) (hk : k ≤ s.length) :
+    (Cmd.foldlState body counter (List.range n) s).length = s.length := by
+  refine Cmd.foldlState_range_induct body counter n s
+    (fun _ st => st.length = s.length) rfl ?_
+  intro i st _ hst
+  have hcl : counter < st.length := by rw [hst]; exact Nat.lt_of_lt_of_le hcnt hk
+  have hsl : (st.set counter (List.replicate i 1)).length = s.length := by
+    rw [Compile.length_set st counter _ hcl, hst]
+  have hge := Cmd.eval_length_ge body (st.set counter (List.replicate i 1))
+  have hle := Cmd.eval_length_le body k huses (st.set counter (List.replicate i 1))
+  rw [hsl] at hge hle
+  rw [Nat.max_eq_left hk] at hle
+  omega
+
+/-- **One iteration's effect on a register `r < sb` (a body/counter register).**
+`forBndIterateState` writes `K1 = sb`/`K2 = sb+1` after the body, neither of which
+is `< sb`, so a register `r < sb` reads through to `body.eval (s.set counter K2)`. -/
+theorem Compile.forBndIterateState_get_below (counter sb : Var) (body : Cmd) (s : State)
+    (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) (r : Var) (hr : r < sb) :
+    State.get (Compile.forBndIterateState counter sb body s) r
+      = State.get (body.eval (s.set counter (State.get s (sb + 1)))) r := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
+  have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  have hsb_lt3 : sb < s3.length := by
+    rw [hs3def]
+    exact Nat.lt_of_lt_of_le (Nat.lt_of_lt_of_le hsb_lt (hlen1 ▸ hs2len_ge))
+      (State.set_length_ge s2 (sb + 1) _)
+  have hr_ne_sb : r ≠ sb := Nat.ne_of_lt hr
+  have hr_ne_sb1 : r ≠ sb + 1 := Nat.ne_of_lt (Nat.lt_succ_of_lt hr)
+  show State.get (s3.set sb (State.get s3 sb).tail) r = State.get s2 r
+  rw [Compile.get_set_ne s3 sb _ r hsb_lt3 hr_ne_sb, hs3def,
+      Compile.get_set_ne s2 (sb + 1) _ r hsb1_lt2 hr_ne_sb1]
+
+/-- **One iteration preserves the register count exactly** (every write is in
+range). The exact form `_length_eq` (the proven `_length_ge` gives only `≥`). -/
+theorem Compile.forBndIterateState_length_eq (counter sb : Var) (body : Cmd) (s : State)
+    (hcnt : counter < sb) (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) :
+    (Compile.forBndIterateState counter sb body s).length = s.length := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  set s1 : State := s.set counter (State.get s (sb + 1)) with hs1def
+  have hlen1 : s1.length = s.length := Compile.length_set s counter _ hcnt_lt
+  set s2 : State := body.eval s1 with hs2def
+  have hge := Cmd.eval_length_ge body s1
+  have hle := Cmd.eval_length_le body sb huses_body s1
+  rw [← hs2def] at hge hle
+  rw [hlen1] at hge hle
+  rw [Nat.max_eq_left (Nat.le_of_lt hsb_lt)] at hle
+  have hs2eq : s2.length = s.length := by omega
+  have hsb1_lt2 : sb + 1 < s2.length := by rw [hs2eq]; exact hsb1_lt
+  set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
+  have hs3eq : s3.length = s.length := by
+    rw [hs3def, Compile.length_set s2 (sb + 1) _ hsb1_lt2, hs2eq]
+  have hsb_lt3 : sb < s3.length := by rw [hs3eq]; exact hsb_lt
+  show (s3.set sb (State.get s3 sb).tail).length = s.length
+  rw [Compile.length_set s3 sb _ hsb_lt3, hs3eq]
+
+/-- **★ The semantic connection for the `forBnd` loop assembly.** Iterating the
+machine fold `forBndIterateState` exactly `iters = |s.get bound|` times from the
+loop-entry state `s.set sb (s.get bound)` (`K1` snapshot, `K2` empty), then
+clearing `K2 = sb + 1`, reproduces `(forBnd …).eval s`. The loop's scratch
+bookkeeping (`K1`/`K2`) lives in registers `≥ sb` that the body (`UsesBelow body
+sb`) and the counter never touch, so the `K2`-cleared/`K1`-emptied machine result
+agrees register-by-register with the pure state fold `foldlState`. -/
+theorem Compile.forBndLoop_eval (counter bound : Var) (sb : Nat) (body : Cmd) (s : State)
+    (hbit : Compile.BitState s) (hcnt : counter < sb) (hbnd : bound < sb)
+    (hlen : sb + 2 + 2 * body.loopDepth ≤ s.length)
+    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (hscratch : ∀ r, sb ≤ r → State.get s r = []) :
+    ((Compile.forBndIterateState counter sb body)^[(State.get s bound).length]
+        (s.set sb (State.get s bound))).set (sb + 1) []
+      = (Cmd.forBnd counter bound body).eval s := by
+  have hsb1_lt : sb + 1 < s.length :=
+    Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth)) hlen
+  have hsb_lt : sb < s.length := Nat.lt_trans (Nat.lt_succ_self sb) hsb1_lt
+  have hcnt_lt : counter < s.length := Nat.lt_trans hcnt hsb_lt
+  have hbnd_lt : bound < s.length := Nat.lt_trans hbnd hsb_lt
+  have hbit_reg : ∀ (r : Var), r < s.length → ∀ x ∈ State.get s r, x ≤ 1 := by
+    intro r hr x hx
+    refine hbit (State.get s r) ?_ x hx
+    rw [State.get, List.getElem?_eq_getElem hr]; exact List.getElem_mem hr
+  set e : State := s.set sb (State.get s bound) with hedef
+  have helen : e.length = s.length := Compile.length_set s sb _ hsb_lt
+  have hge_sb : State.get e sb = State.get s bound := Compile.get_set_eq s sb _ hsb_lt
+  have hbit_e : Compile.BitState e :=
+    Compile.BitState_set s sb _ hbit hsb_lt (hbit_reg bound hbnd_lt)
+  have hFstep : ∀ j, Cmd.foldlState body counter (List.range (j + 1)) s
+      = body.eval ((Cmd.foldlState body counter (List.range j) s).set counter
+          (List.replicate j 1)) := by
+    intro j
+    simp only [Cmd.foldlState, List.range_succ, List.foldl_append, List.foldl_cons, List.foldl_nil]
+  -- the joint state-fold invariant
+  have key : ∀ i, i ≤ (State.get s bound).length →
+      AgreeBelow sb ((Compile.forBndIterateState counter sb body)^[i] e)
+        (Cmd.foldlState body counter (List.range i) s) ∧
+      State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1)
+        = List.replicate i 1 ∧
+      ((Compile.forBndIterateState counter sb body)^[i] e).length = s.length := by
+    intro i
+    induction i with
+    | zero =>
+        intro _
+        refine ⟨?_, ?_, ?_⟩
+        · intro r hr
+          simp only [Function.iterate_zero, id_eq, List.range_zero, Cmd.foldlState_nil]
+          rw [hedef, Compile.get_set_ne s sb _ r hsb_lt (Nat.ne_of_lt hr)]
+        · simp only [Function.iterate_zero, id_eq, List.replicate_zero]
+          rw [hedef, Compile.get_set_ne s sb _ (sb + 1) hsb_lt (Nat.succ_ne_self sb)]
+          exact hscratch (sb + 1) (Nat.le_succ sb)
+        · simp only [Function.iterate_zero, id_eq]; exact helen
+    | succ i ih =>
+        intro hi
+        obtain ⟨hAg, hK2, hAlen⟩ := ih (Nat.le_of_succ_le hi)
+        set a := (Compile.forBndIterateState counter sb body)^[i] e with hadef
+        have hstepA : (Compile.forBndIterateState counter sb body)^[i + 1] e
+            = Compile.forBndIterateState counter sb body a := by
+          rw [Function.iterate_succ_apply', ← hadef]
+        have halen_sb : sb + 2 + 2 * body.loopDepth ≤ a.length := by rw [hAlen]; exact hlen
+        have halen_cnt : counter < a.length := by rw [hAlen]; exact hcnt_lt
+        set s1 : State := a.set counter (State.get a (sb + 1)) with hs1def
+        have hs1_eq : s1 = a.set counter (List.replicate i 1) := by rw [hs1def, hK2]
+        set s2 : State := body.eval s1 with hs2def
+        set g : State := (Cmd.foldlState body counter (List.range i) s).set counter
+          (List.replicate i 1) with hgdef
+        have hag : AgreeBelow sb s1 g := by
+          rw [hs1_eq, hgdef]; exact hAg.set counter (List.replicate i 1)
+        have heval_ag : AgreeBelow sb s2 (body.eval g) := by
+          rw [hs2def]; exact Cmd.eval_agree body sb huses_body hag
+        refine ⟨?_, ?_, ?_⟩
+        · rw [hstepA, hFstep i, ← hgdef]
+          intro r hr
+          rw [Compile.forBndIterateState_get_below counter sb body a hcnt halen_sb huses_body r hr,
+              ← hs1def, ← hs2def]
+          exact heval_ag r hr
+        · rw [hstepA, Compile.forBndIterateState_get_sb1 counter sb body a hcnt halen_sb huses_body,
+              hK2, ← List.replicate_succ']
+        · rw [hstepA, Compile.forBndIterateState_length_eq counter sb body a hcnt halen_sb huses_body,
+              hAlen]
+  -- instantiate at `iters` and assemble the register-by-register equality
+  obtain ⟨hAg, _, hAlen'⟩ := key (State.get s bound).length (Nat.le_refl _)
+  have hscr_e : ∀ r, sb + 2 ≤ r → State.get e r = [] := by
+    intro r hr
+    have hsbr : sb < r := Nat.lt_of_lt_of_le (by omega) hr
+    rw [hedef, Compile.get_set_ne s sb _ r hsb_lt (Ne.symm (Nat.ne_of_lt hsbr))]
+    exact hscratch r (Nat.le_trans (Nat.le_add_right sb 2) hr)
+  have hk2_e : State.get e (sb + 1) = [] := by
+    rw [hedef, Compile.get_set_ne s sb _ (sb + 1) hsb_lt (Nat.succ_ne_self sb)]
+    exact hscratch (sb + 1) (Nat.le_succ sb)
+  have hinv := Compile.forBndLoop_invariant counter sb body e hbit_e hcnt
+    (by rw [helen]; exact hlen) huses_body hnc_body hscr_e hk2_e
+    (State.get s bound).length (Nat.le_of_eq (by rw [hge_sb]))
+  obtain ⟨_, hscr_n, _, hK1_n, _⟩ := hinv
+  have hAsb_nil : State.get ((Compile.forBndIterateState counter sb body)^[(State.get s bound).length] e)
+      sb = [] := by
+    have h0 : (State.get ((Compile.forBndIterateState counter sb body)^[(State.get s bound).length] e)
+        sb).length = 0 := by rw [hK1_n, hge_sb, Nat.sub_self]
+    exact List.eq_nil_of_length_eq_zero h0
+  have hFlen : (Cmd.foldlState body counter (List.range (State.get s bound).length) s).length
+      = s.length :=
+    Cmd.foldlState_length body counter (State.get s bound).length s sb hcnt huses_body
+      (Nat.le_of_lt hsb_lt)
+  have hgetall : ∀ r, State.get (((Compile.forBndIterateState counter sb body)^[(State.get s bound).length] e).set
+        (sb + 1) []) r
+      = State.get (Cmd.foldlState body counter (List.range (State.get s bound).length) s) r := by
+    intro r
+    by_cases hr : r < sb
+    · rw [Compile.get_set_ne _ (sb + 1) _ r (by rw [hAlen']; exact hsb1_lt)
+          (Nat.ne_of_lt (Nat.lt_succ_of_lt hr))]
+      exact hAg r hr
+    · push_neg at hr
+      have hrhs : State.get (Cmd.foldlState body counter (List.range (State.get s bound).length) s) r
+          = [] := by
+        rw [Cmd.foldlState_frame body counter (State.get s bound).length s sb hcnt huses_body r hr]
+        exact hscratch r hr
+      rw [hrhs]
+      by_cases hr1 : r = sb + 1
+      · subst hr1
+        rw [Compile.get_set_eq _ (sb + 1) _ (by rw [hAlen']; exact hsb1_lt)]
+      · rw [Compile.get_set_ne _ (sb + 1) _ r (by rw [hAlen']; exact hsb1_lt) hr1]
+        by_cases hr2 : r = sb
+        · subst hr2; exact hAsb_nil
+        · have hsb_lt_r : sb < r := Nat.lt_of_le_of_ne hr (Ne.symm hr2)
+          have hr_ge : sb + 2 ≤ r := Nat.lt_of_le_of_ne hsb_lt_r (Ne.symm hr1)
+          exact hscr_n r hr_ge
+  rw [Cmd.eval_forBnd]
+  apply List.ext_getElem
+  · rw [Compile.length_set _ (sb + 1) _ (by rw [hAlen']; exact hsb1_lt), hAlen', hFlen]
+  · intro idx h1 h2
+    have e1 : ∀ (l : State) (h : idx < l.length), l[idx] = State.get l idx := by
+      intro l h; rw [State.get, List.getElem?_eq_getElem h, Option.getD_some]
+    rw [e1 _ h1, e1 _ h2]
+    exact hgetall idx
+
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — RE-PINNED 2026-06-11,
 `sorry`).** The scratch-register fix for the snapshot-vs-clobber gap: the previous
 pinning (no scratch interface) was **unprovable** — `Cmd.run` snapshots
