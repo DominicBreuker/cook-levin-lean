@@ -362,6 +362,13 @@ adds a delicate mark/value-carry body for no benefit. Do not pursue it.)
   `res ++ replicate |dst₀| 0`). Plus the **compose-with-`idTM` halt-zeroing
   trick** for stray unreachable halts, and `copyLoopTM_exit_is_halt`/
   `copyLoopTM_halt_unique`/`clearBodyRawTM_sig/_tapes/_start`/`idTM_halt_unique`.
+- **★ `Compile.iterTailsTM` / `Compile.iterTails_run` (2026-06-14c)** — the `eqBit`
+  consume-loop **ITERATE leaf**: `opTail sc1 sc1 ⨾ opTail sc2 sc2` (delete both
+  heads in place, entered at head 0) as a `composeFlatTM` of the proven
+  `opTailSelf_run_delete`, with run lemma (exit `(opTail sc2).exit + (opTail sc1).M.states`,
+  residue `++ [0,0]`). PROVEN & axiom-clean; the first proven piece of `compareRegsTM`
+  (HANDOFF bottom-up task 1 d2a). Pattern: `composeFlatTM_run` threaded over two
+  `opTailSelf_run_delete`s + the head-0 symbol bound (`encodeTape_get_zero`).
 
 ---
 
@@ -436,20 +443,32 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~14114; raw `sorry`s a
    with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
    copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
    Build & prove bottom-up:
-   - **(d2a) consume-loop body `B` + run lemma (the core; hardest piece).** Build
-     the clean **2-outcome** body: nested `branchComposeFlatTM` over
-     `navigateAndTestTM sc1` → (delim ⇒ DONE) / (content ⇒ `navigateAndTestTM sc2`
-     → (delim ⇒ DONE) / (content ⇒ `bitReadTM sc1`; nav `sc2`; `bitReadTM`; equal ⇒
-     `opTail sc1 sc1 ⨾ opTail sc2 sc2 ⨾ rewind` ⇒ ITERATE; differ ⇒ DONE)). Exactly
-     TWO body halts (DONE, ITERATE) — merge the multiple DONE paths via
-     `joinTwoHalts` (mirror `clearBodyRawTM`/`forBndBodyTM`). Then `loopTM B DONE
-     ITERATE`; prove its run lemma by the **`forBndLoop_run`/`copyLoop_run`
-     pattern** (a `T : Nat → tape` family indexed by remaining matched-bit-pairs;
-     `loopTM_run` with per-iteration `tIter` + the no-early-halt trajectory). The
-     loop's **decision contract** ("equal ⟺ both `sc` empty at DONE") is PROVEN for
-     all inputs in `probes/EqBitProbe.lean` (`eqVerdict_correct`, axiom-clean) — the
-     run lemma reproduces it on tape. **`#eval` the assembled `loopTM B …` before
-     proving** (probes/ pattern), confirming it matches `consumeLoop`.
+   - **(d2a) consume-loop body `B` + run lemma (the core; hardest piece).**
+     **★ The machine is PROBE-VALIDATED end-to-end on tape** —
+     `probes/CompareBodyProbe.lean` assembles `B` from proven gadgets and `#eval`s
+     that driving it to fixpoint matches the abstract consume for equal lists, bit
+     mismatches, and length mismatches (11/11). Use that probe as the **exact
+     recipe** (nested `branchComposeFlatTM`/`composeFlatTM` over
+     `navigateAndTestTM sc1`/`sc2`, `bitReadTM`, `opTail`, `justRewindTM`).
+     **★ Recommended CLEAN 2-outcome refactor for the proof** (the probe's `B` has
+     several stray DONE halts; loopTM needs exactly two): factor as
+     `B := branchComposeFlatTM testMachine iterMachine doneMachine exitIter exitDone`
+     where **`testMachine`** is a predicate machine that reads/compares and exits
+     **with the head restored to 0** at one of TWO states (ITER-yes = both nonempty
+     & equal / DONE-no = otherwise), merging its internal paths via `joinTwoHalts`
+     (mirror `clearBodyRawTM`/`forBndBodyTM`). **★ `iterMachine` is DONE —
+     `Compile.iterTailsTM` / `Compile.iterTails_run` (Compile.lean ~14074) PROVEN &
+     axiom-clean (2026-06-14c):** `opTail sc1 sc1 ⨾ opTail sc2 sc2` entered at head 0
+     (clean `composeFlatTM` of the proven `opTailSelf_run_delete`), deleting both
+     heads, residue `++ [0,0]`. `doneMachine` = immediate halt (head already 0).
+     Then `loopTM B exitDone exitIter`; prove its run lemma
+     by the **`forBndLoop_run`/`copyLoop_run` pattern** (a `T : Nat → tape` family
+     indexed by remaining matched-bit-pairs; `loopTM_run` + per-iteration `tIter` +
+     no-early-halt trajectory). The loop's **decision contract** ("equal ⟺ both `sc`
+     empty at DONE") is PROVEN for all inputs in `probes/EqBitProbe.lean`
+     (`eqVerdict_correct`, axiom-clean) — the run lemma reproduces it on tape. The
+     bulk of the work is `testMachine`'s run lemma (the nested-branch composition,
+     ~`opNonEmpty_run`-scale but deeper) + its `joinTwoHalts` 2-halt merge.
    - **(d2b) verdict.** Post-loop: two `navigateAndTestTM`s (sc1 empty? sc2 empty?)
      feeding the EQ/NEQ branch via `joinTwoHalts` — no flag register.
    - **(d2c) scratch lifecycle `growTwoEmpty`/`shrinkTwoEmpty`.** Place `sc1,sc2` at

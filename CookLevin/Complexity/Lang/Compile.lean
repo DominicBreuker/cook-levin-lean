@@ -14071,6 +14071,104 @@ theorem Compile.opTail_run (s : State) (dst src : Var) (hne : dst ≠ src)
     rw [List.length_append]; omega
   omega
 
+/-! ### `eqBit` consume-loop body — the ITERATE machine (bottom-up, Risk C2)
+
+The `eqBit` gadget (design A) compares two scratch copies by a `loopTM` whose body
+ITERATEs — deleting BOTH heads — while the two scratch regs are nonempty and their
+heads match. Entered with the head restored to `0`, that delete-both step is just
+`opTail sc1 sc1 ⨾ opTail sc2 sc2`, a clean `composeFlatTM` of the proven in-place
+self-tail run (`opTailSelf_run_delete`). This is `Compile.iterTailsTM`; its run
+lemma below is the body's ITERATE leaf (reused by the consume-loop run lemma —
+HANDOFF bottom-up task 1, d2a). Probe-validated end-to-end in
+`probes/CompareBodyProbe.lean`. -/
+
+/-- The `eqBit` consume-loop ITERATE machine: delete `sc1`'s head, then `sc2`'s
+head (both in place), entered at head `0`. -/
+def Compile.iterTailsTM (sc1 sc2 : Var) : FlatTM :=
+  composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit
+
+/-- **ITERATE leaf run.** From `encodeTape s ++ res` at head `0` with `sc1 ≠ sc2`
+both nonempty, `iterTailsTM` deletes both heads in place, landing at the composed
+exit with `encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)`, the
+residue gaining two `0` fillers. -/
+theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
+    (h1 : sc1 < s.length) (h2 : sc2 < s.length) (hbit : Compile.BitState s)
+    (hne1 : s.get sc1 ≠ []) (hne2 : s.get sc2 ≠ [])
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.iterTailsTM sc1 sc2)
+          (initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res])
+        = some { state_idx := (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+                     ++ (res ++ [0, 0]))] } := by
+  obtain ⟨t1, hrun1, htraj1, _⟩ := Compile.opTailSelf_run_delete s sc1 h1 hbit hne1 res hres
+  set s' := s.set sc1 (s.get sc1).tail with hs'
+  have hlen' : s'.length = s.length := Compile.length_set s sc1 _ h1
+  have h2' : sc2 < s'.length := by rw [hlen']; exact h2
+  have hbit' : Compile.BitState s' := by
+    apply Compile.BitState_set s sc1 _ hbit h1
+    intro x hx
+    exact hbit (s.get sc1)
+      (by rw [State.get, List.getElem?_eq_getElem h1]; exact List.getElem_mem h1) x
+      (List.tail_subset _ hx)
+  have hget' : s'.get sc2 = s.get sc2 := State.get_set_ne s sc1 _ sc2 (Ne.symm hne)
+  have hne2' : s'.get sc2 ≠ [] := by rw [hget']; exact hne2
+  have hres' : Compile.ValidResidue (res ++ [0]) := by
+    have := Compile.ValidResidue_append_replicate_zero res 1 hres
+    simpa using this
+  obtain ⟨t2, hrun2, htraj2, _⟩ :=
+    Compile.opTailSelf_run_delete s' sc2 h2' hbit' hne2' (res ++ [0]) hres'
+  set right1 : List Nat := Compile.encodeTape s' ++ (res ++ [0]) with hr1
+  have hvalid1 : validFlatTM (Compile.opTail sc1 sc1).M := (Compile.opTail sc1 sc1).M_valid
+  have hvalid2 : validFlatTM (Compile.opTail sc2 sc2).M := (Compile.opTail sc2 sc2).M_valid
+  have hinit1 : initFlatConfig (Compile.opTail sc1 sc1).M [Compile.encodeTape s ++ res]
+      = { state_idx := (Compile.opTail sc1 sc1).M.start,
+          tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    simp only [initFlatConfig, List.map_cons, List.map_nil]
+  rw [hinit1] at hrun1 htraj1
+  have hinit2 : initFlatConfig (Compile.opTail sc2 sc2).M [Compile.encodeTape s' ++ (res ++ [0])]
+      = { state_idx := (Compile.opTail sc2 sc2).M.start, tapes := [([], 0, right1)] } := by
+    simp only [initFlatConfig, hr1, List.map_cons, List.map_nil]
+  rw [hinit2] at hrun2
+  have hLpos : 0 < (Compile.encodeTape s').length := by rw [Compile.encodeTape]; simp
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right1) = some v →
+      v < max (Compile.opTail sc1 sc1).M.sig (Compile.opTail sc2 sc2).M.sig := by
+    intro v hv
+    have hlt : (0 : Nat) < right1.length := by rw [hr1, List.length_append]; omega
+    rw [currentTapeSymbol_in_range hlt] at hv
+    have h0 : right1[0]? = some 3 := by
+      rw [hr1, List.getElem?_append_left hLpos, Compile.encodeTape]; rfl
+    have hhead : right1.get ⟨0, hlt⟩ = 3 := by
+      rw [List.get_eq_getElem]
+      exact Option.some.inj ((List.getElem?_eq_getElem hlt).symm.trans h0)
+    have hv3 : v = 3 := by rw [← Option.some.inj hv]; exact hhead
+    rw [hv3, (Compile.opTail sc1 sc1).M_sig, (Compile.opTail sc2 sc2).M_sig]; omega
+  have hhalt2 : haltingStateReached (Compile.opTail sc2 sc2).M
+      { state_idx := (Compile.opTail sc2 sc2).exit,
+        tapes := [([], 0, Compile.encodeTape (s'.set sc2 (s'.get sc2).tail)
+                    ++ ((res ++ [0]) ++ [0]))] } = true := by
+    show (Compile.opTail sc2 sc2).M.halt.getD (Compile.opTail sc2 sc2).exit false = true
+    rw [List.getD_eq_getElem?_getD, (Compile.opTail sc2 sc2).exit_is_halt]; rfl
+  have hcomp := composeFlatTM_run hvalid1 hvalid2 (Compile.opTail sc1 sc1).exit_lt
+    { state_idx := (Compile.opTail sc1 sc1).M.start,
+      tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hvalid1.1 [] 0 right1 hsym hrun1 htraj1 hrun2 hhalt2
+  refine ⟨t1 + 1 + t2, ?_⟩
+  have hcfg0 : initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]
+      = { state_idx := (Compile.opTail sc1 sc1).M.start,
+          tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    simp only [initFlatConfig, Compile.iterTailsTM, composeFlatTM_start, List.map_cons, List.map_nil]
+  rw [hcfg0]
+  have htape : Compile.encodeTape (s'.set sc2 (s'.get sc2).tail) ++ ((res ++ [0]) ++ [0])
+      = Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+          ++ (res ++ [0, 0]) := by
+    rw [hget', hs']; simp [List.append_assoc]
+  show runFlatTM (t1 + 1 + t2)
+      (composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit)
+      _ = _
+  rw [hcomp.1, ← htape]
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
