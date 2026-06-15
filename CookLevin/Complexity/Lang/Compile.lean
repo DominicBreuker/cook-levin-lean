@@ -14169,6 +14169,96 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
       _ = _
   rw [hcomp.1, ← htape]
 
+/-! ### `opRewindToZero` — a halt-unique "rewind to the leading sentinel" leaf
+(bottom-up, Risk C2)
+
+Every `eqBit` sub-machine whose *last* action is a rewind (the verdict's EQ/NEQ
+leaves; the consume-loop testMachine's restored exits) needs a rewind that is a
+clean single-exit `CompiledCmd`. `composeFlatTM` only zeroes the halts of its
+**first** argument (`composedHalt = replicate M₁.states false ++ M₂.halt`), so a
+rewind used as the *trailing* machine keeps its stray boundary halt (state `2` of
+`scanLeftUntilTM`), violating `halt_unique`. `opRewindToZero` demotes that
+boundary via `joinTwoHalts`, giving a reusable head-→`0` leaf. -/
+
+/-- **Halt-unique "rewind interior head to the leading sentinel" gadget.**
+`justRewindTM` (`= scanLeftUntilTM 4 3`) has two static halt states — `1` (found
+the sentinel) and `2` (boundary, reached only if no sentinel exists). On a tape
+`(left, head, 3 :: rest)` with a terminator-free `rest[0..head)`, the boundary is
+never reached, but it is still a static halt, so the bare machine is not
+`halt_unique` and cannot serve as a clean single-exit branch leaf.
+`opRewindToZero` demotes the boundary `2` via `joinTwoHalts`, leaving `1` as the
+unique exit. -/
+def Compile.opRewindToZero : CompiledCmd where
+  M := joinTwoHalts ClearGadget.justRewindTM 1 2
+  exit := 1
+  exit_lt := by rw [joinTwoHalts_states]; show (1 : Nat) < 3; omega
+  exit_is_halt := joinTwoHalts_h1_is_halt _ 1 2 (by decide) (by decide)
+  halt_unique := joinTwoHalts_halt_unique _ 1 2 (by
+    intro i hi
+    change ([false, true, true] : List Bool)[i]? = some true at hi
+    rcases i with _ | _ | _ | i <;> simp_all)
+  M_valid := joinTwoHalts_valid _ 1 2 ClearGadget.justRewindTM_valid (by decide) (by decide)
+    ClearGadget.justRewindTM_tapes
+  M_tapes := by rw [joinTwoHalts_tapes]; exact ClearGadget.justRewindTM_tapes
+  M_sig := by rw [joinTwoHalts_sig]; show ClearGadget.justRewindTM.sig = 4; rfl
+
+theorem Compile.opRewindToZero_start : Compile.opRewindToZero.M.start = 0 := rfl
+
+/-- state `2` is a (static) halt of `justRewindTM`, so a config the trajectory
+proves "not halting" cannot sit there. -/
+private theorem Compile.justRewind_not_state2 {ck : FlatTMConfig}
+    (hnh : haltingStateReached (ScanLeft.scanLeftUntilTM 4 3) ck = false) :
+    ck.state_idx ≠ 2 := by
+  intro hc
+  have hhalt : haltingStateReached (ScanLeft.scanLeftUntilTM 4 3) ck = true := by
+    show ([false, true, true] : List Bool).getD ck.state_idx false = true
+    rw [hc]; rfl
+  exact absurd (hhalt.symm.trans hnh) (by decide)
+
+/-- **`opRewindToZero` run + no-early-exit/no-early-halt trajectory.** From an
+interior head `head` on `(left, head, 3 :: rest)` with `rest[0..head)`
+terminator-free (`< 4` and `≠ 3`), rewinds to head `0` in `head + 1` steps,
+landing at the unique exit `1`. The demoted boundary `2` is never visited. -/
+theorem Compile.opRewindToZero_run (left rest : List Nat) (head : Nat)
+    (h_head : head ≤ rest.length)
+    (h_cells : ∀ i, i < head → ∃ (h : i < rest.length),
+      rest.get ⟨i, h⟩ < 4 ∧ rest.get ⟨i, h⟩ ≠ 3) :
+    runFlatTM (head + 1) Compile.opRewindToZero.M
+        { state_idx := 0, tapes := [(left, head, 3 :: rest)] }
+      = some { state_idx := Compile.opRewindToZero.exit, tapes := [(left, 0, 3 :: rest)] }
+    ∧ (∀ k, k < head + 1 → ∀ ck,
+        runFlatTM k Compile.opRewindToZero.M
+            { state_idx := 0, tapes := [(left, head, 3 :: rest)] } = some ck →
+        ck.state_idx ≠ Compile.opRewindToZero.exit ∧
+        haltingStateReached Compile.opRewindToZero.M ck = false) := by
+  have hrun := ScanLeft.rewindToStart_run 4 3 left rest head h_head h_cells
+  have htraj := ScanLeft.rewindToStart_traj 4 3 left rest head h_head h_cells
+  have hjr : ClearGadget.justRewindTM = ScanLeft.scanLeftUntilTM 4 3 := rfl
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [(left, head, (3 : Nat) :: rest)] } with hcfg0
+  have hM : Compile.opRewindToZero.M = joinTwoHalts ClearGadget.justRewindTM 1 2 := rfl
+  have hE : Compile.opRewindToZero.exit = 1 := rfl
+  -- the M-run never visits the demoted state `2` within `head+1` steps.
+  have hnv : ∀ k, k ≤ head + 1 → ∀ ck,
+      runFlatTM k ClearGadget.justRewindTM cfg0 = some ck → ck.state_idx ≠ 2 := by
+    intro k hk ck hck
+    rw [hjr] at hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact Compile.justRewind_not_state2 (htraj k hlt ck hck).2
+    · have heq : ck = { state_idx := 1, tapes := [(left, 0, (3 : Nat) :: rest)] } :=
+        Option.some.inj (hck.symm.trans hrun)
+      rw [heq]; show (1 : Nat) ≠ 2; omega
+  refine ⟨?_, ?_⟩
+  · rw [hM, hE, joinTwoHalts_run_eq _ 1 2 (head + 1) cfg0 hnv, hjr, hrun]
+  · intro k hk ck hck
+    rw [hM] at hck ⊢
+    rw [hE]
+    rw [joinTwoHalts_run_eq _ 1 2 k cfg0
+          (fun j hj => hnv j (Nat.le_trans hj (Nat.le_of_lt hk)))] at hck
+    rw [hjr] at hck
+    obtain ⟨hne1, hnh⟩ := htraj k hk ck hck
+    refine ⟨hne1, ?_⟩
+    rw [joinTwoHalts_halting_eq _ 1 2 ck (Compile.justRewind_not_state2 hnh), hjr]; exact hnh
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
