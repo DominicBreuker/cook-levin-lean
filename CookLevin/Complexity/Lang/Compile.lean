@@ -876,6 +876,38 @@ theorem Compile.branchComposeFlatTM_halt_only_M3two (M₁ M₂ M₃ : FlatTM)
       rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
       rcases h3 _ hi with h | h <;> omega
 
+/-- **Variant allowing 2-exit branches on BOTH sides** (d2a, Risk C2). A
+`branchComposeFlatTM` whose positive branch `M₂` AND negative branch `M₃` are each
+nested 2-exit testers has exactly the **four** shifted exits as halt states. Needed
+for the `eqBit` bit-comparison body (read both bits, `M₂`/`M₃` each branch
+MATCH/NOMATCH) and the consume-loop body (each side ITER/DONE). Proof is the parent
+lemma's, both single `M₂`/`M₃` exits split into two by `rcases … <;> omega`. -/
+theorem Compile.branchComposeFlatTM_halt_only_M2two_M3two (M₁ M₂ M₃ : FlatTM)
+    (ep en e₂a e₂b e₃a e₃b : Nat)
+    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂a ∨ i = e₂b)
+    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃a ∨ i = e₃b) :
+    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
+      i = M₁.states + e₂a ∨ i = M₁.states + e₂b ∨
+        i = M₁.states + M₂.states + e₃a ∨ i = M₁.states + M₂.states + e₃b := by
+  intro i hi
+  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  rw [List.append_assoc] at hi
+  by_cases h1 : i < M₁.states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
+        List.getElem?_replicate] at hi
+    simp [h1] at hi
+  · rw [Nat.not_lt] at h1
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
+        List.length_replicate] at hi
+    by_cases h2lt : i - M₁.states < M₂.states
+    · rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
+      rcases h2 _ hi with h | h <;> omega
+    · rw [Nat.not_lt] at h2lt
+      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
+      rcases h3 _ hi with h | h <;> omega
+
 /-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
 branch composite (positive branch). -/
 theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
@@ -14560,6 +14592,506 @@ theorem Compile.navTestRewindM_run_delim (s : State) (sc : Var) (res : List Nat)
      ClearGadget.ne_of_not_halting (Compile.navTestRewindM_exit_delim_is_halt sc) (hneg_traj k hk ck hck),
      hneg_traj k hk ck hck⟩⟩
   simpa only [hstate] using hneg.1
+
+/-! ### `readBitRewindM` — read a register's first bit, head restored to `0`
+(bottom-up, Risk C2 — d2a)
+
+For the `eqBit` consume-loop `testMachine`, after the emptiness guards
+(`navTestRewindM`) establish both scratch registers nonempty, we must read and
+compare their first *bits*. `readBitRewindM sc` is the clean 2-exit primitive:
+from head `0` with `sc` nonempty, navigate to `sc`'s first cell, read its bit, and
+rewind the head back to `0`, exiting in `BIT0`/`BIT1` with the tape unchanged. The
+spurious delim exit (`sc` empty — never taken once guarded) is merged into `BIT0`.
+
+  `readRewindInnerM := branchComposeFlatTM bitReadTM opRewindToZero opRewindToZero b0 b1`
+  `readBitRewindRawM sc := branchComposeFlatTM (navigateAndTestTM sc)
+       opRewindToZero readRewindInnerM (delim sc) (content sc)`   -- M₃ = the 2-exit reader
+  `readBitRewindM sc := joinTwoHalts (readBitRewindRawM sc) raw_b0 raw_dead`
+
+Reuses the proven `bitReadTM` (bit-value tester) + `opRewindToZero` (rewind leaf) +
+`navTestReg_run_content`/`_traj_content` (navigation) + `navTestRewind_rewind_run`
+(the rewind from the post-navigation head). The `head`/`moveContent` proofs are the
+template. The bit-reader is the **M₃** (negative/content) branch so the halt
+characterization reuses `branchComposeFlatTM_halt_only_M3two`. -/
+
+/-- The inner read-and-rewind machine: from a head on `sc`'s first content cell,
+read its bit (`bitReadTM`) and rewind to `0` (`opRewindToZero`), exiting in the
+bit-dependent state `readRewindInner_exit b`. -/
+def Compile.readRewindInnerM : FlatTM :=
+  branchComposeFlatTM Compile.bitReadTM Compile.opRewindToZero.M Compile.opRewindToZero.M
+    Compile.bitReadTM_exit_b0 Compile.bitReadTM_exit_b1
+
+/-- The bit-`b` exit of `readRewindInnerM` (`b = 0` → positive `bitReadTM` branch,
+`b = 1` → negative). -/
+def Compile.readRewindInner_exit (b : Nat) : Nat :=
+  Compile.opRewindToZero.exit + Compile.bitReadTM.states + b * Compile.opRewindToZero.M.states
+
+theorem Compile.readRewindInnerM_start : Compile.readRewindInnerM.start = 0 := by
+  rw [Compile.readRewindInnerM, branchComposeFlatTM_start]; exact Compile.bitReadTM_start
+
+theorem Compile.readRewindInnerM_tapes : Compile.readRewindInnerM.tapes = 1 := by
+  rw [Compile.readRewindInnerM, branchComposeFlatTM_tapes]; exact Compile.bitReadTM_tapes
+
+theorem Compile.readRewindInnerM_sig : Compile.readRewindInnerM.sig = 4 := by
+  rw [Compile.readRewindInnerM, branchComposeFlatTM_sig, Compile.bitReadTM_sig,
+      Compile.opRewindToZero.M_sig]
+  rfl
+
+theorem Compile.readRewindInnerM_valid : validFlatTM Compile.readRewindInnerM :=
+  branchComposeFlatTM_valid _ _ _ _ _ Compile.bitReadTM_valid
+    Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
+    (by rw [Compile.bitReadTM_states, Compile.bitReadTM_exit_b0]; decide)
+    (by rw [Compile.bitReadTM_states, Compile.bitReadTM_exit_b1]; decide)
+    Compile.bitReadTM_tapes Compile.opRewindToZero.M_tapes Compile.opRewindToZero.M_tapes
+
+theorem Compile.readRewindInner_exit_b0_ne_b1 :
+    Compile.readRewindInner_exit 0 ≠ Compile.readRewindInner_exit 1 := by
+  rw [Compile.readRewindInner_exit, Compile.readRewindInner_exit]
+  have := Compile.opRewindToZero.exit_lt
+  omega
+
+theorem Compile.readRewindInner_exit_lt (b : Nat) (hb : b ≤ 1) :
+    Compile.readRewindInner_exit b < Compile.readRewindInnerM.states := by
+  rw [Compile.readRewindInner_exit, Compile.readRewindInnerM, branchComposeFlatTM_states]
+  have := Compile.opRewindToZero.exit_lt
+  rcases Nat.le_one_iff_eq_zero_or_eq_one.mp hb with h | h <;> subst h <;> simp <;> omega
+
+theorem Compile.readRewindInnerM_halt_only :
+    ∀ i, Compile.readRewindInnerM.halt[i]? = some true →
+      i = Compile.readRewindInner_exit 0 ∨ i = Compile.readRewindInner_exit 1 := by
+  intro i hi
+  rw [Compile.readRewindInner_exit, Compile.readRewindInner_exit]
+  have h := Compile.branchComposeFlatTM_halt_only Compile.bitReadTM
+    Compile.opRewindToZero.M Compile.opRewindToZero.M _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
+    Compile.opRewindToZero.halt_unique Compile.opRewindToZero.halt_unique i hi
+  rcases h with h | h
+  · left; omega
+  · right; omega
+
+theorem Compile.readRewindInner_exit_b0_is_halt :
+    Compile.readRewindInnerM.halt[Compile.readRewindInner_exit 0]? = some true := by
+  rw [Compile.readRewindInner_exit, Compile.readRewindInnerM,
+      show Compile.opRewindToZero.exit + Compile.bitReadTM.states + 0 * Compile.opRewindToZero.M.states
+        = Compile.bitReadTM.states + Compile.opRewindToZero.exit from by omega]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.opRewindToZero.exit_lt Compile.opRewindToZero.exit_is_halt
+
+theorem Compile.readRewindInner_exit_b1_is_halt :
+    Compile.readRewindInnerM.halt[Compile.readRewindInner_exit 1]? = some true := by
+  rw [Compile.readRewindInner_exit, Compile.readRewindInnerM,
+      show Compile.opRewindToZero.exit + Compile.bitReadTM.states + 1 * Compile.opRewindToZero.M.states
+        = Compile.bitReadTM.states + Compile.opRewindToZero.M.states + Compile.opRewindToZero.exit
+        from by omega]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.opRewindToZero.exit_is_halt
+
+/-- The raw read machine (3 halts: `b0`, `b1`, and the dead `sc`-empty rewind). The
+bit-reader `readRewindInnerM` is the **negative** (content) branch. -/
+def Compile.readBitRewindRawM (sc : Var) : FlatTM :=
+  branchComposeFlatTM (ClearGadget.navigateAndTestTM sc)
+    Compile.opRewindToZero.M Compile.readRewindInnerM
+    (ClearGadget.navigateAndTestTM_exit_delim sc)
+    (ClearGadget.navigateAndTestTM_exit_content sc)
+
+/-- dead exit (`sc` empty — `M₂`, positive/delim branch). -/
+def Compile.readBitRewindRawM_dead (sc : Var) : Nat :=
+  (ClearGadget.navigateAndTestTM sc).states + Compile.opRewindToZero.exit
+/-- bit-`b` exit (`M₃` content branch). -/
+def Compile.readBitRewindRawM_bit (sc : Var) (b : Nat) : Nat :=
+  (ClearGadget.navigateAndTestTM sc).states + Compile.opRewindToZero.M.states
+    + Compile.readRewindInner_exit b
+
+theorem Compile.readBitRewindRawM_start (sc : Var) :
+    (Compile.readBitRewindRawM sc).start = 0 := by
+  rw [Compile.readBitRewindRawM, branchComposeFlatTM_start]
+  exact ClearGadget.navigateAndTestTM_start sc
+
+theorem Compile.readBitRewindRawM_tapes (sc : Var) :
+    (Compile.readBitRewindRawM sc).tapes = 1 := by
+  rw [Compile.readBitRewindRawM, branchComposeFlatTM_tapes]
+  exact ClearGadget.navigateAndTestTM_tapes sc
+
+theorem Compile.readBitRewindRawM_sig (sc : Var) :
+    (Compile.readBitRewindRawM sc).sig = 4 := by
+  rw [Compile.readBitRewindRawM, branchComposeFlatTM_sig, ClearGadget.navigateAndTestTM_sig,
+      Compile.opRewindToZero.M_sig, Compile.readRewindInnerM_sig]
+  rfl
+
+theorem Compile.readBitRewindRawM_states (sc : Var) :
+    (Compile.readBitRewindRawM sc).states =
+      (ClearGadget.navigateAndTestTM sc).states + Compile.opRewindToZero.M.states
+        + Compile.readRewindInnerM.states := by
+  rw [Compile.readBitRewindRawM, branchComposeFlatTM_states]
+
+theorem Compile.readBitRewindRawM_dead_lt (sc : Var) :
+    Compile.readBitRewindRawM_dead sc < (Compile.readBitRewindRawM sc).states := by
+  rw [Compile.readBitRewindRawM_dead, Compile.readBitRewindRawM_states]
+  have := Compile.opRewindToZero.exit_lt
+  have := Compile.readRewindInner_exit_lt 0 (by omega)
+  omega
+
+theorem Compile.readBitRewindRawM_bit_lt (sc : Var) (b : Nat) (hb : b ≤ 1) :
+    Compile.readBitRewindRawM_bit sc b < (Compile.readBitRewindRawM sc).states := by
+  rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM_states]
+  have := Compile.readRewindInner_exit_lt b hb
+  omega
+
+theorem Compile.readBitRewindRawM_dead_ne_b0 (sc : Var) :
+    Compile.readBitRewindRawM_bit sc 0 ≠ Compile.readBitRewindRawM_dead sc := by
+  rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM_dead,
+      Compile.readRewindInner_exit]
+  have := Compile.opRewindToZero.exit_lt
+  omega
+
+theorem Compile.readBitRewindRawM_b0_ne_b1 (sc : Var) :
+    Compile.readBitRewindRawM_bit sc 0 ≠ Compile.readBitRewindRawM_bit sc 1 := by
+  rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM_bit]
+  have := Compile.readRewindInner_exit_b0_ne_b1
+  omega
+
+theorem Compile.readBitRewindRawM_valid (sc : Var) :
+    validFlatTM (Compile.readBitRewindRawM sc) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (ClearGadget.navigateAndTestTM_valid sc) Compile.opRewindToZero.M_valid
+    Compile.readRewindInnerM_valid
+    (ClearGadget.navigateAndTestTM_exit_delim_lt sc)
+    (ClearGadget.navigateAndTestTM_exit_content_lt sc)
+    (ClearGadget.navigateAndTestTM_tapes sc) Compile.opRewindToZero.M_tapes
+    Compile.readRewindInnerM_tapes
+
+theorem Compile.readBitRewindRawM_halt_only (sc : Var) :
+    ∀ i, (Compile.readBitRewindRawM sc).halt[i]? = some true →
+      i = Compile.readBitRewindRawM_dead sc ∨ i = Compile.readBitRewindRawM_bit sc 0
+        ∨ i = Compile.readBitRewindRawM_bit sc 1 := by
+  rw [Compile.readBitRewindRawM_dead, Compile.readBitRewindRawM_bit,
+      Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM]
+  exact Compile.branchComposeFlatTM_halt_only_M3two _ _ _ _ _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.readRewindInnerM_valid
+    Compile.opRewindToZero.halt_unique Compile.readRewindInnerM_halt_only
+
+theorem Compile.readBitRewindRawM_dead_is_halt (sc : Var) :
+    (Compile.readBitRewindRawM sc).halt[Compile.readBitRewindRawM_dead sc]? = some true := by
+  rw [Compile.readBitRewindRawM_dead, Compile.readBitRewindRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.opRewindToZero.exit_lt Compile.opRewindToZero.exit_is_halt
+
+theorem Compile.readBitRewindRawM_b0_is_halt (sc : Var) :
+    (Compile.readBitRewindRawM sc).halt[Compile.readBitRewindRawM_bit sc 0]? = some true := by
+  rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.readRewindInner_exit_b0_is_halt
+
+theorem Compile.readBitRewindRawM_b1_is_halt (sc : Var) :
+    (Compile.readBitRewindRawM sc).halt[Compile.readBitRewindRawM_bit sc 1]? = some true := by
+  rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    Compile.opRewindToZero.M_valid Compile.readRewindInner_exit_b1_is_halt
+
+/-- **The clean 2-exit read machine** = merge the dead `sc`-empty halt into `BIT0`. -/
+def Compile.readBitRewindM (sc : Var) : FlatTM :=
+  joinTwoHalts (Compile.readBitRewindRawM sc)
+    (Compile.readBitRewindRawM_bit sc 0) (Compile.readBitRewindRawM_dead sc)
+
+/-- bit-`0` exit. -/
+def Compile.readBitRewindM_exit_b0 (sc : Var) : Nat := Compile.readBitRewindRawM_bit sc 0
+/-- bit-`1` exit. -/
+def Compile.readBitRewindM_exit_b1 (sc : Var) : Nat := Compile.readBitRewindRawM_bit sc 1
+
+theorem Compile.readBitRewindM_start (sc : Var) : (Compile.readBitRewindM sc).start = 0 := by
+  rw [Compile.readBitRewindM, joinTwoHalts_start]; exact Compile.readBitRewindRawM_start sc
+
+theorem Compile.readBitRewindM_tapes (sc : Var) : (Compile.readBitRewindM sc).tapes = 1 := by
+  rw [Compile.readBitRewindM, joinTwoHalts_tapes]; exact Compile.readBitRewindRawM_tapes sc
+
+theorem Compile.readBitRewindM_sig (sc : Var) : (Compile.readBitRewindM sc).sig = 4 := by
+  rw [Compile.readBitRewindM, joinTwoHalts_sig]; exact Compile.readBitRewindRawM_sig sc
+
+theorem Compile.readBitRewindM_states (sc : Var) :
+    (Compile.readBitRewindM sc).states = (Compile.readBitRewindRawM sc).states := rfl
+
+theorem Compile.readBitRewindM_valid (sc : Var) : validFlatTM (Compile.readBitRewindM sc) :=
+  joinTwoHalts_valid _ _ _ (Compile.readBitRewindRawM_valid sc)
+    (Compile.readBitRewindRawM_bit_lt sc 0 (by omega)) (Compile.readBitRewindRawM_dead_lt sc)
+    (Compile.readBitRewindRawM_tapes sc)
+
+theorem Compile.readBitRewindM_exit_b0_ne_b1 (sc : Var) :
+    Compile.readBitRewindM_exit_b0 sc ≠ Compile.readBitRewindM_exit_b1 sc :=
+  Compile.readBitRewindRawM_b0_ne_b1 sc
+
+theorem Compile.readBitRewindM_exit_b0_lt (sc : Var) :
+    Compile.readBitRewindM_exit_b0 sc < (Compile.readBitRewindM sc).states := by
+  rw [Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_states]
+  exact Compile.readBitRewindRawM_bit_lt sc 0 (by omega)
+
+theorem Compile.readBitRewindM_exit_b1_lt (sc : Var) :
+    Compile.readBitRewindM_exit_b1 sc < (Compile.readBitRewindM sc).states := by
+  rw [Compile.readBitRewindM_exit_b1, Compile.readBitRewindM_states]
+  exact Compile.readBitRewindRawM_bit_lt sc 1 (by omega)
+
+theorem Compile.readBitRewindM_halt_only (sc : Var) :
+    ∀ i, (Compile.readBitRewindM sc).halt[i]? = some true →
+      i = Compile.readBitRewindM_exit_b0 sc ∨ i = Compile.readBitRewindM_exit_b1 sc := by
+  intro i hi
+  rw [Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_exit_b1]
+  change ((Compile.readBitRewindRawM sc).halt.set (Compile.readBitRewindRawM_dead sc) false)[i]?
+    = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : Compile.readBitRewindRawM_dead sc = i
+  · exfalso; rw [if_pos h_eq] at hi; split at hi <;> simp at hi
+  · rw [if_neg h_eq] at hi
+    rcases Compile.readBitRewindRawM_halt_only sc i hi with h | h | h
+    · exact absurd h.symm h_eq
+    · exact Or.inl h
+    · exact Or.inr h
+
+theorem Compile.readBitRewindM_exit_b0_is_halt (sc : Var) :
+    (Compile.readBitRewindM sc).halt[Compile.readBitRewindM_exit_b0 sc]? = some true := by
+  rw [Compile.readBitRewindM_exit_b0, Compile.readBitRewindM]
+  exact joinTwoHalts_h1_is_halt _ _ _
+    (Compile.readBitRewindRawM_dead_ne_b0 sc) (Compile.readBitRewindRawM_b0_is_halt sc)
+
+theorem Compile.readBitRewindM_exit_b1_is_halt (sc : Var) :
+    (Compile.readBitRewindM sc).halt[Compile.readBitRewindM_exit_b1 sc]? = some true := by
+  rw [Compile.readBitRewindM_exit_b1, Compile.readBitRewindM]
+  show ((Compile.readBitRewindRawM sc).halt.set (Compile.readBitRewindRawM_dead sc) false)[Compile.readBitRewindRawM_bit sc 1]?
+    = some true
+  rw [List.getElem?_set_ne (by
+    have := Compile.readBitRewindRawM_b0_ne_b1 sc
+    rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM_bit,
+        Compile.readBitRewindRawM_dead, Compile.readRewindInner_exit] at *
+    have := Compile.opRewindToZero.exit_lt
+    omega)]
+  exact Compile.readBitRewindRawM_b1_is_halt sc
+
+/-- **Inner read+rewind run.** From the post-navigation head `H` on `sc`'s first
+content cell (value `b+1`), read the bit and rewind to head `0`, landing at
+`readRewindInner_exit b`, the tape unchanged. -/
+theorem Compile.readRewindInner_run (s : State) (sc : Var) (res : List Nat)
+    (b : Nat) (cs : List Nat) (hcons : s.get sc = b :: cs) (hb : b ≤ 1)
+    (hsc : sc < s.length) (hbit : Compile.BitState s) :
+    ∃ t,
+      runFlatTM t Compile.readRewindInnerM
+          { state_idx := Compile.readRewindInnerM.start,
+            tapes := [([], 1 + (AppendGadget.regBlocks ((s.take sc).map Compile.shiftReg)).length,
+                       Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.readRewindInner_exit b,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k Compile.readRewindInnerM
+            { state_idx := Compile.readRewindInnerM.start,
+              tapes := [([], 1 + (AppendGadget.regBlocks ((s.take sc).map Compile.shiftReg)).length,
+                         Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached Compile.readRewindInnerM ck = false) := by
+  set skipped := (s.take sc).map Compile.shiftReg with hskdef
+  set H := 1 + (AppendGadget.regBlocks skipped).length with hHdef
+  -- content decomposition (`sc` nonempty) ⇒ cell at `H` is `b+1`.
+  set tail' := Compile.shiftReg cs ++ 0 :: (Compile.encodeRegs (s.drop (sc + 1))
+      ++ [Compile.endMark] ++ res) with htail
+  have hdecomp : Compile.encodeTape s ++ res
+      = (3 : Nat) :: (AppendGadget.regBlocks skipped ++ (b + 1) :: tail') := by
+    have hsplit := Compile.encodeTape_split s sc hsc
+    rw [← hskdef] at hsplit
+    have hsr : Compile.shiftReg (s.get sc) = (b + 1) :: Compile.shiftReg cs := by
+      rw [hcons]; simp only [Compile.shiftReg, List.map_cons]
+    rw [hsr] at hsplit
+    rw [Compile.encodeTape, List.cons_append, ← hsplit, htail]
+    simp only [Compile.endMark, List.append_assoc, List.cons_append]
+  have hHlt : H < (Compile.encodeTape s ++ res).length := by
+    rw [hdecomp, hHdef]; simp only [List.length_cons, List.length_append]; omega
+  have hcellH : (Compile.encodeTape s ++ res).get ⟨H, hHlt⟩ = b + 1 := by
+    have h? : (Compile.encodeTape s ++ res)[H]? = some (b + 1) := by
+      rw [hdecomp, hHdef,
+          show ((3 : Nat) :: (AppendGadget.regBlocks skipped ++ (b + 1) :: tail'))
+            = ((3 : Nat) :: AppendGadget.regBlocks skipped) ++ ((b + 1) :: tail') from by simp,
+          List.getElem?_append_right (by simp only [List.length_cons]; omega),
+          show 1 + (AppendGadget.regBlocks skipped).length
+            - ((3 : Nat) :: AppendGadget.regBlocks skipped).length = 0 from by
+              simp only [List.length_cons]; omega]
+      rfl
+    rw [List.getElem?_eq_getElem hHlt] at h?
+    rw [List.get_eq_getElem]; exact Option.some.inj h?
+  -- the rewind from head `H` (reuse the shared `navTestRewind` rewind run).
+  obtain ⟨_, hrz_run, hrz_traj⟩ := Compile.navTestRewind_rewind_run s sc res hsc hbit
+  rw [← hskdef, ← hHdef] at hrz_run hrz_traj
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], H, Compile.encodeTape s ++ res)] }
+    with hcfg0def
+  have h_cfg_lt : (0 : Nat) < Compile.bitReadTM.states := by rw [Compile.bitReadTM_states]; omega
+  have hexit_neq : Compile.bitReadTM_exit_b0 ≠ Compile.bitReadTM_exit_b1 := by decide
+  have hep_lt : Compile.bitReadTM_exit_b0 < Compile.bitReadTM.states := by
+    rw [Compile.bitReadTM_states, Compile.bitReadTM_exit_b0]; decide
+  have hen_lt : Compile.bitReadTM_exit_b1 < Compile.bitReadTM.states := by
+    rw [Compile.bitReadTM_states, Compile.bitReadTM_exit_b1]; decide
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), H, Compile.encodeTape s ++ res) = some v →
+      v < max Compile.bitReadTM.sig
+        (max Compile.opRewindToZero.M.sig Compile.opRewindToZero.M.sig) := by
+    intro v hv
+    rw [currentTapeSymbol_in_range hHlt, hcellH] at hv
+    rw [Compile.bitReadTM_sig, Compile.opRewindToZero.M_sig]
+    have : v = b + 1 := (Option.some.inj hv).symm
+    omega
+  have htest_run := Compile.bitReadTM_run b hb [] (Compile.encodeTape s ++ res) H hHlt hcellH
+  have htest_traj : ∀ k, k < 1 → ∀ ck, runFlatTM k Compile.bitReadTM cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitReadTM_exit_b0 ∧ ck.state_idx ≠ Compile.bitReadTM_exit_b1 ∧
+      haltingStateReached Compile.bitReadTM ck = false :=
+    fun k hk ck hck => Compile.bitReadTM_no_early_halt [] (Compile.encodeTape s ++ res) H k hk ck hck
+  have hstart : Compile.readRewindInnerM.start = 0 := Compile.readRewindInnerM_start
+  interval_cases b
+  · -- bit 0: positive branch.
+    have hpos := branchComposeFlatTM_run_pos hexit_neq
+      Compile.bitReadTM_valid Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
+      hep_lt hen_lt cfg0 h_cfg_lt [] H (Compile.encodeTape s ++ res) hsym
+      htest_run htest_traj hrz_run
+      (Compile.haltingStateReached_of_halt Compile.opRewindToZero.exit_is_halt)
+    have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+      Compile.bitReadTM_valid Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
+      hep_lt hen_lt cfg0 h_cfg_lt [] H (Compile.encodeTape s ++ res) hsym
+      htest_run htest_traj (fun k hk ck hck => (hrz_traj k hk ck hck).2)
+    refine ⟨1 + 1 + (H + 1), ?_, ?_⟩
+    · rw [hstart, Compile.readRewindInnerM]
+      rw [show Compile.readRewindInner_exit 0
+          = Compile.opRewindToZero.exit + Compile.bitReadTM.states from by
+            rw [Compile.readRewindInner_exit]; omega]
+      exact hpos.1
+    · intro k hk ck hck
+      rw [hstart] at hck; rw [Compile.readRewindInnerM] at hck ⊢
+      exact hpos_traj k hk ck hck
+  · -- bit 1: negative branch.
+    have hneg := branchComposeFlatTM_run_neg hexit_neq
+      Compile.bitReadTM_valid Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
+      hep_lt hen_lt cfg0 h_cfg_lt [] H (Compile.encodeTape s ++ res) hsym
+      htest_run htest_traj hrz_run
+      (Compile.haltingStateReached_of_halt Compile.opRewindToZero.exit_is_halt)
+    have hneg_traj := branchComposeFlatTM_no_early_halt_neg hexit_neq
+      Compile.bitReadTM_valid Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
+      hep_lt hen_lt cfg0 h_cfg_lt [] H (Compile.encodeTape s ++ res) hsym
+      htest_run htest_traj (fun k hk ck hck => (hrz_traj k hk ck hck).2)
+    refine ⟨1 + 1 + (H + 1), ?_, ?_⟩
+    · rw [hstart, Compile.readRewindInnerM]
+      rw [show Compile.readRewindInner_exit 1
+          = Compile.opRewindToZero.exit + Compile.bitReadTM.states + Compile.opRewindToZero.M.states
+            from by rw [Compile.readRewindInner_exit]; omega]
+      exact hneg.1
+    · intro k hk ck hck
+      rw [hstart] at hck; rw [Compile.readRewindInnerM] at hck ⊢
+      exact hneg_traj k hk ck hck
+
+/-- **`readBitRewindM` run + trajectory.** From head `0` with `sc` nonempty whose
+first bit is `b`, navigate, read, and rewind, landing at `readBitRewindM_exit_b{b}
+= readBitRewindRawM_bit sc b`, the tape unchanged; the dead empty-branch halt is
+never visited. -/
+theorem Compile.readBitRewindM_run (s : State) (sc : Var) (res : List Nat)
+    (b : Nat) (cs : List Nat) (hcons : s.get sc = b :: cs) (hb : b ≤ 1)
+    (hsc : sc < s.length) (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.readBitRewindM sc)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.readBitRewindRawM_bit sc b,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.readBitRewindM sc)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.readBitRewindM_exit_b0 sc ∧
+        ck.state_idx ≠ Compile.readBitRewindM_exit_b1 sc ∧
+        haltingStateReached (Compile.readBitRewindM sc) ck = false) := by
+  have hne : s.get sc ≠ [] := by rw [hcons]; exact List.cons_ne_nil _ _
+  -- navigation to `sc`'s content (head `H`).
+  have hnav_run := Compile.navTestReg_run_content s sc res hsc hbit hne
+  have hnav_traj0 := Compile.navTestReg_traj_content s sc res hsc hbit hne
+  -- `run_neg` has `exit_pos = delim`, `exit_neg = content`; swap the trajectory conjuncts.
+  have hnav_traj : ∀ k, k < ClearGadget.navSteps ((s.take sc).map Compile.shiftReg) + 1 + 1 → ∀ ck,
+      runFlatTM k (ClearGadget.navigateAndTestTM sc)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ ClearGadget.navigateAndTestTM_exit_delim sc ∧
+      ck.state_idx ≠ ClearGadget.navigateAndTestTM_exit_content sc ∧
+      haltingStateReached (ClearGadget.navigateAndTestTM sc) ck = false :=
+    fun k hk ck hck => ⟨(hnav_traj0 k hk ck hck).2.1, (hnav_traj0 k hk ck hck).1,
+      (hnav_traj0 k hk ck hck).2.2⟩
+  obtain ⟨t₃, hM3run, hM3traj⟩ := Compile.readRewindInner_run s sc res b cs hcons hb hsc hbit
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0def
+  set H := 1 + (AppendGadget.regBlocks ((s.take sc).map Compile.shiftReg)).length with hHdef
+  -- symbol bound at `H`.
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), H, Compile.encodeTape s ++ res) = some v →
+      v < max (ClearGadget.navigateAndTestTM sc).sig
+        (max Compile.opRewindToZero.M.sig Compile.readRewindInnerM.sig) := by
+    obtain ⟨hsym0, _, _⟩ := Compile.navTestRewind_rewind_run s sc res hsc hbit
+    intro v hv
+    have := hsym0 v hv
+    rw [ClearGadget.navigateAndTestTM_sig, Compile.opRewindToZero.M_sig] at this
+    rw [ClearGadget.navigateAndTestTM_sig, Compile.opRewindToZero.M_sig, Compile.readRewindInnerM_sig]
+    simpa using this
+  have hcfg_lt : (0 : Nat) < (ClearGadget.navigateAndTestTM sc).states := by
+    rw [ClearGadget.navigateAndTestTM_states]; omega
+  have hM3run' : runFlatTM t₃ Compile.readRewindInnerM
+      { state_idx := Compile.readRewindInnerM.start,
+        tapes := [([], H, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.readRewindInner_exit b,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := hM3run
+  have hexit_neq : ClearGadget.navigateAndTestTM_exit_delim sc
+      ≠ ClearGadget.navigateAndTestTM_exit_content sc := by
+    show (ClearGadget.navigateToRegTM sc).states + 2 ≠ (ClearGadget.navigateToRegTM sc).states + 1
+    omega
+  have hhalt3 : Compile.readRewindInnerM.halt[Compile.readRewindInner_exit b]? = some true := by
+    rcases (show b = 0 ∨ b = 1 from by omega) with h | h <;> subst h
+    · exact Compile.readRewindInner_exit_b0_is_halt
+    · exact Compile.readRewindInner_exit_b1_is_halt
+  have hneg := branchComposeFlatTM_run_neg hexit_neq
+    (ClearGadget.navigateAndTestTM_valid sc) Compile.opRewindToZero.M_valid
+    Compile.readRewindInnerM_valid
+    (ClearGadget.navigateAndTestTM_exit_delim_lt sc) (ClearGadget.navigateAndTestTM_exit_content_lt sc)
+    cfg0 hcfg_lt [] H (Compile.encodeTape s ++ res) hsym
+    hnav_run hnav_traj hM3run'
+    (Compile.haltingStateReached_of_halt hhalt3)
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg hexit_neq
+    (ClearGadget.navigateAndTestTM_valid sc) Compile.opRewindToZero.M_valid
+    Compile.readRewindInnerM_valid
+    (ClearGadget.navigateAndTestTM_exit_delim_lt sc) (ClearGadget.navigateAndTestTM_exit_content_lt sc)
+    cfg0 hcfg_lt [] H (Compile.encodeTape s ++ res) hsym
+    hnav_run hnav_traj (fun k hk ck hck => hM3traj k hk ck hck)
+  -- the raw run reaches `raw_b{b}`.
+  have hraw_run : runFlatTM
+      (ClearGadget.navSteps ((s.take sc).map Compile.shiftReg) + 1 + 1 + 1 + t₃)
+      (Compile.readBitRewindRawM sc) cfg0
+      = some { state_idx := Compile.readBitRewindRawM_bit sc b,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hneg.1
+    have hstate : Compile.readRewindInner_exit b
+          + ((ClearGadget.navigateAndTestTM sc).states + Compile.opRewindToZero.M.states)
+        = Compile.readBitRewindRawM_bit sc b := by
+      rw [Compile.readBitRewindRawM_bit]; omega
+    rw [hstate] at h; exact h
+  set tNav := ClearGadget.navSteps ((s.take sc).map Compile.shiftReg) + 1 + 1 with htNav
+  have hnv : ∀ k, k ≤ tNav + 1 + t₃ → ∀ ck,
+      runFlatTM k (Compile.readBitRewindRawM sc) cfg0 = some ck →
+      ck.state_idx ≠ Compile.readBitRewindRawM_dead sc := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.readBitRewindRawM_dead_is_halt sc)
+        (hneg_traj k hlt ck hck)
+    · rw [hraw_run] at hck; rw [← Option.some.inj hck]
+      have hbne := Compile.readBitRewindRawM_dead_ne_b0 sc
+      rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM_dead, Compile.readRewindInner_exit] at *
+      have := Compile.opRewindToZero.exit_lt
+      rcases (show b = 0 ∨ b = 1 from by omega) with h | h <;> subst h <;> simp_all <;> omega
+  refine ⟨tNav + 1 + t₃, ?_, ?_⟩
+  · rw [Compile.readBitRewindM, joinTwoHalts_run_eq _ _ _ (tNav + 1 + t₃) cfg0 hnv]
+    exact hraw_run
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.readBitRewindRawM sc) cfg0 = some cj →
+        cj.state_idx ≠ Compile.readBitRewindRawM_dead sc :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.readBitRewindM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hneg_traj k (by omega) ck hck
+    refine ⟨?_, ?_, ?_⟩
+    · rw [Compile.readBitRewindM_exit_b0]
+      exact ClearGadget.ne_of_not_halting (Compile.readBitRewindRawM_b0_is_halt sc) hnh
+    · rw [Compile.readBitRewindM_exit_b1]
+      exact ClearGadget.ne_of_not_halting (Compile.readBitRewindRawM_b1_is_halt sc) hnh
+    · rw [Compile.readBitRewindM, joinTwoHalts_halting_eq _ _ _ ck
+        (ClearGadget.ne_of_not_halting (Compile.readBitRewindRawM_dead_is_halt sc) hnh)]
+      exact hnh
 
 /-! ### `eqVerdictM` — the `eqBit` verdict: "are BOTH `sc1` and `sc2` empty?"
 (bottom-up, Risk C2 — d2b)
