@@ -133,52 +133,55 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-15c, bottom-up) did — **the `eqBit` bit-reader is PROVEN: `Compile.readBitRewindM` (d2a), a clean 2-exit "read sc's first bit, head restored to 0" leaf, + the `branchComposeFlatTM_halt_only_M2two_M3two` merge combinator**
+## ✅ What this session (2026-06-15d, bottom-up) did — **`Compile.bitCompareM` is PROVEN: the clean 2-exit "are the first bits of two nonempty registers equal?" leaf (d2a), + the `branchComposeFlatTM_halt_only_M2two` mirror combinator**
 
 Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider
-still needs). The remaining work is pure TM proof engineering; this session
-closed the **novel core risk of (d2a)**: reading a register's first *bit* (not just
-emptiness) as a clean 2-exit, head-restored gadget. Both results PROVEN &
-axiom-clean (`[propext, Classical.choice, Quot.sound]`), full build green (3358):
+still needs). With the d2a bit-reader (`readBitRewindM`) and merge combinators
+already proven, this session built the **bit-comparison leaf** on top of them.
+Both results PROVEN & axiom-clean (`[propext, Classical.choice, Quot.sound]`),
+full build green (3358 jobs):
 
-1. **`Compile.readBitRewindM sc`** (Compile.lean ~14760) — the reusable
-   read-one-bit primitive. From head `0` with `sc` nonempty: navigate to `sc`'s
-   first cell (`navigateAndTestTM`), read its bit (`bitReadTM`), rewind to `0`
-   (`opRewindToZero`), exiting `BIT0`/`BIT1` with the tape unchanged. The spurious
-   `sc`-empty delim exit is merged into `BIT0`. Built as
-   `readRewindInnerM := branchComposeFlatTM bitReadTM opRewindToZero opRewindToZero b0 b1`
-   (the read+rewind, exits `readRewindInner_exit b`), then
-   `readBitRewindRawM sc := branchComposeFlatTM (navigateAndTestTM sc)
-   opRewindToZero readRewindInnerM (delim sc) (content sc)` — **the 2-exit reader is
-   the M₃ branch** so the halt characterization reuses `_halt_only_M3two` — then
-   `readBitRewindM sc := joinTwoHalts … raw_b0 raw_dead`. Full structural family +
-   `readRewindInner_run` (inner read+rewind from the post-navigation head `H`) +
-   `readBitRewindM_run` (both bit cases, no-early-halt trajectory). The cell-value
-   fact (`cell@H = bit+1`) is the `moveContent_run` derivation; the rewind reuses
-   the proven `navTestRewind_rewind_run`. Probe `probes/CompareBodyProbe.lean`.
-2. **`Compile.branchComposeFlatTM_halt_only_M2two_M3two`** (Compile.lean ~885) — the
-   merge combinator for a `branchComposeFlatTM` whose **both** branches are 2-exit
-   testers (→ four halts). Mirror of `_M3two`. Needed for the next pieces below
-   (`bitCompareM`/the loop body `B`, where each side branches MATCH/NOMATCH or
-   ITER/DONE).
+1. **`Compile.bitCompareM sc1 sc2`** (Compile.lean ~15581) — clean 2-exit
+   MATCH/NOMATCH tester. From head `0` with `sc1`/`sc2` both nonempty (first bits
+   `a`/`b`): reaches `bitCompareM_exit_match` iff `a = b`, else `…_exit_nomatch`,
+   head restored to `0`, tape unchanged. Built as
+   `bitCompareRawM := branchComposeFlatTM (readBitRewindM sc1) (readBitRewindM sc2)
+   (readBitRewindM sc2) (exit_b0 sc1) (exit_b1 sc1)` (the **same** `readBitRewindM
+   sc2` on both branches) → four raw halts `m{a}{b}`; MATCH `= {m00,m11}`, NOMATCH
+   `= {m01,m10}`; merged down to two with a **double** `joinTwoHalts` (`m11→m00`,
+   then `m10→m01`). Full structural family (`states`/`valid`/`halt_only`/`is_halt`/
+   `distinct`) + **`bitCompareM_run`** (the single `if a = b` run lemma, all 4
+   bit-cases + no-early-halt trajectory). Proven via **3 reusable join-transport
+   helpers** (`bitCompareM_transport_kept` for `m00`/`m01` kept by both joins;
+   `_transport_m11` demoted by the inner join → bridges to `m00`; `_transport_m10`
+   demoted by the outer join → bridges to `m01`) fed by a raw-run helper
+   (`bitCompareRawM_run`, the `branchComposeFlatTM_run_pos`/`_neg` application).
+   Probe `probes/CompareBodyProbe.lean` / `probes/EqBitProbe.lean`.
+2. **`Compile.branchComposeFlatTM_halt_only_M2two`** (Compile.lean ~911) — mirror of
+   `_M3two`: positive branch `M₂` 2-exit, negative `M₃` halt-unique → three shifted
+   halts. **Needed for `testMachine`** (a 2-exit tester in the positive slot, `idTM`
+   in the negative — see the refined plan below).
 
-### ★ REUSABLE PATTERN (read before building bitCompareM/testMachine)
+### ★ REUSABLE PATTERN — double-`joinTwoHalts` (4 halts → 2)
 
-The recipe for a nested clean 2-exit machine is now proven twice
-(`eqVerdictM`, `readBitRewindM`) — copy it:
+`bitCompareM` is the template for any 4-halt → 2-exit merge. Copy it:
 - `branchComposeFlatTM M₁ M₂ M₃ ep en` with `M₁` a 2-exit tester and `M₂`/`M₃`
-  themselves single-/2-exit. Characterize halts via `_halt_only` (both single),
-  `_halt_only_M3two` (M₃ 2-exit), or the NEW `_halt_only_M2two_M3two` (both 2-exit),
-  then `joinTwoHalts` per stray halt to merge down to 2.
-- Run lemmas: feed `branchComposeFlatTM_run_pos`/`_run_neg` + `_no_early_halt_*`
-  with the inner run lemmas; **mind the conjunct order** — `run_neg`/`no_early_halt_neg`
-  want `h_traj1 : ≠ exit_pos ∧ ≠ exit_neg ∧ …`, so if you put the *content* exit as
-  `exit_neg` (as `readBitRewindM` does) you must **swap** `navTestReg_traj_content`'s
-  conjuncts (see `hnav_traj` in `readBitRewindM_run`). Transport through `joinTwoHalts`
-  via `joinTwoHalts_run_eq` (outcome ≠ demoted) or `_run_eq_weak` + one
-  `joinTwoHalts_step_to_h1` (outcome = demoted; the `eqVerdictM_run_neq_right` bridge).
-- The `∃ t` witness can't be left as `_` in a `refine` — give it explicitly
-  (e.g. `⟨1 + 1 + (H + 1), …⟩`) or Lean fails to synthesize it.
+  2-exit → 4 raw halts. `halt_only` via `_halt_only_M2two_M3two`. Pick which two to
+  KEEP (one per output class) and demote the other two with **nested**
+  `joinTwoHalts` (inner demotes one, outer the other).
+- **Run lemma:** prove a *raw-run helper* (`branchComposeFlatTM_run_pos`/`_neg` +
+  `_no_early_halt_*`, mind the conjunct order — `bitCompareM` needed NO swap since
+  `exit_pos = b0`/`exit_neg = b1` already matches `readBitRewindM_run`'s order), then
+  **three transport helpers**: (kept-by-both) two `joinTwoHalts_run_eq`; (demoted by
+  inner) `_run_eq_weak` + `joinTwoHalts_step_to_h1` on the inner, then `_run_eq` on
+  the outer; (demoted by outer) `_run_eq` on the inner, then `_run_eq_weak` +
+  `step_to_h1` on the outer. Each transport helper produces BOTH the run AND the
+  2-exit trajectory; bundle the raw-halt nonequalities once via a `_distinct` lemma.
+- The trajectory's `k = T` sub-case (for demoted exits) lands on the demoted state
+  (a non-halt of the merged machine — `joinTwoHalts_halting_eq` on the demoted state
+  gives `false` directly).
+- The `if a = b` conclusion: split with `interval_cases a <;> interval_cases b`, then
+  `by simpa [exit_nomatch] using hrun` collapses the `if`.
 
 **Budget reminder (settled, do not revisit):** `Op.cost eqBit = 1`; the two
 scratch copies must use the TIGHT `Compile.copyLoop_run` `(|src|+1)(5L+23)`, NOT
@@ -387,8 +390,21 @@ the loose `opCopy_run` (which busts `~18L²`). Probe `CompareRegsBudgetProbe.lea
   readRewindInnerM (delim) (content)) raw_b0 raw_dead`, the 2-exit reader as M₃). Full
   structural family + `readRewindInner_run` (the inner `bitReadTM`+`opRewindToZero` from
   the post-navigation head) + `readBitRewindM_run` (both bit cases + no-early-halt traj).
-  **Use it twice in `bitCompareM`.** Cell-value fact = the `moveContent_run` derivation;
+  **Used twice in `bitCompareM`.** Cell-value fact = the `moveContent_run` derivation;
   rewind reuses `navTestRewind_rewind_run`.
+- **★ `Compile.bitCompareM sc1 sc2` / `bitCompareM_run` (2026-06-15d)** — the `eqBit`
+  consume-loop **bit-compare leaf**: clean 2-exit MATCH/NOMATCH tester, MATCH iff the
+  first bits of two NONEMPTY registers are equal, head restored to `0`, tape unchanged
+  (`= joinTwoHalts (joinTwoHalts (branchComposeFlatTM (readBitRewindM sc1)
+  (readBitRewindM sc2) (readBitRewindM sc2) (exit_b0 sc1) (exit_b1 sc1)) m00 m11) m01
+  m10` — 4 raw halts merged to 2). Full structural family + `bitCompareM_run` (single
+  `if a = b` lemma, 4 bit-cases + traj), via 3 reusable join-transport helpers
+  (`_transport_kept`/`_transport_m11`/`_transport_m10`) + raw-run helper
+  `bitCompareRawM_run`. **The d2a bit-compare core is done; plug it into `testMachine`.**
+  See the double-`joinTwoHalts` reusable pattern in this session's block.
+- **★ `Compile.branchComposeFlatTM_halt_only_M2two` (2026-06-15d)** — mirror of `_M3two`:
+  positive `M₂` 2-exit + negative `M₃` halt-unique → 3 shifted halts. For the
+  `testMachine` guards (2-exit tester positive, `idTM` negative).
 - **★ `Compile.eqVerdictM` / `eqVerdictM_run_{neq_left,neq_right,eq}` (2026-06-15b)** —
   the `eqBit` verdict: a clean 2-exit "are BOTH `sc1` and `sc2` empty?" tester
   (`joinTwoHalts (branchComposeFlatTM (navTestRewindM sc1) idTM (navTestRewindM sc2)
@@ -472,15 +488,17 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
    with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
    copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
    Build & prove bottom-up:
-   **★ RECOMMENDED ORDER NOW (2026-06-15c):** ✅ (d2b-prep), ✅ (d2b), and the
-   d2a **bit-reader leaf `readBitRewindM` + the `_M2two_M3two` merge combinator**
-   are DONE. Remaining: **finish (d2a) `testMachine` + the loop run lemma → (d2c) →
-   assemble (d2) `compareRegsTM` → (d1) wrapper**. The immediate next step is
-   **`bitCompareM` → `testMachine`** (the merges) then **the consume-loop run lemma**.
+   **★ RECOMMENDED ORDER NOW (2026-06-15d):** ✅ (d2b-prep), ✅ (d2b), and the
+   d2a leaves **`readBitRewindM`** (bit-reader), **`bitCompareM`** (bit-compare),
+   `iterTailsTM` (ITERATE), and all merge combinators (`_M2two`/`_M3two`/
+   `_M2two_M3two`) are DONE & axiom-clean. Remaining for d2a: **`testMachine` → the
+   consume-loop run lemma → (d2c) → assemble (d2) `compareRegsTM` → (d1) wrapper**.
+   The immediate next step is **`testMachine`** (one more merge layer over the proven
+   leaves), then **the `loopTM` consume-loop run lemma**.
 
    - ✅ **(d2b-prep) `branchComposeFlatTM_halt_only_M3two` — DONE** (M₃ 2-exit).
    - ✅ **(d2b) verdict `Compile.eqVerdictM` — DONE & axiom-clean** (Compile.lean
-     ~14770). Clean 2-exit "both scratch empty?" tester (the post-loop verdict). NOTE
+     ~15211). Clean 2-exit "both scratch empty?" tester (the post-loop verdict). NOTE
      the machine uses `idTM` (the trivial head-`0` immediate-halt) as the positive branch.
    - **(d2a) consume-loop body `B` + run lemma (in progress).**
      **★ PROBE-VALIDATED end-to-end** — `probes/CompareBodyProbe.lean` (11/11).
@@ -489,30 +507,30 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
      / `iterTails_run`, Compile.lean ~14121, axiom-clean): deletes both heads,
      residue `++ [0,0]`. `doneMachine` = `idTM` (head already `0`).
      - ✅ **bit-reader `Compile.readBitRewindM sc` — DONE & axiom-clean** (Compile.lean
-       ~14760): clean 2-exit BIT0/BIT1, head restored to `0`, tape unchanged, for `sc`
-       nonempty. `readBitRewindM_run s sc res b cs hcons hb hsc hbit hres` gives the run
-       (both bit cases) + no-early-halt trajectory. **This is the bit-read primitive both
-       bit-reads use.** (See the session block's reusable-pattern notes.)
-     - ✅ **merge combinator `_M2two_M3two` — DONE** (both branches 2-exit → 4 halts).
-     - **NEXT — `bitCompareM sc1 sc2`** (both nonempty, head `0` → clean 2-exit
-       MATCH/NOMATCH, tape unchanged). Build as
-       `bitCompareRawM := branchComposeFlatTM (readBitRewindM sc1) (readBitRewindM sc2)
-       (readBitRewindM sc2) (exit_b0 sc1) (exit_b1 sc1)` — the **same** `readBitRewindM
-       sc2` on both branches (a machine reading sc2's bit); the 4 raw halts are
-       `sc1.states + exit_b{0,1}(sc2)` (a=0) and `sc1.states + (readBitRewindM
-       sc2).states + exit_b{0,1}(sc2)` (a=1). MATCH = {00, 11}, NOMATCH = {01, 10}.
-       Merge with a **double** `joinTwoHalts` (merge 11→00 for MATCH, then 10→01 for
-       NOMATCH); halt_only via `_M2two_M3two`. Run lemma: 4 cases (a,b∈{0,1}), each
-       `branchComposeFlatTM_run_{pos,neg}` (a) feeding `readBitRewindM_run` (b), then
-       through both joins (`joinTwoHalts_run_eq` for kept, `_run_eq_weak`+
-       `joinTwoHalts_step_to_h1` for the demoted 11/10 — the `eqVerdictM_run_neq_right`
-       bridge). ⚠ mind the `run_neg` conjunct-order swap (see session block).
-     - **THEN `testMachine sc1 sc2`** (clean 2-exit ITER/DONE) — wrap `bitCompareM`
-       with the two emptiness guards: `branchComposeFlatTM (navTestRewindM sc1)
-       (branchComposeFlatTM (navTestRewindM sc2) bitCompareM idTM …) idTM …`, route
-       `sc1`/`sc2` empty → DONE and NOMATCH → DONE (merge), MATCH → ITER. (`navTestRewindM`
-       is proven.) Then `B := branchComposeFlatTM testMachine iterTailsTM idTM
-       (testMachine.exitITER) (testMachine.exitDONE)`.
+       ~14792): clean 2-exit BIT0/BIT1, head restored to `0`, for `sc` nonempty.
+     - ✅ **bit-compare `Compile.bitCompareM sc1 sc2` — DONE & axiom-clean** (Compile.lean
+       ~15598): clean 2-exit MATCH/NOMATCH, MATCH iff first bits equal, for both nonempty.
+       `bitCompareM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres`
+       gives the `if a = b` run + no-early-halt trajectory.
+     - ✅ **merge combinators `_M2two`/`_M3two`/`_M2two_M3two` — ALL DONE.**
+     - **NEXT — `testMachine sc1 sc2`** (clean 2-exit ITER/DONE: ITER iff both `sc`
+       nonempty AND first bits equal; DONE otherwise). **★ RECOMMENDED structure
+       (simpler than the old nested form — avoids a 3-exit `M₂` combinator):** build a
+       clean 2-exit guard `bothNonemptyM sc1 sc2` first (mirror of `eqVerdictM` but for
+       "both NONEMPTY?": `branchComposeFlatTM (navTestRewindM sc1) (navTestRewindM sc2)
+       idTM (content sc1) (delim sc1)` — sc1 content → test sc2 (content=YES, delim=NO_b);
+       sc1 delim → idTM=NO_a; merge `NO_a`/`NO_b` with one `joinTwoHalts` → YES/NO,
+       `halt_only` via the new **`_M2two`**, copy `eqVerdictM`'s 3 run lemmas). Then
+       `testMachine := joinTwoHalts (branchComposeFlatTM bothNonemptyM (bitCompareM sc1
+       sc2) idTM (bothNonempty_exit_yes) (bothNonempty_exit_no)) ITER DONE_extra` —
+       positive `M₂ = bitCompareM` (2-exit: MATCH=ITER, NOMATCH), negative `M₃ = idTM`
+       (DONE_a); `halt_only` via **`_M2two`**; merge NOMATCH + DONE_a → DONE (one
+       `joinTwoHalts`). Run lemma: 4 input classes (sc1 empty / sc2 empty / both
+       nonempty+match / both nonempty+nomatch), each a `branchComposeFlatTM_run_{pos,neg}`
+       feeding `bothNonemptyM`'s run then `bitCompareM_run`/`idTM`, transported through the
+       single outer `joinTwoHalts` (kept or `_run_eq_weak`+`step_to_h1` — same recipe as
+       `bitCompareM`'s transport helpers). Then `B := branchComposeFlatTM testMachine
+       iterTailsTM idTM (testMachine.exitITER) (testMachine.exitDONE)`.
      - **THEN the consume-loop run lemma:** `loopTM B exitDone exitIter`; run lemma by
        the `forBndLoop_run`/`copyLoop_run` pattern (`T : Nat → tape` indexed by remaining
        matched pairs; each round deletes one matched bit-pair via `iterTailsTM`). Decision
