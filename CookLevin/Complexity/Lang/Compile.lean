@@ -15578,6 +15578,265 @@ theorem Compile.eqVerdictM_run_neq_right (s : State) (sc1 sc2 : Var) (res : List
         exact Compile.eqVerdictRawM_neqB_ne_eq sc1 sc2
       · rw [hck_eq]; exact hnh_neqB
 
+/-! ### `bitCompareM` — compare the first bits of two NONEMPTY registers
+(bottom-up, Risk C2 — d2a)
+
+In the `eqBit` consume-loop body, once the emptiness guards establish that both
+scratch registers `sc1`/`sc2` are nonempty, we must read and compare their first
+*bits*. `bitCompareM sc1 sc2` is the clean 2-exit tester deciding "are the first
+bits equal?", head restored to `0` on both outcomes, tape unchanged:
+
+  `bitCompareRawM sc1 sc2 :=
+     branchComposeFlatTM (readBitRewindM sc1) (readBitRewindM sc2) (readBitRewindM sc2)
+       (readBitRewindM_exit_b0 sc1) (readBitRewindM_exit_b1 sc1)`
+
+`M₁ = readBitRewindM sc1` reads `sc1`'s bit `a` (`b0` → positive `M₂`, `b1` →
+negative `M₃`); the **same** `readBitRewindM sc2` on both branches then reads
+`sc2`'s bit `b`. The four raw halts are `m{a}{b}`; MATCH `= {m00, m11}`, NOMATCH
+`= {m01, m10}`. `bitCompareM` merges them down to two with a **double**
+`joinTwoHalts` (demote `m11 → m00` for MATCH, then `m10 → m01` for NOMATCH). -/
+
+/-- Raw bit-comparison machine (4 halts: `m00`/`m01`/`m10`/`m11`). -/
+def Compile.bitCompareRawM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.readBitRewindM sc1) (Compile.readBitRewindM sc2)
+    (Compile.readBitRewindM sc2)
+    (Compile.readBitRewindM_exit_b0 sc1) (Compile.readBitRewindM_exit_b1 sc1)
+
+/-- `a=0, b=0` raw exit — MATCH (kept MATCH exit). -/
+def Compile.bitCompareRawM_m00 (sc1 sc2 : Var) : Nat :=
+  (Compile.readBitRewindM sc1).states + Compile.readBitRewindM_exit_b0 sc2
+/-- `a=0, b=1` raw exit — NOMATCH (kept NOMATCH exit). -/
+def Compile.bitCompareRawM_m01 (sc1 sc2 : Var) : Nat :=
+  (Compile.readBitRewindM sc1).states + Compile.readBitRewindM_exit_b1 sc2
+/-- `a=1, b=0` raw exit — NOMATCH (demoted → `m01`). -/
+def Compile.bitCompareRawM_m10 (sc1 sc2 : Var) : Nat :=
+  (Compile.readBitRewindM sc1).states + (Compile.readBitRewindM sc2).states
+    + Compile.readBitRewindM_exit_b0 sc2
+/-- `a=1, b=1` raw exit — MATCH (demoted → `m00`). -/
+def Compile.bitCompareRawM_m11 (sc1 sc2 : Var) : Nat :=
+  (Compile.readBitRewindM sc1).states + (Compile.readBitRewindM sc2).states
+    + Compile.readBitRewindM_exit_b1 sc2
+
+theorem Compile.bitCompareRawM_start (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).start = 0 := by
+  rw [Compile.bitCompareRawM, branchComposeFlatTM_start]; exact Compile.readBitRewindM_start sc1
+
+theorem Compile.bitCompareRawM_tapes (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).tapes = 1 := by
+  rw [Compile.bitCompareRawM, branchComposeFlatTM_tapes]; exact Compile.readBitRewindM_tapes sc1
+
+theorem Compile.bitCompareRawM_sig (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).sig = 4 := by
+  rw [Compile.bitCompareRawM, branchComposeFlatTM_sig, Compile.readBitRewindM_sig,
+      Compile.readBitRewindM_sig]
+  decide
+
+theorem Compile.bitCompareRawM_states (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).states =
+      (Compile.readBitRewindM sc1).states + (Compile.readBitRewindM sc2).states
+        + (Compile.readBitRewindM sc2).states := by
+  rw [Compile.bitCompareRawM, branchComposeFlatTM_states]
+
+/-- `(readBitRewindM sc).states ≥ 1` (used for halt distinctness). -/
+theorem Compile.readBitRewindM_states_pos (sc : Var) :
+    0 < (Compile.readBitRewindM sc).states :=
+  Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.readBitRewindM_exit_b0_lt sc)
+
+theorem Compile.bitCompareRawM_m00_lt (sc1 sc2 : Var) :
+    Compile.bitCompareRawM_m00 sc1 sc2 < (Compile.bitCompareRawM sc1 sc2).states := by
+  rw [Compile.bitCompareRawM_m00, Compile.bitCompareRawM_states]
+  have := Compile.readBitRewindM_exit_b0_lt sc2; have := Compile.readBitRewindM_states_pos sc2; omega
+
+theorem Compile.bitCompareRawM_m01_lt (sc1 sc2 : Var) :
+    Compile.bitCompareRawM_m01 sc1 sc2 < (Compile.bitCompareRawM sc1 sc2).states := by
+  rw [Compile.bitCompareRawM_m01, Compile.bitCompareRawM_states]
+  have := Compile.readBitRewindM_exit_b1_lt sc2; have := Compile.readBitRewindM_states_pos sc2; omega
+
+theorem Compile.bitCompareRawM_m10_lt (sc1 sc2 : Var) :
+    Compile.bitCompareRawM_m10 sc1 sc2 < (Compile.bitCompareRawM sc1 sc2).states := by
+  rw [Compile.bitCompareRawM_m10, Compile.bitCompareRawM_states]
+  have := Compile.readBitRewindM_exit_b0_lt sc2; omega
+
+theorem Compile.bitCompareRawM_m11_lt (sc1 sc2 : Var) :
+    Compile.bitCompareRawM_m11 sc1 sc2 < (Compile.bitCompareRawM sc1 sc2).states := by
+  rw [Compile.bitCompareRawM_m11, Compile.bitCompareRawM_states]
+  have := Compile.readBitRewindM_exit_b1_lt sc2; omega
+
+/-- The four raw halts are pairwise distinct. Bundled for `omega` reuse. -/
+theorem Compile.bitCompareRawM_distinct (sc1 sc2 : Var) :
+    Compile.bitCompareRawM_m00 sc1 sc2 ≠ Compile.bitCompareRawM_m01 sc1 sc2 ∧
+    Compile.bitCompareRawM_m00 sc1 sc2 ≠ Compile.bitCompareRawM_m10 sc1 sc2 ∧
+    Compile.bitCompareRawM_m00 sc1 sc2 ≠ Compile.bitCompareRawM_m11 sc1 sc2 ∧
+    Compile.bitCompareRawM_m01 sc1 sc2 ≠ Compile.bitCompareRawM_m10 sc1 sc2 ∧
+    Compile.bitCompareRawM_m01 sc1 sc2 ≠ Compile.bitCompareRawM_m11 sc1 sc2 ∧
+    Compile.bitCompareRawM_m10 sc1 sc2 ≠ Compile.bitCompareRawM_m11 sc1 sc2 := by
+  rw [Compile.bitCompareRawM_m00, Compile.bitCompareRawM_m01, Compile.bitCompareRawM_m10,
+      Compile.bitCompareRawM_m11]
+  have h01 := Compile.readBitRewindM_exit_b0_ne_b1 sc2
+  have h0 := Compile.readBitRewindM_exit_b0_lt sc2
+  have h1 := Compile.readBitRewindM_exit_b1_lt sc2
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> omega
+
+theorem Compile.bitCompareRawM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.bitCompareRawM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.readBitRewindM_valid sc1) (Compile.readBitRewindM_valid sc2)
+    (Compile.readBitRewindM_valid sc2)
+    (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
+    (Compile.readBitRewindM_tapes sc1) (Compile.readBitRewindM_tapes sc2)
+    (Compile.readBitRewindM_tapes sc2)
+
+theorem Compile.bitCompareRawM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.bitCompareRawM sc1 sc2).halt[i]? = some true →
+      i = Compile.bitCompareRawM_m00 sc1 sc2 ∨ i = Compile.bitCompareRawM_m01 sc1 sc2 ∨
+        i = Compile.bitCompareRawM_m10 sc1 sc2 ∨ i = Compile.bitCompareRawM_m11 sc1 sc2 := by
+  intro i hi
+  rw [Compile.bitCompareRawM_m00, Compile.bitCompareRawM_m01, Compile.bitCompareRawM_m10,
+      Compile.bitCompareRawM_m11]
+  have h := Compile.branchComposeFlatTM_halt_only_M2two_M3two _ _ _ _ _ _ _ _ _
+    (Compile.readBitRewindM_valid sc2) (Compile.readBitRewindM_valid sc2)
+    (Compile.readBitRewindM_halt_only sc2) (Compile.readBitRewindM_halt_only sc2) i hi
+  rw [Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_exit_b1] at *
+  rcases h with h | h | h | h
+  · exact Or.inl (by omega)
+  · exact Or.inr (Or.inl (by omega))
+  · exact Or.inr (Or.inr (Or.inl (by omega)))
+  · exact Or.inr (Or.inr (Or.inr (by omega)))
+
+theorem Compile.bitCompareRawM_m00_is_halt (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).halt[Compile.bitCompareRawM_m00 sc1 sc2]? = some true := by
+  rw [Compile.bitCompareRawM_m00, Compile.bitCompareRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.readBitRewindM_valid sc2)
+    (Compile.readBitRewindM_exit_b0_lt sc2) (Compile.readBitRewindM_exit_b0_is_halt sc2)
+
+theorem Compile.bitCompareRawM_m01_is_halt (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).halt[Compile.bitCompareRawM_m01 sc1 sc2]? = some true := by
+  rw [Compile.bitCompareRawM_m01, Compile.bitCompareRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.readBitRewindM_valid sc2)
+    (Compile.readBitRewindM_exit_b1_lt sc2) (Compile.readBitRewindM_exit_b1_is_halt sc2)
+
+theorem Compile.bitCompareRawM_m10_is_halt (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).halt[Compile.bitCompareRawM_m10 sc1 sc2]? = some true := by
+  rw [Compile.bitCompareRawM_m10, Compile.bitCompareRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.readBitRewindM_valid sc2) (Compile.readBitRewindM_exit_b0_is_halt sc2)
+
+theorem Compile.bitCompareRawM_m11_is_halt (sc1 sc2 : Var) :
+    (Compile.bitCompareRawM sc1 sc2).halt[Compile.bitCompareRawM_m11 sc1 sc2]? = some true := by
+  rw [Compile.bitCompareRawM_m11, Compile.bitCompareRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.readBitRewindM_valid sc2) (Compile.readBitRewindM_exit_b1_is_halt sc2)
+
+/-- **The clean 2-exit bit-comparison machine** = merge the four raw halts down to
+two via a double `joinTwoHalts` (`m11 → m00` for MATCH, `m10 → m01` for NOMATCH). -/
+def Compile.bitCompareM (sc1 sc2 : Var) : FlatTM :=
+  joinTwoHalts
+    (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+      (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2))
+    (Compile.bitCompareRawM_m01 sc1 sc2) (Compile.bitCompareRawM_m10 sc1 sc2)
+
+/-- MATCH exit (first bits equal). -/
+def Compile.bitCompareM_exit_match (sc1 sc2 : Var) : Nat := Compile.bitCompareRawM_m00 sc1 sc2
+/-- NOMATCH exit (first bits differ). -/
+def Compile.bitCompareM_exit_nomatch (sc1 sc2 : Var) : Nat := Compile.bitCompareRawM_m01 sc1 sc2
+
+/-- The inner join (demote `m11`). -/
+abbrev Compile.bitCompareInnerM (sc1 sc2 : Var) : FlatTM :=
+  joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+    (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)
+
+theorem Compile.bitCompareM_start (sc1 sc2 : Var) : (Compile.bitCompareM sc1 sc2).start = 0 := by
+  rw [Compile.bitCompareM, joinTwoHalts_start, joinTwoHalts_start]
+  exact Compile.bitCompareRawM_start sc1 sc2
+
+theorem Compile.bitCompareM_tapes (sc1 sc2 : Var) : (Compile.bitCompareM sc1 sc2).tapes = 1 := by
+  rw [Compile.bitCompareM, joinTwoHalts_tapes, joinTwoHalts_tapes]
+  exact Compile.bitCompareRawM_tapes sc1 sc2
+
+theorem Compile.bitCompareM_sig (sc1 sc2 : Var) : (Compile.bitCompareM sc1 sc2).sig = 4 := by
+  rw [Compile.bitCompareM, joinTwoHalts_sig, joinTwoHalts_sig]
+  exact Compile.bitCompareRawM_sig sc1 sc2
+
+theorem Compile.bitCompareM_states (sc1 sc2 : Var) :
+    (Compile.bitCompareM sc1 sc2).states = (Compile.bitCompareRawM sc1 sc2).states := rfl
+
+theorem Compile.bitCompareM_valid (sc1 sc2 : Var) : validFlatTM (Compile.bitCompareM sc1 sc2) := by
+  rw [Compile.bitCompareM]
+  exact joinTwoHalts_valid _ _ _
+    (joinTwoHalts_valid _ _ _ (Compile.bitCompareRawM_valid sc1 sc2)
+      (Compile.bitCompareRawM_m00_lt sc1 sc2) (Compile.bitCompareRawM_m11_lt sc1 sc2)
+      (Compile.bitCompareRawM_tapes sc1 sc2))
+    (Compile.bitCompareRawM_m01_lt sc1 sc2) (Compile.bitCompareRawM_m10_lt sc1 sc2)
+    (Compile.bitCompareRawM_tapes sc1 sc2)
+
+theorem Compile.bitCompareM_exit_match_ne_nomatch (sc1 sc2 : Var) :
+    Compile.bitCompareM_exit_match sc1 sc2 ≠ Compile.bitCompareM_exit_nomatch sc1 sc2 :=
+  (Compile.bitCompareRawM_distinct sc1 sc2).1
+
+theorem Compile.bitCompareM_exit_match_lt (sc1 sc2 : Var) :
+    Compile.bitCompareM_exit_match sc1 sc2 < (Compile.bitCompareM sc1 sc2).states := by
+  rw [Compile.bitCompareM_exit_match, Compile.bitCompareM_states]; exact Compile.bitCompareRawM_m00_lt sc1 sc2
+
+theorem Compile.bitCompareM_exit_nomatch_lt (sc1 sc2 : Var) :
+    Compile.bitCompareM_exit_nomatch sc1 sc2 < (Compile.bitCompareM sc1 sc2).states := by
+  rw [Compile.bitCompareM_exit_nomatch, Compile.bitCompareM_states]; exact Compile.bitCompareRawM_m01_lt sc1 sc2
+
+/-- The inner join keeps exactly `{m00, m01, m10}` as halts (demotes `m11`). -/
+theorem Compile.bitCompareInnerM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.bitCompareInnerM sc1 sc2).halt[i]? = some true →
+      i = Compile.bitCompareRawM_m00 sc1 sc2 ∨ i = Compile.bitCompareRawM_m01 sc1 sc2 ∨
+        i = Compile.bitCompareRawM_m10 sc1 sc2 := by
+  intro i hi
+  change ((Compile.bitCompareRawM sc1 sc2).halt.set (Compile.bitCompareRawM_m11 sc1 sc2) false)[i]?
+    = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : Compile.bitCompareRawM_m11 sc1 sc2 = i
+  · exfalso; rw [if_pos h_eq] at hi; split at hi <;> simp at hi
+  · rw [if_neg h_eq] at hi
+    rcases Compile.bitCompareRawM_halt_only sc1 sc2 i hi with h | h | h | h
+    · exact Or.inl h
+    · exact Or.inr (Or.inl h)
+    · exact Or.inr (Or.inr h)
+    · exact absurd h.symm h_eq
+
+theorem Compile.bitCompareM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.bitCompareM sc1 sc2).halt[i]? = some true →
+      i = Compile.bitCompareM_exit_match sc1 sc2 ∨ i = Compile.bitCompareM_exit_nomatch sc1 sc2 := by
+  intro i hi
+  rw [Compile.bitCompareM_exit_match, Compile.bitCompareM_exit_nomatch]
+  change ((Compile.bitCompareInnerM sc1 sc2).halt.set (Compile.bitCompareRawM_m10 sc1 sc2) false)[i]?
+    = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : Compile.bitCompareRawM_m10 sc1 sc2 = i
+  · exfalso; rw [if_pos h_eq] at hi; split at hi <;> simp at hi
+  · rw [if_neg h_eq] at hi
+    rcases Compile.bitCompareInnerM_halt_only sc1 sc2 i hi with h | h | h
+    · exact Or.inl h
+    · exact Or.inr h
+    · exact absurd h.symm h_eq
+
+theorem Compile.bitCompareM_exit_match_is_halt (sc1 sc2 : Var) :
+    (Compile.bitCompareM sc1 sc2).halt[Compile.bitCompareM_exit_match sc1 sc2]? = some true := by
+  rw [Compile.bitCompareM_exit_match, Compile.bitCompareM]
+  obtain ⟨_, hne_m00_m10, _, _, _, _⟩ := Compile.bitCompareRawM_distinct sc1 sc2
+  show ((Compile.bitCompareInnerM sc1 sc2).halt.set (Compile.bitCompareRawM_m10 sc1 sc2) false)[Compile.bitCompareRawM_m00 sc1 sc2]?
+    = some true
+  rw [List.getElem?_set_ne (fun h => hne_m00_m10 h.symm)]
+  exact joinTwoHalts_h1_is_halt _ _ _
+    (Compile.bitCompareRawM_distinct sc1 sc2).2.2.1 (Compile.bitCompareRawM_m00_is_halt sc1 sc2)
+
+theorem Compile.bitCompareM_exit_nomatch_is_halt (sc1 sc2 : Var) :
+    (Compile.bitCompareM sc1 sc2).halt[Compile.bitCompareM_exit_nomatch sc1 sc2]? = some true := by
+  rw [Compile.bitCompareM_exit_nomatch, Compile.bitCompareM]
+  obtain ⟨_, _, _, hne_m01_m10, hne_m01_m11, _⟩ := Compile.bitCompareRawM_distinct sc1 sc2
+  refine joinTwoHalts_h1_is_halt _ _ _ hne_m01_m10 ?_
+  show ((Compile.bitCompareRawM sc1 sc2).halt.set (Compile.bitCompareRawM_m11 sc1 sc2) false)[Compile.bitCompareRawM_m01 sc1 sc2]?
+    = some true
+  rw [List.getElem?_set_ne (fun h => hne_m01_m11 h.symm)]
+  exact Compile.bitCompareRawM_m01_is_halt sc1 sc2
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
