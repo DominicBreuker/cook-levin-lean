@@ -908,6 +908,37 @@ theorem Compile.branchComposeFlatTM_halt_only_M2two_M3two (M₁ M₂ M₃ : Flat
       rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
       rcases h3 _ hi with h | h <;> omega
 
+/-- **Variant allowing a 2-exit POSITIVE branch `M₂`** (mirror of `_M3two`). A
+`branchComposeFlatTM` whose positive branch `M₂` is a nested 2-exit tester
+(`e₂a`/`e₂b`) but whose negative branch `M₃` is halt-unique (`e₃`) has exactly the
+**three** shifted exits as halt states. Needed for the `eqBit` consume-loop's
+`testMachine` (the "both nonempty?" guard and the bitCompare wrapper each put a
+2-exit tester in the positive slot and `idTM` in the negative). -/
+theorem Compile.branchComposeFlatTM_halt_only_M2two (M₁ M₂ M₃ : FlatTM)
+    (ep en e₂a e₂b e₃ : Nat)
+    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂a ∨ i = e₂b)
+    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃) :
+    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
+      i = M₁.states + e₂a ∨ i = M₁.states + e₂b ∨ i = M₁.states + M₂.states + e₃ := by
+  intro i hi
+  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  rw [List.append_assoc] at hi
+  by_cases h1 : i < M₁.states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
+        List.getElem?_replicate] at hi
+    simp [h1] at hi
+  · rw [Nat.not_lt] at h1
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
+        List.length_replicate] at hi
+    by_cases h2lt : i - M₁.states < M₂.states
+    · rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
+      rcases h2 _ hi with h | h <;> omega
+    · rw [Nat.not_lt] at h2lt
+      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
+      have := h3 _ hi; omega
+
 /-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
 branch composite (positive branch). -/
 theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
