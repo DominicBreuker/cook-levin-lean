@@ -842,6 +842,40 @@ theorem Compile.branchComposeFlatTM_halt_only (M₁ M₂ M₃ : FlatTM) (ep en e
       rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
       have := h3 _ hi; omega
 
+/-- **Variant allowing a 2-exit negative branch `M₃`** (d2b-prep, Risk C2). A
+`branchComposeFlatTM` whose positive branch `M₂` is halt-unique (`e₂`) but whose
+negative branch `M₃` is a *nested 2-exit tester* (halts only at `e₃a` or `e₃b`)
+has exactly the **three** shifted exits as halt states. This is the keystone for
+every nested 2-exit machine (the `eqBit` verdict nests `navTestRewindM sc2` as
+`M₃`; the consume-loop testMachine nests one likewise). Its proof is the parent
+lemma's, with the single `M₃` exit split into two by `rcases … <;> omega`. -/
+theorem Compile.branchComposeFlatTM_halt_only_M3two (M₁ M₂ M₃ : FlatTM)
+    (ep en e₂ e₃a e₃b : Nat)
+    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂)
+    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃a ∨ i = e₃b) :
+    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
+      i = M₁.states + e₂ ∨ i = M₁.states + M₂.states + e₃a ∨
+        i = M₁.states + M₂.states + e₃b := by
+  intro i hi
+  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  rw [List.append_assoc] at hi
+  by_cases h1 : i < M₁.states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
+        List.getElem?_replicate] at hi
+    simp [h1] at hi
+  · rw [Nat.not_lt] at h1
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
+        List.length_replicate] at hi
+    by_cases h2lt : i - M₁.states < M₂.states
+    · left
+      rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
+      have := h2 _ hi; omega
+    · rw [Nat.not_lt] at h2lt
+      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
+      rcases h3 _ hi with h | h <;> omega
+
 /-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
 branch composite (positive branch). -/
 theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
@@ -14526,6 +14560,491 @@ theorem Compile.navTestRewindM_run_delim (s : State) (sc : Var) (res : List Nat)
      ClearGadget.ne_of_not_halting (Compile.navTestRewindM_exit_delim_is_halt sc) (hneg_traj k hk ck hck),
      hneg_traj k hk ck hck⟩⟩
   simpa only [hstate] using hneg.1
+
+/-! ### `eqVerdictM` — the `eqBit` verdict: "are BOTH `sc1` and `sc2` empty?"
+(bottom-up, Risk C2 — d2b)
+
+After the consume loop has peeled matching head-pairs off scratch copies `sc1`/
+`sc2`, the operands were equal **iff both scratch registers are now empty**
+(`probes/EqBitProbe.lean#eqVerdict_correct`). `eqVerdictM` is the clean 2-exit
+tester deciding that, head restored to `0` on both outcomes:
+
+  `eqVerdictRawM sc1 sc2 := branchComposeFlatTM (navTestRewindM sc1) idTM
+                              (navTestRewindM sc2) (content sc1) (delim sc1)`
+
+`sc1` nonempty → `idTM` (immediate, head already `0`) = **NEQ**; `sc1` empty →
+`navTestRewindM sc2` (content = NEQ, delim = EQ). Three halts {NEQ_a, NEQ_b, EQ}.
+`eqVerdictM` merges the two NEQ halts with one `joinTwoHalts`, leaving the clean
+2-exit `{NEQ, EQ}`. Reuse for the `eqBit` (d1) wrapper. -/
+
+/-- Raw verdict machine (3 halts). -/
+def Compile.eqVerdictRawM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.navTestRewindM sc1) Compile.idTM (Compile.navTestRewindM sc2)
+    (Compile.navTestRewindM_exit_content sc1) (Compile.navTestRewindM_exit_delim sc1)
+
+/-- NEQ exit when `sc1` is nonempty (positive `idTM` branch, head already `0`). -/
+def Compile.eqVerdictRawM_neqA (sc1 : Var) : Nat := (Compile.navTestRewindM sc1).states
+/-- NEQ exit when `sc1` empty but `sc2` nonempty (`M₃` content). -/
+def Compile.eqVerdictRawM_neqB (sc1 sc2 : Var) : Nat :=
+  (Compile.navTestRewindM sc1).states + Compile.idTM.states
+    + Compile.navTestRewindM_exit_content sc2
+/-- EQ exit when both empty (`M₃` delim). -/
+def Compile.eqVerdictRawM_eq (sc1 sc2 : Var) : Nat :=
+  (Compile.navTestRewindM sc1).states + Compile.idTM.states
+    + Compile.navTestRewindM_exit_delim sc2
+
+theorem Compile.eqVerdictRawM_start (sc1 sc2 : Var) : (Compile.eqVerdictRawM sc1 sc2).start = 0 := by
+  rw [Compile.eqVerdictRawM, branchComposeFlatTM_start]; exact Compile.navTestRewindM_start sc1
+
+theorem Compile.eqVerdictRawM_tapes (sc1 sc2 : Var) : (Compile.eqVerdictRawM sc1 sc2).tapes = 1 := by
+  rw [Compile.eqVerdictRawM, branchComposeFlatTM_tapes]; exact Compile.navTestRewindM_tapes sc1
+
+theorem Compile.eqVerdictRawM_sig (sc1 sc2 : Var) : (Compile.eqVerdictRawM sc1 sc2).sig = 4 := by
+  rw [Compile.eqVerdictRawM, branchComposeFlatTM_sig, Compile.navTestRewindM_sig,
+      Compile.navTestRewindM_sig]
+  decide
+
+theorem Compile.eqVerdictRawM_states (sc1 sc2 : Var) :
+    (Compile.eqVerdictRawM sc1 sc2).states =
+      (Compile.navTestRewindM sc1).states + Compile.idTM.states
+        + (Compile.navTestRewindM sc2).states := by
+  rw [Compile.eqVerdictRawM, branchComposeFlatTM_states]
+
+theorem Compile.eqVerdictRawM_neqA_lt (sc1 sc2 : Var) :
+    Compile.eqVerdictRawM_neqA sc1 < (Compile.eqVerdictRawM sc1 sc2).states := by
+  rw [Compile.eqVerdictRawM_neqA, Compile.eqVerdictRawM_states]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.eqVerdictRawM_neqB_lt (sc1 sc2 : Var) :
+    Compile.eqVerdictRawM_neqB sc1 sc2 < (Compile.eqVerdictRawM sc1 sc2).states := by
+  rw [Compile.eqVerdictRawM_neqB, Compile.eqVerdictRawM_states]
+  have := Compile.navTestRewindM_exit_content_lt sc2
+  omega
+
+theorem Compile.eqVerdictRawM_eq_lt (sc1 sc2 : Var) :
+    Compile.eqVerdictRawM_eq sc1 sc2 < (Compile.eqVerdictRawM sc1 sc2).states := by
+  rw [Compile.eqVerdictRawM_eq, Compile.eqVerdictRawM_states]
+  have := Compile.navTestRewindM_exit_delim_lt sc2
+  omega
+
+theorem Compile.eqVerdictRawM_neqA_ne_neqB (sc1 sc2 : Var) :
+    Compile.eqVerdictRawM_neqA sc1 ≠ Compile.eqVerdictRawM_neqB sc1 sc2 := by
+  rw [Compile.eqVerdictRawM_neqA, Compile.eqVerdictRawM_neqB]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.eqVerdictRawM_neqB_ne_eq (sc1 sc2 : Var) :
+    Compile.eqVerdictRawM_neqB sc1 sc2 ≠ Compile.eqVerdictRawM_eq sc1 sc2 := by
+  rw [Compile.eqVerdictRawM_neqB, Compile.eqVerdictRawM_eq]
+  have := Compile.navTestRewindM_exit_content_ne_delim sc2
+  omega
+
+theorem Compile.eqVerdictRawM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.eqVerdictRawM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    (Compile.navTestRewindM_tapes sc1) rfl (Compile.navTestRewindM_tapes sc2)
+
+theorem Compile.eqVerdictRawM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.eqVerdictRawM sc1 sc2).halt[i]? = some true →
+      i = Compile.eqVerdictRawM_neqA sc1 ∨ i = Compile.eqVerdictRawM_neqB sc1 sc2
+        ∨ i = Compile.eqVerdictRawM_eq sc1 sc2 := by
+  rw [Compile.eqVerdictRawM_neqA, Compile.eqVerdictRawM_neqB, Compile.eqVerdictRawM_eq,
+      Compile.eqVerdictRawM]
+  exact Compile.branchComposeFlatTM_halt_only_M3two _ _ _ _ _ _ _ _
+    Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    Compile.idTM_halt_unique (Compile.navTestRewindM_halt_only sc2)
+
+theorem Compile.eqVerdictRawM_neqA_is_halt (sc1 sc2 : Var) :
+    (Compile.eqVerdictRawM sc1 sc2).halt[Compile.eqVerdictRawM_neqA sc1]? = some true := by
+  rw [Compile.eqVerdictRawM_neqA, Compile.eqVerdictRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ 0
+    Compile.idTM_valid (by decide) (by decide)
+
+theorem Compile.eqVerdictRawM_neqB_is_halt (sc1 sc2 : Var) :
+    (Compile.eqVerdictRawM sc1 sc2).halt[Compile.eqVerdictRawM_neqB sc1 sc2]? = some true := by
+  rw [Compile.eqVerdictRawM_neqB, Compile.eqVerdictRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    Compile.idTM_valid (Compile.navTestRewindM_exit_content_is_halt sc2)
+
+theorem Compile.eqVerdictRawM_eq_is_halt (sc1 sc2 : Var) :
+    (Compile.eqVerdictRawM sc1 sc2).halt[Compile.eqVerdictRawM_eq sc1 sc2]? = some true := by
+  rw [Compile.eqVerdictRawM_eq, Compile.eqVerdictRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    Compile.idTM_valid (Compile.navTestRewindM_exit_delim_is_halt sc2)
+
+/-- **The clean 2-exit verdict** = merge the two NEQ halts of the raw machine. -/
+def Compile.eqVerdictM (sc1 sc2 : Var) : FlatTM :=
+  joinTwoHalts (Compile.eqVerdictRawM sc1 sc2)
+    (Compile.eqVerdictRawM_neqA sc1) (Compile.eqVerdictRawM_neqB sc1 sc2)
+
+/-- NEQ exit (operands differ). -/
+def Compile.eqVerdictM_exit_neq (sc1 : Var) : Nat := Compile.eqVerdictRawM_neqA sc1
+/-- EQ exit (operands equal: both scratch registers empty). -/
+def Compile.eqVerdictM_exit_eq (sc1 sc2 : Var) : Nat := Compile.eqVerdictRawM_eq sc1 sc2
+
+theorem Compile.eqVerdictM_start (sc1 sc2 : Var) : (Compile.eqVerdictM sc1 sc2).start = 0 := by
+  rw [Compile.eqVerdictM, joinTwoHalts_start]; exact Compile.eqVerdictRawM_start sc1 sc2
+
+theorem Compile.eqVerdictM_tapes (sc1 sc2 : Var) : (Compile.eqVerdictM sc1 sc2).tapes = 1 := by
+  rw [Compile.eqVerdictM, joinTwoHalts_tapes]; exact Compile.eqVerdictRawM_tapes sc1 sc2
+
+theorem Compile.eqVerdictM_sig (sc1 sc2 : Var) : (Compile.eqVerdictM sc1 sc2).sig = 4 := by
+  rw [Compile.eqVerdictM, joinTwoHalts_sig]; exact Compile.eqVerdictRawM_sig sc1 sc2
+
+theorem Compile.eqVerdictM_states (sc1 sc2 : Var) :
+    (Compile.eqVerdictM sc1 sc2).states = (Compile.eqVerdictRawM sc1 sc2).states := rfl
+
+theorem Compile.eqVerdictM_valid (sc1 sc2 : Var) : validFlatTM (Compile.eqVerdictM sc1 sc2) :=
+  joinTwoHalts_valid _ _ _ (Compile.eqVerdictRawM_valid sc1 sc2)
+    (Compile.eqVerdictRawM_neqA_lt sc1 sc2) (Compile.eqVerdictRawM_neqB_lt sc1 sc2)
+    (Compile.eqVerdictRawM_tapes sc1 sc2)
+
+theorem Compile.eqVerdictM_exit_neq_ne_eq (sc1 sc2 : Var) :
+    Compile.eqVerdictM_exit_neq sc1 ≠ Compile.eqVerdictM_exit_eq sc1 sc2 := by
+  rw [Compile.eqVerdictM_exit_neq, Compile.eqVerdictM_exit_eq,
+      Compile.eqVerdictRawM_neqA, Compile.eqVerdictRawM_eq]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.eqVerdictM_exit_neq_lt (sc1 sc2 : Var) :
+    Compile.eqVerdictM_exit_neq sc1 < (Compile.eqVerdictM sc1 sc2).states := by
+  rw [Compile.eqVerdictM_exit_neq, Compile.eqVerdictM_states]
+  exact Compile.eqVerdictRawM_neqA_lt sc1 sc2
+
+theorem Compile.eqVerdictM_exit_eq_lt (sc1 sc2 : Var) :
+    Compile.eqVerdictM_exit_eq sc1 sc2 < (Compile.eqVerdictM sc1 sc2).states := by
+  rw [Compile.eqVerdictM_exit_eq, Compile.eqVerdictM_states]
+  exact Compile.eqVerdictRawM_eq_lt sc1 sc2
+
+theorem Compile.eqVerdictM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.eqVerdictM sc1 sc2).halt[i]? = some true →
+      i = Compile.eqVerdictM_exit_neq sc1 ∨ i = Compile.eqVerdictM_exit_eq sc1 sc2 := by
+  intro i hi
+  rw [Compile.eqVerdictM_exit_neq, Compile.eqVerdictM_exit_eq]
+  change ((Compile.eqVerdictRawM sc1 sc2).halt.set (Compile.eqVerdictRawM_neqB sc1 sc2) false)[i]?
+    = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : Compile.eqVerdictRawM_neqB sc1 sc2 = i
+  · exfalso; rw [if_pos h_eq] at hi; split at hi <;> simp at hi
+  · rw [if_neg h_eq] at hi
+    rcases Compile.eqVerdictRawM_halt_only sc1 sc2 i hi with h | h | h
+    · exact Or.inl h
+    · exact absurd h.symm h_eq
+    · exact Or.inr h
+
+theorem Compile.eqVerdictM_exit_neq_is_halt (sc1 sc2 : Var) :
+    (Compile.eqVerdictM sc1 sc2).halt[Compile.eqVerdictM_exit_neq sc1]? = some true := by
+  rw [Compile.eqVerdictM_exit_neq, Compile.eqVerdictM]
+  exact joinTwoHalts_h1_is_halt _ _ _
+    (Compile.eqVerdictRawM_neqA_ne_neqB sc1 sc2) (Compile.eqVerdictRawM_neqA_is_halt sc1 sc2)
+
+theorem Compile.eqVerdictM_exit_eq_is_halt (sc1 sc2 : Var) :
+    (Compile.eqVerdictM sc1 sc2).halt[Compile.eqVerdictM_exit_eq sc1 sc2]? = some true := by
+  rw [Compile.eqVerdictM_exit_eq, Compile.eqVerdictM]
+  show ((Compile.eqVerdictRawM sc1 sc2).halt.set (Compile.eqVerdictRawM_neqB sc1 sc2) false)[Compile.eqVerdictRawM_eq sc1 sc2]?
+    = some true
+  rw [List.getElem?_set_ne (Compile.eqVerdictRawM_neqB_ne_eq sc1 sc2)]
+  exact Compile.eqVerdictRawM_eq_is_halt sc1 sc2
+
+/-- Symbol bound at the leading sentinel (head `0`): the cell `< 4`. -/
+private theorem Compile.eqVerdict_sym4 (s : State) (res : List Nat) (hbit : Compile.BitState s) :
+    ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v → v < 4 := by
+  intro v hv
+  have h0lt : 0 < (Compile.encodeTape s ++ res).length := by
+    rw [List.length_append]; have := Compile.encodeTape_length s; omega
+  rw [currentTapeSymbol_in_range h0lt] at hv
+  have h0lt' : 0 < (Compile.encodeTape s).length := by
+    have := Compile.encodeTape_length s; omega
+  have hmem : (Compile.encodeTape s ++ res).get ⟨0, h0lt⟩ ∈ Compile.encodeTape s := by
+    rw [List.get_eq_getElem, List.getElem_append_left h0lt']; exact List.getElem_mem h0lt'
+  rw [← Option.some.inj hv]; exact Compile.encodeTape_lt_four s hbit _ hmem
+
+/-- The branch symbol bound (`v < max sigs`) at head `0`. -/
+private theorem Compile.eqVerdict_symMax (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) :
+    ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < max (Compile.navTestRewindM sc1).sig
+            (max Compile.idTM.sig (Compile.navTestRewindM sc2).sig) := by
+  intro v hv
+  have hmax : max (Compile.navTestRewindM sc1).sig
+      (max Compile.idTM.sig (Compile.navTestRewindM sc2).sig) = 4 := by
+    rw [Compile.navTestRewindM_sig, Compile.navTestRewindM_sig]; decide
+  rw [hmax]; exact Compile.eqVerdict_sym4 s res hbit v hv
+
+/-- **`eqVerdictM` run — NEQ via the left operand (`sc1` nonempty).** -/
+theorem Compile.eqVerdictM_run_neq_left (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hne1 : State.get s sc1 ≠ [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.eqVerdictM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.eqVerdictM_exit_neq sc1,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.eqVerdictM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.eqVerdictM_exit_neq sc1 ∧
+        ck.state_idx ≠ Compile.eqVerdictM_exit_eq sc1 sc2 ∧
+        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.eqVerdict_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.navTestRewindM sc1).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.navTestRewindM_exit_content_lt sc1)
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj
+    (show runFlatTM 0 Compile.idTM
+        { state_idx := (0 : Nat), tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := (0 : Nat), tapes := [([], 0, Compile.encodeTape s ++ res)] } from rfl)
+    (Compile.haltingStateReached_of_halt (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl))
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj (fun k hk _ _ => absurd hk (Nat.not_lt_zero k))
+  have hraw_run : runFlatTM (t₁ + 1) (Compile.eqVerdictRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.eqVerdictRawM_neqA sc1,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hpos.1
+    rw [Nat.add_zero, Nat.zero_add] at h
+    rw [Compile.eqVerdictRawM_neqA]; exact h
+  have hnv : ∀ k, k ≤ t₁ + 1 → ∀ ck,
+      runFlatTM k (Compile.eqVerdictRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.eqVerdictRawM_neqB sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqB_is_halt sc1 sc2)
+        (hpos_traj k (by omega) ck hck)
+    · rw [hraw_run] at hck; rw [← Option.some.inj hck]
+      exact Compile.eqVerdictRawM_neqA_ne_neqB sc1 sc2
+  refine ⟨t₁ + 1, ?_, ?_⟩
+  · rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ (t₁ + 1) cfg0 hnv,
+        Compile.eqVerdictM_exit_neq]
+    exact hraw_run
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.eqVerdictRawM sc1 sc2) cfg0 = some cj →
+        cj.state_idx ≠ Compile.eqVerdictRawM_neqB sc1 sc2 :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hpos_traj k (by omega) ck hck
+    refine ⟨ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqA_is_halt sc1 sc2) hnh,
+      ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_eq_is_halt sc1 sc2) hnh, ?_⟩
+    rw [Compile.eqVerdictM, joinTwoHalts_halting_eq _ _ _ ck
+      (ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqB_is_halt sc1 sc2) hnh)]
+    exact hnh
+
+/-- **`eqVerdictM` run — EQ (both `sc1` and `sc2` empty).** -/
+theorem Compile.eqVerdictM_run_eq (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hempty1 : State.get s sc1 = []) (hempty2 : State.get s sc2 = [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.eqVerdictM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.eqVerdictM_exit_eq sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.eqVerdictM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.eqVerdictM_exit_neq sc1 ∧
+        ck.state_idx ≠ Compile.eqVerdictM_exit_eq sc1 sc2 ∧
+        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
+  obtain ⟨t₃, hM3run, hM3traj⟩ := Compile.navTestRewindM_run_delim s sc2 res hbit hsc2 hempty2 hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.eqVerdict_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.navTestRewindM sc1).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.navTestRewindM_exit_content_lt sc1)
+  have hM3run' : runFlatTM t₃ (Compile.navTestRewindM sc2)
+      { state_idx := (Compile.navTestRewindM sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.navTestRewindM_exit_delim sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.navTestRewindM_start]; exact hM3run
+  have hM3traj' : ∀ k, k < t₃ → ∀ ck,
+      runFlatTM k (Compile.navTestRewindM sc2)
+          { state_idx := (Compile.navTestRewindM sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.navTestRewindM sc2) ck = false := by
+    rw [Compile.navTestRewindM_start]
+    exact fun k hk ck hck => (hM3traj k hk ck hck).2.2
+  have hneg := branchComposeFlatTM_run_neg
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM3run'
+    (Compile.haltingStateReached_of_halt (Compile.navTestRewindM_exit_delim_is_halt sc2))
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM3traj'
+  have hraw_eq : runFlatTM (t₁ + 1 + t₃) (Compile.eqVerdictRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.eqVerdictRawM_eq sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hneg.1
+    have hstate : Compile.navTestRewindM_exit_delim sc2
+          + ((Compile.navTestRewindM sc1).states + Compile.idTM.states)
+        = Compile.eqVerdictRawM_eq sc1 sc2 := by
+      rw [Compile.eqVerdictRawM_eq]; omega
+    rw [hstate] at h; exact h
+  have hnv : ∀ k, k ≤ t₁ + 1 + t₃ → ∀ ck,
+      runFlatTM k (Compile.eqVerdictRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.eqVerdictRawM_neqB sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqB_is_halt sc1 sc2)
+        (hneg_traj k hlt ck hck)
+    · rw [hraw_eq] at hck; rw [← Option.some.inj hck]
+      exact fun h => Compile.eqVerdictRawM_neqB_ne_eq sc1 sc2 h.symm
+  refine ⟨t₁ + 1 + t₃, ?_, ?_⟩
+  · rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + t₃) cfg0 hnv,
+        Compile.eqVerdictM_exit_eq]
+    exact hraw_eq
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.eqVerdictRawM sc1 sc2) cfg0 = some cj →
+        cj.state_idx ≠ Compile.eqVerdictRawM_neqB sc1 sc2 :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hneg_traj k (by omega) ck hck
+    refine ⟨ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqA_is_halt sc1 sc2) hnh,
+      ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_eq_is_halt sc1 sc2) hnh, ?_⟩
+    rw [Compile.eqVerdictM, joinTwoHalts_halting_eq _ _ _ ck
+      (ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqB_is_halt sc1 sc2) hnh)]
+    exact hnh
+
+/-- **`eqVerdictM` run — NEQ via the right operand (`sc1` empty, `sc2` nonempty).**
+The raw machine reaches the demoted NEQ_b halt, then `joinTwoHalts` bridges it to
+the kept NEQ exit in one extra step. -/
+theorem Compile.eqVerdictM_run_neq_right (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hempty1 : State.get s sc1 = []) (hne2 : State.get s sc2 ≠ [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.eqVerdictM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.eqVerdictM_exit_neq sc1,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.eqVerdictM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.eqVerdictM_exit_neq sc1 ∧
+        ck.state_idx ≠ Compile.eqVerdictM_exit_eq sc1 sc2 ∧
+        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
+  obtain ⟨t₃, hM3run, hM3traj⟩ := Compile.navTestRewindM_run_content s sc2 res hbit hsc2 hne2 hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.eqVerdict_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.navTestRewindM sc1).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.navTestRewindM_exit_content_lt sc1)
+  have hM3run' : runFlatTM t₃ (Compile.navTestRewindM sc2)
+      { state_idx := (Compile.navTestRewindM sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.navTestRewindM_exit_content sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.navTestRewindM_start]; exact hM3run
+  have hM3traj' : ∀ k, k < t₃ → ∀ ck,
+      runFlatTM k (Compile.navTestRewindM sc2)
+          { state_idx := (Compile.navTestRewindM sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.navTestRewindM sc2) ck = false := by
+    rw [Compile.navTestRewindM_start]
+    exact fun k hk ck hck => (hM3traj k hk ck hck).2.2
+  have hneg := branchComposeFlatTM_run_neg
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM3run'
+    (Compile.haltingStateReached_of_halt (Compile.navTestRewindM_exit_content_is_halt sc2))
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) Compile.idTM_valid (Compile.navTestRewindM_valid sc2)
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM3traj'
+  have hraw_neqB : runFlatTM (t₁ + 1 + t₃) (Compile.eqVerdictRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.eqVerdictRawM_neqB sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hneg.1
+    have hstate : Compile.navTestRewindM_exit_content sc2
+          + ((Compile.navTestRewindM sc1).states + Compile.idTM.states)
+        = Compile.eqVerdictRawM_neqB sc1 sc2 := by
+      rw [Compile.eqVerdictRawM_neqB]; omega
+    rw [hstate] at h; exact h
+  -- the raw run never visits neqB *strictly* before `t₁+1+t₃`.
+  have hnv_strict : ∀ k, k < t₁ + 1 + t₃ → ∀ ck,
+      runFlatTM k (Compile.eqVerdictRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.eqVerdictRawM_neqB sc1 sc2 :=
+    fun k hk ck hck => ClearGadget.ne_of_not_halting
+      (Compile.eqVerdictRawM_neqB_is_halt sc1 sc2) (hneg_traj k hk ck hck)
+  have hweak : runFlatTM (t₁ + 1 + t₃) (Compile.eqVerdictM sc1 sc2) cfg0
+      = some { state_idx := Compile.eqVerdictRawM_neqB sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.eqVerdictM, joinTwoHalts_run_eq_weak _ _ _ (t₁ + 1 + t₃) cfg0 hnv_strict]
+    exact hraw_neqB
+  have hnh_neqB : haltingStateReached (Compile.eqVerdictM sc1 sc2)
+      { state_idx := Compile.eqVerdictRawM_neqB sc1 sc2,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] } = false := by
+    show ((Compile.eqVerdictRawM sc1 sc2).halt.set (Compile.eqVerdictRawM_neqB sc1 sc2) false).getD
+      (Compile.eqVerdictRawM_neqB sc1 sc2) false = false
+    rw [List.getD_eq_getElem?_getD, List.getElem?_set, if_pos rfl]
+    split <;> rfl
+  have hsymRaw : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < (Compile.eqVerdictRawM sc1 sc2).sig := by
+    intro v hv; rw [Compile.eqVerdictRawM_sig]; exact Compile.eqVerdict_sym4 s res hbit v hv
+  have hstep : stepFlatTM (Compile.eqVerdictM sc1 sc2)
+      { state_idx := Compile.eqVerdictRawM_neqB sc1 sc2,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.eqVerdictRawM_neqA sc1,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+    joinTwoHalts_step_to_h1 (Compile.eqVerdictRawM sc1 sc2)
+      (Compile.eqVerdictRawM_neqA sc1) (Compile.eqVerdictRawM_neqB sc1 sc2)
+      [] (Compile.encodeTape s ++ res) 0 hsymRaw
+  have hfull : runFlatTM (t₁ + 1 + t₃ + 1) (Compile.eqVerdictM sc1 sc2) cfg0
+      = some { state_idx := Compile.eqVerdictRawM_neqA sc1,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+    runFlatTM_extend_by_step (Compile.eqVerdictM sc1 sc2) (t₁ + 1 + t₃) cfg0 _ _
+      hweak hnh_neqB hstep
+  refine ⟨t₁ + 1 + t₃ + 1, ?_, ?_⟩
+  · rw [Compile.eqVerdictM_exit_neq]; exact hfull
+  · intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hk) with hlt | rfl
+    · have hnv_k : ∀ j, j ≤ k → ∀ cj,
+          runFlatTM j (Compile.eqVerdictRawM sc1 sc2) cfg0 = some cj →
+          cj.state_idx ≠ Compile.eqVerdictRawM_neqB sc1 sc2 :=
+        fun j hj cj hcj => hnv_strict j (by omega) cj hcj
+      rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+      have hnh := hneg_traj k (by omega) ck hck
+      refine ⟨ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqA_is_halt sc1 sc2) hnh,
+        ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_eq_is_halt sc1 sc2) hnh, ?_⟩
+      rw [Compile.eqVerdictM, joinTwoHalts_halting_eq _ _ _ ck
+        (ClearGadget.ne_of_not_halting (Compile.eqVerdictRawM_neqB_is_halt sc1 sc2) hnh)]
+      exact hnh
+    · rw [hweak] at hck
+      have hck_eq : ck = { state_idx := Compile.eqVerdictRawM_neqB sc1 sc2,
+                           tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+        Option.some.inj hck.symm
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hck_eq, Compile.eqVerdictM_exit_neq]
+        exact fun h => Compile.eqVerdictRawM_neqA_ne_neqB sc1 sc2 h.symm
+      · rw [hck_eq, Compile.eqVerdictM_exit_eq]
+        exact Compile.eqVerdictRawM_neqB_ne_eq sc1 sc2
+      · rw [hck_eq]; exact hnh_neqB
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
