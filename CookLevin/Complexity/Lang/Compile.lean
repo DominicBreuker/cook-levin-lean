@@ -876,6 +876,38 @@ theorem Compile.branchComposeFlatTM_halt_only_M3two (M₁ M₂ M₃ : FlatTM)
       rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
       rcases h3 _ hi with h | h <;> omega
 
+/-- **Variant allowing 2-exit branches on BOTH sides** (d2a, Risk C2). A
+`branchComposeFlatTM` whose positive branch `M₂` AND negative branch `M₃` are each
+nested 2-exit testers has exactly the **four** shifted exits as halt states. Needed
+for the `eqBit` bit-comparison body (read both bits, `M₂`/`M₃` each branch
+MATCH/NOMATCH) and the consume-loop body (each side ITER/DONE). Proof is the parent
+lemma's, both single `M₂`/`M₃` exits split into two by `rcases … <;> omega`. -/
+theorem Compile.branchComposeFlatTM_halt_only_M2two_M3two (M₁ M₂ M₃ : FlatTM)
+    (ep en e₂a e₂b e₃a e₃b : Nat)
+    (h2v : validFlatTM M₂) (h3v : validFlatTM M₃)
+    (h2 : ∀ i, M₂.halt[i]? = some true → i = e₂a ∨ i = e₂b)
+    (h3 : ∀ i, M₃.halt[i]? = some true → i = e₃a ∨ i = e₃b) :
+    ∀ i, (branchComposeFlatTM M₁ M₂ M₃ ep en).halt[i]? = some true →
+      i = M₁.states + e₂a ∨ i = M₁.states + e₂b ∨
+        i = M₁.states + M₂.states + e₃a ∨ i = M₁.states + M₂.states + e₃b := by
+  intro i hi
+  change (composedBranchHalt M₁ M₂ M₃)[i]? = some true at hi
+  unfold composedBranchHalt at hi
+  rw [List.append_assoc] at hi
+  by_cases h1 : i < M₁.states
+  · rw [List.getElem?_append_left (by rw [List.length_replicate]; exact h1),
+        List.getElem?_replicate] at hi
+    simp [h1] at hi
+  · rw [Nat.not_lt] at h1
+    rw [List.getElem?_append_right (by rw [List.length_replicate]; exact h1),
+        List.length_replicate] at hi
+    by_cases h2lt : i - M₁.states < M₂.states
+    · rw [List.getElem?_append_left (by rw [h2v.2.1]; exact h2lt)] at hi
+      rcases h2 _ hi with h | h <;> omega
+    · rw [Nat.not_lt] at h2lt
+      rw [List.getElem?_append_right (by rw [h2v.2.1]; exact h2lt), h2v.2.1] at hi
+      rcases h3 _ hi with h | h <;> omega
+
 /-- A halt state of `M₂` (with `e₂ < M₂.states`) shifts to a halt of the
 branch composite (positive branch). -/
 theorem Compile.branchComposeFlatTM_M2_halt_intro (M₁ M₂ M₃ : FlatTM) (ep en e₂ : Nat)
