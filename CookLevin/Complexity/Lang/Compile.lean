@@ -15837,6 +15837,432 @@ theorem Compile.bitCompareM_exit_nomatch_is_halt (sc1 sc2 : Var) :
   rw [List.getElem?_set_ne (fun h => hne_m01_m11 h.symm)]
   exact Compile.bitCompareRawM_m01_is_halt sc1 sc2
 
+/-- **Transport — a raw exit `K` kept by BOTH joins** (`K ∈ {m00, m01}`).
+The whole run agrees with the raw machine. -/
+private theorem Compile.bitCompareM_transport_kept (sc1 sc2 : Var) (tp : List Nat) (T K : Nat)
+    (hK_ne_m10 : K ≠ Compile.bitCompareRawM_m10 sc1 sc2)
+    (hK_ne_m11 : K ≠ Compile.bitCompareRawM_m11 sc1 sc2)
+    (hraw_run : runFlatTM T (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] }
+      = some { state_idx := K, tapes := [([], 0, tp)] })
+    (hraw_traj : ∀ k, k < T → ∀ ck, runFlatTM k (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] } = some ck →
+        haltingStateReached (Compile.bitCompareRawM sc1 sc2) ck = false) :
+    runFlatTM T (Compile.bitCompareM sc1 sc2) { state_idx := 0, tapes := [([], 0, tp)] }
+      = some { state_idx := K, tapes := [([], 0, tp)] }
+    ∧ (∀ k, k < T → ∀ ck, runFlatTM k (Compile.bitCompareM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] } = some ck →
+        ck.state_idx ≠ Compile.bitCompareM_exit_match sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bitCompareM_exit_nomatch sc1 sc2 ∧
+        haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, tp)] } with hcfg0
+  -- raw never visits `m11` within `[0,T]`.
+  have hnv_m11 : ∀ k, k ≤ T → ∀ ck,
+      runFlatTM k (Compile.bitCompareRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitCompareRawM_m11 sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | heq
+    · exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m11_is_halt sc1 sc2)
+        (hraw_traj k hlt ck hck)
+    · rw [heq, hraw_run] at hck; rw [← Option.some.inj hck]; exact hK_ne_m11
+  have hJ1 : ∀ t, t ≤ T →
+      runFlatTM t (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+          (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0
+        = runFlatTM t (Compile.bitCompareRawM sc1 sc2) cfg0 :=
+    fun t ht => joinTwoHalts_run_eq _ _ _ t cfg0
+      (fun k hk ck hck => hnv_m11 k (le_trans hk ht) ck hck)
+  -- the inner machine never visits `m10` within `[0,T]`.
+  have hnv_m10 : ∀ k, k ≤ T → ∀ ck,
+      runFlatTM k (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+          (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitCompareRawM_m10 sc1 sc2 := by
+    intro k hk ck hck
+    rw [hJ1 k hk] at hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | heq
+    · exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m10_is_halt sc1 sc2)
+        (hraw_traj k hlt ck hck)
+    · rw [heq, hraw_run] at hck; rw [← Option.some.inj hck]; exact hK_ne_m10
+  have hJ2 : ∀ t, t ≤ T →
+      runFlatTM t (Compile.bitCompareM sc1 sc2) cfg0
+        = runFlatTM t (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+            (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0 := by
+    intro t ht
+    rw [Compile.bitCompareM]
+    exact joinTwoHalts_run_eq _ _ _ t cfg0
+      (fun k hk ck hck => hnv_m10 k (le_trans hk ht) ck hck)
+  refine ⟨?_, ?_⟩
+  · rw [hJ2 T (le_refl _), hJ1 T (le_refl _)]; exact hraw_run
+  · intro k hk ck hck
+    rw [hJ2 k (le_of_lt hk), hJ1 k (le_of_lt hk)] at hck
+    have hnh := hraw_traj k hk ck hck
+    refine ⟨?_, ?_, ?_⟩
+    · rw [Compile.bitCompareM_exit_match]
+      exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m00_is_halt sc1 sc2) hnh
+    · rw [Compile.bitCompareM_exit_nomatch]
+      exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m01_is_halt sc1 sc2) hnh
+    · have hne10 := ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m10_is_halt sc1 sc2) hnh
+      have hne11 := ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m11_is_halt sc1 sc2) hnh
+      rw [Compile.bitCompareM, joinTwoHalts_halting_eq _ _ _ ck hne10,
+          joinTwoHalts_halting_eq _ _ _ ck hne11]
+      exact hnh
+
+/-- **Transport — raw reaches `m11`** (demoted by the inner join → bridges to the
+MATCH exit `m00` in one extra step). -/
+private theorem Compile.bitCompareM_transport_m11 (sc1 sc2 : Var) (tp : List Nat) (T : Nat)
+    (hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0, tp) = some v → v < 4)
+    (hraw_run : runFlatTM T (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] }
+      = some { state_idx := Compile.bitCompareRawM_m11 sc1 sc2, tapes := [([], 0, tp)] })
+    (hraw_traj : ∀ k, k < T → ∀ ck, runFlatTM k (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] } = some ck →
+        haltingStateReached (Compile.bitCompareRawM sc1 sc2) ck = false) :
+    runFlatTM (T + 1) (Compile.bitCompareM sc1 sc2) { state_idx := 0, tapes := [([], 0, tp)] }
+      = some { state_idx := Compile.bitCompareM_exit_match sc1 sc2, tapes := [([], 0, tp)] }
+    ∧ (∀ k, k < T + 1 → ∀ ck, runFlatTM k (Compile.bitCompareM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] } = some ck →
+        ck.state_idx ≠ Compile.bitCompareM_exit_match sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bitCompareM_exit_nomatch sc1 sc2 ∧
+        haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, tp)] } with hcfg0
+  obtain ⟨hd01, hd02, hd03, hd12, hd13, hd23⟩ := Compile.bitCompareRawM_distinct sc1 sc2
+  -- raw never `m11` strictly before `T`; inner run = raw run there.
+  have hnv_m11_strict : ∀ k, k < T → ∀ ck,
+      runFlatTM k (Compile.bitCompareRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitCompareRawM_m11 sc1 sc2 :=
+    fun k hk ck hck => ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m11_is_halt sc1 sc2)
+      (hraw_traj k hk ck hck)
+  have hJ1_eq_raw : ∀ k, k < T →
+      runFlatTM k (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+          (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0
+        = runFlatTM k (Compile.bitCompareRawM sc1 sc2) cfg0 :=
+    fun k hk => joinTwoHalts_run_eq _ _ _ k cfg0
+      (fun j hj cj hcj => hnv_m11_strict j (lt_of_le_of_lt hj hk) cj hcj)
+  -- inner run reaches `m11` at `T` (weak preservation), then bridges to `m00`.
+  have hJ1_T : runFlatTM T (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+        (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0
+      = some { state_idx := Compile.bitCompareRawM_m11 sc1 sc2, tapes := [([], 0, tp)] } := by
+    rw [joinTwoHalts_run_eq_weak _ _ _ T cfg0 hnv_m11_strict]; exact hraw_run
+  have hnh_J1_m11 : haltingStateReached (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+        (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2))
+        { state_idx := Compile.bitCompareRawM_m11 sc1 sc2, tapes := [([], 0, tp)] } = false := by
+    show ((Compile.bitCompareRawM sc1 sc2).halt.set (Compile.bitCompareRawM_m11 sc1 sc2) false).getD
+      (Compile.bitCompareRawM_m11 sc1 sc2) false = false
+    rw [List.getD_eq_getElem?_getD, List.getElem?_set, if_pos rfl]; split <;> rfl
+  have hstep_J1 : stepFlatTM (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+        (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2))
+        { state_idx := Compile.bitCompareRawM_m11 sc1 sc2, tapes := [([], 0, tp)] }
+      = some { state_idx := Compile.bitCompareRawM_m00 sc1 sc2, tapes := [([], 0, tp)] } :=
+    joinTwoHalts_step_to_h1 (Compile.bitCompareRawM sc1 sc2)
+      (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2) [] tp 0
+      (fun v hv => by rw [Compile.bitCompareRawM_sig]; exact hsym4 v hv)
+  have hJ1_T1 : runFlatTM (T + 1) (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+        (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0
+      = some { state_idx := Compile.bitCompareRawM_m00 sc1 sc2, tapes := [([], 0, tp)] } :=
+    runFlatTM_extend_by_step _ T cfg0 _ _ hJ1_T hnh_J1_m11 hstep_J1
+  -- the inner run never visits `m10` within `[0, T+1]`.
+  have hnv_J1_m10 : ∀ k, k ≤ T + 1 → ∀ ck,
+      runFlatTM k (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+          (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitCompareRawM_m10 sc1 sc2 := by
+    intro k hk ck hck
+    rcases (show k < T ∨ k = T ∨ k = T + 1 from by omega) with h | h | h
+    · rw [hJ1_eq_raw k h] at hck
+      exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m10_is_halt sc1 sc2)
+        (hraw_traj k h ck hck)
+    · rw [h, hJ1_T] at hck; rw [← Option.some.inj hck]; exact hd23.symm
+    · rw [h, hJ1_T1] at hck; rw [← Option.some.inj hck]; exact hd02
+  refine ⟨?_, ?_⟩
+  · rw [Compile.bitCompareM, joinTwoHalts_run_eq _ _ _ (T + 1) cfg0 hnv_J1_m10,
+        Compile.bitCompareM_exit_match]
+    exact hJ1_T1
+  · intro k hk ck hck
+    rcases (show k < T ∨ k = T from by omega) with h | h
+    · rw [Compile.bitCompareM,
+          joinTwoHalts_run_eq _ _ _ k cfg0 (fun j hj cj hcj => hnv_J1_m10 j (by omega) cj hcj),
+          hJ1_eq_raw k h] at hck
+      have hnh := hraw_traj k h ck hck
+      refine ⟨?_, ?_, ?_⟩
+      · rw [Compile.bitCompareM_exit_match]
+        exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m00_is_halt sc1 sc2) hnh
+      · rw [Compile.bitCompareM_exit_nomatch]
+        exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m01_is_halt sc1 sc2) hnh
+      · have hne10 := ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m10_is_halt sc1 sc2) hnh
+        have hne11 := ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m11_is_halt sc1 sc2) hnh
+        rw [Compile.bitCompareM, joinTwoHalts_halting_eq _ _ _ ck hne10,
+            joinTwoHalts_halting_eq _ _ _ ck hne11]
+        exact hnh
+    · rw [h, Compile.bitCompareM,
+          joinTwoHalts_run_eq _ _ _ T cfg0 (fun j hj cj hcj => hnv_J1_m10 j (by omega) cj hcj),
+          hJ1_T] at hck
+      have hck_eq : ck = { state_idx := Compile.bitCompareRawM_m11 sc1 sc2, tapes := [([], 0, tp)] } :=
+        (Option.some.inj hck).symm
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hck_eq, Compile.bitCompareM_exit_match]; exact hd03.symm
+      · rw [hck_eq, Compile.bitCompareM_exit_nomatch]; exact hd13.symm
+      · rw [hck_eq, Compile.bitCompareM, joinTwoHalts_halting_eq _ _ _ _ hd23.symm]
+        exact hnh_J1_m11
+
+/-- **Transport — raw reaches `m10`** (kept by the inner join, demoted by the
+outer join → bridges to the NOMATCH exit `m01` in one extra step). -/
+private theorem Compile.bitCompareM_transport_m10 (sc1 sc2 : Var) (tp : List Nat) (T : Nat)
+    (hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0, tp) = some v → v < 4)
+    (hraw_run : runFlatTM T (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] }
+      = some { state_idx := Compile.bitCompareRawM_m10 sc1 sc2, tapes := [([], 0, tp)] })
+    (hraw_traj : ∀ k, k < T → ∀ ck, runFlatTM k (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] } = some ck →
+        haltingStateReached (Compile.bitCompareRawM sc1 sc2) ck = false) :
+    runFlatTM (T + 1) (Compile.bitCompareM sc1 sc2) { state_idx := 0, tapes := [([], 0, tp)] }
+      = some { state_idx := Compile.bitCompareM_exit_nomatch sc1 sc2, tapes := [([], 0, tp)] }
+    ∧ (∀ k, k < T + 1 → ∀ ck, runFlatTM k (Compile.bitCompareM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, tp)] } = some ck →
+        ck.state_idx ≠ Compile.bitCompareM_exit_match sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bitCompareM_exit_nomatch sc1 sc2 ∧
+        haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, tp)] } with hcfg0
+  obtain ⟨hd01, hd02, hd03, hd12, hd13, hd23⟩ := Compile.bitCompareRawM_distinct sc1 sc2
+  -- raw never `m11` within `[0,T]` (`m10 ≠ m11` covers the endpoint); inner = raw.
+  have hnv_m11 : ∀ k, k ≤ T → ∀ ck,
+      runFlatTM k (Compile.bitCompareRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitCompareRawM_m11 sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | heq
+    · exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m11_is_halt sc1 sc2)
+        (hraw_traj k hlt ck hck)
+    · rw [heq, hraw_run] at hck; rw [← Option.some.inj hck]; exact hd23
+  have hJ1_eq_raw : ∀ k, k ≤ T →
+      runFlatTM k (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+          (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0
+        = runFlatTM k (Compile.bitCompareRawM sc1 sc2) cfg0 :=
+    fun k hk => joinTwoHalts_run_eq _ _ _ k cfg0
+      (fun j hj cj hcj => hnv_m11 j (le_trans hj hk) cj hcj)
+  have hJ1_T : runFlatTM T (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+        (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0
+      = some { state_idx := Compile.bitCompareRawM_m10 sc1 sc2, tapes := [([], 0, tp)] } := by
+    rw [hJ1_eq_raw T (le_refl _)]; exact hraw_run
+  -- inner never `m10` strictly before `T`.
+  have hnv_J1_m10_strict : ∀ k, k < T → ∀ ck,
+      runFlatTM k (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+          (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2)) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bitCompareRawM_m10 sc1 sc2 := by
+    intro k hk ck hck
+    rw [hJ1_eq_raw k (le_of_lt hk)] at hck
+    exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m10_is_halt sc1 sc2)
+      (hraw_traj k hk ck hck)
+  -- outer run reaches `m10` at `T` (weak), then bridges to `m01`.
+  have hJ2_T : runFlatTM T (Compile.bitCompareM sc1 sc2) cfg0
+      = some { state_idx := Compile.bitCompareRawM_m10 sc1 sc2, tapes := [([], 0, tp)] } := by
+    rw [Compile.bitCompareM, joinTwoHalts_run_eq_weak _ _ _ T cfg0 hnv_J1_m10_strict]
+    exact hJ1_T
+  have hnh_J2_m10 : haltingStateReached (Compile.bitCompareM sc1 sc2)
+      { state_idx := Compile.bitCompareRawM_m10 sc1 sc2, tapes := [([], 0, tp)] } = false := by
+    rw [Compile.bitCompareM]
+    show ((joinTwoHalts (Compile.bitCompareRawM sc1 sc2) (Compile.bitCompareRawM_m00 sc1 sc2)
+        (Compile.bitCompareRawM_m11 sc1 sc2)).halt.set (Compile.bitCompareRawM_m10 sc1 sc2) false).getD
+      (Compile.bitCompareRawM_m10 sc1 sc2) false = false
+    rw [List.getD_eq_getElem?_getD, List.getElem?_set, if_pos rfl]; split <;> rfl
+  have hstep_J2 : stepFlatTM (Compile.bitCompareM sc1 sc2)
+      { state_idx := Compile.bitCompareRawM_m10 sc1 sc2, tapes := [([], 0, tp)] }
+      = some { state_idx := Compile.bitCompareRawM_m01 sc1 sc2, tapes := [([], 0, tp)] } := by
+    rw [Compile.bitCompareM]
+    exact joinTwoHalts_step_to_h1 (joinTwoHalts (Compile.bitCompareRawM sc1 sc2)
+      (Compile.bitCompareRawM_m00 sc1 sc2) (Compile.bitCompareRawM_m11 sc1 sc2))
+      (Compile.bitCompareRawM_m01 sc1 sc2) (Compile.bitCompareRawM_m10 sc1 sc2) [] tp 0
+      (fun v hv => by rw [joinTwoHalts_sig, Compile.bitCompareRawM_sig]; exact hsym4 v hv)
+  refine ⟨?_, ?_⟩
+  · rw [Compile.bitCompareM_exit_nomatch]
+    exact runFlatTM_extend_by_step _ T cfg0 _ _ hJ2_T hnh_J2_m10 hstep_J2
+  · intro k hk ck hck
+    rcases (show k < T ∨ k = T from by omega) with h | h
+    · rw [Compile.bitCompareM,
+          joinTwoHalts_run_eq _ _ _ k cfg0
+            (fun j hj cj hcj => hnv_J1_m10_strict j (by omega) cj hcj)] at hck
+      rw [hJ1_eq_raw k (le_of_lt h)] at hck
+      have hnh := hraw_traj k h ck hck
+      refine ⟨?_, ?_, ?_⟩
+      · rw [Compile.bitCompareM_exit_match]
+        exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m00_is_halt sc1 sc2) hnh
+      · rw [Compile.bitCompareM_exit_nomatch]
+        exact ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m01_is_halt sc1 sc2) hnh
+      · have hne10 := ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m10_is_halt sc1 sc2) hnh
+        have hne11 := ClearGadget.ne_of_not_halting (Compile.bitCompareRawM_m11_is_halt sc1 sc2) hnh
+        rw [Compile.bitCompareM, joinTwoHalts_halting_eq _ _ _ ck hne10,
+            joinTwoHalts_halting_eq _ _ _ ck hne11]
+        exact hnh
+    · rw [h, hJ2_T] at hck
+      have hck_eq : ck = { state_idx := Compile.bitCompareRawM_m10 sc1 sc2, tapes := [([], 0, tp)] } :=
+        (Option.some.inj hck).symm
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hck_eq, Compile.bitCompareM_exit_match]; exact hd02.symm
+      · rw [hck_eq, Compile.bitCompareM_exit_nomatch]; exact fun heq => hd12 heq.symm
+      · rw [hck_eq]; exact hnh_J2_m10
+
+/-- The raw bit-comparison run: from head `0` with both `sc1`/`sc2` nonempty whose
+first bits are `a`/`b`, `bitCompareRawM` reaches `m{a}{b}` (here written
+`N1 + a·N2 + bit_b(sc2)`), tape unchanged, never halting before. -/
+private theorem Compile.bitCompareRawM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (a b : Nat) (cs1 cs2 : List Nat)
+    (hc1 : State.get s sc1 = a :: cs1) (hc2 : State.get s sc2 = b :: cs2)
+    (ha : a ≤ 1) (hb : b ≤ 1) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.bitCompareRawM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := (Compile.readBitRewindM sc1).states
+                   + a * (Compile.readBitRewindM sc2).states + Compile.readBitRewindRawM_bit sc2 b,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck, runFlatTM k (Compile.bitCompareRawM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached (Compile.bitCompareRawM sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  -- the `M₂`/`M₃` phase: read `sc2`'s bit `b`.
+  obtain ⟨t2, hM2run, hM2traj⟩ := Compile.readBitRewindM_run s sc2 res b cs2 hc2 hb hsc2 hbit hres
+  have hM2run' : runFlatTM t2 (Compile.readBitRewindM sc2)
+      { state_idx := (Compile.readBitRewindM sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.readBitRewindRawM_bit sc2 b,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.readBitRewindM_start]; exact hM2run
+  have hM2traj' : ∀ k, k < t2 → ∀ ck,
+      runFlatTM k (Compile.readBitRewindM sc2)
+          { state_idx := (Compile.readBitRewindM sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.readBitRewindM sc2) ck = false := by
+    rw [Compile.readBitRewindM_start]
+    exact fun k hk ck hck => (hM2traj k hk ck hck).2.2
+  have hhalt2 : haltingStateReached (Compile.readBitRewindM sc2)
+      { state_idx := Compile.readBitRewindRawM_bit sc2 b,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] } = true := by
+    have hh : (Compile.readBitRewindM sc2).halt[Compile.readBitRewindRawM_bit sc2 b]? = some true := by
+      rcases (show b = 0 ∨ b = 1 from by omega) with h | h <;> subst h
+      · exact Compile.readBitRewindM_exit_b0_is_halt sc2
+      · exact Compile.readBitRewindM_exit_b1_is_halt sc2
+    exact Compile.haltingStateReached_of_halt hh
+  have hsymMax : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < max (Compile.readBitRewindM sc1).sig
+            (max (Compile.readBitRewindM sc2).sig (Compile.readBitRewindM sc2).sig) := by
+    intro v hv
+    have hm : max (Compile.readBitRewindM sc1).sig
+        (max (Compile.readBitRewindM sc2).sig (Compile.readBitRewindM sc2).sig) = 4 := by
+      rw [Compile.readBitRewindM_sig, Compile.readBitRewindM_sig]; decide
+    rw [hm]; exact Compile.eqVerdict_sym4 s res hbit v hv
+  have hcfg_lt : (0 : Nat) < (Compile.readBitRewindM sc1).states := Compile.readBitRewindM_states_pos sc1
+  -- the `M₁` phase: read `sc1`'s bit `a`.
+  obtain ⟨t1, hM1run, hM1traj⟩ := Compile.readBitRewindM_run s sc1 res a cs1 hc1 ha hsc1 hbit hres
+  interval_cases a
+  · -- `a = 0`: positive branch (`M₁` reaches `exit_b0 = exit_pos`).
+    have hM1run' : runFlatTM t1 (Compile.readBitRewindM sc1) cfg0
+        = some { state_idx := Compile.readBitRewindM_exit_b0 sc1,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+      rw [Compile.readBitRewindM_exit_b0]; exact hM1run
+    have hpos := branchComposeFlatTM_run_pos (Compile.readBitRewindM_exit_b0_ne_b1 sc1)
+      (Compile.readBitRewindM_valid sc1) (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
+      cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax hM1run' hM1traj hM2run' hhalt2
+    have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+      (Compile.readBitRewindM_valid sc1) (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
+      cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax hM1run' hM1traj hM2traj'
+    refine ⟨t1 + 1 + t2, ?_, ?_⟩
+    · have h := hpos.1
+      rw [show Compile.readBitRewindRawM_bit sc2 b + (Compile.readBitRewindM sc1).states
+            = (Compile.readBitRewindM sc1).states + 0 * (Compile.readBitRewindM sc2).states
+              + Compile.readBitRewindRawM_bit sc2 b from by omega] at h
+      rw [Compile.bitCompareRawM, Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_exit_b1]
+      exact h
+    · intro k hk ck hck
+      rw [Compile.bitCompareRawM, Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_exit_b1] at hck ⊢
+      exact hpos_traj k hk ck hck
+  · -- `a = 1`: negative branch (`M₁` reaches `exit_b1 = exit_neg`).
+    have hM1run' : runFlatTM t1 (Compile.readBitRewindM sc1) cfg0
+        = some { state_idx := Compile.readBitRewindM_exit_b1 sc1,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+      rw [Compile.readBitRewindM_exit_b1]; exact hM1run
+    have hneg := branchComposeFlatTM_run_neg (Compile.readBitRewindM_exit_b0_ne_b1 sc1)
+      (Compile.readBitRewindM_valid sc1) (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
+      cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax hM1run' hM1traj hM2run' hhalt2
+    have hneg_traj := branchComposeFlatTM_no_early_halt_neg (Compile.readBitRewindM_exit_b0_ne_b1 sc1)
+      (Compile.readBitRewindM_valid sc1) (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_valid sc2)
+      (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
+      cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax hM1run' hM1traj hM2traj'
+    refine ⟨t1 + 1 + t2, ?_, ?_⟩
+    · have h := hneg.1
+      rw [show Compile.readBitRewindRawM_bit sc2 b
+            + ((Compile.readBitRewindM sc1).states + (Compile.readBitRewindM sc2).states)
+            = (Compile.readBitRewindM sc1).states + 1 * (Compile.readBitRewindM sc2).states
+              + Compile.readBitRewindRawM_bit sc2 b from by omega] at h
+      rw [Compile.bitCompareRawM, Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_exit_b1]
+      exact h
+    · intro k hk ck hck
+      rw [Compile.bitCompareRawM, Compile.readBitRewindM_exit_b0, Compile.readBitRewindM_exit_b1] at hck ⊢
+      exact hneg_traj k hk ck hck
+
+/-- **`bitCompareM` run + trajectory.** From head `0` with `sc1`/`sc2` nonempty
+whose first bits are `a`/`b`, `bitCompareM` reaches the MATCH exit iff `a = b`
+(NOMATCH otherwise), head restored to `0`, tape unchanged. -/
+theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (a b : Nat) (cs1 cs2 : List Nat)
+    (hc1 : State.get s sc1 = a :: cs1) (hc2 : State.get s sc2 = b :: cs2)
+    (ha : a ≤ 1) (hb : b ≤ 1) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.bitCompareM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := if a = b then Compile.bitCompareM_exit_match sc1 sc2
+                              else Compile.bitCompareM_exit_nomatch sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.bitCompareM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.bitCompareM_exit_match sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bitCompareM_exit_nomatch sc1 sc2 ∧
+        haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false) := by
+  obtain ⟨t, hraw_run, hraw_traj⟩ :=
+    Compile.bitCompareRawM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres
+  have hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < 4 := Compile.eqVerdict_sym4 s res hbit
+  interval_cases a <;> interval_cases b
+  · -- a=0,b=0 → MATCH (m00, kept)
+    have hE : (Compile.readBitRewindM sc1).states + 0 * (Compile.readBitRewindM sc2).states
+        + Compile.readBitRewindRawM_bit sc2 0 = Compile.bitCompareRawM_m00 sc1 sc2 := by
+      rw [Compile.bitCompareRawM_m00, Compile.readBitRewindM_exit_b0]; omega
+    rw [hE] at hraw_run
+    obtain ⟨hrun, htraj⟩ := Compile.bitCompareM_transport_kept sc1 sc2 _ t _
+      (Compile.bitCompareRawM_distinct sc1 sc2).2.1
+      (Compile.bitCompareRawM_distinct sc1 sc2).2.2.1 hraw_run hraw_traj
+    exact ⟨t, by simpa using hrun, htraj⟩
+  · -- a=0,b=1 → NOMATCH (m01, kept)
+    have hE : (Compile.readBitRewindM sc1).states + 0 * (Compile.readBitRewindM sc2).states
+        + Compile.readBitRewindRawM_bit sc2 1 = Compile.bitCompareRawM_m01 sc1 sc2 := by
+      rw [Compile.bitCompareRawM_m01, Compile.readBitRewindM_exit_b1]; omega
+    rw [hE] at hraw_run
+    obtain ⟨hrun, htraj⟩ := Compile.bitCompareM_transport_kept sc1 sc2 _ t _
+      (Compile.bitCompareRawM_distinct sc1 sc2).2.2.2.1
+      (Compile.bitCompareRawM_distinct sc1 sc2).2.2.2.2.1 hraw_run hraw_traj
+    exact ⟨t, by simpa [Compile.bitCompareM_exit_nomatch] using hrun, htraj⟩
+  · -- a=1,b=0 → NOMATCH (m10, demoted by outer)
+    have hE : (Compile.readBitRewindM sc1).states + 1 * (Compile.readBitRewindM sc2).states
+        + Compile.readBitRewindRawM_bit sc2 0 = Compile.bitCompareRawM_m10 sc1 sc2 := by
+      rw [Compile.bitCompareRawM_m10, Compile.readBitRewindM_exit_b0]; omega
+    rw [hE] at hraw_run
+    obtain ⟨hrun, htraj⟩ :=
+      Compile.bitCompareM_transport_m10 sc1 sc2 _ t hsym4 hraw_run hraw_traj
+    exact ⟨t + 1, by simpa using hrun, htraj⟩
+  · -- a=1,b=1 → MATCH (m11, demoted by inner)
+    have hE : (Compile.readBitRewindM sc1).states + 1 * (Compile.readBitRewindM sc2).states
+        + Compile.readBitRewindRawM_bit sc2 1 = Compile.bitCompareRawM_m11 sc1 sc2 := by
+      rw [Compile.bitCompareRawM_m11, Compile.readBitRewindM_exit_b1]; omega
+    rw [hE] at hraw_run
+    obtain ⟨hrun, htraj⟩ :=
+      Compile.bitCompareM_transport_m11 sc1 sc2 _ t hsym4 hraw_run hraw_traj
+    exact ⟨t + 1, by simpa using hrun, htraj⟩
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
