@@ -133,63 +133,50 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-14c, bottom-up) did — **`eqBit` build SETTLED: design (A) at `cost=1`, the budget question RESOLVED (no cost bump, no new copy lemma)**
+## ✅ What this session (2026-06-15, bottom-up) did — **two reusable `eqBit` leaves PROVEN: `opRewindToZero` + `navTestRewindM`; the recurring "merge stray halts into a clean 2-exit tester" obstacle pinned down**
 
-A **de-risking session** on `eqBit` (BOTTOM-UP task 1 — the ONLY op the live
-`sat_NP` decider still needs). The prior session left ONE open question — does
-design (A) (scratch-consume) fit the `cost=1` per-op budget or force an
-`Op.cost eqBit` bump? **It is now answered, with a measurement probe
-(`probes/CompareRegsBudgetProbe.lean`, `#eval`-validated): design (A) fits
-`cost=1` cleanly. Build it. No cost bump.** The two retained design facts:
+Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider
+still needs). The design is settled (prior sessions) and probe-validated; the
+remaining work is pure TM proof engineering. This session built **two foundational
+leaves**, both PROVEN & axiom-clean (`[propext, Classical.choice, Quot.sound]`),
+green in the full build:
 
-1. **★ The `eqBit` WRAPPER is the proven `nonEmptyRawM` template, verbatim.**
-   `nonEmptyRawM dst src = branchComposeFlatTM (navigateAndTestTM src)
-   (nonEmptyBranchBody dst 2) (nonEmptyBranchBody dst 1) …` then `joinTwoHalts`.
-   For `eqBit`, replace **only** the tester `navigateAndTestTM src` with a
-   comparison machine `compareRegsTM src1 src2` halting in **EQ / NEQ** with the
-   tape **restored**; the two branch bodies are *identical* (`nonEmptyBranchBody
-   dst 2` for EQ→`[1]`, `…dst 1` for NEQ→`[0]`). ⇒ the whole `opNonEmpty_run`
-   proof (joinTwoHalts merge, per-branch `clearAppendM_run`, W-invariant ①,
-   answer-`≤1`-cell residue, budget) **transfers verbatim**; the ONLY novel
-   obligation is `compareRegsTM` + its run lemma.
+1. **`Compile.opRewindToZero`** (Compile.lean ~14191) — a halt-unique
+   (`CompiledCmd`, single-exit) "rewind interior head to the leading sentinel".
+   `justRewindTM (= scanLeftUntilTM 4 3)` has a stray boundary halt (state `2`);
+   demoting it via `joinTwoHalts` leaves the found-state (`1`) as the unique exit.
+   `opRewindToZero_run`: from `(left, head, 3 :: rest)` with `rest[0..head)`
+   terminator-free, rewinds to head `0` in `head+1` steps; demoted boundary never
+   visited.
+2. **`Compile.navTestRewindM`** (Compile.lean ~14274) — a **clean 2-exit tester**:
+   "test register `sc`'s emptiness AND restore the head to `0`" =
+   `branchComposeFlatTM (navigateAndTestTM sc) opRewindToZero opRewindToZero …`.
+   Full structural family + `navTestRewindM_run_content`/`_run_delim` (each with
+   the both-exits no-early-halt trajectory). This is the reusable empty-test the
+   verdict (d2b) and consume-loop testMachine (d2a) both need.
 
-2. **★ `loopTM` has exactly ONE terminal halt** ⇒ the comparison loop is a clean
-   **2-outcome body** (ITERATE / DONE); EQ-vs-NEQ is recovered AFTER the loop.
-   Design (A): **consume-and-compare two scratch COPIES** — body ITERATEs while
-   *both heads exist AND are equal* (deleting both), DONEs on first mismatch *or*
-   either-empty; then **EQ ⟺ both scratch empty at DONE** (proven for all inputs:
-   `probes/EqBitProbe.lean#eqVerdict_correct`). Post-loop verdict = two proven
-   `navigateAndTestTM`s feeding the EQ/NEQ branch — no flag register.
+### ★ THE KEY STRUCTURAL FINDING (read before building d2a/d2b)
 
-### ★ THE BUDGET QUESTION — RESOLVED (the key finding; corrects the prior block)
+`composeFlatTM` zeroes the halts of its **first** argument only
+(`composedHalt = replicate M₁.states false ++ M₂.halt`); `branchComposeFlatTM`
+keeps **both** branch bodies' halts (`composedBranchHalt =
+replicate M₁.states false ++ M₂.halt ++ M₃.halt`). So a rewind used as the
+*trailing* action of a branch keeps a stray halt → `opRewindToZero` fixes that
+(it is the canonical halt-unique rewind leaf — use it everywhere a branch ends in
+a rewind). And **every nested-decision machine ends with MORE than 2 halts that
+must be merged with `joinTwoHalts`** to become a clean 2-exit tester. The
+existing `Compile.branchComposeFlatTM_halt_only` (Compile.lean ~820) assumes
+**both** branch bodies are `halt_unique`; nesting (an `M₃` that is itself a 2-exit
+machine like `navTestRewindM sc2`) violates that. **The immediate next concrete
+step is a small generalization** of `branchComposeFlatTM_halt_only` allowing `M₃`
+(or `M₂`) to have a 2-element halt set — its proof is a trivial edit of the
+current one (replace `h3 : i = e₃` with `h3 : i = e₃a ∨ i = e₃b`, derived from
+`composedBranchHalt`'s `++ M₃.halt`). With that, the verdict's 3 halts characterize
+and one `joinTwoHalts` merges the two NEQ halts.
 
-The prior session feared design (A)'s two copies cost `~9L²` each (busting the
-`cost=1` budget `(9L²+9L+30)·2 ≈ 18L²`) and "likely forces an `Op.cost eqBit`
-bump (ripples into EvalCnf's `timeBound` **constant** only)". **Both halves of
-that were wrong:**
-
-- **The copies are cheap.** A copy's REAL cost is `Θ(|src|·L)` (LINEAR per bit),
-  and the **tight** budget is ALREADY PROVEN — `Compile.copyLoop_run`:
-  `(|src|+1)·(5L+23)`. The prior worry came from reusing `Compile.opCopy_run`,
-  whose `(9L²+9L+30)·(|src|+2)` is a LOOSE re-wrap to the per-op CONTRACT shape,
-  NOT the copy's real cost. **Reuse `copyLoop_run` (NOT `opCopy_run`) for the two
-  copies** ⇒ `2·(|src|+1)(5L+23) ≤ ~5L²`, leaving ~13L² for the consume loop.
-  Probe (`twoTightCopiesFitHalfBudget`, `looseCopyBustsBudget`): tight fits with
-  ~62% headroom; loose busts — exactly the trap to avoid.
-- **`cost=1` is the FAITHFUL choice; a bump would be the hack.** `eqBit` is
-  genuinely a `Θ(L²)` op (like `clear`/`nonEmpty`/`head`, all `cost=1`). A
-  data-aware `Op.cost eqBit = |s1|+|s2|+1` would OVER-charge it to `Θ(L³)`, AND
-  the ripple is **NOT a constant**: `eqBit BLOCK_ACC LIT_VAR` (EvalCnfCmd.lean
-  ~157) compares `Θ(n)`-length unary var-indices nested in `forBnd` loops, so a
-  data-aware cost re-opens the finished, axiom-clean EvalCnf **quartic** cost
-  proof (likely a degree bump). **Keep `Op.cost eqBit = 1`; do not bump.**
-
-⇒ **Build design (A) at `cost=1`, reusing `copyLoop_run` for the copies.** The
-only genuinely new gadgets are the scratch grow/shrink lifecycle, the consume
-loop (body + run lemma), and the verdict — all from proven pieces. Decomposed
-plan in BOTTOM-UP task 1 below. (Design B, the in-place caterpillar, is now
-*superseded* — it was only attractive under the false cost-bump pressure; it
-adds a delicate mark/value-carry body for no benefit. Do not pursue it.)
+**Budget reminder (settled, do not revisit):** `Op.cost eqBit = 1`; the two
+scratch copies must use the TIGHT `Compile.copyLoop_run` `(|src|+1)(5L+23)`, NOT
+the loose `opCopy_run` (which busts `~18L²`). Probe `CompareRegsBudgetProbe.lean`.
 
 ---
 
@@ -369,6 +356,18 @@ adds a delicate mark/value-carry body for no benefit. Do not pursue it.)
   residue `++ [0,0]`). PROVEN & axiom-clean; the first proven piece of `compareRegsTM`
   (HANDOFF bottom-up task 1 d2a). Pattern: `composeFlatTM_run` threaded over two
   `opTailSelf_run_delete`s + the head-0 symbol bound (`encodeTape_get_zero`).
+- **★ `Compile.opRewindToZero` / `opRewindToZero_run` (2026-06-15)** — the
+  halt-unique single-exit "rewind interior head → leading sentinel" leaf
+  (`joinTwoHalts justRewindTM 1 2`, demoting the stray boundary halt). Run lemma
+  on `(left, head, 3 :: rest)` with `rest[0..head)` terminator-free (`<4`, `≠3`):
+  `head+1` steps, demoted boundary never visited. **Use this wherever a branch
+  body ends in a rewind** (`composeFlatTM` only zeroes its FIRST arg's halts).
+- **★ `Compile.navTestRewindM` / `navTestRewindM_run_content` / `_run_delim`
+  (2026-06-15)** — the clean 2-exit "test register emptiness, head restored to 0"
+  tester (`branchComposeFlatTM (navigateAndTestTM sc) opRewindToZero opRewindToZero
+  …`). Full structural family + both run lemmas (with both-exits no-early-halt
+  trajectory). Reuse for the `eqBit` verdict (d2b: nest `navTestRewindM sc1` /
+  `navTestRewindM sc2`) and the consume-loop testMachine's empty guards (d2a).
 
 ---
 
@@ -424,13 +423,13 @@ combinator CLOSED (2026-06-11); ✅ the `copy`/`tail` ops CLOSED (2026-06-12b/c)
 fold invariants + budget fix CLOSED (2026-06-13/b/c); ✅ **`compileForBnd_sound_physical_residue`
 FULLY PROVEN & axiom-clean (2026-06-14)** — the forBnd counted loop is closed.
 Everything left bottom-up is TM-level compiler work in Compile.lean: the **5 stub
-ops** in `compileOp_sound_physical_residue` (Compile.lean ~14114; raw `sorry`s at
-`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, ~14286–14303). Both the decider half
+ops** in `compileOp_sound_physical_residue` (Compile.lean ~14570; raw `sorry`s at
+`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, ~14742–14760). Both the decider half
 (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
 1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
    needs).** `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so discharging the
-   `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean ~14286) makes
+   `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean ~14742) makes
    the entire live decider chain `sat_NP → … → Compile_run_physical_residue`
    **sorry-free**. The **design is settled** (see this session's block above — read
    it first). `Op.cost eqBit = 1`; residue beyond `clear`'s `|dst₀|` is ZERO; output
@@ -443,39 +442,53 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~14114; raw `sorry`s a
    with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
    copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
    Build & prove bottom-up:
+   **★ RECOMMENDED ORDER NOW (2026-06-15):** the two empty-test leaves are PROVEN
+   (`opRewindToZero`, `navTestRewindM`). Do **(d2b-prep) → (d2b) → (d2a) → (d2c) →
+   (d1)**. The single immediate next step (small, unblocks both d2b and d2a):
+
+   - **(d2b-prep) generalize `branchComposeFlatTM_halt_only` to a 2-halt `M₃`.**
+     The current lemma (Compile.lean ~820) assumes both branch bodies `halt_unique`.
+     Nesting a 2-exit machine (`navTestRewindM sc2`) as `M₃` needs the variant
+     `h3 : ∀ i, M₃.halt[i]? = some true → i = e₃a ∨ i = e₃b` ⇒
+     `i ∈ {M₁.states+e₂, M₁.states+M₂.states+e₃a, M₁.states+M₂.states+e₃b}`. Its
+     proof is a 3-line edit of the current one (the `++ M₃.halt` branch of
+     `composedBranchHalt`). This is the keystone for **every** nested 2-exit tester
+     (verdict AND testMachine).
+   - **(d2b) verdict — now mostly assembled from proven leaves.** EQ ⟺ `sc1=[] ∧
+     sc2=[]`. `verdictRawM := branchComposeFlatTM (navTestRewindM sc1) haltTM
+     (navTestRewindM sc2) (exit_content sc1) (exit_delim sc1)`: sc1 nonempty → `haltTM`
+     (head already 0) = NEQ; sc1 empty → `navTestRewindM sc2` (content=NEQ,
+     delim=EQ). Run lemma = `branchComposeFlatTM_run_pos/neg` fed by the proven
+     `navTestRewindM_run_content/_delim` (twice). 3 halts {NEQ_a, NEQ_b, EQ}; merge
+     the two NEQ via one `joinTwoHalts` ⇒ clean 2-exit `compareVerdict`. (`haltTM` =
+     the trivial immediate-halt; see `padRegsTM`'s base.) Needs (d2b-prep).
    - **(d2a) consume-loop body `B` + run lemma (the core; hardest piece).**
-     **★ The machine is PROBE-VALIDATED end-to-end on tape** —
-     `probes/CompareBodyProbe.lean` assembles `B` from proven gadgets and `#eval`s
-     that driving it to fixpoint matches the abstract consume for equal lists, bit
-     mismatches, and length mismatches (11/11). Use that probe as the **exact
-     recipe** (nested `branchComposeFlatTM`/`composeFlatTM` over
-     `navigateAndTestTM sc1`/`sc2`, `bitReadTM`, `opTail`, `justRewindTM`).
-     **★ Recommended CLEAN 2-outcome refactor for the proof** (the probe's `B` has
-     several stray DONE halts; loopTM needs exactly two): factor as
-     `B := branchComposeFlatTM testMachine iterMachine doneMachine exitIter exitDone`
-     where **`testMachine`** is a predicate machine that reads/compares and exits
-     **with the head restored to 0** at one of TWO states (ITER-yes = both nonempty
-     & equal / DONE-no = otherwise), merging its internal paths via `joinTwoHalts`
-     (mirror `clearBodyRawTM`/`forBndBodyTM`). **★ `iterMachine` is DONE —
-     `Compile.iterTailsTM` / `Compile.iterTails_run` (Compile.lean ~14074) PROVEN &
-     axiom-clean (2026-06-14c):** `opTail sc1 sc1 ⨾ opTail sc2 sc2` entered at head 0
-     (clean `composeFlatTM` of the proven `opTailSelf_run_delete`), deleting both
-     heads, residue `++ [0,0]`. `doneMachine` = immediate halt (head already 0).
-     Then `loopTM B exitDone exitIter`; prove its run lemma
-     by the **`forBndLoop_run`/`copyLoop_run` pattern** (a `T : Nat → tape` family
-     indexed by remaining matched-bit-pairs; `loopTM_run` + per-iteration `tIter` +
-     no-early-halt trajectory). The loop's **decision contract** ("equal ⟺ both `sc`
-     empty at DONE") is PROVEN for all inputs in `probes/EqBitProbe.lean`
-     (`eqVerdict_correct`, axiom-clean) — the run lemma reproduces it on tape. The
-     bulk of the work is `testMachine`'s run lemma (the nested-branch composition,
-     ~`opNonEmpty_run`-scale but deeper) + its `joinTwoHalts` 2-halt merge.
-   - **(d2b) verdict.** Post-loop: two `navigateAndTestTM`s (sc1 empty? sc2 empty?)
-     feeding the EQ/NEQ branch via `joinTwoHalts` — no flag register.
+     **★ PROBE-VALIDATED end-to-end** — `probes/CompareBodyProbe.lean` (11/11).
+     CLEAN 2-outcome refactor: `B := branchComposeFlatTM testMachine iterMachine
+     doneMachine exitIter exitDone`. **`iterMachine` is DONE** (`Compile.iterTailsTM`
+     / `iterTails_run`, Compile.lean ~14094, axiom-clean): deletes both heads,
+     residue `++ [0,0]`. `doneMachine` = `haltTM` (head already 0). **`testMachine`**
+     reads/compares and exits head-0 at ITER-yes (both nonempty & heads equal) /
+     DONE-no: use `navTestRewindM sc1`/`sc2` for the empty guards (PROVEN), then
+     `bitReadTM` after a `navigateAndTestTM` (head on content) for the two bits, and
+     `joinTwoHalts` (+ the d2b-prep generalized `halt_only`) to merge to exactly 2
+     halts. Then `loopTM B exitDone exitIter`; run lemma by the
+     `forBndLoop_run`/`copyLoop_run` pattern (`T : Nat → tape` indexed by remaining
+     matched pairs). Decision contract ("equal ⟺ both `sc` empty at DONE") PROVEN in
+     `probes/EqBitProbe.lean#eqVerdict_correct`.
    - **(d2c) scratch lifecycle `growTwoEmpty`/`shrinkTwoEmpty`.** Place `sc1,sc2` at
-     the register-list END. `padRegsTM_run` is exact-tape (no residue), so build a
-     small residue-tolerant pair: insert/delete a `0` delimiter before the `3`
-     terminator via `insertCarryTM`/`deleteCarryTM` (the proven carry gadgets; see
-     `padRegsTM`'s `padBody` for the navigate-to-terminator pattern). Each is `O(L)`.
+     the register-list END. ⚠ `padRegsTM`/`padBody` (the proven pad gadget) does the
+     navigate-to-trailing-terminator + `insertCarryTM 0` forward part — that part is
+     residue-tolerant as-is (it stops at the trailing `3` BEFORE the residue). The
+     ONLY non-residue-tolerant part is `padBody`'s single-phase `rewindFromEndTM`;
+     replace it with `opRewindToZero` (the new leaf: from any interior head, rewinds
+     to `0`) — but note the head after `insertCarryTM` is ON the trailing terminator
+     (`3`), not interior, so `opRewindToZero` (scans left for the FIRST `3`) would
+     stop immediately; use a **two-phase rewind** (`rewindTwoPhaseTM` / the
+     `rewindBracket` builder, both proven) to get past the trailing `3` to the
+     sentinel. `shrink` = navigate-to-terminator + `deleteCarryTM` + two-phase rewind.
+     Each is `O(L)`. The round-trip (grow then shrink = identity on `s` mod residue)
+     is the one real proof obligation here.
    - **Budget (settled, `cost=1` ≈ 18L²):** the two copies use the **tight**
      `copyLoop_run` budget `(|src|+1)(5L+23)` ⇒ `≤ ~5L²` total; the consume loop is
      `Θ(L²)` (a few passes/bit on shrinking scratch) ⇒ `≤ ~8L²`; grow/shrink/verdict
@@ -493,7 +506,7 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~14114; raw `sorry`s a
    — structurally identical to `Compile.nonEmptyRawM`/`opNonEmpty` with
    `compareRegsTM` swapped in for `navigateAndTestTM`. The shape/valid/halt lemmas
    and `opEqBit_run` are a **mechanical port of `opNonEmpty`'s**; the `eqBit`
-   contract case is then a copy of the `nonEmpty` case at Compile.lean ~14287
+   contract case is then a copy of the `nonEmpty` case at Compile.lean ~14715
    (residue `res_in ++ replicate |dst₀| 0`, W-invariant via `State.size_set_add`).
 
 2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
