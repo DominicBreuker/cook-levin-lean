@@ -22524,3 +22524,73 @@ theorem Compile.growEmpty_run (s : State) (hbit : Compile.BitState s)
     (by rw [Compile.growInsertM_states]; omega) Compile.growInsertM_tapes Compile.growInsertM_sig hstate17 hraw_traj
   exact ⟨_, htrans.1, htrans.2⟩
 
+
+/-! ### `growTwoEmpty` — two empty registers at the register-list end (eqBit d2c)
+
+The `eqBit` (design A) `compareRegsTM` needs TWO scratch registers `sc1`/`sc2`.
+`growTwoEmptyM = growEmptyTM ⨾ growEmptyTM` grows `encodeTape s ++ res` into
+`encodeTape (s ++ [[],[]]) ++ res` (head 0), via two `growEmpty_run`s. -/
+
+def Compile.growTwoEmptyM : FlatTM :=
+  composeFlatTM Compile.growEmptyTM.M Compile.growEmptyTM.M Compile.growEmptyTM.exit
+
+theorem Compile.growTwoEmpty_run (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t, runFlatTM t Compile.growTwoEmptyM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states,
+                 tapes := [([], 0, Compile.encodeTape (s ++ [[], []]) ++ res)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k Compile.growTwoEmptyM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+            = some ck →
+          haltingStateReached Compile.growTwoEmptyM ck = false) := by
+  have hbit2 : Compile.BitState (s ++ [[]]) := by
+    have := Compile.BitState_append_replicate_nil s 1 hbit
+    rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+  obtain ⟨t1, hr1, ht1⟩ := Compile.growEmpty_run s hbit res hres
+  obtain ⟨t2, hr2, ht2⟩ := Compile.growEmpty_run (s ++ [[]]) hbit2 res hres
+  have hstart : Compile.growEmptyTM.M.start = 0 := by
+    show (Compile.rewindBracket _ _ _ _ _ _).M.start = 0
+    rw [Compile.rewindBracket_M]; rw [Compile.joinTwoHalts_start, composeFlatTM_start]; rfl
+  have hcfg_lt : (0 : Nat) < Compile.growEmptyTM.M.states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) Compile.growEmptyTM.exit_lt
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape (s ++ [[]]) ++ res) = some v
+      → v < max Compile.growEmptyTM.M.sig Compile.growEmptyTM.M.sig := by
+    intro v hv
+    rw [Nat.max_self, Compile.growEmptyTM.M_sig]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx; rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four _ hbit2 x hx
+    · exact (hres x hx).1
+  have hr2' : runFlatTM t2 Compile.growEmptyTM.M
+      { state_idx := Compile.growEmptyTM.M.start, tapes := [([], 0, Compile.encodeTape (s ++ [[]]) ++ res)] }
+        = some { state_idx := Compile.growEmptyTM.exit,
+                 tapes := [([], 0, Compile.encodeTape ((s ++ [[]]) ++ [[]]) ++ res)] } := by
+    rw [hstart]; exact hr2
+  have ht1' : ∀ k, k < t1 → ∀ ck,
+      runFlatTM k Compile.growEmptyTM.M { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ Compile.growEmptyTM.exit ∧ haltingStateReached Compile.growEmptyTM.M ck = false := ht1
+  have hcomp := composeFlatTM_run (M₁ := Compile.growEmptyTM.M) (M₂ := Compile.growEmptyTM.M) (exit := Compile.growEmptyTM.exit)
+    Compile.growEmptyTM.M_valid Compile.growEmptyTM.M_valid Compile.growEmptyTM.exit_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } hcfg_lt
+    [] 0 (Compile.encodeTape (s ++ [[]]) ++ res) hsym
+    hr1 ht1' hr2'
+    (by
+      show haltingStateReached Compile.growEmptyTM.M
+        { state_idx := Compile.growEmptyTM.exit, tapes := [([], 0, Compile.encodeTape ((s ++ [[]]) ++ [[]]) ++ res)] } = true
+      show Compile.growEmptyTM.M.halt.getD Compile.growEmptyTM.exit false = true
+      rw [List.getD_eq_getElem?_getD, Compile.growEmptyTM.exit_is_halt]; rfl)
+  obtain ⟨hrun, _⟩ := hcomp
+  have happend : (s ++ [[]]) ++ [[]] = s ++ [[], []] := by simp
+  rw [happend] at hrun
+  refine ⟨_, hrun, ?_⟩
+  -- no-early-halt
+  have htraj := composeFlatTM_no_early_halt (M₁ := Compile.growEmptyTM.M) (M₂ := Compile.growEmptyTM.M)
+    (exit := Compile.growEmptyTM.exit) (t₂ := t2)
+    Compile.growEmptyTM.M_valid Compile.growEmptyTM.M_valid Compile.growEmptyTM.exit_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } hcfg_lt
+    [] 0 (Compile.encodeTape (s ++ [[]]) ++ res) hsym
+    hr1 ht1'
+    (fun k hk ck hck => (ht2 k hk ck (by rw [hstart] at hck; exact hck)).2)
+  exact htraj
+
+
