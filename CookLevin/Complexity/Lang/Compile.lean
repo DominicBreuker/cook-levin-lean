@@ -17375,6 +17375,245 @@ theorem Compile.testMachine_run_done_neq (s : State) (sc1 sc2 : Var) (res : List
         exact fun h => Compile.testMachineRawM_done_ne_nomatch sc1 sc2 h.symm
       · rw [hck_eq]; exact hnh_nomatch
 
+/-! ### `compareBodyTM` — the `eqBit` consume-loop body (bottom-up, Risk C2 — d2a)
+
+`compareBodyTM sc1 sc2` is the `loopTM` body for the consume loop: dispatch on the
+clean 2-exit `testMachine` (ITER iff both scratch regs nonempty AND first bits
+match; DONE otherwise) and on ITER run `iterTailsTM` (delete both heads, residue
+`++ [0,0]`), on DONE run `idTM` (no-op, head already `0`):
+
+  compareBodyTM sc1 sc2 := branchComposeFlatTM (testMachine sc1 sc2)
+                             (iterTailsTM sc1 sc2) idTM
+                             (testMachine_exit_iter sc1 sc2)
+                             (testMachine_exit_done sc1 sc2)
+
+`exitLoop` (M₂ = `iterTailsTM` exit) is `loopTM`'s `exitLoop`; `exitDone` (M₃ =
+`idTM` exit `0`) is its `exitDone`. Mirrors `forBndBodyTM`/`testMachineRawM`; like
+those, a *bare* branch machine — `loopTM` tolerates `iterTailsTM`'s and `idTM`'s
+stray boundary halts on a terminator-free residue, so no `joinTwoHalts` wrap is
+needed. The two body contracts (`_iterate_run`/`_done_run`) feed `loopTM_run`. -/
+
+def Compile.compareBodyTM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.testMachine sc1 sc2) (Compile.iterTailsTM sc1 sc2) Compile.idTM
+    (Compile.testMachine_exit_iter sc1 sc2) (Compile.testMachine_exit_done sc1 sc2)
+
+/-- `exitLoop`: the ITER (`iterTailsTM`) exit, continue the consume loop. -/
+def Compile.compareBodyTM_exitLoop (sc1 sc2 : Var) : Nat :=
+  (Compile.testMachine sc1 sc2).states + Compile.iterTailsTM_exit sc1 sc2
+
+/-- `exitDone`: the DONE (`idTM`) exit, stop the consume loop. -/
+def Compile.compareBodyTM_exitDone (sc1 sc2 : Var) : Nat :=
+  (Compile.testMachine sc1 sc2).states + (Compile.iterTailsTM sc1 sc2).states
+
+theorem Compile.compareBodyTM_tapes (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).tapes = 1 := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_tapes]; exact Compile.testMachine_tapes sc1 sc2
+
+theorem Compile.compareBodyTM_start (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).start = 0 := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_start]; exact Compile.testMachine_start sc1 sc2
+
+theorem Compile.compareBodyTM_sig (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).sig = 4 := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_sig, Compile.testMachine_sig,
+      Compile.iterTailsTM_sig]; decide
+
+theorem Compile.compareBodyTM_states (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).states =
+      (Compile.testMachine sc1 sc2).states + (Compile.iterTailsTM sc1 sc2).states
+        + Compile.idTM.states := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_states]
+
+theorem Compile.compareBodyTM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.compareBodyTM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    (Compile.testMachine_tapes sc1 sc2) (Compile.iterTailsTM_tapes sc1 sc2) rfl
+
+theorem Compile.compareBodyTM_exitLoop_lt (sc1 sc2 : Var) :
+    Compile.compareBodyTM_exitLoop sc1 sc2 < (Compile.compareBodyTM sc1 sc2).states := by
+  rw [Compile.compareBodyTM_exitLoop, Compile.compareBodyTM_states]
+  have := Compile.iterTailsTM_exit_lt sc1 sc2
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.compareBodyTM_exitDone_lt (sc1 sc2 : Var) :
+    Compile.compareBodyTM_exitDone sc1 sc2 < (Compile.compareBodyTM sc1 sc2).states := by
+  rw [Compile.compareBodyTM_exitDone, Compile.compareBodyTM_states]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.compareBodyTM_exitDone_ne_exitLoop (sc1 sc2 : Var) :
+    Compile.compareBodyTM_exitDone sc1 sc2 ≠ Compile.compareBodyTM_exitLoop sc1 sc2 := by
+  rw [Compile.compareBodyTM_exitDone, Compile.compareBodyTM_exitLoop]
+  have := Compile.iterTailsTM_exit_lt sc1 sc2
+  omega
+
+theorem Compile.compareBodyTM_exitLoop_is_halt (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).halt[Compile.compareBodyTM_exitLoop sc1 sc2]? = some true := by
+  rw [Compile.compareBodyTM_exitLoop, Compile.compareBodyTM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.iterTailsTM_valid sc1 sc2) (Compile.iterTailsTM_exit_lt sc1 sc2)
+    (Compile.iterTailsTM_exit_is_halt sc1 sc2)
+
+theorem Compile.compareBodyTM_exitDone_is_halt (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).halt[Compile.compareBodyTM_exitDone sc1 sc2]? = some true := by
+  rw [Compile.compareBodyTM_exitDone, Compile.compareBodyTM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.iterTailsTM_valid sc1 sc2)
+    (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl)
+
+/-- Symbol bound for the seam tape `([], 0, encodeTape s ++ res)` against the body's
+three-way `max` of sigs (all `4`). -/
+private theorem Compile.compareBody_symMax (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) :
+    ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < max (Compile.testMachine sc1 sc2).sig
+            (max (Compile.iterTailsTM sc1 sc2).sig Compile.idTM.sig) := by
+  intro v hv
+  have hmax : max (Compile.testMachine sc1 sc2).sig
+      (max (Compile.iterTailsTM sc1 sc2).sig Compile.idTM.sig) = 4 := by
+    rw [Compile.testMachine_sig, Compile.iterTailsTM_sig]; decide
+  rw [hmax]; exact Compile.eqVerdict_sym4 s res hbit v hv
+
+/-- **Body ITERATE contract.** Both scratch regs nonempty with matching first bits:
+`testMachine` says ITER, then `iterTailsTM` deletes both heads in place (residue
+`++ [0,0]`). The body reaches `exitLoop` with the consumed state. Feeds
+`loopTM_run`'s iteration contract. -/
+theorem Compile.compareBody_iterate_run (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (a b : Nat) (cs1 cs2 : List Nat)
+    (hc1 : State.get s sc1 = a :: cs1) (hc2 : State.get s sc2 = b :: cs2)
+    (ha : a ≤ 1) (hb : b ≤ 1) (hab : a = b) (hne : sc1 ≠ sc2)
+    (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.compareBodyTM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.compareBodyTM_exitLoop sc1 sc2,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+                     ++ (res ++ [0, 0]))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareBodyTM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+        ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+  have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
+  have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
+  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+    Compile.testMachine_run_iter s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hab hsc1 hsc2 hbit hres
+  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+    Compile.iterTails_run s sc1 sc2 hne hsc1 hsc2 hbit hne1 hne2 res hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0def
+  have hinit2 : initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]
+      = { state_idx := (Compile.iterTailsTM sc1 sc2).start,
+          tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    simp only [initFlatConfig, List.map_cons, List.map_nil]
+  rw [hinit2] at hM2run hM2traj
+  have hsymMax := Compile.compareBody_symMax s sc1 sc2 res hbit
+  have hcfg_lt : cfg0.state_idx < (Compile.testMachine sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.testMachine_exit_iter_lt sc1 sc2)
+  have hhalt2 : haltingStateReached (Compile.iterTailsTM sc1 sc2)
+      { state_idx := Compile.iterTailsTM_exit sc1 sc2,
+        tapes := [([], 0,
+          Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+            ++ (res ++ [0, 0]))] } = true :=
+    Compile.haltingStateReached_of_halt (Compile.iterTailsTM_exit_is_halt sc1 sc2)
+  have hM2run' : runFlatTM t₂ (Compile.iterTailsTM sc1 sc2)
+      { state_idx := (Compile.iterTailsTM sc1 sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.iterTailsTM_exit sc1 sc2,
+               tapes := [([], 0,
+                 Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+                   ++ (res ++ [0, 0]))] } := hM2run
+  have hM2traj' : ∀ k, k < t₂ → ∀ ck,
+      runFlatTM k (Compile.iterTailsTM sc1 sc2)
+          { state_idx := (Compile.iterTailsTM sc1 sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.iterTailsTM sc1 sc2) ck = false := hM2traj
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.testMachine_exit_iter_ne_done sc1 sc2)
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2run' hhalt2
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2traj'
+  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  · have h := hpos.1
+    rw [Nat.add_comm (Compile.iterTailsTM_exit sc1 sc2) (Compile.testMachine sc1 sc2).states] at h
+    rw [Compile.compareBodyTM_exitLoop]
+    exact h
+  · intro k hk ck hck
+    have hnh := hpos_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitDone_is_halt sc1 sc2) hnh,
+           ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitLoop_is_halt sc1 sc2) hnh,
+           hnh⟩
+
+/-- **Body DONE contract.** Given `testMachine` reaches its DONE exit (on the
+abstract seam tape `([], 0, right)`), the negative `idTM` branch is a no-op: the
+body reaches `exitDone`, tape unchanged. Generic over `right` so the loop's
+terminal step can instantiate it with any of `testMachine`'s three DONE cases. -/
+theorem Compile.compareBody_done_run (sc1 sc2 : Var) (right : List Nat) {t₁ : Nat}
+    (hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right) = some v →
+      v < max (Compile.testMachine sc1 sc2).sig
+            (max (Compile.iterTailsTM sc1 sc2).sig Compile.idTM.sig))
+    (hM1run : runFlatTM t₁ (Compile.testMachine sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, right)] }
+      = some { state_idx := Compile.testMachine_exit_done sc1 sc2, tapes := [([], 0, right)] })
+    (hM1traj : ∀ k, k < t₁ → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, right)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) :
+    ∃ t,
+      runFlatTM t (Compile.compareBodyTM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, right)] }
+        = some { state_idx := Compile.compareBodyTM_exitDone sc1 sc2,
+                 tapes := [([], 0, right)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareBodyTM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, right)] } = some ck →
+        ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+        ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, right)] } with hcfg0def
+  have hcfg_lt : cfg0.state_idx < (Compile.testMachine sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.testMachine_exit_iter_lt sc1 sc2)
+  have hrun3 : runFlatTM 0 Compile.idTM
+      { state_idx := Compile.idTM.start, tapes := [([], 0, right)] }
+      = some { state_idx := 0, tapes := [([], 0, right)] } := rfl
+  have hhalt3 : haltingStateReached Compile.idTM
+      { state_idx := 0, tapes := [([], 0, right)] } = true :=
+    Compile.haltingStateReached_of_halt (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl)
+  have hneg := branchComposeFlatTM_run_neg
+    (Compile.testMachine_exit_iter_ne_done sc1 sc2)
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 right hsym hM1run hM1traj hrun3 hhalt3
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.testMachine_exit_iter_ne_done sc1 sc2)
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 right hsym hM1run hM1traj
+    (fun k hk ck hck => absurd hk (Nat.not_lt_zero k))
+  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  · have h := hneg.1
+    rw [Compile.compareBodyTM_exitDone]
+    simpa using h
+  · intro k hk ck hck
+    have hnh := hneg_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitDone_is_halt sc1 sc2) hnh,
+           ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitLoop_is_halt sc1 sc2) hnh,
+           hnh⟩
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
