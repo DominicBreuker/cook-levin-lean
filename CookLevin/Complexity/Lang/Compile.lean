@@ -14184,6 +14184,52 @@ head (both in place), entered at head `0`. -/
 def Compile.iterTailsTM (sc1 sc2 : Var) : FlatTM :=
   composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit
 
+/-- The composed (unique) exit of `iterTailsTM`: `opTail sc2`'s exit, shifted past
+`opTail sc1`. Matches the exit reached by `iterTails_run`. -/
+def Compile.iterTailsTM_exit (sc1 sc2 : Var) : Nat :=
+  (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states
+
+/-! #### `iterTailsTM` structural lemmas (the loop-body ITERATE leaf) -/
+
+theorem Compile.iterTailsTM_tapes (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).tapes = 1 := by
+  rw [Compile.iterTailsTM, composeFlatTM_tapes]; exact (Compile.opTail sc1 sc1).M_tapes
+
+theorem Compile.iterTailsTM_sig (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).sig = 4 := by
+  rw [Compile.iterTailsTM, composeFlatTM_sig, (Compile.opTail sc1 sc1).M_sig,
+      (Compile.opTail sc2 sc2).M_sig]; rfl
+
+theorem Compile.iterTailsTM_start (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).start = (Compile.opTail sc1 sc1).M.start := by
+  rw [Compile.iterTailsTM, composeFlatTM_start]
+
+theorem Compile.iterTailsTM_states (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).states
+      = (Compile.opTail sc1 sc1).M.states + (Compile.opTail sc2 sc2).M.states := by
+  rw [Compile.iterTailsTM, composeFlatTM_states]
+
+theorem Compile.iterTailsTM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.iterTailsTM sc1 sc2) :=
+  composeFlatTM_valid (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M
+    (Compile.opTail sc1 sc1).exit (Compile.opTail sc1 sc1).M_valid (Compile.opTail sc2 sc2).M_valid
+    (Compile.opTail sc1 sc1).exit_lt (Compile.opTail sc1 sc1).M_tapes (Compile.opTail sc2 sc2).M_tapes
+
+theorem Compile.iterTailsTM_exit_lt (sc1 sc2 : Var) :
+    Compile.iterTailsTM_exit sc1 sc2 < (Compile.iterTailsTM sc1 sc2).states := by
+  rw [Compile.iterTailsTM_exit, Compile.iterTailsTM_states]
+  have := (Compile.opTail sc2 sc2).exit_lt
+  omega
+
+theorem Compile.iterTailsTM_exit_is_halt (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).halt[Compile.iterTailsTM_exit sc1 sc2]? = some true := by
+  rw [Compile.iterTailsTM_exit, Compile.iterTailsTM]
+  show (List.replicate (Compile.opTail sc1 sc1).M.states false ++ (Compile.opTail sc2 sc2).M.halt)[
+      (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states]? = some true
+  rw [List.getElem?_append_right (by rw [List.length_replicate]; exact Nat.le_add_left _ _),
+      List.length_replicate, Nat.add_sub_cancel]
+  exact (Compile.opTail sc2 sc2).exit_is_halt
+
 /-- **ITERATE leaf run.** From `encodeTape s ++ res` at head `0` with `sc1 ≠ sc2`
 both nonempty, `iterTailsTM` deletes both heads in place, landing at the composed
 exit with `encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)`, the
@@ -14198,7 +14244,11 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         = some { state_idx := (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states,
                  tapes := [([], 0,
                    Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
-                     ++ (res ++ [0, 0]))] } := by
+                     ++ (res ++ [0, 0]))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.iterTailsTM sc1 sc2)
+              (initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]) = some ck →
+          haltingStateReached (Compile.iterTailsTM sc1 sc2) ck = false) := by
   obtain ⟨t1, hrun1, htraj1, _⟩ := Compile.opTailSelf_run_delete s sc1 h1 hbit hne1 res hres
   set s' := s.set sc1 (s.get sc1).tail with hs'
   have hlen' : s'.length = s.length := Compile.length_set s sc1 _ h1
@@ -14227,7 +14277,7 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
   have hinit2 : initFlatConfig (Compile.opTail sc2 sc2).M [Compile.encodeTape s' ++ (res ++ [0])]
       = { state_idx := (Compile.opTail sc2 sc2).M.start, tapes := [([], 0, right1)] } := by
     simp only [initFlatConfig, hr1, List.map_cons, List.map_nil]
-  rw [hinit2] at hrun2
+  rw [hinit2] at hrun2 htraj2
   have hLpos : 0 < (Compile.encodeTape s').length := by rw [Compile.encodeTape]; simp
   have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right1) = some v →
       v < max (Compile.opTail sc1 sc1).M.sig (Compile.opTail sc2 sc2).M.sig := by
@@ -14251,20 +14301,27 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
     { state_idx := (Compile.opTail sc1 sc1).M.start,
       tapes := [([], 0, Compile.encodeTape s ++ res)] }
     hvalid1.1 [] 0 right1 hsym hrun1 htraj1 hrun2 hhalt2
-  refine ⟨t1 + 1 + t2, ?_⟩
+  have hcomp_traj := composeFlatTM_no_early_halt hvalid1 hvalid2 (Compile.opTail sc1 sc1).exit_lt
+    { state_idx := (Compile.opTail sc1 sc1).M.start,
+      tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hvalid1.1 [] 0 right1 hsym hrun1 htraj1
+    (fun k hk ck hck => (htraj2 k hk ck hck).2)
   have hcfg0 : initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]
       = { state_idx := (Compile.opTail sc1 sc1).M.start,
           tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
     simp only [initFlatConfig, Compile.iterTailsTM, composeFlatTM_start, List.map_cons, List.map_nil]
-  rw [hcfg0]
-  have htape : Compile.encodeTape (s'.set sc2 (s'.get sc2).tail) ++ ((res ++ [0]) ++ [0])
-      = Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
-          ++ (res ++ [0, 0]) := by
-    rw [hget', hs']; simp [List.append_assoc]
-  show runFlatTM (t1 + 1 + t2)
-      (composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit)
-      _ = _
-  rw [hcomp.1, ← htape]
+  refine ⟨t1 + 1 + t2, ?_, ?_⟩
+  · rw [hcfg0]
+    have htape : Compile.encodeTape (s'.set sc2 (s'.get sc2).tail) ++ ((res ++ [0]) ++ [0])
+        = Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+            ++ (res ++ [0, 0]) := by
+      rw [hget', hs']; simp [List.append_assoc]
+    show runFlatTM (t1 + 1 + t2)
+        (composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit)
+        _ = _
+    rw [hcomp.1, ← htape]
+  · rw [hcfg0]
+    exact hcomp_traj
 
 /-! ### `opRewindToZero` — a halt-unique "rewind to the leading sentinel" leaf
 (bottom-up, Risk C2)
@@ -17317,6 +17374,561 @@ theorem Compile.testMachine_run_done_neq (s : State) (sc1 sc2 : Var) (res : List
       · rw [hck_eq, Compile.testMachine_exit_done]
         exact fun h => Compile.testMachineRawM_done_ne_nomatch sc1 sc2 h.symm
       · rw [hck_eq]; exact hnh_nomatch
+
+/-! ### `compareBodyTM` — the `eqBit` consume-loop body (bottom-up, Risk C2 — d2a)
+
+`compareBodyTM sc1 sc2` is the `loopTM` body for the consume loop: dispatch on the
+clean 2-exit `testMachine` (ITER iff both scratch regs nonempty AND first bits
+match; DONE otherwise) and on ITER run `iterTailsTM` (delete both heads, residue
+`++ [0,0]`), on DONE run `idTM` (no-op, head already `0`):
+
+  compareBodyTM sc1 sc2 := branchComposeFlatTM (testMachine sc1 sc2)
+                             (iterTailsTM sc1 sc2) idTM
+                             (testMachine_exit_iter sc1 sc2)
+                             (testMachine_exit_done sc1 sc2)
+
+`exitLoop` (M₂ = `iterTailsTM` exit) is `loopTM`'s `exitLoop`; `exitDone` (M₃ =
+`idTM` exit `0`) is its `exitDone`. Mirrors `forBndBodyTM`/`testMachineRawM`; like
+those, a *bare* branch machine — `loopTM` tolerates `iterTailsTM`'s and `idTM`'s
+stray boundary halts on a terminator-free residue, so no `joinTwoHalts` wrap is
+needed. The two body contracts (`_iterate_run`/`_done_run`) feed `loopTM_run`. -/
+
+def Compile.compareBodyTM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.testMachine sc1 sc2) (Compile.iterTailsTM sc1 sc2) Compile.idTM
+    (Compile.testMachine_exit_iter sc1 sc2) (Compile.testMachine_exit_done sc1 sc2)
+
+/-- `exitLoop`: the ITER (`iterTailsTM`) exit, continue the consume loop. -/
+def Compile.compareBodyTM_exitLoop (sc1 sc2 : Var) : Nat :=
+  (Compile.testMachine sc1 sc2).states + Compile.iterTailsTM_exit sc1 sc2
+
+/-- `exitDone`: the DONE (`idTM`) exit, stop the consume loop. -/
+def Compile.compareBodyTM_exitDone (sc1 sc2 : Var) : Nat :=
+  (Compile.testMachine sc1 sc2).states + (Compile.iterTailsTM sc1 sc2).states
+
+theorem Compile.compareBodyTM_tapes (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).tapes = 1 := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_tapes]; exact Compile.testMachine_tapes sc1 sc2
+
+theorem Compile.compareBodyTM_start (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).start = 0 := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_start]; exact Compile.testMachine_start sc1 sc2
+
+theorem Compile.compareBodyTM_sig (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).sig = 4 := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_sig, Compile.testMachine_sig,
+      Compile.iterTailsTM_sig]; decide
+
+theorem Compile.compareBodyTM_states (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).states =
+      (Compile.testMachine sc1 sc2).states + (Compile.iterTailsTM sc1 sc2).states
+        + Compile.idTM.states := by
+  rw [Compile.compareBodyTM, branchComposeFlatTM_states]
+
+theorem Compile.compareBodyTM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.compareBodyTM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    (Compile.testMachine_tapes sc1 sc2) (Compile.iterTailsTM_tapes sc1 sc2) rfl
+
+theorem Compile.compareBodyTM_exitLoop_lt (sc1 sc2 : Var) :
+    Compile.compareBodyTM_exitLoop sc1 sc2 < (Compile.compareBodyTM sc1 sc2).states := by
+  rw [Compile.compareBodyTM_exitLoop, Compile.compareBodyTM_states]
+  have := Compile.iterTailsTM_exit_lt sc1 sc2
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.compareBodyTM_exitDone_lt (sc1 sc2 : Var) :
+    Compile.compareBodyTM_exitDone sc1 sc2 < (Compile.compareBodyTM sc1 sc2).states := by
+  rw [Compile.compareBodyTM_exitDone, Compile.compareBodyTM_states]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.compareBodyTM_exitDone_ne_exitLoop (sc1 sc2 : Var) :
+    Compile.compareBodyTM_exitDone sc1 sc2 ≠ Compile.compareBodyTM_exitLoop sc1 sc2 := by
+  rw [Compile.compareBodyTM_exitDone, Compile.compareBodyTM_exitLoop]
+  have := Compile.iterTailsTM_exit_lt sc1 sc2
+  omega
+
+theorem Compile.compareBodyTM_exitLoop_is_halt (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).halt[Compile.compareBodyTM_exitLoop sc1 sc2]? = some true := by
+  rw [Compile.compareBodyTM_exitLoop, Compile.compareBodyTM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.iterTailsTM_valid sc1 sc2) (Compile.iterTailsTM_exit_lt sc1 sc2)
+    (Compile.iterTailsTM_exit_is_halt sc1 sc2)
+
+theorem Compile.compareBodyTM_exitDone_is_halt (sc1 sc2 : Var) :
+    (Compile.compareBodyTM sc1 sc2).halt[Compile.compareBodyTM_exitDone sc1 sc2]? = some true := by
+  rw [Compile.compareBodyTM_exitDone, Compile.compareBodyTM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.iterTailsTM_valid sc1 sc2)
+    (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl)
+
+/-- Symbol bound for the seam tape `([], 0, encodeTape s ++ res)` against the body's
+three-way `max` of sigs (all `4`). -/
+private theorem Compile.compareBody_symMax (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) :
+    ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < max (Compile.testMachine sc1 sc2).sig
+            (max (Compile.iterTailsTM sc1 sc2).sig Compile.idTM.sig) := by
+  intro v hv
+  have hmax : max (Compile.testMachine sc1 sc2).sig
+      (max (Compile.iterTailsTM sc1 sc2).sig Compile.idTM.sig) = 4 := by
+    rw [Compile.testMachine_sig, Compile.iterTailsTM_sig]; decide
+  rw [hmax]; exact Compile.eqVerdict_sym4 s res hbit v hv
+
+/-- **Body ITERATE contract.** Both scratch regs nonempty with matching first bits:
+`testMachine` says ITER, then `iterTailsTM` deletes both heads in place (residue
+`++ [0,0]`). The body reaches `exitLoop` with the consumed state. Feeds
+`loopTM_run`'s iteration contract. -/
+theorem Compile.compareBody_iterate_run (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (a b : Nat) (cs1 cs2 : List Nat)
+    (hc1 : State.get s sc1 = a :: cs1) (hc2 : State.get s sc2 = b :: cs2)
+    (ha : a ≤ 1) (hb : b ≤ 1) (hab : a = b) (hne : sc1 ≠ sc2)
+    (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.compareBodyTM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.compareBodyTM_exitLoop sc1 sc2,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+                     ++ (res ++ [0, 0]))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareBodyTM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+        ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+  have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
+  have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
+  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+    Compile.testMachine_run_iter s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hab hsc1 hsc2 hbit hres
+  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+    Compile.iterTails_run s sc1 sc2 hne hsc1 hsc2 hbit hne1 hne2 res hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0def
+  have hinit2 : initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]
+      = { state_idx := (Compile.iterTailsTM sc1 sc2).start,
+          tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    simp only [initFlatConfig, List.map_cons, List.map_nil]
+  rw [hinit2] at hM2run hM2traj
+  have hsymMax := Compile.compareBody_symMax s sc1 sc2 res hbit
+  have hcfg_lt : cfg0.state_idx < (Compile.testMachine sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.testMachine_exit_iter_lt sc1 sc2)
+  have hhalt2 : haltingStateReached (Compile.iterTailsTM sc1 sc2)
+      { state_idx := Compile.iterTailsTM_exit sc1 sc2,
+        tapes := [([], 0,
+          Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+            ++ (res ++ [0, 0]))] } = true :=
+    Compile.haltingStateReached_of_halt (Compile.iterTailsTM_exit_is_halt sc1 sc2)
+  have hM2run' : runFlatTM t₂ (Compile.iterTailsTM sc1 sc2)
+      { state_idx := (Compile.iterTailsTM sc1 sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.iterTailsTM_exit sc1 sc2,
+               tapes := [([], 0,
+                 Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+                   ++ (res ++ [0, 0]))] } := hM2run
+  have hM2traj' : ∀ k, k < t₂ → ∀ ck,
+      runFlatTM k (Compile.iterTailsTM sc1 sc2)
+          { state_idx := (Compile.iterTailsTM sc1 sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.iterTailsTM sc1 sc2) ck = false := hM2traj
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.testMachine_exit_iter_ne_done sc1 sc2)
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2run' hhalt2
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2traj'
+  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  · have h := hpos.1
+    rw [Nat.add_comm (Compile.iterTailsTM_exit sc1 sc2) (Compile.testMachine sc1 sc2).states] at h
+    rw [Compile.compareBodyTM_exitLoop]
+    exact h
+  · intro k hk ck hck
+    have hnh := hpos_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitDone_is_halt sc1 sc2) hnh,
+           ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitLoop_is_halt sc1 sc2) hnh,
+           hnh⟩
+
+/-- **Body DONE contract.** Given `testMachine` reaches its DONE exit (on the
+abstract seam tape `([], 0, right)`), the negative `idTM` branch is a no-op: the
+body reaches `exitDone`, tape unchanged. Generic over `right` so the loop's
+terminal step can instantiate it with any of `testMachine`'s three DONE cases. -/
+theorem Compile.compareBody_done_run (sc1 sc2 : Var) (right : List Nat) {t₁ : Nat}
+    (hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right) = some v →
+      v < max (Compile.testMachine sc1 sc2).sig
+            (max (Compile.iterTailsTM sc1 sc2).sig Compile.idTM.sig))
+    (hM1run : runFlatTM t₁ (Compile.testMachine sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, right)] }
+      = some { state_idx := Compile.testMachine_exit_done sc1 sc2, tapes := [([], 0, right)] })
+    (hM1traj : ∀ k, k < t₁ → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, right)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) :
+    ∃ t,
+      runFlatTM t (Compile.compareBodyTM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, right)] }
+        = some { state_idx := Compile.compareBodyTM_exitDone sc1 sc2,
+                 tapes := [([], 0, right)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareBodyTM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, right)] } = some ck →
+        ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+        ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, right)] } with hcfg0def
+  have hcfg_lt : cfg0.state_idx < (Compile.testMachine sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.testMachine_exit_iter_lt sc1 sc2)
+  have hrun3 : runFlatTM 0 Compile.idTM
+      { state_idx := Compile.idTM.start, tapes := [([], 0, right)] }
+      = some { state_idx := 0, tapes := [([], 0, right)] } := rfl
+  have hhalt3 : haltingStateReached Compile.idTM
+      { state_idx := 0, tapes := [([], 0, right)] } = true :=
+    Compile.haltingStateReached_of_halt (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl)
+  have hneg := branchComposeFlatTM_run_neg
+    (Compile.testMachine_exit_iter_ne_done sc1 sc2)
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 right hsym hM1run hM1traj hrun3 hhalt3
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.testMachine_exit_iter_ne_done sc1 sc2)
+    (Compile.testMachine_valid sc1 sc2) (Compile.iterTailsTM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 right hsym hM1run hM1traj
+    (fun k hk ck hck => absurd hk (Nat.not_lt_zero k))
+  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  · have h := hneg.1
+    rw [Compile.compareBodyTM_exitDone]
+    simpa using h
+  · intro k hk ck hck
+    have hnh := hneg_traj k hk ck hck
+    exact ⟨ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitDone_is_halt sc1 sc2) hnh,
+           ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitLoop_is_halt sc1 sc2) hnh,
+           hnh⟩
+
+/-! ### The consume-loop abstract semantics + State iteration (bottom-up, Risk C2)
+
+`matchLen l1 l2` is the number of matched leading pairs the consume loop peels
+(the iteration count). `consumeStep` is `iterTailsTM`'s state transform (delete
+both scratch heads). The lemmas below give the per-iteration matching facts
+(`matchLen_step`), the terminal stopping disjunction (`matchLen_stop`), and the
+closed-form register contents along the iteration (`consumeIter_spec`). -/
+
+/-- Number of matched leading pairs peeled by the consume loop. -/
+def Compile.matchLen : List Nat → List Nat → Nat
+  | [], _ => 0
+  | _ :: _, [] => 0
+  | a :: r1, b :: r2 => if a = b then Compile.matchLen r1 r2 + 1 else 0
+
+/-- One consume-loop iteration on the abstract `State`: delete the heads of both
+scratch registers. Matches `iterTailsTM`'s state transform. -/
+def Compile.consumeStep (sc1 sc2 : Var) (s : State) : State :=
+  (s.set sc1 (State.get s sc1).tail).set sc2 (State.get s sc2).tail
+
+/-- For `j` below the matched-prefix length, both operands' `j`-suffixes are
+nonempty and share the same first element. -/
+theorem Compile.matchLen_step : ∀ (l1 l2 : List Nat) (j : Nat), j < Compile.matchLen l1 l2 →
+    ∃ a cs1 cs2, l1.drop j = a :: cs1 ∧ l2.drop j = a :: cs2
+  | [], l2, j, hj => by simp [Compile.matchLen] at hj
+  | _ :: _, [], j, hj => by simp [Compile.matchLen] at hj
+  | a :: r1, b :: r2, j, hj => by
+      rw [Compile.matchLen] at hj
+      by_cases hab : a = b
+      · rw [if_pos hab] at hj
+        cases j with
+        | zero =>
+            refine ⟨a, r1, r2, ?_, ?_⟩
+            · simp
+            · simp [hab]
+        | succ j =>
+            have hj' : j < Compile.matchLen r1 r2 := by omega
+            obtain ⟨c, cs1, cs2, h1, h2⟩ := Compile.matchLen_step r1 r2 j hj'
+            exact ⟨c, cs1, cs2, by simpa using h1, by simpa using h2⟩
+      · rw [if_neg hab] at hj; omega
+
+/-- At the matched-prefix length the consume loop stops: one operand's suffix is
+empty, or both are nonempty with differing first elements. -/
+theorem Compile.matchLen_stop : ∀ (l1 l2 : List Nat),
+    l1.drop (Compile.matchLen l1 l2) = [] ∨ l2.drop (Compile.matchLen l1 l2) = [] ∨
+    ∃ a cs1 b cs2, l1.drop (Compile.matchLen l1 l2) = a :: cs1 ∧
+      l2.drop (Compile.matchLen l1 l2) = b :: cs2 ∧ a ≠ b
+  | [], l2 => Or.inl rfl
+  | _ :: _, [] => Or.inr (Or.inl rfl)
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      by_cases hab : a = b
+      · rw [if_pos hab]
+        rcases Compile.matchLen_stop r1 r2 with h | h | ⟨c, cs1, d, cs2, h1, h2, hcd⟩
+        · exact Or.inl (by simpa using h)
+        · exact Or.inr (Or.inl (by simpa using h))
+        · exact Or.inr (Or.inr ⟨c, cs1, d, cs2, by simpa using h1, by simpa using h2, hcd⟩)
+      · rw [if_neg hab]
+        exact Or.inr (Or.inr ⟨a, r1, b, r2, by simp, by simp, hab⟩)
+
+/-- **The consume-loop decision.** The two operands are equal iff BOTH their
+`matchLen`-dropped suffixes are empty — exactly what the post-loop "both empty?"
+verdict (`eqVerdictM`) tests. This is the TM-level analogue of
+`EqBitProbe.eqVerdict_correct`; the verdict assembly (d2) consumes it. -/
+theorem Compile.matchLen_drop_empty_iff : ∀ (l1 l2 : List Nat),
+    (l1.drop (Compile.matchLen l1 l2) = [] ∧ l2.drop (Compile.matchLen l1 l2) = []) ↔ l1 = l2
+  | [], [] => by simp [Compile.matchLen]
+  | [], _ :: _ => by simp [Compile.matchLen]
+  | _ :: _, [] => by simp [Compile.matchLen]
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      by_cases hab : a = b
+      · subst hab
+        rw [if_pos rfl, List.drop_succ_cons, List.drop_succ_cons,
+            Compile.matchLen_drop_empty_iff r1 r2]
+        simp
+      · rw [if_neg hab]
+        simp only [List.drop_zero]
+        constructor
+        · rintro ⟨h, _⟩; exact absurd h (List.cons_ne_nil _ _)
+        · intro h; injection h with ha _; exact absurd ha hab
+
+/-- Closed-form register contents along the consume iteration: after `k` steps the
+two scratch registers hold the `k`-dropped originals; length and `BitState` are
+preserved. -/
+theorem Compile.consumeIter_spec (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
+    (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length) (hbit : Compile.BitState s) (k : Nat) :
+    State.get ((Compile.consumeStep sc1 sc2)^[k] s) sc1 = (State.get s sc1).drop k ∧
+    State.get ((Compile.consumeStep sc1 sc2)^[k] s) sc2 = (State.get s sc2).drop k ∧
+    ((Compile.consumeStep sc1 sc2)^[k] s).length = s.length ∧
+    Compile.BitState ((Compile.consumeStep sc1 sc2)^[k] s) := by
+  induction k with
+  | zero =>
+      simp only [Function.iterate_zero, id_eq, List.drop_zero]
+      exact ⟨trivial, trivial, trivial, hbit⟩
+  | succ k ih =>
+      obtain ⟨ih1, ih2, ihlen, ihbit⟩ := ih
+      set sk := (Compile.consumeStep sc1 sc2)^[k] s with hsk
+      have hsc1' : sc1 < sk.length := by rw [ihlen]; exact hsc1
+      have hsc2' : sc2 < sk.length := by rw [ihlen]; exact hsc2
+      have hsc2X : sc2 < (sk.set sc1 (State.get sk sc1).tail).length := by
+        rw [Compile.length_set _ _ _ hsc1']; exact hsc2'
+      rw [Function.iterate_succ_apply']
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · rw [Compile.consumeStep, State.get_set_ne _ _ _ _ hne, State.get_set_eq, ih1, List.tail_drop]
+      · rw [Compile.consumeStep, State.get_set_eq, ih2, List.tail_drop]
+      · rw [Compile.consumeStep, Compile.length_set _ _ _ hsc2X, Compile.length_set _ _ _ hsc1', ihlen]
+      · have hbitX : Compile.BitState (sk.set sc1 (State.get sk sc1).tail) :=
+          Compile.BitState_set_tail sk sc1 ihbit hsc1'
+        have hgetX : State.get (sk.set sc1 (State.get sk sc1).tail) sc2 = State.get sk sc2 :=
+          State.get_set_ne sk sc1 _ sc2 (Ne.symm hne)
+        rw [Compile.consumeStep, ← hgetX]
+        exact Compile.BitState_set_tail (sk.set sc1 (State.get sk sc1).tail) sc2 hbitX hsc2X
+
+/-! ### `compareLoopTM` — the `eqBit` consume loop (bottom-up, Risk C2 — d2a)
+
+The counted loop over `compareBodyTM`: ITER (delete both heads) while both scratch
+regs are nonempty with matching first bits, DONE otherwise. After
+`matchLen (s.get sc1) (s.get sc2)` iterations the two registers hold the operands'
+suffixes (`consumeLoop`'s residue); the post-loop "both empty?" verdict
+(`eqVerdictM`, proven) then decides equality. -/
+
+def Compile.compareLoopTM (sc1 sc2 : Var) : FlatTM :=
+  loopTM (Compile.compareBodyTM sc1 sc2)
+    (Compile.compareBodyTM_exitDone sc1 sc2) (Compile.compareBodyTM_exitLoop sc1 sc2)
+
+/-- **The consume loop runs to completion.** From `encodeTape s ++ res` at head `0`
+(with `sc1 ≠ sc2` both bit-registers), the loop consumes the matched common prefix
+of the two scratch registers and halts (at `compareBodyTM.states`) with the two
+registers holding their `matchLen`-dropped suffixes (residue extended by the
+per-iteration `[0,0]` fillers). -/
+theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
+    (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.compareLoopTM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := (Compile.compareBodyTM sc1 sc2).states,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[Compile.matchLen (State.get s sc1) (State.get s sc2)] s)
+                     ++ (res ++ List.replicate (2 * Compile.matchLen (State.get s sc1) (State.get s sc2)) 0))] } := by
+  set n := Compile.matchLen (State.get s sc1) (State.get s sc2) with hn
+  set T : Nat → (List Nat × Nat × List Nat) := fun m =>
+    ([], 0, Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+      ++ (res ++ List.replicate (2 * (n - m)) 0)) with hTdef
+  -- The tape head always reads the leading sentinel `3 < 4 = sig`.
+  have hT_sym : ∀ m v, currentTapeSymbol (T m) = some v → v < (Compile.compareBodyTM sc1 sc2).sig := by
+    intro m v hv
+    rw [Compile.compareBodyTM_sig]
+    simp only [hTdef] at hv
+    have hLpos : 0 < (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)).length := by
+      rw [Compile.encodeTape]; simp
+    have hlt : (0 : Nat) < (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+        ++ (res ++ List.replicate (2 * (n - m)) 0)).length := by rw [List.length_append]; omega
+    rw [currentTapeSymbol_in_range hlt] at hv
+    have h0 : (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+        ++ (res ++ List.replicate (2 * (n - m)) 0))[0]? = some 3 := by
+      rw [List.getElem?_append_left hLpos, Compile.encodeTape]; rfl
+    have hhead : (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+        ++ (res ++ List.replicate (2 * (n - m)) 0)).get ⟨0, hlt⟩ = 3 := by
+      rw [List.get_eq_getElem]
+      exact Option.some.inj ((List.getElem?_eq_getElem hlt).symm.trans h0)
+    have hv3 : v = 3 := by rw [← Option.some.inj hv]; exact hhead
+    omega
+  -- Per-iteration body contract (existence form, for `choose`).
+  have hiter_ex : ∀ j, ∃ tj, j < n →
+      runFlatTM tj (Compile.compareBodyTM sc1 sc2)
+          { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T (j + 1)] }
+        = some { state_idx := Compile.compareBodyTM_exitLoop sc1 sc2, tapes := [T j] }
+      ∧ (∀ k, k < tj → ∀ ck,
+          runFlatTM k (Compile.compareBodyTM sc1 sc2)
+              { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T (j + 1)] } = some ck →
+          ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+          ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+          haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+    intro j
+    by_cases hj : j < n
+    · obtain ⟨hspec1, hspec2, hspeclen, hspecbit⟩ :=
+        Compile.consumeIter_spec s sc1 sc2 hne hsc1 hsc2 hbit (n - (j + 1))
+      have hidx : n - (j + 1) < n := by omega
+      obtain ⟨a, cs1, cs2, hd1, hd2⟩ :=
+        Compile.matchLen_step (State.get s sc1) (State.get s sc2) (n - (j + 1)) hidx
+      have hg1 : State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1 = a :: cs1 := by
+        rw [hspec1]; exact hd1
+      have hg2 : State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc2 = a :: cs2 := by
+        rw [hspec2]; exact hd2
+      have hsc1' : sc1 < ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).length := by
+        rw [hspeclen]; exact hsc1
+      have hsc2' : sc2 < ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).length := by
+        rw [hspeclen]; exact hsc2
+      have hmem1 : State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1
+          ∈ (Compile.consumeStep sc1 sc2)^[n - (j + 1)] s := by
+        rw [State.get, List.getElem?_eq_getElem hsc1']; exact List.getElem_mem hsc1'
+      have ha : a ≤ 1 := hspecbit _ hmem1 a (by rw [hg1]; exact List.mem_cons_self)
+      have hres' : Compile.ValidResidue (res ++ List.replicate (2 * (n - (j + 1))) 0) :=
+        Compile.ValidResidue_append_replicate_zero res _ hres
+      obtain ⟨tj, hrun, htraj⟩ :=
+        Compile.compareBody_iterate_run ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1 sc2
+          (res ++ List.replicate (2 * (n - (j + 1))) 0) a a cs1 cs2 hg1 hg2 ha ha rfl hne
+          hsc1' hsc2' hspecbit hres'
+      have hstate_eq : (Compile.consumeStep sc1 sc2)^[n - j] s
+          = (((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).set sc1
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1).tail).set sc2
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc2).tail := by
+        rw [show n - j = (n - (j + 1)) + 1 from by omega, Function.iterate_succ_apply']
+        rfl
+      have hres_eq : res ++ List.replicate (2 * (n - j)) 0
+          = (res ++ List.replicate (2 * (n - (j + 1))) 0) ++ [0, 0] := by
+        rw [List.append_assoc, show ([0, 0] : List Nat) = List.replicate 2 0 from rfl,
+            ← List.replicate_add, show 2 * (n - (j + 1)) + 2 = 2 * (n - j) from by omega]
+      have hgoal_start : T (j + 1) = ([], 0,
+          Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s)
+            ++ (res ++ List.replicate (2 * (n - (j + 1))) 0)) := by simp only [hTdef]
+      have hgoal_end : T j = ([], 0,
+          Compile.encodeTape ((((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).set sc1
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1).tail).set sc2
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc2).tail)
+            ++ ((res ++ List.replicate (2 * (n - (j + 1))) 0) ++ [0, 0])) := by
+        simp only [hTdef]; rw [hstate_eq, hres_eq]
+      refine ⟨tj, fun _ => ⟨?_, ?_⟩⟩
+      · rw [Compile.compareBodyTM_start, hgoal_start, hgoal_end]; exact hrun
+      · intro k hk ck hck
+        rw [Compile.compareBodyTM_start, hgoal_start] at hck
+        exact htraj k hk ck hck
+    · exact ⟨0, fun h => absurd h hj⟩
+  choose tIter hIter using hiter_ex
+  -- Terminal DONE body contract at `T 0` (dispatch the three stopping cases).
+  have hdone : ∃ tD,
+      runFlatTM tD (Compile.compareBodyTM sc1 sc2)
+          { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T 0] }
+        = some { state_idx := Compile.compareBodyTM_exitDone sc1 sc2, tapes := [T 0] }
+      ∧ (∀ k, k < tD → ∀ ck,
+          runFlatTM k (Compile.compareBodyTM sc1 sc2)
+              { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T 0] } = some ck →
+          ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+          ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+          haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+    obtain ⟨hsp1, hsp2, hsplen, hspbit⟩ := Compile.consumeIter_spec s sc1 sc2 hne hsc1 hsc2 hbit n
+    have hsc1n : sc1 < ((Compile.consumeStep sc1 sc2)^[n] s).length := by rw [hsplen]; exact hsc1
+    have hsc2n : sc2 < ((Compile.consumeStep sc1 sc2)^[n] s).length := by rw [hsplen]; exact hsc2
+    have hresn : Compile.ValidResidue (res ++ List.replicate (2 * n) 0) :=
+      Compile.ValidResidue_append_replicate_zero res _ hres
+    have hT0 : T 0 = ([], 0,
+        Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+          ++ (res ++ List.replicate (2 * n) 0)) := by simp only [hTdef, Nat.sub_zero]
+    have hsym0 := Compile.compareBody_symMax ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+      (res ++ List.replicate (2 * n) 0) hspbit
+    obtain ⟨tT, htmrun, htmtraj⟩ : ∃ tT,
+        runFlatTM tT (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0,
+              Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                ++ (res ++ List.replicate (2 * n) 0))] }
+          = some { state_idx := Compile.testMachine_exit_done sc1 sc2,
+                   tapes := [([], 0,
+                     Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                       ++ (res ++ List.replicate (2 * n) 0))] }
+        ∧ (∀ k, k < tT → ∀ ck,
+            runFlatTM k (Compile.testMachine sc1 sc2)
+                { state_idx := 0, tapes := [([], 0,
+                  Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                    ++ (res ++ List.replicate (2 * n) 0))] } = some ck →
+            ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+            ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+            haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+      rcases Compile.matchLen_stop (State.get s sc1) (State.get s sc2) with
+        hstop | hstop | ⟨a, cs1, b, cs2, hda, hdb, hab⟩
+      · have hempty1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = [] := by
+          rw [hsp1, hn]; exact hstop
+        exact Compile.testMachine_run_done_left ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+          (res ++ List.replicate (2 * n) 0) hspbit hsc1n hempty1 hresn
+      · by_cases he1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = []
+        · exact Compile.testMachine_run_done_left ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+            (res ++ List.replicate (2 * n) 0) hspbit hsc1n he1 hresn
+        · have hempty2 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc2 = [] := by
+            rw [hsp2, hn]; exact hstop
+          exact Compile.testMachine_run_done_right ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+            (res ++ List.replicate (2 * n) 0) hspbit hsc1n hsc2n he1 hempty2 hresn
+      · have hgc1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = a :: cs1 := by
+          rw [hsp1, hn]; exact hda
+        have hgc2 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc2 = b :: cs2 := by
+          rw [hsp2, hn]; exact hdb
+        have hamem : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1
+            ∈ (Compile.consumeStep sc1 sc2)^[n] s := by
+          rw [State.get, List.getElem?_eq_getElem hsc1n]; exact List.getElem_mem hsc1n
+        have hbmem : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc2
+            ∈ (Compile.consumeStep sc1 sc2)^[n] s := by
+          rw [State.get, List.getElem?_eq_getElem hsc2n]; exact List.getElem_mem hsc2n
+        have ha : a ≤ 1 := hspbit _ hamem a (by rw [hgc1]; exact List.mem_cons_self)
+        have hb : b ≤ 1 := hspbit _ hbmem b (by rw [hgc2]; exact List.mem_cons_self)
+        exact Compile.testMachine_run_done_neq ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+          (res ++ List.replicate (2 * n) 0) a b cs1 cs2 hgc1 hgc2 ha hb hab hsc1n hsc2n hspbit hresn
+    obtain ⟨tD, hdrun, hdtraj⟩ := Compile.compareBody_done_run sc1 sc2
+      (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s) ++ (res ++ List.replicate (2 * n) 0))
+      hsym0 htmrun htmtraj
+    refine ⟨tD, ?_, ?_⟩
+    · rw [Compile.compareBodyTM_start, hT0]; exact hdrun
+    · intro k hk ck hck
+      rw [Compile.compareBodyTM_start, hT0] at hck
+      exact hdtraj k hk ck hck
+  -- Assemble via `loopTM_run`.
+  obtain ⟨tDone, hdone_run, hdone_traj⟩ := hdone
+  have hmain := loopTM_run (Compile.compareBodyTM sc1 sc2) (Compile.compareBodyTM_exitDone sc1 sc2)
+    (Compile.compareBodyTM_exitLoop sc1 sc2)
+    (Compile.compareBodyTM_valid sc1 sc2) (Compile.compareBodyTM_exitDone_lt sc1 sc2)
+    (Compile.compareBodyTM_exitLoop_lt sc1 sc2) (Compile.compareBodyTM_exitDone_ne_exitLoop sc1 sc2)
+    T hT_sym tIter tDone ⟨hdone_run, hdone_traj⟩ n hIter
+  refine ⟨loopBudget tIter tDone n, ?_⟩
+  have hTn : T n = ([], 0, Compile.encodeTape s ++ res) := by
+    simp only [hTdef, Nat.sub_self, Function.iterate_zero, id_eq, Nat.mul_zero, List.replicate_zero,
+      List.append_nil]
+  have hT0' : T 0 = ([], 0,
+      Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s) ++ (res ++ List.replicate (2 * n) 0)) := by
+    simp only [hTdef, Nat.sub_zero]
+  rw [Compile.compareBodyTM_start, hTn, hT0'] at hmain
+  rw [Compile.compareLoopTM]
+  exact hmain
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
