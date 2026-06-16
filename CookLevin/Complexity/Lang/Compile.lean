@@ -16294,6 +16294,1030 @@ theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
       Compile.bitCompareM_transport_m11 sc1 sc2 _ t hsym4 hraw_run hraw_traj
     exact ⟨t + 1, by simpa using hrun, htraj⟩
 
+/-! ### `bothNonemptyM` — the consume-loop guard: "are BOTH `sc1` and `sc2`
+nonempty?" (bottom-up, Risk C2 — d2a)
+
+The consume-loop body ITERATEs only while both scratch registers are nonempty
+*and* their heads match. `bothNonemptyM sc1 sc2` is the clean 2-exit guard for the
+first conjunct, head restored to `0`:
+
+  bothNonemptyRawM sc1 sc2 := branchComposeFlatTM (navTestRewindM sc1)
+                                (navTestRewindM sc2) idTM
+                                (navTestRewindM_exit_content sc1)
+                                (navTestRewindM_exit_delim sc1)
+
+`sc1` nonempty → `navTestRewindM sc2` (content = YES, delim = NO_b); `sc1` empty →
+`idTM` (immediate, head already `0`) = NO_a. Three halts {YES, NO_b, NO_a}.
+`bothNonemptyM` merges the two NO halts with one `joinTwoHalts`, leaving the clean
+2-exit `{YES, NO}`. Structural mirror of `eqVerdictM` (idTM swapped to the negative
+branch), `halt_only` via the new `_M2two`. Consumed by `testMachine`. -/
+
+/-- Raw guard machine (3 halts). -/
+def Compile.bothNonemptyRawM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.navTestRewindM sc1) (Compile.navTestRewindM sc2) Compile.idTM
+    (Compile.navTestRewindM_exit_content sc1) (Compile.navTestRewindM_exit_delim sc1)
+
+/-- YES exit (both nonempty): positive `navTestRewindM sc2` content. -/
+def Compile.bothNonemptyRawM_yes (sc1 sc2 : Var) : Nat :=
+  (Compile.navTestRewindM sc1).states + Compile.navTestRewindM_exit_content sc2
+/-- NO_b exit (`sc1` nonempty, `sc2` empty): positive `navTestRewindM sc2` delim. -/
+def Compile.bothNonemptyRawM_noB (sc1 sc2 : Var) : Nat :=
+  (Compile.navTestRewindM sc1).states + Compile.navTestRewindM_exit_delim sc2
+/-- NO_a exit (`sc1` empty): negative `idTM` exit `0`. -/
+def Compile.bothNonemptyRawM_noA (sc1 sc2 : Var) : Nat :=
+  (Compile.navTestRewindM sc1).states + (Compile.navTestRewindM sc2).states
+
+theorem Compile.bothNonemptyRawM_start (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).start = 0 := by
+  rw [Compile.bothNonemptyRawM, branchComposeFlatTM_start]; exact Compile.navTestRewindM_start sc1
+
+theorem Compile.bothNonemptyRawM_tapes (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).tapes = 1 := by
+  rw [Compile.bothNonemptyRawM, branchComposeFlatTM_tapes]; exact Compile.navTestRewindM_tapes sc1
+
+theorem Compile.bothNonemptyRawM_sig (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).sig = 4 := by
+  rw [Compile.bothNonemptyRawM, branchComposeFlatTM_sig, Compile.navTestRewindM_sig,
+      Compile.navTestRewindM_sig]
+  decide
+
+theorem Compile.bothNonemptyRawM_states (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).states =
+      (Compile.navTestRewindM sc1).states + (Compile.navTestRewindM sc2).states
+        + Compile.idTM.states := by
+  rw [Compile.bothNonemptyRawM, branchComposeFlatTM_states]
+
+theorem Compile.bothNonemptyRawM_yes_lt (sc1 sc2 : Var) :
+    Compile.bothNonemptyRawM_yes sc1 sc2 < (Compile.bothNonemptyRawM sc1 sc2).states := by
+  rw [Compile.bothNonemptyRawM_yes, Compile.bothNonemptyRawM_states]
+  have := Compile.navTestRewindM_exit_content_lt sc2
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.bothNonemptyRawM_noB_lt (sc1 sc2 : Var) :
+    Compile.bothNonemptyRawM_noB sc1 sc2 < (Compile.bothNonemptyRawM sc1 sc2).states := by
+  rw [Compile.bothNonemptyRawM_noB, Compile.bothNonemptyRawM_states]
+  have := Compile.navTestRewindM_exit_delim_lt sc2
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.bothNonemptyRawM_noA_lt (sc1 sc2 : Var) :
+    Compile.bothNonemptyRawM_noA sc1 sc2 < (Compile.bothNonemptyRawM sc1 sc2).states := by
+  rw [Compile.bothNonemptyRawM_noA, Compile.bothNonemptyRawM_states]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.bothNonemptyRawM_yes_ne_noB (sc1 sc2 : Var) :
+    Compile.bothNonemptyRawM_yes sc1 sc2 ≠ Compile.bothNonemptyRawM_noB sc1 sc2 := by
+  rw [Compile.bothNonemptyRawM_yes, Compile.bothNonemptyRawM_noB]
+  have := Compile.navTestRewindM_exit_content_ne_delim sc2
+  omega
+
+theorem Compile.bothNonemptyRawM_yes_ne_noA (sc1 sc2 : Var) :
+    Compile.bothNonemptyRawM_yes sc1 sc2 ≠ Compile.bothNonemptyRawM_noA sc1 sc2 := by
+  rw [Compile.bothNonemptyRawM_yes, Compile.bothNonemptyRawM_noA]
+  have := Compile.navTestRewindM_exit_content_lt sc2
+  omega
+
+theorem Compile.bothNonemptyRawM_noA_ne_noB (sc1 sc2 : Var) :
+    Compile.bothNonemptyRawM_noA sc1 sc2 ≠ Compile.bothNonemptyRawM_noB sc1 sc2 := by
+  rw [Compile.bothNonemptyRawM_noA, Compile.bothNonemptyRawM_noB]
+  have := Compile.navTestRewindM_exit_delim_lt sc2
+  omega
+
+theorem Compile.bothNonemptyRawM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.bothNonemptyRawM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    (Compile.navTestRewindM_tapes sc1) (Compile.navTestRewindM_tapes sc2) rfl
+
+theorem Compile.bothNonemptyRawM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.bothNonemptyRawM sc1 sc2).halt[i]? = some true →
+      i = Compile.bothNonemptyRawM_yes sc1 sc2 ∨ i = Compile.bothNonemptyRawM_noB sc1 sc2
+        ∨ i = Compile.bothNonemptyRawM_noA sc1 sc2 := by
+  rw [Compile.bothNonemptyRawM_yes, Compile.bothNonemptyRawM_noB, Compile.bothNonemptyRawM_noA,
+      Compile.bothNonemptyRawM]
+  exact Compile.branchComposeFlatTM_halt_only_M2two _ _ _ _ _ _ _ _
+    (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_halt_only sc2) Compile.idTM_halt_unique
+
+theorem Compile.bothNonemptyRawM_yes_is_halt (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).halt[Compile.bothNonemptyRawM_yes sc1 sc2]? = some true := by
+  rw [Compile.bothNonemptyRawM_yes, Compile.bothNonemptyRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.navTestRewindM_valid sc2) (Compile.navTestRewindM_exit_content_lt sc2)
+    (Compile.navTestRewindM_exit_content_is_halt sc2)
+
+theorem Compile.bothNonemptyRawM_noB_is_halt (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).halt[Compile.bothNonemptyRawM_noB sc1 sc2]? = some true := by
+  rw [Compile.bothNonemptyRawM_noB, Compile.bothNonemptyRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.navTestRewindM_valid sc2) (Compile.navTestRewindM_exit_delim_lt sc2)
+    (Compile.navTestRewindM_exit_delim_is_halt sc2)
+
+theorem Compile.bothNonemptyRawM_noA_is_halt (sc1 sc2 : Var) :
+    (Compile.bothNonemptyRawM sc1 sc2).halt[Compile.bothNonemptyRawM_noA sc1 sc2]? = some true := by
+  rw [Compile.bothNonemptyRawM_noA, Compile.bothNonemptyRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.navTestRewindM_valid sc2) (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl)
+
+/-- **The clean 2-exit guard** = merge the two NO halts of the raw machine. -/
+def Compile.bothNonemptyM (sc1 sc2 : Var) : FlatTM :=
+  joinTwoHalts (Compile.bothNonemptyRawM sc1 sc2)
+    (Compile.bothNonemptyRawM_noA sc1 sc2) (Compile.bothNonemptyRawM_noB sc1 sc2)
+
+/-- YES exit (both nonempty). -/
+def Compile.bothNonemptyM_exit_yes (sc1 sc2 : Var) : Nat := Compile.bothNonemptyRawM_yes sc1 sc2
+/-- NO exit (at least one empty). -/
+def Compile.bothNonemptyM_exit_no (sc1 sc2 : Var) : Nat := Compile.bothNonemptyRawM_noA sc1 sc2
+
+theorem Compile.bothNonemptyM_start (sc1 sc2 : Var) : (Compile.bothNonemptyM sc1 sc2).start = 0 := by
+  rw [Compile.bothNonemptyM, joinTwoHalts_start]; exact Compile.bothNonemptyRawM_start sc1 sc2
+
+theorem Compile.bothNonemptyM_tapes (sc1 sc2 : Var) : (Compile.bothNonemptyM sc1 sc2).tapes = 1 := by
+  rw [Compile.bothNonemptyM, joinTwoHalts_tapes]; exact Compile.bothNonemptyRawM_tapes sc1 sc2
+
+theorem Compile.bothNonemptyM_sig (sc1 sc2 : Var) : (Compile.bothNonemptyM sc1 sc2).sig = 4 := by
+  rw [Compile.bothNonemptyM, joinTwoHalts_sig]; exact Compile.bothNonemptyRawM_sig sc1 sc2
+
+theorem Compile.bothNonemptyM_states (sc1 sc2 : Var) :
+    (Compile.bothNonemptyM sc1 sc2).states = (Compile.bothNonemptyRawM sc1 sc2).states := rfl
+
+theorem Compile.bothNonemptyM_valid (sc1 sc2 : Var) : validFlatTM (Compile.bothNonemptyM sc1 sc2) :=
+  joinTwoHalts_valid _ _ _ (Compile.bothNonemptyRawM_valid sc1 sc2)
+    (Compile.bothNonemptyRawM_noA_lt sc1 sc2) (Compile.bothNonemptyRawM_noB_lt sc1 sc2)
+    (Compile.bothNonemptyRawM_tapes sc1 sc2)
+
+theorem Compile.bothNonemptyM_exit_yes_ne_no (sc1 sc2 : Var) :
+    Compile.bothNonemptyM_exit_yes sc1 sc2 ≠ Compile.bothNonemptyM_exit_no sc1 sc2 := by
+  rw [Compile.bothNonemptyM_exit_yes, Compile.bothNonemptyM_exit_no]
+  exact Compile.bothNonemptyRawM_yes_ne_noA sc1 sc2
+
+theorem Compile.bothNonemptyM_exit_yes_lt (sc1 sc2 : Var) :
+    Compile.bothNonemptyM_exit_yes sc1 sc2 < (Compile.bothNonemptyM sc1 sc2).states := by
+  rw [Compile.bothNonemptyM_exit_yes, Compile.bothNonemptyM_states]
+  exact Compile.bothNonemptyRawM_yes_lt sc1 sc2
+
+theorem Compile.bothNonemptyM_exit_no_lt (sc1 sc2 : Var) :
+    Compile.bothNonemptyM_exit_no sc1 sc2 < (Compile.bothNonemptyM sc1 sc2).states := by
+  rw [Compile.bothNonemptyM_exit_no, Compile.bothNonemptyM_states]
+  exact Compile.bothNonemptyRawM_noA_lt sc1 sc2
+
+theorem Compile.bothNonemptyM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.bothNonemptyM sc1 sc2).halt[i]? = some true →
+      i = Compile.bothNonemptyM_exit_yes sc1 sc2 ∨ i = Compile.bothNonemptyM_exit_no sc1 sc2 := by
+  intro i hi
+  rw [Compile.bothNonemptyM_exit_yes, Compile.bothNonemptyM_exit_no]
+  change ((Compile.bothNonemptyRawM sc1 sc2).halt.set (Compile.bothNonemptyRawM_noB sc1 sc2) false)[i]?
+    = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : Compile.bothNonemptyRawM_noB sc1 sc2 = i
+  · exfalso; rw [if_pos h_eq] at hi; split at hi <;> simp at hi
+  · rw [if_neg h_eq] at hi
+    rcases Compile.bothNonemptyRawM_halt_only sc1 sc2 i hi with h | h | h
+    · exact Or.inl h
+    · exact absurd h.symm h_eq
+    · exact Or.inr h
+
+theorem Compile.bothNonemptyM_exit_yes_is_halt (sc1 sc2 : Var) :
+    (Compile.bothNonemptyM sc1 sc2).halt[Compile.bothNonemptyM_exit_yes sc1 sc2]? = some true := by
+  rw [Compile.bothNonemptyM_exit_yes, Compile.bothNonemptyM]
+  show ((Compile.bothNonemptyRawM sc1 sc2).halt.set (Compile.bothNonemptyRawM_noB sc1 sc2) false)[Compile.bothNonemptyRawM_yes sc1 sc2]?
+    = some true
+  rw [List.getElem?_set_ne (fun h => Compile.bothNonemptyRawM_yes_ne_noB sc1 sc2 h.symm)]
+  exact Compile.bothNonemptyRawM_yes_is_halt sc1 sc2
+
+theorem Compile.bothNonemptyM_exit_no_is_halt (sc1 sc2 : Var) :
+    (Compile.bothNonemptyM sc1 sc2).halt[Compile.bothNonemptyM_exit_no sc1 sc2]? = some true := by
+  rw [Compile.bothNonemptyM_exit_no, Compile.bothNonemptyM]
+  exact joinTwoHalts_h1_is_halt _ _ _
+    (Compile.bothNonemptyRawM_noA_ne_noB sc1 sc2) (Compile.bothNonemptyRawM_noA_is_halt sc1 sc2)
+
+/-- The branch symbol bound (`v < max sigs`) at head `0` for `bothNonemptyM`. -/
+private theorem Compile.bothNonempty_symMax (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) :
+    ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < max (Compile.navTestRewindM sc1).sig
+            (max (Compile.navTestRewindM sc2).sig Compile.idTM.sig) := by
+  intro v hv
+  have hmax : max (Compile.navTestRewindM sc1).sig
+      (max (Compile.navTestRewindM sc2).sig Compile.idTM.sig) = 4 := by
+    rw [Compile.navTestRewindM_sig, Compile.navTestRewindM_sig]; decide
+  rw [hmax]; exact Compile.eqVerdict_sym4 s res hbit v hv
+
+/-- **`bothNonemptyM` run — YES (both `sc1` and `sc2` nonempty).** -/
+theorem Compile.bothNonemptyM_run_yes (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hne1 : State.get s sc1 ≠ []) (hne2 : State.get s sc2 ≠ [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.bothNonemptyM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.bothNonemptyM_exit_yes sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.bothNonemptyM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
+  obtain ⟨t₂, hM2run, hM2traj⟩ := Compile.navTestRewindM_run_content s sc2 res hbit hsc2 hne2 hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.bothNonempty_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.navTestRewindM sc1).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.navTestRewindM_exit_content_lt sc1)
+  have hM2run' : runFlatTM t₂ (Compile.navTestRewindM sc2)
+      { state_idx := (Compile.navTestRewindM sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.navTestRewindM_exit_content sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.navTestRewindM_start]; exact hM2run
+  have hM2traj' : ∀ k, k < t₂ → ∀ ck,
+      runFlatTM k (Compile.navTestRewindM sc2)
+          { state_idx := (Compile.navTestRewindM sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.navTestRewindM sc2) ck = false := by
+    rw [Compile.navTestRewindM_start]
+    exact fun k hk ck hck => (hM2traj k hk ck hck).2.2
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2run'
+    (Compile.haltingStateReached_of_halt (Compile.navTestRewindM_exit_content_is_halt sc2))
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2traj'
+  have hraw_run : runFlatTM (t₁ + 1 + t₂) (Compile.bothNonemptyRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.bothNonemptyRawM_yes sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hpos.1
+    have hstate : Compile.navTestRewindM_exit_content sc2 + (Compile.navTestRewindM sc1).states
+        = Compile.bothNonemptyRawM_yes sc1 sc2 := by
+      rw [Compile.bothNonemptyRawM_yes]; omega
+    rw [hstate] at h; exact h
+  have hnv : ∀ k, k ≤ t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (Compile.bothNonemptyRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bothNonemptyRawM_noB sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noB_is_halt sc1 sc2)
+        (hpos_traj k hlt ck hck)
+    · rw [hraw_run] at hck; rw [← Option.some.inj hck]
+      exact Compile.bothNonemptyRawM_yes_ne_noB sc1 sc2
+  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  · rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + t₂) cfg0 hnv,
+        Compile.bothNonemptyM_exit_yes]
+    exact hraw_run
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.bothNonemptyRawM sc1 sc2) cfg0 = some cj →
+        cj.state_idx ≠ Compile.bothNonemptyRawM_noB sc1 sc2 :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hpos_traj k (by omega) ck hck
+    refine ⟨ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_yes_is_halt sc1 sc2) hnh,
+      ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noA_is_halt sc1 sc2) hnh, ?_⟩
+    rw [Compile.bothNonemptyM, joinTwoHalts_halting_eq _ _ _ ck
+      (ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noB_is_halt sc1 sc2) hnh)]
+    exact hnh
+
+/-- **`bothNonemptyM` run — NO via the left operand (`sc1` empty).** -/
+theorem Compile.bothNonemptyM_run_no_left (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hempty1 : State.get s sc1 = [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.bothNonemptyM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.bothNonemptyM_exit_no sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.bothNonemptyM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.bothNonempty_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.navTestRewindM sc1).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.navTestRewindM_exit_content_lt sc1)
+  have hneg := branchComposeFlatTM_run_neg
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj
+    (show runFlatTM 0 Compile.idTM
+        { state_idx := (0 : Nat), tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := (0 : Nat), tapes := [([], 0, Compile.encodeTape s ++ res)] } from rfl)
+    (Compile.haltingStateReached_of_halt (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl))
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj (fun k hk _ _ => absurd hk (Nat.not_lt_zero k))
+  have hraw_run : runFlatTM (t₁ + 1 + 0) (Compile.bothNonemptyRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.bothNonemptyRawM_noA sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hneg.1
+    have hstate : (0 : Nat) + ((Compile.navTestRewindM sc1).states + (Compile.navTestRewindM sc2).states)
+        = Compile.bothNonemptyRawM_noA sc1 sc2 := by
+      rw [Compile.bothNonemptyRawM_noA]; omega
+    rw [hstate] at h; exact h
+  have hnv : ∀ k, k ≤ t₁ + 1 + 0 → ∀ ck,
+      runFlatTM k (Compile.bothNonemptyRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bothNonemptyRawM_noB sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noB_is_halt sc1 sc2)
+        (hneg_traj k hlt ck hck)
+    · rw [hraw_run] at hck; rw [← Option.some.inj hck]
+      exact fun h => Compile.bothNonemptyRawM_noA_ne_noB sc1 sc2 h
+  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  · rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + 0) cfg0 hnv,
+        Compile.bothNonemptyM_exit_no]
+    exact hraw_run
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.bothNonemptyRawM sc1 sc2) cfg0 = some cj →
+        cj.state_idx ≠ Compile.bothNonemptyRawM_noB sc1 sc2 :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hneg_traj k (by omega) ck hck
+    refine ⟨ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_yes_is_halt sc1 sc2) hnh,
+      ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noA_is_halt sc1 sc2) hnh, ?_⟩
+    rw [Compile.bothNonemptyM, joinTwoHalts_halting_eq _ _ _ ck
+      (ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noB_is_halt sc1 sc2) hnh)]
+    exact hnh
+
+/-- **`bothNonemptyM` run — NO via the right operand (`sc1` nonempty, `sc2` empty).**
+The raw machine reaches the demoted NO_b halt, then `joinTwoHalts` bridges it to
+the kept NO exit in one extra step. -/
+theorem Compile.bothNonemptyM_run_no_right (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hne1 : State.get s sc1 ≠ []) (hempty2 : State.get s sc2 = [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.bothNonemptyM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.bothNonemptyM_exit_no sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.bothNonemptyM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
+  obtain ⟨t₂, hM2run, hM2traj⟩ := Compile.navTestRewindM_run_delim s sc2 res hbit hsc2 hempty2 hres
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.bothNonempty_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.navTestRewindM sc1).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.navTestRewindM_exit_content_lt sc1)
+  have hM2run' : runFlatTM t₂ (Compile.navTestRewindM sc2)
+      { state_idx := (Compile.navTestRewindM sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.navTestRewindM_exit_delim sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.navTestRewindM_start]; exact hM2run
+  have hM2traj' : ∀ k, k < t₂ → ∀ ck,
+      runFlatTM k (Compile.navTestRewindM sc2)
+          { state_idx := (Compile.navTestRewindM sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.navTestRewindM sc2) ck = false := by
+    rw [Compile.navTestRewindM_start]
+    exact fun k hk ck hck => (hM2traj k hk ck hck).2.2
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.navTestRewindM_exit_content_ne_delim sc1)
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2run'
+    (Compile.haltingStateReached_of_halt (Compile.navTestRewindM_exit_delim_is_halt sc2))
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.navTestRewindM_valid sc1) (Compile.navTestRewindM_valid sc2) Compile.idTM_valid
+    (Compile.navTestRewindM_exit_content_lt sc1) (Compile.navTestRewindM_exit_delim_lt sc1)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2traj'
+  have hraw_noB : runFlatTM (t₁ + 1 + t₂) (Compile.bothNonemptyRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.bothNonemptyRawM_noB sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hpos.1
+    have hstate : Compile.navTestRewindM_exit_delim sc2 + (Compile.navTestRewindM sc1).states
+        = Compile.bothNonemptyRawM_noB sc1 sc2 := by
+      rw [Compile.bothNonemptyRawM_noB]; omega
+    rw [hstate] at h; exact h
+  have hnv_strict : ∀ k, k < t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (Compile.bothNonemptyRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.bothNonemptyRawM_noB sc1 sc2 :=
+    fun k hk ck hck => ClearGadget.ne_of_not_halting
+      (Compile.bothNonemptyRawM_noB_is_halt sc1 sc2) (hpos_traj k hk ck hck)
+  have hweak : runFlatTM (t₁ + 1 + t₂) (Compile.bothNonemptyM sc1 sc2) cfg0
+      = some { state_idx := Compile.bothNonemptyRawM_noB sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.bothNonemptyM, joinTwoHalts_run_eq_weak _ _ _ (t₁ + 1 + t₂) cfg0 hnv_strict]
+    exact hraw_noB
+  have hnh_noB : haltingStateReached (Compile.bothNonemptyM sc1 sc2)
+      { state_idx := Compile.bothNonemptyRawM_noB sc1 sc2,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] } = false := by
+    show ((Compile.bothNonemptyRawM sc1 sc2).halt.set (Compile.bothNonemptyRawM_noB sc1 sc2) false).getD
+      (Compile.bothNonemptyRawM_noB sc1 sc2) false = false
+    rw [List.getD_eq_getElem?_getD, List.getElem?_set, if_pos rfl]
+    split <;> rfl
+  have hsymRaw : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < (Compile.bothNonemptyRawM sc1 sc2).sig := by
+    intro v hv; rw [Compile.bothNonemptyRawM_sig]; exact Compile.eqVerdict_sym4 s res hbit v hv
+  have hstep : stepFlatTM (Compile.bothNonemptyM sc1 sc2)
+      { state_idx := Compile.bothNonemptyRawM_noB sc1 sc2,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.bothNonemptyRawM_noA sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+    joinTwoHalts_step_to_h1 (Compile.bothNonemptyRawM sc1 sc2)
+      (Compile.bothNonemptyRawM_noA sc1 sc2) (Compile.bothNonemptyRawM_noB sc1 sc2)
+      [] (Compile.encodeTape s ++ res) 0 hsymRaw
+  have hfull : runFlatTM (t₁ + 1 + t₂ + 1) (Compile.bothNonemptyM sc1 sc2) cfg0
+      = some { state_idx := Compile.bothNonemptyRawM_noA sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+    runFlatTM_extend_by_step (Compile.bothNonemptyM sc1 sc2) (t₁ + 1 + t₂) cfg0 _ _
+      hweak hnh_noB hstep
+  refine ⟨t₁ + 1 + t₂ + 1, ?_, ?_⟩
+  · rw [Compile.bothNonemptyM_exit_no]; exact hfull
+  · intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hk) with hlt | rfl
+    · have hnv_k : ∀ j, j ≤ k → ∀ cj,
+          runFlatTM j (Compile.bothNonemptyRawM sc1 sc2) cfg0 = some cj →
+          cj.state_idx ≠ Compile.bothNonemptyRawM_noB sc1 sc2 :=
+        fun j hj cj hcj => hnv_strict j (by omega) cj hcj
+      rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+      have hnh := hpos_traj k (by omega) ck hck
+      refine ⟨ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_yes_is_halt sc1 sc2) hnh,
+        ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noA_is_halt sc1 sc2) hnh, ?_⟩
+      rw [Compile.bothNonemptyM, joinTwoHalts_halting_eq _ _ _ ck
+        (ClearGadget.ne_of_not_halting (Compile.bothNonemptyRawM_noB_is_halt sc1 sc2) hnh)]
+      exact hnh
+    · rw [hweak] at hck
+      have hck_eq : ck = { state_idx := Compile.bothNonemptyRawM_noB sc1 sc2,
+                           tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+        Option.some.inj hck.symm
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hck_eq, Compile.bothNonemptyM_exit_yes]
+        exact fun h => Compile.bothNonemptyRawM_yes_ne_noB sc1 sc2 h.symm
+      · rw [hck_eq, Compile.bothNonemptyM_exit_no]
+        exact fun h => Compile.bothNonemptyRawM_noA_ne_noB sc1 sc2 h.symm
+      · rw [hck_eq]; exact hnh_noB
+
+/-! ### `testMachine` — the consume-loop body decision (bottom-up, Risk C2 — d2a)
+
+`testMachine sc1 sc2` is the clean 2-exit decision the consume-loop body branches
+on: ITER iff both scratch registers are nonempty AND their first bits match;
+DONE otherwise (head restored to `0`, tape unchanged):
+
+  testMachineRawM sc1 sc2 := branchComposeFlatTM (bothNonemptyM sc1 sc2)
+                               (bitCompareM sc1 sc2) idTM
+                               (bothNonemptyM_exit_yes sc1 sc2)
+                               (bothNonemptyM_exit_no sc1 sc2)
+
+both nonempty → `bitCompareM` (MATCH = ITER, NOMATCH); at least one empty → `idTM`
+(immediate, head already `0`) = DONE_a. Three halts {ITER, NOMATCH, DONE_a}.
+`testMachine` merges NOMATCH + DONE_a with one `joinTwoHalts`, leaving the clean
+2-exit `{ITER, DONE}`. `halt_only` via `_M2two`. The loop body `B` then dispatches
+ITER → `iterTailsTM` (delete both heads) and DONE → halt. -/
+
+/-- Raw decision machine (3 halts). -/
+def Compile.testMachineRawM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.bothNonemptyM sc1 sc2) (Compile.bitCompareM sc1 sc2) Compile.idTM
+    (Compile.bothNonemptyM_exit_yes sc1 sc2) (Compile.bothNonemptyM_exit_no sc1 sc2)
+
+/-- ITER exit (both nonempty, bits match): positive `bitCompareM` MATCH. -/
+def Compile.testMachineRawM_iter (sc1 sc2 : Var) : Nat :=
+  (Compile.bothNonemptyM sc1 sc2).states + Compile.bitCompareM_exit_match sc1 sc2
+/-- NOMATCH exit (both nonempty, bits differ): positive `bitCompareM` NOMATCH. -/
+def Compile.testMachineRawM_nomatch (sc1 sc2 : Var) : Nat :=
+  (Compile.bothNonemptyM sc1 sc2).states + Compile.bitCompareM_exit_nomatch sc1 sc2
+/-- DONE_a exit (at least one empty): negative `idTM` exit `0`. -/
+def Compile.testMachineRawM_done (sc1 sc2 : Var) : Nat :=
+  (Compile.bothNonemptyM sc1 sc2).states + (Compile.bitCompareM sc1 sc2).states
+
+theorem Compile.testMachineRawM_start (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).start = 0 := by
+  rw [Compile.testMachineRawM, branchComposeFlatTM_start]; exact Compile.bothNonemptyM_start sc1 sc2
+
+theorem Compile.testMachineRawM_tapes (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).tapes = 1 := by
+  rw [Compile.testMachineRawM, branchComposeFlatTM_tapes]; exact Compile.bothNonemptyM_tapes sc1 sc2
+
+theorem Compile.testMachineRawM_sig (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).sig = 4 := by
+  rw [Compile.testMachineRawM, branchComposeFlatTM_sig, Compile.bothNonemptyM_sig,
+      Compile.bitCompareM_sig]
+  decide
+
+theorem Compile.testMachineRawM_states (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).states =
+      (Compile.bothNonemptyM sc1 sc2).states + (Compile.bitCompareM sc1 sc2).states
+        + Compile.idTM.states := by
+  rw [Compile.testMachineRawM, branchComposeFlatTM_states]
+
+theorem Compile.testMachineRawM_iter_lt (sc1 sc2 : Var) :
+    Compile.testMachineRawM_iter sc1 sc2 < (Compile.testMachineRawM sc1 sc2).states := by
+  rw [Compile.testMachineRawM_iter, Compile.testMachineRawM_states]
+  have := Compile.bitCompareM_exit_match_lt sc1 sc2
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.testMachineRawM_nomatch_lt (sc1 sc2 : Var) :
+    Compile.testMachineRawM_nomatch sc1 sc2 < (Compile.testMachineRawM sc1 sc2).states := by
+  rw [Compile.testMachineRawM_nomatch, Compile.testMachineRawM_states]
+  have := Compile.bitCompareM_exit_nomatch_lt sc1 sc2
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.testMachineRawM_done_lt (sc1 sc2 : Var) :
+    Compile.testMachineRawM_done sc1 sc2 < (Compile.testMachineRawM sc1 sc2).states := by
+  rw [Compile.testMachineRawM_done, Compile.testMachineRawM_states]
+  have hid : Compile.idTM.states = 1 := rfl
+  omega
+
+theorem Compile.testMachineRawM_iter_ne_nomatch (sc1 sc2 : Var) :
+    Compile.testMachineRawM_iter sc1 sc2 ≠ Compile.testMachineRawM_nomatch sc1 sc2 := by
+  rw [Compile.testMachineRawM_iter, Compile.testMachineRawM_nomatch]
+  have := Compile.bitCompareM_exit_match_ne_nomatch sc1 sc2
+  omega
+
+theorem Compile.testMachineRawM_iter_ne_done (sc1 sc2 : Var) :
+    Compile.testMachineRawM_iter sc1 sc2 ≠ Compile.testMachineRawM_done sc1 sc2 := by
+  rw [Compile.testMachineRawM_iter, Compile.testMachineRawM_done]
+  have := Compile.bitCompareM_exit_match_lt sc1 sc2
+  omega
+
+theorem Compile.testMachineRawM_done_ne_nomatch (sc1 sc2 : Var) :
+    Compile.testMachineRawM_done sc1 sc2 ≠ Compile.testMachineRawM_nomatch sc1 sc2 := by
+  rw [Compile.testMachineRawM_done, Compile.testMachineRawM_nomatch]
+  have := Compile.bitCompareM_exit_nomatch_lt sc1 sc2
+  omega
+
+theorem Compile.testMachineRawM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.testMachineRawM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    (Compile.bothNonemptyM_tapes sc1 sc2) (Compile.bitCompareM_tapes sc1 sc2) rfl
+
+theorem Compile.testMachineRawM_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.testMachineRawM sc1 sc2).halt[i]? = some true →
+      i = Compile.testMachineRawM_iter sc1 sc2 ∨ i = Compile.testMachineRawM_nomatch sc1 sc2
+        ∨ i = Compile.testMachineRawM_done sc1 sc2 := by
+  rw [Compile.testMachineRawM_iter, Compile.testMachineRawM_nomatch, Compile.testMachineRawM_done,
+      Compile.testMachineRawM]
+  exact Compile.branchComposeFlatTM_halt_only_M2two _ _ _ _ _ _ _ _
+    (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bitCompareM_halt_only sc1 sc2) Compile.idTM_halt_unique
+
+theorem Compile.testMachineRawM_iter_is_halt (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).halt[Compile.testMachineRawM_iter sc1 sc2]? = some true := by
+  rw [Compile.testMachineRawM_iter, Compile.testMachineRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.bitCompareM_valid sc1 sc2) (Compile.bitCompareM_exit_match_lt sc1 sc2)
+    (Compile.bitCompareM_exit_match_is_halt sc1 sc2)
+
+theorem Compile.testMachineRawM_nomatch_is_halt (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).halt[Compile.testMachineRawM_nomatch sc1 sc2]? = some true := by
+  rw [Compile.testMachineRawM_nomatch, Compile.testMachineRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.bitCompareM_valid sc1 sc2) (Compile.bitCompareM_exit_nomatch_lt sc1 sc2)
+    (Compile.bitCompareM_exit_nomatch_is_halt sc1 sc2)
+
+theorem Compile.testMachineRawM_done_is_halt (sc1 sc2 : Var) :
+    (Compile.testMachineRawM sc1 sc2).halt[Compile.testMachineRawM_done sc1 sc2]? = some true := by
+  rw [Compile.testMachineRawM_done, Compile.testMachineRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.bitCompareM_valid sc1 sc2) (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl)
+
+/-- **The clean 2-exit decision** = merge NOMATCH + DONE_a of the raw machine. -/
+def Compile.testMachine (sc1 sc2 : Var) : FlatTM :=
+  joinTwoHalts (Compile.testMachineRawM sc1 sc2)
+    (Compile.testMachineRawM_done sc1 sc2) (Compile.testMachineRawM_nomatch sc1 sc2)
+
+/-- ITER exit (delete both heads, continue). -/
+def Compile.testMachine_exit_iter (sc1 sc2 : Var) : Nat := Compile.testMachineRawM_iter sc1 sc2
+/-- DONE exit (stop the consume loop). -/
+def Compile.testMachine_exit_done (sc1 sc2 : Var) : Nat := Compile.testMachineRawM_done sc1 sc2
+
+theorem Compile.testMachine_start (sc1 sc2 : Var) : (Compile.testMachine sc1 sc2).start = 0 := by
+  rw [Compile.testMachine, joinTwoHalts_start]; exact Compile.testMachineRawM_start sc1 sc2
+
+theorem Compile.testMachine_tapes (sc1 sc2 : Var) : (Compile.testMachine sc1 sc2).tapes = 1 := by
+  rw [Compile.testMachine, joinTwoHalts_tapes]; exact Compile.testMachineRawM_tapes sc1 sc2
+
+theorem Compile.testMachine_sig (sc1 sc2 : Var) : (Compile.testMachine sc1 sc2).sig = 4 := by
+  rw [Compile.testMachine, joinTwoHalts_sig]; exact Compile.testMachineRawM_sig sc1 sc2
+
+theorem Compile.testMachine_states (sc1 sc2 : Var) :
+    (Compile.testMachine sc1 sc2).states = (Compile.testMachineRawM sc1 sc2).states := rfl
+
+theorem Compile.testMachine_valid (sc1 sc2 : Var) : validFlatTM (Compile.testMachine sc1 sc2) :=
+  joinTwoHalts_valid _ _ _ (Compile.testMachineRawM_valid sc1 sc2)
+    (Compile.testMachineRawM_done_lt sc1 sc2) (Compile.testMachineRawM_nomatch_lt sc1 sc2)
+    (Compile.testMachineRawM_tapes sc1 sc2)
+
+theorem Compile.testMachine_exit_iter_ne_done (sc1 sc2 : Var) :
+    Compile.testMachine_exit_iter sc1 sc2 ≠ Compile.testMachine_exit_done sc1 sc2 := by
+  rw [Compile.testMachine_exit_iter, Compile.testMachine_exit_done]
+  exact Compile.testMachineRawM_iter_ne_done sc1 sc2
+
+theorem Compile.testMachine_exit_iter_lt (sc1 sc2 : Var) :
+    Compile.testMachine_exit_iter sc1 sc2 < (Compile.testMachine sc1 sc2).states := by
+  rw [Compile.testMachine_exit_iter, Compile.testMachine_states]
+  exact Compile.testMachineRawM_iter_lt sc1 sc2
+
+theorem Compile.testMachine_exit_done_lt (sc1 sc2 : Var) :
+    Compile.testMachine_exit_done sc1 sc2 < (Compile.testMachine sc1 sc2).states := by
+  rw [Compile.testMachine_exit_done, Compile.testMachine_states]
+  exact Compile.testMachineRawM_done_lt sc1 sc2
+
+theorem Compile.testMachine_halt_only (sc1 sc2 : Var) :
+    ∀ i, (Compile.testMachine sc1 sc2).halt[i]? = some true →
+      i = Compile.testMachine_exit_iter sc1 sc2 ∨ i = Compile.testMachine_exit_done sc1 sc2 := by
+  intro i hi
+  rw [Compile.testMachine_exit_iter, Compile.testMachine_exit_done]
+  change ((Compile.testMachineRawM sc1 sc2).halt.set (Compile.testMachineRawM_nomatch sc1 sc2) false)[i]?
+    = some true at hi
+  rw [List.getElem?_set] at hi
+  by_cases h_eq : Compile.testMachineRawM_nomatch sc1 sc2 = i
+  · exfalso; rw [if_pos h_eq] at hi; split at hi <;> simp at hi
+  · rw [if_neg h_eq] at hi
+    rcases Compile.testMachineRawM_halt_only sc1 sc2 i hi with h | h | h
+    · exact Or.inl h
+    · exact absurd h.symm h_eq
+    · exact Or.inr h
+
+theorem Compile.testMachine_exit_iter_is_halt (sc1 sc2 : Var) :
+    (Compile.testMachine sc1 sc2).halt[Compile.testMachine_exit_iter sc1 sc2]? = some true := by
+  rw [Compile.testMachine_exit_iter, Compile.testMachine]
+  show ((Compile.testMachineRawM sc1 sc2).halt.set (Compile.testMachineRawM_nomatch sc1 sc2) false)[Compile.testMachineRawM_iter sc1 sc2]?
+    = some true
+  rw [List.getElem?_set_ne (fun h => Compile.testMachineRawM_iter_ne_nomatch sc1 sc2 h.symm)]
+  exact Compile.testMachineRawM_iter_is_halt sc1 sc2
+
+theorem Compile.testMachine_exit_done_is_halt (sc1 sc2 : Var) :
+    (Compile.testMachine sc1 sc2).halt[Compile.testMachine_exit_done sc1 sc2]? = some true := by
+  rw [Compile.testMachine_exit_done, Compile.testMachine]
+  exact joinTwoHalts_h1_is_halt _ _ _
+    (Compile.testMachineRawM_done_ne_nomatch sc1 sc2) (Compile.testMachineRawM_done_is_halt sc1 sc2)
+
+/-- The branch symbol bound (`v < max sigs`) at head `0` for `testMachine`. -/
+private theorem Compile.testMachine_symMax (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) :
+    ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < max (Compile.bothNonemptyM sc1 sc2).sig
+            (max (Compile.bitCompareM sc1 sc2).sig Compile.idTM.sig) := by
+  intro v hv
+  have hmax : max (Compile.bothNonemptyM sc1 sc2).sig
+      (max (Compile.bitCompareM sc1 sc2).sig Compile.idTM.sig) = 4 := by
+    rw [Compile.bothNonemptyM_sig, Compile.bitCompareM_sig]; decide
+  rw [hmax]; exact Compile.eqVerdict_sym4 s res hbit v hv
+
+/-- **`testMachine` run — DONE from a `bothNonemptyM`-NO outcome.** The shared core
+of the two DONE-by-empty cases: given `bothNonemptyM` reaches its NO exit, the
+negative `idTM` branch lands on the kept DONE exit. -/
+private theorem Compile.testMachine_run_done_of_no (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (t₁ : Nat)
+    (hM1run : runFlatTM t₁ (Compile.bothNonemptyM sc1 sc2)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.bothNonemptyM_exit_no sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] })
+    (hM1traj : ∀ k, k < t₁ → ∀ ck,
+        runFlatTM k (Compile.bothNonemptyM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
+        ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) :
+    ∃ t,
+      runFlatTM t (Compile.testMachine sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.testMachine_exit_done sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.testMachine_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.bothNonemptyM sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.bothNonemptyM_exit_yes_lt sc1 sc2)
+  have hneg := branchComposeFlatTM_run_neg
+    (Compile.bothNonemptyM_exit_yes_ne_no sc1 sc2)
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj
+    (show runFlatTM 0 Compile.idTM
+        { state_idx := (0 : Nat), tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := (0 : Nat), tapes := [([], 0, Compile.encodeTape s ++ res)] } from rfl)
+    (Compile.haltingStateReached_of_halt (show Compile.idTM.halt[(0 : Nat)]? = some true from rfl))
+  have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.bothNonemptyM_exit_yes_ne_no sc1 sc2)
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj (fun k hk _ _ => absurd hk (Nat.not_lt_zero k))
+  have hraw_run : runFlatTM (t₁ + 1 + 0) (Compile.testMachineRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.testMachineRawM_done sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hneg.1
+    have hstate : (0 : Nat) + ((Compile.bothNonemptyM sc1 sc2).states + (Compile.bitCompareM sc1 sc2).states)
+        = Compile.testMachineRawM_done sc1 sc2 := by
+      rw [Compile.testMachineRawM_done]; omega
+    rw [hstate] at h; exact h
+  have hnv : ∀ k, k ≤ t₁ + 1 + 0 → ∀ ck,
+      runFlatTM k (Compile.testMachineRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.testMachineRawM_nomatch sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.testMachineRawM_nomatch_is_halt sc1 sc2)
+        (hneg_traj k hlt ck hck)
+    · rw [hraw_run] at hck; rw [← Option.some.inj hck]
+      exact fun h => Compile.testMachineRawM_done_ne_nomatch sc1 sc2 h
+  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  · rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + 0) cfg0 hnv,
+        Compile.testMachine_exit_done]
+    exact hraw_run
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.testMachineRawM sc1 sc2) cfg0 = some cj →
+        cj.state_idx ≠ Compile.testMachineRawM_nomatch sc1 sc2 :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hneg_traj k (by omega) ck hck
+    refine ⟨ClearGadget.ne_of_not_halting (Compile.testMachineRawM_iter_is_halt sc1 sc2) hnh,
+      ClearGadget.ne_of_not_halting (Compile.testMachineRawM_done_is_halt sc1 sc2) hnh, ?_⟩
+    rw [Compile.testMachine, joinTwoHalts_halting_eq _ _ _ ck
+      (ClearGadget.ne_of_not_halting (Compile.testMachineRawM_nomatch_is_halt sc1 sc2) hnh)]
+    exact hnh
+
+/-- **`testMachine` run — DONE (`sc1` empty).** -/
+theorem Compile.testMachine_run_done_left (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hempty1 : State.get s sc1 = [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.testMachine sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.testMachine_exit_done sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+    Compile.bothNonemptyM_run_no_left s sc1 sc2 res hbit hsc1 hempty1 hres
+  exact Compile.testMachine_run_done_of_no s sc1 sc2 res hbit t₁ hM1run hM1traj
+
+/-- **`testMachine` run — DONE (`sc1` nonempty, `sc2` empty).** -/
+theorem Compile.testMachine_run_done_right (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (hbit : Compile.BitState s) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hne1 : State.get s sc1 ≠ []) (hempty2 : State.get s sc2 = [])
+    (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.testMachine sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.testMachine_exit_done sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+    Compile.bothNonemptyM_run_no_right s sc1 sc2 res hbit hsc1 hsc2 hne1 hempty2 hres
+  exact Compile.testMachine_run_done_of_no s sc1 sc2 res hbit t₁ hM1run hM1traj
+
+/-- **`testMachine` run — ITER (both nonempty, first bits match).** -/
+theorem Compile.testMachine_run_iter (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (a b : Nat) (cs1 cs2 : List Nat)
+    (hc1 : State.get s sc1 = a :: cs1) (hc2 : State.get s sc2 = b :: cs2)
+    (ha : a ≤ 1) (hb : b ≤ 1) (hab : a = b) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.testMachine sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.testMachine_exit_iter sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+  have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
+  have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
+  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+    Compile.bothNonemptyM_run_yes s sc1 sc2 res hbit hsc1 hsc2 hne1 hne2 hres
+  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+    Compile.bitCompareM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres
+  rw [if_pos hab] at hM2run
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.testMachine_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.bothNonemptyM sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.bothNonemptyM_exit_yes_lt sc1 sc2)
+  have hM2run' : runFlatTM t₂ (Compile.bitCompareM sc1 sc2)
+      { state_idx := (Compile.bitCompareM sc1 sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.bitCompareM_exit_match sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.bitCompareM_start]; exact hM2run
+  have hM2traj' : ∀ k, k < t₂ → ∀ ck,
+      runFlatTM k (Compile.bitCompareM sc1 sc2)
+          { state_idx := (Compile.bitCompareM sc1 sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false := by
+    rw [Compile.bitCompareM_start]
+    exact fun k hk ck hck => (hM2traj k hk ck hck).2.2
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.bothNonemptyM_exit_yes_ne_no sc1 sc2)
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2run'
+    (Compile.haltingStateReached_of_halt (Compile.bitCompareM_exit_match_is_halt sc1 sc2))
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2traj'
+  have hraw_run : runFlatTM (t₁ + 1 + t₂) (Compile.testMachineRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.testMachineRawM_iter sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hpos.1
+    have hstate : Compile.bitCompareM_exit_match sc1 sc2 + (Compile.bothNonemptyM sc1 sc2).states
+        = Compile.testMachineRawM_iter sc1 sc2 := by
+      rw [Compile.testMachineRawM_iter]; omega
+    rw [hstate] at h; exact h
+  have hnv : ∀ k, k ≤ t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (Compile.testMachineRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.testMachineRawM_nomatch sc1 sc2 := by
+    intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le hk with hlt | rfl
+    · exact ClearGadget.ne_of_not_halting (Compile.testMachineRawM_nomatch_is_halt sc1 sc2)
+        (hpos_traj k hlt ck hck)
+    · rw [hraw_run] at hck; rw [← Option.some.inj hck]
+      exact fun h => Compile.testMachineRawM_iter_ne_nomatch sc1 sc2 h
+  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  · rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + t₂) cfg0 hnv,
+        Compile.testMachine_exit_iter]
+    exact hraw_run
+  · intro k hk ck hck
+    have hnv_k : ∀ j, j ≤ k → ∀ cj,
+        runFlatTM j (Compile.testMachineRawM sc1 sc2) cfg0 = some cj →
+        cj.state_idx ≠ Compile.testMachineRawM_nomatch sc1 sc2 :=
+      fun j hj cj hcj => hnv j (le_trans hj (Nat.le_of_lt hk)) cj hcj
+    rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+    have hnh := hpos_traj k (by omega) ck hck
+    refine ⟨ClearGadget.ne_of_not_halting (Compile.testMachineRawM_iter_is_halt sc1 sc2) hnh,
+      ClearGadget.ne_of_not_halting (Compile.testMachineRawM_done_is_halt sc1 sc2) hnh, ?_⟩
+    rw [Compile.testMachine, joinTwoHalts_halting_eq _ _ _ ck
+      (ClearGadget.ne_of_not_halting (Compile.testMachineRawM_nomatch_is_halt sc1 sc2) hnh)]
+    exact hnh
+
+/-- **`testMachine` run — DONE (both nonempty, first bits differ).** The raw machine
+reaches the demoted NOMATCH halt, then `joinTwoHalts` bridges it to the kept DONE
+exit in one extra step. -/
+theorem Compile.testMachine_run_done_neq (s : State) (sc1 sc2 : Var) (res : List Nat)
+    (a b : Nat) (cs1 cs2 : List Nat)
+    (hc1 : State.get s sc1 = a :: cs1) (hc2 : State.get s sc2 = b :: cs2)
+    (ha : a ≤ 1) (hb : b ≤ 1) (hab : a ≠ b) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.testMachine sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.testMachine_exit_done sc1 sc2,
+                 tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+        ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+  have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
+  have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
+  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+    Compile.bothNonemptyM_run_yes s sc1 sc2 res hbit hsc1 hsc2 hne1 hne2 hres
+  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+    Compile.bitCompareM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres
+  rw [if_neg hab] at hM2run
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    with hcfg0
+  have hsymMax := Compile.testMachine_symMax s sc1 sc2 res hbit
+  have hcfg_lt : (0 : Nat) < (Compile.bothNonemptyM sc1 sc2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.bothNonemptyM_exit_yes_lt sc1 sc2)
+  have hM2run' : runFlatTM t₂ (Compile.bitCompareM sc1 sc2)
+      { state_idx := (Compile.bitCompareM sc1 sc2).start,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.bitCompareM_exit_nomatch sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.bitCompareM_start]; exact hM2run
+  have hM2traj' : ∀ k, k < t₂ → ∀ ck,
+      runFlatTM k (Compile.bitCompareM sc1 sc2)
+          { state_idx := (Compile.bitCompareM sc1 sc2).start,
+            tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false := by
+    rw [Compile.bitCompareM_start]
+    exact fun k hk ck hck => (hM2traj k hk ck hck).2.2
+  have hpos := branchComposeFlatTM_run_pos
+    (Compile.bothNonemptyM_exit_yes_ne_no sc1 sc2)
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2run'
+    (Compile.haltingStateReached_of_halt (Compile.bitCompareM_exit_nomatch_is_halt sc1 sc2))
+  have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.bothNonemptyM_valid sc1 sc2) (Compile.bitCompareM_valid sc1 sc2) Compile.idTM_valid
+    (Compile.bothNonemptyM_exit_yes_lt sc1 sc2) (Compile.bothNonemptyM_exit_no_lt sc1 sc2)
+    cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
+    hM1run hM1traj hM2traj'
+  have hraw_nomatch : runFlatTM (t₁ + 1 + t₂) (Compile.testMachineRawM sc1 sc2) cfg0
+      = some { state_idx := Compile.testMachineRawM_nomatch sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    have h := hpos.1
+    have hstate : Compile.bitCompareM_exit_nomatch sc1 sc2 + (Compile.bothNonemptyM sc1 sc2).states
+        = Compile.testMachineRawM_nomatch sc1 sc2 := by
+      rw [Compile.testMachineRawM_nomatch]; omega
+    rw [hstate] at h; exact h
+  have hnv_strict : ∀ k, k < t₁ + 1 + t₂ → ∀ ck,
+      runFlatTM k (Compile.testMachineRawM sc1 sc2) cfg0 = some ck →
+      ck.state_idx ≠ Compile.testMachineRawM_nomatch sc1 sc2 :=
+    fun k hk ck hck => ClearGadget.ne_of_not_halting
+      (Compile.testMachineRawM_nomatch_is_halt sc1 sc2) (hpos_traj k hk ck hck)
+  have hweak : runFlatTM (t₁ + 1 + t₂) (Compile.testMachine sc1 sc2) cfg0
+      = some { state_idx := Compile.testMachineRawM_nomatch sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
+    rw [Compile.testMachine, joinTwoHalts_run_eq_weak _ _ _ (t₁ + 1 + t₂) cfg0 hnv_strict]
+    exact hraw_nomatch
+  have hnh_nomatch : haltingStateReached (Compile.testMachine sc1 sc2)
+      { state_idx := Compile.testMachineRawM_nomatch sc1 sc2,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] } = false := by
+    show ((Compile.testMachineRawM sc1 sc2).halt.set (Compile.testMachineRawM_nomatch sc1 sc2) false).getD
+      (Compile.testMachineRawM_nomatch sc1 sc2) false = false
+    rw [List.getD_eq_getElem?_getD, List.getElem?_set, if_pos rfl]
+    split <;> rfl
+  have hsymRaw : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
+      v < (Compile.testMachineRawM sc1 sc2).sig := by
+    intro v hv; rw [Compile.testMachineRawM_sig]; exact Compile.eqVerdict_sym4 s res hbit v hv
+  have hstep : stepFlatTM (Compile.testMachine sc1 sc2)
+      { state_idx := Compile.testMachineRawM_nomatch sc1 sc2,
+        tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := Compile.testMachineRawM_done sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+    joinTwoHalts_step_to_h1 (Compile.testMachineRawM sc1 sc2)
+      (Compile.testMachineRawM_done sc1 sc2) (Compile.testMachineRawM_nomatch sc1 sc2)
+      [] (Compile.encodeTape s ++ res) 0 hsymRaw
+  have hfull : runFlatTM (t₁ + 1 + t₂ + 1) (Compile.testMachine sc1 sc2) cfg0
+      = some { state_idx := Compile.testMachineRawM_done sc1 sc2,
+               tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+    runFlatTM_extend_by_step (Compile.testMachine sc1 sc2) (t₁ + 1 + t₂) cfg0 _ _
+      hweak hnh_nomatch hstep
+  refine ⟨t₁ + 1 + t₂ + 1, ?_, ?_⟩
+  · rw [Compile.testMachine_exit_done]; exact hfull
+  · intro k hk ck hck
+    rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hk) with hlt | rfl
+    · have hnv_k : ∀ j, j ≤ k → ∀ cj,
+          runFlatTM j (Compile.testMachineRawM sc1 sc2) cfg0 = some cj →
+          cj.state_idx ≠ Compile.testMachineRawM_nomatch sc1 sc2 :=
+        fun j hj cj hcj => hnv_strict j (by omega) cj hcj
+      rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ k cfg0 hnv_k] at hck
+      have hnh := hpos_traj k (by omega) ck hck
+      refine ⟨ClearGadget.ne_of_not_halting (Compile.testMachineRawM_iter_is_halt sc1 sc2) hnh,
+        ClearGadget.ne_of_not_halting (Compile.testMachineRawM_done_is_halt sc1 sc2) hnh, ?_⟩
+      rw [Compile.testMachine, joinTwoHalts_halting_eq _ _ _ ck
+        (ClearGadget.ne_of_not_halting (Compile.testMachineRawM_nomatch_is_halt sc1 sc2) hnh)]
+      exact hnh
+    · rw [hweak] at hck
+      have hck_eq : ck = { state_idx := Compile.testMachineRawM_nomatch sc1 sc2,
+                           tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
+        Option.some.inj hck.symm
+      refine ⟨?_, ?_, ?_⟩
+      · rw [hck_eq, Compile.testMachine_exit_iter]
+        exact fun h => Compile.testMachineRawM_iter_ne_nomatch sc1 sc2 h.symm
+      · rw [hck_eq, Compile.testMachine_exit_done]
+        exact fun h => Compile.testMachineRawM_done_ne_nomatch sc1 sc2 h.symm
+      · rw [hck_eq]; exact hnh_nomatch
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
