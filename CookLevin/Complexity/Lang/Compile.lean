@@ -17673,6 +17673,28 @@ theorem Compile.matchLen_stop : ∀ (l1 l2 : List Nat),
       · rw [if_neg hab]
         exact Or.inr (Or.inr ⟨a, r1, b, r2, by simp, by simp, hab⟩)
 
+/-- **The consume-loop decision.** The two operands are equal iff BOTH their
+`matchLen`-dropped suffixes are empty — exactly what the post-loop "both empty?"
+verdict (`eqVerdictM`) tests. This is the TM-level analogue of
+`EqBitProbe.eqVerdict_correct`; the verdict assembly (d2) consumes it. -/
+theorem Compile.matchLen_drop_empty_iff : ∀ (l1 l2 : List Nat),
+    (l1.drop (Compile.matchLen l1 l2) = [] ∧ l2.drop (Compile.matchLen l1 l2) = []) ↔ l1 = l2
+  | [], [] => by simp [Compile.matchLen]
+  | [], _ :: _ => by simp [Compile.matchLen]
+  | _ :: _, [] => by simp [Compile.matchLen]
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      by_cases hab : a = b
+      · subst hab
+        rw [if_pos rfl, List.drop_succ_cons, List.drop_succ_cons,
+            Compile.matchLen_drop_empty_iff r1 r2]
+        simp
+      · rw [if_neg hab]
+        simp only [List.drop_zero]
+        constructor
+        · rintro ⟨h, _⟩; exact absurd h (List.cons_ne_nil _ _)
+        · intro h; injection h with ha _; exact absurd ha hab
+
 /-- Closed-form register contents along the consume iteration: after `k` steps the
 two scratch registers hold the `k`-dropped originals; length and `BitState` are
 preserved. -/
