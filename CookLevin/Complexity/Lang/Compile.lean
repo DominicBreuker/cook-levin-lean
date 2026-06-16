@@ -22084,3 +22084,513 @@ theorem Compile.paddedCompute_run (c : Cmd) (s : State) (k : Nat)
       = (Compile.padBudget K s + 1 + t1) + kpad := by omega
   rw [hbudget]
   exact runFlatTM_extend (M := Compile.paddedComputeTM c k) hcrun hchalt
+
+/-! ### Residue-tolerant `growEmpty` — the `eqBit` scratch lifecycle (bottom-up, Risk C2 — d2c)
+
+Appends one empty register at the END of the register list, tolerating a
+terminator-free residue to the right of the trailing terminator. Reuses
+`padBody`'s forward part (`stepRightTM ⨾ scanRightUntilTM 4 3 ⨾ insertCarryTM 0`)
+— residue-tolerant: the scan stops at the trailing `3` BEFORE the residue, and the
+insert shifts the trailing terminator + residue one cell right (head parks past
+the residue) — then a **two-phase** rewind (via `rewindBracket`) returns the head
+to `0`. (A single-phase rewind is WRONG with residue: the head ends past the
+residue and a single left-scan would stop at the trailing `3`, not the sentinel.)
+
+`growEmpty_run` is the reusable lemma the `eqBit` (d2) `compareRegsTM` assembly
+consumes (place the two scratch registers `sc1`/`sc2` at the register-list END). -/
+
+def Compile.growScanInsM : FlatTM :=
+  composeFlatTM (scanRightUntilTM 4 3) (ShiftTape.insertCarryTM 0) 1
+
+def Compile.growInsertM : FlatTM :=
+  composeFlatTM (ScanLeft.stepRightTM 4) Compile.growScanInsM 1
+
+theorem Compile.growScanInsM_tapes : Compile.growScanInsM.tapes = 1 := rfl
+theorem Compile.growScanInsM_sig : Compile.growScanInsM.sig = 4 := by decide
+theorem Compile.growScanInsM_states : Compile.growScanInsM.states = 9 := rfl
+theorem Compile.growScanInsM_valid : validFlatTM Compile.growScanInsM :=
+  composeFlatTM_valid _ _ 1 (scanRightUntilTM_valid 4 3 (by decide))
+    (ShiftTape.insertCarryTM_valid 0 (by decide)) (by decide) rfl rfl
+
+theorem Compile.growInsertM_tapes : Compile.growInsertM.tapes = 1 := rfl
+theorem Compile.growInsertM_sig : Compile.growInsertM.sig = 4 := by decide
+theorem Compile.growInsertM_states : Compile.growInsertM.states = 11 := rfl
+theorem Compile.growInsertM_start : Compile.growInsertM.start = 0 := rfl
+theorem Compile.growInsertM_valid : validFlatTM Compile.growInsertM :=
+  composeFlatTM_valid _ _ 1 (ScanLeft.stepRightTM_valid 4)
+    Compile.growScanInsM_valid (by decide) rfl Compile.growScanInsM_tapes
+
+/-- The tape split for `ShiftTape.insertCarryTM`: `encodeTape s ++ res` = `pre ++ suf`
+with `pre = 3 :: encodeRegs s` and `suf = 3 :: res`. -/
+private theorem Compile.encodeTape_append_split (s : State) (res : List Nat) :
+    Compile.encodeTape s ++ res = (3 :: Compile.encodeRegs s) ++ (3 :: res) := by
+  rw [Compile.encodeTape_cons_form]; simp [List.append_assoc]
+
+/-- The post-insert tape equals `encodeTape (s ++ [[]]) ++ res`. -/
+private theorem Compile.grow_out_tape (s : State) (res : List Nat) :
+    (3 :: Compile.encodeRegs s) ++ (0 : Nat) :: (3 :: res)
+      = Compile.encodeTape (s ++ [[]]) ++ res := by
+  rw [show Compile.encodeTape (s ++ [[]])
+        = (3 :: Compile.encodeRegs s) ++ (0 : Nat) :: [3] from by
+      rw [Compile.encodeTape, Compile.encodeRegs_snoc_nil]
+      simp [Compile.endMark, List.append_assoc]]
+  simp [List.append_assoc]
+
+/-- Bridge: a left-region cell of `encodeTape s ++ res` is the `encodeTape s` cell. -/
+private theorem Compile.getElem_append_left_encTape (s : State) (res : List Nat)
+    (i : Nat) (hi : i < (Compile.encodeTape s).length) :
+    ∃ (h : i < (Compile.encodeTape s ++ res).length),
+      (Compile.encodeTape s ++ res).get ⟨i, h⟩ = (Compile.encodeTape s).get ⟨i, hi⟩ := by
+  refine ⟨by rw [List.length_append]; omega, ?_⟩
+  rw [List.get_eq_getElem, List.get_eq_getElem, List.getElem_append_left hi]
+
+theorem Compile.growScanInsM_run (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    runFlatTM (((Compile.encodeRegs s).length + 1) + 1 + (res.length + 2)) Compile.growScanInsM
+        { state_idx := 0, tapes := [([], 1, Compile.encodeTape s ++ res)] }
+      = some { state_idx := 8,
+               tapes := [([], ((Compile.encodeRegs s).length + 1) + (1 + res.length),
+                 Compile.encodeTape (s ++ [[]]) ++ res)] } := by
+  set R := (Compile.encodeRegs s).length with hR
+  have hElen : (Compile.encodeTape s).length = R + 2 := by
+    rw [Compile.encodeTape]; simp [List.length_append]; exact hR.symm
+  -- scanRight: from head 1, gap = R, lands on the trailing terminator at index 1+R.
+  have hscan := scanRightUntilTM_run_found 4 3 [] (Compile.encodeTape s ++ res) R 1
+    (by rw [List.length_append]; omega)
+    (by
+      obtain ⟨h, hg⟩ := Compile.getElem_append_left_encTape s res (1 + R) (by omega)
+      rw [show (⟨1 + R, h⟩ : Fin _) = ⟨1 + R, h⟩ from rfl, hg]
+      have hlast : (1 + R) = (Compile.encodeTape s).length - 1 := by omega
+      rw [show (⟨1 + R, by omega⟩ : Fin (Compile.encodeTape s).length)
+            = ⟨(Compile.encodeTape s).length - 1, by omega⟩ from Fin.eq_of_val_eq hlast]
+      exact Compile.encodeTape_get_last s _)
+    (by
+      intro k hk
+      obtain ⟨h, hg⟩ := Compile.getElem_append_left_encTape s res (1 + k) (by omega)
+      refine ⟨h, ?_, ?_⟩
+      · rw [hg]; exact Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _)
+      · rw [hg]
+        obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + k) (by omega)
+          (by rw [hElen]; omega)
+        rw [show (⟨1 + k, by omega⟩ : Fin (Compile.encodeTape s).length) = ⟨1 + k, hi⟩ from rfl]
+        exact hne)
+  -- insertCarry: from head 1+R (= pre.length), insert `0` before the trailing terminator.
+  have hpre_len : (3 :: Compile.encodeRegs s).length = R + 1 := by
+    simp [hR]
+  have hins := ShiftTape.insertCarryTM_run 0 (3 :: res) (3 :: Compile.encodeRegs s)
+    (by intro x hx; rcases List.mem_cons.mp hx with rfl | hx
+        · decide
+        · exact (hres x hx).1)
+  rw [hpre_len, ← Compile.encodeTape_append_split s res] at hins
+  rw [show (3 :: res).length + 1 = res.length + 2 from by simp] at hins
+  rw [show (R + 1 + (3 :: res).length) = (R + 1) + (1 + res.length) from by simp; omega] at hins
+  rw [show (3 :: Compile.encodeRegs s) ++ (0 : Nat) :: (3 :: res)
+        = Compile.encodeTape (s ++ [[]]) ++ res from Compile.grow_out_tape s res] at hins
+  -- sym bound at the bridge (head R+1 on `encodeTape s ++ res`).
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), R + 1, Compile.encodeTape s ++ res) = some v
+      → v < max (scanRightUntilTM 4 3).sig (ShiftTape.insertCarryTM 0).sig := by
+    intro v hv
+    rw [show max (scanRightUntilTM 4 3).sig (ShiftTape.insertCarryTM 0).sig = 4 from by decide]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx
+    rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four s hbit x hx
+    · exact (hres x hx).1
+  have hcomp := composeFlatTM_run (M₁ := scanRightUntilTM 4 3) (M₂ := ShiftTape.insertCarryTM 0) (exit := 1)
+    (scanRightUntilTM_valid 4 3 (by decide)) (ShiftTape.insertCarryTM_valid 0 (by decide)) (by decide)
+    { state_idx := 0, tapes := [([], 1, Compile.encodeTape s ++ res)] }
+    (by show (0 : Nat) < (scanRightUntilTM 4 3).states; decide)
+    [] (R + 1) (Compile.encodeTape s ++ res) hsym
+    (by rw [Nat.add_comm 1 R] at hscan; exact hscan)
+    (by
+      intro k hk ck hck
+      have hpart := Compile.scanRight_partial 4 3 [] (Compile.encodeTape s ++ res) 1 R
+        (by
+          intro m hm
+          obtain ⟨h, hg⟩ := Compile.getElem_append_left_encTape s res (1 + m) (by omega)
+          refine ⟨h, ?_, ?_⟩
+          · rw [hg]; exact Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _)
+          · rw [hg]
+            obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + m) (by omega)
+              (by rw [hElen]; omega)
+            rw [show (⟨1 + m, by omega⟩ : Fin (Compile.encodeTape s).length) = ⟨1 + m, hi⟩ from rfl]
+            exact hne)
+        k (by omega)
+      rw [hpart] at hck
+      obtain rfl := Option.some.inj hck
+      exact ⟨Nat.zero_ne_one, rfl⟩)
+    hins
+    (by show (ShiftTape.insertCarryTM 0).halt.getD 5 false = true; decide)
+  obtain ⟨hrun, _⟩ := hcomp
+  exact hrun
+
+theorem Compile.growScanInsM_no_early_halt (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∀ j, j < ((Compile.encodeRegs s).length + 1) + 1 + (res.length + 2) → ∀ ck,
+      runFlatTM j Compile.growScanInsM { state_idx := 0, tapes := [([], 1, Compile.encodeTape s ++ res)] }
+        = some ck →
+      haltingStateReached Compile.growScanInsM ck = false := by
+  set R := (Compile.encodeRegs s).length with hR
+  have hElen : (Compile.encodeTape s).length = R + 2 := by
+    rw [Compile.encodeTape]; simp [List.length_append]; exact hR.symm
+  have hscan := scanRightUntilTM_run_found 4 3 [] (Compile.encodeTape s ++ res) R 1
+    (by rw [List.length_append]; omega)
+    (by
+      obtain ⟨h, hg⟩ := Compile.getElem_append_left_encTape s res (1 + R) (by omega)
+      rw [hg]
+      have hlast : (1 + R) = (Compile.encodeTape s).length - 1 := by omega
+      rw [show (⟨1 + R, by omega⟩ : Fin (Compile.encodeTape s).length)
+            = ⟨(Compile.encodeTape s).length - 1, by omega⟩ from Fin.eq_of_val_eq hlast]
+      exact Compile.encodeTape_get_last s _)
+    (by
+      intro k hk
+      obtain ⟨h, hg⟩ := Compile.getElem_append_left_encTape s res (1 + k) (by omega)
+      refine ⟨h, ?_, ?_⟩
+      · rw [hg]; exact Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _)
+      · rw [hg]
+        obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + k) (by omega)
+          (by rw [hElen]; omega)
+        rw [show (⟨1 + k, by omega⟩ : Fin (Compile.encodeTape s).length) = ⟨1 + k, hi⟩ from rfl]
+        exact hne)
+  have hpre_len : (3 :: Compile.encodeRegs s).length = R + 1 := by simp [hR]
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), R + 1, Compile.encodeTape s ++ res) = some v
+      → v < max (scanRightUntilTM 4 3).sig (ShiftTape.insertCarryTM 0).sig := by
+    intro v hv
+    rw [show max (scanRightUntilTM 4 3).sig (ShiftTape.insertCarryTM 0).sig = 4 from by decide]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx; rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four s hbit x hx
+    · exact (hres x hx).1
+  intro j hj ck hck
+  refine composeFlatTM_no_early_halt (M₁ := scanRightUntilTM 4 3) (M₂ := ShiftTape.insertCarryTM 0) (exit := 1)
+    (t₂ := res.length + 2)
+    (scanRightUntilTM_valid 4 3 (by decide)) (ShiftTape.insertCarryTM_valid 0 (by decide)) (by decide)
+    { state_idx := 0, tapes := [([], 1, Compile.encodeTape s ++ res)] }
+    (by show (0 : Nat) < (scanRightUntilTM 4 3).states; decide)
+    [] (R + 1) (Compile.encodeTape s ++ res) hsym
+    (by rw [Nat.add_comm 1 R] at hscan; exact hscan)
+    (by
+      intro k hk ck' hck'
+      have hpart := Compile.scanRight_partial 4 3 [] (Compile.encodeTape s ++ res) 1 R
+        (by
+          intro m hm
+          obtain ⟨h, hg⟩ := Compile.getElem_append_left_encTape s res (1 + m) (by omega)
+          refine ⟨h, ?_, ?_⟩
+          · rw [hg]; exact Compile.encodeTape_lt_four s hbit _ (List.get_mem _ _)
+          · rw [hg]
+            obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark s hbit (1 + m) (by omega)
+              (by rw [hElen]; omega)
+            rw [show (⟨1 + m, by omega⟩ : Fin (Compile.encodeTape s).length) = ⟨1 + m, hi⟩ from rfl]
+            exact hne)
+        k (by omega)
+      rw [hpart] at hck'
+      obtain rfl := Option.some.inj hck'
+      exact ⟨Nat.zero_ne_one, rfl⟩)
+    (by
+      intro k hk ck' hck'
+      apply ShiftTape.insertCarryTM_no_early_halt 0 (3 :: res) (3 :: Compile.encodeRegs s)
+        (by intro x hx; rcases List.mem_cons.mp hx with rfl | hx
+            · decide
+            · exact (hres x hx).1)
+        k (by rw [show (3 :: res).length + 1 = res.length + 2 from by simp]; exact hk) ck'
+      rw [hpre_len, ← Compile.encodeTape_append_split s res]
+      exact hck')
+    j (by omega) ck hck
+
+theorem Compile.growInsertM_run (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    runFlatTM (1 + 1 + (((Compile.encodeRegs s).length + 1) + 1 + (res.length + 2))) Compile.growInsertM
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := 10,
+               tapes := [([], ((Compile.encodeRegs s).length + 1) + (1 + res.length),
+                 Compile.encodeTape (s ++ [[]]) ++ res)] } := by
+  have hElen0 : 0 < (Compile.encodeTape s ++ res).length := by
+    rw [List.length_append, Compile.encodeTape]; simp
+  have hstep := ScanLeft.stepRightTM_run 4 [] (Compile.encodeTape s ++ res) 0 hElen0
+    (by
+      have hk : (Compile.encodeTape s ++ res)[0]? = some 3 := by
+        rw [List.getElem?_append_left (show 0 < (Compile.encodeTape s).length by
+              rw [Compile.encodeTape]; simp)]
+        simp [Compile.encodeTape, Compile.endMark]
+      rw [List.get_eq_getElem,
+          Option.some.inj ((List.getElem?_eq_getElem hElen0).symm.trans hk)]; decide)
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 1, Compile.encodeTape s ++ res) = some v
+      → v < max (ScanLeft.stepRightTM 4).sig Compile.growScanInsM.sig := by
+    intro v hv
+    rw [show max (ScanLeft.stepRightTM 4).sig Compile.growScanInsM.sig = 4 from by decide]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx; rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four s hbit x hx
+    · exact (hres x hx).1
+  have hcomp := composeFlatTM_run (M₁ := ScanLeft.stepRightTM 4) (M₂ := Compile.growScanInsM) (exit := 1)
+    (ScanLeft.stepRightTM_valid 4) Compile.growScanInsM_valid (by decide)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    (by show (0 : Nat) < (ScanLeft.stepRightTM 4).states; decide)
+    [] 1 (Compile.encodeTape s ++ res) hsym
+    hstep
+    (fun k hk ck hck => ScanLeft.stepRightTM_no_early_halt 4 [] (Compile.encodeTape s ++ res) 0 k hk ck hck)
+    (Compile.growScanInsM_run s hbit res hres)
+    (by show Compile.growScanInsM.halt.getD 8 false = true; decide)
+  obtain ⟨hrun, _⟩ := hcomp
+  exact hrun
+
+theorem Compile.growInsertM_no_early_halt (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∀ j, j < 1 + 1 + (((Compile.encodeRegs s).length + 1) + 1 + (res.length + 2)) → ∀ ck,
+      runFlatTM j Compile.growInsertM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some ck →
+      haltingStateReached Compile.growInsertM ck = false := by
+  have hElen0 : 0 < (Compile.encodeTape s ++ res).length := by
+    rw [List.length_append, Compile.encodeTape]; simp
+  have hstep := ScanLeft.stepRightTM_run 4 [] (Compile.encodeTape s ++ res) 0 hElen0
+    (by
+      have hk : (Compile.encodeTape s ++ res)[0]? = some 3 := by
+        rw [List.getElem?_append_left (show 0 < (Compile.encodeTape s).length by
+              rw [Compile.encodeTape]; simp)]
+        simp [Compile.encodeTape, Compile.endMark]
+      rw [List.get_eq_getElem,
+          Option.some.inj ((List.getElem?_eq_getElem hElen0).symm.trans hk)]; decide)
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 1, Compile.encodeTape s ++ res) = some v
+      → v < max (ScanLeft.stepRightTM 4).sig Compile.growScanInsM.sig := by
+    intro v hv
+    rw [show max (ScanLeft.stepRightTM 4).sig Compile.growScanInsM.sig = 4 from by decide]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx; rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four s hbit x hx
+    · exact (hres x hx).1
+  intro j hj ck hck
+  refine composeFlatTM_no_early_halt (M₁ := ScanLeft.stepRightTM 4) (M₂ := Compile.growScanInsM) (exit := 1)
+    (t₂ := ((Compile.encodeRegs s).length + 1) + 1 + (res.length + 2))
+    (ScanLeft.stepRightTM_valid 4) Compile.growScanInsM_valid (by decide)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    (by show (0 : Nat) < (ScanLeft.stepRightTM 4).states; decide)
+    [] 1 (Compile.encodeTape s ++ res) hsym
+    hstep
+    (fun k hk ck' hck' => ScanLeft.stepRightTM_no_early_halt 4 [] (Compile.encodeTape s ++ res) 0 k hk ck' hck')
+    (fun k hk ck' hck' => Compile.growScanInsM_no_early_halt s hbit res hres k hk ck' hck')
+    j (by omega) ck hck
+
+/-! ## Grown tape facts + the two-phase rewind composite. -/
+
+private theorem Compile.getElem_grown_right (s' : State) (res : List Nat) (i : Nat)
+    (hge : (Compile.encodeTape s').length ≤ i)
+    (hlt : i < (Compile.encodeTape s' ++ res).length) :
+    ∃ (hr : i - (Compile.encodeTape s').length < res.length),
+      (Compile.encodeTape s' ++ res).get ⟨i, hlt⟩
+        = res.get ⟨i - (Compile.encodeTape s').length, hr⟩ := by
+  have hr : i - (Compile.encodeTape s').length < res.length := by
+    rw [List.length_append] at hlt; omega
+  refine ⟨hr, ?_⟩
+  rw [List.get_eq_getElem, List.get_eq_getElem, List.getElem_append_right hge]
+
+/-- The residue-tolerant Compile.grow gadget as a `CompiledCmd` (forward insert ⨾ the
+demoted two-phase rewind). -/
+def Compile.growEmptyTM : CompiledCmd :=
+  Compile.rewindBracket Compile.growInsertM 10 Compile.growInsertM_valid (by rw [Compile.growInsertM_states]; omega)
+    Compile.growInsertM_tapes Compile.growInsertM_sig
+
+theorem Compile.growEmpty_run (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t, runFlatTM t Compile.growEmptyTM.M { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.growEmptyTM.exit,
+                 tapes := [([], 0, Compile.encodeTape (s ++ [[]]) ++ res)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k Compile.growEmptyTM.M { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+            = some ck →
+          ck.state_idx ≠ Compile.growEmptyTM.exit ∧ haltingStateReached Compile.growEmptyTM.M ck = false) := by
+  set R := (Compile.encodeRegs s).length with hR
+  have hbit' : Compile.BitState (s ++ [[]]) := by
+    have := Compile.BitState_append_replicate_nil s 1 hbit
+    rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+  have hElen' : (Compile.encodeTape (s ++ [[]])).length = R + 3 := by
+    rw [Compile.encodeTape, Compile.encodeRegs_snoc_nil]; simp [List.length_append]; omega
+  -- The Compile.grown tape and the rewind parameters.
+  set GT := Compile.encodeTape (s ++ [[]]) ++ res with hGT
+  have hGTlen : GT.length = R + 3 + res.length := by rw [hGT, List.length_append, hElen']
+  set HEAD := (R + 1) + (1 + res.length) with hHEAD
+  -- Conditions for `rewindTwoPhase_run` on `GT`, terminator at `p = R + 2`.
+  have hresid_lt_four : ∀ x ∈ res, x < 4 := fun x hx => (hres x hx).1
+  have hGT_lt4 : ∀ x ∈ GT, x < 4 := by
+    intro x hx; rw [hGT] at hx; rcases List.mem_append.mp hx with h | h
+    · exact Compile.encodeTape_lt_four _ hbit' x h
+    · exact hresid_lt_four x h
+  have hsent : GT.get ⟨0, by rw [hGTlen]; omega⟩ = 3 := by
+    have hk : GT[0]? = some 3 := by
+      rw [hGT, List.getElem?_append_left (show 0 < (Compile.encodeTape (s ++ [[]])).length by
+            rw [hElen']; omega)]
+      simp [Compile.encodeTape, Compile.endMark]
+    rw [List.get_eq_getElem]; exact Option.some.inj ((List.getElem?_eq_getElem _).symm.trans hk)
+  have hterm : GT.get ⟨R + 2, by rw [hGTlen]; omega⟩ = 3 := by
+    have hk : GT[R + 2]? = some 3 := by
+      rw [hGT, List.getElem?_append_left (show R + 2 < (Compile.encodeTape (s ++ [[]])).length by
+            rw [hElen']; omega)]
+      have := Compile.encodeTape_get_last (s ++ [[]])
+        (show (Compile.encodeTape (s ++ [[]])).length - 1 < (Compile.encodeTape (s ++ [[]])).length by
+          rw [hElen']; omega)
+      rw [List.get_eq_getElem] at this
+      rw [show R + 2 = (Compile.encodeTape (s ++ [[]])).length - 1 by rw [hElen']; omega,
+          List.getElem?_eq_getElem (show (Compile.encodeTape (s ++ [[]])).length - 1 < _ by
+            rw [hElen']; omega), this]
+    rw [List.get_eq_getElem]; exact Option.some.inj ((List.getElem?_eq_getElem _).symm.trans hk)
+  have hint : ∀ i, 0 < i → i < R + 2 →
+      ∃ (h : i < GT.length), GT.get ⟨i, h⟩ < 4 ∧ GT.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi0 hilt
+    have hiGT : i < GT.length := by rw [hGTlen]; omega
+    refine ⟨hiGT, ?_, ?_⟩
+    · exact hGT_lt4 _ (List.get_mem _ _)
+    · have hval : GT[i]? = (Compile.encodeTape (s ++ [[]]))[i]? := by
+        rw [hGT, List.getElem?_append_left (by rw [hElen']; omega)]
+      have hGTi : GT[i]'hiGT = (Compile.encodeTape (s ++ [[]]))[i]'(by rw [hElen']; omega) := by
+        have h2 := (List.getElem?_eq_getElem hiGT).symm.trans hval
+        rw [List.getElem?_eq_getElem (show i < _ by rw [hElen']; omega)] at h2
+        exact Option.some.inj h2
+      obtain ⟨hi, hne⟩ := Compile.encodeTape_interior_ne_endMark _ hbit' i hi0 (by rw [hElen']; omega)
+      rw [List.get_eq_getElem, hGTi]; exact hne
+  have hresid : ∀ i, R + 2 < i → i ≤ HEAD →
+      ∃ (h : i < GT.length), GT.get ⟨i, h⟩ < 4 ∧ GT.get ⟨i, h⟩ ≠ 3 := by
+    intro i hi0 hile
+    have hiGT : i < GT.length := by rw [hGTlen, hHEAD] at *; omega
+    have hge : (Compile.encodeTape (s ++ [[]])).length ≤ i := by rw [hElen']; omega
+    have hr : i - (Compile.encodeTape (s ++ [[]])).length < res.length := by
+      rw [hGTlen] at hiGT; omega
+    have hval : GT[i]? = res[i - (Compile.encodeTape (s ++ [[]])).length]? := by
+      rw [hGT, List.getElem?_append_right hge]
+    have hGTi : GT[i]'hiGT = res[i - (Compile.encodeTape (s ++ [[]])).length]'hr := by
+      have h2 := (List.getElem?_eq_getElem hiGT).symm.trans hval
+      rw [List.getElem?_eq_getElem hr] at h2
+      exact Option.some.inj h2
+    have hmem : res[i - (Compile.encodeTape (s ++ [[]])).length]'hr ∈ res := List.getElem_mem hr
+    refine ⟨hiGT, ?_, ?_⟩
+    · exact hGT_lt4 _ (List.get_mem _ _)
+    · rw [List.get_eq_getElem, hGTi]; exact (hres _ hmem).2
+  -- rewindTwoPhase run from the exit head `HEAD` of Compile.growInsertM.
+  have hrw := ScanLeft.rewindTwoPhase_run 4 3 (by decide) [] GT (R + 2) HEAD
+    (by rw [hGTlen]; omega) hsent (by rw [hGTlen]; omega) hterm (by omega)
+    (by rw [hGTlen, hHEAD]; omega) (by rw [hHEAD]; omega) hint hresid
+  have hrw_traj := ScanLeft.rewindTwoPhase_no_early_halt 4 3 (by decide) [] GT (R + 2) HEAD
+    (by rw [hGTlen]; omega) hsent (by rw [hGTlen]; omega) hterm (by omega)
+    (by rw [hGTlen, hHEAD]; omega) (by rw [hHEAD]; omega) hint hresid
+  -- The bridge sym bound at the exit head.
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), HEAD, GT) = some v
+      → v < max Compile.growInsertM.sig (ScanLeft.rewindTwoPhaseTM 4 3).sig := by
+    intro v hv
+    rw [show max Compile.growInsertM.sig (ScanLeft.rewindTwoPhaseTM 4 3).sig = 4 from by decide]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx; rw [hGT] at hx; rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four _ hbit' x hx
+    · exact hresid_lt_four x hx
+  -- Assemble the raw composite run + trajectory, then transport through `rewindBracket`.
+  have hgrun : runFlatTM (1 + 1 + ((R + 1) + 1 + (res.length + 2))) Compile.growInsertM
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := 10, tapes := [([], HEAD, GT)] } := by
+    rw [hHEAD, hGT]; exact Compile.growInsertM_run s hbit res hres
+  have htraj1 : ∀ k, k < (1 + 1 + ((R + 1) + 1 + (res.length + 2))) → ∀ ck,
+      runFlatTM k Compile.growInsertM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ 10 ∧ haltingStateReached Compile.growInsertM ck = false := by
+    intro k hk ck hck
+    have hnh := Compile.growInsertM_no_early_halt s hbit res hres k hk ck hck
+    refine ⟨fun hc => ?_, hnh⟩
+    have hh : haltingStateReached Compile.growInsertM ck = true := by
+      show Compile.growInsertM.halt.getD ck.state_idx false = true
+      rw [hc]; decide
+    rw [hh] at hnh; exact Bool.noConfusion hnh
+  have hcomp := composeFlatTM_run (M₁ := Compile.growInsertM) (M₂ := ScanLeft.rewindTwoPhaseTM 4 3) (exit := 10)
+    Compile.growInsertM_valid (ScanLeft.rewindTwoPhaseTM_valid 4 3 (by decide)) (by rw [Compile.growInsertM_states]; omega)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    (by show (0 : Nat) < Compile.growInsertM.states; rw [Compile.growInsertM_states]; omega) [] HEAD GT hsym
+    hgrun htraj1 hrw
+    (by show (ScanLeft.rewindTwoPhaseTM 4 3).halt.getD 6 false = true; decide)
+  obtain ⟨hraw_run, _⟩ := hcomp
+  -- no-early-halt of the raw composite.
+  have hraw_traj : ∀ k, k < (1 + 1 + ((R + 1) + 1 + (res.length + 2))) + 1
+        + ((HEAD - (R + 2) + 1) + 1 + (1 + 1 + (R + 2))) → ∀ ck,
+      runFlatTM k (composeFlatTM Compile.growInsertM (ScanLeft.rewindTwoPhaseTM 4 3) 10)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      haltingStateReached (composeFlatTM Compile.growInsertM (ScanLeft.rewindTwoPhaseTM 4 3) 10) ck = false := by
+    refine composeFlatTM_no_early_halt (M₁ := Compile.growInsertM) (M₂ := ScanLeft.rewindTwoPhaseTM 4 3) (exit := 10)
+      (t₂ := (HEAD - (R + 2) + 1) + 1 + (1 + 1 + (R + 2)))
+      Compile.growInsertM_valid (ScanLeft.rewindTwoPhaseTM_valid 4 3 (by decide)) (by rw [Compile.growInsertM_states]; omega)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      (by show (0 : Nat) < Compile.growInsertM.states; rw [Compile.growInsertM_states]; omega) [] HEAD GT hsym
+      hgrun htraj1 hrw_traj
+  -- transport through the joinTwoHalts demotion.
+  have hstate17 : runFlatTM ((1 + 1 + ((R + 1) + 1 + (res.length + 2))) + 1
+        + ((HEAD - (R + 2) + 1) + 1 + (1 + 1 + (R + 2))))
+      (composeFlatTM Compile.growInsertM (ScanLeft.rewindTwoPhaseTM 4 3) 10)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.growInsertM.states + 6, tapes := [([], 0, GT)] } := by
+    rw [hraw_run, Compile.growInsertM_states]
+  have htrans := Compile.rewindBracket_transport Compile.growInsertM 10 Compile.growInsertM_valid
+    (by rw [Compile.growInsertM_states]; omega) Compile.growInsertM_tapes Compile.growInsertM_sig hstate17 hraw_traj
+  exact ⟨_, htrans.1, htrans.2⟩
+
+
+/-! ### `growTwoEmpty` — two empty registers at the register-list end (eqBit d2c)
+
+The `eqBit` (design A) `compareRegsTM` needs TWO scratch registers `sc1`/`sc2`.
+`growTwoEmptyM = growEmptyTM ⨾ growEmptyTM` grows `encodeTape s ++ res` into
+`encodeTape (s ++ [[],[]]) ++ res` (head 0), via two `growEmpty_run`s. -/
+
+def Compile.growTwoEmptyM : FlatTM :=
+  composeFlatTM Compile.growEmptyTM.M Compile.growEmptyTM.M Compile.growEmptyTM.exit
+
+theorem Compile.growTwoEmpty_run (s : State) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t, runFlatTM t Compile.growTwoEmptyM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states,
+                 tapes := [([], 0, Compile.encodeTape (s ++ [[], []]) ++ res)] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k Compile.growTwoEmptyM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+            = some ck →
+          haltingStateReached Compile.growTwoEmptyM ck = false) := by
+  have hbit2 : Compile.BitState (s ++ [[]]) := by
+    have := Compile.BitState_append_replicate_nil s 1 hbit
+    rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
+  obtain ⟨t1, hr1, ht1⟩ := Compile.growEmpty_run s hbit res hres
+  obtain ⟨t2, hr2, ht2⟩ := Compile.growEmpty_run (s ++ [[]]) hbit2 res hres
+  have hstart : Compile.growEmptyTM.M.start = 0 := by
+    show (Compile.rewindBracket _ _ _ _ _ _).M.start = 0
+    rw [Compile.rewindBracket_M]; rw [Compile.joinTwoHalts_start, composeFlatTM_start]; rfl
+  have hcfg_lt : (0 : Nat) < Compile.growEmptyTM.M.states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) Compile.growEmptyTM.exit_lt
+  have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape (s ++ [[]]) ++ res) = some v
+      → v < max Compile.growEmptyTM.M.sig Compile.growEmptyTM.M.sig := by
+    intro v hv
+    rw [Nat.max_self, Compile.growEmptyTM.M_sig]
+    refine Compile.curSym_lt ?_ _ v hv
+    intro x hx; rcases List.mem_append.mp hx with hx | hx
+    · exact Compile.encodeTape_lt_four _ hbit2 x hx
+    · exact (hres x hx).1
+  have hr2' : runFlatTM t2 Compile.growEmptyTM.M
+      { state_idx := Compile.growEmptyTM.M.start, tapes := [([], 0, Compile.encodeTape (s ++ [[]]) ++ res)] }
+        = some { state_idx := Compile.growEmptyTM.exit,
+                 tapes := [([], 0, Compile.encodeTape ((s ++ [[]]) ++ [[]]) ++ res)] } := by
+    rw [hstart]; exact hr2
+  have ht1' : ∀ k, k < t1 → ∀ ck,
+      runFlatTM k Compile.growEmptyTM.M { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+      ck.state_idx ≠ Compile.growEmptyTM.exit ∧ haltingStateReached Compile.growEmptyTM.M ck = false := ht1
+  have hcomp := composeFlatTM_run (M₁ := Compile.growEmptyTM.M) (M₂ := Compile.growEmptyTM.M) (exit := Compile.growEmptyTM.exit)
+    Compile.growEmptyTM.M_valid Compile.growEmptyTM.M_valid Compile.growEmptyTM.exit_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } hcfg_lt
+    [] 0 (Compile.encodeTape (s ++ [[]]) ++ res) hsym
+    hr1 ht1' hr2'
+    (by
+      show haltingStateReached Compile.growEmptyTM.M
+        { state_idx := Compile.growEmptyTM.exit, tapes := [([], 0, Compile.encodeTape ((s ++ [[]]) ++ [[]]) ++ res)] } = true
+      show Compile.growEmptyTM.M.halt.getD Compile.growEmptyTM.exit false = true
+      rw [List.getD_eq_getElem?_getD, Compile.growEmptyTM.exit_is_halt]; rfl)
+  obtain ⟨hrun, _⟩ := hcomp
+  have happend : (s ++ [[]]) ++ [[]] = s ++ [[], []] := by simp
+  rw [happend] at hrun
+  refine ⟨_, hrun, ?_⟩
+  -- no-early-halt
+  have htraj := composeFlatTM_no_early_halt (M₁ := Compile.growEmptyTM.M) (M₂ := Compile.growEmptyTM.M)
+    (exit := Compile.growEmptyTM.exit) (t₂ := t2)
+    Compile.growEmptyTM.M_valid Compile.growEmptyTM.M_valid Compile.growEmptyTM.exit_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } hcfg_lt
+    [] 0 (Compile.encodeTape (s ++ [[]]) ++ res) hsym
+    hr1 ht1'
+    (fun k hk ck hck => (ht2 k hk ck (by rw [hstart] at hck; exact hck)).2)
+  exact htraj
+
+
