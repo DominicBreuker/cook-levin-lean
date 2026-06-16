@@ -17705,6 +17705,209 @@ theorem Compile.consumeIter_spec (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         rw [Compile.consumeStep, ← hgetX]
         exact Compile.BitState_set_tail (sk.set sc1 (State.get sk sc1).tail) sc2 hbitX hsc2X
 
+/-! ### `compareLoopTM` — the `eqBit` consume loop (bottom-up, Risk C2 — d2a)
+
+The counted loop over `compareBodyTM`: ITER (delete both heads) while both scratch
+regs are nonempty with matching first bits, DONE otherwise. After
+`matchLen (s.get sc1) (s.get sc2)` iterations the two registers hold the operands'
+suffixes (`consumeLoop`'s residue); the post-loop "both empty?" verdict
+(`eqVerdictM`, proven) then decides equality. -/
+
+def Compile.compareLoopTM (sc1 sc2 : Var) : FlatTM :=
+  loopTM (Compile.compareBodyTM sc1 sc2)
+    (Compile.compareBodyTM_exitDone sc1 sc2) (Compile.compareBodyTM_exitLoop sc1 sc2)
+
+/-- **The consume loop runs to completion.** From `encodeTape s ++ res` at head `0`
+(with `sc1 ≠ sc2` both bit-registers), the loop consumes the matched common prefix
+of the two scratch registers and halts (at `compareBodyTM.states`) with the two
+registers holding their `matchLen`-dropped suffixes (residue extended by the
+per-iteration `[0,0]` fillers). -/
+theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
+    (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length) (hbit : Compile.BitState s)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.compareLoopTM sc1 sc2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := (Compile.compareBodyTM sc1 sc2).states,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[Compile.matchLen (State.get s sc1) (State.get s sc2)] s)
+                     ++ (res ++ List.replicate (2 * Compile.matchLen (State.get s sc1) (State.get s sc2)) 0))] } := by
+  set n := Compile.matchLen (State.get s sc1) (State.get s sc2) with hn
+  set T : Nat → (List Nat × Nat × List Nat) := fun m =>
+    ([], 0, Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+      ++ (res ++ List.replicate (2 * (n - m)) 0)) with hTdef
+  -- The tape head always reads the leading sentinel `3 < 4 = sig`.
+  have hT_sym : ∀ m v, currentTapeSymbol (T m) = some v → v < (Compile.compareBodyTM sc1 sc2).sig := by
+    intro m v hv
+    rw [Compile.compareBodyTM_sig]
+    simp only [hTdef] at hv
+    have hLpos : 0 < (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)).length := by
+      rw [Compile.encodeTape]; simp
+    have hlt : (0 : Nat) < (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+        ++ (res ++ List.replicate (2 * (n - m)) 0)).length := by rw [List.length_append]; omega
+    rw [currentTapeSymbol_in_range hlt] at hv
+    have h0 : (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+        ++ (res ++ List.replicate (2 * (n - m)) 0))[0]? = some 3 := by
+      rw [List.getElem?_append_left hLpos, Compile.encodeTape]; rfl
+    have hhead : (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
+        ++ (res ++ List.replicate (2 * (n - m)) 0)).get ⟨0, hlt⟩ = 3 := by
+      rw [List.get_eq_getElem]
+      exact Option.some.inj ((List.getElem?_eq_getElem hlt).symm.trans h0)
+    have hv3 : v = 3 := by rw [← Option.some.inj hv]; exact hhead
+    omega
+  -- Per-iteration body contract (existence form, for `choose`).
+  have hiter_ex : ∀ j, ∃ tj, j < n →
+      runFlatTM tj (Compile.compareBodyTM sc1 sc2)
+          { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T (j + 1)] }
+        = some { state_idx := Compile.compareBodyTM_exitLoop sc1 sc2, tapes := [T j] }
+      ∧ (∀ k, k < tj → ∀ ck,
+          runFlatTM k (Compile.compareBodyTM sc1 sc2)
+              { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T (j + 1)] } = some ck →
+          ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+          ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+          haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+    intro j
+    by_cases hj : j < n
+    · obtain ⟨hspec1, hspec2, hspeclen, hspecbit⟩ :=
+        Compile.consumeIter_spec s sc1 sc2 hne hsc1 hsc2 hbit (n - (j + 1))
+      have hidx : n - (j + 1) < n := by omega
+      obtain ⟨a, cs1, cs2, hd1, hd2⟩ :=
+        Compile.matchLen_step (State.get s sc1) (State.get s sc2) (n - (j + 1)) hidx
+      have hg1 : State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1 = a :: cs1 := by
+        rw [hspec1]; exact hd1
+      have hg2 : State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc2 = a :: cs2 := by
+        rw [hspec2]; exact hd2
+      have hsc1' : sc1 < ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).length := by
+        rw [hspeclen]; exact hsc1
+      have hsc2' : sc2 < ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).length := by
+        rw [hspeclen]; exact hsc2
+      have hmem1 : State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1
+          ∈ (Compile.consumeStep sc1 sc2)^[n - (j + 1)] s := by
+        rw [State.get, List.getElem?_eq_getElem hsc1']; exact List.getElem_mem hsc1'
+      have ha : a ≤ 1 := hspecbit _ hmem1 a (by rw [hg1]; exact List.mem_cons_self)
+      have hres' : Compile.ValidResidue (res ++ List.replicate (2 * (n - (j + 1))) 0) :=
+        Compile.ValidResidue_append_replicate_zero res _ hres
+      obtain ⟨tj, hrun, htraj⟩ :=
+        Compile.compareBody_iterate_run ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1 sc2
+          (res ++ List.replicate (2 * (n - (j + 1))) 0) a a cs1 cs2 hg1 hg2 ha ha rfl hne
+          hsc1' hsc2' hspecbit hres'
+      have hstate_eq : (Compile.consumeStep sc1 sc2)^[n - j] s
+          = (((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).set sc1
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1).tail).set sc2
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc2).tail := by
+        rw [show n - j = (n - (j + 1)) + 1 from by omega, Function.iterate_succ_apply']
+        rfl
+      have hres_eq : res ++ List.replicate (2 * (n - j)) 0
+          = (res ++ List.replicate (2 * (n - (j + 1))) 0) ++ [0, 0] := by
+        rw [List.append_assoc, show ([0, 0] : List Nat) = List.replicate 2 0 from rfl,
+            ← List.replicate_add, show 2 * (n - (j + 1)) + 2 = 2 * (n - j) from by omega]
+      have hgoal_start : T (j + 1) = ([], 0,
+          Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s)
+            ++ (res ++ List.replicate (2 * (n - (j + 1))) 0)) := by simp only [hTdef]
+      have hgoal_end : T j = ([], 0,
+          Compile.encodeTape ((((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s).set sc1
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1).tail).set sc2
+                (State.get ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc2).tail)
+            ++ ((res ++ List.replicate (2 * (n - (j + 1))) 0) ++ [0, 0])) := by
+        simp only [hTdef]; rw [hstate_eq, hres_eq]
+      refine ⟨tj, fun _ => ⟨?_, ?_⟩⟩
+      · rw [Compile.compareBodyTM_start, hgoal_start, hgoal_end]; exact hrun
+      · intro k hk ck hck
+        rw [Compile.compareBodyTM_start, hgoal_start] at hck
+        exact htraj k hk ck hck
+    · exact ⟨0, fun h => absurd h hj⟩
+  choose tIter hIter using hiter_ex
+  -- Terminal DONE body contract at `T 0` (dispatch the three stopping cases).
+  have hdone : ∃ tD,
+      runFlatTM tD (Compile.compareBodyTM sc1 sc2)
+          { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T 0] }
+        = some { state_idx := Compile.compareBodyTM_exitDone sc1 sc2, tapes := [T 0] }
+      ∧ (∀ k, k < tD → ∀ ck,
+          runFlatTM k (Compile.compareBodyTM sc1 sc2)
+              { state_idx := (Compile.compareBodyTM sc1 sc2).start, tapes := [T 0] } = some ck →
+          ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
+          ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
+          haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+    obtain ⟨hsp1, hsp2, hsplen, hspbit⟩ := Compile.consumeIter_spec s sc1 sc2 hne hsc1 hsc2 hbit n
+    have hsc1n : sc1 < ((Compile.consumeStep sc1 sc2)^[n] s).length := by rw [hsplen]; exact hsc1
+    have hsc2n : sc2 < ((Compile.consumeStep sc1 sc2)^[n] s).length := by rw [hsplen]; exact hsc2
+    have hresn : Compile.ValidResidue (res ++ List.replicate (2 * n) 0) :=
+      Compile.ValidResidue_append_replicate_zero res _ hres
+    have hT0 : T 0 = ([], 0,
+        Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+          ++ (res ++ List.replicate (2 * n) 0)) := by simp only [hTdef, Nat.sub_zero]
+    have hsym0 := Compile.compareBody_symMax ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+      (res ++ List.replicate (2 * n) 0) hspbit
+    obtain ⟨tT, htmrun, htmtraj⟩ : ∃ tT,
+        runFlatTM tT (Compile.testMachine sc1 sc2)
+            { state_idx := 0, tapes := [([], 0,
+              Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                ++ (res ++ List.replicate (2 * n) 0))] }
+          = some { state_idx := Compile.testMachine_exit_done sc1 sc2,
+                   tapes := [([], 0,
+                     Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                       ++ (res ++ List.replicate (2 * n) 0))] }
+        ∧ (∀ k, k < tT → ∀ ck,
+            runFlatTM k (Compile.testMachine sc1 sc2)
+                { state_idx := 0, tapes := [([], 0,
+                  Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                    ++ (res ++ List.replicate (2 * n) 0))] } = some ck →
+            ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
+            ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
+            haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+      rcases Compile.matchLen_stop (State.get s sc1) (State.get s sc2) with
+        hstop | hstop | ⟨a, cs1, b, cs2, hda, hdb, hab⟩
+      · have hempty1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = [] := by
+          rw [hsp1, hn]; exact hstop
+        exact Compile.testMachine_run_done_left ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+          (res ++ List.replicate (2 * n) 0) hspbit hsc1n hempty1 hresn
+      · by_cases he1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = []
+        · exact Compile.testMachine_run_done_left ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+            (res ++ List.replicate (2 * n) 0) hspbit hsc1n he1 hresn
+        · have hempty2 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc2 = [] := by
+            rw [hsp2, hn]; exact hstop
+          exact Compile.testMachine_run_done_right ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+            (res ++ List.replicate (2 * n) 0) hspbit hsc1n hsc2n he1 hempty2 hresn
+      · have hgc1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = a :: cs1 := by
+          rw [hsp1, hn]; exact hda
+        have hgc2 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc2 = b :: cs2 := by
+          rw [hsp2, hn]; exact hdb
+        have hamem : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1
+            ∈ (Compile.consumeStep sc1 sc2)^[n] s := by
+          rw [State.get, List.getElem?_eq_getElem hsc1n]; exact List.getElem_mem hsc1n
+        have hbmem : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc2
+            ∈ (Compile.consumeStep sc1 sc2)^[n] s := by
+          rw [State.get, List.getElem?_eq_getElem hsc2n]; exact List.getElem_mem hsc2n
+        have ha : a ≤ 1 := hspbit _ hamem a (by rw [hgc1]; exact List.mem_cons_self)
+        have hb : b ≤ 1 := hspbit _ hbmem b (by rw [hgc2]; exact List.mem_cons_self)
+        exact Compile.testMachine_run_done_neq ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
+          (res ++ List.replicate (2 * n) 0) a b cs1 cs2 hgc1 hgc2 ha hb hab hsc1n hsc2n hspbit hresn
+    obtain ⟨tD, hdrun, hdtraj⟩ := Compile.compareBody_done_run sc1 sc2
+      (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s) ++ (res ++ List.replicate (2 * n) 0))
+      hsym0 htmrun htmtraj
+    refine ⟨tD, ?_, ?_⟩
+    · rw [Compile.compareBodyTM_start, hT0]; exact hdrun
+    · intro k hk ck hck
+      rw [Compile.compareBodyTM_start, hT0] at hck
+      exact hdtraj k hk ck hck
+  -- Assemble via `loopTM_run`.
+  obtain ⟨tDone, hdone_run, hdone_traj⟩ := hdone
+  have hmain := loopTM_run (Compile.compareBodyTM sc1 sc2) (Compile.compareBodyTM_exitDone sc1 sc2)
+    (Compile.compareBodyTM_exitLoop sc1 sc2)
+    (Compile.compareBodyTM_valid sc1 sc2) (Compile.compareBodyTM_exitDone_lt sc1 sc2)
+    (Compile.compareBodyTM_exitLoop_lt sc1 sc2) (Compile.compareBodyTM_exitDone_ne_exitLoop sc1 sc2)
+    T hT_sym tIter tDone ⟨hdone_run, hdone_traj⟩ n hIter
+  refine ⟨loopBudget tIter tDone n, ?_⟩
+  have hTn : T n = ([], 0, Compile.encodeTape s ++ res) := by
+    simp only [hTdef, Nat.sub_self, Function.iterate_zero, id_eq, Nat.mul_zero, List.replicate_zero,
+      List.append_nil]
+  have hT0' : T 0 = ([], 0,
+      Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s) ++ (res ++ List.replicate (2 * n) 0)) := by
+    simp only [hTdef, Nat.sub_zero]
+  rw [Compile.compareBodyTM_start, hTn, hT0'] at hmain
+  rw [Compile.compareLoopTM]
+  exact hmain
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
