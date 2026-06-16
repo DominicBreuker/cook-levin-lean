@@ -14184,6 +14184,52 @@ head (both in place), entered at head `0`. -/
 def Compile.iterTailsTM (sc1 sc2 : Var) : FlatTM :=
   composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit
 
+/-- The composed (unique) exit of `iterTailsTM`: `opTail sc2`'s exit, shifted past
+`opTail sc1`. Matches the exit reached by `iterTails_run`. -/
+def Compile.iterTailsTM_exit (sc1 sc2 : Var) : Nat :=
+  (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states
+
+/-! #### `iterTailsTM` structural lemmas (the loop-body ITERATE leaf) -/
+
+theorem Compile.iterTailsTM_tapes (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).tapes = 1 := by
+  rw [Compile.iterTailsTM, composeFlatTM_tapes]; exact (Compile.opTail sc1 sc1).M_tapes
+
+theorem Compile.iterTailsTM_sig (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).sig = 4 := by
+  rw [Compile.iterTailsTM, composeFlatTM_sig, (Compile.opTail sc1 sc1).M_sig,
+      (Compile.opTail sc2 sc2).M_sig]; rfl
+
+theorem Compile.iterTailsTM_start (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).start = (Compile.opTail sc1 sc1).M.start := by
+  rw [Compile.iterTailsTM, composeFlatTM_start]
+
+theorem Compile.iterTailsTM_states (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).states
+      = (Compile.opTail sc1 sc1).M.states + (Compile.opTail sc2 sc2).M.states := by
+  rw [Compile.iterTailsTM, composeFlatTM_states]
+
+theorem Compile.iterTailsTM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.iterTailsTM sc1 sc2) :=
+  composeFlatTM_valid (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M
+    (Compile.opTail sc1 sc1).exit (Compile.opTail sc1 sc1).M_valid (Compile.opTail sc2 sc2).M_valid
+    (Compile.opTail sc1 sc1).exit_lt (Compile.opTail sc1 sc1).M_tapes (Compile.opTail sc2 sc2).M_tapes
+
+theorem Compile.iterTailsTM_exit_lt (sc1 sc2 : Var) :
+    Compile.iterTailsTM_exit sc1 sc2 < (Compile.iterTailsTM sc1 sc2).states := by
+  rw [Compile.iterTailsTM_exit, Compile.iterTailsTM_states]
+  have := (Compile.opTail sc2 sc2).exit_lt
+  omega
+
+theorem Compile.iterTailsTM_exit_is_halt (sc1 sc2 : Var) :
+    (Compile.iterTailsTM sc1 sc2).halt[Compile.iterTailsTM_exit sc1 sc2]? = some true := by
+  rw [Compile.iterTailsTM_exit, Compile.iterTailsTM]
+  show (List.replicate (Compile.opTail sc1 sc1).M.states false ++ (Compile.opTail sc2 sc2).M.halt)[
+      (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states]? = some true
+  rw [List.getElem?_append_right (by rw [List.length_replicate]; exact Nat.le_add_left _ _),
+      List.length_replicate, Nat.add_sub_cancel]
+  exact (Compile.opTail sc2 sc2).exit_is_halt
+
 /-- **ITERATE leaf run.** From `encodeTape s ++ res` at head `0` with `sc1 ≠ sc2`
 both nonempty, `iterTailsTM` deletes both heads in place, landing at the composed
 exit with `encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)`, the
@@ -14198,7 +14244,11 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         = some { state_idx := (Compile.opTail sc2 sc2).exit + (Compile.opTail sc1 sc1).M.states,
                  tapes := [([], 0,
                    Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
-                     ++ (res ++ [0, 0]))] } := by
+                     ++ (res ++ [0, 0]))] }
+      ∧ (∀ k, k < t → ∀ ck,
+          runFlatTM k (Compile.iterTailsTM sc1 sc2)
+              (initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]) = some ck →
+          haltingStateReached (Compile.iterTailsTM sc1 sc2) ck = false) := by
   obtain ⟨t1, hrun1, htraj1, _⟩ := Compile.opTailSelf_run_delete s sc1 h1 hbit hne1 res hres
   set s' := s.set sc1 (s.get sc1).tail with hs'
   have hlen' : s'.length = s.length := Compile.length_set s sc1 _ h1
@@ -14227,7 +14277,7 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
   have hinit2 : initFlatConfig (Compile.opTail sc2 sc2).M [Compile.encodeTape s' ++ (res ++ [0])]
       = { state_idx := (Compile.opTail sc2 sc2).M.start, tapes := [([], 0, right1)] } := by
     simp only [initFlatConfig, hr1, List.map_cons, List.map_nil]
-  rw [hinit2] at hrun2
+  rw [hinit2] at hrun2 htraj2
   have hLpos : 0 < (Compile.encodeTape s').length := by rw [Compile.encodeTape]; simp
   have hsym : ∀ v, currentTapeSymbol (([] : List Nat), 0, right1) = some v →
       v < max (Compile.opTail sc1 sc1).M.sig (Compile.opTail sc2 sc2).M.sig := by
@@ -14251,20 +14301,27 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
     { state_idx := (Compile.opTail sc1 sc1).M.start,
       tapes := [([], 0, Compile.encodeTape s ++ res)] }
     hvalid1.1 [] 0 right1 hsym hrun1 htraj1 hrun2 hhalt2
-  refine ⟨t1 + 1 + t2, ?_⟩
+  have hcomp_traj := composeFlatTM_no_early_halt hvalid1 hvalid2 (Compile.opTail sc1 sc1).exit_lt
+    { state_idx := (Compile.opTail sc1 sc1).M.start,
+      tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    hvalid1.1 [] 0 right1 hsym hrun1 htraj1
+    (fun k hk ck hck => (htraj2 k hk ck hck).2)
   have hcfg0 : initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]
       = { state_idx := (Compile.opTail sc1 sc1).M.start,
           tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
     simp only [initFlatConfig, Compile.iterTailsTM, composeFlatTM_start, List.map_cons, List.map_nil]
-  rw [hcfg0]
-  have htape : Compile.encodeTape (s'.set sc2 (s'.get sc2).tail) ++ ((res ++ [0]) ++ [0])
-      = Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
-          ++ (res ++ [0, 0]) := by
-    rw [hget', hs']; simp [List.append_assoc]
-  show runFlatTM (t1 + 1 + t2)
-      (composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit)
-      _ = _
-  rw [hcomp.1, ← htape]
+  refine ⟨t1 + 1 + t2, ?_, ?_⟩
+  · rw [hcfg0]
+    have htape : Compile.encodeTape (s'.set sc2 (s'.get sc2).tail) ++ ((res ++ [0]) ++ [0])
+        = Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
+            ++ (res ++ [0, 0]) := by
+      rw [hget', hs']; simp [List.append_assoc]
+    show runFlatTM (t1 + 1 + t2)
+        (composeFlatTM (Compile.opTail sc1 sc1).M (Compile.opTail sc2 sc2).M (Compile.opTail sc1 sc1).exit)
+        _ = _
+    rw [hcomp.1, ← htape]
+  · rw [hcfg0]
+    exact hcomp_traj
 
 /-! ### `opRewindToZero` — a halt-unique "rewind to the leading sentinel" leaf
 (bottom-up, Risk C2)
