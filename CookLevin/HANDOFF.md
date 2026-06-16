@@ -133,51 +133,63 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What this session (2026-06-15e, bottom-up) did — **`Compile.bothNonemptyM` + `Compile.testMachine` PROVEN: the consume-loop body decision is now a clean 2-exit gadget (d2a)**
+## ✅ What this session (2026-06-16, bottom-up) did — **the `eqBit` consume LOOP is closed: `Compile.compareLoop_run` PROVEN (d2a milestone)**
 
-Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider
-still needs). With the bit-reader/bit-compare leaves and all merge combinators
-already proven, this session assembled the **consume-loop body decision**
-`testMachine` from them. Both results PROVEN & axiom-clean (`[propext,
-Classical.choice, Quot.sound]`), full build green (3358 jobs):
+Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider still
+needs). With the body decision `testMachine` already proven, this session built the
+loop body, ran it through `loopTM_run`, and closed the consume-loop run lemma — the
+"immediate next step" the prior handoff flagged. **All results PROVEN & axiom-clean
+(`[propext, Classical.choice, Quot.sound]`), full build green (3358 jobs):**
 
-1. **`Compile.bothNonemptyM sc1 sc2`** (Compile.lean ~16316) — clean 2-exit guard
-   "are BOTH `sc1` and `sc2` nonempty?", head restored to `0`, tape unchanged.
-   `joinTwoHalts (branchComposeFlatTM (navTestRewindM sc1) (navTestRewindM sc2) idTM
-   (content sc1) (delim sc1)) noA noB` — `sc1` nonempty → test `sc2`; `sc1` empty →
-   `idTM` = NO. **Structural mirror of `eqVerdictM`** (idTM swapped to the *negative*
-   branch), `halt_only` via the new `_M2two`. Full structural family + the three
-   input-case run lemmas (`bothNonemptyM_run_yes` / `_no_left` / `_no_right`; the
-   `_no_right` case is the `_run_eq_weak`+`step_to_h1` demoted-then-bridge pattern).
-2. **`Compile.testMachine sc1 sc2`** (Compile.lean ~16797) — the clean 2-exit body
-   DECISION: **ITER** iff both scratch regs nonempty AND first bits match, **DONE**
-   otherwise; head `0`, tape unchanged. `joinTwoHalts (branchComposeFlatTM
-   (bothNonemptyM sc1 sc2) (bitCompareM sc1 sc2) idTM exit_yes exit_no) done nomatch`
-   — both nonempty → `bitCompareM` (MATCH=ITER, NOMATCH demoted); ≥1 empty → `idTM`
-   = DONE. `halt_only` via `_M2two`. Full structural family + the **four** input-case
-   run lemmas (`testMachine_run_iter` / `_done_left` / `_done_right` / `_done_neq`)
-   via a shared `testMachine_run_done_of_no` helper (the two DONE-by-empty cases) +
-   the demoted-bridge `_done_neq`. **These four lemmas are exactly the body contracts
-   the consume-loop run lemma will feed into `branchComposeFlatTM_run_{pos,neg}`.**
+1. **`iterTailsTM` structural family + trajectory** (Compile.lean ~14188) — the ITERATE
+   leaf's `tapes/sig/start/states/valid` + the composed `iterTailsTM_exit`/`_exit_lt`/
+   `_exit_is_halt`; and `iterTails_run` now ALSO returns the no-early-halt trajectory
+   (threaded the discarded `opTailSelf_run_delete` trajectories through
+   `composeFlatTM_no_early_halt`). ⚠ `loopTM` tolerates `iterTailsTM`'s extra
+   composeFlatTM halt — NO `joinTwoHalts` wrap needed (the prior handoff's worry was moot).
+2. **`Compile.compareBodyTM sc1 sc2`** (Compile.lean ~17475) — the loop body
+   `branchComposeFlatTM (testMachine) (iterTailsTM) idTM (exit_iter) (exit_done)`; full
+   structural family + the two body contracts: **`compareBody_iterate_run`** (both regs
+   nonempty + matching bits → ITER, delete heads, residue `++ [0,0]`) and
+   **`compareBody_done_run`** (generic over the seam tape; given `testMachine` DONE the
+   `idTM` branch is a no-op). The trajectory's `≠ exit` conjuncts come from
+   `ne_of_not_halting` + the two `compareBodyTM_exit{Loop,Done}_is_halt` facts.
+3. **Consume-loop abstract semantics** (Compile.lean ~17620) — `matchLen` (iteration
+   count), `matchLen_step` (per-iteration matching heads), `matchLen_stop` (the 3 DONE
+   cases), `consumeStep`/`consumeIter_spec` (`iterTailsTM`'s state transform + the
+   closed-form `k`-dropped register contents, `BitState`/length preserved), and
+   **`matchLen_drop_empty_iff`** (operands equal ⟺ both suffixes empty — the TM-level
+   `eqVerdict_correct`, for the d2 verdict).
+4. **`Compile.compareLoopTM` + `compareLoop_run`** (Compile.lean ~17715) — `loopTM
+   compareBodyTM exitDone exitLoop` + its run lemma: from `encodeTape s ++ res` at head
+   `0`, the loop halts at `compareBodyTM.states` with `sc1`/`sc2` holding their
+   `matchLen`-dropped suffixes (residue `++ replicate (2·matchLen) 0`). Assembled via
+   `loopTM_run`: `T m = encodeTape (consumeStep^[n−m] s) ++ (res ++ replicate (2(n−m)) 0)`;
+   `tIter` extracted by `choose`; DONE dispatched over `matchLen_stop`'s 3 cases.
 
-### ★ REUSABLE PATTERN — nested 2-exit tester wrapped to a clean 2-exit (`_M2two`)
+### ★ REUSABLE PATTERN — feeding a 2-exit-body branch machine to `loopTM_run`
 
-`bothNonemptyM`/`testMachine` are the template (and `eqVerdictM` before them) for
-"`branchComposeFlatTM M₁ M₂ M₃` with a 2-exit `M₂` positive, halt-unique `M₃`
-negative (`idTM`), merged to 2 exits". Copy `testMachine` verbatim:
-- `halt_only` via `branchComposeFlatTM_halt_only_M2two`; `is_halt` via
-  `branchComposeFlatTM_M2_halt_intro` (positive exits) / `_M3_halt_intro` (negative).
-- 3 raw halts → keep one per class, demote the third with ONE `joinTwoHalts`.
-- Run lemmas: the KEPT cases are `branchComposeFlatTM_run_{pos,neg}` →
-  `joinTwoHalts_run_eq` (mirror `_run_yes`/`_no_left`); the DEMOTED case is
-  `_run_eq_weak` + `joinTwoHalts_step_to_h1` (mirror `_no_right`/`_done_neq`).
-- `idTM` as a branch: run is 0 steps (`from rfl`), halt fact is
-  `idTM.halt[(0:Nat)]? = some true` (`rfl`); its no-early-halt traj is vacuous
-  (`fun k hk _ _ => absurd hk (Nat.not_lt_zero k)`).
+`compareBodyTM`/`compareLoop_run` are the template (mirrors `forBndLoop_run`) for a
+`loopTM` whose body is `branchComposeFlatTM (decision) (iterate) idTM`:
+- The body is a **bare** branch machine (no `joinTwoHalts`) — `loopTM` tolerates the
+  iterate/`idTM` stray halts; you only need body `valid` + the two exits' `_lt`/`_ne`.
+- ITER contract = `branchComposeFlatTM_run_pos` (decision→`exit_iter`, then iterate);
+  DONE = `branchComposeFlatTM_run_neg` (decision→`exit_done`, then `idTM` 0-step no-op).
+  The `≠ exitDone/exitLoop` traj conjuncts = `ne_of_not_halting` + the exit-`is_halt`
+  facts (from `branchComposeFlatTM_M2/M3_halt_intro`).
+- `loopTM_run` wants a single `tIter : Nat → Nat`: phrase the per-step run as
+  `∀ j, ∃ tj, j < n → contract` (trivial `⟨0, …⟩` for `j ≥ n`) and `choose tIter hIter`.
+- `T m` closed-form (state `step^[n−m] s`, residue `res ++ replicate (2(n−m)) 0`); the
+  index bridging is `n−(j+1) = n−j−1`, `(n−(j+1))+1 = n−j` (both `omega`, `j < n`) and
+  `Function.iterate_succ_apply'`; `consumeStep …` unfolds to the iterate output by `rfl`.
 
-**Budget reminder (settled, do not revisit):** `Op.cost eqBit = 1`; the two
-scratch copies must use the TIGHT `Compile.copyLoop_run` `(|src|+1)(5L+23)`, NOT
-the loose `opCopy_run` (which busts `~18L²`). Probe `CompareRegsBudgetProbe.lean`.
+**Budget reminder (settled, do not revisit):** `Op.cost eqBit = 1`; the two d2 scratch
+copies must use the TIGHT `Compile.copyLoop_run` `(|src|+1)(5L+23)`, NOT the loose
+`opCopy_run` (which busts `~18L²`). Probe `CompareRegsBudgetProbe.lean`. **NOTE: the
+consume loop's own budget is `loopBudget tIter tDone n` — left as that opaque sum (the
+`compareLoop_run` statement does NOT carry a closed-form step bound). The d2 assembly
+must bound it (each `tIter j`/`tDone` is `O(L)` per the leaf budgets; `n ≤ L`, so the
+loop is `O(L²)`) — surface this when wiring the `eqBit` per-op `cost=1 ≈ 18L²` contract.**
 
 ---
 
@@ -416,9 +428,27 @@ the loose `opCopy_run` (which busts `~18L²`). Probe `CompareRegsBudgetProbe.lea
   ITER iff both scratch regs nonempty AND first bits match, head `0`, tape unchanged
   (`joinTwoHalts (branchComposeFlatTM (bothNonemptyM sc1 sc2) (bitCompareM sc1 sc2) idTM
   exit_yes exit_no) done nomatch`). Full structural family (`halt_only` via `_M2two`) +
-  the 4 input-case run lemmas — **exactly the body contracts the consume-loop
-  `loopTM_run` feeds into `branchComposeFlatTM_run_{pos,neg}`.** Next: the loop run
-  lemma (BOTTOM-UP task 1, d2a — see there).
+  the 4 input-case run lemmas — the body contracts `compareBodyTM` consumes.
+- **★ `Compile.iterTailsTM` structural family + `iterTails_run` (+traj) (2026-06-16)** —
+  the ITERATE leaf, with `iterTailsTM_exit`/`_exit_lt`/`_exit_is_halt` and the
+  no-early-halt trajectory (needed by `loopTM`/`branchComposeFlatTM_run_pos`). ⚠ `loopTM`
+  tolerates its stray composeFlatTM halt — no `joinTwoHalts` wrap.
+- **★ `Compile.compareBodyTM sc1 sc2` / `compareBody_{iterate,done}_run` (2026-06-16)** —
+  the consume-loop body `branchComposeFlatTM (testMachine) (iterTailsTM) idTM …`; full
+  structural family (+ `compareBodyTM_exit{Loop,Done}_is_halt`) + the ITER contract
+  (`_iterate_run`) and the generic-tape DONE contract (`_done_run`). The
+  `loopTM_run`-body template (see this session's REUSABLE PATTERN).
+- **★ Consume-loop semantics (2026-06-16)** — `Compile.matchLen` (iteration count),
+  `matchLen_step` (per-iter matching heads), `matchLen_stop` (3 DONE cases),
+  `consumeStep`/`consumeIter_spec` (state transform + closed-form `drop k` register
+  contents, `BitState`/length preserved), `matchLen_drop_empty_iff` (equal ⟺ both
+  suffixes empty — the d2 verdict's decision fact).
+- **★ `Compile.compareLoopTM` / `compareLoop_run` (2026-06-16)** — `loopTM compareBodyTM
+  exitDone exitLoop` + its run lemma (the d2a milestone): loop halts at
+  `compareBodyTM.states` with `sc1`/`sc2` = their `matchLen`-dropped suffixes, residue
+  `++ replicate (2·matchLen) 0`. ⚠ Step bound = the opaque `loopBudget tIter tDone n`
+  (no closed form yet — d2 must bound it `O(L²)`). **The `eqBit` consume loop is closed;
+  d2 (assemble `compareRegsTM`) + d1 (wrapper) remain.**
 
 ---
 
@@ -493,55 +523,24 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
    with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
    copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
    Build & prove bottom-up:
-   **★ RECOMMENDED ORDER NOW (2026-06-15e):** ✅ (d2b-prep), ✅ (d2b), and the
-   d2a leaves **`readBitRewindM`** (bit-reader), **`bitCompareM`** (bit-compare),
-   `iterTailsTM` (ITERATE), all merge combinators, **`bothNonemptyM`** (guard), and
-   **`testMachine`** (the clean 2-exit body decision) are DONE & axiom-clean.
-   Remaining for d2a: **the consume-loop run lemma → (d2c) → assemble (d2)
-   `compareRegsTM` → (d1) wrapper**. The immediate next step is **the `loopTM`
-   consume-loop run lemma** — all body contracts are now proven.
+   **★ RECOMMENDED ORDER NOW (2026-06-16):** ✅ (d2b-prep), ✅ (d2b verdict
+   `eqVerdictM`), ✅ ALL of d2a — the leaves (`readBitRewindM`/`bitCompareM`/
+   `iterTailsTM`), merge combinators, `bothNonemptyM`, `testMachine`, the body
+   `compareBodyTM`, the abstract semantics (`matchLen`/`consumeStep`/
+   `matchLen_drop_empty_iff`), AND **`Compile.compareLoop_run`** (the consume-loop
+   run lemma) are DONE & axiom-clean. **Remaining: (d2c) scratch lifecycle →
+   assemble (d2) `compareRegsTM` → (d1) wrapper.** The immediate next step is
+   **(d2c) `growTwoEmpty`/`shrinkTwoEmpty`**, then the (d2) assembly.
 
-   - ✅ **(d2b-prep) `branchComposeFlatTM_halt_only_M3two` / `_M2two` / `_M2two_M3two`
-     — ALL DONE.**
-   - ✅ **(d2b) verdict `Compile.eqVerdictM` — DONE & axiom-clean.** Clean 2-exit
-     "both scratch empty?" tester (the post-loop verdict).
-   - ✅ **(d2a) the body DECISION `Compile.testMachine sc1 sc2` — DONE & axiom-clean**
-     (Compile.lean ~16797), with `bothNonemptyM` (Compile.lean ~16316). 2-exit
-     ITER/DONE, head `0`. The **four** run lemmas `testMachine_run_iter` (both
-     nonempty + bits match, hyps `a b cs1 cs2 hc1 hc2 ha hb hab hsc1 hsc2 hbit hres`)
-     / `_done_left` (sc1 empty) / `_done_right` (sc1 nonempty, sc2 empty) / `_done_neq`
-     (both nonempty, bits differ) are the body contracts for the next step.
-   - **NEXT — the consume-loop run lemma.** Body
-     `B := branchComposeFlatTM (testMachine sc1 sc2) (iterTailsTM sc1 sc2) idTM
-     (testMachine_exit_iter sc1 sc2) (testMachine_exit_done sc1 sc2)`, loop
-     `loopTM B (testMachine_exit_done sc1 sc2) (testMachine_exit_iter sc1 sc2)`.
-     **Two prerequisites to build first** (both mechanical):
-       (a) **`iterTailsTM` structural family** — it is `composeFlatTM (opTail sc1
-       sc1).M (opTail sc2 sc2).M (opTail sc1 sc1).exit`. Need `valid`/`tapes`/`sig`/
-       `halt_unique`(?)/`exit_lt`. ⚠ CHECK halt-uniqueness: `composeFlatTM` of two
-       `CompiledCmd`s may leave a stray halt — if so, wrap iterTailsTM in
-       `joinTwoHalts` (like `iterTailsTM` already has a clean single exit per
-       `iterTails_run`, but the `halt_unique` lemma is not yet proven). `opTail` has
-       `M_valid`/`M_sig`/`exit_lt`/`exit_is_halt`.
-       (b) **`iterTails_run` + a no-early-halt trajectory** — the current
-       `iterTails_run` (Compile.lean ~14191) lacks the `∀ k < t, … not halting`
-       conjunct that `loopTM_run`'s iteration contract needs. Re-derive it via
-       `composeFlatTM_no_early_halt` fed by the `opTailSelf_run_delete` trajectories
-       (`opTailSelf_run_delete` already returns its traj as the 2nd component — the
-       current proof discards it with `_`).
-     Then the body contracts for `loopTM_run` (see its signature, TMPrimitives.lean
-     ~3854): the **DONE contract** from `T 0` = `testMachine_run_done_*` ⨾ `idTM`
-     (run_neg, idTM no-op); the **ITER contract** from `T (j+1)` to `T j` =
-     `testMachine_run_iter` ⨾ `iterTailsTM` (run_pos), where `T j` is `encodeTape`
-     of the state after consuming `(total−j)` matched pairs (residue grows by `[0,0]`
-     per round — fold `iterTails_run`'s tape transform). Decision contract ("equal ⟺
-     both `sc` empty at DONE") PROVEN in `probes/EqBitProbe.lean#eqVerdict_correct`;
-     the post-loop "both empty?" test IS `eqVerdictM` (proven — plug it in directly).
-     ⚠ Mind that `testMachine_run_iter`/`bitCompareM_run` need the head BITS
-     (`get sc = a::cs`), so `T j` must expose the leading bit of each scratch reg at
-     round `j`; the consume order is "delete matched leading pairs", so `T j`'s scratch
-     contents are the *suffixes* — thread this through the `consumeLoop` abstract
-     semantics (`EqBitProbe.consumeLoop`) as the `T`-index.
+   - ✅ **(d2b-prep / d2b / d2a) — ALL DONE & axiom-clean.** Key d2a outputs the
+     assembly consumes: **`Compile.compareLoop_run`** (Compile.lean ~17730) — from
+     `encodeTape s ++ res` head `0`, the loop halts at `compareBodyTM.states` with
+     `sc1`/`sc2` holding `(s.get sc1).drop n` / `(s.get sc2).drop n`
+     (`n = matchLen (s.get sc1) (s.get sc2)`), residue `++ replicate (2n) 0`; and
+     **`Compile.matchLen_drop_empty_iff`** (equal ⟺ both suffixes empty — the
+     verdict's decision fact). ⚠ `compareLoop_run`'s step bound is the OPAQUE
+     `loopBudget tIter tDone n` — the d2 assembly must bound it (`O(L²)`, see the
+     budget note in this session's block).
    - **(d2c) scratch lifecycle `growTwoEmpty`/`shrinkTwoEmpty`.** Place `sc1,sc2` at
      the register-list END. ⚠ `padRegsTM`/`padBody` (the proven pad gadget) does the
      navigate-to-trailing-terminator + `insertCarryTM 0` forward part — that part is
