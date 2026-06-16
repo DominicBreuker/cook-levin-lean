@@ -17614,6 +17614,97 @@ theorem Compile.compareBody_done_run (sc1 sc2 : Var) (right : List Nat) {t₁ : 
            ClearGadget.ne_of_not_halting (Compile.compareBodyTM_exitLoop_is_halt sc1 sc2) hnh,
            hnh⟩
 
+/-! ### The consume-loop abstract semantics + State iteration (bottom-up, Risk C2)
+
+`matchLen l1 l2` is the number of matched leading pairs the consume loop peels
+(the iteration count). `consumeStep` is `iterTailsTM`'s state transform (delete
+both scratch heads). The lemmas below give the per-iteration matching facts
+(`matchLen_step`), the terminal stopping disjunction (`matchLen_stop`), and the
+closed-form register contents along the iteration (`consumeIter_spec`). -/
+
+/-- Number of matched leading pairs peeled by the consume loop. -/
+def Compile.matchLen : List Nat → List Nat → Nat
+  | [], _ => 0
+  | _ :: _, [] => 0
+  | a :: r1, b :: r2 => if a = b then Compile.matchLen r1 r2 + 1 else 0
+
+/-- One consume-loop iteration on the abstract `State`: delete the heads of both
+scratch registers. Matches `iterTailsTM`'s state transform. -/
+def Compile.consumeStep (sc1 sc2 : Var) (s : State) : State :=
+  (s.set sc1 (State.get s sc1).tail).set sc2 (State.get s sc2).tail
+
+/-- For `j` below the matched-prefix length, both operands' `j`-suffixes are
+nonempty and share the same first element. -/
+theorem Compile.matchLen_step : ∀ (l1 l2 : List Nat) (j : Nat), j < Compile.matchLen l1 l2 →
+    ∃ a cs1 cs2, l1.drop j = a :: cs1 ∧ l2.drop j = a :: cs2
+  | [], l2, j, hj => by simp [Compile.matchLen] at hj
+  | _ :: _, [], j, hj => by simp [Compile.matchLen] at hj
+  | a :: r1, b :: r2, j, hj => by
+      rw [Compile.matchLen] at hj
+      by_cases hab : a = b
+      · rw [if_pos hab] at hj
+        cases j with
+        | zero =>
+            refine ⟨a, r1, r2, ?_, ?_⟩
+            · simp
+            · simp [hab]
+        | succ j =>
+            have hj' : j < Compile.matchLen r1 r2 := by omega
+            obtain ⟨c, cs1, cs2, h1, h2⟩ := Compile.matchLen_step r1 r2 j hj'
+            exact ⟨c, cs1, cs2, by simpa using h1, by simpa using h2⟩
+      · rw [if_neg hab] at hj; omega
+
+/-- At the matched-prefix length the consume loop stops: one operand's suffix is
+empty, or both are nonempty with differing first elements. -/
+theorem Compile.matchLen_stop : ∀ (l1 l2 : List Nat),
+    l1.drop (Compile.matchLen l1 l2) = [] ∨ l2.drop (Compile.matchLen l1 l2) = [] ∨
+    ∃ a cs1 b cs2, l1.drop (Compile.matchLen l1 l2) = a :: cs1 ∧
+      l2.drop (Compile.matchLen l1 l2) = b :: cs2 ∧ a ≠ b
+  | [], l2 => Or.inl rfl
+  | _ :: _, [] => Or.inr (Or.inl rfl)
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      by_cases hab : a = b
+      · rw [if_pos hab]
+        rcases Compile.matchLen_stop r1 r2 with h | h | ⟨c, cs1, d, cs2, h1, h2, hcd⟩
+        · exact Or.inl (by simpa using h)
+        · exact Or.inr (Or.inl (by simpa using h))
+        · exact Or.inr (Or.inr ⟨c, cs1, d, cs2, by simpa using h1, by simpa using h2, hcd⟩)
+      · rw [if_neg hab]
+        exact Or.inr (Or.inr ⟨a, r1, b, r2, by simp, by simp, hab⟩)
+
+/-- Closed-form register contents along the consume iteration: after `k` steps the
+two scratch registers hold the `k`-dropped originals; length and `BitState` are
+preserved. -/
+theorem Compile.consumeIter_spec (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
+    (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length) (hbit : Compile.BitState s) (k : Nat) :
+    State.get ((Compile.consumeStep sc1 sc2)^[k] s) sc1 = (State.get s sc1).drop k ∧
+    State.get ((Compile.consumeStep sc1 sc2)^[k] s) sc2 = (State.get s sc2).drop k ∧
+    ((Compile.consumeStep sc1 sc2)^[k] s).length = s.length ∧
+    Compile.BitState ((Compile.consumeStep sc1 sc2)^[k] s) := by
+  induction k with
+  | zero =>
+      simp only [Function.iterate_zero, id_eq, List.drop_zero]
+      exact ⟨trivial, trivial, trivial, hbit⟩
+  | succ k ih =>
+      obtain ⟨ih1, ih2, ihlen, ihbit⟩ := ih
+      set sk := (Compile.consumeStep sc1 sc2)^[k] s with hsk
+      have hsc1' : sc1 < sk.length := by rw [ihlen]; exact hsc1
+      have hsc2' : sc2 < sk.length := by rw [ihlen]; exact hsc2
+      have hsc2X : sc2 < (sk.set sc1 (State.get sk sc1).tail).length := by
+        rw [Compile.length_set _ _ _ hsc1']; exact hsc2'
+      rw [Function.iterate_succ_apply']
+      refine ⟨?_, ?_, ?_, ?_⟩
+      · rw [Compile.consumeStep, State.get_set_ne _ _ _ _ hne, State.get_set_eq, ih1, List.tail_drop]
+      · rw [Compile.consumeStep, State.get_set_eq, ih2, List.tail_drop]
+      · rw [Compile.consumeStep, Compile.length_set _ _ _ hsc2X, Compile.length_set _ _ _ hsc1', ihlen]
+      · have hbitX : Compile.BitState (sk.set sc1 (State.get sk sc1).tail) :=
+          Compile.BitState_set_tail sk sc1 ihbit hsc1'
+        have hgetX : State.get (sk.set sc1 (State.get sk sc1).tail) sc2 = State.get sk sc2 :=
+          State.get_set_ne sk sc1 _ sc2 (Ne.symm hne)
+        rw [Compile.consumeStep, ← hgetX]
+        exact Compile.BitState_set_tail (sk.set sc1 (State.get sk sc1).tail) sc2 hbitX hsc2X
+
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
 `encodeTape (Op.eval o s) ++ res_out` where `res_out` is `ValidResidue`,
