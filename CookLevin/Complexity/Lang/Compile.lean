@@ -23797,3 +23797,24 @@ theorem Compile.compareCleanup_run (base : State) (c1 c2 : List Nat)
   refine ⟨_, hrun, ?_⟩
   intro k hk ck hck
   exact hCtraj k hk ck hck
+
+/-- `compareCleanupM`'s exit is a halt state — needed when the cleanup is composed
+as a `branchComposeFlatTM` branch (`M₂`/`M₃`) in `compareRegsTM`. -/
+theorem Compile.compareCleanupM_exit_is_halt (sc1 sc2 : Var)
+    (τ : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (Compile.compareCleanupM sc1 sc2)
+      { state_idx := Compile.compareCleanupM_exit sc1 sc2, tapes := τ } = true := by
+  show (composedHalt (composeFlatTM (ClearGadget.clearRegionTM sc1)
+        (ClearGadget.clearRegionTM sc2) (ClearGadget.clearRegionTM_exit sc1))
+        Compile.shrinkTwoEmptyM).getD (Compile.compareCleanupM_exit sc1 sc2) false = true
+  show ((List.replicate (composeFlatTM (ClearGadget.clearRegionTM sc1)
+        (ClearGadget.clearRegionTM sc2) (ClearGadget.clearRegionTM_exit sc1)).states false
+      ++ Compile.shrinkTwoEmptyM.halt).getD (Compile.compareCleanupM_exit sc1 sc2) false) = true
+  rw [List.getD_append_right _ _ false (Compile.compareCleanupM_exit sc1 sc2)
+        (by rw [List.length_replicate, composeFlatTM_states, Compile.compareCleanupM_exit]; omega),
+      List.length_replicate, composeFlatTM_states,
+      show Compile.compareCleanupM_exit sc1 sc2
+          - ((ClearGadget.clearRegionTM sc1).states + (ClearGadget.clearRegionTM sc2).states)
+        = Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states from by
+          rw [Compile.compareCleanupM_exit]; omega]
+  exact Compile.shrinkTwoEmptyM_exit_is_halt τ
