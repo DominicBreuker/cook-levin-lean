@@ -23525,3 +23525,275 @@ theorem Compile.copyEmpty_run (s : State) (dst src : Var) (hne : dst ≠ src)
     exact ⟨ClearGadget.ne_of_not_halting (Compile.copyEmptyRawTM_exit_is_halt dst src) hh, hh⟩
   · -- budget
     omega
+
+/-! ### `eqBit` (d2) — the shared CLEANUP gadget `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`
+
+After the consume loop + verdict, BOTH verdict branches run the SAME cleanup: clear
+the two scratch registers `sc1 = base.length`, `sc2 = base.length + 1` (the
+grown-empty registers, now holding the unmatched suffixes), then shrink the two
+trailing empty registers away — restoring the tape to `encodeTape base ++ residue`.
+`compareRegsTM` feeds this as both `branchComposeFlatTM` branches. -/
+
+/-- `shrinkTwoEmptyM`'s exit (`shrinkEmptyTM.exit + shrinkEmptyTM.M.states`) is a
+halt state — needed to compose `shrinkTwoEmptyM` as the final `M₂`. -/
+theorem Compile.shrinkTwoEmptyM_exit_is_halt (τ : List (List Nat × Nat × List Nat)) :
+    haltingStateReached Compile.shrinkTwoEmptyM
+      { state_idx := Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states,
+        tapes := τ } = true := by
+  show (composedHalt Compile.shrinkEmptyTM.M Compile.shrinkEmptyTM.M).getD _ false = true
+  show ((List.replicate Compile.shrinkEmptyTM.M.states false
+      ++ Compile.shrinkEmptyTM.M.halt).getD _ false) = true
+  rw [List.getD_append_right _ _ false
+        (Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states)
+        (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel]
+  simp only [List.getD_eq_getElem?_getD, Compile.shrinkEmptyTM.exit_is_halt, Option.getD_some]
+
+theorem Compile.shrinkTwoEmptyM_valid : validFlatTM Compile.shrinkTwoEmptyM :=
+  composeFlatTM_valid _ _ _ Compile.shrinkEmptyTM.M_valid Compile.shrinkEmptyTM.M_valid
+    Compile.shrinkEmptyTM.exit_lt Compile.shrinkEmptyTM.M_tapes Compile.shrinkEmptyTM.M_tapes
+
+theorem Compile.shrinkTwoEmptyM_sig : Compile.shrinkTwoEmptyM.sig = 4 := by
+  show (composeFlatTM _ _ _).sig = 4
+  rw [composeFlatTM_sig, Compile.shrinkEmptyTM.M_sig, Nat.max_self]
+
+theorem Compile.shrinkTwoEmptyM_tapes : Compile.shrinkTwoEmptyM.tapes = 1 := by
+  show (composeFlatTM _ _ _).tapes = 1; rw [composeFlatTM_tapes]; exact Compile.shrinkEmptyTM.M_tapes
+
+theorem Compile.shrinkTwoEmptyM_start : Compile.shrinkTwoEmptyM.start = 0 := by
+  show (composeFlatTM _ _ _).start = 0
+  rw [composeFlatTM_start]
+  show (Compile.rewindBracket _ _ _ _ _ _).M.start = 0
+  rw [Compile.rewindBracket_M, Compile.joinTwoHalts_start, composeFlatTM_start]; rfl
+
+/-- The cleanup machine: `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty` (left-nested). -/
+def Compile.compareCleanupM (sc1 sc2 : Var) : FlatTM :=
+  composeFlatTM
+    (composeFlatTM (ClearGadget.clearRegionTM sc1) (ClearGadget.clearRegionTM sc2)
+      (ClearGadget.clearRegionTM_exit sc1))
+    Compile.shrinkTwoEmptyM
+    ((ClearGadget.clearRegionTM sc1).states + ClearGadget.clearRegionTM_exit sc2)
+
+/-- The cleanup exit (shrinkTwoEmpty's exit, shifted past the two clears). -/
+def Compile.compareCleanupM_exit (sc1 sc2 : Var) : Nat :=
+  (ClearGadget.clearRegionTM sc1).states + (ClearGadget.clearRegionTM sc2).states
+    + (Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states)
+
+theorem Compile.compareCleanupM_sig (sc1 sc2 : Var) :
+    (Compile.compareCleanupM sc1 sc2).sig = 4 := by
+  show (composeFlatTM _ _ _).sig = 4
+  rw [composeFlatTM_sig, composeFlatTM_sig, ClearGadget.clearRegionTM_sig,
+      ClearGadget.clearRegionTM_sig, Compile.shrinkTwoEmptyM_sig]; rfl
+
+theorem Compile.compareCleanupM_tapes (sc1 sc2 : Var) :
+    (Compile.compareCleanupM sc1 sc2).tapes = 1 := by
+  show (composeFlatTM _ _ _).tapes = 1
+  rw [composeFlatTM_tapes, composeFlatTM_tapes]; exact ClearGadget.clearRegionTM_tapes sc1
+
+theorem Compile.compareCleanupM_states (sc1 sc2 : Var) :
+    (Compile.compareCleanupM sc1 sc2).states =
+      (ClearGadget.clearRegionTM sc1).states + (ClearGadget.clearRegionTM sc2).states
+        + Compile.shrinkTwoEmptyM.states := by
+  show (composeFlatTM _ _ _).states = _
+  rw [composeFlatTM_states, composeFlatTM_states]
+
+theorem Compile.compareCleanupM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.compareCleanupM sc1 sc2) := by
+  refine composeFlatTM_valid _ _ _
+    (composeFlatTM_valid _ _ _ (ClearGadget.clearRegionTM_valid sc1)
+      (ClearGadget.clearRegionTM_valid sc2) ?_ (ClearGadget.clearRegionTM_tapes sc1)
+      (ClearGadget.clearRegionTM_tapes sc2))
+    Compile.shrinkTwoEmptyM_valid ?_ ?_ Compile.shrinkTwoEmptyM_tapes
+  · rw [ClearGadget.clearRegionTM_states]; rw [ClearGadget.clearRegionTM_exit]; omega
+  · rw [composeFlatTM_states, ClearGadget.clearRegionTM_states sc1,
+        ClearGadget.clearRegionTM_states sc2, ClearGadget.clearRegionTM_exit]; omega
+  · rw [composeFlatTM_tapes]; exact ClearGadget.clearRegionTM_tapes sc1
+
+/-- **The cleanup gadget run.** From `encodeTape (base ++ [c1, c2]) ++ res` at head
+`0` (sc1 = base.length, sc2 = base.length + 1 are the last two registers), clears
+both scratch registers and shrinks them away, restoring the tape to
+`encodeTape base ++ residue` (head `0`). Residue accumulates the cleared content
+(`replicate |c1| 0`, `replicate |c2| 0`) and the two shrink separators (`[0,0]`). -/
+theorem Compile.compareCleanup_run (base : State) (c1 c2 : List Nat)
+    (hbit : Compile.BitState (base ++ [c1, c2]))
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.compareCleanupM base.length (base.length + 1))
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape (base ++ [c1, c2]) ++ res)] }
+        = some { state_idx := Compile.compareCleanupM_exit base.length (base.length + 1),
+                 tapes := [([], 0, Compile.encodeTape base
+                   ++ (((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0)
+                        ++ [0, 0]))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareCleanupM base.length (base.length + 1))
+            { state_idx := 0,
+              tapes := [([], 0, Compile.encodeTape (base ++ [c1, c2]) ++ res)] } = some ck →
+        haltingStateReached (Compile.compareCleanupM base.length (base.length + 1)) ck = false) := by
+  -- abbreviations
+  have hreplen : (base ++ [c1, c2]).length = base.length + 2 := by
+    rw [List.length_append]; rfl
+  have hsc1_lt : base.length < (base ++ [c1, c2]).length := by rw [hreplen]; omega
+  have hsc2_lt : base.length + 1 < (base ++ [c1, c2]).length := by rw [hreplen]; omega
+  -- replicate-0 residue validity.
+  have hrep : ∀ n : Nat, Compile.ValidResidue (List.replicate n 0) := by
+    intro n x hx; obtain ⟨_, rfl⟩ := List.mem_replicate.mp hx; exact ⟨by omega, by decide⟩
+  -- BitState facts.
+  have hc2_mem : c2 ∈ base ++ [c1, c2] := List.mem_append_right _ (by simp)
+  have hbit_base : Compile.BitState base :=
+    fun reg hreg x hx => hbit reg (List.mem_append_left _ hreg) x hx
+  have hbitA : Compile.BitState (base ++ [[], c2]) := by
+    intro reg hreg x hx
+    rcases List.mem_append.mp hreg with hb | hp
+    · exact hbit_base reg hb x hx
+    · rcases List.mem_cons.mp hp with rfl | hp2
+      · exact absurd hx (List.not_mem_nil)
+      · rcases List.mem_cons.mp hp2 with rfl | hp3
+        · exact hbit reg hc2_mem x hx
+        · exact absurd hp3 (List.not_mem_nil)
+  have hbitB : Compile.BitState (base ++ [[], []]) := by
+    have := Compile.BitState_append_replicate_nil base 2 hbit_base
+    rwa [show List.replicate 2 ([] : List Nat) = [[], []] from rfl] at this
+  -- residue accumulation validity.
+  have hresA : Compile.ValidResidue (res ++ List.replicate c1.length 0) :=
+    Compile.ValidResidue_append _ _ hres (hrep _)
+  have hresB : Compile.ValidResidue ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0) :=
+    Compile.ValidResidue_append _ _ hresA (hrep _)
+  -- state computations.
+  have hclearA : Op.eval (Op.clear base.length) (base ++ [c1, c2]) = base ++ [[], c2] := by
+    simp only [Op.eval]
+    rw [State.set, List.set_append_right base.length [] (by simp)]; simp
+  have hgetA : State.get (base ++ [c1, c2]) base.length = c1 := by
+    rw [State.get, List.getElem?_append_right (by omega)]; simp
+  have hclearB : Op.eval (Op.clear (base.length + 1)) (base ++ [[], c2]) = base ++ [[], []] := by
+    simp only [Op.eval]
+    rw [State.set, List.set_append_right (base.length + 1) [] (by simp)]; simp
+  have hgetB : State.get (base ++ [[], c2]) (base.length + 1) = c2 := by
+    rw [State.get, List.getElem?_append_right (by simp)]; simp
+  have hsc2A_lt : base.length + 1 < (base ++ [[], c2]).length := by
+    rw [List.length_append]; simp
+  -- ### Stage A: clear sc1
+  obtain ⟨tA, hA_run, hA_traj, _⟩ :=
+    Compile.clearRegionTM_run (base ++ [c1, c2]) base.length res hsc1_lt hbit hres
+  rw [hclearA, hgetA] at hA_run
+  -- ### Stage B: clear sc2 on `base ++ [[], c2]`
+  obtain ⟨tB, hB_run, hB_traj, _⟩ :=
+    Compile.clearRegionTM_run (base ++ [[], c2]) (base.length + 1)
+      (res ++ List.replicate c1.length 0) hsc2A_lt hbitA hresA
+  rw [hclearB, hgetB] at hB_run
+  -- ### Stage C: shrink the two trailing empties
+  obtain ⟨tC, hC_run, hC_traj⟩ :=
+    Compile.shrinkTwoEmpty_run base hbit_base
+      ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0) hresB
+  -- ### Level B: clear sc1 ⨾ clear sc2
+  have hAtape4 : ∀ x ∈ Compile.encodeTape (base ++ [[], c2]) ++ (res ++ List.replicate c1.length 0),
+      x < 4 := Compile.encodeTape_append_res_lt_four _ _ hbitA hresA
+  have hsymB : ∀ v, currentTapeSymbol
+      ([], 0, Compile.encodeTape (base ++ [[], c2]) ++ (res ++ List.replicate c1.length 0)) = some v →
+      v < max (ClearGadget.clearRegionTM base.length).sig (ClearGadget.clearRegionTM (base.length + 1)).sig := by
+    intro v hv
+    rw [show max (ClearGadget.clearRegionTM base.length).sig (ClearGadget.clearRegionTM (base.length + 1)).sig = 4
+      from by rw [ClearGadget.clearRegionTM_sig, ClearGadget.clearRegionTM_sig]; rfl]
+    exact Compile.sym_bound_of_lt_four _ hAtape4 _ v hv
+  have hexitA_lt : ClearGadget.clearRegionTM_exit base.length < (ClearGadget.clearRegionTM base.length).states := by
+    rw [ClearGadget.clearRegionTM_states, ClearGadget.clearRegionTM_exit]; omega
+  have hB_run' : runFlatTM tB (ClearGadget.clearRegionTM (base.length + 1))
+      { state_idx := (ClearGadget.clearRegionTM (base.length + 1)).start,
+        tapes := [([], 0, Compile.encodeTape (base ++ [[], c2]) ++ (res ++ List.replicate c1.length 0))] }
+        = some { state_idx := ClearGadget.clearRegionTM_exit (base.length + 1),
+                 tapes := [([], 0, Compile.encodeTape (base ++ [[], []])
+                   ++ ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0))] } := by
+    rw [ClearGadget.clearRegionTM_start]; exact hB_run
+  have hBrun := composeFlatTM_run
+    (ClearGadget.clearRegionTM_valid base.length) (ClearGadget.clearRegionTM_valid (base.length + 1))
+    hexitA_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape (base ++ [c1, c2]) ++ res)] }
+    (by show (0 : Nat) < (ClearGadget.clearRegionTM base.length).states
+        rw [ClearGadget.clearRegionTM_states]; omega)
+    [] 0 (Compile.encodeTape (base ++ [[], c2]) ++ (res ++ List.replicate c1.length 0))
+    hsymB hA_run hA_traj hB_run'
+    (Compile.haltingStateReached_of_halt (Compile.opClear (base.length + 1)).exit_is_halt)
+  have hBtraj := composeFlatTM_no_early_halt
+    (ClearGadget.clearRegionTM_valid base.length) (ClearGadget.clearRegionTM_valid (base.length + 1))
+    hexitA_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape (base ++ [c1, c2]) ++ res)] }
+    (by show (0 : Nat) < (ClearGadget.clearRegionTM base.length).states
+        rw [ClearGadget.clearRegionTM_states]; omega)
+    [] 0 (Compile.encodeTape (base ++ [[], c2]) ++ (res ++ List.replicate c1.length 0))
+    hsymB hA_run hA_traj
+    (fun k hk ck hck => (hB_traj k hk ck (by rw [ClearGadget.clearRegionTM_start] at hck; exact hck)).2)
+  have hBhalt := Compile.composeFlatTM_halt_intro (ClearGadget.clearRegionTM base.length)
+    (ClearGadget.clearRegionTM (base.length + 1)) (ClearGadget.clearRegionTM_exit (base.length + 1))
+    (ClearGadget.clearRegionTM_exit base.length)
+    (Compile.opClear (base.length + 1)).exit_is_halt
+  have heqB : ClearGadget.clearRegionTM_exit (base.length + 1) + (ClearGadget.clearRegionTM base.length).states
+      = (ClearGadget.clearRegionTM base.length).states + ClearGadget.clearRegionTM_exit (base.length + 1) :=
+    Nat.add_comm _ _
+  rw [heqB] at hBrun
+  -- ### Level C: ⨾ shrinkTwoEmpty
+  have hBtape4 : ∀ x ∈ Compile.encodeTape (base ++ [[], []])
+      ++ ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0), x < 4 :=
+    Compile.encodeTape_append_res_lt_four _ _ hbitB hresB
+  have hsymC : ∀ v, currentTapeSymbol
+      ([], 0, Compile.encodeTape (base ++ [[], []])
+        ++ ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0)) = some v →
+      v < max (composeFlatTM (ClearGadget.clearRegionTM base.length)
+          (ClearGadget.clearRegionTM (base.length + 1)) (ClearGadget.clearRegionTM_exit base.length)).sig
+        Compile.shrinkTwoEmptyM.sig := by
+    intro v hv
+    rw [show max (composeFlatTM (ClearGadget.clearRegionTM base.length)
+          (ClearGadget.clearRegionTM (base.length + 1)) (ClearGadget.clearRegionTM_exit base.length)).sig
+        Compile.shrinkTwoEmptyM.sig = 4
+      from by
+        rw [composeFlatTM_sig, ClearGadget.clearRegionTM_sig, ClearGadget.clearRegionTM_sig,
+            Compile.shrinkTwoEmptyM_sig]; rfl]
+    exact Compile.sym_bound_of_lt_four _ hBtape4 _ v hv
+  have hexitOuter_lt : (ClearGadget.clearRegionTM base.length).states + ClearGadget.clearRegionTM_exit (base.length + 1)
+      < (composeFlatTM (ClearGadget.clearRegionTM base.length)
+          (ClearGadget.clearRegionTM (base.length + 1)) (ClearGadget.clearRegionTM_exit base.length)).states := by
+    rw [composeFlatTM_states, ClearGadget.clearRegionTM_states (base.length + 1),
+        ClearGadget.clearRegionTM_exit]; omega
+  have hC_run' : runFlatTM tC Compile.shrinkTwoEmptyM
+      { state_idx := Compile.shrinkTwoEmptyM.start,
+        tapes := [([], 0, Compile.encodeTape (base ++ [[], []])
+          ++ ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0))] }
+        = some { state_idx := Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states,
+                 tapes := [([], 0, Compile.encodeTape base
+                   ++ (((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0) ++ [0, 0]))] } := by
+    rw [Compile.shrinkTwoEmptyM_start]; exact hC_run
+  have hCrun := composeFlatTM_run
+    (composeFlatTM_valid _ _ _ (ClearGadget.clearRegionTM_valid base.length)
+      (ClearGadget.clearRegionTM_valid (base.length + 1)) hexitA_lt
+      (ClearGadget.clearRegionTM_tapes base.length) (ClearGadget.clearRegionTM_tapes (base.length + 1)))
+    Compile.shrinkTwoEmptyM_valid hexitOuter_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape (base ++ [c1, c2]) ++ res)] }
+    (by show (0 : Nat) < (composeFlatTM _ _ _).states
+        rw [composeFlatTM_states, ClearGadget.clearRegionTM_states]; omega)
+    [] 0 (Compile.encodeTape (base ++ [[], []])
+      ++ ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0))
+    hsymC hBrun.1
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hBhalt (hBtraj k hk ck hck), hBtraj k hk ck hck⟩)
+    hC_run' (Compile.shrinkTwoEmptyM_exit_is_halt _)
+  have hCtraj := composeFlatTM_no_early_halt
+    (composeFlatTM_valid _ _ _ (ClearGadget.clearRegionTM_valid base.length)
+      (ClearGadget.clearRegionTM_valid (base.length + 1)) hexitA_lt
+      (ClearGadget.clearRegionTM_tapes base.length) (ClearGadget.clearRegionTM_tapes (base.length + 1)))
+    Compile.shrinkTwoEmptyM_valid hexitOuter_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape (base ++ [c1, c2]) ++ res)] }
+    (by show (0 : Nat) < (composeFlatTM _ _ _).states
+        rw [composeFlatTM_states, ClearGadget.clearRegionTM_states]; omega)
+    [] 0 (Compile.encodeTape (base ++ [[], []])
+      ++ ((res ++ List.replicate c1.length 0) ++ List.replicate c2.length 0))
+    hsymC hBrun.1
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hBhalt (hBtraj k hk ck hck), hBtraj k hk ck hck⟩)
+    (fun k hk ck hck => hC_traj k hk ck (by rw [Compile.shrinkTwoEmptyM_start] at hck; exact hck))
+  -- conclude.
+  have hstate_eq : (Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states)
+      + (composeFlatTM (ClearGadget.clearRegionTM base.length)
+          (ClearGadget.clearRegionTM (base.length + 1)) (ClearGadget.clearRegionTM_exit base.length)).states
+      = Compile.compareCleanupM_exit base.length (base.length + 1) := by
+    rw [composeFlatTM_states, Compile.compareCleanupM_exit]; omega
+  have hrun := hCrun.1
+  rw [hstate_eq] at hrun
+  refine ⟨_, hrun, ?_⟩
+  intro k hk ck hck
+  exact hCtraj k hk ck hck
