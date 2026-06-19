@@ -133,67 +133,64 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What the last session (2026-06-16c, bottom-up) did — **the `eqBit` scratch-SHRINK gadget is closed: `Compile.shrinkEmptyTM`/`shrinkTwoEmpty` PROVEN (d2c-shrink milestone)**
+## ✅ What the last session (2026-06-19, bottom-up) did — **the `eqBit` copy-into-empty gadget is closed: `Compile.copyEmptyRawTM`/`copyEmpty_run` PROVEN (d2 copy stage)** + a GAP surfaced & closed
 
 Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider still
-needs). Both scratch-lifecycle halves are now done: `growEmptyTM`/`growTwoEmpty`
-(prior session) and now the **SHRINK teardown** — the "immediate next step
-(d2c-SHRINK)" the prior handoff flagged. **All results PROVEN & axiom-clean
-(`[propext, Classical.choice, Quot.sound]`), full build green (3358 jobs); probe
-`probes/ShrinkEmptyProbe.lean` (all `true`, incl. grow→shrink round-trip):**
+needs). The prior handoff said the (d2) `compareRegsTM` assembly's ingredients
+"all exist" via `copyLoop_run`. **Surfaced gap (risk-based):** the two scratch
+copies (`copy src→sc`, head-`0`→head-`0`, `sc` freshly grown-empty) had NO usable
+gadget — `opCopy_run` busts the `cost=1` budget (it always runs `clearRegionTM`,
+≈`9L²` each ⇒ ≈`18L²` for the two clears alone, even on an empty `dst`), and
+`copyLoop_run` needs a **pre-positioned head**, not head `0`. So the copy stage
+genuinely needed a NEW clear-free gadget. **Built & PROVEN (axiom-clean
+`[propext, Classical.choice, Quot.sound]`; full build green 3358 jobs; probe
+`probes/CopyEmptyProbe.lean`, all `true`, real-step ≤ tight budget):**
 
-1. **`Compile.shrinkDelStepM` / `shrinkScanDelM` / `shrinkComputeM`** (Compile.lean, end) —
-   the forward "delete one trailing empty register" compute machine `stepRightTM 4 ⨾
-   scanRightUntilTM 4 3 ⨾ deleteCarryTM ⨾ stepLeftTM 4` (residue-tolerant), with the full
-   structural family + `_run`/`_no_early_halt` for each level. From `encodeTape (s ++ [[]])
-   ++ res` (head 0) it lands head at `Tout.length-1` with `encodeTape s ++ (res ++ [0])`.
-2. **`Compile.shrinkEmptyTM` (CompiledCmd) + `shrinkEmpty_run`** — `rewindBracket
-   shrinkComputeM 13` (compute ⨾ the demoted **two-phase** rewind): from `encodeTape
-   (s ++ [[]]) ++ res` (head 0), halts at `shrinkEmptyTM.exit (=20)` with `encodeTape s ++
-   (res ++ [0])`, head rewound to `0`, `O(L)` + the no-early-exit/halt trajectory. ⚠ the
-   deletion frees a cell so the **residue grows by one `0`** (still `ValidResidue`).
-3. **`Compile.shrinkTwoEmptyM` + `shrinkTwoEmpty_run`** — `composeFlatTM shrinkEmptyTM.M
-   shrinkEmptyTM.M shrinkEmptyTM.exit`: removes **two** trailing empties
-   (`encodeTape (s ++ [[],[]]) ++ res → encodeTape s ++ (res ++ [0,0])`, head 0) via two
-   `shrinkEmpty_run`s — the teardown for the design-A `compareRegsTM`'s `sc1`/`sc2`.
+1. **`Compile.copyEmptyRawTM dst src`** (Compile.lean, end) = `opCopy` minus its
+   clear phase = `navigateToRegTM src ⨾ copyLoopTM dst ⨾ justRewindTM`, with the
+   full shape family (`_states`/`_sig`/`_tapes`/`_valid`/`copyEmptyRawTM_exit`/
+   `_exit_is_halt`; `copyEmptyPreStates = (2+3·src)+(56+6·dst)`, exit `= +1`).
+2. **`Compile.copyEmpty_run`** — from `encodeTape s ++ res` (head `0`, `dst` EMPTY)
+   copies `src` into `dst` non-destructively, head rewound to `0`, **residue
+   UNCHANGED** (`= res`, since `|s.get dst| = 0` ⇒ no `clear` freeing); run +
+   no-early-halt + the **TIGHT** budget `(|src|+1)(5L+23) + 3L + 4` (`copyLoop`'s
+   tight cost + `O(L)` nav/rewind). **Use this twice for the d2 copies.**
 
-### ★ FINDINGS (this session) — shrink is NOT a literal grow clone
+### ★ FINDINGS (this session) — reusable for the rest of the assembly
 
-- **`deleteCarryTM` parks the head one cell PAST the tape end** (vs `insertCarryTM` which
-  lands ON the last residue cell), so the compute machine must `stepLeftTM` back onto the
-  tape **before** `rewindBracket`'s two-phase rewind — exactly the `ClearGadget.stepDelete­
-  Rewind` shape. Hence `shrinkComputeM` is a 4-stage compose (one more than grow's 3).
-- **Off-by-one in the scan gap:** `encodeTape (s ++ [[]])` has the extra `0` separator
-  before the trailing terminator, so `scanRightUntilTM` from head 1 has gap `R+1` (not `R`),
-  i.e. step count `R+2` (not `R+1`). This trips up any "copy the grow step-count" attempt.
-- Reused `Compile.encodeTape_residue_twoPhaseRewind` (head `len-1 → 0` on `encodeTape out ++
-  residue`) verbatim for the rewind half — cleaner than grow's inlined `rewindTwoPhase_run`.
-
-### ★ REUSABLE PATTERN — residue-tolerant "insert/delete one cell + rewind" op (grow ∥ shrink)
-
-`growEmpty_run`/`shrinkEmpty_run` are the templates for any tape-resizing op ending head 0
-on a residue tape:
-- compute machine = forward insert/delete (`stepRight ⨾ scanRight ⨾ insertCarryTM`/
-  `deleteCarryTM` **⨾ stepLeftTM for delete** — delete ends past-end); resizes, lands head
-  at `len-1`. Wrap with `Compile.rewindBracket compute exit …` (adds `rewindTwoPhaseTM`,
-  demotes the boundary halt → single-exit `CompiledCmd`); feed `rewindBracket_transport`
-  the raw composite run (`composeFlatTM compute rewindTwoPhase exit`) + its
-  `composeFlatTM_no_early_halt`.
-- gotchas hit & resolved: `rw [hTout]` corrupts a `getElem` index motive (build a
-  `hTout4 : ∀ x ∈ Tout, x < 4` lemma instead and `exact hTout4 _ (List.getElem_mem hr)`);
-  `set R/Tout` ARE defeq-transparent (`exact` of external lemmas works through them);
-  state-arith `rw [show n+m=k]` FAILS (`.states` projections stay unreduced) — drop it and
-  rely on `exact`'s defeq; `stepLeftTM_no_early_halt` returns a **conjunction**, feed
-  `composeFlatTM_no_early_halt`'s `h_traj2` its `.2` (the run's `h_traj1` wants the whole
-  conjunction); convert a primitive's `pre`-form trajectory to `encodeTape`-form via a local
-  `have … := by rw [hpre_len, hin_eq]; exact hck` bridge.
+- **No `joinTwoHalts` wrap needed for a chain ending in `justRewindTM`.**
+  `justRewindTM (= scanLeftUntilTM 4 3)` carries TWO halts (found `+1`, reject
+  `+2`); on a sentinel'd tape the rewind always finds the sentinel so reject is
+  unreachable, and `composeFlatTM_no_early_halt`'s `haltingStateReached = false`
+  trajectory already excludes BOTH. So `copyEmptyRawTM` is a bare `composeFlatTM`
+  chain (3 leaves), no demotion — simpler than `opCopy`.
+- **`composeFlatTM_run`'s `h_sym_bound` is about the SEAM head, not head 0**
+  (the symbol `M₂` first reads). When the inner machine is `M₁` (here `nav`), its
+  `_no_early_halt` (which gives only `haltingStateReached = false`) must be wrapped
+  into the `h_traj1` CONJUNCTION `ck ≠ exit ∧ …` via `ne_of_not_halting (…_exit_is_halt)`.
+- **`composeFlatTM_halt_intro` yields the seam-halt index as `M₁.states + e₂`,
+  but `composeFlatTM_run` reaches the exit as `e₂ + M₁.states`** — commute with
+  `Nat.add_comm` before `rw`-ing your seam-equation into the halt fact.
+- **Budget omega gotchas:** do NOT `set L := …` then `rw [hL]` a hypothesis back to
+  the raw length (fold/unfold mismatch — omega sees two atoms). Keep the full
+  `(encodeTape … ++ res).length` expression everywhere. `rw [List.length_append]`
+  on BOTH the goal and the decomposition hypothesis so `(a++b).length` becomes
+  `a.length + b.length` consistently. The `s.get dst = []` length fact must be
+  fed explicitly (`have : (s.get dst).length = 0 := by rw [hempty]; rfl`). The
+  trivial `(2+3·src)+(55+6·dst) < (2+3·src)+(56+6·dst)` state-bound needs
+  `simp only [Var]; omega` (bare `Var`-atom arithmetic).
+- **Witness for `∃ t`:** `refine ⟨_, ?_, …⟩` leaves the step metavariable
+  underdetermined → "cannot synthesize placeholder". Make the run a CONCRETE
+  `have hrun := hCrun.1; simp only [hstate_eq] at hrun` (the `simp only` reduces
+  the `{…}.state_idx` projection AND applies your `1 + B.states = exit` equation),
+  then `refine ⟨_, hrun, ?_, ?_⟩` (`_` unifies with `hrun`'s concrete step).
 
 **Budget reminder (settled, do not revisit):** `Op.cost eqBit = 1`; the two d2 scratch
-copies must use the TIGHT `Compile.copyLoop_run` `(|src|+1)(5L+23)`, NOT the loose
-`opCopy_run` (which busts `~18L²`). Probe `CompareRegsBudgetProbe.lean`. The consume
-loop's own budget is the opaque `loopBudget tIter tDone n` (`compareLoop_run` carries no
-closed-form step bound); the d2 assembly must bound it `O(L²)` (each `tIter j`/`tDone` is
-`O(L)`; `n ≤ L`). grow/shrink are each `O(L)`.
+copies use `copyEmpty_run` (`(|src|+1)(5L+23)+3L+4`, built on the TIGHT
+`copyLoop_run`), NOT `opCopy_run` (busts `~18L²`). Probe `CompareRegsBudgetProbe.lean`.
+The consume loop's own budget is the opaque `loopBudget tIter tDone n` (`compareLoop_run`
+carries no closed-form step bound); the d2 assembly must bound it `O(L²)` (each
+`tIter j`/`tDone` is `O(L)`; `n ≤ L`). grow/shrink are each `O(L)`.
 
 ---
 
@@ -460,6 +457,13 @@ closed-form step bound); the d2 assembly must bound it `O(L²)` (each `tIter j`/
   (head 0) → `encodeTape (s ++ [[]]) ++ res` (head 0), `O(L)`, residue unchanged;
   `growTwoEmpty` = two of these (`s ++ [[],[]]`). ⚠ single-phase rewind is WRONG with
   residue (insertCarry parks the head past the residue; a single left-scan stops at `3`).
+- **★ `Compile.copyEmptyRawTM`/`copyEmpty_run` (2026-06-19)** — the `eqBit` (d2) copy
+  stage (Compile.lean, end): head-`0`→head-`0` copy of `src` into an EMPTY register `dst`,
+  `= opCopy` phases 2–4 (`navigateToRegTM ⨾ copyLoopTM ⨾ justRewindTM`, NO clear). From
+  `encodeTape s ++ res` → `encodeTape (s.set dst (s.get src)) ++ res` (head 0, **residue
+  unchanged**); TIGHT budget `(|src|+1)(5L+23)+3L+4`. The clear-free variant the two scratch
+  copies need (`opCopy` busts the budget via its double `clearRegionTM`). No `joinTwoHalts`
+  wrap (trailing `justRewindTM` reject halt is unreachable; the raw trajectory excludes both).
 - **★ `Compile.shrinkEmptyTM`/`shrinkEmpty_run` + `shrinkTwoEmptyM`/`shrinkTwoEmpty_run`
   (2026-06-16c)** — the `eqBit` scratch-SHRINK gadget (Compile.lean, end), the grow mirror.
   Compute = `stepRight ⨾ scanRight 3 ⨾ deleteCarryTM ⨾ stepLeftTM` (delete the trailing
@@ -487,6 +491,16 @@ reduction path is a **compiler gadget**. The top-down frontier:
 session block: scratch interface re-pinned, gen lemma threaded, probe green.
 The build is UNGATED for bottom-up. New frontier:
 
+0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
+   d2 `compareRegsTM` + d1 `opEqBit` wrapper).** When the `eqBit` case of
+   `compileOp_sound_physical_residue` (Compile.lean ~15261, currently raw `sorry`) is
+   discharged, the **entire live decider chain `sat_NP → … → Compile_run_physical_residue`
+   becomes sorry-free** (`evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free). Concrete top-down
+   work: `#print axioms sat_NP` / `inTimePolyTM_evalCnf` and confirm `sorryAx` is GONE from
+   the decider half (only `eqBit`'s sibling stub ops + S1/S2/S3 + `red_inNP` remain on
+   `CookLevin`). Update README/ROADMAP status tables (the "in-NP half reaches a `sorry`"
+   line in README "Not sound" becomes false for SAT). This is the **first headline soundness
+   win** and worth a careful audit. Then proceed to Task 1/2.
 1. **CliqueRelTM — replicate the EvalCnf pattern (highest standalone top-down value).**
    `Deciders/CliqueRelTM.lean` is still the pre-pattern skeleton: `cliqueRelCmd`/
    `cliqueRelEncode` are `sorry` **defs** and every witness field is a raw `sorry`
@@ -543,25 +557,44 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
    with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
    copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
    Build & prove bottom-up:
-   **★ RECOMMENDED ORDER NOW (2026-06-16c):** ✅ (d2b-prep), ✅ (d2b verdict
-   `eqVerdictM`), ✅ ALL of d2a (leaves + body + `compareLoop_run`), ✅ (d2c-GROW:
-   `growEmptyTM`/`growTwoEmpty`), ✅ **(d2c-SHRINK: `shrinkEmptyTM`/`shrinkTwoEmpty`
-   — DONE & axiom-clean).** **ALL d2 sub-gadgets are now proven — the only remaining
-   bottom-up work for `eqBit` is the two STITCHING steps:**
+   **★ RECOMMENDED ORDER NOW (2026-06-19):** ✅ (d2b-prep), ✅ (d2b verdict
+   `eqVerdictM`), ✅ ALL of d2a (leaves + body + `compareLoop_run`), ✅ (d2c-GROW),
+   ✅ (d2c-SHRINK), ✅ **(d2-COPY: `copyEmptyRawTM`/`copyEmpty_run` — DONE &
+   axiom-clean 2026-06-19).** **ALL d2 sub-gadgets are now proven — the only
+   remaining bottom-up work for `eqBit` is the STITCHING:**
 
-   **▶ THE IMMEDIATE NEXT STEP — (d2) assemble `compareRegsTM`.** All ingredients exist
-   (`growTwoEmpty_run`, `copyLoop_run`, `compareLoop_run`, `eqVerdictM_run_*`,
-   `clear`, `shrinkTwoEmpty_run`). The work is one `composeFlatTM` chain
-   `growTwoEmpty ⨾ copy src1→sc1 ⨾ copy src2→sc2 ⨾ compareLoop ⨾ eqVerdict ⨾ clear sc1
-   ⨾ clear sc2 ⨾ shrinkTwoEmpty`, threading the **concrete intermediate states/residues**
-   through each seam (each `_run` lemma already gives the exact output tape + residue), the
-   EQ/NEQ verdict via `matchLen_drop_empty_iff`, and the **budget bound**: sum the per-stage
-   counts and bound the opaque `loopBudget tIter tDone n` by `O(L²)` (see budget bullet).
-   Mind the residue bookkeeping: `copyLoop` appends `replicate |dst₀| 0`; `compareLoop`
-   appends `replicate (2·matchLen) 0`; each `shrinkEmpty` appends one `0` — all `ValidResidue`.
-   Model the seam-threading on `forBndLoop_run`/`opTail_run` (concrete-state `composeFlatTM_run`
-   chains). This is the **single highest-value bottom-up item now.**
+   **▶ THE IMMEDIATE NEXT STEP — (d2) assemble `compareRegsTM`.** All sub-gadgets now
+   exist as head-`0`→head-`0` run lemmas: `growTwoEmpty_run`, **`copyEmpty_run`**
+   (the NEW copy-into-empty gadget — use TWICE, residue UNCHANGED), `compareLoop_run`,
+   `eqVerdictM_run_{eq,neq_left,neq_right}`, `clearRegionTM_run` (×2), `shrinkTwoEmpty_run`.
+   ⚠ **the verdict makes this NOT a flat linear chain** — `eqVerdictM` is a **2-exit
+   tester** (`eqVerdictM_exit_eq` / `eqVerdictM_exit_neq`) reading `sc1`/`sc2` BEFORE
+   they're cleared, so the structure is:
+   `growTwoEmpty ⨾ copyEmpty src1→sc1 ⨾ copyEmpty src2→sc2 ⨾ compareLoop ⨾
+   branchComposeFlatTM eqVerdictM (clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty) (same) exitEQ exitNEQ`.
+   I.e. the cleanup `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty` is the SAME code on both
+   verdict branches; both must restore the tape (so the d1 wrapper sees a clean tape).
+   So `compareRegsTM` is itself a **2-exit tester** (EQ/NEQ), tape restored, the verdict
+   decided by `matchLen_drop_empty_iff`. **Recommended sub-order:** (i) prove the shared
+   **cleanup gadget** `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty` as ONE head-0 run lemma
+   (3-stage `composeFlatTM_run` of proven pieces — easiest next, fully linear, residue
+   bookkeeping `++ replicate|sc1₀|0 ++ replicate|sc2₀|0 ++ [0,0]`); (ii) the linear prefix
+   `growTwoEmpty ⨾ copyEmpty ⨾ copyEmpty ⨾ compareLoop` as a run lemma (4-stage
+   `composeFlatTM_run`, model on `copyEmpty_run`'s level-B/C threading); (iii) wrap with
+   `branchComposeFlatTM eqVerdictM cleanup cleanup` (the 2-exit verdict, both branches =
+   cleanup); (iv) the **budget**: sum per-stage + bound the opaque `loopBudget tIter
+   tDone n` by `O(L²)`. Mind residues: `copyEmpty` leaves res UNCHANGED; `compareLoop`
+   appends `replicate (2·matchLen) 0`; each `clear`/`shrink` appends `0`s — all `ValidResidue`.
+   Model the seam-threading on `copyEmpty_run` / `forBndLoop_run` / `opTail_run`
+   (concrete-state `composeFlatTM_run` chains). **Single highest-value bottom-up item now.**
 
+   - ✅ **(d2-COPY) `copyEmptyRawTM`/`copyEmpty_run` — DONE & axiom-clean (2026-06-19).**
+     `encodeTape s ++ res` (head 0, `dst` EMPTY) → `encodeTape (s.set dst (s.get src)) ++ res`
+     (head 0, **res unchanged**), tight budget `(|src|+1)(5L+23)+3L+4`. The clear-free
+     `navigateToRegTM ⨾ copyLoopTM ⨾ justRewindTM` (= `opCopy` phases 2–4). Probe
+     `probes/CopyEmptyProbe.lean`. Place the copies so `dst = sc1 = s.length`, `sc2 = s.length+1`
+     (the grown-empty registers); `copyEmpty_run` needs `dst ≠ src`, `dst < length`, `src < length`,
+     `BitState`, `s.get dst = []` — all hold post-`growTwoEmpty`.
    - ✅ **(d2b-prep / d2b / d2a) — ALL DONE & axiom-clean.** Key outputs the assembly
      consumes: **`Compile.compareLoop_run`** (from `encodeTape s ++ res` head `0`,
      loop halts at `compareBodyTM.states` with `sc1`/`sc2` = their `matchLen`-dropped
@@ -581,12 +614,11 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
      **No explicit round-trip lemma is needed — the (d2) seam just threads the concrete
      output tapes; `shrinkTwoEmpty_run` is applied to the post-`clear` `encodeTape
      (s ++ [[],[]]) ++ res'` state.**
-   - **Budget (settled, `cost=1` ≈ 18L²):** the two copies use the **tight**
-     `copyLoop_run` budget `(|src|+1)(5L+23)` ⇒ `≤ ~5L²` total; the consume loop is
-     `Θ(L²)` (a few passes/bit on shrinking scratch) ⇒ `≤ ~8L²`; grow/shrink/verdict
-     `O(L)`. Total `~13L² < 18L²`. Probe `CompareRegsBudgetProbe.lean` confirms
-     `2·copyLoop_run ≤ ½·18L²`. **Do NOT reuse `opCopy_run` (loose `9L²·|src|` busts
-     the budget). Do NOT bump `Op.cost eqBit`.**
+   - **Budget (settled, `cost=1` ≈ 18L²):** the two copies use **`copyEmpty_run`**
+     (`(|src|+1)(5L+23)+3L+4`, built on the tight `copyLoop_run`) ⇒ `≤ ~10L²` total;
+     the consume loop is `Θ(L²)` (a few passes/bit on shrinking scratch) ⇒ `≤ ~8L²`;
+     grow/shrink/verdict `O(L)`. Probe `CompareRegsBudgetProbe.lean`. **Do NOT reuse
+     `opCopy_run` (loose `9L²·|src|` busts the budget). Do NOT bump `Op.cost eqBit`.**
    - **Reuse heavily:** `navigateAndTestTM`/`bitReadTM`/`opTail`/`copyLoop_run`/
      `clear`/`insertCarryTM`/`deleteCarryTM` (all proven + `#eval`-validated),
      `branchComposeFlatTM`/`joinTwoHalts`/`loopTM` run-lemma stacks, and
