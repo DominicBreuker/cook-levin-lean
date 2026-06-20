@@ -17753,7 +17753,11 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         = some { state_idx := (Compile.compareBodyTM sc1 sc2).states,
                  tapes := [([], 0,
                    Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[Compile.matchLen (State.get s sc1) (State.get s sc2)] s)
-                     ++ (res ++ List.replicate (2 * Compile.matchLen (State.get s sc1) (State.get s sc2)) 0))] } := by
+                     ++ (res ++ List.replicate (2 * Compile.matchLen (State.get s sc1) (State.get s sc2)) 0))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareLoopTM sc1 sc2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached (Compile.compareLoopTM sc1 sc2) ck = false) := by
   set n := Compile.matchLen (State.get s sc1) (State.get s sc2) with hn
   set T : Nat → (List Nat × Nat × List Nat) := fun m =>
     ([], 0, Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
@@ -17919,16 +17923,24 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
     (Compile.compareBodyTM_valid sc1 sc2) (Compile.compareBodyTM_exitDone_lt sc1 sc2)
     (Compile.compareBodyTM_exitLoop_lt sc1 sc2) (Compile.compareBodyTM_exitDone_ne_exitLoop sc1 sc2)
     T hT_sym tIter tDone ⟨hdone_run, hdone_traj⟩ n hIter
-  refine ⟨loopBudget tIter tDone n, ?_⟩
+  have hneh := loopTM_no_early_halt (Compile.compareBodyTM sc1 sc2) (Compile.compareBodyTM_exitDone sc1 sc2)
+    (Compile.compareBodyTM_exitLoop sc1 sc2)
+    (Compile.compareBodyTM_valid sc1 sc2) (Compile.compareBodyTM_exitDone_lt sc1 sc2)
+    (Compile.compareBodyTM_exitLoop_lt sc1 sc2) (Compile.compareBodyTM_exitDone_ne_exitLoop sc1 sc2)
+    T hT_sym tIter tDone ⟨hdone_run, hdone_traj⟩ n hIter
   have hTn : T n = ([], 0, Compile.encodeTape s ++ res) := by
     simp only [hTdef, Nat.sub_self, Function.iterate_zero, id_eq, Nat.mul_zero, List.replicate_zero,
       List.append_nil]
   have hT0' : T 0 = ([], 0,
       Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s) ++ (res ++ List.replicate (2 * n) 0)) := by
     simp only [hTdef, Nat.sub_zero]
-  rw [Compile.compareBodyTM_start, hTn, hT0'] at hmain
-  rw [Compile.compareLoopTM]
-  exact hmain
+  refine ⟨loopBudget tIter tDone n, ?_, ?_⟩
+  · rw [Compile.compareBodyTM_start, hTn, hT0'] at hmain
+    rw [Compile.compareLoopTM]
+    exact hmain
+  · rw [Compile.compareBodyTM_start, hTn] at hneh
+    rw [Compile.compareLoopTM]
+    exact hneh
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
@@ -23818,3 +23830,108 @@ theorem Compile.compareCleanupM_exit_is_halt (sc1 sc2 : Var)
         = Compile.shrinkEmptyTM.exit + Compile.shrinkEmptyTM.M.states from by
           rw [Compile.compareCleanupM_exit]; omega]
   exact Compile.shrinkTwoEmptyM_exit_is_halt τ
+
+/-! ### `eqBit` (d2-ii) — shape lemmas for the PREFIX machines
+
+Plumbing for the 4-stage prefix `growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾ copyEmpty sc2
+src2 ⨾ compareLoop`: validity / sig / tapes / start / exit-is-halt for the three
+composite machines, so the seam-threading reduces to `composeFlatTM_run`. -/
+
+theorem Compile.growTwoEmptyM_valid : validFlatTM Compile.growTwoEmptyM :=
+  composeFlatTM_valid _ _ _ Compile.growEmptyTM.M_valid Compile.growEmptyTM.M_valid
+    Compile.growEmptyTM.exit_lt Compile.growEmptyTM.M_tapes Compile.growEmptyTM.M_tapes
+
+theorem Compile.growTwoEmptyM_sig : Compile.growTwoEmptyM.sig = 4 := by
+  show (composeFlatTM _ _ _).sig = 4
+  rw [composeFlatTM_sig, Compile.growEmptyTM.M_sig, Nat.max_self]
+
+theorem Compile.growTwoEmptyM_tapes : Compile.growTwoEmptyM.tapes = 1 := by
+  show (composeFlatTM _ _ _).tapes = 1; rw [composeFlatTM_tapes]; exact Compile.growEmptyTM.M_tapes
+
+theorem Compile.growTwoEmptyM_states :
+    Compile.growTwoEmptyM.states = Compile.growEmptyTM.M.states + Compile.growEmptyTM.M.states := by
+  show (composeFlatTM _ _ _).states = _; rw [composeFlatTM_states]
+
+theorem Compile.growTwoEmptyM_start : Compile.growTwoEmptyM.start = 0 := by
+  show (composeFlatTM _ _ _).start = 0
+  rw [composeFlatTM_start]
+  show (Compile.rewindBracket _ _ _ _ _ _).M.start = 0
+  rw [Compile.rewindBracket_M, Compile.joinTwoHalts_start, composeFlatTM_start]; rfl
+
+theorem Compile.growTwoEmptyM_exit_lt :
+    Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states < Compile.growTwoEmptyM.states := by
+  rw [Compile.growTwoEmptyM_states]; have := Compile.growEmptyTM.exit_lt; omega
+
+theorem Compile.growTwoEmptyM_exit_is_halt :
+    Compile.growTwoEmptyM.halt[Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states]?
+      = some true := by
+  show (composedHalt Compile.growEmptyTM.M Compile.growEmptyTM.M)[_]? = some true
+  show ((List.replicate Compile.growEmptyTM.M.states false
+      ++ Compile.growEmptyTM.M.halt)[_]?) = some true
+  rw [List.getElem?_append_right (by rw [List.length_replicate]; omega),
+      List.length_replicate, Nat.add_sub_cancel]
+  exact Compile.growEmptyTM.exit_is_halt
+
+theorem Compile.copyEmptyRawTM_start (dst src : Var) :
+    (Compile.copyEmptyRawTM dst src).start = 0 := by
+  show (composeFlatTM _ _ _).start = 0
+  rw [composeFlatTM_start, composeFlatTM_start]; exact ClearGadget.navigateToRegTM_start src
+
+theorem Compile.copyEmptyRawTM_exit_lt (dst src : Var) :
+    Compile.copyEmptyRawTM_exit dst src < (Compile.copyEmptyRawTM dst src).states := by
+  rw [Compile.copyEmptyRawTM_states, Compile.copyEmptyRawTM_exit]; omega
+
+theorem Compile.compareLoopTM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.compareLoopTM sc1 sc2) :=
+  loopTM_valid _ _ _ (Compile.compareBodyTM_valid sc1 sc2)
+    (Compile.compareBodyTM_exitDone_lt sc1 sc2) (Compile.compareBodyTM_exitLoop_lt sc1 sc2)
+    (Compile.compareBodyTM_tapes sc1 sc2)
+
+theorem Compile.compareLoopTM_sig (sc1 sc2 : Var) : (Compile.compareLoopTM sc1 sc2).sig = 4 := by
+  show (loopTM _ _ _).sig = 4; rw [loopTM_sig]; exact Compile.compareBodyTM_sig sc1 sc2
+
+theorem Compile.compareLoopTM_tapes (sc1 sc2 : Var) : (Compile.compareLoopTM sc1 sc2).tapes = 1 := by
+  show (loopTM _ _ _).tapes = 1; rw [loopTM_tapes]; exact Compile.compareBodyTM_tapes sc1 sc2
+
+theorem Compile.compareLoopTM_start (sc1 sc2 : Var) : (Compile.compareLoopTM sc1 sc2).start = 0 := by
+  simp only [Compile.compareLoopTM, Compile.compareBodyTM, Compile.testMachine,
+    Compile.testMachineRawM, Compile.bothNonemptyM, Compile.bothNonemptyRawM,
+    Compile.navTestRewindM, loopTM_start, branchComposeFlatTM_start, Compile.joinTwoHalts_start,
+    ClearGadget.navigateAndTestTM_start]
+
+theorem Compile.compareLoopTM_exit_is_halt (sc1 sc2 : Var)
+    (τ : List (List Nat × Nat × List Nat)) :
+    haltingStateReached (Compile.compareLoopTM sc1 sc2)
+      { state_idx := (Compile.compareBodyTM sc1 sc2).states, tapes := τ } = true := by
+  show (loopHalt (Compile.compareBodyTM sc1 sc2)).getD (Compile.compareBodyTM sc1 sc2).states false = true
+  show ((List.replicate (Compile.compareBodyTM sc1 sc2).states false ++ [true]).getD
+      (Compile.compareBodyTM sc1 sc2).states false) = true
+  rw [List.getD_append_right _ _ false (Compile.compareBodyTM sc1 sc2).states
+        (by rw [List.length_replicate]),
+      List.length_replicate, Nat.sub_self]; rfl
+
+/-! ### `eqBit` (d2-ii) — the PREFIX machine and its run lemma
+
+`compareRegsPrefixM sc1 sc2 src1 src2 = growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾
+copyEmpty sc2 src2 ⨾ compareLoop sc1 sc2` (left-nested). From `encodeTape s0 ++ res`
+(sc1 = s0.length, sc2 = s0.length+1 the two grown-empty scratch registers, src1/src2
+`< s0.length`) it grows two scratch registers, copies `src1`/`src2` into them, and
+runs the consume loop — leaving the original `s0` registers untouched and the two
+scratch registers holding the unmatched suffixes. -/
+def Compile.compareRegsPrefixM (sc1 sc2 src1 src2 : Var) : FlatTM :=
+  composeFlatTM
+    (composeFlatTM
+      (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM sc1 src1)
+        (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states))
+      (Compile.copyEmptyRawTM sc2 src2)
+      (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit sc1 src1))
+    (Compile.compareLoopTM sc1 sc2)
+    ((Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM sc1 src1).states)
+      + Compile.copyEmptyRawTM_exit sc2 src2)
+
+/-- The prefix exit (compareLoop's halt at `compareBodyTM.states`, shifted past the
+grow + two copies). -/
+def Compile.compareRegsPrefixM_exit (sc1 sc2 src1 src2 : Var) : Nat :=
+  (Compile.compareBodyTM sc1 sc2).states
+    + ((Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM sc1 src1).states)
+        + (Compile.copyEmptyRawTM sc2 src2).states)
