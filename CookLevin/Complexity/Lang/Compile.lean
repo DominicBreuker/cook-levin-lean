@@ -6157,6 +6157,17 @@ theorem Compile.clearBudget_arith (n L : Nat) (h : n + 2 ≤ L) :
   obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le h
   nlinarith [Nat.zero_le n, Nat.zero_le d, Nat.zero_le (n * d)]
 
+/-- **Per-op contract budget loosening `9 → 27` (the `eqBit` enabler).** The
+proven ops establish the tight `(9·L²+9·L+30)·c`; `compileOp_sound_physical_residue`
+states the looser `(27·L²+27·L+90)·c` (room for the `eqBit` cascade — see the
+finding above that theorem). The looser constant is free against `physStepBudget`
+(8× headroom, `27 ≤ 72`). `omega` atomises `L*L`. -/
+theorem Compile.opBudgetLoosen {L c d : Nat}
+    (h : d ≤ (9 * L * L + 9 * L + 30) * c) :
+    d ≤ (27 * L * L + 27 * L + 90) * c :=
+  le_trans h (Nat.mul_le_mul_right _
+    (by nlinarith [Nat.zero_le (L * L), Nat.zero_le L]))
+
 /-- **`clearRegionTM` run (Risk C2, step 5b).** Assembled from `loopTM_run`. The
 loop deletes register `dst`'s `n = |s.get dst|` leading cells one per iteration
 (`clearBody_delete_run`), then the done branch fires when `dst` is empty
@@ -17981,7 +17992,20 @@ it (the clear phase alone exhausts it). Scaling by `Op.cost o s + 1` funds the
 loop rounds (`cost = |src|+1` for `copy`/`tail`) and is free for the consumer:
 `run_physical_residue_gen`'s ② discharge pays `physStepBudget`'s
 `(9G²+9G+33)·(8·cost+8)`, and `(9G²+9G+30)·(cost+1)` sits under it termwise
-(`#eval`-validated against the real machines in `probes/CursorCopyProbe.lean`). -/
+(`#eval`-validated against the real machines in `probes/CursorCopyProbe.lean`).
+
+**⚠ 2026-06-20c — budget constant LOOSENED `9 → 27` (the `eqBit` enabler).** A
+risk probe of the *full* `compareRegsTM` + d1 wrapper (`probes/EqBitBudgetProbe.lean`)
+found that while the REAL steps fit `(9·L²+…)·2` at ~70%, the *provable* loose
+bounds (every sub-gadget's `t ≤ …` recovered via the 2×-loose `navSteps_le` etc.)
+**compound to ~121%** of the `cost=1` budget — and even near-perfect tight bounds
+land at ~97% (fragile). The fix is to loosen the per-op CONTRACT budget constant
+`9 → 27`: this is **free** because the consumer `run_physical_residue_gen` ②
+discharges against `physStepBudget`'s `(9G²+9G+33)·(8·cost+8)` — an ~8× headroom
+(`27 ≤ 72 = 8·9`), so `physStepBudget` is untouched and `Op.cost`/EvalCnf are
+untouched (degree unchanged). The 7 proven ops relax their tight `(9·L²+…)` bounds
+through `Compile.opBudgetLoosen`. Do NOT re-tighten — the eqBit cascade needs the
+room (see HANDOFF bottom-up task 1, d2-iv). -/
 theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat)
     (hbit : Compile.BitState s) (hbnd : o.inBounds s)
     (hres_in : Compile.ValidResidue res_in) :
@@ -18001,9 +18025,9 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
-      ∧ t ≤ (9 * (Compile.encodeTape s ++ res_in).length
+      ∧ t ≤ (27 * (Compile.encodeTape s ++ res_in).length
                * (Compile.encodeTape s ++ res_in).length
-               + 9 * (Compile.encodeTape s ++ res_in).length + 30)
+               + 27 * (Compile.encodeTape s ++ res_in).length + 90)
             * (Op.cost o s + 1) := by
   cases o with
   | appendOne dst =>
@@ -18013,15 +18037,17 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
         Compile.opAppendBit_physical_residue 1 (by omega) s dst hbit hbnd res_in hres_in
       exact ⟨t, res_in, hres_in,
         (by have := Op.size_eval_le (Op.appendOne dst) s; omega), hrun, htraj,
-        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in))
-          (by show _ ≤ _ * (1 + 1); omega)⟩
+        Compile.opBudgetLoosen
+          (le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in))
+            (by show _ ≤ _ * (1 + 1); omega))⟩
   | appendZero dst =>
       obtain ⟨t, hrun, htraj, hbudget⟩ :=
         Compile.opAppendBit_physical_residue 0 (by omega) s dst hbit hbnd res_in hres_in
       exact ⟨t, res_in, hres_in,
         (by have := Op.size_eval_le (Op.appendZero dst) s; omega), hrun, htraj,
-        le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in))
-          (by show _ ≤ _ * (1 + 1); omega)⟩
+        Compile.opBudgetLoosen
+          (le_trans (le_trans hbudget (Compile.linear_le_quadratic_tapeLen s res_in))
+            (by show _ ≤ _ * (1 + 1); omega))⟩
   -- The 9 cross-register stub ops still need their gadgets (`copyBlockTM`, see ROADMAP C2.c).
   | clear dst =>
       -- `clearRegionTM_run` (step 5b) provides the run + no-early-halt trajectory; the loop
@@ -18034,7 +18060,7 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
         simp only [initFlatConfig, hstart0, List.map_cons, List.map_nil]
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
         Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, ?_, ?_,
-        le_trans hbud (by show _ ≤ _ * (1 + 1); omega)⟩
+        Compile.opBudgetLoosen (le_trans hbud (by show _ ≤ _ * (1 + 1); omega))⟩
       · -- ① the freed `|dst|` cells move into the residue: `W` is unchanged (cost ≥ 0).
         have h := State.size_set_add s dst ([] : List Nat)
         simp only [List.length_nil, Nat.add_zero] at h
@@ -18070,8 +18096,8 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
           have h := State.size_set_add s dst (State.get s src)
           simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
           omega
-        · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`.
-          exact hbud
+        · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`, loosened to `27`.
+          exact Compile.opBudgetLoosen hbud
   | tail dst src =>
       by_cases hds : dst = src
       · subst hds
@@ -18102,7 +18128,7 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               refine Nat.mul_le_mul_left _ ?_
               simp only [Op.cost]
               omega
-            exact le_trans (le_trans hbud (by omega)) h2
+            exact Compile.opBudgetLoosen (le_trans (le_trans hbud (by omega)) h2)
         · -- in-place, delete branch: exact residue `res_in ++ [0]`.
           obtain ⟨t, hrun, htraj, hbud⟩ :=
             Compile.opTailSelf_run_delete s dst hbnd.1 hbit hemp res_in hres_in
@@ -18125,7 +18151,7 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               refine Nat.mul_le_mul_left _ ?_
               simp only [Op.cost]
               omega
-            exact le_trans (le_trans hbud (by omega)) h2
+            exact Compile.opBudgetLoosen (le_trans (le_trans hbud (by omega)) h2)
       · obtain ⟨t, hrun, htraj, hbud⟩ :=
           Compile.opTail_run s dst src hds hbnd.1 hbnd.2 hbit res_in hres_in
         refine ⟨t, res_in ++ List.replicate (State.get s dst).length 0,
@@ -18136,14 +18162,14 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
             List.length_tail
           simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
           omega
-        · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`.
-          exact hbud
+        · -- budget: `(9L²+9L+30)·(|src|+2) = (9L²+9L+30)·(cost+1)`, loosened to `27`.
+          exact Compile.opBudgetLoosen hbud
   | head dst src =>
       obtain ⟨t, hrun, htraj, hbud⟩ :=
         Compile.opHead_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
         Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj,
-        le_trans hbud (by show _ ≤ _ * (1 + 1); omega)⟩
+        Compile.opBudgetLoosen (le_trans hbud (by show _ ≤ _ * (1 + 1); omega))⟩
       · -- ① `head` writes `≤ 1` cell to `dst`; freed cells go to residue.
         rcases hsrc : s.get src with _ | ⟨x, xs⟩
         · have h := State.size_set_add s dst ([] : List Nat)
@@ -18160,7 +18186,7 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
         Compile.opNonEmpty_run s dst src res_in hbit hbnd.1 hbnd.2 hres_in
       refine ⟨t, res_in ++ List.replicate (s.get dst).length 0,
         Compile.ValidResidue_append_replicate_zero res_in _ hres_in, ?_, hrun, htraj,
-        le_trans hbud (by show _ ≤ _ * (1 + 1); omega)⟩
+        Compile.opBudgetLoosen (le_trans hbud (by show _ ≤ _ * (1 + 1); omega))⟩
       · -- ① `nonEmpty` writes exactly `1` cell to `dst`; freed cells go to residue.
         have h := State.size_set_add s dst (if (s.get src).isEmpty then ([0] : List Nat) else [1])
         have hv : (if (s.get src).isEmpty then ([0] : List Nat) else [1]).length = 1 := by
@@ -20885,15 +20911,18 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
         have hL : (Compile.encodeTape s ++ res0).length ≤ G := by
           rw [List.length_append, Compile.encodeTape_length]; omega
         set L := (Compile.encodeTape s ++ res0).length with hLdef
-        have h1 : (9 * L * L + 9 * L + 30) * (Op.cost o s + 1)
-                  ≤ (9 * G * G + 9 * G + 30) * (Op.cost o s + 1) :=
+        have h1 : (27 * L * L + 27 * L + 90) * (Op.cost o s + 1)
+                  ≤ (27 * G * G + 27 * G + 90) * (Op.cost o s + 1) :=
           Nat.mul_le_mul_right _
             (Nat.add_le_add
-              (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 9 hL) hL)
-                (Nat.mul_le_mul_left 9 hL)) (Nat.le_refl 30))
-        have h2 : (9 * G * G + 9 * G + 30) * (Op.cost o s + 1)
+              (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 27 hL) hL)
+                (Nat.mul_le_mul_left 27 hL)) (Nat.le_refl 90))
+        -- `27 ≤ 72 = 8·9`: the loosened constant still sits under physStepBudget's `(·)·(8·cost+8)`.
+        have h2 : (27 * G * G + 27 * G + 90) * (Op.cost o s + 1)
                   ≤ (9 * G * G + 9 * G + 33) * (8 * Op.cost o s + 8) :=
-          Nat.mul_le_mul (by omega) (by omega)
+          le_trans (Nat.mul_le_mul_right _ (by nlinarith [Nat.zero_le (G * G), Nat.zero_le G] :
+              27 * G * G + 27 * G + 90 ≤ 72 * G * G + 72 * G + 264))
+            (Nat.le_of_eq (by ring))
         show t ≤ Compile.physStepBudget G (Op.cost o s)
         rw [Compile.physStepBudget]
         exact le_trans (le_trans hbud (le_trans h1 h2)) (Nat.le_add_right _ _)
