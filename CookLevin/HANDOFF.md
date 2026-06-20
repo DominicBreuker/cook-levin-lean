@@ -133,75 +133,77 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What the last session (2026-06-20, bottom-up) did — **`compareRegsTM` (d2) probed end-to-end; the CLEANUP gadget AND the 4-stage PREFIX run lemma are PROVEN** — only the d2-iii branch-wrap + d2-iv budget remain for `compareRegsTM`
+## ✅ What the last session (2026-06-20b, bottom-up) did — **`compareRegsTM` (d2-iii) the BRANCH WRAP is PROVEN & axiom-clean** — `compareRegsTM` is now a complete 2-exit EQ/NEQ tester; only d2-iv (budget) + d1 (wrapper) remain for `eqBit`
 
-Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider still
-needs). All d2 sub-gadgets were already proven; the remaining work is the
-STITCHING. Following "probe before committing engineering":
+Closed the d2-iii STITCHING (HANDOFF "▶ THE IMMEDIATE NEXT STEP"). All sub-gadgets
+were proven; this session assembled the final `compareRegsTM`. **Full build green
+(3358), all new results axiom-clean (`[propext, Classical.choice, Quot.sound]`).**
 
-1. **`probes/CompareRegsAssemblyProbe.lean` — the full design-(A) pipeline is
-   validated END-TO-END** (`#eval`, all `true`). It drives the actual machines,
-   feeding each PROVEN stage's output tape into the next
-   (`growTwoEmpty ⨾ copyEmpty src1→sc1 ⨾ copyEmpty src2→sc2 ⨾ compareLoop ⨾
-   [verdict reads sc1/sc2] ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`) and checks,
-   for EQ + NEQ inputs at several lengths: (a) the final tape decodes back to the
-   ORIGINAL registers (tape restored for the d1 wrapper), and (b) "both scratch
-   suffixes empty ⟺ src1 = src2" (`matchLen_drop_empty_iff`). **Design (A)
-   assembles correctly — the rest is pure seam-threading, no structural unknown.**
-2. **`Compile.compareCleanupM sc1 sc2` + `compareCleanup_run` PROVEN & axiom-clean** —
-   the shared cleanup branch `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty` as ONE
-   head-`0`→head-`0` run lemma over `base ++ [c1, c2]` →
-   `encodeTape base ++ (((res ++ replicate|c1| 0) ++ replicate|c2| 0) ++ [0,0])`. Plus
-   `compareCleanupM_{sig,tapes,states,valid,exit,exit_is_halt}` and the
-   `shrinkTwoEmptyM_{exit_is_halt,valid,sig,tapes,start}` helpers.
-3. **`Compile.compareRegsPrefixM` + `compareRegsPrefix_run` PROVEN & axiom-clean** —
-   the 4-stage prefix `growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾ copyEmpty sc2 src2 ⨾
-   compareLoop` (see d2-ii below). Plus the prefix-machine shape lemmas and the
-   `compareLoop_run` no-early-halt extension. **`compareRegsTM` now needs only the
-   branch-wrap (d2-iii) + budget (d2-iv).** ⚠ Full build green (3358), all axiom-clean.
+1. **`Compile.compareRegsTM sc1 sc2 src1 src2` is DONE** (`= compareRegsPrefixM ⨾
+   compareBranchM`, where `compareBranchM := branchComposeFlatTM eqVerdictM cleanup
+   cleanup (eqVerdictM_exit_eq) (eqVerdictM_exit_neq)` — BOTH branches the same
+   cleanup). With its full shape family: `compareBranchM_{sig,tapes,start,states,valid}`,
+   `compareRegsTM_{sig,tapes,start,states,valid}`, the two exit defs
+   `compareRegsTM_exit_{eq,neq}` + `_{eq,neq}_lt` + `_eq_ne_neq` + `_{eq,neq}_is_halt`.
+2. **`compareRegsTM_run_eq` / `compareRegsTM_run_neq` PROVEN** — the 2-exit tester
+   contract: from `encodeTape s0 ++ res` (head `0`, `sc1 = s0.length`,
+   `sc2 = s0.length+1`, `src1/src2 < s0.length`), reaches `compareRegsTM_exit_eq`
+   when `s0.get src1 = s0.get src2` (EQ) / `compareRegsTM_exit_neq` when `≠` (NEQ),
+   tape **restored** (`∃ residue, ValidResidue residue ∧ tape = encodeTape s0 ++
+   residue`), + the no-early-halt trajectory. NEQ splits on which suffix is nonempty
+   (`eqVerdictM_run_neq_left` / `_right`). **Residue is existential** (the d1 wrapper
+   re-clears `dst` anyway) — avoids the trailing-zeros `List.replicate` algebra.
+3. **Reusable helpers added (axiom-clean):** `consumeStep_iterate_append` (the
+   `State` closed form `consumeStep^[k] (s0 ++ [a,b]) = s0 ++ [a.drop k, b.drop k]`),
+   `BitState_append_drop_pair`, `halt_getElem_of_haltingStateReached` (generic
+   `haltingStateReached`-true → `.halt[i]? = some true`), `compareLoopTM_halt_getElem`,
+   `compareCleanupM_{start,exit_lt,halt_getElem}`, and the prefix shape family
+   `compareRegsPrefixM_{states,sig,tapes,valid,exit_lt,exit_is_halt}`.
 
-### ⚠ GAP surfaced (risk-based) — the budget step (d2-iv) needs step-count bounds the run lemmas DON'T carry
+### ⚠ THE remaining bottom-up blocker for `eqBit` is d2-iv (BUDGET) — still the open GAP
 
-`growTwoEmpty_run` / `shrinkTwoEmpty_run` / `compareLoop_run` (and now
-`compareCleanup_run`) expose only `∃ t, run ∧ no_early_halt` — **NO `t ≤ …`
-conjunct**. `compareLoop_run`'s bound is the OPAQUE `loopBudget tIter tDone n`.
-So the eqBit budget (`(9L²+9L+30)·2 ≈ 18L²`, probe-validated feasible in
-`CompareRegsBudgetProbe`) **cannot be PROVEN until those lemmas gain explicit
-`O(L)`/`O(L²)` bounds.** Plan: when wiring the budget, either (a) add a `t ≤ …`
-conjunct to each of grow/shrink/compareLoop (grow/shrink are `O(L)` — the
-`rewindBracket` step counts are recoverable; `compareLoop` needs
-`loopBudget_le`-style bounding of `loopBudget tIter tDone n` with `tIter,tDone =
-O(L)`, `n ≤ L`), or (b) prove the total budget directly inside `compareRegsTM`'s
-run lemma. Either way this is the bulk of step (d2-iv). `copyEmpty_run` and
-`clearRegionTM_run` already carry their bounds (`(|src|+1)(5L+23)+3L+4`, `9L²+9`).
+`compareRegsTM_run_{eq,neq}` are **`∃ t` with NO `t ≤ …` conjunct**, inherited from
+`growTwoEmpty_run` / `shrinkTwoEmpty_run` / `compareLoop_run` / `compareCleanup_run`
+(`compareLoop_run`'s bound is the OPAQUE `loopBudget tIter tDone n`). The `eqBit`
+contract case (`compileOp_sound_physical_residue`) **requires** the per-op budget
+`(9L²+9L+30)·(cost+1)`, so **d1 (the wrapper) cannot close `eqBit` until the budget
+exists.** ⇒ **d2-iv is THE critical path, not d1.** Plan (probe-validated feasible
+`≈18L²` in `CompareRegsBudgetProbe`): add a `t ≤ …` conjunct to each of
+grow/shrink/compareLoop (grow/shrink `O(L)` — `rewindBracket` step counts recoverable;
+`compareLoop` needs `loopBudget_le`-bounding of `loopBudget tIter tDone n` with
+`tIter,tDone = O(L)`, `n ≤ L`), thread them through `compareRegsPrefix_run` /
+`compareRegsTM_run_{eq,neq}`. `copyEmpty_run`/`clearRegionTM_run` already carry their
+bounds (`(|src|+1)(5L+23)+3L+4`, `9L²+9`). See BOTTOM-UP task 1 (d2-iv).
 
-### ★ FINDINGS (this session) — reusable for the prefix / branch / future assemblies
+### ★ FINDINGS (this session) — reusable for branch wraps / future 2-exit testers
 
-- **STAGED PROBE for an assembly:** before threading a long `composeFlatTM` chain,
-  `#eval` it by running each PROVEN stage's machine from state `0` on the current
-  tape (`runToHalt`) and feeding the output `right`-list forward. Validates the
-  SEMANTICS (= the run-lemma chain) cheaply; the seam-index arithmetic is then the
-  only thing the proof adds. (`CompareRegsAssemblyProbe.lean` is the template.)
-- **`loopTM` / `clearRegionTM` `.start` is NOT defeq `0`** (unlike a bare
-  `composeFlatTM` of leaves). When passing such a machine as `composeFlatTM_run`'s
-  `M₂` (its `h_run2`/`h_traj2` want `state_idx := M₂.start`), first build an
-  `hX_run'`/convert the hypothesis with `rw [ClearGadget.clearRegionTM_start]` (or
-  `shrinkTwoEmptyM_start` / `loopTM_start`). `copyLoopTM` (also a `loopTM`) worked
-  by defeq in `copyEmpty_run` only because its start happened to reduce — don't rely
-  on it.
-- **`List.getD_append_right l l' d n h` — PIN `n` explicitly** (the index), else the
-  side-condition `by … omega` elaborates against a metavar `n` and fails ("No usable
-  constraints"). Used in `*_exit_is_halt` proofs (`shrinkTwoEmptyM`/`compareCleanupM`).
-  Halt fact for a `composeFlatTM`'d exit = unfold `composedHalt` to
-  `replicate M₁.states false ++ M₂.halt`, `getD_append_right`, then the inner exit_is_halt.
-- **`rw [clearRegionTM_states]` rewrites only the `sc1` instance** (unifies `dst:=sc1`
-  at the first occurrence); rewrite the `sc2` instance too (`clearRegionTM_states sc2`)
-  before `omega`, else `(clearRegionTM sc2).states` stays an opaque atom omega can't
-  relate to `clearBodyRawTM.states + 1`.
-- **Op.eval/State.get/State.set on `base ++ [c1,c2]`:** `Op.eval (Op.clear base.length)
-  (base++[c1,c2]) = base++[[],c2]` via `simp only [Op.eval]; rw [State.set,
-  List.set_append_right base.length [] (by simp)]; simp`; `State.get (base++[c1,c2])
-  base.length = c1` via `rw [State.get, List.getElem?_append_right (by omega)]; simp`.
+- **`rw [<def>]` on a plain `def` (e.g. `compareRegsTM`) can FAIL** ("did not find
+  pattern") when the goal already shows it through a projection. The composite
+  machine is **defeq** to its `composeFlatTM`/`branchComposeFlatTM` body, so just
+  `exact h` (or `exact this k …`) lets the kernel unfold — drop the `rw`.
+- **`rcases hh : e with …` / `cases hh : e` SUBSTITUTES `e` in the goal** (when it
+  occurs there) — so a later `rw [hh]` on the goal fails ("no occurrence"). In the
+  `some` branch the goal is already `some b = …`; close with `simp only [hh, …] at h';
+  subst h'; rfl` (don't re-`rw [hh]` the goal).
+- **A 2-exit tester's `_run` trajectory is `(≠ exit_neg ∧ ≠ exit_pos ∧ ¬halt)`** (the
+  `eqVerdictM`/`compareRegsTM` shape). `branchComposeFlatTM_run_pos/_neg` want
+  `(≠ exit_pos ∧ ≠ exit_neg ∧ ¬halt)` — **reorder** with
+  `fun k hk ck hck => ⟨(h …).2.1, (h …).1, (h …).2.2⟩`.
+- **Lift a composite's exit halt to `getElem?` form** = `composeFlatTM_halt_intro` /
+  `branchComposeFlatTM_M2_halt_intro` (pos) / `_M3_halt_intro` (neg), each consuming
+  the inner `.halt[e]? = some true`; the index comes out `M₁.states + e` (commute with
+  the def's order via a `show … from by …; omega` rewrite). `loopTM`'s loop halt in
+  `getElem?` form: `(loopHalt B)[B.states]?` via `getElem?_append_right` + `Nat.sub_self`.
+- **`consumeStep`'s SECOND `State.get` reads the ORIGINAL `s`, not the post-`set`
+  state** (`(s.set sc1 …).set sc2 (State.get s sc2).tail`) — state the two `get`-facts
+  on `s0 ++ [a,b]` (NOT on the half-updated list).
+- **The branch's `M₂`/`M₃` run starts at `M₂.start` (not literal `0`)** —
+  `compareCleanupM_start`/`compareBranchM_start` are `= 0`, so convert
+  `h_run2`/`h_traj2` with `rw [compareBranchM_start]` then `exact`; the no-early-halt
+  hyp already uses `cfgB` (state `0`), so DON'T `rw … at` it (only the goal).
+- **`List.set_append_right`/`getElem?_append_right`: feed the side-condition as
+  `Nat.le_refl _` / `Nat.le_succ _`** (not `by omega` — the implicit index metavar
+  defeats it here) and the leftover index via `show … from Nat.add_sub_cancel_left …`.
 
 ---
 
@@ -484,6 +486,17 @@ run lemma. Either way this is the bulk of step (d2-iv). `copyEmpty_run` and
   (`encodeTape (s ++ [[],[]]) ++ res → encodeTape s ++ (res ++ [0,0])`). ⚠ residue grows by
   one `0`/shrink; scan gap is `R+1` (extra separator) so step count is `R+2`. **Templates
   for any residue-tolerant resize-then-rewind op — see this-session REUSABLE PATTERN.**
+- **★ `Compile.compareRegsPrefixM`/`compareRegsPrefix_run` (2026-06-20) + `Compile.compareRegsTM`/
+  `compareRegsTM_run_{eq,neq}` (2026-06-20b) — the `eqBit` (d2) tester is STRUCTURALLY COMPLETE.**
+  `compareRegsTM sc1 sc2 src1 src2 = compareRegsPrefixM ⨾ compareBranchM` is a 2-exit EQ/NEQ
+  register-equality tester (`EQ ⟺ s0.get src1 = s0.get src2`), tape **restored** to
+  `encodeTape s0 ++ residue` (existential `ValidResidue`), with the no-early-halt trajectory.
+  Full shape family (`compareRegsTM_{sig,tapes,start,states,valid,exit_eq,exit_neq,_lt,
+  _eq_ne_neq,_is_halt}`, `compareBranchM_*`, `compareRegsPrefixM_*`). Reusable: the closed
+  `State` form `consumeStep_iterate_append` (`consumeStep^[k] (s0++[a,b]) = s0++[a.drop k,
+  b.drop k]`), `BitState_append_drop_pair`, `halt_getElem_of_haltingStateReached`,
+  `compareLoopTM_halt_getElem`. ⚠ **NO step bound yet** (the `∃ t` is budget-free —
+  d2-iv). The d1 `opEqBit` wrapper drops this in as `branchComposeFlatTM`'s M₁.
 
 ---
 
@@ -574,14 +587,16 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
    axiom-clean 2026-06-19).** **ALL d2 sub-gadgets are now proven — the only
    remaining bottom-up work for `eqBit` is the STITCHING:**
 
-   **▶ THE IMMEDIATE NEXT STEP — finish (d2) `compareRegsTM`: only the PREFIX +
-   BRANCH-WRAP + BUDGET remain.** The structure (`compareRegsTM` is itself a 2-exit
-   EQ/NEQ tester, tape restored, verdict by `matchLen_drop_empty_iff`):
-   `growTwoEmpty ⨾ copyEmpty src1→sc1 ⨾ copyEmpty src2→sc2 ⨾ compareLoop ⨾
-   branchComposeFlatTM eqVerdictM cleanup cleanup exitEQ exitNEQ` — both branches are
-   the SAME `cleanup`. **★ The whole pipeline is `#eval`-VALIDATED end-to-end**
-   (`probes/CompareRegsAssemblyProbe.lean`, all `true`) — no structural unknown; pure
-   seam-threading. Recommended sub-order:
+   **▶ THE IMMEDIATE NEXT STEP — d2-iv (BUDGET): the structural assembly is DONE;
+   only the step-count GAP remains.** `compareRegsTM` (the 2-exit EQ/NEQ tester) is
+   fully PROVEN & axiom-clean (`compareRegsTM_run_{eq,neq}`, see this-session block).
+   What's left is to give it (and its sub-gadgets) explicit `t ≤ …` bounds so the
+   `eqBit` op contract (which needs `(9L²+9L+30)·(cost+1)`) can be discharged. **d1
+   (the wrapper) is BLOCKED on d2-iv** — without the budget the wrapper's run lemma
+   has no step bound and the contract case can't close. The full structural
+   assembly (`growTwoEmpty ⨾ copyEmpty src1→sc1 ⨾ copyEmpty src2→sc2 ⨾ compareLoop ⨾
+   branchComposeFlatTM eqVerdictM cleanup cleanup exitEQ exitNEQ`) is `#eval`-validated
+   (`probes/CompareRegsAssemblyProbe.lean`) and proven. Sub-steps:
    - ✅ **(d2-i CLEANUP) DONE & axiom-clean (2026-06-19b)** — `Compile.compareCleanupM
      sc1 sc2` (= `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`) + `compareCleanup_run`:
      from `encodeTape (base++[c1,c2]) ++ res` (sc1=base.length, sc2=base.length+1)
@@ -612,24 +627,28 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
      `List.set_append_right`/`List.getElem?_append_right` (`(s := …)`, or feed
      `Nat.le_refl _`/`Nat.le_succ _` as the hypothesis) so the side-condition doesn't
      elaborate against a metavariable.
-   - **(d2-iii BRANCH WRAP) ← DO THIS NEXT.** `compareRegsTM src1 src2 := composeFlatTM
-     (compareRegsPrefixM s0.length (s0.length+1) src1 src2) (branchComposeFlatTM
-     eqVerdictM compareCleanupM compareCleanupM exitEQ exitNEQ) (compareRegsPrefixM_exit
-     …)`. The prefix exits into the branch at `compareRegsPrefixM_exit` (a halt — prove a
-     `compareRegsPrefixM_exit_is_halt`, mirror `copyEmptyRawTM_exit_is_halt`: the loop's
-     halt at `compareBodyTM.states`, shifted; `compareLoopTM_exit_is_halt` is the seed).
-     The branch's M₁ = `eqVerdictM s0.length (s0.length+1)`, reading the post-loop
-     scratch suffixes; use **`consumeIter_spec`** to rewrite the prefix output state to
-     `s0 ++ [drop n g1, drop n g2]` (so eqVerdictM sees concrete sc1/sc2 = drop n g1 /
-     drop n g2), then **`matchLen_drop_empty_iff`**: both empty ⟺ g1 = g2. EQ case →
-     `eqVerdictM_run_eq` → exitEQ; NEQ → `eqVerdictM_run_{neq_left,neq_right}` → exitNEQ.
-     M₂ = M₃ = `compareCleanupM` (cleanup is the SAME on both branches): use
-     `compareCleanup_run` (base = s0, c1 = drop n g1, c2 = drop n g2) +
-     `compareCleanupM_exit_is_halt` (both PROVEN this session). `compareRegsTM` is then a
-     **2-exit EQ/NEQ tester, tape restored**. ⚠ Use `branchComposeFlatTM_run_pos`/`_neg`;
-     **term-mode arithmetic only** (omega broken).
-   - **(d2-iv BUDGET)** ⚠ still blocked on the GAP (grow/shrink/compareLoop carry no
-     `t ≤ …`). Same plan as before.
+   - **(d2-iii BRANCH WRAP) ✅ DONE & axiom-clean (2026-06-20b).** `Compile.compareRegsTM
+     sc1 sc2 src1 src2 = compareRegsPrefixM ⨾ compareBranchM`
+     (`compareBranchM := branchComposeFlatTM eqVerdictM cleanup cleanup eqVerdictM_exit_eq
+     eqVerdictM_exit_neq`). `compareRegsTM_run_eq` (EQ via `branchComposeFlatTM_run_pos`)
+     / `compareRegsTM_run_neq` (NEQ via `_run_neg`, splitting on which `drop n` suffix is
+     nonempty), tape restored to `encodeTape s0 ++ residue` (existential `ValidResidue`).
+     The prefix→state rewrite used the new `consumeStep_iterate_append` (NOT
+     `consumeIter_spec` — the closed `State` form is cleaner). Plus the full shape family
+     `compareRegsTM_{exit_eq,exit_neq,_lt,_ne,_is_halt,sig,tapes,start,states,valid}` and
+     `compareBranchM_*`, `compareRegsPrefixM_{states,sig,tapes,valid,exit_lt,exit_is_halt}`.
+     **NB: `omega` worked fine in these small shape-lemma contexts** (the d2-ii
+     omega-failure was specific to the huge prefix proof; not a general ban).
+   - **(d2-iv BUDGET) ← DO THIS NEXT — the only remaining bottom-up blocker for `eqBit`.**
+     Add a `t ≤ …` conjunct to `growTwoEmpty_run` (`O(L)`), `shrinkTwoEmpty_run` (`O(L)`),
+     `compareLoop_run` (bound the OPAQUE `loopBudget tIter tDone n` via `loopBudget_le`
+     with `tIter,tDone = O(L)`, iteration count `n ≤ L`), and `compareCleanup_run`
+     (`clearRegionTM_run` already carries `9L²+9`; `shrinkTwoEmpty` `O(L)`). Then thread
+     the sums through `compareRegsPrefix_run` and `compareRegsTM_run_{eq,neq}` (the
+     `composeFlatTM_run`/`branchComposeFlatTM_run_*` give `t₁+1+t₂`-additive totals —
+     just carry the `≤` alongside). Probe `CompareRegsBudgetProbe` validated `≈18L² ≤
+     (9L²+9L+30)·2` feasible. `copyEmpty_run` already has `(|src|+1)(5L+23)+3L+4`.
+     **Only after d2-iv does d1 become unblocked.**
 
    - ✅ **(d2-COPY) `copyEmptyRawTM`/`copyEmpty_run` — DONE & axiom-clean (2026-06-19).**
      `encodeTape s ++ res` (head 0, `dst` EMPTY) → `encodeTape (s.set dst (s.get src)) ++ res`
@@ -667,14 +686,21 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
      `branchComposeFlatTM`/`joinTwoHalts`/`loopTM` run-lemma stacks, and
      `clearBodyRawTM`/`forBndLoop_run`/`opNonEmpty_run` as proof templates.
 
-   **(d1) WRAPPER — reuse `nonEmptyRawM` verbatim — LAST, after (d2).** Define
-   `opEqBit dst src1 src2 := joinTwoHalts (branchComposeFlatTM (compareRegsTM
-   src1 src2) (nonEmptyBranchBody dst 2 _) (nonEmptyBranchBody dst 1 _) EQ NEQ) …`
-   — structurally identical to `Compile.nonEmptyRawM`/`opNonEmpty` with
-   `compareRegsTM` swapped in for `navigateAndTestTM`. The shape/valid/halt lemmas
-   and `opEqBit_run` are a **mechanical port of `opNonEmpty`'s**; the `eqBit`
-   contract case is then a copy of the `nonEmpty` case at Compile.lean ~15262
-   (residue `res_in ++ replicate |dst₀| 0`, W-invariant via `State.size_set_add`).
+   **(d1) WRAPPER — reuse `nonEmptyRawM` verbatim — BLOCKED on d2-iv (do it AFTER the
+   budget).** `compareRegsTM` is now a complete 2-exit tester (`compareRegsTM_run_{eq,neq}`
+   + `compareRegsTM_{exit_eq,exit_neq}_{is_halt,lt}` + `_exit_eq_ne_neq` + `_valid` +
+   `_sig`/`_tapes`/`_start` — all PROVEN, ready to drop in as the `branchComposeFlatTM`
+   M₁). Define `opEqBit dst src1 src2 := joinTwoHalts (branchComposeFlatTM (compareRegsTM
+   s.length (s.length+1) src1 src2) (nonEmptyBranchBody dst 2 _) (nonEmptyBranchBody dst 1
+   _) compareRegsTM_exit_eq compareRegsTM_exit_neq) …` — structurally identical to
+   `Compile.nonEmptyRawM`/`opNonEmpty` with `compareRegsTM` swapped in for
+   `navigateAndTestTM`. The shape/valid/halt lemmas and `opEqBit_run` are a **mechanical
+   port of `opNonEmpty`'s**; the `eqBit` contract case is then a copy of the `nonEmpty`
+   case at Compile.lean ~15262 (residue `res_in ++ replicate |dst₀| 0`, W-invariant via
+   `State.size_set_add`). ⚠ **The contract's per-op budget can only be met once
+   `compareRegsTM_run_{eq,neq}` carry a `t ≤ …` bound (d2-iv).** The EQ/NEQ residue from
+   `compareRegsTM` is existential — `obtain` it, then the `nonEmptyBranchBody` clear of
+   `dst` absorbs it (`dst < s.length`, content = original, restored by the tester).
 
 2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
    `concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`. = `clear dst ⨾

@@ -24198,3 +24198,575 @@ theorem Compile.compareRegsPrefix_run (s0 : State) (src1 src2 : Var)
   refine ⟨_, hrun, ?_⟩
   intro k hk ck hck
   exact hDtraj k hk ck hck
+
+/-! ### `eqBit` (d2-iii) — the BRANCH WRAP `compareRegsTM`
+
+Assembles the 2-exit EQ/NEQ tester `compareRegsTM = compareRegsPrefixM ⨾
+branchComposeFlatTM eqVerdictM compareCleanupM compareCleanupM`. The prefix grows
+two scratch registers, copies `src1`/`src2` into them and consumes the matched
+prefix; the verdict (`eqVerdictM`) tests "both scratch suffixes empty?" (which is
+`src1 = src2` by `matchLen_drop_empty_iff`); BOTH branches run the SAME cleanup,
+restoring the tape to `encodeTape s0 ++ residue` and exiting at distinct EQ/NEQ
+halts. No budget yet (HANDOFF d2-iv: grow/shrink/compareLoop carry no `t ≤ …`). -/
+
+/-- Generic bridge: a `haltingStateReached`-true config gives the `getElem?`-form
+halt fact (`ne_of_not_halting` / the halt-intro lemmas want the latter). -/
+theorem Compile.halt_getElem_of_haltingStateReached {M : FlatTM} {i : Nat}
+    (h : haltingStateReached M { state_idx := i, tapes := [] } = true) :
+    M.halt[i]? = some true := by
+  have h' : M.halt.getD i false = true := h
+  rw [List.getD_eq_getElem?_getD] at h'
+  rcases hh : M.halt[i]? with _ | b
+  · rw [hh] at h'; simp at h'
+  · simp only [hh, Option.getD_some] at h'; subst h'; rfl
+
+/-- The consume-loop `State` iteration in closed form: deleting both scratch heads
+`k` times drops `k` from each appended operand, leaving the base untouched
+(`sc1 = s0.length`, `sc2 = s0.length + 1`). -/
+theorem Compile.consumeStep_iterate_append (s0 : State) (a b : List Nat) (k : Nat) :
+    (Compile.consumeStep s0.length (s0.length + 1))^[k] (s0 ++ [a, b])
+      = s0 ++ [a.drop k, b.drop k] := by
+  induction k with
+  | zero => simp
+  | succ k ih =>
+    rw [Function.iterate_succ_apply', ih, Compile.consumeStep]
+    have hget1 : State.get (s0 ++ [a.drop k, b.drop k]) s0.length = a.drop k := by
+      simp only [State.get]
+      rw [List.getElem?_append_right (Nat.le_refl _), Nat.sub_self]; rfl
+    have hget2 : State.get (s0 ++ [a.drop k, b.drop k]) (s0.length + 1) = b.drop k := by
+      simp only [State.get]
+      rw [List.getElem?_append_right (Nat.le_succ _),
+          show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1]; rfl
+    have hset1 : (s0 ++ [a.drop k, b.drop k]).set s0.length (a.drop k).tail
+        = s0 ++ [(a.drop k).tail, b.drop k] := by
+      rw [State.set, if_pos (by rw [List.length_append]; exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)),
+          List.set_append_right (s := s0) (t := [a.drop k, b.drop k]) s0.length (a.drop k).tail (Nat.le_refl _),
+          Nat.sub_self]; rfl
+    rw [hget1, hget2, hset1, State.set,
+        if_pos (by rw [List.length_append]; exact Nat.lt_succ_self _),
+        List.set_append_right (s := s0) (t := [(a.drop k).tail, b.drop k]) (s0.length + 1) (b.drop k).tail (Nat.le_succ _),
+        show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1,
+        List.tail_drop, List.tail_drop]
+    rfl
+
+/-- `BitState` is preserved by appending two suffixes of `s0`'s registers (the
+verdict/cleanup operate on `s0 ++ [g1.drop n, g2.drop n]`). -/
+theorem Compile.BitState_append_drop_pair (s0 : State) (src1 src2 : Var)
+    (hsrc1 : src1 < s0.length) (hsrc2 : src2 < s0.length) (hbit : Compile.BitState s0) (n : Nat) :
+    Compile.BitState (s0 ++ [(State.get s0 src1).drop n, (State.get s0 src2).drop n]) := by
+  have hg1mem : State.get s0 src1 ∈ s0 := by
+    rw [State.get, List.getElem?_eq_getElem hsrc1, Option.getD_some]; exact List.getElem_mem hsrc1
+  have hg2mem : State.get s0 src2 ∈ s0 := by
+    rw [State.get, List.getElem?_eq_getElem hsrc2, Option.getD_some]; exact List.getElem_mem hsrc2
+  intro reg hreg x hx
+  rcases List.mem_append.mp hreg with hb | hp
+  · exact hbit reg hb x hx
+  · rcases List.mem_cons.mp hp with h1 | hp2
+    · rw [h1] at hx; exact hbit (State.get s0 src1) hg1mem x (List.mem_of_mem_drop hx)
+    · rcases List.mem_cons.mp hp2 with h2 | h3
+      · rw [h2] at hx; exact hbit (State.get s0 src2) hg2mem x (List.mem_of_mem_drop hx)
+      · exact absurd h3 List.not_mem_nil
+
+/-! ### Prefix / cleanup shape lemmas the branch wrap consumes -/
+
+/-- `compareLoopTM`'s loop halt at `compareBodyTM.states` in `getElem?` form. -/
+theorem Compile.compareLoopTM_halt_getElem (sc1 sc2 : Var) :
+    (Compile.compareLoopTM sc1 sc2).halt[(Compile.compareBodyTM sc1 sc2).states]? = some true := by
+  show (loopHalt (Compile.compareBodyTM sc1 sc2))[(Compile.compareBodyTM sc1 sc2).states]? = some true
+  show (List.replicate (Compile.compareBodyTM sc1 sc2).states false ++ [true])[(Compile.compareBodyTM sc1 sc2).states]? = some true
+  rw [List.getElem?_append_right (by rw [List.length_replicate]),
+      List.length_replicate, Nat.sub_self]; rfl
+
+theorem Compile.compareRegsPrefixM_states (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states =
+      ((Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM sc1 src1).states)
+        + (Compile.copyEmptyRawTM sc2 src2).states) + (Compile.compareLoopTM sc1 sc2).states := by
+  rw [Compile.compareRegsPrefixM, composeFlatTM_states, composeFlatTM_states, composeFlatTM_states]
+
+theorem Compile.compareRegsPrefixM_sig (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsPrefixM sc1 sc2 src1 src2).sig = 4 := by
+  rw [Compile.compareRegsPrefixM, composeFlatTM_sig, composeFlatTM_sig, composeFlatTM_sig,
+      Compile.growTwoEmptyM_sig, Compile.copyEmptyRawTM_sig, Compile.copyEmptyRawTM_sig,
+      Compile.compareLoopTM_sig]; rfl
+
+theorem Compile.compareRegsPrefixM_tapes (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsPrefixM sc1 sc2 src1 src2).tapes = 1 := by
+  rw [Compile.compareRegsPrefixM, composeFlatTM_tapes, composeFlatTM_tapes, composeFlatTM_tapes,
+      Compile.growTwoEmptyM_tapes]
+
+theorem Compile.compareRegsPrefixM_valid (sc1 sc2 src1 src2 : Var) :
+    validFlatTM (Compile.compareRegsPrefixM sc1 sc2 src1 src2) := by
+  have hMB_valid := composeFlatTM_valid _ _ _ Compile.growTwoEmptyM_valid
+    (Compile.copyEmptyRawTM_valid sc1 src1) Compile.growTwoEmptyM_exit_lt
+    Compile.growTwoEmptyM_tapes (Compile.copyEmptyRawTM_tapes sc1 src1)
+  have hexitC_lt : Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit sc1 src1
+      < (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM sc1 src1)
+          (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)).states := by
+    rw [composeFlatTM_states]; exact Nat.add_lt_add_left (Compile.copyEmptyRawTM_exit_lt sc1 src1) _
+  have hMC_valid := composeFlatTM_valid _ _ _ hMB_valid (Compile.copyEmptyRawTM_valid sc2 src2)
+    hexitC_lt (by rw [composeFlatTM_tapes]; exact Compile.growTwoEmptyM_tapes)
+    (Compile.copyEmptyRawTM_tapes sc2 src2)
+  have hexitD_lt : (Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM sc1 src1).states)
+        + Compile.copyEmptyRawTM_exit sc2 src2
+      < (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM sc1 src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM sc2 src2)
+            (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit sc1 src1)).states := by
+    rw [composeFlatTM_states, composeFlatTM_states]
+    exact Nat.add_lt_add_left (Compile.copyEmptyRawTM_exit_lt sc2 src2) _
+  rw [Compile.compareRegsPrefixM]
+  exact composeFlatTM_valid _ _ _ hMC_valid (Compile.compareLoopTM_valid sc1 sc2) hexitD_lt
+    (by rw [composeFlatTM_tapes, composeFlatTM_tapes]; exact Compile.growTwoEmptyM_tapes)
+    (Compile.compareLoopTM_tapes sc1 sc2)
+
+theorem Compile.compareRegsPrefixM_exit_lt (sc1 sc2 src1 src2 : Var) :
+    Compile.compareRegsPrefixM_exit sc1 sc2 src1 src2
+      < (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states := by
+  rw [Compile.compareRegsPrefixM_exit, Compile.compareRegsPrefixM_states]
+  have hcl : (Compile.compareLoopTM sc1 sc2).states = (Compile.compareBodyTM sc1 sc2).states + 1 := by
+    rw [Compile.compareLoopTM, loopTM_states]
+  omega
+
+theorem Compile.compareRegsPrefixM_exit_is_halt (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsPrefixM sc1 sc2 src1 src2).halt[Compile.compareRegsPrefixM_exit sc1 sc2 src1 src2]? = some true := by
+  have h := Compile.composeFlatTM_halt_intro
+    (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM sc1 src1)
+        (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM sc2 src2)
+        (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit sc1 src1))
+    (Compile.compareLoopTM sc1 sc2) (Compile.compareBodyTM sc1 sc2).states
+    ((Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM sc1 src1).states)
+      + Compile.copyEmptyRawTM_exit sc2 src2)
+    (Compile.compareLoopTM_halt_getElem sc1 sc2)
+  rw [Compile.compareRegsPrefixM]
+  rw [show Compile.compareRegsPrefixM_exit sc1 sc2 src1 src2
+      = (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM sc1 src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM sc2 src2)
+            (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit sc1 src1)).states
+          + (Compile.compareBodyTM sc1 sc2).states from by
+        rw [composeFlatTM_states, composeFlatTM_states, Compile.compareRegsPrefixM_exit]; omega]
+  exact h
+
+theorem Compile.compareCleanupM_start (sc1 sc2 : Var) : (Compile.compareCleanupM sc1 sc2).start = 0 := by
+  rw [Compile.compareCleanupM, composeFlatTM_start, composeFlatTM_start, ClearGadget.clearRegionTM_start]
+
+theorem Compile.compareCleanupM_exit_lt (sc1 sc2 : Var) :
+    Compile.compareCleanupM_exit sc1 sc2 < (Compile.compareCleanupM sc1 sc2).states := by
+  rw [Compile.compareCleanupM_exit, Compile.compareCleanupM_states]
+  have hshrink : Compile.shrinkTwoEmptyM.states
+      = Compile.shrinkEmptyTM.M.states + Compile.shrinkEmptyTM.M.states := by
+    show (composeFlatTM _ _ _).states = _; rw [composeFlatTM_states]
+  rw [hshrink]
+  have := Compile.shrinkEmptyTM.exit_lt
+  omega
+
+theorem Compile.compareCleanupM_halt_getElem (sc1 sc2 : Var) :
+    (Compile.compareCleanupM sc1 sc2).halt[Compile.compareCleanupM_exit sc1 sc2]? = some true :=
+  Compile.halt_getElem_of_haltingStateReached (Compile.compareCleanupM_exit_is_halt sc1 sc2 [])
+
+/-! ### The branch machine and `compareRegsTM` -/
+
+/-- The verdict + shared cleanup branch: `branchComposeFlatTM eqVerdictM cleanup
+cleanup` with `exit_pos = eqVerdictM_exit_eq` (EQ → cleanup) and `exit_neg =
+eqVerdictM_exit_neq` (NEQ → cleanup). -/
+def Compile.compareBranchM (sc1 sc2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.eqVerdictM sc1 sc2) (Compile.compareCleanupM sc1 sc2)
+    (Compile.compareCleanupM sc1 sc2)
+    (Compile.eqVerdictM_exit_eq sc1 sc2) (Compile.eqVerdictM_exit_neq sc1)
+
+theorem Compile.compareBranchM_sig (sc1 sc2 : Var) : (Compile.compareBranchM sc1 sc2).sig = 4 := by
+  rw [Compile.compareBranchM, branchComposeFlatTM_sig, Compile.eqVerdictM_sig,
+      Compile.compareCleanupM_sig]; rfl
+
+theorem Compile.compareBranchM_tapes (sc1 sc2 : Var) : (Compile.compareBranchM sc1 sc2).tapes = 1 := by
+  rw [Compile.compareBranchM, branchComposeFlatTM_tapes]; exact Compile.eqVerdictM_tapes sc1 sc2
+
+theorem Compile.compareBranchM_start (sc1 sc2 : Var) : (Compile.compareBranchM sc1 sc2).start = 0 := by
+  rw [Compile.compareBranchM, branchComposeFlatTM_start]; exact Compile.eqVerdictM_start sc1 sc2
+
+theorem Compile.compareBranchM_states (sc1 sc2 : Var) :
+    (Compile.compareBranchM sc1 sc2).states =
+      (Compile.eqVerdictM sc1 sc2).states + (Compile.compareCleanupM sc1 sc2).states
+        + (Compile.compareCleanupM sc1 sc2).states := by
+  rw [Compile.compareBranchM, branchComposeFlatTM_states]
+
+theorem Compile.compareBranchM_valid (sc1 sc2 : Var) :
+    validFlatTM (Compile.compareBranchM sc1 sc2) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.eqVerdictM_valid sc1 sc2) (Compile.compareCleanupM_valid sc1 sc2)
+    (Compile.compareCleanupM_valid sc1 sc2)
+    (Compile.eqVerdictM_exit_eq_lt sc1 sc2) (Compile.eqVerdictM_exit_neq_lt sc1 sc2)
+    (Compile.eqVerdictM_tapes sc1 sc2) (Compile.compareCleanupM_tapes sc1 sc2)
+    (Compile.compareCleanupM_tapes sc1 sc2)
+
+/-- The 2-exit EQ/NEQ register-equality tester (tape restored). -/
+def Compile.compareRegsTM (sc1 sc2 src1 src2 : Var) : FlatTM :=
+  composeFlatTM (Compile.compareRegsPrefixM sc1 sc2 src1 src2) (Compile.compareBranchM sc1 sc2)
+    (Compile.compareRegsPrefixM_exit sc1 sc2 src1 src2)
+
+/-- EQ exit: cleanup exit through the positive (EQ) branch, shifted past the prefix. -/
+def Compile.compareRegsTM_exit_eq (sc1 sc2 src1 src2 : Var) : Nat :=
+  (Compile.compareCleanupM_exit sc1 sc2 + (Compile.eqVerdictM sc1 sc2).states)
+    + (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states
+
+/-- NEQ exit: cleanup exit through the negative (NEQ) branch, shifted past the prefix. -/
+def Compile.compareRegsTM_exit_neq (sc1 sc2 src1 src2 : Var) : Nat :=
+  (Compile.compareCleanupM_exit sc1 sc2
+      + ((Compile.eqVerdictM sc1 sc2).states + (Compile.compareCleanupM sc1 sc2).states))
+    + (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states
+
+theorem Compile.compareRegsTM_sig (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsTM sc1 sc2 src1 src2).sig = 4 := by
+  rw [Compile.compareRegsTM, composeFlatTM_sig, Compile.compareRegsPrefixM_sig,
+      Compile.compareBranchM_sig]; rfl
+
+theorem Compile.compareRegsTM_tapes (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsTM sc1 sc2 src1 src2).tapes = 1 := by
+  rw [Compile.compareRegsTM, composeFlatTM_tapes]; exact Compile.compareRegsPrefixM_tapes sc1 sc2 src1 src2
+
+theorem Compile.compareRegsTM_start (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsTM sc1 sc2 src1 src2).start = 0 := by
+  rw [Compile.compareRegsTM, composeFlatTM_start]
+  show (Compile.compareRegsPrefixM sc1 sc2 src1 src2).start = 0
+  rw [Compile.compareRegsPrefixM, composeFlatTM_start, composeFlatTM_start, composeFlatTM_start,
+      Compile.growTwoEmptyM_start]
+
+theorem Compile.compareRegsTM_states (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsTM sc1 sc2 src1 src2).states =
+      (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states + (Compile.compareBranchM sc1 sc2).states := by
+  rw [Compile.compareRegsTM, composeFlatTM_states]
+
+theorem Compile.compareRegsTM_valid (sc1 sc2 src1 src2 : Var) :
+    validFlatTM (Compile.compareRegsTM sc1 sc2 src1 src2) := by
+  rw [Compile.compareRegsTM]
+  exact composeFlatTM_valid _ _ _ (Compile.compareRegsPrefixM_valid sc1 sc2 src1 src2)
+    (Compile.compareBranchM_valid sc1 sc2) (Compile.compareRegsPrefixM_exit_lt sc1 sc2 src1 src2)
+    (Compile.compareRegsPrefixM_tapes sc1 sc2 src1 src2) (Compile.compareBranchM_tapes sc1 sc2)
+
+theorem Compile.compareRegsTM_exit_eq_lt (sc1 sc2 src1 src2 : Var) :
+    Compile.compareRegsTM_exit_eq sc1 sc2 src1 src2 < (Compile.compareRegsTM sc1 sc2 src1 src2).states := by
+  rw [Compile.compareRegsTM_exit_eq, Compile.compareRegsTM_states, Compile.compareBranchM_states]
+  have := Compile.compareCleanupM_exit_lt sc1 sc2
+  omega
+
+theorem Compile.compareRegsTM_exit_neq_lt (sc1 sc2 src1 src2 : Var) :
+    Compile.compareRegsTM_exit_neq sc1 sc2 src1 src2 < (Compile.compareRegsTM sc1 sc2 src1 src2).states := by
+  rw [Compile.compareRegsTM_exit_neq, Compile.compareRegsTM_states, Compile.compareBranchM_states]
+  have := Compile.compareCleanupM_exit_lt sc1 sc2
+  omega
+
+theorem Compile.compareRegsTM_exit_eq_ne_neq (sc1 sc2 src1 src2 : Var) :
+    Compile.compareRegsTM_exit_eq sc1 sc2 src1 src2 ≠ Compile.compareRegsTM_exit_neq sc1 sc2 src1 src2 := by
+  rw [Compile.compareRegsTM_exit_eq, Compile.compareRegsTM_exit_neq]
+  have := Compile.compareCleanupM_exit_lt sc1 sc2
+  omega
+
+theorem Compile.compareRegsTM_exit_eq_is_halt (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsTM sc1 sc2 src1 src2).halt[Compile.compareRegsTM_exit_eq sc1 sc2 src1 src2]? = some true := by
+  have hbranch : (Compile.compareBranchM sc1 sc2).halt[(Compile.eqVerdictM sc1 sc2).states
+        + Compile.compareCleanupM_exit sc1 sc2]? = some true := by
+    rw [Compile.compareBranchM]
+    exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+      (Compile.compareCleanupM_valid sc1 sc2) (Compile.compareCleanupM_exit_lt sc1 sc2)
+      (Compile.compareCleanupM_halt_getElem sc1 sc2)
+  have hfull := Compile.composeFlatTM_halt_intro (Compile.compareRegsPrefixM sc1 sc2 src1 src2)
+    (Compile.compareBranchM sc1 sc2)
+    ((Compile.eqVerdictM sc1 sc2).states + Compile.compareCleanupM_exit sc1 sc2)
+    (Compile.compareRegsPrefixM_exit sc1 sc2 src1 src2) hbranch
+  rw [Compile.compareRegsTM,
+      show Compile.compareRegsTM_exit_eq sc1 sc2 src1 src2
+        = (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states
+            + ((Compile.eqVerdictM sc1 sc2).states + Compile.compareCleanupM_exit sc1 sc2) from by
+        rw [Compile.compareRegsTM_exit_eq]; omega]
+  exact hfull
+
+theorem Compile.compareRegsTM_exit_neq_is_halt (sc1 sc2 src1 src2 : Var) :
+    (Compile.compareRegsTM sc1 sc2 src1 src2).halt[Compile.compareRegsTM_exit_neq sc1 sc2 src1 src2]? = some true := by
+  have hbranch : (Compile.compareBranchM sc1 sc2).halt[(Compile.eqVerdictM sc1 sc2).states
+        + (Compile.compareCleanupM sc1 sc2).states + Compile.compareCleanupM_exit sc1 sc2]? = some true := by
+    rw [Compile.compareBranchM]
+    exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+      (Compile.compareCleanupM_valid sc1 sc2) (Compile.compareCleanupM_halt_getElem sc1 sc2)
+  have hfull := Compile.composeFlatTM_halt_intro (Compile.compareRegsPrefixM sc1 sc2 src1 src2)
+    (Compile.compareBranchM sc1 sc2)
+    ((Compile.eqVerdictM sc1 sc2).states + (Compile.compareCleanupM sc1 sc2).states
+      + Compile.compareCleanupM_exit sc1 sc2)
+    (Compile.compareRegsPrefixM_exit sc1 sc2 src1 src2) hbranch
+  rw [Compile.compareRegsTM,
+      show Compile.compareRegsTM_exit_neq sc1 sc2 src1 src2
+        = (Compile.compareRegsPrefixM sc1 sc2 src1 src2).states
+            + ((Compile.eqVerdictM sc1 sc2).states + (Compile.compareCleanupM sc1 sc2).states
+                + Compile.compareCleanupM_exit sc1 sc2) from by
+        rw [Compile.compareRegsTM_exit_neq]; omega]
+  exact hfull
+
+/-- **`compareRegsTM` run — EQUAL.** From `encodeTape s0 ++ res` (head `0`, scratch
+`sc1 = s0.length`, `sc2 = s0.length + 1`), when `s0.get src1 = s0.get src2` the
+tester reaches its EQ exit with the tape restored (`encodeTape s0 ++ residue`,
+residue terminator-free). No step bound (HANDOFF d2-iv). -/
+theorem Compile.compareRegsTM_run_eq (s0 : State) (src1 src2 : Var)
+    (hsrc1 : src1 < s0.length) (hsrc2 : src2 < s0.length)
+    (heqv : State.get s0 src1 = State.get s0 src2)
+    (hbit : Compile.BitState s0) (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ residue, Compile.ValidResidue residue ∧ ∃ t,
+      runFlatTM t (Compile.compareRegsTM s0.length (s0.length + 1) src1 src2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+        = some { state_idx := Compile.compareRegsTM_exit_eq s0.length (s0.length + 1) src1 src2,
+                 tapes := [([], 0, Compile.encodeTape s0 ++ residue)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareRegsTM s0.length (s0.length + 1) src1 src2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] } = some ck →
+        haltingStateReached (Compile.compareRegsTM s0.length (s0.length + 1) src1 src2) ck = false) := by
+  set g1 := State.get s0 src1 with hg1def
+  set g2 := State.get s0 src2 with hg2def
+  set n := Compile.matchLen g1 g2 with hndef
+  have hrep : ∀ m : Nat, Compile.ValidResidue (List.replicate m 0) := by
+    intro m x hx; obtain ⟨_, rfl⟩ := List.mem_replicate.mp hx; exact ⟨by omega, by decide⟩
+  have h00 : Compile.ValidResidue ([0, 0] : List Nat) := by
+    intro x hx
+    rcases List.mem_cons.mp hx with rfl | hx2
+    · exact ⟨by omega, by decide⟩
+    · rcases List.mem_cons.mp hx2 with rfl | hx3
+      · exact ⟨by omega, by decide⟩
+      · exact absurd hx3 List.not_mem_nil
+  have hres' : Compile.ValidResidue (res ++ List.replicate (2 * n) 0) :=
+    Compile.ValidResidue_append _ _ hres (hrep _)
+  have hfinalbit : Compile.BitState (s0 ++ [g1.drop n, g2.drop n]) :=
+    Compile.BitState_append_drop_pair s0 src1 src2 hsrc1 hsrc2 hbit n
+  have hlenF : (s0 ++ [g1.drop n, g2.drop n]).length = s0.length + 2 := by
+    rw [List.length_append]; rfl
+  have hsc1lt : s0.length < (s0 ++ [g1.drop n, g2.drop n]).length := by
+    rw [hlenF]; exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)
+  have hsc2lt : s0.length + 1 < (s0 ++ [g1.drop n, g2.drop n]).length := by
+    rw [hlenF]; exact Nat.lt_succ_self _
+  have hgsc1 : State.get (s0 ++ [g1.drop n, g2.drop n]) s0.length = g1.drop n := by
+    simp only [State.get]; rw [List.getElem?_append_right (Nat.le_refl _), Nat.sub_self]; rfl
+  have hgsc2 : State.get (s0 ++ [g1.drop n, g2.drop n]) (s0.length + 1) = g2.drop n := by
+    simp only [State.get]
+    rw [List.getElem?_append_right (Nat.le_succ _),
+        show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1]; rfl
+  obtain ⟨he1, he2⟩ := (Compile.matchLen_drop_empty_iff g1 g2).mpr heqv
+  have hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0)) = some v → v < 4 := by
+    intro v hv
+    exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hfinalbit hres') _ v hv
+  obtain ⟨tP, hPrun, hPtraj⟩ := Compile.compareRegsPrefix_run s0 src1 src2 hsrc1 hsrc2 hbit res hres
+  rw [← hg1def, ← hg2def, ← hndef, Compile.consumeStep_iterate_append s0 g1 g2 n] at hPrun
+  obtain ⟨tV, hVrun, hVtraj⟩ := Compile.eqVerdictM_run_eq (s0 ++ [g1.drop n, g2.drop n]) s0.length (s0.length + 1)
+    (res ++ List.replicate (2 * n) 0) hfinalbit hsc1lt hsc2lt
+    (by rw [hgsc1]; exact he1) (by rw [hgsc2]; exact he2) hres'
+  obtain ⟨tC, hCrun, hCtraj⟩ := Compile.compareCleanup_run s0 (g1.drop n) (g2.drop n) hfinalbit
+    (res ++ List.replicate (2 * n) 0) hres'
+  set cfgB : FlatTMConfig :=
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] } with hcfgB
+  have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0)) = some v →
+      v < max (Compile.eqVerdictM s0.length (s0.length + 1)).sig
+            (max (Compile.compareCleanupM s0.length (s0.length + 1)).sig
+              (Compile.compareCleanupM s0.length (s0.length + 1)).sig) := by
+    intro v hv
+    rw [Compile.eqVerdictM_sig, Compile.compareCleanupM_sig, Nat.max_self, Nat.max_self]
+    exact hsym4 v hv
+  have hcfgB_lt : cfgB.state_idx < (Compile.eqVerdictM s0.length (s0.length + 1)).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.eqVerdictM_exit_eq_lt s0.length (s0.length + 1))
+  have hCrun' : runFlatTM tC (Compile.compareCleanupM s0.length (s0.length + 1))
+      { state_idx := (Compile.compareCleanupM s0.length (s0.length + 1)).start,
+        tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] }
+        = some { state_idx := Compile.compareCleanupM_exit s0.length (s0.length + 1),
+                 tapes := [([], 0, Compile.encodeTape s0
+                   ++ ((((res ++ List.replicate (2 * n) 0) ++ List.replicate (g1.drop n).length 0)
+                        ++ List.replicate (g2.drop n).length 0) ++ [0, 0]))] } := by
+    rw [Compile.compareCleanupM_start]; exact hCrun
+  have hbranchpos := branchComposeFlatTM_run_pos
+    (Compile.eqVerdictM_exit_neq_ne_eq s0.length (s0.length + 1)).symm
+    (Compile.eqVerdictM_valid s0.length (s0.length + 1)) (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.eqVerdictM_exit_eq_lt s0.length (s0.length + 1)) (Compile.eqVerdictM_exit_neq_lt s0.length (s0.length + 1))
+    cfgB hcfgB_lt [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+    hsymB hVrun
+    (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
+    hCrun' (Compile.haltingStateReached_of_halt (Compile.compareCleanupM_halt_getElem s0.length (s0.length + 1)))
+  have hbranchpos_traj := branchComposeFlatTM_no_early_halt_pos
+    (Compile.eqVerdictM_valid s0.length (s0.length + 1)) (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.eqVerdictM_exit_eq_lt s0.length (s0.length + 1)) (Compile.eqVerdictM_exit_neq_lt s0.length (s0.length + 1))
+    cfgB hcfgB_lt [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+    hsymB hVrun
+    (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
+    (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.compareCleanupM_start] at hck; exact hck))
+  refine ⟨(((res ++ List.replicate (2 * n) 0) ++ List.replicate (g1.drop n).length 0)
+              ++ List.replicate (g2.drop n).length 0) ++ [0, 0],
+    Compile.ValidResidue_append _ _ (Compile.ValidResidue_append _ _
+      (Compile.ValidResidue_append _ _ hres' (hrep _)) (hrep _)) h00,
+    tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  · have h := (composeFlatTM_run (Compile.compareRegsPrefixM_valid s0.length (s0.length + 1) src1 src2)
+      (Compile.compareBranchM_valid s0.length (s0.length + 1))
+      (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2))
+      [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+      (by intro v hv; rw [Compile.compareRegsPrefixM_sig, Compile.compareBranchM_sig, Nat.max_self]; exact hsym4 v hv)
+      hPrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+        (Compile.compareRegsPrefixM_exit_is_halt s0.length (s0.length + 1) src1 src2) (hPtraj k hk ck hck),
+        hPtraj k hk ck hck⟩)
+      (by rw [Compile.compareBranchM_start]; exact hbranchpos.1)
+      hbranchpos.2).1
+    exact h
+  · intro k hk ck hck
+    have := composeFlatTM_no_early_halt (Compile.compareRegsPrefixM_valid s0.length (s0.length + 1) src1 src2)
+      (Compile.compareBranchM_valid s0.length (s0.length + 1))
+      (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2))
+      [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+      (by intro v hv; rw [Compile.compareRegsPrefixM_sig, Compile.compareBranchM_sig, Nat.max_self]; exact hsym4 v hv)
+      hPrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+        (Compile.compareRegsPrefixM_exit_is_halt s0.length (s0.length + 1) src1 src2) (hPtraj k hk ck hck),
+        hPtraj k hk ck hck⟩)
+      (by rw [Compile.compareBranchM_start]; exact hbranchpos_traj)
+    exact this k hk ck hck
+
+/-- **`compareRegsTM` run — NOT EQUAL.** Symmetric to the EQ case via the negative
+(NEQ) branch; both `s0.get src1 ≠ s0.get src2` sub-cases (left/right operand's
+suffix nonempty) route to the same NEQ exit, tape restored. -/
+theorem Compile.compareRegsTM_run_neq (s0 : State) (src1 src2 : Var)
+    (hsrc1 : src1 < s0.length) (hsrc2 : src2 < s0.length)
+    (hneqv : State.get s0 src1 ≠ State.get s0 src2)
+    (hbit : Compile.BitState s0) (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ residue, Compile.ValidResidue residue ∧ ∃ t,
+      runFlatTM t (Compile.compareRegsTM s0.length (s0.length + 1) src1 src2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+        = some { state_idx := Compile.compareRegsTM_exit_neq s0.length (s0.length + 1) src1 src2,
+                 tapes := [([], 0, Compile.encodeTape s0 ++ residue)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareRegsTM s0.length (s0.length + 1) src1 src2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] } = some ck →
+        haltingStateReached (Compile.compareRegsTM s0.length (s0.length + 1) src1 src2) ck = false) := by
+  set g1 := State.get s0 src1 with hg1def
+  set g2 := State.get s0 src2 with hg2def
+  set n := Compile.matchLen g1 g2 with hndef
+  have hrep : ∀ m : Nat, Compile.ValidResidue (List.replicate m 0) := by
+    intro m x hx; obtain ⟨_, rfl⟩ := List.mem_replicate.mp hx; exact ⟨by omega, by decide⟩
+  have h00 : Compile.ValidResidue ([0, 0] : List Nat) := by
+    intro x hx
+    rcases List.mem_cons.mp hx with rfl | hx2
+    · exact ⟨by omega, by decide⟩
+    · rcases List.mem_cons.mp hx2 with rfl | hx3
+      · exact ⟨by omega, by decide⟩
+      · exact absurd hx3 List.not_mem_nil
+  have hres' : Compile.ValidResidue (res ++ List.replicate (2 * n) 0) :=
+    Compile.ValidResidue_append _ _ hres (hrep _)
+  have hfinalbit : Compile.BitState (s0 ++ [g1.drop n, g2.drop n]) :=
+    Compile.BitState_append_drop_pair s0 src1 src2 hsrc1 hsrc2 hbit n
+  have hlenF : (s0 ++ [g1.drop n, g2.drop n]).length = s0.length + 2 := by
+    rw [List.length_append]; rfl
+  have hsc1lt : s0.length < (s0 ++ [g1.drop n, g2.drop n]).length := by
+    rw [hlenF]; exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)
+  have hsc2lt : s0.length + 1 < (s0 ++ [g1.drop n, g2.drop n]).length := by
+    rw [hlenF]; exact Nat.lt_succ_self _
+  have hgsc1 : State.get (s0 ++ [g1.drop n, g2.drop n]) s0.length = g1.drop n := by
+    simp only [State.get]; rw [List.getElem?_append_right (Nat.le_refl _), Nat.sub_self]; rfl
+  have hgsc2 : State.get (s0 ++ [g1.drop n, g2.drop n]) (s0.length + 1) = g2.drop n := by
+    simp only [State.get]
+    rw [List.getElem?_append_right (Nat.le_succ _),
+        show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1]; rfl
+  have hnotboth : ¬(g1.drop n = [] ∧ g2.drop n = []) :=
+    fun h => hneqv ((Compile.matchLen_drop_empty_iff g1 g2).mp h)
+  have hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0)) = some v → v < 4 := by
+    intro v hv
+    exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hfinalbit hres') _ v hv
+  obtain ⟨tP, hPrun, hPtraj⟩ := Compile.compareRegsPrefix_run s0 src1 src2 hsrc1 hsrc2 hbit res hres
+  rw [← hg1def, ← hg2def, ← hndef, Compile.consumeStep_iterate_append s0 g1 g2 n] at hPrun
+  obtain ⟨tV, hVrun, hVtraj⟩ : ∃ tV,
+      runFlatTM tV (Compile.eqVerdictM s0.length (s0.length + 1))
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] }
+        = some { state_idx := Compile.eqVerdictM_exit_neq s0.length,
+                 tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] }
+      ∧ (∀ k, k < tV → ∀ ck,
+          runFlatTM k (Compile.eqVerdictM s0.length (s0.length + 1))
+              { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] } = some ck →
+          ck.state_idx ≠ Compile.eqVerdictM_exit_neq s0.length ∧
+          ck.state_idx ≠ Compile.eqVerdictM_exit_eq s0.length (s0.length + 1) ∧
+          haltingStateReached (Compile.eqVerdictM s0.length (s0.length + 1)) ck = false) := by
+    by_cases hd1 : g1.drop n = []
+    · have hd2 : g2.drop n ≠ [] := fun h => hnotboth ⟨hd1, h⟩
+      exact Compile.eqVerdictM_run_neq_right (s0 ++ [g1.drop n, g2.drop n]) s0.length (s0.length + 1)
+        (res ++ List.replicate (2 * n) 0) hfinalbit hsc1lt hsc2lt
+        (by rw [hgsc1]; exact hd1) (by rw [hgsc2]; exact hd2) hres'
+    · exact Compile.eqVerdictM_run_neq_left (s0 ++ [g1.drop n, g2.drop n]) s0.length (s0.length + 1)
+        (res ++ List.replicate (2 * n) 0) hfinalbit hsc1lt
+        (by rw [hgsc1]; exact hd1) hres'
+  obtain ⟨tC, hCrun, hCtraj⟩ := Compile.compareCleanup_run s0 (g1.drop n) (g2.drop n) hfinalbit
+    (res ++ List.replicate (2 * n) 0) hres'
+  set cfgB : FlatTMConfig :=
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] } with hcfgB
+  have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0)) = some v →
+      v < max (Compile.eqVerdictM s0.length (s0.length + 1)).sig
+            (max (Compile.compareCleanupM s0.length (s0.length + 1)).sig
+              (Compile.compareCleanupM s0.length (s0.length + 1)).sig) := by
+    intro v hv
+    rw [Compile.eqVerdictM_sig, Compile.compareCleanupM_sig, Nat.max_self, Nat.max_self]
+    exact hsym4 v hv
+  have hcfgB_lt : cfgB.state_idx < (Compile.eqVerdictM s0.length (s0.length + 1)).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.eqVerdictM_exit_eq_lt s0.length (s0.length + 1))
+  have hCrun' : runFlatTM tC (Compile.compareCleanupM s0.length (s0.length + 1))
+      { state_idx := (Compile.compareCleanupM s0.length (s0.length + 1)).start,
+        tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] }
+        = some { state_idx := Compile.compareCleanupM_exit s0.length (s0.length + 1),
+                 tapes := [([], 0, Compile.encodeTape s0
+                   ++ ((((res ++ List.replicate (2 * n) 0) ++ List.replicate (g1.drop n).length 0)
+                        ++ List.replicate (g2.drop n).length 0) ++ [0, 0]))] } := by
+    rw [Compile.compareCleanupM_start]; exact hCrun
+  have hbranchneg := branchComposeFlatTM_run_neg
+    (Compile.eqVerdictM_exit_neq_ne_eq s0.length (s0.length + 1)).symm
+    (Compile.eqVerdictM_valid s0.length (s0.length + 1)) (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.eqVerdictM_exit_eq_lt s0.length (s0.length + 1)) (Compile.eqVerdictM_exit_neq_lt s0.length (s0.length + 1))
+    cfgB hcfgB_lt [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+    hsymB hVrun
+    (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
+    hCrun' (Compile.haltingStateReached_of_halt (Compile.compareCleanupM_halt_getElem s0.length (s0.length + 1)))
+  have hbranchneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.eqVerdictM_exit_neq_ne_eq s0.length (s0.length + 1)).symm
+    (Compile.eqVerdictM_valid s0.length (s0.length + 1)) (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.compareCleanupM_valid s0.length (s0.length + 1))
+    (Compile.eqVerdictM_exit_eq_lt s0.length (s0.length + 1)) (Compile.eqVerdictM_exit_neq_lt s0.length (s0.length + 1))
+    cfgB hcfgB_lt [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+    hsymB hVrun
+    (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
+    (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.compareCleanupM_start] at hck; exact hck))
+  refine ⟨(((res ++ List.replicate (2 * n) 0) ++ List.replicate (g1.drop n).length 0)
+              ++ List.replicate (g2.drop n).length 0) ++ [0, 0],
+    Compile.ValidResidue_append _ _ (Compile.ValidResidue_append _ _
+      (Compile.ValidResidue_append _ _ hres' (hrep _)) (hrep _)) h00,
+    tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  · have h := (composeFlatTM_run (Compile.compareRegsPrefixM_valid s0.length (s0.length + 1) src1 src2)
+      (Compile.compareBranchM_valid s0.length (s0.length + 1))
+      (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2))
+      [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+      (by intro v hv; rw [Compile.compareRegsPrefixM_sig, Compile.compareBranchM_sig, Nat.max_self]; exact hsym4 v hv)
+      hPrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+        (Compile.compareRegsPrefixM_exit_is_halt s0.length (s0.length + 1) src1 src2) (hPtraj k hk ck hck),
+        hPtraj k hk ck hck⟩)
+      (by rw [Compile.compareBranchM_start]; exact hbranchneg.1)
+      hbranchneg.2).1
+    exact h
+  · intro k hk ck hck
+    have := composeFlatTM_no_early_halt (Compile.compareRegsPrefixM_valid s0.length (s0.length + 1) src1 src2)
+      (Compile.compareBranchM_valid s0.length (s0.length + 1))
+      (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.compareRegsPrefixM_exit_lt s0.length (s0.length + 1) src1 src2))
+      [] 0 (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))
+      (by intro v hv; rw [Compile.compareRegsPrefixM_sig, Compile.compareBranchM_sig, Nat.max_self]; exact hsym4 v hv)
+      hPrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+        (Compile.compareRegsPrefixM_exit_is_halt s0.length (s0.length + 1) src1 src2) (hPtraj k hk ck hck),
+        hPtraj k hk ck hck⟩)
+      (by rw [Compile.compareBranchM_start]; exact hbranchneg_traj)
+    exact this k hk ck hck
