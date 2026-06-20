@@ -6157,14 +6157,26 @@ theorem Compile.clearBudget_arith (n L : Nat) (h : n + 2 ≤ L) :
   obtain ⟨d, rfl⟩ := Nat.exists_eq_add_of_le h
   nlinarith [Nat.zero_le n, Nat.zero_le d, Nat.zero_le (n * d)]
 
-/-- **Per-op contract budget loosening `9 → 27` (the `eqBit` enabler).** The
+/-- **Per-op contract budget loosening `9 → 54` (the `eqBit` enabler).** The
 proven ops establish the tight `(9·L²+9·L+30)·c`; `compileOp_sound_physical_residue`
-states the looser `(27·L²+27·L+90)·c` (room for the `eqBit` cascade — see the
+states the looser `(54·L²+54·L+180)·c` (room for the `eqBit` cascade — see the
 finding above that theorem). The looser constant is free against `physStepBudget`
-(8× headroom, `27 ≤ 72`). `omega` atomises `L*L`. -/
+(8× headroom, `54 ≤ 72`). `omega` atomises `L*L`.
+
+**2026-06-20d (bottom-up):** loosened `27 → 54`. The prior `27` was calibrated to
+the `EqBitBudgetProbe` **#eval real** step counts (~70% of `(9·L²)·2`) times an
+assumed `1.7×` "provable" factor. But the bounds actually *recoverable from the
+sub-gadgets* (the d2-iv symbolic component sum: `navSteps_le` 2×, each
+`branchComposeFlatTM`/`composeFlatTM` seam additive, `opTailSelf ≤ 6L+14`,
+`clearRegion ≤ 9L²`, two scratch copies, the `(matchLen+1)·M_body` loop with the
+provable `M_body ≈ 24·L`, the cleanup's two clears, plus the d1 wrapper's
+`clear dst`) sum to **~60·L²** — *3-4× real*, not `1.7×`, because each gadget's
+provable bound is `1.5–2×` real and they stack through the loop. `54` gives the
+cascade comfortable (~57%) margin and is still free (`54 ≤ 72`); `physStepBudget`,
+`Op.cost`, and EvalCnf are untouched. Do NOT re-tighten below the symbolic sum. -/
 theorem Compile.opBudgetLoosen {L c d : Nat}
     (h : d ≤ (9 * L * L + 9 * L + 30) * c) :
-    d ≤ (27 * L * L + 27 * L + 90) * c :=
+    d ≤ (54 * L * L + 54 * L + 180) * c :=
   le_trans h (Nat.mul_le_mul_right _
     (by nlinarith [Nat.zero_le (L * L), Nat.zero_le L]))
 
@@ -14259,8 +14271,9 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
       ∧ (∀ k, k < t → ∀ ck,
           runFlatTM k (Compile.iterTailsTM sc1 sc2)
               (initFlatConfig (Compile.iterTailsTM sc1 sc2) [Compile.encodeTape s ++ res]) = some ck →
-          haltingStateReached (Compile.iterTailsTM sc1 sc2) ck = false) := by
-  obtain ⟨t1, hrun1, htraj1, _⟩ := Compile.opTailSelf_run_delete s sc1 h1 hbit hne1 res hres
+          haltingStateReached (Compile.iterTailsTM sc1 sc2) ck = false)
+      ∧ t ≤ 12 * (Compile.encodeTape s ++ res).length + 29 := by
+  obtain ⟨t1, hrun1, htraj1, ht1le⟩ := Compile.opTailSelf_run_delete s sc1 h1 hbit hne1 res hres
   set s' := s.set sc1 (s.get sc1).tail with hs'
   have hlen' : s'.length = s.length := Compile.length_set s sc1 _ h1
   have h2' : sc2 < s'.length := by rw [hlen']; exact h2
@@ -14275,7 +14288,7 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
   have hres' : Compile.ValidResidue (res ++ [0]) := by
     have := Compile.ValidResidue_append_replicate_zero res 1 hres
     simpa using this
-  obtain ⟨t2, hrun2, htraj2, _⟩ :=
+  obtain ⟨t2, hrun2, htraj2, ht2le⟩ :=
     Compile.opTailSelf_run_delete s' sc2 h2' hbit' hne2' (res ++ [0]) hres'
   set right1 : List Nat := Compile.encodeTape s' ++ (res ++ [0]) with hr1
   have hvalid1 : validFlatTM (Compile.opTail sc1 sc1).M := (Compile.opTail sc1 sc1).M_valid
@@ -14321,7 +14334,7 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
       = { state_idx := (Compile.opTail sc1 sc1).M.start,
           tapes := [([], 0, Compile.encodeTape s ++ res)] } := by
     simp only [initFlatConfig, Compile.iterTailsTM, composeFlatTM_start, List.map_cons, List.map_nil]
-  refine ⟨t1 + 1 + t2, ?_, ?_⟩
+  refine ⟨t1 + 1 + t2, ?_, ?_, ?_⟩
   · rw [hcfg0]
     have htape : Compile.encodeTape (s'.set sc2 (s'.get sc2).tail) ++ ((res ++ [0]) ++ [0])
         = Compile.encodeTape ((s.set sc1 (s.get sc1).tail).set sc2 (s.get sc2).tail)
@@ -14333,6 +14346,17 @@ theorem Compile.iterTails_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
     rw [hcomp.1, ← htape]
   · rw [hcfg0]
     exact hcomp_traj
+  · -- step bound: both in-place tails cost ≤ 6·L+14 on the invariant tape length L.
+    have hbal := Compile.encodeTape_set_length s sc1 (s.get sc1).tail h1
+    have htail : (s.get sc1).tail.length + 1 = (s.get sc1).length := by
+      cases hh : s.get sc1 with
+      | nil => exact absurd hh hne1
+      | cons a t => simp
+    have hLeq : right1.length ≤ (Compile.encodeTape s ++ res).length := by
+      rw [hr1, hs']
+      simp only [List.length_append, List.length_cons, List.length_nil]
+      omega
+    omega
 
 /-! ### `opRewindToZero` — a halt-unique "rewind to the leading sentinel" leaf
 (bottom-up, Risk C2)
@@ -14587,6 +14611,24 @@ private theorem Compile.navTestRewind_rewind_run (s : State) (sc : Var) (res : L
     rw [Compile.opRewindToZero_start, htape_eq] at hck
     exact hrz_traj k hk ck hck
 
+/-- **Step-bound helper (eqBit d2-iv).** The preceding-register-blocks prefix of
+the encoded tape is at least 3 cells short of the full tape length. This is the
+single arithmetic fact every `navTestRewindM`-based tester needs to bound its
+navigate-then-rewind step count linearly in the tape length `L`: with
+`ClearGadget.navSteps_le` (`navSteps ≤ 2·rb+1`), the navigate cost `navSteps+2`
+and rewind cost `rb+2` both fall under `2·L` / `L`. -/
+theorem Compile.regBlocks_take_len_le (s : State) (sc : Var) (hsc : sc < s.length)
+    (res : List Nat) :
+    (AppendGadget.regBlocks ((s.take sc).map Compile.shiftReg)).length + 3
+      ≤ (Compile.encodeTape s ++ res).length := by
+  have hlen := congrArg List.length (Compile.encodeTape_split s sc hsc)
+  rw [Compile.regBlocks_map_shiftReg] at hlen
+  simp only [List.length_append, List.length_cons] at hlen
+  have htape : (Compile.encodeTape s).length = (Compile.encodeRegs s).length + 2 := by
+    rw [Compile.encodeTape_length, Compile.encodeRegs_length]
+  rw [List.length_append, htape, Compile.regBlocks_map_shiftReg]
+  omega
+
 /-- **`navTestRewindM` run + trajectory — content branch (`sc` nonempty).** -/
 theorem Compile.navTestRewindM_run_content (s : State) (sc : Var) (res : List Nat)
     (hbit : Compile.BitState s) (hsc : sc < s.length) (hne : State.get s sc ≠ [])
@@ -14601,7 +14643,8 @@ theorem Compile.navTestRewindM_run_content (s : State) (sc : Var) (res : List Na
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.navTestRewindM_exit_content sc ∧
         ck.state_idx ≠ Compile.navTestRewindM_exit_delim sc ∧
-        haltingStateReached (Compile.navTestRewindM sc) ck = false) := by
+        haltingStateReached (Compile.navTestRewindM sc) ck = false)
+    ∧ t ≤ 3 * (Compile.encodeTape s ++ res).length := by
   obtain ⟨hsym, hrz_run, hrz_traj⟩ := Compile.navTestRewind_rewind_run s sc res hsc hbit
   have hexit_neq : ClearGadget.navigateAndTestTM_exit_content sc
       ≠ ClearGadget.navigateAndTestTM_exit_delim sc := by
@@ -14633,11 +14676,14 @@ theorem Compile.navTestRewindM_run_content (s : State) (sc : Var) (res : List Na
   have hstate : Compile.opRewindToZero.exit + (ClearGadget.navigateAndTestTM sc).states
       = Compile.navTestRewindM_exit_content sc := by
     rw [Compile.navTestRewindM_exit_content]; omega
-  refine ⟨_, ?_, fun k hk ck hck =>
+  refine ⟨_, ?_, (fun k hk ck hck =>
     ⟨ClearGadget.ne_of_not_halting (Compile.navTestRewindM_exit_content_is_halt sc) (hpos_traj k hk ck hck),
      ClearGadget.ne_of_not_halting (Compile.navTestRewindM_exit_delim_is_halt sc) (hpos_traj k hk ck hck),
-     hpos_traj k hk ck hck⟩⟩
-  simpa only [hstate] using hpos.1
+     hpos_traj k hk ck hck⟩), ?_⟩
+  · simpa only [hstate] using hpos.1
+  · have hns := ClearGadget.navSteps_le ((s.take sc).map Compile.shiftReg)
+    have hrb := Compile.regBlocks_take_len_le s sc hsc res
+    omega
 
 /-- **`navTestRewindM` run + trajectory — delim branch (`sc` empty).** -/
 theorem Compile.navTestRewindM_run_delim (s : State) (sc : Var) (res : List Nat)
@@ -14653,7 +14699,8 @@ theorem Compile.navTestRewindM_run_delim (s : State) (sc : Var) (res : List Nat)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.navTestRewindM_exit_content sc ∧
         ck.state_idx ≠ Compile.navTestRewindM_exit_delim sc ∧
-        haltingStateReached (Compile.navTestRewindM sc) ck = false) := by
+        haltingStateReached (Compile.navTestRewindM sc) ck = false)
+    ∧ t ≤ 3 * (Compile.encodeTape s ++ res).length := by
   obtain ⟨hsym, hrz_run, hrz_traj⟩ := Compile.navTestRewind_rewind_run s sc res hsc hbit
   have hexit_neq : ClearGadget.navigateAndTestTM_exit_content sc
       ≠ ClearGadget.navigateAndTestTM_exit_delim sc := by
@@ -14686,11 +14733,14 @@ theorem Compile.navTestRewindM_run_delim (s : State) (sc : Var) (res : List Nat)
         + ((ClearGadget.navigateAndTestTM sc).states + Compile.opRewindToZero.M.states)
       = Compile.navTestRewindM_exit_delim sc := by
     rw [Compile.navTestRewindM_exit_delim]; omega
-  refine ⟨_, ?_, fun k hk ck hck =>
+  refine ⟨_, ?_, (fun k hk ck hck =>
     ⟨ClearGadget.ne_of_not_halting (Compile.navTestRewindM_exit_content_is_halt sc) (hneg_traj k hk ck hck),
      ClearGadget.ne_of_not_halting (Compile.navTestRewindM_exit_delim_is_halt sc) (hneg_traj k hk ck hck),
-     hneg_traj k hk ck hck⟩⟩
-  simpa only [hstate] using hneg.1
+     hneg_traj k hk ck hck⟩), ?_⟩
+  · simpa only [hstate] using hneg.1
+  · have hns := ClearGadget.navSteps_le ((s.take sc).map Compile.shiftReg)
+    have hrb := Compile.regBlocks_take_len_le s sc hsc res
+    omega
 
 /-! ### `readBitRewindM` — read a register's first bit, head restored to `0`
 (bottom-up, Risk C2 — d2a)
@@ -14981,9 +15031,13 @@ theorem Compile.readRewindInner_run (s : State) (sc : Var) (res : List Nat)
             { state_idx := Compile.readRewindInnerM.start,
               tapes := [([], 1 + (AppendGadget.regBlocks ((s.take sc).map Compile.shiftReg)).length,
                          Compile.encodeTape s ++ res)] } = some ck →
-        haltingStateReached Compile.readRewindInnerM ck = false) := by
+        haltingStateReached Compile.readRewindInnerM ck = false)
+    ∧ t ≤ (Compile.encodeTape s ++ res).length + 3 := by
   set skipped := (s.take sc).map Compile.shiftReg with hskdef
   set H := 1 + (AppendGadget.regBlocks skipped).length with hHdef
+  have hrb : (AppendGadget.regBlocks skipped).length + 3 ≤ (Compile.encodeTape s ++ res).length := by
+    have h := Compile.regBlocks_take_len_le s sc hsc res
+    rw [← hskdef] at h; exact h
   -- content decomposition (`sc` nonempty) ⇒ cell at `H` is `b+1`.
   set tail' := Compile.shiftReg cs ++ 0 :: (Compile.encodeRegs (s.drop (sc + 1))
       ++ [Compile.endMark] ++ res) with htail
@@ -15046,7 +15100,7 @@ theorem Compile.readRewindInner_run (s : State) (sc : Var) (res : List Nat)
       Compile.bitReadTM_valid Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
       hep_lt hen_lt cfg0 h_cfg_lt [] H (Compile.encodeTape s ++ res) hsym
       htest_run htest_traj (fun k hk ck hck => (hrz_traj k hk ck hck).2)
-    refine ⟨1 + 1 + (H + 1), ?_, ?_⟩
+    refine ⟨1 + 1 + (H + 1), ?_, ?_, by omega⟩
     · rw [hstart, Compile.readRewindInnerM]
       rw [show Compile.readRewindInner_exit 0
           = Compile.opRewindToZero.exit + Compile.bitReadTM.states from by
@@ -15065,7 +15119,7 @@ theorem Compile.readRewindInner_run (s : State) (sc : Var) (res : List Nat)
       Compile.bitReadTM_valid Compile.opRewindToZero.M_valid Compile.opRewindToZero.M_valid
       hep_lt hen_lt cfg0 h_cfg_lt [] H (Compile.encodeTape s ++ res) hsym
       htest_run htest_traj (fun k hk ck hck => (hrz_traj k hk ck hck).2)
-    refine ⟨1 + 1 + (H + 1), ?_, ?_⟩
+    refine ⟨1 + 1 + (H + 1), ?_, ?_, by omega⟩
     · rw [hstart, Compile.readRewindInnerM]
       rw [show Compile.readRewindInner_exit 1
           = Compile.opRewindToZero.exit + Compile.bitReadTM.states + Compile.opRewindToZero.M.states
@@ -15092,7 +15146,8 @@ theorem Compile.readBitRewindM_run (s : State) (sc : Var) (res : List Nat)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.readBitRewindM_exit_b0 sc ∧
         ck.state_idx ≠ Compile.readBitRewindM_exit_b1 sc ∧
-        haltingStateReached (Compile.readBitRewindM sc) ck = false) := by
+        haltingStateReached (Compile.readBitRewindM sc) ck = false)
+    ∧ t ≤ 3 * (Compile.encodeTape s ++ res).length + 4 := by
   have hne : s.get sc ≠ [] := by rw [hcons]; exact List.cons_ne_nil _ _
   -- navigation to `sc`'s content (head `H`).
   have hnav_run := Compile.navTestReg_run_content s sc res hsc hbit hne
@@ -15106,7 +15161,7 @@ theorem Compile.readBitRewindM_run (s : State) (sc : Var) (res : List Nat)
       haltingStateReached (ClearGadget.navigateAndTestTM sc) ck = false :=
     fun k hk ck hck => ⟨(hnav_traj0 k hk ck hck).2.1, (hnav_traj0 k hk ck hck).1,
       (hnav_traj0 k hk ck hck).2.2⟩
-  obtain ⟨t₃, hM3run, hM3traj⟩ := Compile.readRewindInner_run s sc res b cs hcons hb hsc hbit
+  obtain ⟨t₃, hM3run, hM3traj, ht3le⟩ := Compile.readRewindInner_run s sc res b cs hcons hb hsc hbit
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0def
   set H := 1 + (AppendGadget.regBlocks ((s.take sc).map Compile.shiftReg)).length with hHdef
@@ -15173,7 +15228,7 @@ theorem Compile.readBitRewindM_run (s : State) (sc : Var) (res : List Nat)
       rw [Compile.readBitRewindRawM_bit, Compile.readBitRewindRawM_dead, Compile.readRewindInner_exit] at *
       have := Compile.opRewindToZero.exit_lt
       rcases (show b = 0 ∨ b = 1 from by omega) with h | h <;> subst h <;> simp_all <;> omega
-  refine ⟨tNav + 1 + t₃, ?_, ?_⟩
+  refine ⟨tNav + 1 + t₃, ?_, ?_, ?_⟩
   · rw [Compile.readBitRewindM, joinTwoHalts_run_eq _ _ _ (tNav + 1 + t₃) cfg0 hnv]
     exact hraw_run
   · intro k hk ck hck
@@ -15191,6 +15246,9 @@ theorem Compile.readBitRewindM_run (s : State) (sc : Var) (res : List Nat)
     · rw [Compile.readBitRewindM, joinTwoHalts_halting_eq _ _ _ ck
         (ClearGadget.ne_of_not_halting (Compile.readBitRewindRawM_dead_is_halt sc) hnh)]
       exact hnh
+  · have hns := ClearGadget.navSteps_le ((s.take sc).map Compile.shiftReg)
+    have hrb := Compile.regBlocks_take_len_le s sc hsc res
+    omega
 
 /-! ### `eqVerdictM` — the `eqBit` verdict: "are BOTH `sc1` and `sc2` empty?"
 (bottom-up, Risk C2 — d2b)
@@ -15419,8 +15477,9 @@ theorem Compile.eqVerdictM_run_neq_left (s : State) (sc1 sc2 : Var) (res : List 
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.eqVerdictM_exit_neq sc1 ∧
         ck.state_idx ≠ Compile.eqVerdictM_exit_eq sc1 sc2 ∧
-        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
+        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 2 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.eqVerdict_symMax s sc1 sc2 res hbit
@@ -15456,7 +15515,7 @@ theorem Compile.eqVerdictM_run_neq_left (s : State) (sc1 sc2 : Var) (res : List 
         (hpos_traj k (by omega) ck hck)
     · rw [hraw_run] at hck; rw [← Option.some.inj hck]
       exact Compile.eqVerdictRawM_neqA_ne_neqB sc1 sc2
-  refine ⟨t₁ + 1, ?_, ?_⟩
+  refine ⟨t₁ + 1, ?_, ?_, by omega⟩
   · rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ (t₁ + 1) cfg0 hnv,
         Compile.eqVerdictM_exit_neq]
     exact hraw_run
@@ -15488,9 +15547,10 @@ theorem Compile.eqVerdictM_run_eq (s : State) (sc1 sc2 : Var) (res : List Nat)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.eqVerdictM_exit_neq sc1 ∧
         ck.state_idx ≠ Compile.eqVerdictM_exit_eq sc1 sc2 ∧
-        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
-  obtain ⟨t₃, hM3run, hM3traj⟩ := Compile.navTestRewindM_run_delim s sc2 res hbit hsc2 hempty2 hres
+        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 2 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
+  obtain ⟨t₃, hM3run, hM3traj, ht3le⟩ := Compile.navTestRewindM_run_delim s sc2 res hbit hsc2 hempty2 hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.eqVerdict_symMax s sc1 sc2 res hbit
@@ -15540,7 +15600,7 @@ theorem Compile.eqVerdictM_run_eq (s : State) (sc1 sc2 : Var) (res : List Nat)
         (hneg_traj k hlt ck hck)
     · rw [hraw_eq] at hck; rw [← Option.some.inj hck]
       exact fun h => Compile.eqVerdictRawM_neqB_ne_eq sc1 sc2 h.symm
-  refine ⟨t₁ + 1 + t₃, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₃, ?_, ?_, by omega⟩
   · rw [Compile.eqVerdictM, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + t₃) cfg0 hnv,
         Compile.eqVerdictM_exit_eq]
     exact hraw_eq
@@ -15574,9 +15634,10 @@ theorem Compile.eqVerdictM_run_neq_right (s : State) (sc1 sc2 : Var) (res : List
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.eqVerdictM_exit_neq sc1 ∧
         ck.state_idx ≠ Compile.eqVerdictM_exit_eq sc1 sc2 ∧
-        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
-  obtain ⟨t₃, hM3run, hM3traj⟩ := Compile.navTestRewindM_run_content s sc2 res hbit hsc2 hne2 hres
+        haltingStateReached (Compile.eqVerdictM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 2 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
+  obtain ⟨t₃, hM3run, hM3traj, ht3le⟩ := Compile.navTestRewindM_run_content s sc2 res hbit hsc2 hne2 hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.eqVerdict_symMax s sc1 sc2 res hbit
@@ -15651,7 +15712,7 @@ theorem Compile.eqVerdictM_run_neq_right (s : State) (sc1 sc2 : Var) (res : List
                tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
     runFlatTM_extend_by_step (Compile.eqVerdictM sc1 sc2) (t₁ + 1 + t₃) cfg0 _ _
       hweak hnh_neqB hstep
-  refine ⟨t₁ + 1 + t₃ + 1, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₃ + 1, ?_, ?_, by omega⟩
   · rw [Compile.eqVerdictM_exit_neq]; exact hfull
   · intro k hk ck hck
     rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hk) with hlt | rfl
@@ -16212,11 +16273,12 @@ private theorem Compile.bitCompareRawM_run (s : State) (sc1 sc2 : Var) (res : Li
                  tapes := [([], 0, Compile.encodeTape s ++ res)] }
     ∧ (∀ k, k < t → ∀ ck, runFlatTM k (Compile.bitCompareRawM sc1 sc2)
         { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
-        haltingStateReached (Compile.bitCompareRawM sc1 sc2) ck = false) := by
+        haltingStateReached (Compile.bitCompareRawM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 9 := by
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   -- the `M₂`/`M₃` phase: read `sc2`'s bit `b`.
-  obtain ⟨t2, hM2run, hM2traj⟩ := Compile.readBitRewindM_run s sc2 res b cs2 hc2 hb hsc2 hbit hres
+  obtain ⟨t2, hM2run, hM2traj, ht2le⟩ := Compile.readBitRewindM_run s sc2 res b cs2 hc2 hb hsc2 hbit hres
   have hM2run' : runFlatTM t2 (Compile.readBitRewindM sc2)
       { state_idx := (Compile.readBitRewindM sc2).start,
         tapes := [([], 0, Compile.encodeTape s ++ res)] }
@@ -16248,7 +16310,7 @@ private theorem Compile.bitCompareRawM_run (s : State) (sc1 sc2 : Var) (res : Li
     rw [hm]; exact Compile.eqVerdict_sym4 s res hbit v hv
   have hcfg_lt : (0 : Nat) < (Compile.readBitRewindM sc1).states := Compile.readBitRewindM_states_pos sc1
   -- the `M₁` phase: read `sc1`'s bit `a`.
-  obtain ⟨t1, hM1run, hM1traj⟩ := Compile.readBitRewindM_run s sc1 res a cs1 hc1 ha hsc1 hbit hres
+  obtain ⟨t1, hM1run, hM1traj, ht1le⟩ := Compile.readBitRewindM_run s sc1 res a cs1 hc1 ha hsc1 hbit hres
   interval_cases a
   · -- `a = 0`: positive branch (`M₁` reaches `exit_b0 = exit_pos`).
     have hM1run' : runFlatTM t1 (Compile.readBitRewindM sc1) cfg0
@@ -16265,7 +16327,7 @@ private theorem Compile.bitCompareRawM_run (s : State) (sc1 sc2 : Var) (res : Li
       (Compile.readBitRewindM_valid sc2)
       (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
       cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax hM1run' hM1traj hM2traj'
-    refine ⟨t1 + 1 + t2, ?_, ?_⟩
+    refine ⟨t1 + 1 + t2, ?_, ?_, by omega⟩
     · have h := hpos.1
       rw [show Compile.readBitRewindRawM_bit sc2 b + (Compile.readBitRewindM sc1).states
             = (Compile.readBitRewindM sc1).states + 0 * (Compile.readBitRewindM sc2).states
@@ -16290,7 +16352,7 @@ private theorem Compile.bitCompareRawM_run (s : State) (sc1 sc2 : Var) (res : Li
       (Compile.readBitRewindM_valid sc2)
       (Compile.readBitRewindM_exit_b0_lt sc1) (Compile.readBitRewindM_exit_b1_lt sc1)
       cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax hM1run' hM1traj hM2traj'
-    refine ⟨t1 + 1 + t2, ?_, ?_⟩
+    refine ⟨t1 + 1 + t2, ?_, ?_, by omega⟩
     · have h := hneg.1
       rw [show Compile.readBitRewindRawM_bit sc2 b
             + ((Compile.readBitRewindM sc1).states + (Compile.readBitRewindM sc2).states)
@@ -16321,8 +16383,9 @@ theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.bitCompareM_exit_match sc1 sc2 ∧
         ck.state_idx ≠ Compile.bitCompareM_exit_nomatch sc1 sc2 ∧
-        haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false) := by
-  obtain ⟨t, hraw_run, hraw_traj⟩ :=
+        haltingStateReached (Compile.bitCompareM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 10 := by
+  obtain ⟨t, hraw_run, hraw_traj, htle⟩ :=
     Compile.bitCompareRawM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres
   have hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ res) = some v →
       v < 4 := Compile.eqVerdict_sym4 s res hbit
@@ -16335,7 +16398,7 @@ theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
     obtain ⟨hrun, htraj⟩ := Compile.bitCompareM_transport_kept sc1 sc2 _ t _
       (Compile.bitCompareRawM_distinct sc1 sc2).2.1
       (Compile.bitCompareRawM_distinct sc1 sc2).2.2.1 hraw_run hraw_traj
-    exact ⟨t, by simpa using hrun, htraj⟩
+    exact ⟨t, by simpa using hrun, htraj, by omega⟩
   · -- a=0,b=1 → NOMATCH (m01, kept)
     have hE : (Compile.readBitRewindM sc1).states + 0 * (Compile.readBitRewindM sc2).states
         + Compile.readBitRewindRawM_bit sc2 1 = Compile.bitCompareRawM_m01 sc1 sc2 := by
@@ -16344,7 +16407,7 @@ theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
     obtain ⟨hrun, htraj⟩ := Compile.bitCompareM_transport_kept sc1 sc2 _ t _
       (Compile.bitCompareRawM_distinct sc1 sc2).2.2.2.1
       (Compile.bitCompareRawM_distinct sc1 sc2).2.2.2.2.1 hraw_run hraw_traj
-    exact ⟨t, by simpa [Compile.bitCompareM_exit_nomatch] using hrun, htraj⟩
+    exact ⟨t, by simpa [Compile.bitCompareM_exit_nomatch] using hrun, htraj, by omega⟩
   · -- a=1,b=0 → NOMATCH (m10, demoted by outer)
     have hE : (Compile.readBitRewindM sc1).states + 1 * (Compile.readBitRewindM sc2).states
         + Compile.readBitRewindRawM_bit sc2 0 = Compile.bitCompareRawM_m10 sc1 sc2 := by
@@ -16352,7 +16415,7 @@ theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
     rw [hE] at hraw_run
     obtain ⟨hrun, htraj⟩ :=
       Compile.bitCompareM_transport_m10 sc1 sc2 _ t hsym4 hraw_run hraw_traj
-    exact ⟨t + 1, by simpa using hrun, htraj⟩
+    exact ⟨t + 1, by simpa using hrun, htraj, by omega⟩
   · -- a=1,b=1 → MATCH (m11, demoted by inner)
     have hE : (Compile.readBitRewindM sc1).states + 1 * (Compile.readBitRewindM sc2).states
         + Compile.readBitRewindRawM_bit sc2 1 = Compile.bitCompareRawM_m11 sc1 sc2 := by
@@ -16360,7 +16423,7 @@ theorem Compile.bitCompareM_run (s : State) (sc1 sc2 : Var) (res : List Nat)
     rw [hE] at hraw_run
     obtain ⟨hrun, htraj⟩ :=
       Compile.bitCompareM_transport_m11 sc1 sc2 _ t hsym4 hraw_run hraw_traj
-    exact ⟨t + 1, by simpa using hrun, htraj⟩
+    exact ⟨t + 1, by simpa using hrun, htraj, by omega⟩
 
 /-! ### `bothNonemptyM` — the consume-loop guard: "are BOTH `sc1` and `sc2`
 nonempty?" (bottom-up, Risk C2 — d2a)
@@ -16589,9 +16652,10 @@ theorem Compile.bothNonemptyM_run_yes (s : State) (sc1 sc2 : Var) (res : List Na
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
         ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
-        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
-  obtain ⟨t₂, hM2run, hM2traj⟩ := Compile.navTestRewindM_run_content s sc2 res hbit hsc2 hne2 hres
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 2 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
+  obtain ⟨t₂, hM2run, hM2traj, ht2le⟩ := Compile.navTestRewindM_run_content s sc2 res hbit hsc2 hne2 hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.bothNonempty_symMax s sc1 sc2 res hbit
@@ -16639,7 +16703,7 @@ theorem Compile.bothNonemptyM_run_yes (s : State) (sc1 sc2 : Var) (res : List Na
         (hpos_traj k hlt ck hck)
     · rw [hraw_run] at hck; rw [← Option.some.inj hck]
       exact Compile.bothNonemptyRawM_yes_ne_noB sc1 sc2
-  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₂, ?_, ?_, by omega⟩
   · rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + t₂) cfg0 hnv,
         Compile.bothNonemptyM_exit_yes]
     exact hraw_run
@@ -16670,8 +16734,9 @@ theorem Compile.bothNonemptyM_run_no_left (s : State) (sc1 sc2 : Var) (res : Lis
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
         ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
-        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 2 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ := Compile.navTestRewindM_run_delim s sc1 res hbit hsc1 hempty1 hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.bothNonempty_symMax s sc1 sc2 res hbit
@@ -16710,7 +16775,7 @@ theorem Compile.bothNonemptyM_run_no_left (s : State) (sc1 sc2 : Var) (res : Lis
         (hneg_traj k hlt ck hck)
     · rw [hraw_run] at hck; rw [← Option.some.inj hck]
       exact fun h => Compile.bothNonemptyRawM_noA_ne_noB sc1 sc2 h
-  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  refine ⟨t₁ + 1 + 0, ?_, ?_, by omega⟩
   · rw [Compile.bothNonemptyM, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + 0) cfg0 hnv,
         Compile.bothNonemptyM_exit_no]
     exact hraw_run
@@ -16744,9 +16809,10 @@ theorem Compile.bothNonemptyM_run_no_right (s : State) (sc1 sc2 : Var) (res : Li
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.bothNonemptyM_exit_yes sc1 sc2 ∧
         ck.state_idx ≠ Compile.bothNonemptyM_exit_no sc1 sc2 ∧
-        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
-  obtain ⟨t₂, hM2run, hM2traj⟩ := Compile.navTestRewindM_run_delim s sc2 res hbit hsc2 hempty2 hres
+        haltingStateReached (Compile.bothNonemptyM sc1 sc2) ck = false)
+    ∧ t ≤ 6 * (Compile.encodeTape s ++ res).length + 2 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ := Compile.navTestRewindM_run_content s sc1 res hbit hsc1 hne1 hres
+  obtain ⟨t₂, hM2run, hM2traj, ht2le⟩ := Compile.navTestRewindM_run_delim s sc2 res hbit hsc2 hempty2 hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.bothNonempty_symMax s sc1 sc2 res hbit
@@ -16818,7 +16884,7 @@ theorem Compile.bothNonemptyM_run_no_right (s : State) (sc1 sc2 : Var) (res : Li
                tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
     runFlatTM_extend_by_step (Compile.bothNonemptyM sc1 sc2) (t₁ + 1 + t₂) cfg0 _ _
       hweak hnh_noB hstep
-  refine ⟨t₁ + 1 + t₂ + 1, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₂ + 1, ?_, ?_, by omega⟩
   · rw [Compile.bothNonemptyM_exit_no]; exact hfull
   · intro k hk ck hck
     rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hk) with hlt | rfl
@@ -17060,6 +17126,7 @@ of the two DONE-by-empty cases: given `bothNonemptyM` reaches its NO exit, the
 negative `idTM` branch lands on the kept DONE exit. -/
 private theorem Compile.testMachine_run_done_of_no (s : State) (sc1 sc2 : Var) (res : List Nat)
     (hbit : Compile.BitState s) (t₁ : Nat)
+    (ht1le : t₁ ≤ 6 * (Compile.encodeTape s ++ res).length + 2)
     (hM1run : runFlatTM t₁ (Compile.bothNonemptyM sc1 sc2)
         { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
       = some { state_idx := Compile.bothNonemptyM_exit_no sc1 sc2,
@@ -17080,7 +17147,8 @@ private theorem Compile.testMachine_run_done_of_no (s : State) (sc1 sc2 : Var) (
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
         ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+    ∧ t ≤ 12 * (Compile.encodeTape s ++ res).length + 14 := by
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0
   have hsymMax := Compile.testMachine_symMax s sc1 sc2 res hbit
@@ -17119,7 +17187,7 @@ private theorem Compile.testMachine_run_done_of_no (s : State) (sc1 sc2 : Var) (
         (hneg_traj k hlt ck hck)
     · rw [hraw_run] at hck; rw [← Option.some.inj hck]
       exact fun h => Compile.testMachineRawM_done_ne_nomatch sc1 sc2 h
-  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  refine ⟨t₁ + 1 + 0, ?_, ?_, by omega⟩
   · rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + 0) cfg0 hnv,
         Compile.testMachine_exit_done]
     exact hraw_run
@@ -17150,10 +17218,11 @@ theorem Compile.testMachine_run_done_left (s : State) (sc1 sc2 : Var) (res : Lis
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
         ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+    ∧ t ≤ 12 * (Compile.encodeTape s ++ res).length + 14 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ :=
     Compile.bothNonemptyM_run_no_left s sc1 sc2 res hbit hsc1 hempty1 hres
-  exact Compile.testMachine_run_done_of_no s sc1 sc2 res hbit t₁ hM1run hM1traj
+  exact Compile.testMachine_run_done_of_no s sc1 sc2 res hbit t₁ ht1le hM1run hM1traj
 
 /-- **`testMachine` run — DONE (`sc1` nonempty, `sc2` empty).** -/
 theorem Compile.testMachine_run_done_right (s : State) (sc1 sc2 : Var) (res : List Nat)
@@ -17170,10 +17239,11 @@ theorem Compile.testMachine_run_done_right (s : State) (sc1 sc2 : Var) (res : Li
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
         ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
-  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+    ∧ t ≤ 12 * (Compile.encodeTape s ++ res).length + 14 := by
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ :=
     Compile.bothNonemptyM_run_no_right s sc1 sc2 res hbit hsc1 hsc2 hne1 hempty2 hres
-  exact Compile.testMachine_run_done_of_no s sc1 sc2 res hbit t₁ hM1run hM1traj
+  exact Compile.testMachine_run_done_of_no s sc1 sc2 res hbit t₁ ht1le hM1run hM1traj
 
 /-- **`testMachine` run — ITER (both nonempty, first bits match).** -/
 theorem Compile.testMachine_run_iter (s : State) (sc1 sc2 : Var) (res : List Nat)
@@ -17191,12 +17261,13 @@ theorem Compile.testMachine_run_iter (s : State) (sc1 sc2 : Var) (res : List Nat
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
         ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+    ∧ t ≤ 12 * (Compile.encodeTape s ++ res).length + 14 := by
   have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
   have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
-  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ :=
     Compile.bothNonemptyM_run_yes s sc1 sc2 res hbit hsc1 hsc2 hne1 hne2 hres
-  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+  obtain ⟨t₂, hM2run, hM2traj, ht2le⟩ :=
     Compile.bitCompareM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres
   rw [if_pos hab] at hM2run
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
@@ -17246,7 +17317,7 @@ theorem Compile.testMachine_run_iter (s : State) (sc1 sc2 : Var) (res : List Nat
         (hpos_traj k hlt ck hck)
     · rw [hraw_run] at hck; rw [← Option.some.inj hck]
       exact fun h => Compile.testMachineRawM_iter_ne_nomatch sc1 sc2 h
-  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₂, ?_, ?_, by omega⟩
   · rw [Compile.testMachine, joinTwoHalts_run_eq _ _ _ (t₁ + 1 + t₂) cfg0 hnv,
         Compile.testMachine_exit_iter]
     exact hraw_run
@@ -17281,12 +17352,13 @@ theorem Compile.testMachine_run_done_neq (s : State) (sc1 sc2 : Var) (res : List
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
         ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+    ∧ t ≤ 12 * (Compile.encodeTape s ++ res).length + 14 := by
   have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
   have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
-  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ :=
     Compile.bothNonemptyM_run_yes s sc1 sc2 res hbit hsc1 hsc2 hne1 hne2 hres
-  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+  obtain ⟨t₂, hM2run, hM2traj, ht2le⟩ :=
     Compile.bitCompareM_run s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hsc1 hsc2 hbit hres
   rw [if_neg hab] at hM2run
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
@@ -17360,7 +17432,7 @@ theorem Compile.testMachine_run_done_neq (s : State) (sc1 sc2 : Var) (res : List
                tapes := [([], 0, Compile.encodeTape s ++ res)] } :=
     runFlatTM_extend_by_step (Compile.testMachine sc1 sc2) (t₁ + 1 + t₂) cfg0 _ _
       hweak hnh_nomatch hstep
-  refine ⟨t₁ + 1 + t₂ + 1, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₂ + 1, ?_, ?_, by omega⟩
   · rw [Compile.testMachine_exit_done]; exact hfull
   · intro k hk ck hck
     rcases Nat.lt_or_eq_of_le (Nat.lt_succ_iff.mp hk) with hlt | rfl
@@ -17510,12 +17582,13 @@ theorem Compile.compareBody_iterate_run (s : State) (sc1 sc2 : Var) (res : List 
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
         ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
-        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false)
+    ∧ t ≤ 24 * (Compile.encodeTape s ++ res).length + 44 := by
   have hne1 : State.get s sc1 ≠ [] := by rw [hc1]; exact List.cons_ne_nil _ _
   have hne2 : State.get s sc2 ≠ [] := by rw [hc2]; exact List.cons_ne_nil _ _
-  obtain ⟨t₁, hM1run, hM1traj⟩ :=
+  obtain ⟨t₁, hM1run, hM1traj, ht1le⟩ :=
     Compile.testMachine_run_iter s sc1 sc2 res a b cs1 cs2 hc1 hc2 ha hb hab hsc1 hsc2 hbit hres
-  obtain ⟨t₂, hM2run, hM2traj⟩ :=
+  obtain ⟨t₂, hM2run, hM2traj, ht2le⟩ :=
     Compile.iterTails_run s sc1 sc2 hne hsc1 hsc2 hbit hne1 hne2 res hres
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
     with hcfg0def
@@ -17556,7 +17629,7 @@ theorem Compile.compareBody_iterate_run (s : State) (sc1 sc2 : Var) (res : List 
     (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
     cfg0 hcfg_lt [] 0 (Compile.encodeTape s ++ res) hsymMax
     hM1run hM1traj hM2traj'
-  refine ⟨t₁ + 1 + t₂, ?_, ?_⟩
+  refine ⟨t₁ + 1 + t₂, ?_, ?_, by omega⟩
   · have h := hpos.1
     rw [Nat.add_comm (Compile.iterTailsTM_exit sc1 sc2) (Compile.testMachine sc1 sc2).states] at h
     rw [Compile.compareBodyTM_exitLoop]
@@ -17583,7 +17656,8 @@ theorem Compile.compareBody_done_run (sc1 sc2 : Var) (right : List Nat) {t₁ : 
             { state_idx := 0, tapes := [([], 0, right)] } = some ck →
         ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
         ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-        haltingStateReached (Compile.testMachine sc1 sc2) ck = false) :
+        haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+    (ht1le : t₁ ≤ 12 * right.length + 14) :
     ∃ t,
       runFlatTM t (Compile.compareBodyTM sc1 sc2)
           { state_idx := 0, tapes := [([], 0, right)] }
@@ -17594,7 +17668,8 @@ theorem Compile.compareBody_done_run (sc1 sc2 : Var) (right : List Nat) {t₁ : 
             { state_idx := 0, tapes := [([], 0, right)] } = some ck →
         ck.state_idx ≠ Compile.compareBodyTM_exitDone sc1 sc2 ∧
         ck.state_idx ≠ Compile.compareBodyTM_exitLoop sc1 sc2 ∧
-        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false) := by
+        haltingStateReached (Compile.compareBodyTM sc1 sc2) ck = false)
+    ∧ t ≤ 12 * right.length + 15 := by
   set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, right)] } with hcfg0def
   have hcfg_lt : cfg0.state_idx < (Compile.testMachine sc1 sc2).states :=
     Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.testMachine_exit_iter_lt sc1 sc2)
@@ -17615,7 +17690,7 @@ theorem Compile.compareBody_done_run (sc1 sc2 : Var) (right : List Nat) {t₁ : 
     (Compile.testMachine_exit_iter_lt sc1 sc2) (Compile.testMachine_exit_done_lt sc1 sc2)
     cfg0 hcfg_lt [] 0 right hsym hM1run hM1traj
     (fun k hk ck hck => absurd hk (Nat.not_lt_zero k))
-  refine ⟨t₁ + 1 + 0, ?_, ?_⟩
+  refine ⟨t₁ + 1 + 0, ?_, ?_, by omega⟩
   · have h := hneg.1
     rw [Compile.compareBodyTM_exitDone]
     simpa using h
@@ -17738,6 +17813,63 @@ theorem Compile.consumeIter_spec (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         rw [Compile.consumeStep, ← hgetX]
         exact Compile.BitState_set_tail (sk.set sc1 (State.get sk sc1).tail) sc2 hbitX hsc2X
 
+/-- `matchLen` is at most the length of the first operand (it peels at most one
+matched pair per cell of `l1`). Gives `n = matchLen ≤ |g1| ≤ L` for the loop's
+quadratic step bound. -/
+theorem Compile.matchLen_le_left : ∀ (l1 l2 : List Nat), Compile.matchLen l1 l2 ≤ l1.length
+  | [], _ => by simp [Compile.matchLen]
+  | _ :: _, [] => by simp [Compile.matchLen]
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      split
+      · have ih := Compile.matchLen_le_left r1 r2
+        simp only [List.length_cons]; omega
+      · simp only [List.length_cons]; omega
+
+/-- **Loop tape-length invariance (eqBit d2-iv).** Within the matched prefix
+(`m ≤ matchLen`) both scratch heads are nonempty, so each `consumeStep` deletes
+exactly one cell from each of `sc1`/`sc2` — the encoded-tape length shrinks by
+`2` per step. The loop's residue grows by `2` in lock-step (`T m` carries
+`replicate (2·(n−m)) 0`), so the total loop tape length is invariant `= L`. This
+is the keystone fact the `compareLoop_run` quadratic step bound needs (uniform
+`M_body` across iterations). -/
+theorem Compile.encodeTape_consumeStep_length (s : State) (sc1 sc2 : Var)
+    (hne : sc1 ≠ sc2) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) :
+    ∀ m, m ≤ Compile.matchLen (State.get s sc1) (State.get s sc2) →
+      (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[m] s)).length + 2 * m
+        = (Compile.encodeTape s).length := by
+  intro m
+  induction m with
+  | zero => intro _; simp
+  | succ m ih =>
+      intro hm
+      have hm' := ih (by omega)
+      obtain ⟨hsp1, hsp2, hsplen, hspbit⟩ := Compile.consumeIter_spec s sc1 sc2 hne hsc1 hsc2 hbit m
+      have hm_lt : m < Compile.matchLen (State.get s sc1) (State.get s sc2) := by omega
+      obtain ⟨a, cs1, cs2, hd1, hd2⟩ :=
+        Compile.matchLen_step (State.get s sc1) (State.get s sc2) m hm_lt
+      set sm := (Compile.consumeStep sc1 sc2)^[m] s with hsm
+      have hg1 : State.get sm sc1 = a :: cs1 := by rw [hsp1]; exact hd1
+      have hg2 : State.get sm sc2 = a :: cs2 := by rw [hsp2]; exact hd2
+      have hsc1m : sc1 < sm.length := by rw [hsplen]; exact hsc1
+      have hbal1 := Compile.encodeTape_set_length sm sc1 (State.get sm sc1).tail hsc1m
+      set s1 := sm.set sc1 (State.get sm sc1).tail with hs1
+      have hsc2m1 : sc2 < s1.length := by rw [hs1, Compile.length_set _ _ _ hsc1m, hsplen]; exact hsc2
+      have hget21 : State.get s1 sc2 = State.get sm sc2 :=
+        State.get_set_ne sm sc1 _ sc2 (Ne.symm hne)
+      have hbal2 := Compile.encodeTape_set_length s1 sc2 (State.get sm sc2).tail hsc2m1
+      have htail1 : (State.get sm sc1).length = (State.get sm sc1).tail.length + 1 := by
+        rw [hg1]; simp
+      have htail2 : (State.get sm sc2).length = (State.get sm sc2).tail.length + 1 := by
+        rw [hg2]; simp
+      have hget21len : (State.get s1 sc2).length = (State.get sm sc2).length := by rw [hget21]
+      have hstep : (Compile.consumeStep sc1 sc2)^[m + 1] s = s1.set sc2 (State.get sm sc2).tail := by
+        rw [Function.iterate_succ_apply', ← hsm]
+        simp only [Compile.consumeStep, ← hs1]
+      rw [hstep]
+      omega
+
 /-! ### `compareLoopTM` — the `eqBit` consume loop (bottom-up, Risk C2 — d2a)
 
 The counted loop over `compareBodyTM`: ITER (delete both heads) while both scratch
@@ -17824,7 +17956,7 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
       have ha : a ≤ 1 := hspecbit _ hmem1 a (by rw [hg1]; exact List.mem_cons_self)
       have hres' : Compile.ValidResidue (res ++ List.replicate (2 * (n - (j + 1))) 0) :=
         Compile.ValidResidue_append_replicate_zero res _ hres
-      obtain ⟨tj, hrun, htraj⟩ :=
+      obtain ⟨tj, hrun, htraj, _⟩ :=
         Compile.compareBody_iterate_run ((Compile.consumeStep sc1 sc2)^[n - (j + 1)] s) sc1 sc2
           (res ++ List.replicate (2 * (n - (j + 1))) 0) a a cs1 cs2 hg1 hg2 ha ha rfl hne
           hsc1' hsc2' hspecbit hres'
@@ -17875,7 +18007,7 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
           ++ (res ++ List.replicate (2 * n) 0)) := by simp only [hTdef, Nat.sub_zero]
     have hsym0 := Compile.compareBody_symMax ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
       (res ++ List.replicate (2 * n) 0) hspbit
-    obtain ⟨tT, htmrun, htmtraj⟩ : ∃ tT,
+    obtain ⟨tT, htmrun, htmtraj, htTle⟩ : ∃ tT,
         runFlatTM tT (Compile.testMachine sc1 sc2)
             { state_idx := 0, tapes := [([], 0,
               Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
@@ -17891,7 +18023,9 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
                     ++ (res ++ List.replicate (2 * n) 0))] } = some ck →
             ck.state_idx ≠ Compile.testMachine_exit_iter sc1 sc2 ∧
             ck.state_idx ≠ Compile.testMachine_exit_done sc1 sc2 ∧
-            haltingStateReached (Compile.testMachine sc1 sc2) ck = false) := by
+            haltingStateReached (Compile.testMachine sc1 sc2) ck = false)
+        ∧ tT ≤ 12 * (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s)
+                      ++ (res ++ List.replicate (2 * n) 0)).length + 14 := by
       rcases Compile.matchLen_stop (State.get s sc1) (State.get s sc2) with
         hstop | hstop | ⟨a, cs1, b, cs2, hda, hdb, hab⟩
       · have hempty1 : State.get ((Compile.consumeStep sc1 sc2)^[n] s) sc1 = [] := by
@@ -17919,9 +18053,9 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         have hb : b ≤ 1 := hspbit _ hbmem b (by rw [hgc2]; exact List.mem_cons_self)
         exact Compile.testMachine_run_done_neq ((Compile.consumeStep sc1 sc2)^[n] s) sc1 sc2
           (res ++ List.replicate (2 * n) 0) a b cs1 cs2 hgc1 hgc2 ha hb hab hsc1n hsc2n hspbit hresn
-    obtain ⟨tD, hdrun, hdtraj⟩ := Compile.compareBody_done_run sc1 sc2
+    obtain ⟨tD, hdrun, hdtraj, _⟩ := Compile.compareBody_done_run sc1 sc2
       (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n] s) ++ (res ++ List.replicate (2 * n) 0))
-      hsym0 htmrun htmtraj
+      hsym0 htmrun htmtraj htTle
     refine ⟨tD, ?_, ?_⟩
     · rw [Compile.compareBodyTM_start, hT0]; exact hdrun
     · intro k hk ck hck
@@ -18025,9 +18159,9 @@ theorem compileOp_sound_physical_residue (o : Op) (s : State) (res_in : List Nat
               (initFlatConfig (compileOp o).M [Compile.encodeTape s ++ res_in]) = some ck →
           ck.state_idx ≠ (compileOp o).exit ∧
           haltingStateReached (compileOp o).M ck = false)
-      ∧ t ≤ (27 * (Compile.encodeTape s ++ res_in).length
+      ∧ t ≤ (54 * (Compile.encodeTape s ++ res_in).length
                * (Compile.encodeTape s ++ res_in).length
-               + 27 * (Compile.encodeTape s ++ res_in).length + 90)
+               + 54 * (Compile.encodeTape s ++ res_in).length + 180)
             * (Op.cost o s + 1) := by
   cases o with
   | appendOne dst =>
@@ -20911,17 +21045,17 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
         have hL : (Compile.encodeTape s ++ res0).length ≤ G := by
           rw [List.length_append, Compile.encodeTape_length]; omega
         set L := (Compile.encodeTape s ++ res0).length with hLdef
-        have h1 : (27 * L * L + 27 * L + 90) * (Op.cost o s + 1)
-                  ≤ (27 * G * G + 27 * G + 90) * (Op.cost o s + 1) :=
+        have h1 : (54 * L * L + 54 * L + 180) * (Op.cost o s + 1)
+                  ≤ (54 * G * G + 54 * G + 180) * (Op.cost o s + 1) :=
           Nat.mul_le_mul_right _
             (Nat.add_le_add
-              (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 27 hL) hL)
-                (Nat.mul_le_mul_left 27 hL)) (Nat.le_refl 90))
-        -- `27 ≤ 72 = 8·9`: the loosened constant still sits under physStepBudget's `(·)·(8·cost+8)`.
-        have h2 : (27 * G * G + 27 * G + 90) * (Op.cost o s + 1)
+              (Nat.add_le_add (Nat.mul_le_mul (Nat.mul_le_mul_left 54 hL) hL)
+                (Nat.mul_le_mul_left 54 hL)) (Nat.le_refl 180))
+        -- `54 ≤ 72 = 8·9`: the loosened constant still sits under physStepBudget's `(·)·(8·cost+8)`.
+        have h2 : (54 * G * G + 54 * G + 180) * (Op.cost o s + 1)
                   ≤ (9 * G * G + 9 * G + 33) * (8 * Op.cost o s + 8) :=
           le_trans (Nat.mul_le_mul_right _ (by nlinarith [Nat.zero_le (G * G), Nat.zero_le G] :
-              27 * G * G + 27 * G + 90 ≤ 72 * G * G + 72 * G + 264))
+              54 * G * G + 54 * G + 180 ≤ 72 * G * G + 72 * G + 264))
             (Nat.le_of_eq (by ring))
         show t ≤ Compile.physStepBudget G (Op.cost o s)
         rw [Compile.physStepBudget]
@@ -24579,7 +24713,7 @@ theorem Compile.compareRegsTM_run_eq (s0 : State) (src1 src2 : Var)
     exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hfinalbit hres') _ v hv
   obtain ⟨tP, hPrun, hPtraj⟩ := Compile.compareRegsPrefix_run s0 src1 src2 hsrc1 hsrc2 hbit res hres
   rw [← hg1def, ← hg2def, ← hndef, Compile.consumeStep_iterate_append s0 g1 g2 n] at hPrun
-  obtain ⟨tV, hVrun, hVtraj⟩ := Compile.eqVerdictM_run_eq (s0 ++ [g1.drop n, g2.drop n]) s0.length (s0.length + 1)
+  obtain ⟨tV, hVrun, hVtraj, _⟩ := Compile.eqVerdictM_run_eq (s0 ++ [g1.drop n, g2.drop n]) s0.length (s0.length + 1)
     (res ++ List.replicate (2 * n) 0) hfinalbit hsc1lt hsc2lt
     (by rw [hgsc1]; exact he1) (by rw [hgsc2]; exact he2) hres'
   obtain ⟨tC, hCrun, hCtraj⟩ := Compile.compareCleanup_run s0 (g1.drop n) (g2.drop n) hfinalbit
@@ -24707,7 +24841,7 @@ theorem Compile.compareRegsTM_run_neq (s0 : State) (src1 src2 : Var)
     exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hfinalbit hres') _ v hv
   obtain ⟨tP, hPrun, hPtraj⟩ := Compile.compareRegsPrefix_run s0 src1 src2 hsrc1 hsrc2 hbit res hres
   rw [← hg1def, ← hg2def, ← hndef, Compile.consumeStep_iterate_append s0 g1 g2 n] at hPrun
-  obtain ⟨tV, hVrun, hVtraj⟩ : ∃ tV,
+  obtain ⟨tV, hVrun, hVtraj, _⟩ : ∃ tV,
       runFlatTM tV (Compile.eqVerdictM s0.length (s0.length + 1))
           { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] }
         = some { state_idx := Compile.eqVerdictM_exit_neq s0.length,
@@ -24717,7 +24851,8 @@ theorem Compile.compareRegsTM_run_neq (s0 : State) (src1 src2 : Var)
               { state_idx := 0, tapes := [([], 0, Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0))] } = some ck →
           ck.state_idx ≠ Compile.eqVerdictM_exit_neq s0.length ∧
           ck.state_idx ≠ Compile.eqVerdictM_exit_eq s0.length (s0.length + 1) ∧
-          haltingStateReached (Compile.eqVerdictM s0.length (s0.length + 1)) ck = false) := by
+          haltingStateReached (Compile.eqVerdictM s0.length (s0.length + 1)) ck = false)
+      ∧ tV ≤ 6 * (Compile.encodeTape (s0 ++ [g1.drop n, g2.drop n]) ++ (res ++ List.replicate (2 * n) 0)).length + 2 := by
     by_cases hd1 : g1.drop n = []
     · have hd2 : g2.drop n ≠ [] := fun h => hnotboth ⟨hd1, h⟩
       exact Compile.eqVerdictM_run_neq_right (s0 ++ [g1.drop n, g2.drop n]) s0.length (s0.length + 1)
