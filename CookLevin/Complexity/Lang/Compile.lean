@@ -23935,3 +23935,266 @@ def Compile.compareRegsPrefixM_exit (sc1 sc2 src1 src2 : Var) : Nat :=
   (Compile.compareBodyTM sc1 sc2).states
     + ((Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM sc1 src1).states)
         + (Compile.copyEmptyRawTM sc2 src2).states)
+
+theorem Compile.compareRegsPrefix_run (s0 : State) (src1 src2 : Var)
+    (hsrc1 : src1 < s0.length) (hsrc2 : src2 < s0.length) (hbit : Compile.BitState s0)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.compareRegsPrefixM s0.length (s0.length + 1) src1 src2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+        = some { state_idx := Compile.compareRegsPrefixM_exit s0.length (s0.length + 1) src1 src2,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Compile.consumeStep s0.length (s0.length + 1))^[
+                       Compile.matchLen (State.get s0 src1) (State.get s0 src2)]
+                       (s0 ++ [State.get s0 src1, State.get s0 src2]))
+                     ++ (res ++ List.replicate
+                          (2 * Compile.matchLen (State.get s0 src1) (State.get s0 src2)) 0))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareRegsPrefixM s0.length (s0.length + 1) src1 src2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] } = some ck →
+        haltingStateReached (Compile.compareRegsPrefixM s0.length (s0.length + 1) src1 src2) ck = false) := by
+  have hg1mem : State.get s0 src1 ∈ s0 := by
+    rw [State.get, List.getElem?_eq_getElem hsrc1, Option.getD_some]; exact List.getElem_mem hsrc1
+  have hg2mem : State.get s0 src2 ∈ s0 := by
+    rw [State.get, List.getElem?_eq_getElem hsrc2, Option.getD_some]; exact List.getElem_mem hsrc2
+  have hbit1 : Compile.BitState (s0 ++ [[], []]) := by
+    have := Compile.BitState_append_replicate_nil s0 2 hbit
+    rwa [show List.replicate 2 ([] : List Nat) = [[], []] from rfl] at this
+  have hbit2 : Compile.BitState (s0 ++ [State.get s0 src1, []]) := by
+    intro reg hreg x hx
+    rcases List.mem_append.mp hreg with hb | hp
+    · exact hbit reg hb x hx
+    · rcases List.mem_cons.mp hp with h1 | hp2
+      · exact hbit reg (by rw [h1]; exact hg1mem) x hx
+      · rcases List.mem_cons.mp hp2 with h2 | h3
+        · rw [h2] at hx; exact absurd hx List.not_mem_nil
+        · exact absurd h3 List.not_mem_nil
+  have hbit3 : Compile.BitState (s0 ++ [State.get s0 src1, State.get s0 src2]) := by
+    intro reg hreg x hx
+    rcases List.mem_append.mp hreg with hb | hp
+    · exact hbit reg hb x hx
+    · rcases List.mem_cons.mp hp with h1 | hp2
+      · exact hbit reg (by rw [h1]; exact hg1mem) x hx
+      · rcases List.mem_cons.mp hp2 with h2 | h3
+        · exact hbit reg (by rw [h2]; exact hg2mem) x hx
+        · exact absurd h3 List.not_mem_nil
+  have hlen1 : (s0 ++ [[], []]).length = s0.length + 2 := by rw [List.length_append]; rfl
+  have hlen2 : (s0 ++ [State.get s0 src1, []]).length = s0.length + 2 := by rw [List.length_append]; rfl
+  have hlen3 : (s0 ++ [State.get s0 src1, State.get s0 src2]).length = s0.length + 2 := by
+    rw [List.length_append]; rfl
+  have hg1eq : State.get (s0 ++ [[], []]) src1 = State.get s0 src1 := by
+    simp only [State.get]; rw [List.getElem?_append_left hsrc1]
+  have hg2eq : State.get (s0 ++ [State.get s0 src1, []]) src2 = State.get s0 src2 := by
+    simp only [State.get]; rw [List.getElem?_append_left hsrc2]
+  have hcp1set : (s0 ++ [[], []]).set s0.length (State.get s0 src1) = s0 ++ [State.get s0 src1, []] := by
+    rw [State.set, if_pos (by rw [hlen1]; exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)),
+        List.set_append_right (s := s0) (t := [[], []]) s0.length (State.get s0 src1) (Nat.le_refl _),
+        Nat.sub_self]
+    rfl
+  have hcp2set : (s0 ++ [State.get s0 src1, []]).set (s0.length + 1) (State.get s0 src2)
+      = s0 ++ [State.get s0 src1, State.get s0 src2] := by
+    rw [State.set, if_pos (by rw [hlen2]; exact Nat.lt_succ_self _),
+        List.set_append_right (s := s0) (t := [State.get s0 src1, []]) (s0.length + 1) (State.get s0 src2) (Nat.le_succ _),
+        show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1]
+    rfl
+  have hs1sc1 : State.get (s0 ++ [[], []]) s0.length = [] := by
+    simp only [State.get]
+    rw [List.getElem?_append_right (Nat.le_refl _), Nat.sub_self]; rfl
+  have hs2sc2 : State.get (s0 ++ [State.get s0 src1, []]) (s0.length + 1) = [] := by
+    simp only [State.get]
+    rw [List.getElem?_append_right (Nat.le_succ _), show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1]
+    rfl
+  have hs3sc1 : State.get (s0 ++ [State.get s0 src1, State.get s0 src2]) s0.length = State.get s0 src1 := by
+    simp only [State.get]
+    rw [List.getElem?_append_right (Nat.le_refl _), Nat.sub_self]; rfl
+  have hs3sc2 : State.get (s0 ++ [State.get s0 src1, State.get s0 src2]) (s0.length + 1) = State.get s0 src2 := by
+    simp only [State.get]
+    rw [List.getElem?_append_right (Nat.le_succ _), show s0.length + 1 - s0.length = 1 from Nat.add_sub_cancel_left s0.length 1]
+    rfl
+  have hsc1_lt1 : s0.length < (s0 ++ [[], []]).length := by
+    rw [hlen1]; exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)
+  have hsrc1_lt1 : src1 < (s0 ++ [[], []]).length := by
+    rw [hlen1]; exact Nat.lt_of_lt_of_le hsrc1 (Nat.le_add_right _ _)
+  have hsc1_ne1 : s0.length ≠ src1 := (Nat.ne_of_lt hsrc1).symm
+  have hsc2_lt2 : s0.length + 1 < (s0 ++ [State.get s0 src1, []]).length := by
+    rw [hlen2]; exact Nat.lt_succ_self _
+  have hsrc2_lt2 : src2 < (s0 ++ [State.get s0 src1, []]).length := by
+    rw [hlen2]; exact Nat.lt_of_lt_of_le hsrc2 (Nat.le_add_right _ _)
+  have hsc2_ne2 : s0.length + 1 ≠ src2 := (Nat.ne_of_lt (Nat.lt_succ_of_lt hsrc2)).symm
+  have hsc1_lt3 : s0.length < (s0 ++ [State.get s0 src1, State.get s0 src2]).length := by
+    rw [hlen3]; exact Nat.lt_succ_of_lt (Nat.lt_succ_self _)
+  have hsc2_lt3 : s0.length + 1 < (s0 ++ [State.get s0 src1, State.get s0 src2]).length := by
+    rw [hlen3]; exact Nat.lt_succ_self _
+  have hsc_ne : s0.length ≠ s0.length + 1 := Nat.ne_of_lt (Nat.lt_succ_self _)
+  have hgrowpos : 0 < Compile.growTwoEmptyM.states := by
+    rw [Compile.growTwoEmptyM_states]
+    exact Nat.lt_of_lt_of_le (Nat.lt_of_le_of_lt (Nat.zero_le _) Compile.growEmptyTM.exit_lt)
+      (Nat.le_add_right _ _)
+  -- ### stage runs
+  obtain ⟨t1, hgrow_run, hgrow_traj⟩ := Compile.growTwoEmpty_run s0 hbit res hres
+  obtain ⟨t2, hcp1_run, hcp1_traj, _⟩ :=
+    Compile.copyEmpty_run (s0 ++ [[], []]) s0.length src1 hsc1_ne1 hsc1_lt1 hsrc1_lt1 hbit1 hs1sc1 res hres
+  rw [hg1eq, hcp1set] at hcp1_run
+  obtain ⟨t3, hcp2_run, hcp2_traj, _⟩ :=
+    Compile.copyEmpty_run (s0 ++ [State.get s0 src1, []]) (s0.length + 1) src2 hsc2_ne2 hsc2_lt2 hsrc2_lt2 hbit2 hs2sc2 res hres
+  rw [hg2eq, hcp2set] at hcp2_run
+  obtain ⟨t4, hcl_run, hcl_traj⟩ :=
+    Compile.compareLoop_run (s0 ++ [State.get s0 src1, State.get s0 src2]) s0.length (s0.length + 1) hsc_ne hsc1_lt3 hsc2_lt3 hbit3 res hres
+  rw [hs3sc1, hs3sc2] at hcl_run
+  have hsymtape : ∀ (sX : State), Compile.BitState sX → ∀ v,
+      currentTapeSymbol ([], 0, Compile.encodeTape sX ++ res) = some v → v < 4 := by
+    intro sX hbX v hv
+    exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hbX hres) _ v hv
+  -- ### Level B: grow ⨾ copy1
+  have hsymB : ∀ v, currentTapeSymbol ([], 0, Compile.encodeTape (s0 ++ [[], []]) ++ res) = some v →
+      v < max Compile.growTwoEmptyM.sig (Compile.copyEmptyRawTM s0.length src1).sig := by
+    intro v hv
+    rw [show max Compile.growTwoEmptyM.sig (Compile.copyEmptyRawTM s0.length src1).sig = 4 from by
+      rw [Compile.growTwoEmptyM_sig, Compile.copyEmptyRawTM_sig]; rfl]
+    exact hsymtape _ hbit1 v hv
+  have hcp1_run' : runFlatTM t2 (Compile.copyEmptyRawTM s0.length src1)
+      { state_idx := (Compile.copyEmptyRawTM s0.length src1).start,
+        tapes := [([], 0, Compile.encodeTape (s0 ++ [[], []]) ++ res)] }
+        = some { state_idx := Compile.copyEmptyRawTM_exit s0.length src1,
+                 tapes := [([], 0, Compile.encodeTape (s0 ++ [State.get s0 src1, []]) ++ res)] } := by
+    rw [Compile.copyEmptyRawTM_start]; exact hcp1_run
+  have hBrun := composeFlatTM_run Compile.growTwoEmptyM_valid (Compile.copyEmptyRawTM_valid s0.length src1)
+    Compile.growTwoEmptyM_exit_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] } hgrowpos
+    [] 0 (Compile.encodeTape (s0 ++ [[], []]) ++ res)
+    hsymB hgrow_run
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting Compile.growTwoEmptyM_exit_is_halt (hgrow_traj k hk ck hck), hgrow_traj k hk ck hck⟩)
+    hcp1_run' (Compile.haltingStateReached_of_halt (Compile.copyEmptyRawTM_exit_is_halt s0.length src1))
+  have hBtraj := composeFlatTM_no_early_halt Compile.growTwoEmptyM_valid (Compile.copyEmptyRawTM_valid s0.length src1)
+    Compile.growTwoEmptyM_exit_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] } hgrowpos
+    [] 0 (Compile.encodeTape (s0 ++ [[], []]) ++ res)
+    hsymB hgrow_run
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting Compile.growTwoEmptyM_exit_is_halt (hgrow_traj k hk ck hck), hgrow_traj k hk ck hck⟩)
+    (fun k hk ck hck => (hcp1_traj k hk ck (by rw [Compile.copyEmptyRawTM_start] at hck; exact hck)).2)
+  have hBhalt := Compile.composeFlatTM_halt_intro Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+    (Compile.copyEmptyRawTM_exit s0.length src1) (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)
+    (Compile.copyEmptyRawTM_exit_is_halt s0.length src1)
+  have heqB : Compile.copyEmptyRawTM_exit s0.length src1 + Compile.growTwoEmptyM.states
+      = Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1 := Nat.add_comm _ _
+  rw [heqB] at hBrun
+  -- ### Level C: ⨾ copy2
+  have hMB_valid := composeFlatTM_valid _ _ _ Compile.growTwoEmptyM_valid
+    (Compile.copyEmptyRawTM_valid s0.length src1) Compile.growTwoEmptyM_exit_lt
+    Compile.growTwoEmptyM_tapes (Compile.copyEmptyRawTM_tapes s0.length src1)
+  have hMB_states : (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+      (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)).states
+      = Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM s0.length src1).states := by
+    rw [composeFlatTM_states]
+  have hsymC : ∀ v, currentTapeSymbol ([], 0, Compile.encodeTape (s0 ++ [State.get s0 src1, []]) ++ res) = some v →
+      v < max (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+          (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)).sig
+        (Compile.copyEmptyRawTM (s0.length + 1) src2).sig := by
+    intro v hv
+    rw [show max (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+          (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)).sig
+        (Compile.copyEmptyRawTM (s0.length + 1) src2).sig = 4 from by
+      rw [composeFlatTM_sig, Compile.growTwoEmptyM_sig, Compile.copyEmptyRawTM_sig,
+          Compile.copyEmptyRawTM_sig]; rfl]
+    exact hsymtape _ hbit2 v hv
+  have hexitC_lt : Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1
+      < (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+          (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)).states := by
+    rw [hMB_states]; exact Nat.add_lt_add_left (Compile.copyEmptyRawTM_exit_lt s0.length src1) _
+  have hcp2_run' : runFlatTM t3 (Compile.copyEmptyRawTM (s0.length + 1) src2)
+      { state_idx := (Compile.copyEmptyRawTM (s0.length + 1) src2).start,
+        tapes := [([], 0, Compile.encodeTape (s0 ++ [State.get s0 src1, []]) ++ res)] }
+        = some { state_idx := Compile.copyEmptyRawTM_exit (s0.length + 1) src2,
+                 tapes := [([], 0, Compile.encodeTape (s0 ++ [State.get s0 src1, State.get s0 src2]) ++ res)] } := by
+    rw [Compile.copyEmptyRawTM_start]; exact hcp2_run
+  have hCrun := composeFlatTM_run hMB_valid (Compile.copyEmptyRawTM_valid (s0.length + 1) src2) hexitC_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+    (by rw [hMB_states]; exact Nat.lt_of_lt_of_le hgrowpos (Nat.le_add_right _ _))
+    [] 0 (Compile.encodeTape (s0 ++ [State.get s0 src1, []]) ++ res)
+    hsymC hBrun.1
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hBhalt (hBtraj k hk ck hck), hBtraj k hk ck hck⟩)
+    hcp2_run' (Compile.haltingStateReached_of_halt (Compile.copyEmptyRawTM_exit_is_halt (s0.length + 1) src2))
+  have hCtraj := composeFlatTM_no_early_halt hMB_valid (Compile.copyEmptyRawTM_valid (s0.length + 1) src2) hexitC_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+    (by rw [hMB_states]; exact Nat.lt_of_lt_of_le hgrowpos (Nat.le_add_right _ _))
+    [] 0 (Compile.encodeTape (s0 ++ [State.get s0 src1, []]) ++ res)
+    hsymC hBrun.1
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hBhalt (hBtraj k hk ck hck), hBtraj k hk ck hck⟩)
+    (fun k hk ck hck => (hcp2_traj k hk ck (by rw [Compile.copyEmptyRawTM_start] at hck; exact hck)).2)
+  have hChalt := Compile.composeFlatTM_halt_intro
+    (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+      (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states))
+    (Compile.copyEmptyRawTM (s0.length + 1) src2) (Compile.copyEmptyRawTM_exit (s0.length + 1) src2)
+    (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1)
+    (Compile.copyEmptyRawTM_exit_is_halt (s0.length + 1) src2)
+  have heqC : Compile.copyEmptyRawTM_exit (s0.length + 1) src2
+        + (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)).states
+      = (Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM s0.length src1).states)
+        + Compile.copyEmptyRawTM_exit (s0.length + 1) src2 := by
+    rw [hMB_states]; exact Nat.add_comm _ _
+  rw [heqC] at hCrun
+  -- ### Level D: ⨾ compareLoop
+  have hMC_valid := composeFlatTM_valid _ _ _ hMB_valid (Compile.copyEmptyRawTM_valid (s0.length + 1) src2)
+    hexitC_lt (by rw [composeFlatTM_tapes]; exact Compile.growTwoEmptyM_tapes)
+    (Compile.copyEmptyRawTM_tapes (s0.length + 1) src2)
+  have hMC_states : (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+        (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM (s0.length + 1) src2)
+        (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1)).states
+      = (Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM s0.length src1).states)
+        + (Compile.copyEmptyRawTM (s0.length + 1) src2).states := by
+    rw [composeFlatTM_states, hMB_states]
+  have hsymD : ∀ v, currentTapeSymbol ([], 0, Compile.encodeTape (s0 ++ [State.get s0 src1, State.get s0 src2]) ++ res) = some v →
+      v < max (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM (s0.length + 1) src2)
+            (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1)).sig
+        (Compile.compareLoopTM s0.length (s0.length + 1)).sig := by
+    intro v hv
+    rw [show max (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM (s0.length + 1) src2)
+            (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1)).sig
+          (Compile.compareLoopTM s0.length (s0.length + 1)).sig = 4 from by
+      rw [composeFlatTM_sig, composeFlatTM_sig, Compile.growTwoEmptyM_sig, Compile.copyEmptyRawTM_sig,
+          Compile.copyEmptyRawTM_sig, Compile.compareLoopTM_sig]; rfl]
+    exact hsymtape _ hbit3 v hv
+  have hexitD_lt : (Compile.growTwoEmptyM.states + (Compile.copyEmptyRawTM s0.length src1).states)
+        + Compile.copyEmptyRawTM_exit (s0.length + 1) src2
+      < (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM (s0.length + 1) src2)
+            (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1)).states := by
+    rw [hMC_states]; exact Nat.add_lt_add_left (Compile.copyEmptyRawTM_exit_lt (s0.length + 1) src2) _
+  have hcl_run' : runFlatTM t4 (Compile.compareLoopTM s0.length (s0.length + 1))
+      { state_idx := (Compile.compareLoopTM s0.length (s0.length + 1)).start,
+        tapes := [([], 0, Compile.encodeTape (s0 ++ [State.get s0 src1, State.get s0 src2]) ++ res)] }
+        = some { state_idx := (Compile.compareBodyTM s0.length (s0.length + 1)).states,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Compile.consumeStep s0.length (s0.length + 1))^[
+                       Compile.matchLen (State.get s0 src1) (State.get s0 src2)]
+                       (s0 ++ [State.get s0 src1, State.get s0 src2]))
+                     ++ (res ++ List.replicate (2 * Compile.matchLen (State.get s0 src1) (State.get s0 src2)) 0))] } := by
+    rw [Compile.compareLoopTM_start]; exact hcl_run
+  have hDrun := composeFlatTM_run hMC_valid (Compile.compareLoopTM_valid s0.length (s0.length + 1)) hexitD_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+    (by rw [hMC_states]; exact Nat.lt_of_lt_of_le hgrowpos (Nat.le_trans (Nat.le_add_right _ _) (Nat.le_add_right _ _)))
+    [] 0 (Compile.encodeTape (s0 ++ [State.get s0 src1, State.get s0 src2]) ++ res)
+    hsymD hCrun.1
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hChalt (hCtraj k hk ck hck), hCtraj k hk ck hck⟩)
+    hcl_run' (Compile.compareLoopTM_exit_is_halt s0.length (s0.length + 1) _)
+  have hDtraj := composeFlatTM_no_early_halt hMC_valid (Compile.compareLoopTM_valid s0.length (s0.length + 1)) hexitD_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s0 ++ res)] }
+    (by rw [hMC_states]; exact Nat.lt_of_lt_of_le hgrowpos (Nat.le_trans (Nat.le_add_right _ _) (Nat.le_add_right _ _)))
+    [] 0 (Compile.encodeTape (s0 ++ [State.get s0 src1, State.get s0 src2]) ++ res)
+    hsymD hCrun.1
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hChalt (hCtraj k hk ck hck), hCtraj k hk ck hck⟩)
+    (fun k hk ck hck => hcl_traj k hk ck (by rw [Compile.compareLoopTM_start] at hck; exact hck))
+  have hstate_eq : (Compile.compareBodyTM s0.length (s0.length + 1)).states
+      + (composeFlatTM (composeFlatTM Compile.growTwoEmptyM (Compile.copyEmptyRawTM s0.length src1)
+            (Compile.growEmptyTM.exit + Compile.growEmptyTM.M.states)) (Compile.copyEmptyRawTM (s0.length + 1) src2)
+            (Compile.growTwoEmptyM.states + Compile.copyEmptyRawTM_exit s0.length src1)).states
+      = Compile.compareRegsPrefixM_exit s0.length (s0.length + 1) src1 src2 := by
+    rw [hMC_states, Compile.compareRegsPrefixM_exit]
+  have hrun := hDrun.1
+  rw [hstate_eq] at hrun
+  refine ⟨_, hrun, ?_⟩
+  intro k hk ck hck
+  exact hDtraj k hk ck hck
