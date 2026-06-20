@@ -133,7 +133,7 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What the last session (2026-06-19b, bottom-up) did — **the full `compareRegsTM` (d2) assembly is PROBED end-to-end + the shared CLEANUP gadget is PROVEN**; a budget GAP surfaced
+## ✅ What the last session (2026-06-20, bottom-up) did — **`compareRegsTM` (d2) probed end-to-end; the CLEANUP gadget AND the 4-stage PREFIX run lemma are PROVEN** — only the d2-iii branch-wrap + d2-iv budget remain for `compareRegsTM`
 
 Continued `eqBit` (BOTTOM-UP task 1 — the ONLY op the live `sat_NP` decider still
 needs). All d2 sub-gadgets were already proven; the remaining work is the
@@ -148,16 +148,17 @@ STITCHING. Following "probe before committing engineering":
    ORIGINAL registers (tape restored for the d1 wrapper), and (b) "both scratch
    suffixes empty ⟺ src1 = src2" (`matchLen_drop_empty_iff`). **Design (A)
    assembles correctly — the rest is pure seam-threading, no structural unknown.**
-2. **`Compile.compareCleanupM sc1 sc2` + `compareCleanup_run` PROVEN & axiom-clean**
-   (`[propext, Classical.choice, Quot.sound]`; full build green 3358) — the shared
-   cleanup branch `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty` as ONE head-`0`→head-`0`
-   run lemma. Stated over `base ++ [c1, c2]` (sc1 = base.length, sc2 = base.length+1
-   the last two registers); from `encodeTape (base++[c1,c2]) ++ res` →
-   `encodeTape base ++ (((res ++ replicate|c1| 0) ++ replicate|c2| 0) ++ [0,0])`,
-   head `0`. Run + no-early-halt (no closed-form budget — see GAP). Plus the
-   shape family `compareCleanupM_{sig,tapes,states,valid,exit,exit_is_halt}` and the
-   `shrinkTwoEmptyM_{exit_is_halt,valid,sig,tapes,start}` helpers (the latter were
-   missing — composing `shrinkTwoEmptyM`/`growTwoEmptyM` further needs them).
+2. **`Compile.compareCleanupM sc1 sc2` + `compareCleanup_run` PROVEN & axiom-clean** —
+   the shared cleanup branch `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty` as ONE
+   head-`0`→head-`0` run lemma over `base ++ [c1, c2]` →
+   `encodeTape base ++ (((res ++ replicate|c1| 0) ++ replicate|c2| 0) ++ [0,0])`. Plus
+   `compareCleanupM_{sig,tapes,states,valid,exit,exit_is_halt}` and the
+   `shrinkTwoEmptyM_{exit_is_halt,valid,sig,tapes,start}` helpers.
+3. **`Compile.compareRegsPrefixM` + `compareRegsPrefix_run` PROVEN & axiom-clean** —
+   the 4-stage prefix `growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾ copyEmpty sc2 src2 ⨾
+   compareLoop` (see d2-ii below). Plus the prefix-machine shape lemmas and the
+   `compareLoop_run` no-early-halt extension. **`compareRegsTM` now needs only the
+   branch-wrap (d2-iii) + budget (d2-iv).** ⚠ Full build green (3358), all axiom-clean.
 
 ### ⚠ GAP surfaced (risk-based) — the budget step (d2-iv) needs step-count bounds the run lemmas DON'T carry
 
@@ -588,36 +589,47 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
      + no-early-halt. Plus `compareCleanupM_{exit,exit_is_halt,valid,sig,tapes,states}`
      and `shrinkTwoEmptyM_{exit_is_halt,valid,sig,tapes,start}`. **`compareCleanupM_exit_is_halt`
      is ready for the branch wrap (cleanup = M₂ = M₃).**
-   - **(d2-ii PREFIX) ← DO THIS NEXT.** `growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾
-     copyEmpty sc2 src2 ⨾ compareLoop sc1 sc2` as a 4-stage left-nested
-     `composeFlatTM` run lemma. Model on `copyEmpty_run`'s level-B/C threading
-     (3 seams). Input `encodeTape s0 ++ res` (sc1=s0.length, sc2=s0.length+1,
-     src1≠src2 both `< s0.length`); output state `(compareBodyTM sc1 sc2).states`
-     shifted, tape `encodeTape s4 ++ (res ++ replicate (2n) 0)` where n =
-     `matchLen (s0.get src1)(s0.get src2)` and `s4 = s0 ++ [drop n (s0.get src1),
-     drop n (s0.get src2)]` (via `consumeIter_spec` — only sc1/sc2 change; this is the
-     `base++[c1,c2]` cleanup-input form with base=s0). **Plumbing to add first** (all
-     mechanical via `composeFlatTM_*`/`loopTM_*`): `growTwoEmptyM_{valid,sig,tapes,
-     states,start,exit_is_halt}` (mirror the `shrinkTwoEmptyM_*` helpers added this
-     session), `copyEmptyRawTM_start` (= `0`, via `navigateToRegTM_start`),
-     `compareLoopTM_{valid,sig,tapes,start,exit_is_halt}` (`loopTM_*` + the loop's
-     unique halt at `compareBodyTM.states`). Per-stage state facts: `BitState`/`get`/
-     `set` of `s0++[[],[]]`/`s0++[c1',[]]`/`s0++[c1',c2']` (use the Op.eval/get recipes
-     in this session's FINDINGS). ⚠ `copyEmpty_run`'s `dst ≠ src`/`dst<len`/`src<len`/
-     `s.get dst = []` all hold post-grow.
-   - **(d2-iii BRANCH WRAP)** `compareRegsTM src1 src2 := branchComposeFlatTM eqVerdictM
-     compareCleanupM compareCleanupM exitEQ exitNEQ`, composed AFTER the prefix
-     (`composeFlatTM prefix branch …`). `eqVerdictM` reads sc1/sc2 (= the dropped
-     suffixes) and exits EQ/NEQ; in BOTH branches `compareCleanup_run` restores the
-     tape. Use `branchComposeFlatTM_run_pos`/`_neg` (M₁=eqVerdictM, M₂=M₃=cleanup),
-     `eqVerdictM_run_{eq,neq_left,neq_right}`, `compareCleanup_run`,
-     `compareCleanupM_exit_is_halt`. Verdict decided by `matchLen_drop_empty_iff`.
-     compareRegsTM's two exits feed the d1 wrapper's branch.
-   - **(d2-iv BUDGET)** ⚠ **blocked on the GAP above** (grow/shrink/compareLoop carry
-     NO `t ≤ …`). Add `O(L)`/`O(L²)` bounds to those run lemmas (or bound inside
-     `compareRegsTM`), then sum: 2 copies `≤ ~5L²` (`copyEmpty`), consume loop `≤ ~8L²`
-     (bound `loopBudget`), grow/shrink/clear/verdict `O(L)`/`O(L²)` ⇒ total `≤ 18L² =
-     (9L²+9L+30)·2`. Probe `CompareRegsBudgetProbe.lean` confirms feasibility.
+   - **(d2-ii PREFIX) ✅ DONE & axiom-clean (2026-06-20).** `Compile.compareRegsPrefixM
+     sc1 sc2 src1 src2` (= `growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾ copyEmpty sc2 src2 ⨾
+     compareLoop sc1 sc2`) + `compareRegsPrefix_run`: from `encodeTape s0 ++ res`
+     (sc1=s0.length, sc2=s0.length+1, src1/src2 `< s0.length`) → exit
+     `compareRegsPrefixM_exit`, tape `encodeTape ((consumeStep sc1 sc2)^[matchLen g1 g2]
+     (s0 ++ [g1, g2])) ++ (res ++ replicate (2·matchLen g1 g2) 0)` (g1=`s0.get src1`,
+     g2=`s0.get src2`) + no-early-halt. 4-stage `composeFlatTM_run`/`_no_early_halt`
+     thread (model: `copyEmpty_run`). Also added: the prefix-machine shape lemmas
+     (`growTwoEmptyM_*`, `copyEmptyRawTM_{start,exit_lt}`, `compareLoopTM_*`) and
+     `compareLoop_run` now returns the no-early-halt trajectory too.
+     ⚠⚠ **GOTCHA (cost me a session): `omega` SILENTLY FAILS on trivial arithmetic
+     side-goals inside this large-context proof** — it returns "could not prove" with
+     spurious counterexamples referencing *unrelated* hypotheses (e.g. `length(s0 ++
+     [g1,g2]) ≥ 2` for a goal `s0.length < s0.length + 2`). The whole prefix proof uses
+     **term-mode `Nat` lemmas** (`Nat.lt_succ_of_lt`, `Nat.lt_of_lt_of_le`,
+     `Nat.add_lt_add_left`, `Nat.add_comm`, `Nat.add_sub_cancel_left n m`, …) for ALL
+     arithmetic. **Do NOT use `omega` in `compareRegsTM`/the d1 wrapper** — it will fail
+     on goals that are obviously true. (Suspected: omega chokes scanning the many
+     `List`/encodeTape hypotheses. The next agent with a working `lean_goal` could
+     confirm; here the LSP was off-limits.) Also: pin implicit list args of
+     `List.set_append_right`/`List.getElem?_append_right` (`(s := …)`, or feed
+     `Nat.le_refl _`/`Nat.le_succ _` as the hypothesis) so the side-condition doesn't
+     elaborate against a metavariable.
+   - **(d2-iii BRANCH WRAP) ← DO THIS NEXT.** `compareRegsTM src1 src2 := composeFlatTM
+     (compareRegsPrefixM s0.length (s0.length+1) src1 src2) (branchComposeFlatTM
+     eqVerdictM compareCleanupM compareCleanupM exitEQ exitNEQ) (compareRegsPrefixM_exit
+     …)`. The prefix exits into the branch at `compareRegsPrefixM_exit` (a halt — prove a
+     `compareRegsPrefixM_exit_is_halt`, mirror `copyEmptyRawTM_exit_is_halt`: the loop's
+     halt at `compareBodyTM.states`, shifted; `compareLoopTM_exit_is_halt` is the seed).
+     The branch's M₁ = `eqVerdictM s0.length (s0.length+1)`, reading the post-loop
+     scratch suffixes; use **`consumeIter_spec`** to rewrite the prefix output state to
+     `s0 ++ [drop n g1, drop n g2]` (so eqVerdictM sees concrete sc1/sc2 = drop n g1 /
+     drop n g2), then **`matchLen_drop_empty_iff`**: both empty ⟺ g1 = g2. EQ case →
+     `eqVerdictM_run_eq` → exitEQ; NEQ → `eqVerdictM_run_{neq_left,neq_right}` → exitNEQ.
+     M₂ = M₃ = `compareCleanupM` (cleanup is the SAME on both branches): use
+     `compareCleanup_run` (base = s0, c1 = drop n g1, c2 = drop n g2) +
+     `compareCleanupM_exit_is_halt` (both PROVEN this session). `compareRegsTM` is then a
+     **2-exit EQ/NEQ tester, tape restored**. ⚠ Use `branchComposeFlatTM_run_pos`/`_neg`;
+     **term-mode arithmetic only** (omega broken).
+   - **(d2-iv BUDGET)** ⚠ still blocked on the GAP (grow/shrink/compareLoop carry no
+     `t ≤ …`). Same plan as before.
 
    - ✅ **(d2-COPY) `copyEmptyRawTM`/`copyEmpty_run` — DONE & axiom-clean (2026-06-19).**
      `encodeTape s ++ res` (head 0, `dst` EMPTY) → `encodeTape (s.set dst (s.get src)) ++ res`
