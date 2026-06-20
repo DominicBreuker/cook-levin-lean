@@ -133,77 +133,59 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What the last session (2026-06-20b, bottom-up) did — **`compareRegsTM` (d2-iii) the BRANCH WRAP is PROVEN & axiom-clean** — `compareRegsTM` is now a complete 2-exit EQ/NEQ tester; only d2-iv (budget) + d1 (wrapper) remain for `eqBit`
+## ✅ What the last session (2026-06-20c, bottom-up) did — **DE-RISKED d2-iv + shipped the budget enabler: the per-op contract budget is LOOSENED `9 → 27`** (free against `physStepBudget`); the eqBit step-bound cascade can now use LOOSE bounds. **Full build green (3358); `opBudgetLoosen` axiom-clean.**
 
-Closed the d2-iii STITCHING (HANDOFF "▶ THE IMMEDIATE NEXT STEP"). All sub-gadgets
-were proven; this session assembled the final `compareRegsTM`. **Full build green
-(3358), all new results axiom-clean (`[propext, Classical.choice, Quot.sound]`).**
+Risk-based session: instead of grinding the d2-iv step-bound cascade with bounds
+that would not have composed, **measured the full assembly first** and **fixed the
+budget so the cascade is now tractable.** No new gadget proofs, but the single most
+important blocker for `eqBit` is removed.
 
-1. **`Compile.compareRegsTM sc1 sc2 src1 src2` is DONE** (`= compareRegsPrefixM ⨾
-   compareBranchM`, where `compareBranchM := branchComposeFlatTM eqVerdictM cleanup
-   cleanup (eqVerdictM_exit_eq) (eqVerdictM_exit_neq)` — BOTH branches the same
-   cleanup). With its full shape family: `compareBranchM_{sig,tapes,start,states,valid}`,
-   `compareRegsTM_{sig,tapes,start,states,valid}`, the two exit defs
-   `compareRegsTM_exit_{eq,neq}` + `_{eq,neq}_lt` + `_eq_ne_neq` + `_{eq,neq}_is_halt`.
-2. **`compareRegsTM_run_eq` / `compareRegsTM_run_neq` PROVEN** — the 2-exit tester
-   contract: from `encodeTape s0 ++ res` (head `0`, `sc1 = s0.length`,
-   `sc2 = s0.length+1`, `src1/src2 < s0.length`), reaches `compareRegsTM_exit_eq`
-   when `s0.get src1 = s0.get src2` (EQ) / `compareRegsTM_exit_neq` when `≠` (NEQ),
-   tape **restored** (`∃ residue, ValidResidue residue ∧ tape = encodeTape s0 ++
-   residue`), + the no-early-halt trajectory. NEQ splits on which suffix is nonempty
-   (`eqVerdictM_run_neq_left` / `_right`). **Residue is existential** (the d1 wrapper
-   re-clears `dst` anyway) — avoids the trailing-zeros `List.replicate` algebra.
-3. **Reusable helpers added (axiom-clean):** `consumeStep_iterate_append` (the
-   `State` closed form `consumeStep^[k] (s0 ++ [a,b]) = s0 ++ [a.drop k, b.drop k]`),
-   `BitState_append_drop_pair`, `halt_getElem_of_haltingStateReached` (generic
-   `haltingStateReached`-true → `.halt[i]? = some true`), `compareLoopTM_halt_getElem`,
-   `compareCleanupM_{start,exit_lt,halt_getElem}`, and the prefix shape family
-   `compareRegsPrefixM_{states,sig,tapes,valid,exit_lt,exit_is_halt}`.
+**The headline finding (probe `probes/EqBitBudgetProbe.lean`, `#eval`-validated):**
+1. **REAL steps FIT.** Full `compareRegsTM` real steps ≈ **70%** of the `cost=1`
+   budget `(9·L²+9·L+30)·2`; full `opEqBit` (compareRegsTM + clear dst) ≈ **60%**.
+   The op genuinely fits `cost=1` — **do NOT bump `Op.cost eqBit`.**
+2. **⚠ but PROVABLE LOOSE bounds BUST.** The bounds recoverable from the existing
+   sub-gadgets are loose (`navSteps_le` is already 2×; each `branchComposeFlatTM`
+   seam adds slack). Composed via `loopBudget ≤ (matchLen+1)·M_body` with the
+   provable `M_body ≈ 18·L` (vs real `≈ 13·L`), the worst case (equal operands,
+   longest loop) reaches **~121%** of the `cost=1` budget; even near-tight bounds
+   land at ~97% (fragile). **The prior plan ("just add `t ≤ O(L)` conjuncts") would
+   NOT have closed — this gap is now surfaced and fixed.**
+3. **✅ FREE FIX SHIPPED.** `run_physical_residue_gen` ② discharges the per-op
+   budget against `physStepBudget`'s `(9G²+9G+33)·(8·cost+8)` — an **8× headroom**.
+   So loosening the per-op CONTRACT budget constant `9 → 27` is free (`27 ≤ 72`):
+   `physStepBudget`, `Op.cost`, and EvalCnf are all untouched (degree unchanged).
+   Done in `Compile.lean`: the `compileOp_sound_physical_residue` statement now
+   reads `(27·L²+27·L+90)·(cost+1)`; the 7 proven ops relax through the new
+   axiom-clean **`Compile.opBudgetLoosen`** (`(9·L²+…)·c → (27·L²+…)·c`); the gen
+   lemma's `h1`/`h2` rederived (`27 ≤ 72 = 8·9`).
 
-### ⚠ THE remaining bottom-up blocker for `eqBit` is d2-iv (BUDGET) — still the open GAP
+### ▶ d2-iv is now UNBLOCKED and tractable — thread LOOSE bounds to `(27·L²+27·L+90)·2`
 
-`compareRegsTM_run_{eq,neq}` are **`∃ t` with NO `t ≤ …` conjunct**, inherited from
-`growTwoEmpty_run` / `shrinkTwoEmpty_run` / `compareLoop_run` / `compareCleanup_run`
-(`compareLoop_run`'s bound is the OPAQUE `loopBudget tIter tDone n`). The `eqBit`
-contract case (`compileOp_sound_physical_residue`) **requires** the per-op budget
-`(9L²+9L+30)·(cost+1)`, so **d1 (the wrapper) cannot close `eqBit` until the budget
-exists.** ⇒ **d2-iv is THE critical path, not d1.** Plan (probe-validated feasible
-`≈18L²` in `CompareRegsBudgetProbe`): add a `t ≤ …` conjunct to each of
-grow/shrink/compareLoop (grow/shrink `O(L)` — `rewindBracket` step counts recoverable;
-`compareLoop` needs `loopBudget_le`-bounding of `loopBudget tIter tDone n` with
-`tIter,tDone = O(L)`, `n ≤ L`), thread them through `compareRegsPrefix_run` /
-`compareRegsTM_run_{eq,neq}`. `copyEmpty_run`/`clearRegionTM_run` already carry their
-bounds (`(|src|+1)(5L+23)+3L+4`, `9L²+9`). See BOTTOM-UP task 1 (d2-iv).
+`compareRegsTM_run_{eq,neq}` are still `∃ t` with NO `t ≤ …` conjunct. The cascade
+is now **safe to do with loose bounds** (the budget has ~3× room). See BOTTOM-UP
+task 1 (d2-iv) for the exact ordered lemma list and the per-level recipe. Key facts
+the next agent needs:
+- The composition is **additive**: `branchComposeFlatTM_run_pos`/`_neg` and
+  `composeFlatTM_run` expose the total step count `t₁ + 1 + t₂` explicitly, so each
+  level's bound = sum of sub-bounds + 1.
+- Leaves with **concrete** counts (no change needed, just extract): `opRewindToZero_run`
+  (`head + 1`, `head < L`), `navTestReg_run_content/_delim` (`navSteps + 2`,
+  `navSteps_le : ≤ 2·(regBlocks).length + 1 ≤ 2L+1`), `navTestRewind_rewind_run`
+  (`H + 1`, `H < (encodeTape s).length`). `opTailSelf_run_delete` already carries
+  `≤ 6·L+14`; `copyEmpty_run` `(|src|+1)(5L+23)+3L+4`; `clearRegionTM_run` `9L²+9`.
+- **`omega` cannot relate `27*L*L` and `9*L*L`** (parsed `(27*L)*L` vs `(9*L)*L`,
+  distinct atoms) — use `nlinarith [Nat.zero_le (L*L), Nat.zero_le L]` for the
+  `9·L² ≤ 27·L²` step (the `opBudgetLoosen`/`h2` pattern).
 
-### ★ FINDINGS (this session) — reusable for branch wraps / future 2-exit testers
+### ★ REUSABLE PATTERN (this session) — risk-probe BEFORE threading bounds
 
-- **`rw [<def>]` on a plain `def` (e.g. `compareRegsTM`) can FAIL** ("did not find
-  pattern") when the goal already shows it through a projection. The composite
-  machine is **defeq** to its `composeFlatTM`/`branchComposeFlatTM` body, so just
-  `exact h` (or `exact this k …`) lets the kernel unfold — drop the `rw`.
-- **`rcases hh : e with …` / `cases hh : e` SUBSTITUTES `e` in the goal** (when it
-  occurs there) — so a later `rw [hh]` on the goal fails ("no occurrence"). In the
-  `some` branch the goal is already `some b = …`; close with `simp only [hh, …] at h';
-  subst h'; rfl` (don't re-`rw [hh]` the goal).
-- **A 2-exit tester's `_run` trajectory is `(≠ exit_neg ∧ ≠ exit_pos ∧ ¬halt)`** (the
-  `eqVerdictM`/`compareRegsTM` shape). `branchComposeFlatTM_run_pos/_neg` want
-  `(≠ exit_pos ∧ ≠ exit_neg ∧ ¬halt)` — **reorder** with
-  `fun k hk ck hck => ⟨(h …).2.1, (h …).1, (h …).2.2⟩`.
-- **Lift a composite's exit halt to `getElem?` form** = `composeFlatTM_halt_intro` /
-  `branchComposeFlatTM_M2_halt_intro` (pos) / `_M3_halt_intro` (neg), each consuming
-  the inner `.halt[e]? = some true`; the index comes out `M₁.states + e` (commute with
-  the def's order via a `show … from by …; omega` rewrite). `loopTM`'s loop halt in
-  `getElem?` form: `(loopHalt B)[B.states]?` via `getElem?_append_right` + `Nat.sub_self`.
-- **`consumeStep`'s SECOND `State.get` reads the ORIGINAL `s`, not the post-`set`
-  state** (`(s.set sc1 …).set sc2 (State.get s sc2).tail`) — state the two `get`-facts
-  on `s0 ++ [a,b]` (NOT on the half-updated list).
-- **The branch's `M₂`/`M₃` run starts at `M₂.start` (not literal `0`)** —
-  `compareCleanupM_start`/`compareBranchM_start` are `= 0`, so convert
-  `h_run2`/`h_traj2` with `rw [compareBranchM_start]` then `exact`; the no-early-halt
-  hyp already uses `cfgB` (state `0`), so DON'T `rw … at` it (only the goal).
-- **`List.set_append_right`/`getElem?_append_right`: feed the side-condition as
-  `Nat.le_refl _` / `Nat.le_succ _`** (not `by omega` — the implicit index metavar
-  defeats it here) and the leftover index via `show … from Nat.add_sub_cancel_left …`.
+When a multi-level gadget stack must fit a fixed per-op budget, **measure the full
+real step count first** (a `runToHalt`-counting `#eval` probe with `sc` at its real
+operating position — NOT a toy position like `sc=0`, which hides the Θ(L)
+navigation). If real fits but the *provable* (loose) bound would not, the budget is
+the thing to fix, not the bounds. The per-op contract budget is **not** tight against
+`physStepBudget` (8× slack), so loosening its constant is the cheapest lever.
 
 ---
 
@@ -315,8 +297,12 @@ bounds (`(|src|+1)(5L+23)+3L+4`, `9L²+9`). See BOTTOM-UP task 1 (d2-iv).
   `∀ k ≤ T, ≠ h2` argument (`testBitReg_run_pos`'s ending).
 - **7/12 ops FULLY PROVEN** in `compileOp_sound_physical_residue`: `appendOne`,
   `appendZero`, `clear`, `nonEmpty`, `head`, **`copy`**, **`tail`** (each carries
-  the W-invariant ①). The per-op budget is **cost-scaled**:
-  `(9L²+9L+30)·(Op.cost+1)` — settled, do not revert.
+  the W-invariant ①). The per-op contract budget is **cost-scaled and LOOSENED
+  (2026-06-20c)**: `(27·L²+27·L+90)·(Op.cost+1)` (was `9·…`; the 7 proven ops keep
+  their tight `9·…` internally and relax via **`Compile.opBudgetLoosen`**). The
+  loosening is free against `physStepBudget` (8× headroom, `27 ≤ 72`) and is the
+  ENABLER for the `eqBit` loose-bound cascade — **do not re-tighten** (see the
+  2026-06-20c session block + `probes/EqBitBudgetProbe.lean`).
 - **★ `Compile.forBndIterate` + `forBndIterate_run` (2026-06-13)** — the `forBnd`
   per-iteration bookkeeping chain `copy cnt K2 ⨾ rbody ⨾ appendOne K2 ⨾ tail K1
   K1` as a `CompiledCmd` (built by `compileSeq` from the proven op gadgets;
@@ -517,7 +503,7 @@ The build is UNGATED for bottom-up. New frontier:
 
 0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
    d2 `compareRegsTM` + d1 `opEqBit` wrapper).** When the `eqBit` case of
-   `compileOp_sound_physical_residue` (Compile.lean ~15261, currently raw `sorry`) is
+   `compileOp_sound_physical_residue` (Compile.lean ~18183, currently raw `sorry`) is
    discharged, the **entire live decider chain `sat_NP → … → Compile_run_physical_residue`
    becomes sorry-free** (`evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free). Concrete top-down
    work: `#print axioms sat_NP` / `inTimePolyTM_evalCnf` and confirm `sorryAx` is GONE from
@@ -562,13 +548,13 @@ combinator CLOSED (2026-06-11); ✅ the `copy`/`tail` ops CLOSED (2026-06-12b/c)
 fold invariants + budget fix CLOSED (2026-06-13/b/c); ✅ **`compileForBnd_sound_physical_residue`
 FULLY PROVEN & axiom-clean (2026-06-14)** — the forBnd counted loop is closed.
 Everything left bottom-up is TM-level compiler work in Compile.lean: the **5 stub
-ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s at
-`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, ~15261–15280). Both the decider half
+ops** in `compileOp_sound_physical_residue` (Compile.lean ~18009; raw `sorry`s at
+`eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, ~18183). Both the decider half
 (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
 1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
    needs).** `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so discharging the
-   `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean ~15261) makes
+   `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean ~18183) makes
    the entire live decider chain `sat_NP → … → Compile_run_physical_residue`
    **sorry-free**. The **design is settled** (see this session's block above — read
    it first). `Op.cost eqBit = 1`; residue beyond `clear`'s `|dst₀|` is ZERO; output
@@ -591,9 +577,10 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
    only the step-count GAP remains.** `compareRegsTM` (the 2-exit EQ/NEQ tester) is
    fully PROVEN & axiom-clean (`compareRegsTM_run_{eq,neq}`, see this-session block).
    What's left is to give it (and its sub-gadgets) explicit `t ≤ …` bounds so the
-   `eqBit` op contract (which needs `(9L²+9L+30)·(cost+1)`) can be discharged. **d1
-   (the wrapper) is BLOCKED on d2-iv** — without the budget the wrapper's run lemma
-   has no step bound and the contract case can't close. The full structural
+   `eqBit` op contract (now LOOSENED to `(27·L²+27·L+90)·(cost+1)` — see the
+   2026-06-20c session block) can be discharged. **d1 (the wrapper) is BLOCKED on
+   d2-iv** — without the budget the wrapper's run lemma has no step bound and the
+   contract case can't close. The full structural
    assembly (`growTwoEmpty ⨾ copyEmpty src1→sc1 ⨾ copyEmpty src2→sc2 ⨾ compareLoop ⨾
    branchComposeFlatTM eqVerdictM cleanup cleanup exitEQ exitNEQ`) is `#eval`-validated
    (`probes/CompareRegsAssemblyProbe.lean`) and proven. Sub-steps:
@@ -639,16 +626,33 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
      `compareBranchM_*`, `compareRegsPrefixM_{states,sig,tapes,valid,exit_lt,exit_is_halt}`.
      **NB: `omega` worked fine in these small shape-lemma contexts** (the d2-ii
      omega-failure was specific to the huge prefix proof; not a general ban).
-   - **(d2-iv BUDGET) ← DO THIS NEXT — the only remaining bottom-up blocker for `eqBit`.**
-     Add a `t ≤ …` conjunct to `growTwoEmpty_run` (`O(L)`), `shrinkTwoEmpty_run` (`O(L)`),
-     `compareLoop_run` (bound the OPAQUE `loopBudget tIter tDone n` via `loopBudget_le`
-     with `tIter,tDone = O(L)`, iteration count `n ≤ L`), and `compareCleanup_run`
-     (`clearRegionTM_run` already carries `9L²+9`; `shrinkTwoEmpty` `O(L)`). Then thread
-     the sums through `compareRegsPrefix_run` and `compareRegsTM_run_{eq,neq}` (the
-     `composeFlatTM_run`/`branchComposeFlatTM_run_*` give `t₁+1+t₂`-additive totals —
-     just carry the `≤` alongside). Probe `CompareRegsBudgetProbe` validated `≈18L² ≤
-     (9L²+9L+30)·2` feasible. `copyEmpty_run` already has `(|src|+1)(5L+23)+3L+4`.
-     **Only after d2-iv does d1 become unblocked.**
+   - **(d2-iv BUDGET) ← DO THIS NEXT — now UNBLOCKED (budget loosened `9→27` this
+     session). Thread LOOSE `t ≤ …` bounds; the target is `(27·L²+27·L+90)·2`.**
+     ⚠ Do NOT chase tight bounds — the de-risk probe (`probes/EqBitBudgetProbe.lean`)
+     shows the loose composed bound (~1.7× real) now fits the loosened budget with
+     ~1.5× margin, whereas it BUSTS the old `(9·L²+…)·2` (~121%). Ordered cascade
+     (bottom-up; each level's `t` is the additive `t₁+1+t₂` from
+     `branchComposeFlatTM_run_*` / `composeFlatTM_run`, so add a `t ≤ <linear in L>`
+     conjunct and sum the sub-bounds):
+     1. **Consume-loop body leaves** (each `≤ c·L`, `c` small): `navTestRewindM_run_
+        {content,delim}` (`≈ 3L+6`, from `navSteps_le` + the `H+1` rewind);
+        `readBitRewindM_run`; `bothNonemptyM_run_{yes,no_left,no_right}`;
+        `bitCompareM_run`; `testMachine_run_{iter,done_left,done_right,done_neq}`;
+        `iterTails_run` (= 2× the already-bounded `opTailSelf_run_delete ≤ 6L+14`).
+        Then `compareBody_{iterate,done}_run` (`≤ M_body ≈ 18·L`).
+     2. **`compareLoop_run`**: replace `loopBudget tIter tDone n` with
+        `loopBudget_le tIter tDone (M_body+1) n …` (needs `tDone+1 ≤ M_body+1` and
+        each `tIter j + 1 ≤ M_body+1` — both from step 1's `compareBody_*_run`
+        bounds; `n = matchLen ≤ L`), giving `≤ (n+1)·(M_body+1) = O(L²)`. The loop
+        tape length is INVARIANT (residue grows as content shrinks), so one uniform
+        `M_body` works for all iterations.
+     3. **Prefix/cleanup**: `growTwoEmpty_run`/`shrinkTwoEmpty_run` (`O(L)`, concrete
+        `t` already in-proof — just expose `≤ c·L`); `compareCleanup_run`
+        (`clearRegionTM_run` already `9L²+9`, ×2, + shrink `O(L)`). `copyEmpty_run`
+        already `(|src|+1)(5L+23)+3L+4`.
+     4. Thread the sums through `compareRegsPrefix_run` then `compareRegsTM_run_
+        {eq,neq}`; bound the total `≤ (27·L²+27·L+90)·2` with `nlinarith` (NOT omega
+        on `L*L`). **Only after d2-iv does d1 become unblocked.**
 
    - ✅ **(d2-COPY) `copyEmptyRawTM`/`copyEmpty_run` — DONE & axiom-clean (2026-06-19).**
      `encodeTape s ++ res` (head 0, `dst` EMPTY) → `encodeTape (s.set dst (s.get src)) ++ res`
@@ -696,7 +700,7 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~15089; raw `sorry`s a
    `Compile.nonEmptyRawM`/`opNonEmpty` with `compareRegsTM` swapped in for
    `navigateAndTestTM`. The shape/valid/halt lemmas and `opEqBit_run` are a **mechanical
    port of `opNonEmpty`'s**; the `eqBit` contract case is then a copy of the `nonEmpty`
-   case at Compile.lean ~15262 (residue `res_in ++ replicate |dst₀| 0`, W-invariant via
+   case at Compile.lean ~18183 (residue `res_in ++ replicate |dst₀| 0`, W-invariant via
    `State.size_set_add`). ⚠ **The contract's per-op budget can only be met once
    `compareRegsTM_run_{eq,neq}` carry a `t ≤ …` bound (d2-iv).** The EQ/NEQ residue from
    `compareRegsTM` is existential — `obtain` it, then the `nonEmptyBranchBody` clear of
