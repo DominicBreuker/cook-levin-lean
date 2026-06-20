@@ -17813,6 +17813,63 @@ theorem Compile.consumeIter_spec (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         rw [Compile.consumeStep, ← hgetX]
         exact Compile.BitState_set_tail (sk.set sc1 (State.get sk sc1).tail) sc2 hbitX hsc2X
 
+/-- `matchLen` is at most the length of the first operand (it peels at most one
+matched pair per cell of `l1`). Gives `n = matchLen ≤ |g1| ≤ L` for the loop's
+quadratic step bound. -/
+theorem Compile.matchLen_le_left : ∀ (l1 l2 : List Nat), Compile.matchLen l1 l2 ≤ l1.length
+  | [], _ => by simp [Compile.matchLen]
+  | _ :: _, [] => by simp [Compile.matchLen]
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      split
+      · have ih := Compile.matchLen_le_left r1 r2
+        simp only [List.length_cons]; omega
+      · simp only [List.length_cons]; omega
+
+/-- **Loop tape-length invariance (eqBit d2-iv).** Within the matched prefix
+(`m ≤ matchLen`) both scratch heads are nonempty, so each `consumeStep` deletes
+exactly one cell from each of `sc1`/`sc2` — the encoded-tape length shrinks by
+`2` per step. The loop's residue grows by `2` in lock-step (`T m` carries
+`replicate (2·(n−m)) 0`), so the total loop tape length is invariant `= L`. This
+is the keystone fact the `compareLoop_run` quadratic step bound needs (uniform
+`M_body` across iterations). -/
+theorem Compile.encodeTape_consumeStep_length (s : State) (sc1 sc2 : Var)
+    (hne : sc1 ≠ sc2) (hsc1 : sc1 < s.length) (hsc2 : sc2 < s.length)
+    (hbit : Compile.BitState s) :
+    ∀ m, m ≤ Compile.matchLen (State.get s sc1) (State.get s sc2) →
+      (Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[m] s)).length + 2 * m
+        = (Compile.encodeTape s).length := by
+  intro m
+  induction m with
+  | zero => intro _; simp
+  | succ m ih =>
+      intro hm
+      have hm' := ih (by omega)
+      obtain ⟨hsp1, hsp2, hsplen, hspbit⟩ := Compile.consumeIter_spec s sc1 sc2 hne hsc1 hsc2 hbit m
+      have hm_lt : m < Compile.matchLen (State.get s sc1) (State.get s sc2) := by omega
+      obtain ⟨a, cs1, cs2, hd1, hd2⟩ :=
+        Compile.matchLen_step (State.get s sc1) (State.get s sc2) m hm_lt
+      set sm := (Compile.consumeStep sc1 sc2)^[m] s with hsm
+      have hg1 : State.get sm sc1 = a :: cs1 := by rw [hsp1]; exact hd1
+      have hg2 : State.get sm sc2 = a :: cs2 := by rw [hsp2]; exact hd2
+      have hsc1m : sc1 < sm.length := by rw [hsplen]; exact hsc1
+      have hbal1 := Compile.encodeTape_set_length sm sc1 (State.get sm sc1).tail hsc1m
+      set s1 := sm.set sc1 (State.get sm sc1).tail with hs1
+      have hsc2m1 : sc2 < s1.length := by rw [hs1, Compile.length_set _ _ _ hsc1m, hsplen]; exact hsc2
+      have hget21 : State.get s1 sc2 = State.get sm sc2 :=
+        State.get_set_ne sm sc1 _ sc2 (Ne.symm hne)
+      have hbal2 := Compile.encodeTape_set_length s1 sc2 (State.get sm sc2).tail hsc2m1
+      have htail1 : (State.get sm sc1).length = (State.get sm sc1).tail.length + 1 := by
+        rw [hg1]; simp
+      have htail2 : (State.get sm sc2).length = (State.get sm sc2).tail.length + 1 := by
+        rw [hg2]; simp
+      have hget21len : (State.get s1 sc2).length = (State.get sm sc2).length := by rw [hget21]
+      have hstep : (Compile.consumeStep sc1 sc2)^[m + 1] s = s1.set sc2 (State.get sm sc2).tail := by
+        rw [Function.iterate_succ_apply', ← hsm]
+        simp only [Compile.consumeStep, ← hs1]
+      rw [hstep]
+      omega
+
 /-! ### `compareLoopTM` — the `eqBit` consume loop (bottom-up, Risk C2 — d2a)
 
 The counted loop over `compareBodyTM`: ITER (delete both heads) while both scratch
