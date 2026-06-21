@@ -22621,7 +22621,8 @@ theorem Compile.growEmpty_run (s : State) (hbit : Compile.BitState s)
       ∧ (∀ k, k < t → ∀ ck,
           runFlatTM k Compile.growEmptyTM.M { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
             = some ck →
-          ck.state_idx ≠ Compile.growEmptyTM.exit ∧ haltingStateReached Compile.growEmptyTM.M ck = false) := by
+          ck.state_idx ≠ Compile.growEmptyTM.exit ∧ haltingStateReached Compile.growEmptyTM.M ck = false)
+      ∧ t ≤ 2 * (Compile.encodeTape s ++ res).length + 9 := by
   set R := (Compile.encodeRegs s).length with hR
   have hbit' : Compile.BitState (s ++ [[]]) := by
     have := Compile.BitState_append_replicate_nil s 1 hbit
@@ -22746,7 +22747,12 @@ theorem Compile.growEmpty_run (s : State) (hbit : Compile.BitState s)
     rw [hraw_run, Compile.growInsertM_states]
   have htrans := Compile.rewindBracket_transport Compile.growInsertM 10 Compile.growInsertM_valid
     (by rw [Compile.growInsertM_states]; omega) Compile.growInsertM_tapes Compile.growInsertM_sig hstate17 hraw_traj
-  exact ⟨_, htrans.1, htrans.2⟩
+  -- the explicit step count `2R + 2·|res| + 13 = 2L + 9` (L = |encodeTape s ++ res|).
+  have hEs : (Compile.encodeTape s).length = R + 2 := by
+    rw [Compile.encodeTape]; simp [List.length_append]; omega
+  have hL : (Compile.encodeTape s ++ res).length = R + 2 + res.length := by
+    rw [List.length_append, hEs]
+  exact ⟨_, htrans.1, htrans.2, by omega⟩
 
 
 /-! ### `growTwoEmpty` — two empty registers at the register-list end (eqBit d2c)
@@ -22766,12 +22772,20 @@ theorem Compile.growTwoEmpty_run (s : State) (hbit : Compile.BitState s)
       ∧ (∀ k, k < t → ∀ ck,
           runFlatTM k Compile.growTwoEmptyM { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
             = some ck →
-          haltingStateReached Compile.growTwoEmptyM ck = false) := by
+          haltingStateReached Compile.growTwoEmptyM ck = false)
+      ∧ t ≤ 4 * (Compile.encodeTape s ++ res).length + 21 := by
   have hbit2 : Compile.BitState (s ++ [[]]) := by
     have := Compile.BitState_append_replicate_nil s 1 hbit
     rwa [show List.replicate 1 ([] : List Nat) = [[]] from rfl] at this
-  obtain ⟨t1, hr1, ht1⟩ := Compile.growEmpty_run s hbit res hres
-  obtain ⟨t2, hr2, ht2⟩ := Compile.growEmpty_run (s ++ [[]]) hbit2 res hres
+  obtain ⟨t1, hr1, ht1, htb1⟩ := Compile.growEmpty_run s hbit res hres
+  obtain ⟨t2, hr2, ht2, htb2⟩ := Compile.growEmpty_run (s ++ [[]]) hbit2 res hres
+  -- growing one empty register adds exactly one tape cell.
+  have hrel : (Compile.encodeTape (s ++ [[]]) ++ res).length
+      = (Compile.encodeTape s ++ res).length + 1 := by
+    rw [Compile.encodeTape, Compile.encodeTape, Compile.encodeRegs_snoc_nil]
+    simp only [List.length_append, List.length_cons, List.length_singleton, List.length_nil]
+    omega
+  rw [hrel] at htb2
   have hstart : Compile.growEmptyTM.M.start = 0 := by
     show (Compile.rewindBracket _ _ _ _ _ _).M.start = 0
     rw [Compile.rewindBracket_M]; rw [Compile.joinTwoHalts_start, composeFlatTM_start]; rfl
@@ -22806,7 +22820,7 @@ theorem Compile.growTwoEmpty_run (s : State) (hbit : Compile.BitState s)
   obtain ⟨hrun, _⟩ := hcomp
   have happend : (s ++ [[]]) ++ [[]] = s ++ [[], []] := by simp
   rw [happend] at hrun
-  refine ⟨_, hrun, ?_⟩
+  refine ⟨_, hrun, ?_, by omega⟩
   -- no-early-halt
   have htraj := composeFlatTM_no_early_halt (M₁ := Compile.growEmptyTM.M) (M₂ := Compile.growEmptyTM.M)
     (exit := Compile.growEmptyTM.exit) (t₂ := t2)
@@ -24243,7 +24257,7 @@ theorem Compile.compareRegsPrefix_run (s0 : State) (src1 src2 : Var)
     exact Nat.lt_of_lt_of_le (Nat.lt_of_le_of_lt (Nat.zero_le _) Compile.growEmptyTM.exit_lt)
       (Nat.le_add_right _ _)
   -- ### stage runs
-  obtain ⟨t1, hgrow_run, hgrow_traj⟩ := Compile.growTwoEmpty_run s0 hbit res hres
+  obtain ⟨t1, hgrow_run, hgrow_traj, _⟩ := Compile.growTwoEmpty_run s0 hbit res hres
   obtain ⟨t2, hcp1_run, hcp1_traj, _⟩ :=
     Compile.copyEmpty_run (s0 ++ [[], []]) s0.length src1 hsc1_ne1 hsc1_lt1 hsrc1_lt1 hbit1 hs1sc1 res hres
   rw [hg1eq, hcp1set] at hcp1_run
