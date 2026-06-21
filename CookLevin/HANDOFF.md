@@ -133,77 +133,88 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What the last session (2026-06-21, top-down) did — **the eqBit BUDGET FEASIBILITY GATE (top-down task 0a): re-validated; VERDICT = GREEN. Corrected the prior bottom-up RISK FINDING (it was over-pessimistic). Shipped a worst-case probe + a PROVEN arithmetic backbone (`probes/EqBitBudgetProbe.lean`, all theorems nlinarith-checked).**
+## ⚠⚠ What the last session (2026-06-21b, bottom-up) found — **BLOCKING ARCHITECTURAL FINDING: the d2 `compareRegsTM` stack is COMPLETE & axiom-clean but CANNOT be instantiated into the fixed `opEqBit` machine. The d1 wrapper as planned does not typecheck. The eqBit path needs a scratch-addressing redesign (Resolution B, below) BEFORE d1/budget can proceed.**
 
-Risk-based de-risking session. The prior bottom-up session flagged that the
-`compareRegsTM` working tape is `L4 ≈ 3·op-L` and that the provable bounds sum to
-`~133·op-L²` vs the const-72 ceiling `144·op-L²` — a fragile ~92% margin — and asked
-for a feasibility re-validation BEFORE finishing the eqBit assembly. This session ran
-that gate. **Result: the assembly is comfortably FEASIBLE; the alarm was a false
-alarm.** No design change, no `Op.cost` bump.
+Risk-based session. Before threading the d2-iv budget + building the d1 wrapper, I
+checked that the d1 wrapper can actually be *defined*. It cannot. **This is the
+"effort on code that must later be discarded" risk — surfaced now, at the d1 seam,
+before the budget work is wasted on an un-instantiable base.**
 
-### ★ VERDICT — GREENLIGHT the eqBit d2-iv assembly (prefix + top bounds + d1 wrapper).
-Use **const-72** for the per-op contract (covers ALL eqBit inputs; free vs
-`physStepBudget` — `72 = 8·9`, the discharge is termwise with `L ≤ G`). The current
-`opBudgetLoosen` const-54 already suffices for *every case except* the fully-degenerate
-`eqBit r r r` (a register compared to itself AND written to itself — off every real path).
+### The finding (airtight, type-level — no build needed to see it)
+- `compileOp : Op → CompiledCmd` produces a machine determined **only** by the op's
+  register args `dst src1 src2`. And `compileCmd`'s op case is `| _, .op o => compileOp o`
+  — it **discards the scratch base `sb`**. So an op gadget has **no access to `sb`, to
+  `s`, or to `s.length`.**
+- The whole d2 stack `compareRegsTM sc1 sc2 src1 src2` (and `compareRegsPrefixM`,
+  `copyEmptyRawTM`, `compareLoopTM`, …) is parameterized by the **runtime index
+  `sc1 = s.length`**: it `growTwoEmpty`s two scratch registers at the *end* of the
+  register list and addresses them by index (`navigateToRegTM`/`copyLoopTM` literally
+  have `2 + 3·sc1` states — index baked into the machine).
+- The d1 sketch `opEqBit dst src1 src2 := … compareRegsTM s.length (s.length+1) …`
+  **cannot typecheck** — `s.length` is not a function of `dst/src1/src2`. The d2 stack
+  is a complete, sorry-free, axiom-clean SPEC (`compareRegsTM_run_{eq,neq}`,
+  `compareLoop_run` all `[propext, Classical.choice, Quot.sound]`) that **cannot be
+  plugged into the position-fixed `compileOp` contract.** Months of d2 work built a
+  spec on the wrong addressing model.
 
-### Two corrections to the prior finding (both machine-checked):
-1. **`L4 < 2·op-L` when `src1 ≠ src2`** (every real program incl. the live EvalCnf
-   path), **NOT `3·op-L`.** `L4 = op-L + |g1| + |g2| + 2`, and since `src1`/`src2`
-   coexist in the same input `s`, `|g1|+|g2| ≤ State.size s = op-L − len − 2`. So
-   `L4 ≤ 2·op-L` (measured ratio 1.87–1.90). `≈3·op-L` is reachable ONLY when
-   `src1 = src2` (both scratch copies duplicate one giant register; measured up to 2.57,
-   →3 as the register grows).
-2. **The per-stage worst cases are MUTUALLY EXCLUSIVE.** A long match (loop
-   `(matchLen+1)·24L4` expensive) forces short leftover suffixes (`c_i = g_i.drop
-   matchLen`, cleanup cheap), and vice versa. Summing each stage's *independent* worst
-   case (what the finding did → `133·op-L²`) double-counts; the JOINT worst is far
-   smaller.
+### The precedent that shows the right model: `forBnd`
+`compileForBnd cnt bnd sb …` uses scratch at the **fixed compile-time index `sb`/`sb+1`**
+(threaded by `compileCmd`), on **pre-existing PADDED scratch** (registers `≥ sb` are
+empty by `hscratch`; `padRegsTM` reserves `k + 2·loopDepth` of them; navigation is
+by the static index `sb`). It does **not** grow anything. eqBit must follow this model.
 
-### Measured + PROVEN (`EqBitBudgetProbe.lean`; lift the theorems into `Compile.lean`):
-- Real worst-case full `opEqBit` steps ≈ `12–13·op-L²` (~70% of the old `18·op-L²`).
-- **`compareBudget_arith_fits54`** (distinct `src`): the TIGHT iteration-explicit stage
-  sum fits **const-54 at ≤28%**; the fully-DECOUPLED honest bound (loop≤`|g1|`,
-  cleanup≤`|g1|+|g2|` — the finding's over-counting method, but with the corrected `L4`)
-  fits const-54 at **≤53%**.
-- **`selfBudget_neqDst_54`** (`src1=src2≠dst`): fits **const-54** (constraint
-  `l+dlen+2 ≤ op-L`).
-- **`selfBudget_eqDst_72`** (`eqBit r r r`): fits **const-72** (constraint `l+3 ≤ op-L`,
-  i.e. the register coexists on the tape). The ONLY case needing 72. ⚠ `l ≤ op-L`
-  *alone* is too weak — the additive gadget overheads bust a tiny `op-L` ceiling; thread
-  the coexistence `l+3 ≤ op-L` (always available: `op-L = State.size+len+2`, `len ≥ 1`).
+### ★ RECOMMENDED RESOLUTION — **Resolution B (pre-existing padded scratch at a threaded base).** Reuses the most; matches `forBnd`.
+1. **Thread `sb` into the op case:** `compileOp : Nat → Op → CompiledCmd`, with
+   `compileCmd | sb, .op o => compileOp sb o`. All op cases ignore `sb` except `eqBit`
+   (and later `concat`).
+2. **`opEqBit sb dst src1 src2`** uses scratch at the fixed indices `sb`, `sb+1`
+   (pre-existing, empty) — **NO `growTwoEmpty`/`shrinkTwoEmpty`.** Build a
+   grow/shrink-free `compareRegsNoGrow sb (sb+1) src1 src2 = copyEmpty sb src1 ⨾
+   copyEmpty (sb+1) src2 ⨾ compareLoop sb (sb+1) ⨾ branchComposeFlatTM eqVerdictM
+   (clear sb ⨾ clear (sb+1)) (clear sb ⨾ clear (sb+1)) …`. **This REUSES, verbatim,
+   the proven `copyEmpty_run` / `compareLoop_run` / `eqVerdictM` / `clearRegionTM_run`
+   (all index-parameterized — just pass `sb` instead of `s.length`)** and the
+   consume-loop cascade (the hard ~4K-LOC novel core SURVIVES). The existing
+   `compareRegsPrefix_run` / `compareRegsTM_run_{eq,neq}` are good PROOF TEMPLATES — drop
+   the grow stage (prefix → 3 stages) and the shrink stage (cleanup → `clear ⨾ clear`).
+   **`growTwoEmpty`/`shrinkTwoEmpty` (~1K LOC, Compile.lean ~22307–23438) become DEAD.**
+3. **Contract change:** `compileOp_sound_physical_residue` gains `(sb : Nat)` + the
+   eqBit-only hyps `sb + 1 < s.length`, `s.get sb = []`, `s.get (sb+1) = []`. The op case
+   of `run_physical_residue_gen` already has `hscratch`/`hk` to supply them — **but only
+   after the padding reserves eqBit's 2 registers** (next point).
+4. **Padding reservation (the OWNER-SENSITIVE part — design top-down first).** Currently
+   `padRegsTM` reserves `k + 2·loopDepth` (loop counters). A leaf `eqBit` has
+   `loopDepth = 0`, so at the deepest op there may be **zero** free scratch (`s.length =
+   k`). Reserve eqBit's 2: e.g. define `scratchNeed c ≥ loopDepth` that is `≥ 1` when `c`
+   contains an `eqBit`/`concat`, pad to `k + 2·scratchNeed`, and re-thread the `hk`
+   inequality through `run_physical_residue_gen` + both bridges' `width_le`. **This
+   touches the WALL/`padRegsTM` (owner-settled `sig=4` is untouched, but the pad *amount*
+   changes) — design it carefully in a TOP-DOWN session before bottom-up builds step 2.**
 
-### Concrete handoff to bottom-up (the proven arithmetic IS the backbone):
-- **Lift `compareBudget_arith_fits54` + `selfBudget_eqDst_72` from the probe into
-  `Compile.lean`** next to `opBudgetLoosen` for the top bound. Their hypotheses are
-  exactly what the run lemmas supply: `matchLen ≤ |g_i|`, `c1+c2 ≤ l1+l2` (`length_drop`),
-  `l1+l2+2 ≤ op-L` (`encodeTape_length` + `State.size`), `dlen ≤ op-L`. Each stage's
-  budget is bounded by the uniform working tape `L4` (monotone in tape length).
-- **Bump `opBudgetLoosen`/the contract `54 → 72`** (one line; free vs `physStepBudget`).
-  Then **the cleanup TIGHTENING (old d2-iv step 1) is NICE-TO-HAVE, not a blocker**: even
-  the COLLAPSED currently-proven cleanup `18L4²` + clear `9L4²` fits const-72 at ≤88% for
-  `src1≠src2` (measured), and for `eqBit r r r` the cleanup is `c=0` = linear (collapsed
-  is irrelevant there). Do the tightening only if cheap (it drops the margin 88%→28%,
-  robustifying the final `nlinarith`).
-- **Alternative to bumping:** keep const-54 and add a side-condition `src1 ≠ src2 ∨
-  src1 ≠ dst` to the eqBit contract case if the witnesses guarantee it (the live EvalCnf
-  `eqBit` uses distinct registers). But const-72 is simpler and free.
+### Resolutions considered & rejected
+- **Res A (grow-at-end + position-independent "navigate-to-last-register").** Keeps
+  grow/shrink, but requires NEW end-addressing nav gadgets AND reworking the ENTIRE
+  index-parameterized consume-loop cascade (`compareBodyTM`/`compareLoopTM`/`copyEmpty`/
+  verdict) for end-addressing — discards the ~4K-LOC core. Strictly more work than B.
+- **Scratch-free in-place bit-by-bit compare (cursor-mark like `opCopy`).** Possible
+  (no scratch, no padding/contract change) but a totally different machine — discards
+  ALL d2 work. Only consider if the padding redesign proves intractable.
 
-### Gotchas confirmed this session
-- **The "independent per-stage worst-case sum" over-counts on a quadratic budget.** When
-  validating a composed budget, compute the JOINT worst case (respect the constraints
-  tying the stages: here `matchLen + |leftover| ≤ |operand|`, `Σ operands ≤ op-L`). The
-  probe's `provableTight` (real matchLen/leftover) vs `provableDecoupled` (relaxed
-  independently) makes the gap visible — measure both.
-- **A correct-asymptotically budget can fail `nlinarith` at SMALL sizes** because the
-  additive gadget-overhead constants (`+21`, `+45`, …) exceed a tiny `c·op-L²` ceiling.
-  Fix by threading the *real* lower bound on `op-L` (here `op-L ≥ l + 3`, from
-  `encodeTape_length`), not a loose `l ≤ op-L`.
-- `nlinarith` for these sums needs the cross-term hints `l*opL ≤ opL*opL`
-  (`Nat.mul_le_mul hl (Nat.le_refl opL)`) and `l*l ≤ opL*opL` (`Nat.mul_le_mul hl hl`),
-  plus `Nat.zero_le` of every product atom. `Nat.zero_le (l*opL)` alone is useless (gives
-  `≥0`, not the `≤opL²` bound needed).
+### What this session shipped
+- The finding + Resolution-B plan (this block + bottom-up task 1, rewritten).
+- Verified the build is green (3358 jobs) and the d2 top lemmas are axiom-clean (so the
+  salvage analysis is exact: the consume-loop core is reusable verbatim).
+- **No code changes** — deliberately: building d1/budget on the un-instantiable base, or
+  doing a half-finished `compileOp`-signature change, would be exactly the discarded
+  effort to avoid. The `compileOp` signature + padding redesign is a top-down design call.
+
+### The budget arithmetic is still valid (don't re-derive)
+`probes/EqBitBudgetProbe.lean`'s `compareBudget_arith_fits54` / `selfBudget_eqDst_72`
+remain correct as a CEILING: Resolution B's stage sum DROPS the grow (`4L+21`) and shrink
+(part of cleanup) terms, so it is strictly SMALLER than the probe's grow-inclusive sum —
+the same const-54/72 ceilings hold. Lift them when assembling the no-grow budget. Use
+**const-72** (free vs `physStepBudget`, `72 = 8·9`); the only case needing 72 is the
+degenerate `eqBit r r r`.
 
 ---
 
@@ -500,10 +511,14 @@ Use **const-72** for the per-op contract (covers ALL eqBit inputs; free vs
   _eq_ne_neq,_is_halt}`, `compareBranchM_*`, `compareRegsPrefixM_*`). Reusable: the closed
   `State` form `consumeStep_iterate_append` (`consumeStep^[k] (s0++[a,b]) = s0++[a.drop k,
   b.drop k]`), `BitState_append_drop_pair`, `halt_getElem_of_haltingStateReached`,
-  `compareLoopTM_halt_getElem`. ⚠ **`compareRegsTM_run_*` (top) + `compareRegsPrefix_run`
-  step bounds not yet added** (all sub-gadgets ARE bounded; the FEASIBILITY GATE passed
-  2026-06-21 — see d2-iv + the proven `compareBudget_arith_fits54`). The d1 `opEqBit`
-  wrapper drops `compareRegsTM` in as `branchComposeFlatTM`'s M₁.
+  `compareLoopTM_halt_getElem`. ⚠⚠ **2026-06-21b FINDING: this whole stack is a complete
+  SPEC but is parameterized by the runtime index `sc1 = s.length` (grow-at-end), so it
+  CANNOT be instantiated into the position-fixed `opEqBit`.** It must be RE-ASSEMBLED on a
+  threaded scratch base (Resolution B — see the top session block + bottom-up task 1). The
+  REUSABLE, axiom-clean cores (index-parameterized — just pass `sb`): `compareLoop_run`,
+  `copyEmpty_run`, `eqVerdictM`, the `compareBodyTM`/`testMachine`/`bitCompareM` cascade,
+  `consumeStep_iterate_append`. **DEAD on Res B:** `growTwoEmpty`/`shrinkTwoEmpty`/
+  `compareRegsPrefixM`/`compareRegsTM`/`compareCleanupM` (grow/shrink scaffolding).
 
 ---
 
@@ -523,20 +538,37 @@ session block: scratch interface re-pinned, gen lemma threaded, probe green.
 The build is UNGATED for bottom-up. New frontier:
 
 ✅ **Task 0a (eqBit BUDGET FEASIBILITY gate) is DONE (2026-06-21, top-down) — VERDICT
-   GREEN.** Re-validated with a worst-case probe + proven arithmetic (see this session's
-   block above and `probes/EqBitBudgetProbe.lean`). The prior `~133·op-L²`/fragile-92%
-   alarm was over-pessimistic (`L4 < 2·op-L` for distinct `src`; per-stage worst cases
-   are mutually exclusive). **Proceed with the bottom-up assembly at const-72** (free vs
-   `physStepBudget`); the cleanup tightening is no longer a blocker. The proven
-   `compareBudget_arith_fits54` / `selfBudget_eqDst_72` are the top-bound backbone.
+   GREEN.** The proven `compareBudget_arith_fits54` / `selfBudget_eqDst_72`
+   (`probes/EqBitBudgetProbe.lean`) are the top-bound backbone (still valid as ceilings
+   for Resolution B — the no-grow sum is strictly smaller).
 
-   **▶ NEXT TOP-DOWN SESSION:** with 0a done, the eqBit ball is in bottom-up's court
-   (assembling d2-iv). The next *non-gated* top-down item is **Task 1 (CliqueRelTM)** —
-   standalone, highest standalone top-down value, not blocked by the compiler. Task 0
-   (the eqBit-completion axiom checkpoint) is gated on bottom-up finishing the wrapper.
+⚠⚠ **Task 0b — DESIGN Resolution B for the `eqBit` scratch (NEW, HIGHEST-PRIORITY top-down;
+   the eqBit path is BLOCKED on it).** The 2026-06-21b bottom-up session found the d2
+   `compareRegsTM` stack is un-instantiable into the position-fixed `opEqBit` (it addresses
+   scratch by the runtime index `s.length`; `compileOp` has no scratch base). Read the top
+   session block + bottom-up task 1. **Concrete top-down work (design + skeleton with
+   `sorry`, surface gaps; mirror the `forBnd` scratch model):**
+   - Change `compileOp : Nat → Op → CompiledCmd` and `compileCmd | sb, .op o => compileOp
+     sb o` (all op cases ignore `sb` except `eqBit`). Restate `compileOp_sound_physical_residue`
+     with `(sb : Nat)` + eqBit-only hyps (`sb+1 < s.length`, `s.get sb = s.get (sb+1) = []`).
+   - **The owner-sensitive part — pad reservation.** A leaf `eqBit` has `loopDepth = 0`, so
+     the current `padRegsTM` pad `k + 2·loopDepth` may give ZERO free scratch. Define a
+     `scratchNeed c` (`≥ loopDepth`, and `≥ 1` if `c` contains an `eqBit`/`concat`), pad
+     `k + 2·scratchNeed`, and re-thread `hk` through `run_physical_residue_gen` + both
+     bridges' `width_le`. `sig=4`/`BitState` is UNTOUCHED; only the pad *amount* changes.
+     Surface early whether `scratchNeed` ripples the proven `padRegsTM`/`paddedBitDecider_run`
+     budget poly (it should stay `inOPoly`). **Get this skeleton typechecking with `sorry`s
+     so bottom-up can build `compareRegsNoGrow` + the d1 wrapper against a real interface.**
+   - Then hand to bottom-up (task 1 BUILD step). After bottom-up closes eqBit, do the
+     completion checkpoint (Task 0 below).
+
+   **▶ NEXT TOP-DOWN SESSION:** **Task 0b** (above) is the highest-value item — it unblocks
+   the entire live `sat_NP` decider chain. If you'd rather not touch the WALL pad this
+   session, **Task 1 (CliqueRelTM)** is the standalone alternative (not blocked by the
+   compiler). Task 0 (the eqBit-completion axiom checkpoint) is gated on bottom-up finishing.
 0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
-   d2 `compareRegsTM` + d1 `opEqBit` wrapper).** When the `eqBit` case of
-   `compileOp_sound_physical_residue` (Compile.lean ~18183, currently raw `sorry`) is
+   Resolution-B `opEqBit` gadget).** When the `eqBit` case of
+   `compileOp_sound_physical_residue` (Compile.lean ~18361, currently raw `sorry`) is
    discharged, the **entire live decider chain `sat_NP → … → Compile_run_physical_residue`
    becomes sorry-free** (`evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free). Concrete top-down
    work: `#print axioms sat_NP` / `inTimePolyTM_evalCnf` and confirm `sorryAx` is GONE from
@@ -586,155 +618,66 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~18009; raw `sorry`s a
 (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
 1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
-   needs).** `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so discharging the
-   `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean ~18183) makes
-   the entire live decider chain `sat_NP → … → Compile_run_physical_residue`
-   **sorry-free**. The **design is settled** (see this session's block above — read
-   it first). `Op.cost eqBit = 1`; residue beyond `clear`'s `|dst₀|` is ZERO; output
-   is exactly `[answer]` (1 cell). **Decomposed build plan (build (d2) first, then
-   the (d1) wrapper):**
+   needs), but ⚠ BLOCKED on the scratch-addressing redesign (see this session's block
+   above — read it FIRST).** `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so
+   discharging the `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean
+   ~18361, raw `sorry`) makes the entire live decider chain `sat_NP → … →
+   Compile_run_physical_residue` **sorry-free**. `Op.cost eqBit = 1`; output is exactly
+   `[answer]` (1 cell).
 
-   **(d2) `compareRegsTM src1 src2` — design (A), `cost=1` (budget SETTLED this
-   session — see the session block; reuse `copyLoop_run`, NOT `opCopy_run`).**
-   Runs on `encodeTape s ++ res`, leaves the tape **restored**, halts in EQ or NEQ
-   with `EQ ⟺ s.get src1 = s.get src2`. Structure: `growTwoEmpty ⨾ copy src1→sc1 ⨾
-   copy src2→sc2 ⨾ consumeLoop ⨾ verdict ⨾ clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`.
-   Build & prove bottom-up:
-   **★ RECOMMENDED ORDER NOW (2026-06-19):** ✅ (d2b-prep), ✅ (d2b verdict
-   `eqVerdictM`), ✅ ALL of d2a (leaves + body + `compareLoop_run`), ✅ (d2c-GROW),
-   ✅ (d2c-SHRINK), ✅ **(d2-COPY: `copyEmptyRawTM`/`copyEmpty_run` — DONE &
-   axiom-clean 2026-06-19).** **ALL d2 sub-gadgets are now proven — the only
-   remaining bottom-up work for `eqBit` is the STITCHING:**
+   **▶ THE FINDING (2026-06-21b): the existing d2 `compareRegsTM` cannot be plugged into
+   `opEqBit`.** It addresses scratch by the runtime index `sc1 = s.length` (grow-at-end +
+   `navigateToRegTM`), but `compileOp` builds a machine fixed by `dst/src1/src2` only.
+   The d2 stack is a complete, axiom-clean SPEC that must be RE-ASSEMBLED on a fixed
+   scratch base. **Do NOT attempt the old d1 sketch — it does not typecheck.**
 
-   **▶ THE IMMEDIATE NEXT STEP — d2-iv (BUDGET): leaves+body+invariance DONE; finish
-   the loop + prefix + top bounds.** `compareRegsTM_run_{eq,neq}` is structurally
-   PROVEN; its sub-gadgets (the whole consume-loop cascade) now carry `t ≤ …`
-   bounds, and the keystone tape-invariance lemma is proven (2026-06-20d). What's
-   left is to bound `compareLoop_run`, `compareRegsPrefix_run`, and the two
-   `compareRegsTM_run_*` so the `eqBit` op contract (`(54·L²+54·L+180)·(cost+1)`,
-   loosened 2026-06-20d) discharges. **d1 (the wrapper) is BLOCKED on the top bound**
-   — without it the wrapper's run lemma has no step bound and the contract can't
-   close. The full structural
-   assembly (`growTwoEmpty ⨾ copyEmpty src1→sc1 ⨾ copyEmpty src2→sc2 ⨾ compareLoop ⨾
-   branchComposeFlatTM eqVerdictM cleanup cleanup exitEQ exitNEQ`) is `#eval`-validated
-   (`probes/CompareRegsAssemblyProbe.lean`) and proven. Sub-steps:
-   - ✅ **(d2-i CLEANUP) DONE & axiom-clean (2026-06-19b)** — `Compile.compareCleanupM
-     sc1 sc2` (= `clear sc1 ⨾ clear sc2 ⨾ shrinkTwoEmpty`) + `compareCleanup_run`:
-     from `encodeTape (base++[c1,c2]) ++ res` (sc1=base.length, sc2=base.length+1)
-     → `encodeTape base ++ (((res++replicate|c1|0)++replicate|c2|0)++[0,0])`, head 0,
-     + no-early-halt. Plus `compareCleanupM_{exit,exit_is_halt,valid,sig,tapes,states}`
-     and `shrinkTwoEmptyM_{exit_is_halt,valid,sig,tapes,start}`. **`compareCleanupM_exit_is_halt`
-     is ready for the branch wrap (cleanup = M₂ = M₃).**
-   - **(d2-ii PREFIX) ✅ DONE & axiom-clean (2026-06-20).** `Compile.compareRegsPrefixM
-     sc1 sc2 src1 src2` (= `growTwoEmpty ⨾ copyEmpty sc1 src1 ⨾ copyEmpty sc2 src2 ⨾
-     compareLoop sc1 sc2`) + `compareRegsPrefix_run`: from `encodeTape s0 ++ res`
-     (sc1=s0.length, sc2=s0.length+1, src1/src2 `< s0.length`) → exit
-     `compareRegsPrefixM_exit`, tape `encodeTape ((consumeStep sc1 sc2)^[matchLen g1 g2]
-     (s0 ++ [g1, g2])) ++ (res ++ replicate (2·matchLen g1 g2) 0)` (g1=`s0.get src1`,
-     g2=`s0.get src2`) + no-early-halt. 4-stage `composeFlatTM_run`/`_no_early_halt`
-     thread (model: `copyEmpty_run`). Also added: the prefix-machine shape lemmas
-     (`growTwoEmptyM_*`, `copyEmptyRawTM_{start,exit_lt}`, `compareLoopTM_*`) and
-     `compareLoop_run` now returns the no-early-halt trajectory too.
-     ⚠⚠ **GOTCHA (cost me a session): `omega` SILENTLY FAILS on trivial arithmetic
-     side-goals inside this large-context proof** — it returns "could not prove" with
-     spurious counterexamples referencing *unrelated* hypotheses (e.g. `length(s0 ++
-     [g1,g2]) ≥ 2` for a goal `s0.length < s0.length + 2`). The whole prefix proof uses
-     **term-mode `Nat` lemmas** (`Nat.lt_succ_of_lt`, `Nat.lt_of_lt_of_le`,
-     `Nat.add_lt_add_left`, `Nat.add_comm`, `Nat.add_sub_cancel_left n m`, …) for ALL
-     arithmetic. **Do NOT use `omega` in `compareRegsTM`/the d1 wrapper** — it will fail
-     on goals that are obviously true. (Suspected: omega chokes scanning the many
-     `List`/encodeTape hypotheses. The next agent with a working `lean_goal` could
-     confirm; here the LSP was off-limits.) Also: pin implicit list args of
-     `List.set_append_right`/`List.getElem?_append_right` (`(s := …)`, or feed
-     `Nat.le_refl _`/`Nat.le_succ _` as the hypothesis) so the side-condition doesn't
+   **▶ THE PLAN NOW (Resolution B — pre-existing padded scratch at a threaded base):**
+   - **GATE (TOP-DOWN, do first): design the scratch-base threading + padding reservation.**
+     `compileOp : Nat → Op → CompiledCmd`; `compileCmd | sb, .op o => compileOp sb o`;
+     restate `compileOp_sound_physical_residue` with `(sb : Nat)` + eqBit-only hyps
+     (`sb+1 < s.length`, `s.get sb = []`, `s.get (sb+1) = []`); and reserve eqBit's 2
+     scratch in `padRegsTM` (pad `k + 2·scratchNeed` where `scratchNeed ≥ 1` if `c` has
+     an `eqBit`/`concat`; re-thread `hk` through `run_physical_residue_gen` + both bridges'
+     `width_le`). **This touches the WALL pad amount — owner-sensitive; design carefully
+     before building.** See the top-down stream's new Task 0b.
+   - **BUILD (BOTTOM-UP, after the gate): the grow/shrink-free assembly. PROBE-VALIDATED
+     end-to-end (2026-06-21b, `probes/EqBitNoGrowProbe.lean`, all `#eval`s `true`): with
+     pre-existing empty scratch at `sb`/`sb+1`, the no-grow chain decides equality AND
+     restores the tape.** Build
+     `compareRegsNoGrow sb (sb+1) src1 src2 = copyEmpty sb src1 ⨾ copyEmpty (sb+1) src2 ⨾
+     compareLoop sb (sb+1) ⨾ branchComposeFlatTM eqVerdictM (clear sb ⨾ clear (sb+1))
+     (clear sb ⨾ clear (sb+1)) …`. **REUSE VERBATIM (all proven & axiom-clean, all
+     index-parameterized — pass `sb`):** `copyEmpty_run`, `compareLoop_run` (consume-loop
+     core), `eqVerdictM` + `eqVerdictM_run_{eq,neq_left,neq_right}`, `clearRegionTM_run`,
+     plus the whole `compareBodyTM`/`testMachine`/`bitCompareM` cascade. The existing
+     `compareRegsPrefix_run` / `compareRegsTM_run_{eq,neq}` are PROOF TEMPLATES — delete
+     the grow stage (prefix → 3 stages: copy ⨾ copy ⨾ compareLoop) and the shrink stage
+     (cleanup → `clear ⨾ clear`). Then the d1 wrapper `opEqBit sb dst src1 src2` (port of
+     `opNonEmpty` with `compareRegsNoGrow` as the `branchComposeFlatTM` M₁) + the contract
+     case (copy of the `nonEmpty` case, residue `res_in ++ replicate |dst₀| 0`).
+   - **DEAD on Resolution B:** `growEmptyTM`/`growTwoEmpty` (~22307–22828) and
+     `shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM` (~22829–23438, ~24101–24467) —
+     scratch is pre-existing, so no grow/shrink. Delete once the no-grow assembly is green.
+   - **Budget (const-72, free vs `physStepBudget`):** the no-grow stage sum is the probe's
+     `provableTight` MINUS the grow term — strictly under the proven
+     `compareBudget_arith_fits54` (distinct src) / `selfBudget_eqDst_72` (`eqBit r r r`)
+     ceilings in `probes/EqBitBudgetProbe.lean`. Lift those two theorems into `Compile.lean`
+     and **bump `opBudgetLoosen`/the contract `54 → 72`** (one line). `compareLoop_run`'s
+     bound is the iteration-explicit `(matchLen+1)·(24·L+45)`; `copyEmpty_run` is
+     `(|src|+1)(5L+23)+3L+4`; `eqVerdictM ≤ 6L+2`; `clearRegionTM` is `9L²+9` (collapsed)
+     or `(n+1)(6L+13)` (tight, if needed). **Do NOT bump `Op.cost eqBit`.**
+
+   **Reusable proof gotchas from the d2 work (still valid):**
+   - ⚠⚠ **`omega` SILENTLY FAILS on trivial arithmetic side-goals inside the large
+     `compareRegs*` proof contexts** (returns "could not prove" with spurious
+     counterexamples on *unrelated* hypotheses). Use **term-mode `Nat` lemmas**
+     (`Nat.lt_succ_of_lt`, `Nat.lt_of_lt_of_le`, `Nat.add_lt_add_left`, `Nat.add_comm`,
+     `Nat.add_sub_cancel_left n m`) for ALL arithmetic there. (`omega` is fine in the
+     small shape-lemma contexts — the failure is specific to the huge proofs.)
+   - Pin implicit list args of `List.set_append_right`/`List.getElem?_append_right`
+     (`(s := …)`, or feed `Nat.le_refl _`/`Nat.le_succ _`) so the side-condition doesn't
      elaborate against a metavariable.
-   - **(d2-iii BRANCH WRAP) ✅ DONE & axiom-clean (2026-06-20b).** `Compile.compareRegsTM
-     sc1 sc2 src1 src2 = compareRegsPrefixM ⨾ compareBranchM`
-     (`compareBranchM := branchComposeFlatTM eqVerdictM cleanup cleanup eqVerdictM_exit_eq
-     eqVerdictM_exit_neq`). `compareRegsTM_run_eq` (EQ via `branchComposeFlatTM_run_pos`)
-     / `compareRegsTM_run_neq` (NEQ via `_run_neg`, splitting on which `drop n` suffix is
-     nonempty), tape restored to `encodeTape s0 ++ residue` (existential `ValidResidue`).
-     The prefix→state rewrite used the new `consumeStep_iterate_append` (NOT
-     `consumeIter_spec` — the closed `State` form is cleaner). Plus the full shape family
-     `compareRegsTM_{exit_eq,exit_neq,_lt,_ne,_is_halt,sig,tapes,start,states,valid}` and
-     `compareBranchM_*`, `compareRegsPrefixM_{states,sig,tapes,valid,exit_lt,exit_is_halt}`.
-     **NB: `omega` worked fine in these small shape-lemma contexts** (the d2-ii
-     omega-failure was specific to the huge prefix proof; not a general ban).
-   - **(d2-iv BUDGET) — ALL sub-gadgets bounded; FEASIBILITY GATE PASSED (top-down
-     2026-06-21). Remaining: prefix + top bounds + d1 wrapper.** ✅ Bounded & axiom-clean:
-     `compareLoop_run` **`(matchLen+1)·(24·L+45)`** (iteration-explicit), `growEmpty ≤ 2L+9`,
-     `growTwoEmpty ≤ 4L+21`, `shrinkEmpty ≤ 4L+12`, `shrinkTwoEmpty ≤ 8L+25`,
-     `compareCleanup ≤ 18L²+8L+45` (collapsed — fine, see below), `eqVerdictM ≤ 6L+2`,
-     `copyEmpty (|src|+1)(5L+23)+3L+4`. **The gate (top-down) PROVED the composition fits
-     — see the session block + `probes/EqBitBudgetProbe.lean`. Do this at const-72.**
-     1. **Bump `opBudgetLoosen`/the contract `54 → 72`** (one line; free vs `physStepBudget`).
-        Then **cleanup tightening is OPTIONAL** — the collapsed `compareCleanup ≤ 18L²` + the
-        collapsed d1 `clear dst ≤ 9L²` fit const-72 at ≤88% for `src1≠src2` (measured/proven).
-        Tighten only if cheap (`clearRegionTM_run_tight` sibling exposing the `(n+1)·(6L+13)`
-        already inside `clearRegionTM_run` before `clearBudget_arith` collapses it) — it drops
-        the margin to ~28% and robustifies `nlinarith`, but is NOT a blocker.
-     2. **Prefix `compareRegsPrefix_run`** (sum grow+copy1+copy2+compareLoop, witness
-        `((t1+1+t2)+1+t3)+1+t4`): all four bounded. Thread the tape lengths
-        (`L'(copy1)=L+|g1|+2`, `L''(copy2)=L4=L+|g1|+|g2|+2`; bound everything by `L4`),
-        `|g1|+|g2| ≤ op-L` (`encodeTape_set_length`/`size_set_add`), `matchLen ≤ |g1|`.
-     3. **Top `compareRegsTM_run_{eq,neq}`** (= prefix + verdict + cleanup): sum and discharge
-        via the PROVEN **`compareBudget_arith_fits54`** (distinct `src`) — lift it from the
-        probe into `Compile.lean`. The d1 wrapper additionally needs **`selfBudget_eqDst_72`**
-        for the degenerate `eqBit r r r` (constraint `l+3 ≤ op-L`). Hypotheses (all from the
-        run lemmas): `matchLen ≤ |g_i|`, `c1+c2 ≤ l1+l2` (`length_drop`), `l1+l2+2 ≤ op-L`,
-        `dlen ≤ op-L`. **The hard final arithmetic is already discharged — just port it.**
-     **After the top bound, d1 (the `opEqBit` wrapper) is unblocked.**
-
-   - ✅ **(d2-COPY) `copyEmptyRawTM`/`copyEmpty_run` — DONE & axiom-clean (2026-06-19).**
-     `encodeTape s ++ res` (head 0, `dst` EMPTY) → `encodeTape (s.set dst (s.get src)) ++ res`
-     (head 0, **res unchanged**), tight budget `(|src|+1)(5L+23)+3L+4`. The clear-free
-     `navigateToRegTM ⨾ copyLoopTM ⨾ justRewindTM` (= `opCopy` phases 2–4). Probe
-     `probes/CopyEmptyProbe.lean`. Place the copies so `dst = sc1 = s.length`, `sc2 = s.length+1`
-     (the grown-empty registers); `copyEmpty_run` needs `dst ≠ src`, `dst < length`, `src < length`,
-     `BitState`, `s.get dst = []` — all hold post-`growTwoEmpty`.
-   - ✅ **(d2b-prep / d2b / d2a) — ALL DONE & axiom-clean.** Key outputs the assembly
-     consumes: **`Compile.compareLoop_run`** (from `encodeTape s ++ res` head `0`,
-     loop halts at `compareBodyTM.states` with `sc1`/`sc2` = their `matchLen`-dropped
-     suffixes, residue `++ replicate (2n) 0`); **`Compile.matchLen_drop_empty_iff`**
-     (equal ⟺ both suffixes empty — the verdict's decision fact). ✅ `compareLoop_run`'s
-     step bound is now PROVEN iteration-explicit `(matchLen+1)·(24·L+45)` (2026-06-21).
-   - ✅ **(d2c-GROW) `growEmptyTM`/`growTwoEmpty` — DONE & axiom-clean (2026-06-16b).**
-     Grows `encodeTape s ++ res` → `encodeTape (s ++ [[]]/[[],[]]) ++ res` (head 0),
-     `O(L)`, residue passes through. Place `sc1,sc2` at the register-list END = `s.length`,
-     `s.length+1` (so `src1`/`src2` indices are unchanged).
-   - ✅ **(d2c-SHRINK) `shrinkEmptyTM`/`shrinkEmpty_run` + `shrinkTwoEmptyM`/
-     `shrinkTwoEmpty_run` — DONE & axiom-clean (2026-06-16c).** `encodeTape (s ++ [[]]) ++
-     res → encodeTape s ++ (res ++ [0])` (head 0), `O(L)`; two-version
-     `encodeTape (s ++ [[],[]]) ++ res → encodeTape s ++ (res ++ [0,0])`. ⚠ residue grows
-     by one `0`/shrink. Probe `probes/ShrinkEmptyProbe.lean` (incl. grow→shrink round-trip).
-     **No explicit round-trip lemma is needed — the (d2) seam just threads the concrete
-     output tapes; `shrinkTwoEmpty_run` is applied to the post-`clear` `encodeTape
-     (s ++ [[],[]]) ++ res'` state.**
-   - **Budget (settled, `cost=1` ≈ 18L²):** the two copies use **`copyEmpty_run`**
-     (`(|src|+1)(5L+23)+3L+4`, built on the tight `copyLoop_run`) ⇒ `≤ ~10L²` total;
-     the consume loop is `Θ(L²)` (a few passes/bit on shrinking scratch) ⇒ `≤ ~8L²`;
-     grow/shrink/verdict `O(L)`. Probe `CompareRegsBudgetProbe.lean`. **Do NOT reuse
-     `opCopy_run` (loose `9L²·|src|` busts the budget). Do NOT bump `Op.cost eqBit`.**
-   - **Reuse heavily:** `navigateAndTestTM`/`bitReadTM`/`opTail`/`copyLoop_run`/
-     `clear`/`insertCarryTM`/`deleteCarryTM` (all proven + `#eval`-validated),
-     `branchComposeFlatTM`/`joinTwoHalts`/`loopTM` run-lemma stacks, and
-     `clearBodyRawTM`/`forBndLoop_run`/`opNonEmpty_run` as proof templates.
-
-   **(d1) WRAPPER — reuse `nonEmptyRawM` verbatim — BLOCKED on d2-iv (do it AFTER the
-   budget).** `compareRegsTM` is now a complete 2-exit tester (`compareRegsTM_run_{eq,neq}`
-   + `compareRegsTM_{exit_eq,exit_neq}_{is_halt,lt}` + `_exit_eq_ne_neq` + `_valid` +
-   `_sig`/`_tapes`/`_start` — all PROVEN, ready to drop in as the `branchComposeFlatTM`
-   M₁). Define `opEqBit dst src1 src2 := joinTwoHalts (branchComposeFlatTM (compareRegsTM
-   s.length (s.length+1) src1 src2) (nonEmptyBranchBody dst 2 _) (nonEmptyBranchBody dst 1
-   _) compareRegsTM_exit_eq compareRegsTM_exit_neq) …` — structurally identical to
-   `Compile.nonEmptyRawM`/`opNonEmpty` with `compareRegsTM` swapped in for
-   `navigateAndTestTM`. The shape/valid/halt lemmas and `opEqBit_run` are a **mechanical
-   port of `opNonEmpty`'s**; the `eqBit` contract case is then a copy of the `nonEmpty`
-   case at Compile.lean ~18183 (residue `res_in ++ replicate |dst₀| 0`, W-invariant via
-   `State.size_set_add`). ⚠ **The contract's per-op budget can only be met once
-   `compareRegsTM_run_{eq,neq}` carry a `t ≤ …` bound (d2-iv).** The EQ/NEQ residue from
-   `compareRegsTM` is existential — `obtain` it, then the `nonEmptyBranchBody` clear of
-   `dst` absorbs it (`dst < s.length`, content = original, restored by the tester).
+   - `composeFlatTM_run` witness is `t₁ + 1 + t₂`; chain it for the multi-stage budget.
 
 2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
    `concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`. = `clear dst ⨾
