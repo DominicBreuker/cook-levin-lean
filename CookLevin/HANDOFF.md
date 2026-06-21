@@ -133,71 +133,77 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ✅ What the last session (2026-06-21, bottom-up) did — **bounded `compareLoop` + ALL four resize gadgets + cleanup, AND surfaced a budget-feasibility RISK FINDING that re-shapes the rest of d2-iv.** Full build green (3358); all new results axiom-clean.
+## ✅ What the last session (2026-06-21, top-down) did — **the eqBit BUDGET FEASIBILITY GATE (top-down task 0a): re-validated; VERDICT = GREEN. Corrected the prior bottom-up RISK FINDING (it was over-pessimistic). Shipped a worst-case probe + a PROVEN arithmetic backbone (`probes/EqBitBudgetProbe.lean`, all theorems nlinarith-checked).**
 
-Risk-based session. Added budget conjuncts (each `t ≤ …`) to the eqBit sub-gadgets,
-then — while assembling the prefix (step 2) — surfaced a gap that the prior plan
-glossed over. **Read the finding before continuing d2-iv.**
+Risk-based de-risking session. The prior bottom-up session flagged that the
+`compareRegsTM` working tape is `L4 ≈ 3·op-L` and that the provable bounds sum to
+`~133·op-L²` vs the const-72 ceiling `144·op-L²` — a fragile ~92% margin — and asked
+for a feasibility re-validation BEFORE finishing the eqBit assembly. This session ran
+that gate. **Result: the assembly is comfortably FEASIBLE; the alarm was a false
+alarm.** No design change, no `Op.cost` bump.
 
-**Bounds added (all axiom-clean):**
-- `compareLoop_run`: **`t ≤ (matchLen(g1,g2)+1)·(24·L+45)`** (`L = |encodeTape s ++ res|`,
-  the loop's own input). Stated **iteration-explicit** (kept `matchLen` separate) — this
-  is exactly what `loopBudget_le` yields. Threads `compareBody_iterate ≤ 24L+44` /
-  `compareBody_done ≤ 12L+15` rewritten to the invariant `L` via the keystone
-  `encodeTape_consumeStep_length`.
-- `growEmpty_run` **`≤ 2L+9`**, `growTwoEmpty_run` **`≤ 4L+21`** (`rewindBracket_transport`
-  preserves the explicit composite count; `2R+2|res|+13 = 2L+9` via `|encodeTape s|=R+2`).
-- `shrinkEmpty_run` **`≤ 4·Lin+12`** (`CB = R+3|res|+11`, `t_rw ≤ |Tout|+3` from
-  `encodeTape_residue_twoPhaseRewind`), `shrinkTwoEmpty_run` **`≤ 8L+25`**.
-- `compareCleanup_run` **`≤ 18·L²+8·L+45`** (= 2×`clearRegion 9L²` + `shrinkTwoEmpty`;
-  stage-length equalities `hLB`/`hLC` from `encodeTape_set_length`; summed by `nlinarith`).
-  ⚠ This is the **collapsed `9·L²` (= n ≤ L) shape** — see the finding: it is TOO LOOSE
-  for assembly and must be restated.
+### ★ VERDICT — GREENLIGHT the eqBit d2-iv assembly (prefix + top bounds + d1 wrapper).
+Use **const-72** for the per-op contract (covers ALL eqBit inputs; free vs
+`physStepBudget` — `72 = 8·9`, the discharge is termwise with `L ≤ G`). The current
+`opBudgetLoosen` const-54 already suffices for *every case except* the fully-degenerate
+`eqBit r r r` (a register compared to itself AND written to itself — off every real path).
 
-### ★★ RISK FINDING — the eqBit working tape is ≈ 3× the op-input tape; collapsed `c·L²` budget shapes BUST the op budget.
+### Two corrections to the prior finding (both machine-checked):
+1. **`L4 < 2·op-L` when `src1 ≠ src2`** (every real program incl. the live EvalCnf
+   path), **NOT `3·op-L`.** `L4 = op-L + |g1| + |g2| + 2`, and since `src1`/`src2`
+   coexist in the same input `s`, `|g1|+|g2| ≤ State.size s = op-L − len − 2`. So
+   `L4 ≤ 2·op-L` (measured ratio 1.87–1.90). `≈3·op-L` is reachable ONLY when
+   `src1 = src2` (both scratch copies duplicate one giant register; measured up to 2.57,
+   →3 as the register grows).
+2. **The per-stage worst cases are MUTUALLY EXCLUSIVE.** A long match (loop
+   `(matchLen+1)·24L4` expensive) forces short leftover suffixes (`c_i = g_i.drop
+   matchLen`, cleanup cheap), and vice versa. Summing each stage's *independent* worst
+   case (what the finding did → `133·op-L²`) double-counts; the JOINT worst is far
+   smaller.
 
-`compareRegsTM` (the `eqBit` core) GROWS its tape: it copies `src1`/`src2` (registers
-already in the input state `s`) into two fresh scratch regs, so the working tape is
-**`L4 = L + |g1| + |g2| + 2`, up to ≈ `3·(op-input L)`** (worst case `|g1|≈|g2|≈L`).
-The per-op contract budget is `(54·L²+…)·(cost+1)` with **`L` = op INPUT length**
-(`(encodeTape s ++ res_in).length`), ceiling ≈ `144·(op-L)²` at the max constant `72`.
+### Measured + PROVEN (`EqBitBudgetProbe.lean`; lift the theorems into `Compile.lean`):
+- Real worst-case full `opEqBit` steps ≈ `12–13·op-L²` (~70% of the old `18·op-L²`).
+- **`compareBudget_arith_fits54`** (distinct `src`): the TIGHT iteration-explicit stage
+  sum fits **const-54 at ≤28%**; the fully-DECOUPLED honest bound (loop≤`|g1|`,
+  cleanup≤`|g1|+|g2|` — the finding's over-counting method, but with the corrected `L4`)
+  fits const-54 at **≤53%**.
+- **`selfBudget_neqDst_54`** (`src1=src2≠dst`): fits **const-54** (constraint
+  `l+dlen+2 ≤ op-L`).
+- **`selfBudget_eqDst_72`** (`eqBit r r r`): fits **const-72** (constraint `l+3 ≤ op-L`,
+  i.e. the register coexists on the tape). The ONLY case needing 72. ⚠ `l ≤ op-L`
+  *alone* is too weak — the additive gadget overheads bust a tiny `op-L` ceiling; thread
+  the coexistence `l+3 ≤ op-L` (always available: `op-L = State.size+len+2`, `len ≥ 1`).
 
-So any sub-gadget bound of the *collapsed* form `c·L4²` (iteration count ≤ working
-tape) explodes to `c·9·(op-L)²` once `L4 ≈ 3·op-L`: the loop's old `24·L4²` → `216·op-L²`
-and the cleanup's `18·L4²` → `162·op-L²` **each bust the ceiling alone**. The
-`CompareRegsBudgetProbe` missed this — it #evals single-non-empty-register states
-(`L4 ≈ 1.5L`), not the worst case.
-
-**The fix = iteration-count-explicit bounds everywhere** (iteration count = matchLen /
-cleared-register length, bounded by the op-input register sizes ≤ op-L, while the tape
-factor `L4 ≈ 3·op-L`):
-- ✅ `compareLoop` is already restated this way (`(matchLen+1)·(24L4+45)`; assembler uses
-  `matchLen ≤ |g1| ≤ op-L`). Gives `≈ op-L·72·op-L = 72·op-L²`.
-- ⚠ **cleanup must be restated** `(|c1|+|c2|+1)·(6·L4+13) + shrink` — which needs a
-  **TIGHT `clearRegionTM_run` bound** `(|s.get dst|+1)·(6·L+13)` (it currently proves
-  only the collapsed `9·L²+9`; the tight `(n+1)·(6L+13)` IS already established inside
-  its proof, just not exposed — add a 2nd bound conjunct or a sibling lemma). Gives
-  cleanup `≈ (|c1|+|c2|)·6·op-L·… ≤ 2·op-L·18·op-L = 36·op-L²`.
-- the two copies via `copyEmpty_run` are already iteration-explicit (`(|src|+1)(5L4+23)`).
-
-**Tight whole-eqBit estimate: copies ~25 + loop ~72 + cleanup ~36 ≈ `133·(op-L)²` vs
-ceiling `144·(op-L)²` (constant 72) — FITS but only ~92%, fragile.** ⇒ The op-budget
-constant must go **54 → 72** (free vs `physStepBudget`), and the assembly must thread
-the tight bounds. **A top-down feasibility re-validation is recommended BEFORE finishing
-the bottom-up assembly** (see top-down task 0).
+### Concrete handoff to bottom-up (the proven arithmetic IS the backbone):
+- **Lift `compareBudget_arith_fits54` + `selfBudget_eqDst_72` from the probe into
+  `Compile.lean`** next to `opBudgetLoosen` for the top bound. Their hypotheses are
+  exactly what the run lemmas supply: `matchLen ≤ |g_i|`, `c1+c2 ≤ l1+l2` (`length_drop`),
+  `l1+l2+2 ≤ op-L` (`encodeTape_length` + `State.size`), `dlen ≤ op-L`. Each stage's
+  budget is bounded by the uniform working tape `L4` (monotone in tape length).
+- **Bump `opBudgetLoosen`/the contract `54 → 72`** (one line; free vs `physStepBudget`).
+  Then **the cleanup TIGHTENING (old d2-iv step 1) is NICE-TO-HAVE, not a blocker**: even
+  the COLLAPSED currently-proven cleanup `18L4²` + clear `9L4²` fits const-72 at ≤88% for
+  `src1≠src2` (measured), and for `eqBit r r r` the cleanup is `c=0` = linear (collapsed
+  is irrelevant there). Do the tightening only if cheap (it drops the margin 88%→28%,
+  robustifying the final `nlinarith`).
+- **Alternative to bumping:** keep const-54 and add a side-condition `src1 ≠ src2 ∨
+  src1 ≠ dst` to the eqBit contract case if the witnesses guarantee it (the live EvalCnf
+  `eqBit` uses distinct registers). But const-72 is simpler and free.
 
 ### Gotchas confirmed this session
-- `rewindBracket_transport` **preserves the explicit step count** (the `{t}` passes
-  through) — so a gadget's witness `t` from `exact ⟨_, htrans.1, htrans.2, by omega⟩`
-  is the concrete composite count; bound it directly.
-- `simp only [List.length_*]` **closes** pure length-equalities by rfl (a trailing
-  `omega` then errors "no goals"); keep `omega` only when a `set`-var / `res.length`
-  atom remains.
-- **`omega` cannot relate `9·L·L` and `18·L·L`** (parses `(9*L)*L` vs `(18*L)*L`, distinct
-  atoms) → use `nlinarith [htbA, htbB, htbC]` for the quadratic cleanup sum. LINEAR
-  sums (grow/shrink `2L+9`, `8L+25`) are fine with `omega`.
-- Adding a 4th budget conjunct to a gadget breaks every caller's `obtain ⟨…,_⟩`
-  ("Function expected") — update them to the wider tuple (discard with `_` if unused).
+- **The "independent per-stage worst-case sum" over-counts on a quadratic budget.** When
+  validating a composed budget, compute the JOINT worst case (respect the constraints
+  tying the stages: here `matchLen + |leftover| ≤ |operand|`, `Σ operands ≤ op-L`). The
+  probe's `provableTight` (real matchLen/leftover) vs `provableDecoupled` (relaxed
+  independently) makes the gap visible — measure both.
+- **A correct-asymptotically budget can fail `nlinarith` at SMALL sizes** because the
+  additive gadget-overhead constants (`+21`, `+45`, …) exceed a tiny `c·op-L²` ceiling.
+  Fix by threading the *real* lower bound on `op-L` (here `op-L ≥ l + 3`, from
+  `encodeTape_length`), not a loose `l ≤ op-L`.
+- `nlinarith` for these sums needs the cross-term hints `l*opL ≤ opL*opL`
+  (`Nat.mul_le_mul hl (Nat.le_refl opL)`) and `l*l ≤ opL*opL` (`Nat.mul_le_mul hl hl`),
+  plus `Nat.zero_le` of every product atom. `Nat.zero_le (l*opL)` alone is useless (gives
+  `≥0`, not the `≤opL²` bound needed).
 
 ---
 
@@ -495,9 +501,9 @@ the bottom-up assembly** (see top-down task 0).
   `State` form `consumeStep_iterate_append` (`consumeStep^[k] (s0++[a,b]) = s0++[a.drop k,
   b.drop k]`), `BitState_append_drop_pair`, `halt_getElem_of_haltingStateReached`,
   `compareLoopTM_halt_getElem`. ⚠ **`compareRegsTM_run_*` (top) + `compareRegsPrefix_run`
-  step bounds not yet added** (`compareLoop` + ALL resize/cleanup sub-gadgets ARE bounded
-  as of 2026-06-21 — but cleanup needs tightening first; see the d2-iv RISK FINDING). The
-  d1 `opEqBit` wrapper drops `compareRegsTM` in as `branchComposeFlatTM`'s M₁.
+  step bounds not yet added** (all sub-gadgets ARE bounded; the FEASIBILITY GATE passed
+  2026-06-21 — see d2-iv + the proven `compareBudget_arith_fits54`). The d1 `opEqBit`
+  wrapper drops `compareRegsTM` in as `branchComposeFlatTM`'s M₁.
 
 ---
 
@@ -516,20 +522,18 @@ reduction path is a **compiler gadget**. The top-down frontier:
 session block: scratch interface re-pinned, gen lemma threaded, probe green.
 The build is UNGATED for bottom-up. New frontier:
 
-0a. **★ eqBit BUDGET FEASIBILITY re-validation (DO THIS NEXT — gates the whole eqBit
-   assembly).** The 2026-06-21 bottom-up session surfaced that the `compareRegsTM`
-   working tape is `L4 ≈ 3·(op-input L)` (the two scratch copies duplicate src1/src2),
-   so the assembly fits the op budget only at constant **72** (ceiling `144·op-L²`) with
-   a fragile ~92% margin (estimate `~133·op-L²`), AND only with **iteration-explicit**
-   sub-gadget bounds (collapsed `c·L4²` shapes bust it). Top-down job: (i) write/extend
-   a probe (`probes/EqBitBudgetProbe.lean`) that exercises the WORST case — `src1`/`src2`
-   both ≈ full-length registers (not the current single-non-empty-register inputs) — and
-   confirm real steps stay under `72·op-L²·2`; (ii) decide whether `72` + tight bounds
-   is enough or whether the design needs a change (e.g. a cheaper register-equality that
-   doesn't copy both operands, or — last resort — revisit the owner-settled `cost=1`).
-   If the probe says ≤ ~100·op-L² real worst-case, greenlight the bottom-up prefix/top
-   assembly (d2-iv steps 1–3) at constant 72. If it busts, surface to owner BEFORE more
-   bottom-up work. **This is the de-risking gate the methodology calls for.**
+✅ **Task 0a (eqBit BUDGET FEASIBILITY gate) is DONE (2026-06-21, top-down) — VERDICT
+   GREEN.** Re-validated with a worst-case probe + proven arithmetic (see this session's
+   block above and `probes/EqBitBudgetProbe.lean`). The prior `~133·op-L²`/fragile-92%
+   alarm was over-pessimistic (`L4 < 2·op-L` for distinct `src`; per-stage worst cases
+   are mutually exclusive). **Proceed with the bottom-up assembly at const-72** (free vs
+   `physStepBudget`); the cleanup tightening is no longer a blocker. The proven
+   `compareBudget_arith_fits54` / `selfBudget_eqDst_72` are the top-bound backbone.
+
+   **▶ NEXT TOP-DOWN SESSION:** with 0a done, the eqBit ball is in bottom-up's court
+   (assembling d2-iv). The next *non-gated* top-down item is **Task 1 (CliqueRelTM)** —
+   standalone, highest standalone top-down value, not blocked by the compiler. Task 0
+   (the eqBit-completion axiom checkpoint) is gated on bottom-up finishing the wrapper.
 0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
    d2 `compareRegsTM` + d1 `opEqBit` wrapper).** When the `eqBit` case of
    `compileOp_sound_physical_residue` (Compile.lean ~18183, currently raw `sorry`) is
@@ -656,35 +660,30 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~18009; raw `sorry`s a
      `compareBranchM_*`, `compareRegsPrefixM_{states,sig,tapes,valid,exit_lt,exit_is_halt}`.
      **NB: `omega` worked fine in these small shape-lemma contexts** (the d2-ii
      omega-failure was specific to the huge prefix proof; not a general ban).
-   - **(d2-iv BUDGET) — ALL sub-gadgets bounded (2026-06-21); prefix+top+cleanup-tighten remain.**
-     ✅ Bounded & axiom-clean: `compareLoop_run` **`(matchLen+1)·(24·L+45)`** (iteration-
-     explicit — see the RISK FINDING in the session header), `growEmpty ≤ 2L+9`,
+   - **(d2-iv BUDGET) — ALL sub-gadgets bounded; FEASIBILITY GATE PASSED (top-down
+     2026-06-21). Remaining: prefix + top bounds + d1 wrapper.** ✅ Bounded & axiom-clean:
+     `compareLoop_run` **`(matchLen+1)·(24·L+45)`** (iteration-explicit), `growEmpty ≤ 2L+9`,
      `growTwoEmpty ≤ 4L+21`, `shrinkEmpty ≤ 4L+12`, `shrinkTwoEmpty ≤ 8L+25`,
-     `compareCleanup ≤ 18L²+8L+45` (loose — see below). `eqVerdictM ≤ 6L+2`,
-     `copyEmpty (|src|+1)(5L+23)+3L+4` were already bounded. **Remaining (read the RISK
-     FINDING first — the working tape is `L4 ≈ 3·op-L`, so collapsed `c·L4²` shapes bust
-     the op budget):**
-     1. **TIGHTEN cleanup (BLOCKER for the top bound).** Restate `compareCleanup_run` as
-        **`(|c1|+|c2|+1)·(6·L+13) + (8·L+25)`** (iteration-explicit). This needs a TIGHT
-        `clearRegionTM_run` bound: add a conjunct/sibling **`t ≤ (|s.get dst|+1)·(6·(encodeTape
-        s ++ res).length+13)`** (the `(n+1)·(6L+13)` is ALREADY proven inside
-        `clearRegionTM_run` via `loopBudget_le` before `clearBudget_arith` collapses it to
-        `9L²+9` — just expose it; `n = |s.get dst|`). Then the two cleanup clears each
-        `≤ (|ci|+1)·(6·L4+13)`, summed via `nlinarith`. (Beware: this ripples to every
-        `clearRegionTM_run` caller's `obtain` if you ADD a conjunct — prefer a separate
-        `clearRegionTM_run_tight` lemma to avoid the churn.)
+     `compareCleanup ≤ 18L²+8L+45` (collapsed — fine, see below), `eqVerdictM ≤ 6L+2`,
+     `copyEmpty (|src|+1)(5L+23)+3L+4`. **The gate (top-down) PROVED the composition fits
+     — see the session block + `probes/EqBitBudgetProbe.lean`. Do this at const-72.**
+     1. **Bump `opBudgetLoosen`/the contract `54 → 72`** (one line; free vs `physStepBudget`).
+        Then **cleanup tightening is OPTIONAL** — the collapsed `compareCleanup ≤ 18L²` + the
+        collapsed d1 `clear dst ≤ 9L²` fit const-72 at ≤88% for `src1≠src2` (measured/proven).
+        Tighten only if cheap (`clearRegionTM_run_tight` sibling exposing the `(n+1)·(6L+13)`
+        already inside `clearRegionTM_run` before `clearBudget_arith` collapses it) — it drops
+        the margin to ~28% and robustifies `nlinarith`, but is NOT a blocker.
      2. **Prefix `compareRegsPrefix_run`** (sum grow+copy1+copy2+compareLoop, witness
-        `((t1+1+t2)+1+t3)+1+t4`): all four bounded. Relate the tape lengths to op-L:
-        `|encodeTape (s0++[[],[]]) ++ res| = L+2`, `L'(copy1) = L+|g1|+2`,
-        `L''(copy2)=L4(loop)=L+|g1|+|g2|+2`; bound `|g1|,|g2| ≤ op-L` (via
-        `encodeTape_set_length`/`size_set_add`, like compareLoop's old `hn_le_L`) and
-        `matchLen ≤ |g1|`. Target ≈ `100·op-L²` via `nlinarith`.
-     3. **Top `compareRegsTM_run_{eq,neq}`** (= prefix + verdict + cleanup, on op input
-        `encodeTape s0 ++ res`): sum to **`≤ ~133·op-L²`** and STATE it so the d1 contract
-        (budget constant **bumped 54→72**, ceiling `144·op-L²`) closes. `nlinarith`.
-     **Only after the top bound does d1 (the `opEqBit` wrapper) become unblocked. Strongly
-     consider the top-down feasibility re-validation (top-down task 0) BEFORE step 3 —
-     the ~92% margin is fragile.**
+        `((t1+1+t2)+1+t3)+1+t4`): all four bounded. Thread the tape lengths
+        (`L'(copy1)=L+|g1|+2`, `L''(copy2)=L4=L+|g1|+|g2|+2`; bound everything by `L4`),
+        `|g1|+|g2| ≤ op-L` (`encodeTape_set_length`/`size_set_add`), `matchLen ≤ |g1|`.
+     3. **Top `compareRegsTM_run_{eq,neq}`** (= prefix + verdict + cleanup): sum and discharge
+        via the PROVEN **`compareBudget_arith_fits54`** (distinct `src`) — lift it from the
+        probe into `Compile.lean`. The d1 wrapper additionally needs **`selfBudget_eqDst_72`**
+        for the degenerate `eqBit r r r` (constraint `l+3 ≤ op-L`). Hypotheses (all from the
+        run lemmas): `matchLen ≤ |g_i|`, `c1+c2 ≤ l1+l2` (`length_drop`), `l1+l2+2 ≤ op-L`,
+        `dlen ≤ op-L`. **The hard final arithmetic is already discharged — just port it.**
+     **After the top bound, d1 (the `opEqBit` wrapper) is unblocked.**
 
    - ✅ **(d2-COPY) `copyEmptyRawTM`/`copyEmpty_run` — DONE & axiom-clean (2026-06-19).**
      `encodeTape s ++ res` (head 0, `dst` EMPTY) → `encodeTape (s.set dst (s.get src)) ++ res`
