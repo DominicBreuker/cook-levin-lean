@@ -17901,8 +17901,8 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
         runFlatTM k (Compile.compareLoopTM sc1 sc2)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
         haltingStateReached (Compile.compareLoopTM sc1 sc2) ck = false)
-    ∧ t ≤ 24 * (Compile.encodeTape s ++ res).length * (Compile.encodeTape s ++ res).length
-            + 69 * (Compile.encodeTape s ++ res).length + 45 := by
+    ∧ t ≤ (Compile.matchLen (State.get s sc1) (State.get s sc2) + 1)
+            * (24 * (Compile.encodeTape s ++ res).length + 45) := by
   set n := Compile.matchLen (State.get s sc1) (State.get s sc2) with hn
   set T : Nat → (List Nat × Nat × List Nat) := fun m =>
     ([], 0, Compile.encodeTape ((Compile.consumeStep sc1 sc2)^[n - m] s)
@@ -18118,12 +18118,6 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
       tIter j + 1 ≤ 24 * (Compile.encodeTape s ++ res).length + 45 :=
     fun j hj => by have := (hIter j hj).2.2; omega
   have h_done_bnd : tDone + 1 ≤ 24 * (Compile.encodeTape s ++ res).length + 45 := by omega
-  have hn_le_L : n ≤ (Compile.encodeTape s ++ res).length := by
-    have h1 : n ≤ (State.get s sc1).length := by rw [hn]; exact Compile.matchLen_le_left _ _
-    have h2 := State.size_set_add s sc1 ([] : List Nat)
-    simp only [List.length_nil, Nat.add_zero] at h2
-    rw [List.length_append, Compile.encodeTape_length]
-    omega
   refine ⟨loopBudget tIter tDone n, ?_, ?_, ?_⟩
   · rw [Compile.compareBodyTM_start, hTn, hT0'] at hmain
     rw [Compile.compareLoopTM]
@@ -18131,10 +18125,11 @@ theorem Compile.compareLoop_run (s : State) (sc1 sc2 : Var) (hne : sc1 ≠ sc2)
   · rw [Compile.compareBodyTM_start, hTn] at hneh
     rw [Compile.compareLoopTM]
     exact hneh
-  · refine le_trans (Compile.loopBudget_le tIter tDone
-        (24 * (Compile.encodeTape s ++ res).length + 45) n h_done_bnd h_iter_bnd) ?_
-    nlinarith [hn_le_L, mul_le_mul_right' hn_le_L (Compile.encodeTape s ++ res).length,
-      Nat.zero_le (Compile.encodeTape s ++ res).length]
+  · -- `loopBudget ≤ (matchLen+1)·(24·L+45)` directly (kept iteration-explicit: the
+    -- assembly bounds `matchLen ≤ |g1| ≤ op-input-L`, while the loop tape `L` is the
+    -- ~3× grown working tape — collapsing `matchLen → L` here busts the op budget).
+    exact Compile.loopBudget_le tIter tDone
+      (24 * (Compile.encodeTape s ++ res).length + 45) n h_done_bnd h_iter_bnd
 
 /-- **Residue-tolerant per-op physical contract (Risk C2, step 1c).** The fix
 for the unsatisfiable exact-tape contract: the exit tape is
