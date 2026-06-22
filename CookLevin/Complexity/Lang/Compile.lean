@@ -25060,3 +25060,76 @@ theorem Compile.compareRegsTM_run_neq (s0 : State) (src1 src2 : Var)
         hPtraj k hk ck hck⟩)
       (by rw [Compile.compareBranchM_start]; exact hbranchneg_traj)
     exact this k hk ck hck
+
+/-! ## `eqBit` Resolution-B — no-grow (pre-existing scratch) assembly (bottom-up, Task 1)
+
+The d2 `compareRegsTM` stack (above) grows two scratch registers at the end of the
+state (`sc1 = s0.length`), so it is un-instantiable into the position-fixed
+`opEqBit`. Resolution B (HANDOFF) mirrors `forBnd`: the op gets a static scratch
+base `sb`, and uses **pre-existing empty** scratch at the fixed interior indices
+`sb`, `sb + 1` (no grow/shrink). This section builds the no-grow assembly,
+reusing the proven stage gadgets verbatim (`copyEmpty_run`, `compareLoop_run`,
+`eqVerdictM_run_*`, `clearRegionTM_run`).
+
+⚠ DEF-ORDERING: the machine `def`s here (and `Compile.opEqBit`) must eventually
+move **above `compileOp`** (which references `opEqBit`). The def bodies depend only
+on early primitives + each other (machine-checked: zero forbidden-zone refs), so
+the move is mechanical; the proofs stay here (they consume the late stage run
+lemmas). See HANDOFF bottom-up Task 1. -/
+
+/-- State extensionality from per-register reads + equal length. -/
+theorem State.ext_of_get {s t : State} (hlen : s.length = t.length)
+    (h : ∀ r, State.get s r = State.get t r) : s = t := by
+  apply List.ext_getElem hlen
+  intro r h1 h2
+  have hr := h r
+  rw [State.get, List.getElem?_eq_getElem h1, Option.getD_some] at hr
+  rw [State.get, List.getElem?_eq_getElem h2, Option.getD_some] at hr
+  exact hr
+
+/-- The consume loop only touches `sc1`/`sc2`; every other register is unchanged. -/
+theorem Compile.consumeStep_frame (sc1 sc2 : Var) (r : Var)
+    (hr1 : r ≠ sc1) (hr2 : r ≠ sc2) (k : Nat) (s : State) :
+    State.get ((Compile.consumeStep sc1 sc2)^[k] s) r = State.get s r := by
+  induction k generalizing s with
+  | zero => simp
+  | succ k ih =>
+      rw [Function.iterate_succ_apply, ih (Compile.consumeStep sc1 sc2 s),
+          Compile.consumeStep, State.get_set_ne _ _ _ _ hr2, State.get_set_ne _ _ _ _ hr1]
+
+/-- **The no-grow restore fact.** Copying the operands into interior scratch
+`sb`/`sb+1` (both pre-existing empty), consuming the matched prefix `n` times, then
+clearing both scratch registers returns the state to `s` exactly. (`s2 = (s.set sb
+a).set (sb+1) b` is the post-copy state; `a`/`b` are bit-shaped operand copies.) -/
+theorem Compile.consumeStep_clear_restore (s : State) (sb : Var) (a b : List Nat) (n : Nat)
+    (hsb : sb < s.length) (hsb1 : sb + 1 < s.length)
+    (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
+    (ha : ∀ x ∈ a, x ≤ 1) (hb : ∀ x ∈ b, x ≤ 1) (hbit : Compile.BitState s) :
+    (((Compile.consumeStep sb (sb + 1))^[n]
+        ((s.set sb a).set (sb + 1) b)).set sb []).set (sb + 1) [] = s := by
+  have hne : (sb : Var) ≠ sb + 1 := Nat.ne_of_lt (Nat.lt_succ_self sb)
+  set s2 := (s.set sb a).set (sb + 1) b with hs2
+  have hlen_s2 : s2.length = s.length := by
+    rw [hs2, Compile.length_set _ _ _ (by rw [Compile.length_set _ _ _ hsb]; exact hsb1),
+        Compile.length_set _ _ _ hsb]
+  have hbit2 : Compile.BitState s2 := by
+    rw [hs2]; exact Compile.BitState_set_pad _ _ _ (Compile.BitState_set_pad _ _ _ hbit ha) hb
+  have hsb_s2 : sb < s2.length := by rw [hlen_s2]; exact hsb
+  have hsb1_s2 : sb + 1 < s2.length := by rw [hlen_s2]; exact hsb1
+  obtain ⟨_, _, hlen_iter, _⟩ := Compile.consumeIter_spec s2 sb (sb + 1) hne hsb_s2 hsb1_s2 hbit2 n
+  set s3 := (Compile.consumeStep sb (sb + 1))^[n] s2 with hs3
+  have hlen3 : s3.length = s.length := by rw [hlen_iter, hlen_s2]
+  have hsb_s3 : sb < s3.length := by rw [hlen3]; exact hsb
+  have hsb1_s3' : sb + 1 < (s3.set sb []).length := by
+    rw [Compile.length_set _ _ _ hsb_s3, hlen3]; exact hsb1
+  apply State.ext_of_get
+  · rw [Compile.length_set _ _ _ hsb1_s3', Compile.length_set _ _ _ hsb_s3]; exact hlen3
+  · intro r
+    by_cases hrb1 : r = sb + 1
+    · subst hrb1; rw [State.get_set_eq, hsb1e]
+    · rw [State.get_set_ne _ _ _ _ hrb1]
+      by_cases hrb : r = sb
+      · subst hrb; rw [State.get_set_eq, hsbe]
+      · rw [State.get_set_ne _ _ _ _ hrb, hs3,
+            Compile.consumeStep_frame sb (sb + 1) r hrb hrb1 n s2, hs2,
+            State.get_set_ne _ _ _ _ hrb1, State.get_set_ne _ _ _ _ hrb]
