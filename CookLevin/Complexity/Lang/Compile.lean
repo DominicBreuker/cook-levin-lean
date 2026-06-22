@@ -18199,7 +18199,11 @@ theorem compileOp_sound_physical_residue (sb : Nat) (o : Op) (s : State) (res_in
     -- Supplied by `run_physical_residue_gen`'s op case from `hk` (the `+2` padding
     -- reservation) + `hscratch`. See HANDOFF Task 0b.
     (hsb1 : sb + 1 < s.length)
-    (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = []) :
+    (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
+    -- **Operands live below the scratch base** (eqBit/concat only; from the gen lemma's
+    -- `huses : Op.UsesBelow o k` with the scratch base `sb = k`). The eqBit gadget copies
+    -- the operands into scratch `sb`/`sb+1`, so it needs them disjoint from scratch.
+    (hbsb : Op.UsesBelow o sb) :
     ∃ (t : Nat) (res_out : List Nat),
       Compile.ValidResidue res_out ∧
       -- ① the **W-invariant** (joint size+residue grows by ≤ cost). Non-compounding;
@@ -21098,7 +21102,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hsbe : State.get s k = [] := hscratch k (Nat.le_refl k)
       have hsb1e : State.get s (k + 1) = [] := hscratch (k + 1) (Nat.le_succ k)
       obtain ⟨t, res_out, hres, hW, hrun, htraj, hbud⟩ :=
-        compileOp_sound_physical_residue k o s res0 hbit hbnd hres0 hsb1 hsbe hsb1e
+        compileOp_sound_physical_residue k o s res0 hbit hbnd hres0 hsb1 hsbe hsb1e huses
       refine ⟨t, res_out, hres, hW, hrun, htraj, ?_⟩
       · -- ② budget: `(9·L²+9·L+30)·(cost+1) ≤ physStepBudget G (Op.cost o s)`, since
         -- `L ≤ G` and `(9G²+9G+30)·(cost+1)` sits termwise under `(9G²+9G+33)·(8·cost+8)`.
