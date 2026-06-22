@@ -25776,3 +25776,170 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
         hPtraj k hk ck hck⟩)
       (by rw [Compile.cmpNGBranchM_start]; exact hbranchpos_traj)
     exact this k hk ck hck
+
+/-- **`compareRegsNoGrowM` run — NOT EQUAL.** Symmetric to the EQ case via the
+negative (NEQ) branch; both `src1 ≠ src2` sub-cases route to the NEQ exit, tape
+restored. -/
+theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
+    (hsb : sb < s.length) (hsb1 : sb + 1 < s.length)
+    (hsrc1 : src1 < s.length) (hsrc2 : src2 < s.length)
+    (hsbsrc1 : sb ≠ src1) (hsbsrc2 : sb ≠ src2) (hsb1src2 : sb + 1 ≠ src2)
+    (hneqv : State.get s src1 ≠ State.get s src2)
+    (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
+    (hbit : Compile.BitState s) (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ residue, Compile.ValidResidue residue ∧ ∃ t,
+      runFlatTM t (Compile.compareRegsNoGrowM sb src1 src2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.compareRegsNoGrowM_exit_neq sb src1 src2,
+                 tapes := [([], 0, Compile.encodeTape s ++ residue)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.compareRegsNoGrowM sb src1 src2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached (Compile.compareRegsNoGrowM sb src1 src2) ck = false) := by
+  set g1 := State.get s src1 with hg1def
+  set g2 := State.get s src2 with hg2def
+  set n := Compile.matchLen g1 g2 with hndef
+  have hne : (sb : Var) ≠ sb + 1 := Nat.ne_of_lt (Nat.lt_succ_self sb)
+  have hg1mem : g1 ∈ s := by
+    rw [hg1def, State.get, List.getElem?_eq_getElem hsrc1, Option.getD_some]; exact List.getElem_mem hsrc1
+  have hg2mem : g2 ∈ s := by
+    rw [hg2def, State.get, List.getElem?_eq_getElem hsrc2, Option.getD_some]; exact List.getElem_mem hsrc2
+  have hg1bit : ∀ x ∈ g1, x ≤ 1 := fun x hx => hbit g1 hg1mem x hx
+  have hg2bit : ∀ x ∈ g2, x ≤ 1 := fun x hx => hbit g2 hg2mem x hx
+  have hbit1 : Compile.BitState (s.set sb g1) := Compile.BitState_set_pad s sb g1 hbit hg1bit
+  have hlen1 : (s.set sb g1).length = s.length := Compile.length_set s sb g1 hsb
+  set s2 := (s.set sb g1).set (sb + 1) g2 with hs2def
+  have hbit2 : Compile.BitState s2 := Compile.BitState_set_pad _ (sb + 1) g2 hbit1 hg2bit
+  have hlen2 : s2.length = s.length := by rw [hs2def, Compile.length_set _ _ _ (by rw [hlen1]; exact hsb1), hlen1]
+  have hs2sb : State.get s2 sb = g1 := by rw [hs2def, State.get_set_ne _ _ _ _ hne, State.get_set_eq]
+  have hs2sb1 : State.get s2 (sb + 1) = g2 := by rw [hs2def, State.get_set_eq]
+  have hsb_s2 : sb < s2.length := by rw [hlen2]; exact hsb
+  have hsb1_s2 : sb + 1 < s2.length := by rw [hlen2]; exact hsb1
+  have hrep : ∀ m : Nat, Compile.ValidResidue (List.replicate m 0) := by
+    intro m x hx; obtain ⟨_, rfl⟩ := List.mem_replicate.mp hx; exact ⟨by omega, by decide⟩
+  have hres' : Compile.ValidResidue (res ++ List.replicate (2 * n) 0) :=
+    Compile.ValidResidue_append _ _ hres (hrep _)
+  set s3 := (Compile.consumeStep sb (sb + 1))^[n] s2 with hs3def
+  obtain ⟨hs3sb', hs3sb1', hs3len, hbit3⟩ := Compile.consumeIter_spec s2 sb (sb + 1) hne hsb_s2 hsb1_s2 hbit2 n
+  rw [hs2sb] at hs3sb'
+  rw [hs2sb1] at hs3sb1'
+  have hsb_s3 : sb < s3.length := by rw [hs3def, hs3len, hlen2]; exact hsb
+  have hsb1_s3 : sb + 1 < s3.length := by rw [hs3def, hs3len, hlen2]; exact hsb1
+  have hrestore : (s3.set sb []).set (sb + 1) [] = s :=
+    Compile.consumeStep_clear_restore s sb g1 g2 n hsb hsb1 hsbe hsb1e hg1bit hg2bit hbit
+  have hnotboth : ¬(g1.drop n = [] ∧ g2.drop n = []) :=
+    fun h => hneqv ((Compile.matchLen_drop_empty_iff g1 g2).mp h)
+  have hsym4 : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0)) = some v → v < 4 := by
+    intro v hv
+    exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hbit3 hres') _ v hv
+  obtain ⟨tP, hPrun, hPtraj⟩ := Compile.cmpNGPrefix_run s sb src1 src2 hsb hsb1 hsrc1 hsrc2
+    hsbsrc1 hsbsrc2 hsb1src2 hsbe hsb1e hbit res hres
+  rw [← hg1def, ← hg2def, ← hndef, ← hs2def, ← hs3def] at hPrun
+  -- eqVerdict NEQ run on `s3` (left/right operand suffix nonempty)
+  obtain ⟨tV, hVrun, hVtraj, _⟩ : ∃ tV,
+      runFlatTM tV (Compile.eqVerdictM sb (sb + 1))
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] }
+        = some { state_idx := Compile.eqVerdictM_exit_neq sb,
+                 tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] }
+      ∧ (∀ k, k < tV → ∀ ck,
+          runFlatTM k (Compile.eqVerdictM sb (sb + 1))
+              { state_idx := 0, tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] } = some ck →
+          ck.state_idx ≠ Compile.eqVerdictM_exit_neq sb ∧
+          ck.state_idx ≠ Compile.eqVerdictM_exit_eq sb (sb + 1) ∧
+          haltingStateReached (Compile.eqVerdictM sb (sb + 1)) ck = false)
+      ∧ tV ≤ 6 * (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0)).length + 2 := by
+    by_cases hd1 : g1.drop n = []
+    · have hd2 : g2.drop n ≠ [] := fun h => hnotboth ⟨hd1, h⟩
+      exact Compile.eqVerdictM_run_neq_right s3 sb (sb + 1)
+        (res ++ List.replicate (2 * n) 0) hbit3 hsb_s3 hsb1_s3
+        (by rw [hs3sb']; exact hd1) (by rw [hs3sb1']; exact hd2) hres'
+    · exact Compile.eqVerdictM_run_neq_left s3 sb (sb + 1)
+        (res ++ List.replicate (2 * n) 0) hbit3 hsb_s3
+        (by rw [hs3sb']; exact hd1) hres'
+  obtain ⟨tC, hCrun, hCtraj, _⟩ := Compile.cmpNGCleanup_run s3 sb hsb_s3 hsb1_s3 hbit3
+    (res ++ List.replicate (2 * n) 0) hres'
+  rw [hrestore] at hCrun
+  set residue := ((res ++ List.replicate (2 * n) 0) ++ List.replicate (State.get s3 sb).length 0)
+      ++ List.replicate (State.get (s3.set sb []) (sb + 1)).length 0 with hresidue
+  have hresidue_valid : Compile.ValidResidue residue :=
+    Compile.ValidResidue_append _ _ (Compile.ValidResidue_append _ _ hres' (hrep _)) (hrep _)
+  set cfgB : FlatTMConfig :=
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] } with hcfgB
+  have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0,
+      Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0)) = some v →
+      v < max (Compile.eqVerdictM sb (sb + 1)).sig
+            (max (Compile.cmpNGCleanupM sb).sig (Compile.cmpNGCleanupM sb).sig) := by
+    intro v hv
+    rw [Compile.eqVerdictM_sig, Compile.cmpNGCleanupM_sig, Nat.max_self, Nat.max_self]
+    exact hsym4 v hv
+  have hcfgB_lt : cfgB.state_idx < (Compile.eqVerdictM sb (sb + 1)).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.eqVerdictM_exit_eq_lt sb (sb + 1))
+  have hCrun' : runFlatTM tC (Compile.cmpNGCleanupM sb)
+      { state_idx := (Compile.cmpNGCleanupM sb).start,
+        tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] }
+        = some { state_idx := Compile.cmpNGCleanupM_exit sb,
+                 tapes := [([], 0, Compile.encodeTape s ++ residue)] } := by
+    rw [Compile.cmpNGCleanupM_start, hresidue]; exact hCrun
+  have hbranchneg := branchComposeFlatTM_run_neg
+    (Compile.eqVerdictM_exit_neq_ne_eq sb (sb + 1)).symm
+    (Compile.eqVerdictM_valid sb (sb + 1)) (Compile.cmpNGCleanupM_valid sb)
+    (Compile.cmpNGCleanupM_valid sb)
+    (Compile.eqVerdictM_exit_eq_lt sb (sb + 1)) (Compile.eqVerdictM_exit_neq_lt sb (sb + 1))
+    cfgB hcfgB_lt [] 0 (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))
+    hsymB hVrun
+    (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
+    hCrun' (Compile.haltingStateReached_of_halt (Compile.cmpNGCleanupM_halt_getElem sb))
+  have hbranchneg_traj := branchComposeFlatTM_no_early_halt_neg
+    (Compile.eqVerdictM_exit_neq_ne_eq sb (sb + 1)).symm
+    (Compile.eqVerdictM_valid sb (sb + 1)) (Compile.cmpNGCleanupM_valid sb)
+    (Compile.cmpNGCleanupM_valid sb)
+    (Compile.eqVerdictM_exit_eq_lt sb (sb + 1)) (Compile.eqVerdictM_exit_neq_lt sb (sb + 1))
+    cfgB hcfgB_lt [] 0 (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))
+    hsymB hVrun
+    (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
+    (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.cmpNGCleanupM_start] at hck; exact hck))
+  refine ⟨residue, hresidue_valid, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  · have h := (composeFlatTM_run (Compile.cmpNGPrefixM_valid sb src1 src2)
+      (Compile.cmpNGBranchM_valid sb)
+      (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.cmpNGPrefixM_exit_lt sb src1 src2))
+      [] 0 (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))
+      (by intro v hv; rw [Compile.cmpNGPrefixM_sig, Compile.cmpNGBranchM_sig, Nat.max_self]; exact hsym4 v hv)
+      hPrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+        (Compile.cmpNGPrefixM_exit_is_halt sb src1 src2) (hPtraj k hk ck hck),
+        hPtraj k hk ck hck⟩)
+      (by rw [Compile.cmpNGBranchM_start]; exact hbranchneg.1)
+      hbranchneg.2).1
+    have hstate : (Compile.cmpNGCleanupM_exit sb
+            + ((Compile.eqVerdictM sb (sb + 1)).states + (Compile.cmpNGCleanupM sb).states))
+          + (Compile.cmpNGPrefixM sb src1 src2).states
+        = Compile.compareRegsNoGrowM_exit_neq sb src1 src2 := by
+      rw [Compile.compareRegsNoGrowM_exit_neq]
+    rw [Compile.cmpNGBranchM] at h
+    rw [show Compile.compareRegsNoGrowM sb src1 src2
+        = composeFlatTM (Compile.cmpNGPrefixM sb src1 src2)
+            (branchComposeFlatTM (Compile.eqVerdictM sb (sb + 1)) (Compile.cmpNGCleanupM sb)
+              (Compile.cmpNGCleanupM sb) (Compile.eqVerdictM_exit_eq sb (sb + 1))
+              (Compile.eqVerdictM_exit_neq sb)) (Compile.cmpNGPrefixM_exit sb src1 src2) from rfl,
+        ← hstate]
+    exact h
+  · intro k hk ck hck
+    rw [show Compile.compareRegsNoGrowM sb src1 src2
+        = composeFlatTM (Compile.cmpNGPrefixM sb src1 src2) (Compile.cmpNGBranchM sb)
+            (Compile.cmpNGPrefixM_exit sb src1 src2) from rfl] at hck ⊢
+    have := composeFlatTM_no_early_halt (Compile.cmpNGPrefixM_valid sb src1 src2)
+      (Compile.cmpNGBranchM_valid sb)
+      (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      (Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.cmpNGPrefixM_exit_lt sb src1 src2))
+      [] 0 (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))
+      (by intro v hv; rw [Compile.cmpNGPrefixM_sig, Compile.cmpNGBranchM_sig, Nat.max_self]; exact hsym4 v hv)
+      hPrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+        (Compile.cmpNGPrefixM_exit_is_halt sb src1 src2) (hPtraj k hk ck hck),
+        hPtraj k hk ck hck⟩)
+      (by rw [Compile.cmpNGBranchM_start]; exact hbranchneg_traj)
+    exact this k hk ck hck
