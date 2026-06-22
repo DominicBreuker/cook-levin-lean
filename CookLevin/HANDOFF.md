@@ -61,13 +61,14 @@ REAL REMAINING MATH under the assembly:
                            forBnd counted loop is fully assembled & discharged.)
 ```
 **The live `sat_NP` decider half now needs only ONE compiler gadget: `eqBit`** —
-and its scratch interface is now BUILT (Resolution B, 2026-06-22 top-down; the op
-takes a threaded base `sb`, scratch hyps handed to the eqBit case). With
-`compileForBnd` proven, `evalCnfCmd`'s only remaining stub op is `eqBit`
-(`evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free). Closing `eqBit` makes the
-entire live decider chain (`sat_NP → … → Compile_run_physical_residue`)
-**sorry-free** — the single highest-value bottom-up item, now UNBLOCKED. See
-BOTTOM-UP task 1.
+the no-grow tester `compareRegsNoGrowM` is now **PROVEN** (2026-06-22 bottom-up),
+but discharging the `eqBit` contract case is gated on TWO cleared-this-session
+findings: **bump `Op.cost eqBit`** (owner-approved — the consume design leaves
+`|src1|+|src2|` residue that cost-1 can't absorb) + a mechanical **def-ordering
+reorg**. See the "★ `eqBit`" section above for the full plan. With `compileForBnd`
+proven, `evalCnfCmd`'s only remaining stub op is `eqBit` (it is
+`consLen`/`takeAt`/`dropAt`-free); closing it makes the entire live decider chain
+(`sat_NP → … → Compile_run_physical_residue`) **sorry-free**.
 Both the **canonical** path (`DecidesLang'` / `inNPLang_to_inNP`) and the **free/live**
 path (`DecidesLang` / `inTimePolyLang_to_inTimePoly`) are now assembled and bridge the
 same `paddedBitDecider_run` → `bitDecider_run`. **The decider half's only remaining
@@ -136,44 +137,78 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ★ The `eqBit` scratch interface — RESOLUTION B IS LANDED (2026-06-22, top-down)
+## ★ `eqBit` — TESTER PROVEN; TWO BLOCKERS FOUND; OWNER PICKED THE FIX (2026-06-22 bottom-up)
 
-The d2 `compareRegsTM` stack addressed scratch by the runtime index `s.length`
-(grow-at-end), so it could not be instantiated into the position-fixed op machine.
-**Resolution B is now built & green:** the op gets a threaded scratch base and uses
-**pre-existing padded scratch** at the fixed indices `sb`, `sb + 1` (mirror of
-`forBnd`). The interface is real; **bottom-up can now build against it (no design
-work left on the seam).**
+The no-grow EQ/NEQ register tester is **fully proven & axiom-clean**, but assembling
+it into `opEqBit` surfaced two architectural gaps the Resolution-B handoff missed.
+**Both must be cleared before the eqBit contract case can be discharged.**
 
-**What is now in place (Compile.lean / PolyTime.lean, all green, axiom-clean):**
-- `compileOp : Nat → Op → CompiledCmd`; `Compile.opEqBit sb dst src1 src2` (still a
-  `compiledCmd_default` STUB) takes the base; `compileCmd | sb, .op o => compileOp sb o`.
-- `compileOp_sound_physical_residue (sb : Nat) (o) … (hsb1 : sb + 1 < s.length)
-  (hsbe : s.get sb = []) (hsb1e : s.get (sb+1) = [])` — the eqBit-only scratch hyps,
-  **handed to the eqBit case for free** (the proven ops ignore them; the gen lemma
-  supplies them from the `+2` pad + `hscratch`). The `eqBit` case is still `sorry`.
-- The padding reserves eqBit's 2 registers by a **uniform `+2`**: every room
-  hypothesis is now `… + 2 ≤ length` (`run_physical_residue_gen` /
-  `Compile_run_physical_residue` / `bitDecider_run` `hk = k + 2·c.loopDepth + 2`; the
-  forBnd driver chain; `paddedBitDeciderTM`/`paddedComputeTM` pad `k + 2·c.loopDepth +
-  2`; both bridges' `padTimeBound`/`budget_ge`). Still `inOPoly` (constant bump). The
-  `+2` reaches every leaf op at every nesting depth (validated end-to-end by the build).
+**PROVEN THIS SESSION (Compile.lean, end; all axiom-clean `[propext, Classical.choice,
+Quot.sound]`, all green):**
+- `Compile.compareRegsNoGrowM sb src1 src2` — the position-fixed 2-exit EQ/NEQ tester
+  using **pre-existing interior scratch** `sb`/`sb+1` (no grow/shrink). Full shape
+  family + **`compareRegsNoGrowM_run_eq` / `_run_neq`**: from `encodeTape s ++ res`
+  reaches the EQ (resp. NEQ) exit iff `s.get src1 = s.get src2`, tape **restored** to
+  `encodeTape s ++ residue` (residue terminator-free). Built from the proven
+  `cmpNGPrefix_run` (copy⨾copy⨾compareLoop) + `eqVerdictM_run_*` + `cmpNGCleanup_run`
+  (clear⨾clear) + the new restore algebra.
+- Restore algebra (reusable): `State.ext_of_get`, `Compile.consumeStep_frame`,
+  `Compile.consumeStep_clear_restore` (copy-into-scratch then consume then clear ⇒
+  original state, exactly).
+- Contract seam fixed: `compileOp_sound_physical_residue` now also takes
+  `(hbsb : Op.UsesBelow o sb)` (operands live below the scratch base — needed so the
+  eqBit scratch never aliases `src1`/`src2`/`dst`; supplied from the gen lemma's `huses`).
 
-**So eqBit is now a pure BOTTOM-UP gadget build** — see bottom-up Task 1. The hard
-~4K-LOC consume-loop core is reused VERBATIM (all index-parameterized — pass `sb`):
-`copyEmpty_run`, `compareLoop_run`, `eqVerdictM` + `_run_{eq,neq_left,neq_right}`,
-`clearRegionTM_run`, and the `compareBodyTM`/`testMachine`/`bitCompareM` cascade.
-**DEAD on Resolution B** (delete once the no-grow assembly is green):
+**⚠ BLOCKER 1 — W-invariant / cost (OWNER DECISION: bump `Op.cost eqBit`).** The
+handoff's consume recipe (`copyEmpty src1→sb ⨾ copyEmpty src2→sb+1 ⨾ compareLoop ⨾
+clear ⨾ clear`) is correct as a TESTER but leaves residue `replicate (|src1|+|src2|) 0`
+(the consumed scratch copies — every TM deletion drops one residue cell; the tape
+never shrinks). The contract's **W-invariant ①** demands `size(eval) + |res_out| ≤
+size s + |res_in| + Op.cost o s`; with the proven residue the LHS exceeds the RHS by
+`|src1|+|src2|`, and `Op.cost eqBit = 1`. **Owner-approved fix: set `Op.cost eqBit =
+(s.get src1).length + (s.get src2).length + 1`** (exactly how `copy`/`tail`/`concat`
+charge for data they read — then growth `= 1+|g1|+|g2| ≤ cost`, equality). This
+**reverses the old "do NOT bump eqBit cost" note** (that was a budget/step-count
+judgement; it missed the residue dimension). ⚠ **Ripple to re-audit:**
+`Op.cost` (Semantics.lean ~82), `Op.size_eval_le` eqBit case (Semantics ~195, slack
+grows — easy), `Op.cost_agree` eqBit case (Frame.lean ~366, becomes the `concat`
+pattern), and **`EvalCnfCmd.lean`'s cost proofs** — `eqBit` is used pervasively there
+(`mcSkip := eqBit CMP_FLAG CMP_FLAG CMP_FLAG` with `mcSkip_cost := rfl`; many
+`simp [Op.cost]` derivations; the quartic `evalCnfCmd_cost_bound`). The quartic budget
+is generous so it should re-close, but every cost lemma needs re-deriving. **This is a
+real EvalCnf budget re-audit — schedule it as its own step (good top-down item).**
+
+**⚠ BLOCKER 2 — def-ordering (mechanical, validated).** `opEqBit` is referenced by
+`compileOp` (~L2488), so it (and the machines it's built from) must be defined
+**before** `compileOp`. But the consume-loop gadget DEFS (`navTestRewindM`..`compareLoopTM`
+~L14214–18130, `copyEmptyRawTM` ~L23478) + the new `compareRegsNoGrowM` stack live far
+later. **Fix = move the ~50 machine `def`s above `compileOp`** (the `forBnd` precedent:
+"machine defs moved above `compileCmd`"). Machine-checked SAFE: those 49 def **bodies**
+reference zero forbidden-zone names (only early primitives + each other) — so move just
+the `def`s (+ exit-index defs); leave all `theorem`s where they are (they consume the
+late stage run lemmas). The proofs of `compareRegsNoGrowM_run_*` etc. stay put.
+
+**Remaining to discharge eqBit (bottom-up Task 1, in order):**
+1. Bump `Op.cost eqBit` + ripple (Semantics/Frame; small) — **then** EvalCnf re-audit.
+2. Build the wrapper `opEqBitRawM sb dst src1 src2 := branchComposeFlatTM
+   (compareRegsNoGrowM sb src1 src2) (clearAppendM dst 2) (clearAppendM dst 1)
+   (compareRegsNoGrowM_exit_eq …) (compareRegsNoGrowM_exit_neq …)` (bodies need NO
+   rewind — the tester exits at head 0), then `opEqBit := joinTwoHalts …` (port of
+   `opNonEmpty`; bodies = `clearAppendM dst (bit+1)` via `clearAppendM_run`, which
+   writes `[bit]`: EQ→bit 1, NEQ→bit 0 = `Op.eval eqBit`). Run lemma `opEqBit_run`:
+   `encodeTape (s.set dst [answer]) ++ res_out`, `res_out = res_in ++ replicate
+   (|src1|+|src2|) 0 ++ replicate |dst₀| 0`.
+3. The def-ordering reorg (above).
+4. Discharge the `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean
+   ~18374): W-invariant ① now holds (bumped cost = residue growth); budget via the
+   `54→72` lift (still valid — the no-grow stage sum is below `compareBudget_arith_fits54`
+   / `selfBudget_eqDst_72` in `probes/EqBitBudgetProbe.lean`). Use the `nonEmpty` case
+   as the structural template; discharge `hbsb`'s `src1,src2,dst < sb` facts into the
+   tester's disjointness hyps.
+
+**DEAD on Resolution B** (delete after the no-grow assembly discharges):
 `growEmptyTM`/`growTwoEmpty`, `shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM`,
-`compareRegsPrefixM`/`compareRegsTM` (the grow/shrink scaffolding).
-
-**Budget (when assembling):** the no-grow stage sum is strictly below the proven
-ceilings `compareBudget_arith_fits54` (distinct src) / `selfBudget_eqDst_72`
-(`eqBit r r r`) in `probes/EqBitBudgetProbe.lean` — lift those into `Compile.lean`
-and bump the contract `54 → 72` (a free one-liner: the gen op-case already proves
-`54·G²+… ≤ 72·G²+… ≤ physStepBudget`, and `72·… ≤ physStepBudget` is the `72 = 8·9`
-identity, so bumping the contract constant to 72 keeps that step). **Do NOT bump
-`Op.cost eqBit`.**
+`compareRegsPrefixM`/`compareRegsTM`/`compareBranchM` (the grow/shrink scaffolding).
 
 ---
 
@@ -479,6 +514,19 @@ identity, so bumping the contract constant to 72 keeps that step). **Do NOT bump
   `copyEmpty_run`, `eqVerdictM`, the `compareBodyTM`/`testMachine`/`bitCompareM` cascade,
   `consumeStep_iterate_append`. **DEAD on Res B:** `growTwoEmpty`/`shrinkTwoEmpty`/
   `compareRegsPrefixM`/`compareRegsTM`/`compareCleanupM` (grow/shrink scaffolding).
+- **★ `Compile.compareRegsNoGrowM`/`compareRegsNoGrowM_run_{eq,neq}` — the Resolution-B
+  no-grow `eqBit` tester is COMPLETE (2026-06-22 bottom-up).** Position-fixed 2-exit
+  EQ/NEQ register tester on **pre-existing interior scratch** `sb`/`sb+1`:
+  `compareRegsNoGrowM sb src1 src2 = cmpNGPrefixM ⨾ cmpNGBranchM` where `cmpNGPrefixM =
+  copyEmpty sb src1 ⨾ copyEmpty (sb+1) src2 ⨾ compareLoop sb (sb+1)` and `cmpNGBranchM =
+  branchComposeFlatTM eqVerdictM cmpNGCleanupM cmpNGCleanupM` with `cmpNGCleanupM =
+  clear sb ⨾ clear (sb+1)`. `EQ ⟺ s.get src1 = s.get src2`, tape **restored** to
+  `encodeTape s ++ residue` (`residue = res ++ replicate (|g1.drop n|+|g2.drop n|+2·matchLen) 0`).
+  Full shape family + both run lemmas + no-early-halt, all axiom-clean. Reusable cores:
+  `Compile.consumeStep_clear_restore` (copy→consume→clear ⇒ original state),
+  `Compile.consumeStep_frame`, `State.ext_of_get`. **⚠ NOT yet a discharge of the eqBit
+  contract** — gated on the cost bump + def-reorg (see the "★ `eqBit`" section). ⇒
+  `compareRegsPrefixM`/`compareRegsTM`/`compareBranchM` (grow versions) are now superseded.
 
 ---
 
@@ -509,11 +557,20 @@ The build is UNGATED for bottom-up. New frontier:
    ⇒ **eqBit is now a pure BOTTOM-UP build** (bottom-up Task 1). The owner-sensitive
    pad change is settled (`+2` constant; `sig=4`/`BitState` untouched) — do not revisit.
 
-   **▶ NEXT TOP-DOWN SESSION — pick one (both standalone, neither blocked by the compiler):**
-   - **Task 1 (CliqueRelTM)** — highest standalone value; replicate the proven EvalCnf
-     end-to-end template (see below). Recommended if bottom-up has NOT yet closed eqBit.
-   - **Task 0 (eqBit-completion checkpoint)** — do this the session AFTER bottom-up closes
-     the eqBit case: audit `#print axioms sat_NP`, the first headline soundness win (below).
+   **▶ NEXT TOP-DOWN SESSION — pick one:**
+   - **Task 2 (EvalCnf eqBit-cost re-audit) — NEW, unblocks bottom-up Task 1(a).** The
+     owner approved bumping `Op.cost eqBit → |src1|+|src2|+1` (the W-invariant finding —
+     see the "★ `eqBit`" section). This ripples into `EvalCnfCmd.lean`'s cost proofs
+     (`eqBit`/`mcSkip` are used pervasively; `mcSkip_cost := rfl` and many `simp [Op.cost]`
+     derivations break). Re-derive them under the new cost (quartic `evalCnfCmd_cost_bound`
+     is generous — should re-close; `mcSkip` becomes a small *constant* cost since
+     `CMP_FLAG` is a 1-cell flag). This is verifier-cost work = top-down; coordinate with
+     bottom-up so the cost bump lands once. **Recommended next if bottom-up is about to
+     tackle eqBit.**
+   - **Task 1 (CliqueRelTM)** — highest *standalone* value; replicate the proven EvalCnf
+     end-to-end template (see below). Recommended if bottom-up is NOT yet on eqBit.
+   - **Task 0 (eqBit-completion checkpoint)** — the session AFTER bottom-up closes the
+     eqBit case: audit `#print axioms sat_NP`, the first headline soundness win (below).
 0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
    Resolution-B `opEqBit` gadget).** When the `eqBit` case of
    `compileOp_sound_physical_residue` (Compile.lean ~18361, currently raw `sorry`) is
@@ -566,58 +623,52 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~18187 statement; raw
 half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
 1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
-   needs), now UNBLOCKED (the scratch interface is built — Resolution B, 2026-06-22).**
-   `evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free, so discharging the `eqBit` case of
+   needs). The no-grow tester is PROVEN; 4 steps remain (see the "★ `eqBit`" section
+   above for full detail).** Discharging the `eqBit` case of
    `compileOp_sound_physical_residue` (Compile.lean ~18374, raw `sorry`) makes the entire
-   live decider chain `sat_NP → … → Compile_run_physical_residue` **sorry-free**. `Op.cost
-   eqBit = 1`; output is exactly `[answer]` (1 cell).
+   live decider chain `sat_NP → … → Compile_run_physical_residue` **sorry-free**.
 
-   **▶ THE INTERFACE YOU BUILD AGAINST (now real).** `Compile.opEqBit sb dst src1 src2`
-   (currently `compiledCmd_default`) gets the threaded scratch base `sb`. The eqBit case
-   of `compileOp_sound_physical_residue` is handed, for free, exactly the hyps the no-grow
-   chain needs: `hsb1 : sb + 1 < s.length`, `hsbe : s.get sb = []`, `hsb1e : s.get (sb+1) =
-   []`. **No design work remains on the seam — go straight to the gadget build.**
+   **DONE (this session, all green & axiom-clean):** `Compile.compareRegsNoGrowM` +
+   `compareRegsNoGrowM_run_eq`/`_run_neq` (the 2-exit EQ/NEQ tester on pre-existing
+   interior scratch `sb`/`sb+1`, tape restored); its stack `cmpNGCleanupM`/`cmpNGPrefixM`/
+   `cmpNGBranchM` + run lemmas; the restore algebra (`consumeStep_clear_restore` etc.);
+   and the contract's new `hbsb : Op.UsesBelow o sb` hyp.
 
-   **▶ THE BUILD (PROBE-VALIDATED end-to-end, `probes/EqBitNoGrowProbe.lean`, all `#eval`s
-   `true`): with pre-existing empty scratch at `sb`/`sb+1`, the no-grow chain decides
-   equality AND restores the tape.** Build
-   `compareRegsNoGrow sb (sb+1) src1 src2 = copyEmpty sb src1 ⨾ copyEmpty (sb+1) src2 ⨾
-   compareLoop sb (sb+1) ⨾ branchComposeFlatTM eqVerdictM (clear sb ⨾ clear (sb+1))
-   (clear sb ⨾ clear (sb+1)) …`. **REUSE VERBATIM (all proven & axiom-clean, all
-   index-parameterized — pass `sb`):** `copyEmpty_run`, `compareLoop_run` (consume-loop
-   core), `eqVerdictM` + `eqVerdictM_run_{eq,neq_left,neq_right}`, `clearRegionTM_run`,
-   plus the whole `compareBodyTM`/`testMachine`/`bitCompareM` cascade. The existing
-   `compareRegsPrefix_run` / `compareRegsTM_run_{eq,neq}` are PROOF TEMPLATES — delete the
-   grow stage (prefix → 3 stages: copy ⨾ copy ⨾ compareLoop) and the shrink stage
-   (cleanup → `clear ⨾ clear`). Then the d1 wrapper `opEqBit sb dst src1 src2` (port of
-   `opNonEmpty` with `compareRegsNoGrow` as the `branchComposeFlatTM` M₁) + the contract
-   case (copy of the `nonEmpty` case, residue `res_in ++ replicate |dst₀| 0`), discharging
-   `hsb1`/`hsbe`/`hsb1e` into the no-grow run lemma's scratch preconditions.
-   - **DEAD on Resolution B:** `growEmptyTM`/`growTwoEmpty` (~22307–22828) and
-     `shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM` (~22829–23438, ~24101–24467) —
-     scratch is pre-existing, so no grow/shrink. Delete once the no-grow assembly is green.
-   - **Budget (const-72, free vs `physStepBudget`):** the no-grow stage sum is the probe's
-     `provableTight` MINUS the grow term — strictly under the proven
-     `compareBudget_arith_fits54` (distinct src) / `selfBudget_eqDst_72` (`eqBit r r r`)
-     ceilings in `probes/EqBitBudgetProbe.lean`. Lift those two theorems into `Compile.lean`
-     and **bump the contract budget constant `54 → 72`** (a free one-liner — the gen
-     op-case already proves `54·G²+… ≤ 72·G²+… ≤ physStepBudget`, so a `72·…` contract still
-     fits via the `72 = 8·9` step). `compareLoop_run`'s bound is the iteration-explicit
-     `(matchLen+1)·(24·L+45)`; `copyEmpty_run` is `(|src|+1)(5L+23)+3L+4`; `eqVerdictM ≤
-     6L+2`; `clearRegionTM` is `9L²+9` (collapsed) or `(n+1)(6L+13)` (tight). **Do NOT bump
-     `Op.cost eqBit`.**
+   **REMAINING (in order):**
+   - **(a) Bump `Op.cost eqBit` → `(s.get src1).length + (s.get src2).length + 1`**
+     (owner-approved; the consume design leaves `|src1|+|src2|` residue that cost-1 can't
+     absorb under W-invariant ①). Ripple: `Op.cost`/`Op.size_eval_le`/`Op.cost_agree`
+     (eqBit becomes the `concat` pattern), then **re-audit `EvalCnfCmd.lean`'s cost
+     proofs** (pervasive `eqBit`/`mcSkip` use; quartic budget is generous). *This sub-step
+     is a verifier-cost re-audit — a natural TOP-DOWN item; coordinate.*
+   - **(b) Wrapper** `opEqBitRawM := branchComposeFlatTM (compareRegsNoGrowM sb src1 src2)
+     (clearAppendM dst 2) (clearAppendM dst 1) (…exit_eq) (…exit_neq)` then `opEqBit :=
+     joinTwoHalts …` (port of `opNonEmpty`; bodies need NO rewind — the tester exits at
+     head 0). Run lemma via `clearAppendM_run` (writes `[bit]`, EQ→1/NEQ→0 = `Op.eval
+     eqBit`).
+   - **(c) Def-ordering reorg:** move the ~50 consume-loop machine `def`s (+ the new
+     `compareRegsNoGrowM` stack defs) **above `compileOp`** (machine-checked safe: def
+     bodies have zero forbidden-zone refs; leave all `theorem`s in place). Mirrors the
+     `forBnd` "moved above `compileCmd`" precedent.
+   - **(d) Discharge** the contract `eqBit` case (template = the `nonEmpty` case): W-① now
+     holds (bumped cost = residue growth); budget via the `54 → 72` lift (no-grow stage sum
+     is below `compareBudget_arith_fits54`/`selfBudget_eqDst_72` in
+     `probes/EqBitBudgetProbe.lean`). Feed `hbsb`'s `src1,src2,dst < sb` into the tester's
+     disjointness hyps.
 
-   **Reusable proof gotchas from the d2 work (still valid):**
-   - ⚠⚠ **`omega` SILENTLY FAILS on trivial arithmetic side-goals inside the large
-     `compareRegs*` proof contexts** (returns "could not prove" with spurious
-     counterexamples on *unrelated* hypotheses). Use **term-mode `Nat` lemmas**
-     (`Nat.lt_succ_of_lt`, `Nat.lt_of_lt_of_le`, `Nat.add_lt_add_left`, `Nat.add_comm`,
-     `Nat.add_sub_cancel_left n m`) for ALL arithmetic there. (`omega` is fine in the
-     small shape-lemma contexts — the failure is specific to the huge proofs.)
-   - Pin implicit list args of `List.set_append_right`/`List.getElem?_append_right`
-     (`(s := …)`, or feed `Nat.le_refl _`/`Nat.le_succ _`) so the side-condition doesn't
-     elaborate against a metavariable.
-   - `composeFlatTM_run` witness is `t₁ + 1 + t₂`; chain it for the multi-stage budget.
+   **DEAD on Resolution B** (delete after (d) is green): `growEmptyTM`/`growTwoEmpty`,
+   `shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM`, `compareRegsPrefixM`/`compareRegsTM`/
+   `compareBranchM` (grow/shrink scaffolding).
+
+   **Reusable proof gotchas (still valid):**
+   - `omega` fails on `Var` atoms — use `Nat.*` lemmas or `simp only [Var] at *`. For
+     `sb ≠ sb+1` use `Nat.ne_of_lt (Nat.lt_succ_self _)` (not `omega`).
+   - `composeFlatTM_halt_intro M1 M2 h2 glue` gives halt at `M1.states + h2` (this order);
+     get the `show` right or `exact h` whnf-times-out on the huge term.
+   - `composeFlatTM_run`'s M1-run/M1-traj take the config at `state_idx 0` (the gadget run
+     lemmas are stated at `0`); the M2 args take `M2.start` (rw the `_start` lemma).
+   - `copyEmpty_run`/`compareLoop_run`/`eqVerdictM_run_*`/`clearRegionTM_run` are stated at
+     `state_idx 0`; `composeFlatTM_run` witness is `t₁ + 1 + t₂` (chain for multi-stage).
 
 2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
    `concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`. = `clear dst ⨾
