@@ -25268,3 +25268,227 @@ theorem Compile.cmpNGCleanup_run (x : State) (sb : Var)
     rw [Compile.cmpNGCleanupM] at hck ⊢
     exact htraj k hk ck hck
   · nlinarith [htbA, htbB]
+
+/-! ### No-grow prefix `cmpNGPrefixM` — copy both operands into the pre-existing
+interior scratch `sb`/`sb+1`, then consume the matched prefix. Mirror of
+`compareRegsPrefixM` with the `growTwoEmptyM` stage dropped. -/
+
+def Compile.cmpNGPrefixM (sb src1 src2 : Var) : FlatTM :=
+  composeFlatTM
+    (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+      (Compile.copyEmptyRawTM_exit sb src1))
+    (Compile.compareLoopTM sb (sb + 1))
+    ((Compile.copyEmptyRawTM sb src1).states + Compile.copyEmptyRawTM_exit (sb + 1) src2)
+
+def Compile.cmpNGPrefixM_exit (sb src1 src2 : Var) : Nat :=
+  (Compile.compareBodyTM sb (sb + 1)).states
+    + ((Compile.copyEmptyRawTM sb src1).states + (Compile.copyEmptyRawTM (sb + 1) src2).states)
+
+theorem Compile.cmpNGPrefixM_sig (sb src1 src2 : Var) :
+    (Compile.cmpNGPrefixM sb src1 src2).sig = 4 := by
+  rw [Compile.cmpNGPrefixM, composeFlatTM_sig, composeFlatTM_sig,
+      Compile.copyEmptyRawTM_sig, Compile.copyEmptyRawTM_sig, Compile.compareLoopTM_sig]; rfl
+
+theorem Compile.cmpNGPrefixM_tapes (sb src1 src2 : Var) :
+    (Compile.cmpNGPrefixM sb src1 src2).tapes = 1 := by
+  rw [Compile.cmpNGPrefixM, composeFlatTM_tapes, composeFlatTM_tapes]
+  exact Compile.copyEmptyRawTM_tapes sb src1
+
+theorem Compile.cmpNGPrefixM_start (sb src1 src2 : Var) :
+    (Compile.cmpNGPrefixM sb src1 src2).start = 0 := by
+  rw [Compile.cmpNGPrefixM, composeFlatTM_start, composeFlatTM_start, Compile.copyEmptyRawTM_start]
+
+theorem Compile.cmpNGPrefixM_states (sb src1 src2 : Var) :
+    (Compile.cmpNGPrefixM sb src1 src2).states =
+      ((Compile.copyEmptyRawTM sb src1).states + (Compile.copyEmptyRawTM (sb + 1) src2).states)
+        + (Compile.compareLoopTM sb (sb + 1)).states := by
+  rw [Compile.cmpNGPrefixM, composeFlatTM_states, composeFlatTM_states]
+
+theorem Compile.cmpNGPrefixM_valid (sb src1 src2 : Var) :
+    validFlatTM (Compile.cmpNGPrefixM sb src1 src2) := by
+  have hMB_valid := composeFlatTM_valid _ _ _ (Compile.copyEmptyRawTM_valid sb src1)
+    (Compile.copyEmptyRawTM_valid (sb + 1) src2) (Compile.copyEmptyRawTM_exit_lt sb src1)
+    (Compile.copyEmptyRawTM_tapes sb src1) (Compile.copyEmptyRawTM_tapes (sb + 1) src2)
+  have hexit_lt : (Compile.copyEmptyRawTM sb src1).states + Compile.copyEmptyRawTM_exit (sb + 1) src2
+      < (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+          (Compile.copyEmptyRawTM_exit sb src1)).states := by
+    rw [composeFlatTM_states]; exact Nat.add_lt_add_left (Compile.copyEmptyRawTM_exit_lt (sb + 1) src2) _
+  rw [Compile.cmpNGPrefixM]
+  exact composeFlatTM_valid _ _ _ hMB_valid (Compile.compareLoopTM_valid sb (sb + 1)) hexit_lt
+    (by rw [composeFlatTM_tapes]; exact Compile.copyEmptyRawTM_tapes sb src1)
+    (Compile.compareLoopTM_tapes sb (sb + 1))
+
+theorem Compile.cmpNGPrefixM_exit_lt (sb src1 src2 : Var) :
+    Compile.cmpNGPrefixM_exit sb src1 src2 < (Compile.cmpNGPrefixM sb src1 src2).states := by
+  rw [Compile.cmpNGPrefixM_exit, Compile.cmpNGPrefixM_states]
+  have hcl : (Compile.compareLoopTM sb (sb + 1)).states = (Compile.compareBodyTM sb (sb + 1)).states + 1 := by
+    rw [Compile.compareLoopTM, loopTM_states]
+  omega
+
+theorem Compile.cmpNGPrefixM_exit_is_halt (sb src1 src2 : Var) :
+    (Compile.cmpNGPrefixM sb src1 src2).halt[Compile.cmpNGPrefixM_exit sb src1 src2]? = some true := by
+  have h := Compile.composeFlatTM_halt_intro
+    (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+      (Compile.copyEmptyRawTM_exit sb src1))
+    (Compile.compareLoopTM sb (sb + 1)) (Compile.compareBodyTM sb (sb + 1)).states
+    ((Compile.copyEmptyRawTM sb src1).states + Compile.copyEmptyRawTM_exit (sb + 1) src2)
+    (Compile.compareLoopTM_halt_getElem sb (sb + 1))
+  rw [Compile.cmpNGPrefixM,
+      show Compile.cmpNGPrefixM_exit sb src1 src2
+        = (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+                (Compile.copyEmptyRawTM_exit sb src1)).states
+            + (Compile.compareBodyTM sb (sb + 1)).states from by
+        rw [composeFlatTM_states, Compile.cmpNGPrefixM_exit]; omega]
+  exact h
+
+/-- **No-grow prefix run.** Copies `src1`/`src2` into the pre-existing empty scratch
+`sb`/`sb+1`, then consumes the matched common prefix. Exits at head `0` on
+`encodeTape (consumeStep^[matchLen g1 g2] s2)`, where `s2 = (s.set sb g1).set (sb+1) g2`
+holds the two operand copies, residue extended by the `[0,0]`-per-iteration fillers. -/
+theorem Compile.cmpNGPrefix_run (s : State) (sb src1 src2 : Var)
+    (hsb : sb < s.length) (hsb1 : sb + 1 < s.length)
+    (hsrc1 : src1 < s.length) (hsrc2 : src2 < s.length)
+    (hsbsrc1 : sb ≠ src1) (hsbsrc2 : sb ≠ src2)
+    (hsb1src2 : sb + 1 ≠ src2)
+    (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
+    (hbit : Compile.BitState s) (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t,
+      runFlatTM t (Compile.cmpNGPrefixM sb src1 src2)
+          { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+        = some { state_idx := Compile.cmpNGPrefixM_exit sb src1 src2,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Compile.consumeStep sb (sb + 1))^[
+                       Compile.matchLen (State.get s src1) (State.get s src2)]
+                       ((s.set sb (State.get s src1)).set (sb + 1) (State.get s src2)))
+                     ++ (res ++ List.replicate
+                          (2 * Compile.matchLen (State.get s src1) (State.get s src2)) 0))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.cmpNGPrefixM sb src1 src2)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
+        haltingStateReached (Compile.cmpNGPrefixM sb src1 src2) ck = false) := by
+  set g1 := State.get s src1 with hg1def
+  set g2 := State.get s src2 with hg2def
+  have hne : (sb : Var) ≠ sb + 1 := Nat.ne_of_lt (Nat.lt_succ_self sb)
+  have hg1mem : g1 ∈ s := by
+    rw [hg1def, State.get, List.getElem?_eq_getElem hsrc1, Option.getD_some]; exact List.getElem_mem hsrc1
+  have hg2mem : g2 ∈ s := by
+    rw [hg2def, State.get, List.getElem?_eq_getElem hsrc2, Option.getD_some]; exact List.getElem_mem hsrc2
+  have hg1bit : ∀ x ∈ g1, x ≤ 1 := fun x hx => hbit g1 hg1mem x hx
+  have hg2bit : ∀ x ∈ g2, x ≤ 1 := fun x hx => hbit g2 hg2mem x hx
+  have hbit1 : Compile.BitState (s.set sb g1) := Compile.BitState_set_pad s sb g1 hbit hg1bit
+  have hlen1 : (s.set sb g1).length = s.length := Compile.length_set s sb g1 hsb
+  set s2 := (s.set sb g1).set (sb + 1) g2 with hs2def
+  have hbit2 : Compile.BitState s2 := Compile.BitState_set_pad _ (sb + 1) g2 hbit1 hg2bit
+  have hlen2 : s2.length = s.length := by rw [hs2def, Compile.length_set _ _ _ (by rw [hlen1]; exact hsb1), hlen1]
+  -- intermediate get/set facts
+  have hcp1get : State.get s src1 = g1 := hg1def.symm
+  have hg2eq : State.get (s.set sb g1) src2 = g2 := by rw [State.get_set_ne _ _ _ _ (Ne.symm hsbsrc2), hg2def]
+  have hsb1e' : State.get (s.set sb g1) (sb + 1) = [] := by
+    rw [State.get_set_ne _ _ _ _ (Ne.symm hne), hsb1e]
+  have hsb1_1 : sb + 1 < (s.set sb g1).length := by rw [hlen1]; exact hsb1
+  have hsrc2_1 : src2 < (s.set sb g1).length := by rw [hlen1]; exact hsrc2
+  have hsb_2 : sb < s2.length := by rw [hlen2]; exact hsb
+  have hsb1_2 : sb + 1 < s2.length := by rw [hlen2]; exact hsb1
+  have hs2sb : State.get s2 sb = g1 := by
+    rw [hs2def, State.get_set_ne _ _ _ _ hne, State.get_set_eq]
+  have hs2sb1 : State.get s2 (sb + 1) = g2 := by rw [hs2def, State.get_set_eq]
+  -- stage runs
+  obtain ⟨t1, hcp1_run, hcp1_traj, _⟩ := Compile.copyEmpty_run s sb src1 hsbsrc1 hsb hsrc1 hbit hsbe res hres
+  rw [← hg1def] at hcp1_run
+  obtain ⟨t2, hcp2_run, hcp2_traj, _⟩ :=
+    Compile.copyEmpty_run (s.set sb g1) (sb + 1) src2 hsb1src2 hsb1_1 hsrc2_1 hbit1 hsb1e' res hres
+  rw [hg2eq, ← hs2def] at hcp2_run
+  obtain ⟨t3, hcl_run, hcl_traj, _⟩ :=
+    Compile.compareLoop_run s2 sb (sb + 1) hne hsb_2 hsb1_2 hbit2 res hres
+  rw [hs2sb, hs2sb1] at hcl_run
+  -- symbol bound helper
+  have hsymtape : ∀ (sX : State), Compile.BitState sX → ∀ v,
+      currentTapeSymbol ([], 0, Compile.encodeTape sX ++ res) = some v → v < 4 := by
+    intro sX hbX v hv
+    exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hbX hres) _ v hv
+  -- ### Level B: copy1 ⨾ copy2
+  have hgrowpos : (0 : Nat) < (Compile.copyEmptyRawTM sb src1).states := by
+    rw [Compile.copyEmptyRawTM_states]; omega
+  have hsymB : ∀ v, currentTapeSymbol ([], 0, Compile.encodeTape (s.set sb g1) ++ res) = some v →
+      v < max (Compile.copyEmptyRawTM sb src1).sig (Compile.copyEmptyRawTM (sb + 1) src2).sig := by
+    intro v hv
+    rw [show max (Compile.copyEmptyRawTM sb src1).sig (Compile.copyEmptyRawTM (sb + 1) src2).sig = 4 from by
+      rw [Compile.copyEmptyRawTM_sig, Compile.copyEmptyRawTM_sig]; rfl]
+    exact hsymtape _ hbit1 v hv
+  have hcp2_run' : runFlatTM t2 (Compile.copyEmptyRawTM (sb + 1) src2)
+      { state_idx := (Compile.copyEmptyRawTM (sb + 1) src2).start,
+        tapes := [([], 0, Compile.encodeTape (s.set sb g1) ++ res)] }
+        = some { state_idx := Compile.copyEmptyRawTM_exit (sb + 1) src2,
+                 tapes := [([], 0, Compile.encodeTape s2 ++ res)] } := by
+    rw [Compile.copyEmptyRawTM_start]; exact hcp2_run
+  have hBrun := composeFlatTM_run (Compile.copyEmptyRawTM_valid sb src1)
+    (Compile.copyEmptyRawTM_valid (sb + 1) src2) (Compile.copyEmptyRawTM_exit_lt sb src1)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } hgrowpos
+    [] 0 (Compile.encodeTape (s.set sb g1) ++ res) hsymB hcp1_run hcp1_traj
+    hcp2_run' (Compile.haltingStateReached_of_halt (Compile.copyEmptyRawTM_exit_is_halt (sb + 1) src2))
+  have hBtraj := composeFlatTM_no_early_halt (Compile.copyEmptyRawTM_valid sb src1)
+    (Compile.copyEmptyRawTM_valid (sb + 1) src2) (Compile.copyEmptyRawTM_exit_lt sb src1)
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } hgrowpos
+    [] 0 (Compile.encodeTape (s.set sb g1) ++ res) hsymB hcp1_run hcp1_traj
+    (fun k hk ck hck => (hcp2_traj k hk ck (by rw [Compile.copyEmptyRawTM_start] at hck; exact hck)).2)
+  have hBhalt := Compile.composeFlatTM_halt_intro (Compile.copyEmptyRawTM sb src1)
+    (Compile.copyEmptyRawTM (sb + 1) src2) (Compile.copyEmptyRawTM_exit (sb + 1) src2)
+    (Compile.copyEmptyRawTM_exit sb src1) (Compile.copyEmptyRawTM_exit_is_halt (sb + 1) src2)
+  -- ### Level C: ⨾ compareLoop
+  have hMB_valid := composeFlatTM_valid _ _ _ (Compile.copyEmptyRawTM_valid sb src1)
+    (Compile.copyEmptyRawTM_valid (sb + 1) src2) (Compile.copyEmptyRawTM_exit_lt sb src1)
+    (Compile.copyEmptyRawTM_tapes sb src1) (Compile.copyEmptyRawTM_tapes (sb + 1) src2)
+  have hMB_states : (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+      (Compile.copyEmptyRawTM_exit sb src1)).states
+      = (Compile.copyEmptyRawTM sb src1).states + (Compile.copyEmptyRawTM (sb + 1) src2).states := by
+    rw [composeFlatTM_states]
+  have hexitC_lt : (Compile.copyEmptyRawTM sb src1).states + Compile.copyEmptyRawTM_exit (sb + 1) src2
+      < (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+          (Compile.copyEmptyRawTM_exit sb src1)).states := by
+    rw [hMB_states]; exact Nat.add_lt_add_left (Compile.copyEmptyRawTM_exit_lt (sb + 1) src2) _
+  have hsymC : ∀ v, currentTapeSymbol ([], 0, Compile.encodeTape s2 ++ res) = some v →
+      v < max (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+          (Compile.copyEmptyRawTM_exit sb src1)).sig (Compile.compareLoopTM sb (sb + 1)).sig := by
+    intro v hv
+    rw [show max (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+          (Compile.copyEmptyRawTM_exit sb src1)).sig (Compile.compareLoopTM sb (sb + 1)).sig = 4 from by
+      rw [composeFlatTM_sig, Compile.copyEmptyRawTM_sig, Compile.copyEmptyRawTM_sig,
+          Compile.compareLoopTM_sig]; rfl]
+    exact hsymtape _ hbit2 v hv
+  have hBrun_eq : runFlatTM (t1 + 1 + t2)
+      (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+        (Compile.copyEmptyRawTM_exit sb src1))
+      { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+      = some { state_idx := (Compile.copyEmptyRawTM sb src1).states + Compile.copyEmptyRawTM_exit (sb + 1) src2,
+               tapes := [([], 0, Compile.encodeTape s2 ++ res)] } := by
+    have := hBrun.1; rwa [Nat.add_comm (Compile.copyEmptyRawTM_exit (sb + 1) src2)] at this
+  have hcl_run' : runFlatTM t3 (Compile.compareLoopTM sb (sb + 1))
+      { state_idx := (Compile.compareLoopTM sb (sb + 1)).start,
+        tapes := [([], 0, Compile.encodeTape s2 ++ res)] }
+        = some { state_idx := (Compile.compareBodyTM sb (sb + 1)).states,
+                 tapes := [([], 0,
+                   Compile.encodeTape ((Compile.consumeStep sb (sb + 1))^[Compile.matchLen g1 g2] s2)
+                     ++ (res ++ List.replicate (2 * Compile.matchLen g1 g2) 0))] } := by
+    rw [Compile.compareLoopTM_start]; exact hcl_run
+  have hCrun := composeFlatTM_run hMB_valid (Compile.compareLoopTM_valid sb (sb + 1)) hexitC_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    (by rw [hMB_states]; exact Nat.lt_of_lt_of_le hgrowpos (Nat.le_add_right _ _))
+    [] 0 (Compile.encodeTape s2 ++ res) hsymC hBrun_eq
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hBhalt (hBtraj k hk ck hck), hBtraj k hk ck hck⟩)
+    hcl_run' (Compile.compareLoopTM_exit_is_halt sb (sb + 1) _)
+  have hCtraj := composeFlatTM_no_early_halt hMB_valid (Compile.compareLoopTM_valid sb (sb + 1)) hexitC_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
+    (by rw [hMB_states]; exact Nat.lt_of_lt_of_le hgrowpos (Nat.le_add_right _ _))
+    [] 0 (Compile.encodeTape s2 ++ res) hsymC hBrun_eq
+    (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting hBhalt (hBtraj k hk ck hck), hBtraj k hk ck hck⟩)
+    (fun k hk ck hck => hcl_traj k hk ck (by rw [Compile.compareLoopTM_start] at hck; exact hck))
+  have hstate_eq : (Compile.compareBodyTM sb (sb + 1)).states
+      + (composeFlatTM (Compile.copyEmptyRawTM sb src1) (Compile.copyEmptyRawTM (sb + 1) src2)
+          (Compile.copyEmptyRawTM_exit sb src1)).states
+      = Compile.cmpNGPrefixM_exit sb src1 src2 := by
+    rw [hMB_states, Compile.cmpNGPrefixM_exit]
+  have hrun := hCrun.1
+  rw [hstate_eq] at hrun
+  refine ⟨_, hrun, ?_⟩
+  intro k hk ck hck
+  exact hCtraj k hk ck hck
