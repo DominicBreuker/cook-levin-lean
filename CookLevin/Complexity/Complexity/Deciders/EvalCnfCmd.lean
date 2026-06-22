@@ -137,12 +137,15 @@ def encodeState : cnf × assgn → State
 
 /-! ## The verifier program -/
 
-/-- A unit-cost no-op (`CMP_FLAG := [1]` — `eqBit` of a register with itself).
-Used as the idle branch of flag-guarded loop bodies. `CMP_FLAG` is declared
-scratch in every contract below, and `eqBit` is unit cost regardless of the
-state (a `copy r r` "no-op" would cost `|r|+1` with `r` unconstrained garbage
-on the first iteration, breaking the uniform per-iteration cost bound). -/
-def mcSkip : Cmd := Cmd.op (.eqBit CMP_FLAG CMP_FLAG CMP_FLAG)
+/-- A constant-cost (`3`) no-op (`CMP_FLAG := [1]`). Used as the idle branch of
+flag-guarded loop bodies. `CMP_FLAG` is declared scratch in every contract
+below. It is built from `clear ⨾ appendOne` (each `1`, plus `1` for the seq) so
+its cost is a **state-independent constant**: this matters now that `eqBit` is
+size-aware (`Op.cost eqBit = |src1|+|src2|+1`), under which the old
+`eqBit CMP_FLAG CMP_FLAG CMP_FLAG` realisation would cost `2·|CMP_FLAG|+1` and a
+`copy r r` "no-op" would cost `|r|+1` — either way data-dependent, breaking the
+uniform per-iteration cost bound. -/
+def mcSkip : Cmd := Cmd.op (.clear CMP_FLAG) ;; Cmd.op (.appendOne CMP_FLAG)
 
 /-- One iteration of `memberCheck`'s scan: consume one cell of `ASSGN_COPY`
 into `HEAD_CELL` and step the block parser (`IN_BLOCK`/`BLOCK_ACC`; on a
@@ -318,12 +321,35 @@ private theorem mcStep_take_succ (v : Nat) (L : List Nat) (i : Nat)
   rw [List.take_succ_eq_append_getElem hi, List.foldl_append]
   rfl
 
-private theorem mcSkip_eval (s : State) : mcSkip.eval s = s.set CMP_FLAG [1] := by
-  show Op.eval (.eqBit CMP_FLAG CMP_FLAG CMP_FLAG) s = _
-  simp only [Op.eval]
-  rw [if_pos trivial]
+/-- The parser accumulator (`BLOCK_ACC`) grows by at most one per consumed cell,
+so after folding over a prefix it is bounded by that prefix's length. This is
+the uniform bound on the data `mcBody`'s `eqBit` (cost `|BLOCK_ACC|+|LIT_VAR|+1`)
+re-materialises each iteration. -/
+private theorem mcStep_acc_le (v : Nat) :
+    ∀ (L : List Nat) (b : Bool) (acc : Nat) (f : Bool),
+      (L.foldl (mcStep v) (b, acc, f)).2.1 ≤ acc + L.length := by
+  intro L
+  induction L with
+  | nil => intro b acc f; simp
+  | cons c cs ih =>
+      intro b acc f
+      rw [List.foldl_cons]
+      have hstep : ∃ b' acc' f', mcStep v (b, acc, f) c = (b', acc', f') ∧ acc' ≤ acc + 1 := by
+        cases b <;> simp only [mcStep] <;> split <;>
+          exact ⟨_, _, _, rfl, by omega⟩
+      obtain ⟨b', acc', f', heq, hle⟩ := hstep
+      rw [heq]
+      refine (ih b' acc' f').trans ?_
+      simp only [List.length_cons]; omega
 
-private theorem mcSkip_cost (s : State) : mcSkip.cost s = 1 := rfl
+private theorem mcSkip_eval (s : State) : mcSkip.eval s = s.set CMP_FLAG [1] := by
+  show ((Cmd.op (.clear CMP_FLAG)) ;; Cmd.op (.appendOne CMP_FLAG)).eval s = _
+  rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+  simp only [Op.eval, State.get_set_eq, List.nil_append, State.set_set]
+
+private theorem mcSkip_cost (s : State) : mcSkip.cost s = 3 := by
+  show ((Cmd.op (.clear CMP_FLAG)) ;; Cmd.op (.appendOne CMP_FLAG)).cost s = _
+  rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]; rfl
 
 /-- **One `mcBody` iteration = one `mcStep`** (plus its uniform cost bound and
 frame). The single case-bash over the branch conditions; everything above it
@@ -344,7 +370,7 @@ private theorem mcBody_step (st : State) (cell : Nat) (restL : List Nat)
         = [if (mcStep v (inB, acc, found) cell).2.2 then 1 else 0]
     ∧ (∀ r : Var, r ∉ [ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL,
           CMP_FLAG, IN_BLOCK, BLOCK_ACC] → (mcBody.eval st).get r = st.get r)
-    ∧ mcBody.cost st ≤ restL.length + 20 := by
+    ∧ mcBody.cost st ≤ restL.length + acc + v + 20 := by
   -- shared prefix: head + tail
   have e1 : (Cmd.op (.head HEAD_CELL ASSGN_COPY)).eval st
       = st.set HEAD_CELL [cell] := by
@@ -503,7 +529,7 @@ private theorem mcBody_step (st : State) (cell : Nat) (restL : List Nat)
               State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h1,
               State.get_set_ne _ _ _ _ h4]
           · rw [hcost]
-            simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+            simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost, List.length_replicate]
             omega
         · -- no match: MEMBER_FOUND unchanged (mcSkip)
           rw [if_neg hav] at heval hcost
@@ -540,7 +566,7 @@ private theorem mcBody_step (st : State) (cell : Nat) (restL : List Nat)
               State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h5,
               State.get_set_ne _ _ _ _ h1, State.get_set_ne _ _ _ _ h4]
           · rw [hcost]
-            simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+            simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost, List.length_replicate]
             omega
   | false =>
       -- at a boundary: a `1` opens a block, a `0` is inert
@@ -726,7 +752,7 @@ private theorem memberCheck_main (st : State) (v : Nat) (a : assgn)
       omega
     have hC : ∀ i s, i < (encodeAssgn a).length → MCInv v a st i s →
         mcBody.cost (s.set INNER_IDX (List.replicate i 1))
-          ≤ (encodeAssgn a).length + 20 := by
+          ≤ 2 * (encodeAssgn a).length + v + 20 := by
       intro i s hi h
       obtain ⟨hAC, hIB, hBA, hMF, hframe⟩ := h
       have hAC' : (s.set INNER_IDX (List.replicate i 1)).get ASSGN_COPY
@@ -752,30 +778,33 @@ private theorem memberCheck_main (st : State) (v : Nat) (a : assgn)
       obtain ⟨_, _, _, _, _, hc⟩ :=
         mcBody_step _ _ _ _ _ _ _ hAC' hIB' hBA' hMF' hLV'
       refine hc.trans ?_
-      have : (List.drop (i + 1) (encodeAssgn a)).length
+      have hdrop : (List.drop (i + 1) (encodeAssgn a)).length
           = (encodeAssgn a).length - (i + 1) := List.length_drop
+      have hacc : (((encodeAssgn a).take i).foldl (mcStep v) (false, 0, false)).2.1
+          ≤ (encodeAssgn a).length := by
+        refine (mcStep_acc_le v ((encodeAssgn a).take i) false 0 false).trans ?_
+        simp only [Nat.zero_add, List.length_take]; omega
       omega
     have hloop : (Cmd.forBnd INNER_IDX ASSGN_COPY mcBody).cost
         ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
           MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC [])
-        ≤ 1 + (encodeAssgn a).length * ((encodeAssgn a).length + 20)
+        ≤ 1 + (encodeAssgn a).length * (2 * (encodeAssgn a).length + v + 20)
           + (encodeAssgn a).length * (encodeAssgn a).length := by
       have h := Cmd.cost_forBnd_le INNER_IDX ASSGN_COPY mcBody
         ((((((st.set ASSGN_COPY (encodeAssgn a)).set MEMBER_FOUND []).set
           MEMBER_FOUND [0]).set IN_BLOCK []).set IN_BLOCK [0]).set BLOCK_ACC [])
-        ((encodeAssgn a).length + 20) (MCInv v a st) hbase
+        (2 * (encodeAssgn a).length + v + 20) (MCInv v a st) hbase
         (fun i s hi h => MCInv_step v a st hvar i s (by rwa [hbound] at hi) h)
         (fun i s hi h => hC i s (by rwa [hbound] at hi) h)
       rwa [hbound] at h
-    -- assemble the arithmetic: 2n² + 21n + 13 ≤ 100(n + v' + 1)²
+    -- assemble the arithmetic: 3n² + nv + 21n + 13 ≤ 100(n + v + 1)²
     rw [hcost_eq, hassgn, hvar]
     have hn := hloop
     set n := (encodeAssgn a).length with hndef
     rw [List.length_replicate]
-    have hmono : (n + 1) ^ 2 ≤ (n + v + 1) ^ 2 :=
-      Nat.pow_le_pow_left (by omega) 2
-    have hsq : (n + 1) ^ 2 = n * n + 2 * n + 1 := by ring
-    have hexp : n * (n + 20) = n * n + 20 * n := by ring
+    have he1 : n * (2 * n + v + 20) = 2 * (n * n) + n * v + 20 * n := by ring
+    have he2 : (n + v + 1) ^ 2
+        = n * n + v * v + 1 + 2 * (n * v) + 2 * n + 2 * v := by ring
     omega
 
 /-! ## Pinned inner-body contracts — the bottom-up ⇄ top-down interface
@@ -1066,7 +1095,7 @@ private theorem LVInv_cost (v : Nat) (rest : List Nat) (st : State)
     have hIB' : (s.set INNER_IDX (List.replicate i 1)).get IN_BLOCK ≠ [1] := by
       rw [State.get_set_ne _ _ _ _ (by decide), hphase.1]; decide
     have hcost : varExtractBody.cost (s.set INNER_IDX (List.replicate i 1))
-        = 1 + 1 := by
+        = 1 + 3 := by
       show (Cmd.ifBit IN_BLOCK _ _).cost _ = _
       rw [Cmd.cost_ifBit_false _ _ _ _ hIB', mcSkip_cost]
     omega
@@ -1274,7 +1303,6 @@ private theorem processOneLiteral_main (st : State) (pol : Bool) (v : Nat)
       simp only [Op.cost]
       omega
     · rw [Cmd.cost_ifBit_false _ _ _ _ hb, mcSkip_cost]
-      omega
   have hLst : (st.get CNF_STREAM).length = v + rest.length + 3 := by
     rw [hstream]
     simp only [List.length_cons, List.length_append, List.length_replicate]
@@ -1284,6 +1312,9 @@ private theorem processOneLiteral_main (st : State) (pol : Bool) (v : Nat)
   rw [Cmd.cost_seq, Cmd.eval_forBnd, hnlen, Cmd.cost_seq, Cmd.cost_seq,
     Cmd.cost_op]
   simp only [Op.cost]
+  -- the `eqBit MEMBER_FOUND LIT_POL` reads two 1-cell flags (cost `1+1+1`)
+  rw [hMF8, hLP8]
+  simp only [List.length_cons, List.length_nil]
   have hif := hIfCost ((Cmd.op (.eqBit CMP_FLAG MEMBER_FOUND LIT_POL)).eval
     (memberCheck.eval (Cmd.foldlState varExtractBody INNER_IDX (List.range (v + 1 + rest.length)) ((((((st.set CNF_STREAM ((if pol then 1 else 0) :: (List.replicate v 1 ++ 0 :: rest))).set LIT_POL [(if pol then 1 else 0)]).set CNF_STREAM (List.replicate v 1 ++ 0 :: rest)).set LIT_VAR []).set IN_BLOCK []).set IN_BLOCK [1]))))
   -- arithmetic: everything against the budget base
@@ -1720,7 +1751,6 @@ private theorem CInv_cost (C : clause) (rest : List Nat) (a : assgn) (b : Bool)
         intro t
         by_cases hb : t.get CLAUSE_SAT = [1]
         · rw [Cmd.cost_ifBit_true _ _ _ _ hb, mcSkip_cost]
-          omega
         · rw [Cmd.cost_ifBit_false _ _ _ _ hb, Cmd.cost_seq, Cmd.cost_op,
             Cmd.cost_op]
           simp only [Op.cost]
@@ -1754,7 +1784,7 @@ private theorem CInv_cost (C : clause) (rest : List Nat) (a : assgn) (b : Bool)
     rw [if_neg hile] at hphase
     have hCD' : (s.set INNER_IDX (List.replicate i 1)).get CLAUSE_DONE = [1] := by
       rw [State.get_set_ne _ _ _ _ (by decide)]; exact hphase.1
-    have hc : clauseBody.cost (s.set INNER_IDX (List.replicate i 1)) = 1 + 1 := by
+    have hc : clauseBody.cost (s.set INNER_IDX (List.replicate i 1)) = 1 + 3 := by
       show (Cmd.ifBit CLAUSE_DONE _ _).cost _ = _
       rw [Cmd.cost_ifBit_true _ _ _ _ hCD', mcSkip_cost]
     rw [hc]

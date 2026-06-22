@@ -64,14 +64,19 @@ def Op.eval : Op → State → State
 Each op costs `1` for the control step plus the length of any **source data it
 must read and re-materialise**. The size-increasing ops (`copy`, `tail`,
 `takeAt`, `dropAt`, `concat`, `consLen`) therefore charge for their output, so
-that cost dominates the per-step size growth (`Op.size_eval_le`). This is the
+that cost dominates the per-step size growth (`Op.size_eval_le`). `eqBit` also
+charges `|src1|+|src2|`: even though it only *writes* one cell, the compiled
+register-equality tester copies and consumes both source registers, leaving a
+`|src1|+|src2|` residue on the tape that the factor-1 W-invariant of the
+physical-residue contract can only absorb if `Op.cost` accounts for it. This is the
 fix for the cost-model gap: under the previous unit-cost model `concat`/`copy`
 could grow `State.size` multiplicatively in one step, making the layer cost an
 unfaithful proxy for the compiled TM's running time (output size — hence TM
 steps — could be exponential in layer cost). With this cost the global invariant
 `State.size (Op.eval o s) ≤ State.size s + Op.cost o s` holds. The ops that only
-write `O(1)` cells (`clear`, `appendOne/Zero`, `head`, `eqBit`, `nonEmpty`)
-remain unit cost. This mirrors the L-calculus cost the Coq port extracts from. -/
+write `O(1)` cells and read no register data (`clear`, `appendOne/Zero`, `head`,
+`nonEmpty`) remain unit cost. This mirrors the L-calculus cost the Coq port
+extracts from. -/
 def Op.cost : Op → State → Nat
   | .clear      _,            _ => 1
   | .appendOne  _,            _ => 1
@@ -79,7 +84,7 @@ def Op.cost : Op → State → Nat
   | .copy       _ src,        s => (s.get src).length + 1
   | .tail       _ src,        s => (s.get src).length + 1
   | .head       _ _,          _ => 1
-  | .eqBit      _ _ _,        _ => 1
+  | .eqBit      _ src1 src2,  s => (s.get src1).length + (s.get src2).length + 1
   | .nonEmpty   _ _,          _ => 1
   | .takeAt     _ src _,      s => (s.get src).length + 1
   | .dropAt     _ src _,      s => (s.get src).length + 1
@@ -193,8 +198,10 @@ theorem Op.size_eval_le (o : Op) (s : State) :
       refine State.size_set_le_cost s dst _ 1 ?_
       rcases s.get src with _ | ⟨x, xs⟩ <;> simp
   | eqBit dst s1 s2 =>
-      refine State.size_set_le_cost s dst _ 1 ?_
-      by_cases hh : s.get s1 = s.get s2 <;> simp [hh]
+      refine State.size_set_le_cost s dst _ ((s.get s1).length + (s.get s2).length + 1) ?_
+      by_cases hh : s.get s1 = s.get s2
+      · rw [if_pos hh]; simp only [List.length_cons, List.length_nil]; omega
+      · rw [if_neg hh]; simp only [List.length_cons, List.length_nil]; omega
   | nonEmpty dst src =>
       refine State.size_set_le_cost s dst _ 1 ?_
       by_cases hh : (s.get src).isEmpty <;> simp [hh]
