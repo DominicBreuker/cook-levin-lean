@@ -25492,3 +25492,132 @@ theorem Compile.cmpNGPrefix_run (s : State) (sb src1 src2 : Var)
   refine ⟨_, hrun, ?_⟩
   intro k hk ck hck
   exact hCtraj k hk ck hck
+
+/-! ### No-grow branch wrap `compareRegsNoGrowM` — the 2-exit EQ/NEQ tester.
+Mirror of `compareRegsTM` with the no-grow prefix/cleanup. -/
+
+def Compile.cmpNGBranchM (sb : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.eqVerdictM sb (sb + 1)) (Compile.cmpNGCleanupM sb)
+    (Compile.cmpNGCleanupM sb)
+    (Compile.eqVerdictM_exit_eq sb (sb + 1)) (Compile.eqVerdictM_exit_neq sb)
+
+theorem Compile.cmpNGBranchM_sig (sb : Var) : (Compile.cmpNGBranchM sb).sig = 4 := by
+  rw [Compile.cmpNGBranchM, branchComposeFlatTM_sig, Compile.eqVerdictM_sig,
+      Compile.cmpNGCleanupM_sig]; rfl
+
+theorem Compile.cmpNGBranchM_tapes (sb : Var) : (Compile.cmpNGBranchM sb).tapes = 1 := by
+  rw [Compile.cmpNGBranchM, branchComposeFlatTM_tapes]; exact Compile.eqVerdictM_tapes sb (sb + 1)
+
+theorem Compile.cmpNGBranchM_start (sb : Var) : (Compile.cmpNGBranchM sb).start = 0 := by
+  rw [Compile.cmpNGBranchM, branchComposeFlatTM_start]; exact Compile.eqVerdictM_start sb (sb + 1)
+
+theorem Compile.cmpNGBranchM_states (sb : Var) :
+    (Compile.cmpNGBranchM sb).states =
+      (Compile.eqVerdictM sb (sb + 1)).states + (Compile.cmpNGCleanupM sb).states
+        + (Compile.cmpNGCleanupM sb).states := by
+  rw [Compile.cmpNGBranchM, branchComposeFlatTM_states]
+
+theorem Compile.cmpNGBranchM_valid (sb : Var) : validFlatTM (Compile.cmpNGBranchM sb) :=
+  branchComposeFlatTM_valid _ _ _ _ _
+    (Compile.eqVerdictM_valid sb (sb + 1)) (Compile.cmpNGCleanupM_valid sb)
+    (Compile.cmpNGCleanupM_valid sb)
+    (Compile.eqVerdictM_exit_eq_lt sb (sb + 1)) (Compile.eqVerdictM_exit_neq_lt sb (sb + 1))
+    (Compile.eqVerdictM_tapes sb (sb + 1)) (Compile.cmpNGCleanupM_tapes sb)
+    (Compile.cmpNGCleanupM_tapes sb)
+
+def Compile.compareRegsNoGrowM (sb src1 src2 : Var) : FlatTM :=
+  composeFlatTM (Compile.cmpNGPrefixM sb src1 src2) (Compile.cmpNGBranchM sb)
+    (Compile.cmpNGPrefixM_exit sb src1 src2)
+
+def Compile.compareRegsNoGrowM_exit_eq (sb src1 src2 : Var) : Nat :=
+  (Compile.cmpNGCleanupM_exit sb + (Compile.eqVerdictM sb (sb + 1)).states)
+    + (Compile.cmpNGPrefixM sb src1 src2).states
+
+def Compile.compareRegsNoGrowM_exit_neq (sb src1 src2 : Var) : Nat :=
+  (Compile.cmpNGCleanupM_exit sb
+      + ((Compile.eqVerdictM sb (sb + 1)).states + (Compile.cmpNGCleanupM sb).states))
+    + (Compile.cmpNGPrefixM sb src1 src2).states
+
+theorem Compile.compareRegsNoGrowM_sig (sb src1 src2 : Var) :
+    (Compile.compareRegsNoGrowM sb src1 src2).sig = 4 := by
+  rw [Compile.compareRegsNoGrowM, composeFlatTM_sig, Compile.cmpNGPrefixM_sig,
+      Compile.cmpNGBranchM_sig]; rfl
+
+theorem Compile.compareRegsNoGrowM_tapes (sb src1 src2 : Var) :
+    (Compile.compareRegsNoGrowM sb src1 src2).tapes = 1 := by
+  rw [Compile.compareRegsNoGrowM, composeFlatTM_tapes]
+  exact Compile.cmpNGPrefixM_tapes sb src1 src2
+
+theorem Compile.compareRegsNoGrowM_start (sb src1 src2 : Var) :
+    (Compile.compareRegsNoGrowM sb src1 src2).start = 0 := by
+  rw [Compile.compareRegsNoGrowM, composeFlatTM_start]
+  exact Compile.cmpNGPrefixM_start sb src1 src2
+
+theorem Compile.compareRegsNoGrowM_states (sb src1 src2 : Var) :
+    (Compile.compareRegsNoGrowM sb src1 src2).states =
+      (Compile.cmpNGPrefixM sb src1 src2).states + (Compile.cmpNGBranchM sb).states := by
+  rw [Compile.compareRegsNoGrowM, composeFlatTM_states]
+
+theorem Compile.compareRegsNoGrowM_valid (sb src1 src2 : Var) :
+    validFlatTM (Compile.compareRegsNoGrowM sb src1 src2) := by
+  rw [Compile.compareRegsNoGrowM]
+  exact composeFlatTM_valid _ _ _ (Compile.cmpNGPrefixM_valid sb src1 src2)
+    (Compile.cmpNGBranchM_valid sb) (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
+    (Compile.cmpNGPrefixM_tapes sb src1 src2) (Compile.cmpNGBranchM_tapes sb)
+
+theorem Compile.compareRegsNoGrowM_exit_eq_lt (sb src1 src2 : Var) :
+    Compile.compareRegsNoGrowM_exit_eq sb src1 src2 < (Compile.compareRegsNoGrowM sb src1 src2).states := by
+  rw [Compile.compareRegsNoGrowM_exit_eq, Compile.compareRegsNoGrowM_states, Compile.cmpNGBranchM_states]
+  have := Compile.cmpNGCleanupM_exit_lt sb
+  omega
+
+theorem Compile.compareRegsNoGrowM_exit_neq_lt (sb src1 src2 : Var) :
+    Compile.compareRegsNoGrowM_exit_neq sb src1 src2 < (Compile.compareRegsNoGrowM sb src1 src2).states := by
+  rw [Compile.compareRegsNoGrowM_exit_neq, Compile.compareRegsNoGrowM_states, Compile.cmpNGBranchM_states]
+  have := Compile.cmpNGCleanupM_exit_lt sb
+  omega
+
+theorem Compile.compareRegsNoGrowM_exit_eq_ne_neq (sb src1 src2 : Var) :
+    Compile.compareRegsNoGrowM_exit_eq sb src1 src2 ≠ Compile.compareRegsNoGrowM_exit_neq sb src1 src2 := by
+  rw [Compile.compareRegsNoGrowM_exit_eq, Compile.compareRegsNoGrowM_exit_neq]
+  have := Compile.cmpNGCleanupM_exit_lt sb
+  omega
+
+theorem Compile.compareRegsNoGrowM_exit_eq_is_halt (sb src1 src2 : Var) :
+    (Compile.compareRegsNoGrowM sb src1 src2).halt[Compile.compareRegsNoGrowM_exit_eq sb src1 src2]? = some true := by
+  have hbranch : (Compile.cmpNGBranchM sb).halt[(Compile.eqVerdictM sb (sb + 1)).states
+        + Compile.cmpNGCleanupM_exit sb]? = some true := by
+    rw [Compile.cmpNGBranchM]
+    exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+      (Compile.cmpNGCleanupM_valid sb) (Compile.cmpNGCleanupM_exit_lt sb)
+      (Compile.cmpNGCleanupM_halt_getElem sb)
+  have hfull := Compile.composeFlatTM_halt_intro (Compile.cmpNGPrefixM sb src1 src2)
+    (Compile.cmpNGBranchM sb)
+    ((Compile.eqVerdictM sb (sb + 1)).states + Compile.cmpNGCleanupM_exit sb)
+    (Compile.cmpNGPrefixM_exit sb src1 src2) hbranch
+  rw [Compile.compareRegsNoGrowM,
+      show Compile.compareRegsNoGrowM_exit_eq sb src1 src2
+        = (Compile.cmpNGPrefixM sb src1 src2).states
+            + ((Compile.eqVerdictM sb (sb + 1)).states + Compile.cmpNGCleanupM_exit sb) from by
+        rw [Compile.compareRegsNoGrowM_exit_eq]; omega]
+  exact hfull
+
+theorem Compile.compareRegsNoGrowM_exit_neq_is_halt (sb src1 src2 : Var) :
+    (Compile.compareRegsNoGrowM sb src1 src2).halt[Compile.compareRegsNoGrowM_exit_neq sb src1 src2]? = some true := by
+  have hbranch : (Compile.cmpNGBranchM sb).halt[(Compile.eqVerdictM sb (sb + 1)).states
+        + (Compile.cmpNGCleanupM sb).states + Compile.cmpNGCleanupM_exit sb]? = some true := by
+    rw [Compile.cmpNGBranchM]
+    exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+      (Compile.cmpNGCleanupM_valid sb) (Compile.cmpNGCleanupM_halt_getElem sb)
+  have hfull := Compile.composeFlatTM_halt_intro (Compile.cmpNGPrefixM sb src1 src2)
+    (Compile.cmpNGBranchM sb)
+    ((Compile.eqVerdictM sb (sb + 1)).states + (Compile.cmpNGCleanupM sb).states
+      + Compile.cmpNGCleanupM_exit sb)
+    (Compile.cmpNGPrefixM_exit sb src1 src2) hbranch
+  rw [Compile.compareRegsNoGrowM,
+      show Compile.compareRegsNoGrowM_exit_neq sb src1 src2
+        = (Compile.cmpNGPrefixM sb src1 src2).states
+            + ((Compile.eqVerdictM sb (sb + 1)).states + (Compile.cmpNGCleanupM sb).states
+                + Compile.cmpNGCleanupM_exit sb) from by
+        rw [Compile.compareRegsNoGrowM_exit_neq]; omega]
+  exact hfull
