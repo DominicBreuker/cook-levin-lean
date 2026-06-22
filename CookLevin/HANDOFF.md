@@ -61,11 +61,11 @@ REAL REMAINING MATH under the assembly:
                            forBnd counted loop is fully assembled & discharged.)
 ```
 **The live `sat_NP` decider half now needs only ONE compiler gadget: `eqBit`** —
-the no-grow tester `compareRegsNoGrowM` is now **PROVEN** (2026-06-22 bottom-up),
-but discharging the `eqBit` contract case is gated on TWO cleared-this-session
-findings: **bump `Op.cost eqBit`** (owner-approved — the consume design leaves
-`|src1|+|src2|` residue that cost-1 can't absorb) + a mechanical **def-ordering
-reorg**. See the "★ `eqBit`" section above for the full plan. With `compileForBnd`
+the no-grow tester `compareRegsNoGrowM` is **PROVEN** (2026-06-22 bottom-up) and the
+**`Op.cost eqBit` bump is now LANDED** (2026-06-22 top-down, full EvalCnf re-audit done).
+Discharging the `eqBit` contract case is therefore gated on only ONE remaining finding:
+a mechanical **def-ordering reorg** (BLOCKER 2) + the wrapper + the contract discharge —
+all pure bottom-up. See the "★ `eqBit`" section above for the full plan. With `compileForBnd`
 proven, `evalCnfCmd`'s only remaining stub op is `eqBit` (it is
 `consLen`/`takeAt`/`dropAt`-free); closing it makes the entire live decider chain
 (`sat_NP → … → Compile_run_physical_residue`) **sorry-free**.
@@ -137,11 +137,12 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ★ `eqBit` — TESTER PROVEN; TWO BLOCKERS FOUND; OWNER PICKED THE FIX (2026-06-22 bottom-up)
+## ★ `eqBit` — TESTER PROVEN; BLOCKER 1 (cost bump) DONE; BLOCKER 2 (def-reorg) REMAINS
 
-The no-grow EQ/NEQ register tester is **fully proven & axiom-clean**, but assembling
-it into `opEqBit` surfaced two architectural gaps the Resolution-B handoff missed.
-**Both must be cleared before the eqBit contract case can be discharged.**
+The no-grow EQ/NEQ register tester is **fully proven & axiom-clean**, and the
+**owner-approved cost bump (BLOCKER 1) is now landed (2026-06-22 top-down)** — so the
+W-invariant ① holds for the eqBit consume residue. **Only the mechanical def-ordering
+reorg (BLOCKER 2) + the wrapper + the contract discharge remain — all pure BOTTOM-UP.**
 
 **PROVEN THIS SESSION (Compile.lean, end; all axiom-clean `[propext, Classical.choice,
 Quot.sound]`, all green):**
@@ -159,26 +160,23 @@ Quot.sound]`, all green):**
   `(hbsb : Op.UsesBelow o sb)` (operands live below the scratch base — needed so the
   eqBit scratch never aliases `src1`/`src2`/`dst`; supplied from the gen lemma's `huses`).
 
-**⚠ BLOCKER 1 — W-invariant / cost (OWNER DECISION: bump `Op.cost eqBit`).** The
-handoff's consume recipe (`copyEmpty src1→sb ⨾ copyEmpty src2→sb+1 ⨾ compareLoop ⨾
-clear ⨾ clear`) is correct as a TESTER but leaves residue `replicate (|src1|+|src2|) 0`
-(the consumed scratch copies — every TM deletion drops one residue cell; the tape
-never shrinks). The contract's **W-invariant ①** demands `size(eval) + |res_out| ≤
-size s + |res_in| + Op.cost o s`; with the proven residue the LHS exceeds the RHS by
-`|src1|+|src2|`, and `Op.cost eqBit = 1`. **Owner-approved fix: set `Op.cost eqBit =
-(s.get src1).length + (s.get src2).length + 1`** (exactly how `copy`/`tail`/`concat`
-charge for data they read — then growth `= 1+|g1|+|g2| ≤ cost`, equality). This
-**reverses the old "do NOT bump eqBit cost" note** (that was a budget/step-count
-judgement; it missed the residue dimension). ⚠ **Ripple to re-audit:**
-`Op.cost` (Semantics.lean ~82), `Op.size_eval_le` eqBit case (Semantics ~195, slack
-grows — easy), `Op.cost_agree` eqBit case (Frame.lean ~366, becomes the `concat`
-pattern), and **`EvalCnfCmd.lean`'s cost proofs** — `eqBit` is used pervasively there
-(`mcSkip := eqBit CMP_FLAG CMP_FLAG CMP_FLAG` with `mcSkip_cost := rfl`; many
-`simp [Op.cost]` derivations; the quartic `evalCnfCmd_cost_bound`). The quartic budget
-is generous so it should re-close, but every cost lemma needs re-deriving. **This is a
-real EvalCnf budget re-audit — schedule it as its own step (good top-down item).**
+**✅ BLOCKER 1 — W-invariant / cost (DONE, 2026-06-22 top-down).** `Op.cost eqBit` is now
+`(s.get src1).length + (s.get src2).length + 1` (was unit cost), so the consume residue
+`replicate (|src1|+|src2|) 0` is exactly covered by the W-invariant ① budget (growth
+`= 1+|g1|+|g2| ≤ cost`, equality). Landed & re-proven green/axiom-clean across the whole
+ripple: `Op.cost`/`Op.size_eval_le` (Semantics, mirror `concat`), `Op.cost_agree`
+(Frame, mirror `concat`) + new reusable unconditional **`State.set_set`** (Frame), and
+the full **EvalCnf budget re-audit** (`EvalCnfCmd.lean`): `mcSkip` redefined
+`eqBit r r r` → `clear ⨾ appendOne` (state-independent constant cost **3** — the old
+realisation would now cost `2·|CMP_FLAG|+1`); the genuine data-eqBit
+(`eqBit CMP_FLAG BLOCK_ACC LIT_VAR`) widened via the new **`mcStep_acc_le`** (accumulator
+≤ prefix length) to the uniform loop bound `2n+v+20` (quartic `evalCnfCmd_cost_bound`
+unchanged — still fits `100·(n+v+1)²`); the flag-eqBit (`MEMBER_FOUND`/`LIT_POL`)
+discharged from the existing length facts. `evalCnfDecidesLang` stays axiom-clean.
+**Do not re-touch — bottom-up just consumes the new `Op.cost eqBit` value in the W-①
+arithmetic of step 4 below.**
 
-**⚠ BLOCKER 2 — def-ordering (mechanical, validated).** `opEqBit` is referenced by
+**⚠ BLOCKER 2 — def-ordering (mechanical, validated; STILL OPEN).** `opEqBit` is referenced by
 `compileOp` (~L2488), so it (and the machines it's built from) must be defined
 **before** `compileOp`. But the consume-loop gadget DEFS (`navTestRewindM`..`compareLoopTM`
 ~L14214–18130, `copyEmptyRawTM` ~L23478) + the new `compareRegsNoGrowM` stack live far
@@ -189,7 +187,7 @@ the `def`s (+ exit-index defs); leave all `theorem`s where they are (they consum
 late stage run lemmas). The proofs of `compareRegsNoGrowM_run_*` etc. stay put.
 
 **Remaining to discharge eqBit (bottom-up Task 1, in order):**
-1. Bump `Op.cost eqBit` + ripple (Semantics/Frame; small) — **then** EvalCnf re-audit.
+1. ✅ **DONE** — `Op.cost eqBit` bumped + full ripple + EvalCnf re-audit (top-down, above).
 2. Build the wrapper `opEqBitRawM sb dst src1 src2 := branchComposeFlatTM
    (compareRegsNoGrowM sb src1 src2) (clearAppendM dst 2) (clearAppendM dst 1)
    (compareRegsNoGrowM_exit_eq …) (compareRegsNoGrowM_exit_neq …)` (bodies need NO
@@ -200,7 +198,8 @@ late stage run lemmas). The proofs of `compareRegsNoGrowM_run_*` etc. stay put.
    (|src1|+|src2|) 0 ++ replicate |dst₀| 0`.
 3. The def-ordering reorg (above).
 4. Discharge the `eqBit` case of `compileOp_sound_physical_residue` (Compile.lean
-   ~18374): W-invariant ① now holds (bumped cost = residue growth); budget via the
+   ~18374): W-invariant ① now holds (the **landed** bumped cost `|src1|+|src2|+1` =
+   residue growth); budget via the
    `54→72` lift (still valid — the no-grow stage sum is below `compareBudget_arith_fits54`
    / `selfBudget_eqDst_72` in `probes/EqBitBudgetProbe.lean`). Use the `nonEmpty` case
    as the structural template; discharge `hbsb`'s `src1,src2,dst < sb` facts into the
@@ -300,6 +299,11 @@ late stage run lemmas). The proofs of `compareRegsNoGrowM_run_*` etc. stay put.
 - **Threading toolkit** (now all in `Compile.lean`): `Cmd.eval_preserves_BitState`,
   `Op.inBounds_of_UsesBelow`, `Cmd.eval_length_ge`/`_le`, `Cmd.size_eval_le`,
   `State.set_length_ge`, `BitState_set_pad`.
+- **`State.set_set`** (Frame.lean) — unconditional `(s.set v a).set v b = s.set v b`
+  (the `State` analogue of `List.set_set`; no `v < s.length` side-condition). New
+  2026-06-22; reuse it for any double-write collapse. **`Op.cost eqBit` is now
+  `|src1|+|src2|+1`** (no longer unit cost — it reads two source registers like
+  `concat`); any new `Cmd` using `eqBit` must charge for it.
 - **Move/branch/loop gadgets:** `moveRegionTM`/`moveRegion2TM` (single/dual FIFO
   transfer), `joinTwoHalts*`, `rewindBracket`/`_transport`, `bitReadTM`,
   `rewindTwoPhaseTM`, `deleteCarryTM`, `navigateAndTestTM`, `loopTM`(+`_run`/
@@ -525,7 +529,8 @@ late stage run lemmas). The proofs of `compareRegsNoGrowM_run_*` etc. stay put.
   Full shape family + both run lemmas + no-early-halt, all axiom-clean. Reusable cores:
   `Compile.consumeStep_clear_restore` (copy→consume→clear ⇒ original state),
   `Compile.consumeStep_frame`, `State.ext_of_get`. **⚠ NOT yet a discharge of the eqBit
-  contract** — gated on the cost bump + def-reorg (see the "★ `eqBit`" section). ⇒
+  contract** — the cost bump is now landed; gated only on the def-reorg + wrapper +
+  discharge (see the "★ `eqBit`" section). ⇒
   `compareRegsPrefixM`/`compareRegsTM`/`compareBranchM` (grow versions) are now superseded.
 
 ---
@@ -557,20 +562,18 @@ The build is UNGATED for bottom-up. New frontier:
    ⇒ **eqBit is now a pure BOTTOM-UP build** (bottom-up Task 1). The owner-sensitive
    pad change is settled (`+2` constant; `sig=4`/`BitState` untouched) — do not revisit.
 
+   ✅ **Task 2 (EvalCnf eqBit-cost re-audit) is DONE (2026-06-22 top-down).** `Op.cost eqBit`
+   bumped to `|src1|+|src2|+1` and the full ripple re-proven green/axiom-clean — see the "★
+   `eqBit`" BLOCKER 1 block for the details (new `State.set_set`/`mcStep_acc_le`, `mcSkip`
+   redefined constant-cost). **The cost bump has landed; bottom-up Task 1(a) is unblocked.**
+
    **▶ NEXT TOP-DOWN SESSION — pick one:**
-   - **Task 2 (EvalCnf eqBit-cost re-audit) — NEW, unblocks bottom-up Task 1(a).** The
-     owner approved bumping `Op.cost eqBit → |src1|+|src2|+1` (the W-invariant finding —
-     see the "★ `eqBit`" section). This ripples into `EvalCnfCmd.lean`'s cost proofs
-     (`eqBit`/`mcSkip` are used pervasively; `mcSkip_cost := rfl` and many `simp [Op.cost]`
-     derivations break). Re-derive them under the new cost (quartic `evalCnfCmd_cost_bound`
-     is generous — should re-close; `mcSkip` becomes a small *constant* cost since
-     `CMP_FLAG` is a 1-cell flag). This is verifier-cost work = top-down; coordinate with
-     bottom-up so the cost bump lands once. **Recommended next if bottom-up is about to
-     tackle eqBit.**
    - **Task 1 (CliqueRelTM)** — highest *standalone* value; replicate the proven EvalCnf
-     end-to-end template (see below). Recommended if bottom-up is NOT yet on eqBit.
+     end-to-end template (see below). **Recommended next** — verifier-cost work is now done,
+     and CliqueRelTM is the only remaining large standalone top-down build (FlatClique→Clique).
    - **Task 0 (eqBit-completion checkpoint)** — the session AFTER bottom-up closes the
      eqBit case: audit `#print axioms sat_NP`, the first headline soundness win (below).
+     Pick this if bottom-up has just landed `opEqBit`.
 0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
    Resolution-B `opEqBit` gadget).** When the `eqBit` case of
    `compileOp_sound_physical_residue` (Compile.lean ~18361, currently raw `sorry`) is
@@ -623,24 +626,24 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~18187 statement; raw
 half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
 1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
-   needs). The no-grow tester is PROVEN; 4 steps remain (see the "★ `eqBit`" section
-   above for full detail).** Discharging the `eqBit` case of
+   needs). The no-grow tester is PROVEN, the cost bump (a) is LANDED; 3 steps remain
+   (see the "★ `eqBit`" section above for full detail).** Discharging the `eqBit` case of
    `compileOp_sound_physical_residue` (Compile.lean ~18374, raw `sorry`) makes the entire
    live decider chain `sat_NP → … → Compile_run_physical_residue` **sorry-free**.
 
-   **DONE (this session, all green & axiom-clean):** `Compile.compareRegsNoGrowM` +
+   **DONE (prior sessions, all green & axiom-clean):** `Compile.compareRegsNoGrowM` +
    `compareRegsNoGrowM_run_eq`/`_run_neq` (the 2-exit EQ/NEQ tester on pre-existing
    interior scratch `sb`/`sb+1`, tape restored); its stack `cmpNGCleanupM`/`cmpNGPrefixM`/
    `cmpNGBranchM` + run lemmas; the restore algebra (`consumeStep_clear_restore` etc.);
-   and the contract's new `hbsb : Op.UsesBelow o sb` hyp.
+   the contract's new `hbsb : Op.UsesBelow o sb` hyp; **and (a) the `Op.cost eqBit` bump +
+   full EvalCnf re-audit (2026-06-22 top-down).**
 
    **REMAINING (in order):**
-   - **(a) Bump `Op.cost eqBit` → `(s.get src1).length + (s.get src2).length + 1`**
-     (owner-approved; the consume design leaves `|src1|+|src2|` residue that cost-1 can't
-     absorb under W-invariant ①). Ripple: `Op.cost`/`Op.size_eval_le`/`Op.cost_agree`
-     (eqBit becomes the `concat` pattern), then **re-audit `EvalCnfCmd.lean`'s cost
-     proofs** (pervasive `eqBit`/`mcSkip` use; quartic budget is generous). *This sub-step
-     is a verifier-cost re-audit — a natural TOP-DOWN item; coordinate.*
+   - **(a) ✅ DONE** — `Op.cost eqBit = |src1|+|src2|+1` landed (Semantics/Frame + the
+     EvalCnf re-audit). Bottom-up just *uses* this value in step (d)'s W-① arithmetic
+     (growth `= 1+|g1.drop n|+|g2.drop n|+2·matchLen` … must be `≤ |src1|+|src2|+1`; recall
+     `|g1.drop n|+|g2.drop n|+matchLen·2 = |src1|+|src2|` when the tester restores, so the
+     residue exactly matches the new cost — verify the `simp [Op.cost]` step picks it up).
    - **(b) Wrapper** `opEqBitRawM := branchComposeFlatTM (compareRegsNoGrowM sb src1 src2)
      (clearAppendM dst 2) (clearAppendM dst 1) (…exit_eq) (…exit_neq)` then `opEqBit :=
      joinTwoHalts …` (port of `opNonEmpty`; bodies need NO rewind — the tester exits at
