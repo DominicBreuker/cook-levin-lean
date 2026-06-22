@@ -289,34 +289,34 @@ step, and the inner compiler's `physStepBudget`. `regBound` is a per-witness
 constant, so this is polynomial in `n` whenever `cost_bound` is. -/
 private def PolyTimeComputableLang.padTimeBound {X Y : Type} [encodable X] [encodable Y]
     {f : X → Y} (W : PolyTimeComputableLang f) (n : Nat) : Nat :=
-  (W.regBound + 2 * W.c.loopDepth + 1)
-      * (4 * n + 4 * (W.regBound + 2 * W.c.loopDepth) + 14) + 1
+  (W.regBound + 2 * W.c.loopDepth + 2 + 1)
+      * (4 * n + 4 * (W.regBound + 2 * W.c.loopDepth + 2) + 14) + 1
     + Compile.physStepBudget
-        (2 * n + 2 * (W.regBound + 2 * W.c.loopDepth) + W.cost_bound n + 3) (W.cost_bound n)
+        (2 * n + 2 * (W.regBound + 2 * W.c.loopDepth + 2) + W.cost_bound n + 3) (W.cost_bound n)
 
 /-- The padded compute machine's actual run cost on `encodeIn x` is dominated by
 `padTimeBound (size x)`. (Uses `encodeIn_size`, `cost_le`, and `width_le`; resolves
 the register-count WALL via the runtime padding `Compile.paddedCompute_run`.) -/
 private theorem PolyTimeComputableLang.budget_ge {X Y : Type} [encodable X] [encodable Y]
     {f : X → Y} (W : PolyTimeComputableLang f) (x : X) :
-    Compile.padBudget (W.regBound + 2 * W.c.loopDepth) (W.encodeIn x) + 1
+    Compile.padBudget (W.regBound + 2 * W.c.loopDepth + 2) (W.encodeIn x) + 1
         + Compile.physStepBudget (State.size (W.encodeIn x)
-              + ((W.encodeIn x).length + (W.regBound + 2 * W.c.loopDepth))
+              + ((W.encodeIn x).length + (W.regBound + 2 * W.c.loopDepth + 2))
               + W.c.cost (W.encodeIn x) + 2) (W.c.cost (W.encodeIn x))
       ≤ W.padTimeBound (encodable.size x) := by
   have hsz : State.size (W.encodeIn x) ≤ 2 * encodable.size x + 1 := W.encodeIn_size x
   have hw : (W.encodeIn x).length ≤ W.regBound := W.width_le x
   have hc : W.c.cost (W.encodeIn x) ≤ W.cost_bound (encodable.size x) := W.cost_le x
   unfold PolyTimeComputableLang.padTimeBound
-  have hpb := Compile.padBudget_le (W.regBound + 2 * W.c.loopDepth) (W.encodeIn x)
-  have hpad : Compile.padBudget (W.regBound + 2 * W.c.loopDepth) (W.encodeIn x)
-      ≤ (W.regBound + 2 * W.c.loopDepth + 1)
-          * (4 * encodable.size x + 4 * (W.regBound + 2 * W.c.loopDepth) + 14) :=
+  have hpb := Compile.padBudget_le (W.regBound + 2 * W.c.loopDepth + 2) (W.encodeIn x)
+  have hpad : Compile.padBudget (W.regBound + 2 * W.c.loopDepth + 2) (W.encodeIn x)
+      ≤ (W.regBound + 2 * W.c.loopDepth + 2 + 1)
+          * (4 * encodable.size x + 4 * (W.regBound + 2 * W.c.loopDepth + 2) + 14) :=
     le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by omega))
   have hps : Compile.physStepBudget (State.size (W.encodeIn x)
-            + ((W.encodeIn x).length + (W.regBound + 2 * W.c.loopDepth))
+            + ((W.encodeIn x).length + (W.regBound + 2 * W.c.loopDepth + 2))
             + W.c.cost (W.encodeIn x) + 2) (W.c.cost (W.encodeIn x))
-      ≤ Compile.physStepBudget (2 * encodable.size x + 2 * (W.regBound + 2 * W.c.loopDepth)
+      ≤ Compile.physStepBudget (2 * encodable.size x + 2 * (W.regBound + 2 * W.c.loopDepth + 2)
           + W.cost_bound (encodable.size x) + 3) (W.cost_bound (encodable.size x)) :=
     Compile.physStepBudget_mono (by omega) hc
   -- `omega` blows up (whnf) on the two-atom product atoms; explicit monotone adds.
@@ -337,7 +337,7 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
     {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
     (W : PolyTimeComputableLang f) :
     polyTimeComputable' f := by
-  set RB : Nat := W.regBound + 2 * W.c.loopDepth with hRB
+  set RB : Nat := W.regBound + 2 * W.c.loopDepth + 2 with hRB
   have htb_poly : inOPoly W.padTimeBound := by
     unfold PolyTimeComputableLang.padTimeBound
     have hlin : inOPoly (fun n => (RB + 1) * (4 * n + 4 * RB + 14)) :=
@@ -1927,10 +1927,10 @@ inner bit-decider's `physStepBudget (2n + dBound n + regBound + 4) (dBound n) + 
 `regBound` is a per-decider constant, so this is polynomial in `n`. -/
 private def DecidesLang'.padTimeBound {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (n : Nat) : Nat :=
-  (D.regBound + 2 * D.c.loopDepth + 1)
-      * (4 * n + 2 * (D.regBound + 2 * D.c.loopDepth) + 16) + 1
+  (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+      * (4 * n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 16) + 1
     + (Compile.physStepBudget
-        (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4) (dBound n) + 3)
+        (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4) (dBound n) + 3)
 
 /-- The padded decider's actual run cost on `encodeState x` is dominated by the
 canonical poly budget `padTimeBound (size x)`. (Resolves the register-count WALL:
@@ -1938,9 +1938,9 @@ the runtime padding lets `Compile_run_physical_residue` run on the widened tape,
 while the *input* encoding stays the tight single register.) -/
 private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X]
     {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) (x : X) :
-    Compile.padBudget (D.regBound + 2 * D.c.loopDepth) (LangEncodable.encodeState x) + 1
+    Compile.padBudget (D.regBound + 2 * D.c.loopDepth + 2) (LangEncodable.encodeState x) + 1
         + (Compile.physStepBudget (State.size (LangEncodable.encodeState x)
-              + ((LangEncodable.encodeState x).length + (D.regBound + 2 * D.c.loopDepth))
+              + ((LangEncodable.encodeState x).length + (D.regBound + 2 * D.c.loopDepth + 2))
               + D.c.cost (LangEncodable.encodeState x) + 2)
             (D.c.cost (LangEncodable.encodeState x)) + 3)
       ≤ D.padTimeBound (encodable.size x) := by
@@ -1949,17 +1949,17 @@ private theorem DecidesLang'.budget_ge {X : Type} [encodable X] [LangEncodable X
     rw [LangEncodable.size_encodeState]; exact LangEncodable.enc_size x
   have h2 : D.c.cost (LangEncodable.encodeState x) ≤ dBound (encodable.size x) := D.cost_le x
   unfold DecidesLang'.padTimeBound
-  have hpb := Compile.padBudget_le (D.regBound + 2 * D.c.loopDepth) (LangEncodable.encodeState x)
-  have hpad : Compile.padBudget (D.regBound + 2 * D.c.loopDepth) (LangEncodable.encodeState x)
-      ≤ (D.regBound + 2 * D.c.loopDepth + 1)
-          * (4 * encodable.size x + 2 * (D.regBound + 2 * D.c.loopDepth) + 16) :=
+  have hpb := Compile.padBudget_le (D.regBound + 2 * D.c.loopDepth + 2) (LangEncodable.encodeState x)
+  have hpad : Compile.padBudget (D.regBound + 2 * D.c.loopDepth + 2) (LangEncodable.encodeState x)
+      ≤ (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+          * (4 * encodable.size x + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 16) :=
     le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by rw [hw] at *; omega))
   have hps : Compile.physStepBudget (State.size (LangEncodable.encodeState x)
-            + ((LangEncodable.encodeState x).length + (D.regBound + 2 * D.c.loopDepth))
+            + ((LangEncodable.encodeState x).length + (D.regBound + 2 * D.c.loopDepth + 2))
             + D.c.cost (LangEncodable.encodeState x) + 2)
           (D.c.cost (LangEncodable.encodeState x))
       ≤ Compile.physStepBudget (2 * encodable.size x + dBound (encodable.size x)
-            + (D.regBound + 2 * D.c.loopDepth) + 4)
+            + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
           (dBound (encodable.size x)) :=
     Compile.physStepBudget_mono (by omega) h2
   exact Nat.add_le_add (Nat.add_le_add hpad (Nat.le_refl 1)) (Nat.add_le_add hps (Nat.le_refl 3))
@@ -2000,9 +2000,9 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
   M_valid := Compile.paddedBitDeciderTM_valid D.c D.regBound
   M_tapes_pos := by rw [Compile.paddedBitDeciderTM_tapes]; exact Nat.one_pos
   acceptState := 1 + (Compile D.regBound D.c).states
-    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
   rejectState := 2 + (Compile D.regBound D.c).states
-    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
   halting_acc :=
     (Compile.paddedBitDeciderTM_halt_shift D.c D.regBound 1).trans Compile.bitTestTM_halt_one
   halting_rej :=
@@ -2034,7 +2034,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
       exact runFlatTM_extend hrun hhalt
     · show cfg.state_idx
           = 1 + (Compile D.regBound D.c).states
-            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
       rw [hstate]; norm_num
   decides_neg := fun x hnPx => by
     have hb : (D.c.eval (LangEncodable.encodeState x)).get 0 = [0] :=
@@ -2062,7 +2062,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
       exact runFlatTM_extend hrun hhalt
     · show cfg.state_idx
           = 2 + (Compile D.regBound D.c).states
-            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
       rw [hstate]; norm_num
 
 
@@ -2077,40 +2077,40 @@ theorem DecidesLang'.toInTimePoly {X : Type} [encodable X] [LangEncodable X]
   · -- `inOPoly`: a linear pad term + the `physStepBudget` term (dominated by its
     -- diagonal at `m = 2n + dBound n + regBound + 4`, poly) + constants.
     unfold DecidesLang'.padTimeBound
-    have hlin : inOPoly (fun n => (D.regBound + 2 * D.c.loopDepth + 1)
-        * (4 * n + 2 * (D.regBound + 2 * D.c.loopDepth) + 16)) :=
+    have hlin : inOPoly (fun n => (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+        * (4 * n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 16)) :=
       inOPoly_mul (inOPoly_const _)
         (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 4) inOPoly_id)
           (inOPoly_const _)) (inOPoly_const 16))
-    have hinner : inOPoly (fun n => 2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4) :=
+    have hinner : inOPoly (fun n => 2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4) :=
       inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) hpoly)
         (inOPoly_const _)) (inOPoly_const 4)
     have hcomp : inOPoly ((fun m => Compile.physStepBudget m m)
-        ∘ (fun n => 2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4)) :=
+        ∘ (fun n => 2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4)) :=
       inOPoly_comp hinner Compile.physStepBudget_poly
     have hphys : inOPoly (fun n =>
-        Compile.physStepBudget (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4)
+        Compile.physStepBudget (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
           (dBound n)) := by
       refine inOPoly_of_le ?_ hcomp
       intro n
-      show Compile.physStepBudget (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4)
+      show Compile.physStepBudget (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
             (dBound n)
-          ≤ Compile.physStepBudget (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4)
-              (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth) + 4)
+          ≤ Compile.physStepBudget (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
+              (2 * n + dBound n + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
       exact Compile.physStepBudget_mono (Nat.le_refl _) (by omega)
     exact inOPoly_add (inOPoly_add hlin (inOPoly_const 1))
       (inOPoly_add hphys (inOPoly_const 3))
   · intro a b hab
     have hd : dBound a ≤ dBound b := hmono a b hab
     unfold DecidesLang'.padTimeBound
-    have h1 : (D.regBound + 2 * D.c.loopDepth + 1)
-          * (4 * a + 2 * (D.regBound + 2 * D.c.loopDepth) + 16)
-        ≤ (D.regBound + 2 * D.c.loopDepth + 1)
-          * (4 * b + 2 * (D.regBound + 2 * D.c.loopDepth) + 16) :=
+    have h1 : (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+          * (4 * a + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 16)
+        ≤ (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+          * (4 * b + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 16) :=
       Nat.mul_le_mul_left _ (by omega)
-    have h2 : Compile.physStepBudget (2 * a + dBound a + (D.regBound + 2 * D.c.loopDepth) + 4)
+    have h2 : Compile.physStepBudget (2 * a + dBound a + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
           (dBound a)
-        ≤ Compile.physStepBudget (2 * b + dBound b + (D.regBound + 2 * D.c.loopDepth) + 4)
+        ≤ Compile.physStepBudget (2 * b + dBound b + (D.regBound + 2 * D.c.loopDepth + 2) + 4)
           (dBound b) :=
       Compile.physStepBudget_mono (by omega) hd
     exact Nat.add_le_add (Nat.add_le_add h1 (Nat.le_refl 1)) (Nat.add_le_add h2 (Nat.le_refl 3))
@@ -2133,19 +2133,19 @@ step, and the inner bit-decider's `physStepBudget … + 3`. `regBound` is a
 per-decider constant, so this is polynomial in `n` whenever `costBound` is. -/
 private def DecidesLang.padTimeBound {X : Type} [encodable X]
     {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound) (n : Nat) : Nat :=
-  (D.regBound + 2 * D.c.loopDepth + 1)
-      * (2 * costBound n + 4 * (D.regBound + 2 * D.c.loopDepth) + 12) + 1
+  (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+      * (2 * costBound n + 4 * (D.regBound + 2 * D.c.loopDepth + 2) + 12) + 1
     + (Compile.physStepBudget
-        (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2) (costBound n) + 3)
+        (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2) (costBound n) + 3)
 
 /-- The free-path padded decider's actual run cost on `encodeIn x` is dominated by
 `padTimeBound (size x)`. (Uses `encodeIn_size`, `cost_bound`, and the width bound
 `width_le`; resolves the register-count WALL via runtime padding.) -/
 private theorem DecidesLang.budget_ge {X : Type} [encodable X]
     {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound) (x : X) :
-    Compile.padBudget (D.regBound + 2 * D.c.loopDepth) (D.encodeIn x) + 1
+    Compile.padBudget (D.regBound + 2 * D.c.loopDepth + 2) (D.encodeIn x) + 1
         + (Compile.physStepBudget (State.size (D.encodeIn x)
-              + ((D.encodeIn x).length + (D.regBound + 2 * D.c.loopDepth))
+              + ((D.encodeIn x).length + (D.regBound + 2 * D.c.loopDepth + 2))
               + D.c.cost (D.encodeIn x) + 2)
             (D.c.cost (D.encodeIn x)) + 3)
       ≤ D.padTimeBound (encodable.size x) := by
@@ -2153,17 +2153,17 @@ private theorem DecidesLang.budget_ge {X : Type} [encodable X]
   have hw : (D.encodeIn x).length ≤ D.regBound := D.width_le x
   have h2 : D.c.cost (D.encodeIn x) ≤ costBound (encodable.size x) := D.cost_bound x
   unfold DecidesLang.padTimeBound
-  have hpb := Compile.padBudget_le (D.regBound + 2 * D.c.loopDepth) (D.encodeIn x)
-  have hpad : Compile.padBudget (D.regBound + 2 * D.c.loopDepth) (D.encodeIn x)
-      ≤ (D.regBound + 2 * D.c.loopDepth + 1)
-          * (2 * costBound (encodable.size x) + 4 * (D.regBound + 2 * D.c.loopDepth) + 12) :=
+  have hpb := Compile.padBudget_le (D.regBound + 2 * D.c.loopDepth + 2) (D.encodeIn x)
+  have hpad : Compile.padBudget (D.regBound + 2 * D.c.loopDepth + 2) (D.encodeIn x)
+      ≤ (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+          * (2 * costBound (encodable.size x) + 4 * (D.regBound + 2 * D.c.loopDepth + 2) + 12) :=
     le_trans hpb (Nat.mul_le_mul (Nat.le_succ _) (by omega))
   have hps : Compile.physStepBudget (State.size (D.encodeIn x)
-            + ((D.encodeIn x).length + (D.regBound + 2 * D.c.loopDepth))
+            + ((D.encodeIn x).length + (D.regBound + 2 * D.c.loopDepth + 2))
             + D.c.cost (D.encodeIn x) + 2)
           (D.c.cost (D.encodeIn x))
       ≤ Compile.physStepBudget (2 * costBound (encodable.size x)
-            + 2 * (D.regBound + 2 * D.c.loopDepth) + 2)
+            + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2)
           (costBound (encodable.size x)) :=
     Compile.physStepBudget_mono (by omega) h2
   exact Nat.add_le_add (Nat.add_le_add hpad (Nat.le_refl 1)) (Nat.add_le_add hps (Nat.le_refl 3))
@@ -2201,9 +2201,9 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
   M_valid := Compile.paddedBitDeciderTM_valid D.c D.regBound
   M_tapes_pos := by rw [Compile.paddedBitDeciderTM_tapes]; exact Nat.one_pos
   acceptState := 1 + (Compile D.regBound D.c).states
-    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
   rejectState := 2 + (Compile D.regBound D.c).states
-    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+    + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
   halting_acc :=
     (Compile.paddedBitDeciderTM_halt_shift D.c D.regBound 1).trans Compile.bitTestTM_halt_one
   halting_rej :=
@@ -2233,7 +2233,7 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
       exact runFlatTM_extend hrun hhalt
     · show cfg.state_idx
           = 1 + (Compile D.regBound D.c).states
-            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
       rw [hstate]; norm_num
   decides_neg := fun x hnPx => by
     have hb : (D.c.eval (D.encodeIn x)).get 0 = [0] :=
@@ -2259,7 +2259,7 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
       exact runFlatTM_extend hrun hhalt
     · show cfg.state_idx
           = 2 + (Compile D.regBound D.c).states
-            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth)).states
+            + (Compile.padRegsTM (D.regBound + 2 * D.c.loopDepth + 2)).states
       rw [hstate]; norm_num
 
 /-- **Bridge 2 (free path):** `DecidesLang P costBound` (with `costBound` polynomial
@@ -2273,41 +2273,41 @@ theorem DecidesLang.toInTimePoly {X : Type} [encodable X]
   · -- `inOPoly`: a linear-in-`costBound` pad term + the `physStepBudget` term
     -- (dominated by its poly diagonal) + constants.
     unfold DecidesLang.padTimeBound
-    have hlin : inOPoly (fun n => (D.regBound + 2 * D.c.loopDepth + 1)
-        * (2 * costBound n + 4 * (D.regBound + 2 * D.c.loopDepth) + 12)) :=
+    have hlin : inOPoly (fun n => (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+        * (2 * costBound n + 4 * (D.regBound + 2 * D.c.loopDepth + 2) + 12)) :=
       inOPoly_mul (inOPoly_const _)
         (inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) hpoly)
           (inOPoly_const _)) (inOPoly_const 12))
-    have hinner : inOPoly (fun n => 2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2) :=
+    have hinner : inOPoly (fun n => 2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2) :=
       inOPoly_add (inOPoly_add (inOPoly_mul (inOPoly_const 2) hpoly)
         (inOPoly_const _)) (inOPoly_const 2)
     have hcomp : inOPoly ((fun m => Compile.physStepBudget m m)
-        ∘ (fun n => 2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2)) :=
+        ∘ (fun n => 2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2)) :=
       inOPoly_comp hinner Compile.physStepBudget_poly
     have hphys : inOPoly (fun n =>
-        Compile.physStepBudget (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2)
+        Compile.physStepBudget (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2)
           (costBound n)) := by
       refine inOPoly_of_le ?_ hcomp
       intro n
-      show Compile.physStepBudget (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2)
+      show Compile.physStepBudget (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2)
             (costBound n)
-          ≤ Compile.physStepBudget (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2)
-              (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth) + 2)
+          ≤ Compile.physStepBudget (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2)
+              (2 * costBound n + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2)
       exact Compile.physStepBudget_mono (Nat.le_refl _) (by omega)
     exact inOPoly_add (inOPoly_add hlin (inOPoly_const 1))
       (inOPoly_add hphys (inOPoly_const 3))
   · intro a b hab
     have hd : costBound a ≤ costBound b := hmono a b hab
     unfold DecidesLang.padTimeBound
-    have h1 : (D.regBound + 2 * D.c.loopDepth + 1)
-          * (2 * costBound a + 4 * (D.regBound + 2 * D.c.loopDepth) + 12)
-        ≤ (D.regBound + 2 * D.c.loopDepth + 1)
-          * (2 * costBound b + 4 * (D.regBound + 2 * D.c.loopDepth) + 12) :=
+    have h1 : (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+          * (2 * costBound a + 4 * (D.regBound + 2 * D.c.loopDepth + 2) + 12)
+        ≤ (D.regBound + 2 * D.c.loopDepth + 2 + 1)
+          * (2 * costBound b + 4 * (D.regBound + 2 * D.c.loopDepth + 2) + 12) :=
       Nat.mul_le_mul_left _ (by omega)
     have h2 : Compile.physStepBudget
-          (2 * costBound a + 2 * (D.regBound + 2 * D.c.loopDepth) + 2) (costBound a)
+          (2 * costBound a + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2) (costBound a)
         ≤ Compile.physStepBudget
-          (2 * costBound b + 2 * (D.regBound + 2 * D.c.loopDepth) + 2) (costBound b) :=
+          (2 * costBound b + 2 * (D.regBound + 2 * D.c.loopDepth + 2) + 2) (costBound b) :=
       Compile.physStepBudget_mono (by omega) hd
     exact Nat.add_le_add (Nat.add_le_add h1 (Nat.le_refl 1)) (Nat.add_le_add h2 (Nat.le_refl 3))
 
