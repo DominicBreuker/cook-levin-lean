@@ -25133,3 +25133,138 @@ theorem Compile.consumeStep_clear_restore (s : State) (sb : Var) (a b : List Nat
       · rw [State.get_set_ne _ _ _ _ hrb, hs3,
             Compile.consumeStep_frame sb (sb + 1) r hrb hrb1 n s2, hs2,
             State.get_set_ne _ _ _ _ hrb1, State.get_set_ne _ _ _ _ hrb]
+
+/-! ### No-grow cleanup `cmpNGCleanupM` — clear the two interior scratch registers.
+Mirror of `compareCleanupM` with the trailing `shrinkTwoEmptyM` dropped (scratch
+is pre-existing, not appended). -/
+
+def Compile.cmpNGCleanupM (sb : Var) : FlatTM :=
+  composeFlatTM (ClearGadget.clearRegionTM sb) (ClearGadget.clearRegionTM (sb + 1))
+    (ClearGadget.clearRegionTM_exit sb)
+
+def Compile.cmpNGCleanupM_exit (sb : Var) : Nat :=
+  (ClearGadget.clearRegionTM sb).states + ClearGadget.clearRegionTM_exit (sb + 1)
+
+theorem Compile.cmpNGCleanupM_sig (sb : Var) : (Compile.cmpNGCleanupM sb).sig = 4 := by
+  rw [Compile.cmpNGCleanupM, composeFlatTM_sig, ClearGadget.clearRegionTM_sig,
+      ClearGadget.clearRegionTM_sig]; rfl
+
+theorem Compile.cmpNGCleanupM_tapes (sb : Var) : (Compile.cmpNGCleanupM sb).tapes = 1 := by
+  rw [Compile.cmpNGCleanupM, composeFlatTM_tapes]; exact ClearGadget.clearRegionTM_tapes sb
+
+theorem Compile.cmpNGCleanupM_start (sb : Var) : (Compile.cmpNGCleanupM sb).start = 0 := by
+  rw [Compile.cmpNGCleanupM, composeFlatTM_start, ClearGadget.clearRegionTM_start]
+
+theorem Compile.cmpNGCleanupM_states (sb : Var) :
+    (Compile.cmpNGCleanupM sb).states =
+      (ClearGadget.clearRegionTM sb).states + (ClearGadget.clearRegionTM (sb + 1)).states := by
+  rw [Compile.cmpNGCleanupM, composeFlatTM_states]
+
+theorem Compile.cmpNGCleanupM_valid (sb : Var) : validFlatTM (Compile.cmpNGCleanupM sb) :=
+  composeFlatTM_valid _ _ _ (ClearGadget.clearRegionTM_valid sb)
+    (ClearGadget.clearRegionTM_valid (sb + 1)) (Compile.clearRegionTM_exit_lt sb)
+    (ClearGadget.clearRegionTM_tapes sb) (ClearGadget.clearRegionTM_tapes (sb + 1))
+
+theorem Compile.cmpNGCleanupM_exit_lt (sb : Var) :
+    Compile.cmpNGCleanupM_exit sb < (Compile.cmpNGCleanupM sb).states := by
+  rw [Compile.cmpNGCleanupM_exit, Compile.cmpNGCleanupM_states]
+  have := Compile.clearRegionTM_exit_lt (sb + 1)
+  omega
+
+theorem Compile.cmpNGCleanupM_halt_getElem (sb : Var) :
+    (Compile.cmpNGCleanupM sb).halt[Compile.cmpNGCleanupM_exit sb]? = some true := by
+  have h := Compile.composeFlatTM_halt_intro (ClearGadget.clearRegionTM sb)
+    (ClearGadget.clearRegionTM (sb + 1)) (ClearGadget.clearRegionTM_exit (sb + 1))
+    (ClearGadget.clearRegionTM_exit sb) (Compile.opClear (sb + 1)).exit_is_halt
+  rw [Compile.cmpNGCleanupM,
+      show Compile.cmpNGCleanupM_exit sb
+        = (ClearGadget.clearRegionTM sb).states + ClearGadget.clearRegionTM_exit (sb + 1) from
+        rfl]
+  exact h
+
+/-- **No-grow cleanup run.** From `encodeTape x ++ res` (head `0`), clears `sb` then
+`sb + 1`, exiting at head `0` with `encodeTape ((x.set sb []).set (sb+1) [])` and the
+cleared content moved to the residue. -/
+theorem Compile.cmpNGCleanup_run (x : State) (sb : Var)
+    (hsb : sb < x.length) (hsb1 : sb + 1 < x.length) (hbit : Compile.BitState x)
+    (res : List Nat) (hres : Compile.ValidResidue res) :
+    ∃ t, runFlatTM t (Compile.cmpNGCleanupM sb)
+        { state_idx := 0, tapes := [([], 0, Compile.encodeTape x ++ res)] }
+      = some { state_idx := Compile.cmpNGCleanupM_exit sb,
+               tapes := [([], 0, Compile.encodeTape ((x.set sb []).set (sb + 1) [])
+                 ++ ((res ++ List.replicate (State.get x sb).length 0)
+                      ++ List.replicate (State.get (x.set sb []) (sb + 1)).length 0))] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.cmpNGCleanupM sb)
+            { state_idx := 0, tapes := [([], 0, Compile.encodeTape x ++ res)] } = some ck →
+        haltingStateReached (Compile.cmpNGCleanupM sb) ck = false)
+    ∧ t ≤ 18 * (Compile.encodeTape x ++ res).length * (Compile.encodeTape x ++ res).length
+            + 8 * (Compile.encodeTape x ++ res).length + 45 := by
+  have hrep : ∀ n : Nat, Compile.ValidResidue (List.replicate n 0) := by
+    intro n y hy; obtain ⟨_, rfl⟩ := List.mem_replicate.mp hy; exact ⟨by omega, by decide⟩
+  have hbitA : Compile.BitState (x.set sb []) := Compile.BitState_set_pad x sb [] hbit (by simp)
+  have hsb1A : sb + 1 < (x.set sb []).length := by rw [Compile.length_set _ _ _ hsb]; exact hsb1
+  have hresA : Compile.ValidResidue (res ++ List.replicate (State.get x sb).length 0) :=
+    Compile.ValidResidue_append _ _ hres (hrep _)
+  -- stage runs
+  obtain ⟨tA, hA_run, hA_traj, htbA⟩ := Compile.clearRegionTM_run x sb res hsb hbit hres
+  have hevA : Op.eval (Op.clear sb) x = x.set sb [] := rfl
+  rw [hevA] at hA_run
+  obtain ⟨tB, hB_run, hB_traj, htbB⟩ :=
+    Compile.clearRegionTM_run (x.set sb []) (sb + 1)
+      (res ++ List.replicate (State.get x sb).length 0) hsb1A hbitA hresA
+  have hevB : Op.eval (Op.clear (sb + 1)) (x.set sb []) = (x.set sb []).set (sb + 1) [] := rfl
+  rw [hevB] at hB_run
+  -- L-invariance of the second stage's tape length.
+  have hbalA := Compile.encodeTape_set_length x sb [] hsb
+  simp only [List.length_nil, Nat.add_zero] at hbalA
+  have hLB : (Compile.encodeTape (x.set sb []) ++ (res ++ List.replicate (State.get x sb).length 0)).length
+      = (Compile.encodeTape x ++ res).length := by
+    simp only [List.length_append, List.length_replicate] at hbalA ⊢; omega
+  rw [hLB] at htbB
+  -- symbol bound for the seam.
+  have htape4 : ∀ y ∈ Compile.encodeTape (x.set sb []) ++ (res ++ List.replicate (State.get x sb).length 0), y < 4 :=
+    Compile.encodeTape_append_res_lt_four _ _ hbitA hresA
+  have hsymB : ∀ v, currentTapeSymbol
+      ([], 0, Compile.encodeTape (x.set sb []) ++ (res ++ List.replicate (State.get x sb).length 0)) = some v →
+      v < max (ClearGadget.clearRegionTM sb).sig (ClearGadget.clearRegionTM (sb + 1)).sig := by
+    intro v hv
+    rw [show max (ClearGadget.clearRegionTM sb).sig (ClearGadget.clearRegionTM (sb + 1)).sig = 4
+      from by rw [ClearGadget.clearRegionTM_sig, ClearGadget.clearRegionTM_sig]; rfl]
+    exact Compile.sym_bound_of_lt_four _ htape4 _ v hv
+  have hexitA_lt : ClearGadget.clearRegionTM_exit sb < (ClearGadget.clearRegionTM sb).states :=
+    Compile.clearRegionTM_exit_lt sb
+  have hB_run' : runFlatTM tB (ClearGadget.clearRegionTM (sb + 1))
+      { state_idx := (ClearGadget.clearRegionTM (sb + 1)).start,
+        tapes := [([], 0, Compile.encodeTape (x.set sb []) ++ (res ++ List.replicate (State.get x sb).length 0))] }
+        = some { state_idx := ClearGadget.clearRegionTM_exit (sb + 1),
+                 tapes := [([], 0, Compile.encodeTape ((x.set sb []).set (sb + 1) [])
+                   ++ ((res ++ List.replicate (State.get x sb).length 0)
+                        ++ List.replicate (State.get (x.set sb []) (sb + 1)).length 0))] } := by
+    rw [ClearGadget.clearRegionTM_start]; exact hB_run
+  have h0lt : (0 : Nat) < (ClearGadget.clearRegionTM sb).states := by
+    rw [ClearGadget.clearRegionTM_states]; omega
+  have hBhalt := Compile.composeFlatTM_halt_intro (ClearGadget.clearRegionTM sb)
+    (ClearGadget.clearRegionTM (sb + 1)) (ClearGadget.clearRegionTM_exit (sb + 1))
+    (ClearGadget.clearRegionTM_exit sb) (Compile.opClear (sb + 1)).exit_is_halt
+  have hrun := composeFlatTM_run (ClearGadget.clearRegionTM_valid sb)
+    (ClearGadget.clearRegionTM_valid (sb + 1)) hexitA_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape x ++ res)] } h0lt
+    [] 0 (Compile.encodeTape (x.set sb []) ++ (res ++ List.replicate (State.get x sb).length 0))
+    hsymB hA_run hA_traj hB_run'
+    (Compile.haltingStateReached_of_halt (Compile.opClear (sb + 1)).exit_is_halt)
+  have htraj := composeFlatTM_no_early_halt (ClearGadget.clearRegionTM_valid sb)
+    (ClearGadget.clearRegionTM_valid (sb + 1)) hexitA_lt
+    { state_idx := 0, tapes := [([], 0, Compile.encodeTape x ++ res)] } h0lt
+    [] 0 (Compile.encodeTape (x.set sb []) ++ (res ++ List.replicate (State.get x sb).length 0))
+    hsymB hA_run hA_traj
+    (fun k hk ck hck => (hB_traj k hk ck (by rw [ClearGadget.clearRegionTM_start] at hck; exact hck)).2)
+  have heqB : ClearGadget.clearRegionTM_exit (sb + 1) + (ClearGadget.clearRegionTM sb).states
+      = Compile.cmpNGCleanupM_exit sb := by rw [Compile.cmpNGCleanupM_exit]; omega
+  rw [heqB] at hrun
+  refine ⟨tA + 1 + tB, ?_, ?_, ?_⟩
+  · rw [Compile.cmpNGCleanupM]; exact hrun.1
+  · intro k hk ck hck
+    rw [Compile.cmpNGCleanupM] at hck ⊢
+    exact htraj k hk ck hck
+  · nlinarith [htbA, htbB]
