@@ -63,6 +63,18 @@ theorem State.get_set_ne (s : State) (v : Var) (val : List Nat) (r : Var) (hr : 
           (show (List.replicate (v + 1 - s.length) ([] : List Nat)).length ≤ r - s.length by
             rw [List.length_replicate]; exact hge)]
 
+/-- Two writes to the same register collapse to the second (unconditionally —
+the first write already pads the state to length `> v`, so the second's bounds
+check passes). The `State` analogue of `List.set_set`. -/
+theorem State.set_set (s : State) (v : Var) (a b : List Nat) :
+    (s.set v a).set v b = s.set v b := by
+  by_cases h : v < s.length
+  · simp only [State.set, if_pos h, List.length_set, List.set_set]
+  · have hp : (s ++ List.replicate (v + 1 - s.length) (([] : List Nat))).length = v + 1 := by
+      rw [List.length_append, List.length_replicate]; simp only [Var] at h ⊢; omega
+    have hlt : v < v + 1 := Nat.lt_succ_self v
+    simp only [State.set, if_neg h, List.length_set, hp, if_pos hlt, List.set_set]
+
 /-- Writing to register `v` extends the register *count* to at most `max
 s.length (v + 1)` — in range it is unchanged, out of range it grows to exactly
 `v + 1`. The register-count analogue of `State.get_set_*`; the basis for
@@ -363,7 +375,6 @@ theorem Op.cost_agree (o : Op) (k : Nat) (h : Op.UsesBelow o k)
   | appendOne _ => rfl
   | appendZero _ => rfl
   | head _ _ => rfl
-  | eqBit _ _ _ => rfl
   | nonEmpty _ _ => rfl
   | copy _ src =>
       show (s₁.get src).length + 1 = (s₂.get src).length + 1
@@ -377,6 +388,10 @@ theorem Op.cost_agree (o : Op) (k : Nat) (h : Op.UsesBelow o k)
   | dropAt _ src _ =>
       show (s₁.get src).length + 1 = (s₂.get src).length + 1
       rw [hagree src h.2.1]
+  | eqBit _ src1 src2 =>
+      show (s₁.get src1).length + (s₁.get src2).length + 1
+          = (s₂.get src1).length + (s₂.get src2).length + 1
+      rw [hagree src1 h.2.1, hagree src2 h.2.2]
   | concat _ src1 src2 =>
       show (s₁.get src1).length + (s₁.get src2).length + 1
           = (s₂.get src1).length + (s₂.get src2).length + 1
