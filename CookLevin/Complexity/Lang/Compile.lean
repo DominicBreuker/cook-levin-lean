@@ -17833,6 +17833,20 @@ theorem Compile.matchLen_le_left : ∀ (l1 l2 : List Nat), Compile.matchLen l1 l
         simp only [List.length_cons]; omega
       · simp only [List.length_cons]; omega
 
+/-- `matchLen` is also at most the length of the SECOND operand (each matched pair
+peels one cell off both). The symmetric companion of `matchLen_le_left`; together
+they give `2·matchLen + |g1.drop n| + |g2.drop n| = |g1| + |g2|` (the exact residue
+length the eqBit W-invariant needs). -/
+theorem Compile.matchLen_le_right : ∀ (l1 l2 : List Nat), Compile.matchLen l1 l2 ≤ l2.length
+  | [], _ => by simp [Compile.matchLen]
+  | _ :: _, [] => by simp [Compile.matchLen]
+  | a :: r1, b :: r2 => by
+      rw [Compile.matchLen]
+      split
+      · have ih := Compile.matchLen_le_right r1 r2
+        simp only [List.length_cons]; omega
+      · simp only [List.length_cons]; omega
+
 /-- **Loop tape-length invariance (eqBit d2-iv).** Within the matched prefix
 (`m ≤ matchLen`) both scratch heads are nonempty, so each `consumeStep` deletes
 exactly one cell from each of `sc1`/`sc2` — the encoded-tape length shrinks by
@@ -25632,7 +25646,8 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
     (heqv : State.get s src1 = State.get s src2)
     (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
     (hbit : Compile.BitState s) (res : List Nat) (hres : Compile.ValidResidue res) :
-    ∃ residue, Compile.ValidResidue residue ∧ ∃ t,
+    ∃ residue, Compile.ValidResidue residue ∧
+      residue.length = res.length + (State.get s src1).length + (State.get s src2).length ∧ ∃ t,
       runFlatTM t (Compile.compareRegsNoGrowM sb src1 src2)
           { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
         = some { state_idx := Compile.compareRegsNoGrowM_exit_eq sb src1 src2,
@@ -25697,6 +25712,18 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
       ++ List.replicate (State.get (s3.set sb []) (sb + 1)).length 0 with hresidue
   have hresidue_valid : Compile.ValidResidue residue :=
     Compile.ValidResidue_append _ _ (Compile.ValidResidue_append _ _ hres' (hrep _)) (hrep _)
+  -- the exact residue length: the two scratch suffixes are empty (EQ), so the residue
+  -- grew by exactly `2·n = |g1| + |g2|` zero fillers.
+  have hresidue_len : residue.length = res.length + g1.length + g2.length := by
+    have hsetget : State.get (s3.set sb []) (sb + 1) = State.get s3 (sb + 1) :=
+      State.get_set_ne _ _ _ _ (Ne.symm hne)
+    have hnle : n ≤ g1.length := Compile.matchLen_le_left g1 g2
+    have hgle : g1.length ≤ n := (List.drop_eq_nil_iff).mp he1
+    have hg12 : g1.length = g2.length := by rw [heqv]
+    rw [hresidue]
+    simp only [List.length_append, List.length_replicate, hsetget, hs3sbe, hs3sb1e,
+      List.length_nil, Nat.add_zero]
+    omega
   -- branch (EQ → cleanup)
   set cfgB : FlatTMConfig :=
     { state_idx := 0, tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] } with hcfgB
@@ -25732,7 +25759,7 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
     hsymB hVrun
     (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
     (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.cmpNGCleanupM_start] at hck; exact hck))
-  refine ⟨residue, hresidue_valid, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  refine ⟨residue, hresidue_valid, hresidue_len, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
   · have h := (composeFlatTM_run (Compile.cmpNGPrefixM_valid sb src1 src2)
       (Compile.cmpNGBranchM_valid sb)
       (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
@@ -25787,7 +25814,8 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
     (hneqv : State.get s src1 ≠ State.get s src2)
     (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
     (hbit : Compile.BitState s) (res : List Nat) (hres : Compile.ValidResidue res) :
-    ∃ residue, Compile.ValidResidue residue ∧ ∃ t,
+    ∃ residue, Compile.ValidResidue residue ∧
+      residue.length = res.length + (State.get s src1).length + (State.get s src2).length ∧ ∃ t,
       runFlatTM t (Compile.compareRegsNoGrowM sb src1 src2)
           { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] }
         = some { state_idx := Compile.compareRegsNoGrowM_exit_neq sb src1 src2,
@@ -25864,6 +25892,17 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
       ++ List.replicate (State.get (s3.set sb []) (sb + 1)).length 0 with hresidue
   have hresidue_valid : Compile.ValidResidue residue :=
     Compile.ValidResidue_append _ _ (Compile.ValidResidue_append _ _ hres' (hrep _)) (hrep _)
+  -- the exact residue length: `2·n + |g1.drop n| + |g2.drop n| = |g1| + |g2|` since
+  -- `matchLen ≤ |g1|` and `≤ |g2|` (the matched prefix peels one cell off both).
+  have hresidue_len : residue.length = res.length + g1.length + g2.length := by
+    have hnle1 : n ≤ g1.length := Compile.matchLen_le_left g1 g2
+    have hnle2 : n ≤ g2.length := Compile.matchLen_le_right g1 g2
+    have e1 : (State.get s3 sb).length = g1.length - n := by rw [hs3sb', List.length_drop]
+    have e2 : (State.get (s3.set sb []) (sb + 1)).length = g2.length - n := by
+      rw [State.get_set_ne _ _ _ _ (Ne.symm hne), hs3sb1', List.length_drop]
+    rw [hresidue]
+    simp only [List.length_append, List.length_replicate, e1, e2]
+    omega
   set cfgB : FlatTMConfig :=
     { state_idx := 0, tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] } with hcfgB
   have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0,
@@ -25899,7 +25938,7 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
     hsymB hVrun
     (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
     (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.cmpNGCleanupM_start] at hck; exact hck))
-  refine ⟨residue, hresidue_valid, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  refine ⟨residue, hresidue_valid, hresidue_len, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
   · have h := (composeFlatTM_run (Compile.cmpNGPrefixM_valid sb src1 src2)
       (Compile.cmpNGBranchM_valid sb)
       (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
@@ -25943,3 +25982,334 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
         hPtraj k hk ck hck⟩)
       (by rw [Compile.cmpNGBranchM_start]; exact hbranchneg_traj)
     exact this k hk ck hck
+
+/-! ### The `eqBit` op wrapper (Resolution B, no-grow) — HANDOFF bottom-up Task 1(b).
+
+`opEqBitNG sb dst src1 src2` is the register-equality op built on the proven no-grow
+tester `compareRegsNoGrowM` (which restores the tape to `encodeTape s ++ residue`,
+head `0`) followed by a single `clearAppendM dst (bit+1)` that writes the answer bit
+to a freshly-cleared `dst`:
+
+  `branchComposeFlatTM (compareRegsNoGrowM sb src1 src2)`
+    `(clearAppendM dst 2)`   -- EQ  → write bit `1`
+    `(clearAppendM dst 1)`   -- NEQ → write bit `0`
+
+The two branch bodies need NO rewind (the tester exits at head `0`, unlike the navtest
+of `nonEmpty`). The two exits are merged into a single exit by `joinTwoHalts` (port of
+`opNonEmpty`).
+
+⚠ **DEF-ORDERING (HANDOFF bottom-up Task 1(c) — STILL OPEN).** This `def`/shape stack
+lives here, at the END of the file, because the `compareRegsNoGrowM` stack does. To
+wire it into `compileOp` (which references `Compile.opEqBit` at ~L2488, currently the
+`compiledCmd_default` stub) the machine `def`s + their shape theorems must be moved
+**above `compileOp`**, and `opEqBitNG` renamed to `opEqBit` (replacing the stub). The
+behavioural run lemma `opEqBitNG_run` (below) stays here (it consumes the late-stage
+`compareRegsNoGrowM_run_*`). See HANDOFF Task 1. -/
+
+/-- `clearAppendM`'s start is head `0` (it begins by navigating to `dst`). -/
+theorem Compile.clearAppendM_start (dst : Var) (ins : Nat) (h_ins : ins < 4) :
+    (Compile.clearAppendM dst ins h_ins).start = 0 := by
+  rw [Compile.clearAppendM, composeFlatTM_start]; exact ClearGadget.clearRegionTM_start dst
+
+/-- `clearAppendM`'s exit index is `< states`. -/
+theorem Compile.clearAppendM_exit_lt (dst : Var) (ins : Nat) (h_ins : ins < 4) :
+    Compile.clearAppendM_exit dst ins h_ins < (Compile.clearAppendM dst ins h_ins).states := by
+  rw [Compile.clearAppendM_exit, Compile.clearAppendM, composeFlatTM_states]
+  have := (Compile.opAppendBitRewind ins h_ins dst).exit_lt
+  omega
+
+/-- The raw (two-exit) `eqBit` machine: branch on `compareRegsNoGrowM`. -/
+def Compile.eqBitNGRawM (sb dst src1 src2 : Var) : FlatTM :=
+  branchComposeFlatTM (Compile.compareRegsNoGrowM sb src1 src2)
+    (Compile.clearAppendM dst 2 (by decide))
+    (Compile.clearAppendM dst 1 (by decide))
+    (Compile.compareRegsNoGrowM_exit_eq sb src1 src2)
+    (Compile.compareRegsNoGrowM_exit_neq sb src1 src2)
+
+/-- EQ exit (positive branch). -/
+def Compile.eqBitNGRawM_h1 (sb dst src1 src2 : Var) : Nat :=
+  (Compile.compareRegsNoGrowM sb src1 src2).states + Compile.clearAppendM_exit dst 2 (by decide)
+
+/-- NEQ exit (negative branch). -/
+def Compile.eqBitNGRawM_h2 (sb dst src1 src2 : Var) : Nat :=
+  (Compile.compareRegsNoGrowM sb src1 src2).states + (Compile.clearAppendM dst 2 (by decide)).states
+    + Compile.clearAppendM_exit dst 1 (by decide)
+
+theorem Compile.eqBitNGRawM_valid (sb dst src1 src2 : Var) :
+    validFlatTM (Compile.eqBitNGRawM sb dst src1 src2) :=
+  branchComposeFlatTM_valid _ _ _ _ _ (Compile.compareRegsNoGrowM_valid sb src1 src2)
+    (Compile.clearAppendM_valid dst 2 (by decide))
+    (Compile.clearAppendM_valid dst 1 (by decide))
+    (Compile.compareRegsNoGrowM_exit_eq_lt sb src1 src2)
+    (Compile.compareRegsNoGrowM_exit_neq_lt sb src1 src2)
+    (Compile.compareRegsNoGrowM_tapes sb src1 src2)
+    (Compile.clearAppendM_tapes dst 2 (by decide))
+    (Compile.clearAppendM_tapes dst 1 (by decide))
+
+theorem Compile.eqBitNGRawM_tapes (sb dst src1 src2 : Var) :
+    (Compile.eqBitNGRawM sb dst src1 src2).tapes = 1 := by
+  rw [Compile.eqBitNGRawM, branchComposeFlatTM_tapes]
+  exact Compile.compareRegsNoGrowM_tapes sb src1 src2
+
+theorem Compile.eqBitNGRawM_sig (sb dst src1 src2 : Var) :
+    (Compile.eqBitNGRawM sb dst src1 src2).sig = 4 := by
+  rw [Compile.eqBitNGRawM, branchComposeFlatTM_sig, Compile.compareRegsNoGrowM_sig,
+      Compile.clearAppendM_sig, Compile.clearAppendM_sig, Nat.max_self, Nat.max_self]
+
+theorem Compile.eqBitNGRawM_h1_ne_h2 (sb dst src1 src2 : Var) :
+    Compile.eqBitNGRawM_h1 sb dst src1 src2 ≠ Compile.eqBitNGRawM_h2 sb dst src1 src2 := by
+  rw [Compile.eqBitNGRawM_h1, Compile.eqBitNGRawM_h2]
+  have hb2 := Compile.clearAppendM_exit_lt dst 2 (by decide)
+  omega
+
+theorem Compile.eqBitNGRawM_halt_only (sb dst src1 src2 : Var) :
+    ∀ i, (Compile.eqBitNGRawM sb dst src1 src2).halt[i]? = some true →
+      i = Compile.eqBitNGRawM_h1 sb dst src1 src2 ∨ i = Compile.eqBitNGRawM_h2 sb dst src1 src2 := by
+  rw [Compile.eqBitNGRawM_h1, Compile.eqBitNGRawM_h2, Compile.eqBitNGRawM]
+  exact Compile.branchComposeFlatTM_halt_only _ _ _ _ _ _ _
+    (Compile.clearAppendM_valid dst 2 (by decide))
+    (Compile.clearAppendM_valid dst 1 (by decide))
+    (Compile.clearAppendM_halt_unique dst 2 (by decide))
+    (Compile.clearAppendM_halt_unique dst 1 (by decide))
+
+theorem Compile.eqBitNGRawM_h1_is_halt (sb dst src1 src2 : Var) :
+    (Compile.eqBitNGRawM sb dst src1 src2).halt[Compile.eqBitNGRawM_h1 sb dst src1 src2]? = some true := by
+  rw [Compile.eqBitNGRawM_h1, Compile.eqBitNGRawM]
+  exact Compile.branchComposeFlatTM_M2_halt_intro _ _ _ _ _ _
+    (Compile.clearAppendM_valid dst 2 (by decide))
+    (Compile.clearAppendM_exit_lt dst 2 (by decide))
+    (Compile.clearAppendM_exit_is_halt dst 2 (by decide))
+
+theorem Compile.eqBitNGRawM_h1_lt (sb dst src1 src2 : Var) :
+    Compile.eqBitNGRawM_h1 sb dst src1 src2 < (Compile.eqBitNGRawM sb dst src1 src2).states := by
+  rw [Compile.eqBitNGRawM_h1, Compile.eqBitNGRawM, branchComposeFlatTM_states]
+  have := Compile.clearAppendM_exit_lt dst 2 (by decide)
+  omega
+
+theorem Compile.eqBitNGRawM_h2_is_halt (sb dst src1 src2 : Var) :
+    (Compile.eqBitNGRawM sb dst src1 src2).halt[Compile.eqBitNGRawM_h2 sb dst src1 src2]? = some true := by
+  rw [Compile.eqBitNGRawM_h2, Compile.eqBitNGRawM]
+  exact Compile.branchComposeFlatTM_M3_halt_intro _ _ _ _ _ _
+    (Compile.clearAppendM_valid dst 2 (by decide))
+    (Compile.clearAppendM_exit_is_halt dst 1 (by decide))
+
+theorem Compile.eqBitNGRawM_h2_lt (sb dst src1 src2 : Var) :
+    Compile.eqBitNGRawM_h2 sb dst src1 src2 < (Compile.eqBitNGRawM sb dst src1 src2).states := by
+  rw [Compile.eqBitNGRawM_h2, Compile.eqBitNGRawM, branchComposeFlatTM_states]
+  have := Compile.clearAppendM_exit_lt dst 1 (by decide)
+  omega
+
+/-- Compile `Op.eqBit dst src1 src2` (Resolution B): the `joinTwoHalts`-merged branch
+machine. The eventual `opEqBit` (post def-reorg). -/
+def Compile.opEqBitNG (sb dst src1 src2 : Var) : CompiledCmd where
+  M := joinTwoHalts (Compile.eqBitNGRawM sb dst src1 src2)
+        (Compile.eqBitNGRawM_h1 sb dst src1 src2) (Compile.eqBitNGRawM_h2 sb dst src1 src2)
+  exit := Compile.eqBitNGRawM_h1 sb dst src1 src2
+  exit_lt := by
+    rw [joinTwoHalts_states]; exact Compile.eqBitNGRawM_h1_lt sb dst src1 src2
+  exit_is_halt :=
+    joinTwoHalts_h1_is_halt _ _ _ (Compile.eqBitNGRawM_h1_ne_h2 sb dst src1 src2)
+      (Compile.eqBitNGRawM_h1_is_halt sb dst src1 src2)
+  halt_unique :=
+    joinTwoHalts_halt_unique _ _ _ (Compile.eqBitNGRawM_halt_only sb dst src1 src2)
+  M_valid := joinTwoHalts_valid _ _ _ (Compile.eqBitNGRawM_valid sb dst src1 src2)
+    (Compile.eqBitNGRawM_h1_lt sb dst src1 src2) (Compile.eqBitNGRawM_h2_lt sb dst src1 src2)
+    (Compile.eqBitNGRawM_tapes sb dst src1 src2)
+  M_tapes := by rw [joinTwoHalts_tapes]; exact Compile.eqBitNGRawM_tapes sb dst src1 src2
+  M_sig := by rw [joinTwoHalts_sig]; exact Compile.eqBitNGRawM_sig sb dst src1 src2
+
+/-- **`opEqBitNG` run + trajectory (the behavioural part of the `eqBit` residue
+contract).** From head `0` on `encodeTape s ++ res_in`, with the two pre-existing empty
+interior scratch registers `sb`/`sb+1` (and the operands `dst,src1,src2 < sb`), the
+answer bit (`1` if `s.get src1 = s.get src2` else `0`) is written to a freshly cleared
+register `dst`; the tape is `encodeTape (Op.eval (eqBit …) s) ++ res_out` with
+`res_out.length = |res_in| + |src1| + |src2| + |dst|` (the exact W-invariant residue
+growth: the tester consumes both operand copies, the clear frees the old `dst` block).
+The two branches merge through `joinTwoHalts`. **No budget conjunct yet** — see HANDOFF
+bottom-up Task 1 (budget threading through `cmpNGPrefix_run`/`compareRegsNoGrowM_run_*`). -/
+theorem Compile.opEqBitNG_run (s : State) (sb dst src1 src2 : Var) (res_in : List Nat)
+    (hbit : Compile.BitState s) (hsb1 : sb + 1 < s.length)
+    (hsbe : State.get s sb = []) (hsb1e : State.get s (sb + 1) = [])
+    (hdst : dst < sb) (hsrc1 : src1 < sb) (hsrc2 : src2 < sb)
+    (hres_in : Compile.ValidResidue res_in) :
+    ∃ res_out, Compile.ValidResidue res_out ∧
+      res_out.length = res_in.length + (State.get s src1).length + (State.get s src2).length
+        + (State.get s dst).length ∧ ∃ t,
+      runFlatTM t (Compile.opEqBitNG sb dst src1 src2).M
+          (initFlatConfig (Compile.opEqBitNG sb dst src1 src2).M [Compile.encodeTape s ++ res_in])
+        = some { state_idx := (Compile.opEqBitNG sb dst src1 src2).exit,
+                 tapes := [([], 0, Compile.encodeTape (Op.eval (Op.eqBit dst src1 src2) s)
+                            ++ res_out)] }
+    ∧ (∀ k, k < t → ∀ ck,
+        runFlatTM k (Compile.opEqBitNG sb dst src1 src2).M
+            (initFlatConfig (Compile.opEqBitNG sb dst src1 src2).M [Compile.encodeTape s ++ res_in]) = some ck →
+        ck.state_idx ≠ (Compile.opEqBitNG sb dst src1 src2).exit ∧
+        haltingStateReached (Compile.opEqBitNG sb dst src1 src2).M ck = false) := by
+  -- derived bounds / disjointness (omega can't see through `Var`; use explicit Nat lemmas)
+  have hsb : sb < s.length := Nat.lt_of_succ_lt hsb1
+  have hdstL : dst < s.length := Nat.lt_trans hdst hsb
+  have hsrc1L : src1 < s.length := Nat.lt_trans hsrc1 hsb
+  have hsrc2L : src2 < s.length := Nat.lt_trans hsrc2 hsb
+  have hsbsrc1 : (sb : Var) ≠ src1 := Ne.symm (Nat.ne_of_lt hsrc1)
+  have hsbsrc2 : (sb : Var) ≠ src2 := Ne.symm (Nat.ne_of_lt hsrc2)
+  have hsb1src2 : (sb + 1 : Var) ≠ src2 := Ne.symm (Nat.ne_of_lt (Nat.lt_succ_of_lt hsrc2))
+  set raw := Compile.eqBitNGRawM sb dst src1 src2 with hrawdef
+  set h1 := Compile.eqBitNGRawM_h1 sb dst src1 src2 with hh1def
+  set h2 := Compile.eqBitNGRawM_h2 sb dst src1 src2 with hh2def
+  have hraweq : branchComposeFlatTM (Compile.compareRegsNoGrowM sb src1 src2)
+      (Compile.clearAppendM dst 2 (by decide)) (Compile.clearAppendM dst 1 (by decide))
+      (Compile.compareRegsNoGrowM_exit_eq sb src1 src2)
+      (Compile.compareRegsNoGrowM_exit_neq sb src1 src2) = raw := rfl
+  have hMstart : (Compile.opEqBitNG sb dst src1 src2).M.start = 0 := by
+    show (joinTwoHalts raw h1 h2).start = 0
+    rw [joinTwoHalts_start, hrawdef, Compile.eqBitNGRawM, branchComposeFlatTM_start]
+    exact Compile.compareRegsNoGrowM_start sb src1 src2
+  have hinit : initFlatConfig (Compile.opEqBitNG sb dst src1 src2).M [Compile.encodeTape s ++ res_in]
+      = { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] } := by
+    simp only [initFlatConfig, hMstart, List.map_cons, List.map_nil]
+  have hMeq : (Compile.opEqBitNG sb dst src1 src2).M = joinTwoHalts raw h1 h2 := rfl
+  have hexit : (Compile.opEqBitNG sb dst src1 src2).exit = h1 := rfl
+  set cfg0 : FlatTMConfig := { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res_in)] }
+    with hcfg0
+  have h_cfg_lt : cfg0.state_idx < (Compile.compareRegsNoGrowM sb src1 src2).states :=
+    Nat.lt_of_le_of_lt (Nat.zero_le _) (Compile.compareRegsNoGrowM_exit_eq_lt sb src1 src2)
+  have hCAstart2 : (Compile.clearAppendM dst 2 (by decide)).start = 0 := Compile.clearAppendM_start dst 2 (by decide)
+  have hCAstart1 : (Compile.clearAppendM dst 1 (by decide)).start = 0 := Compile.clearAppendM_start dst 1 (by decide)
+  have hh1_is := Compile.eqBitNGRawM_h1_is_halt sb dst src1 src2
+  have hh2_is := Compile.eqBitNGRawM_h2_is_halt sb dst src1 src2
+  have hh_ne := Compile.eqBitNGRawM_h1_ne_h2 sb dst src1 src2
+  rw [← hrawdef] at hh1_is hh2_is
+  rw [← hh1def] at hh1_is hh_ne
+  rw [← hh2def] at hh2_is hh_ne
+  rw [hinit, hMeq, hexit]
+  by_cases he : State.get s src1 = State.get s src2
+  · -- EQ: answer bit 1, Op.eval = s.set dst [1]; raw reaches h1 (kept).
+    have hisE : Op.eval (Op.eqBit dst src1 src2) s = s.set dst [1] := by
+      show s.set dst (if State.get s src1 = State.get s src2 then [1] else [0]) = s.set dst [1]
+      rw [if_pos he]
+    obtain ⟨residue, hres_valid, hres_len, tT, hTrun, hTtraj⟩ :=
+      Compile.compareRegsNoGrowM_run_eq s sb src1 src2 hsb hsb1 hsrc1L hsrc2L hsbsrc1 hsbsrc2
+        hsb1src2 he hsbe hsb1e hbit res_in hres_in
+    obtain ⟨tC, hCrun, hCtraj, _⟩ :=
+      Compile.clearAppendM_run s dst 1 (by omega) hdstL hbit residue hres_valid
+    -- symbol bound at the M1-exit tape (head 0): cell is the sentinel `3 < 4`.
+    have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ residue) = some v →
+        v < max (Compile.compareRegsNoGrowM sb src1 src2).sig
+              (max (Compile.clearAppendM dst 2 (by decide)).sig (Compile.clearAppendM dst 1 (by decide)).sig) := by
+      intro v hv
+      rw [Compile.compareRegsNoGrowM_sig, Compile.clearAppendM_sig, Compile.clearAppendM_sig,
+          Nat.max_self, Nat.max_self]
+      exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four s residue hbit hres_valid) _ v hv
+    have hCrun' : runFlatTM tC (Compile.clearAppendM dst 2 (by decide))
+        { state_idx := (Compile.clearAppendM dst 2 (by decide)).start,
+          tapes := [([], 0, Compile.encodeTape s ++ residue)] }
+        = some { state_idx := Compile.clearAppendM_exit dst 2 (by decide),
+                 tapes := [([], 0, Compile.encodeTape (s.set dst [1])
+                            ++ (residue ++ List.replicate (s.get dst).length 0))] } := by
+      rw [hCAstart2]; exact hCrun
+    have hpos := branchComposeFlatTM_run_pos
+      (Compile.compareRegsNoGrowM_exit_eq_ne_neq sb src1 src2)
+      (Compile.compareRegsNoGrowM_valid sb src1 src2)
+      (Compile.clearAppendM_valid dst 2 (by decide)) (Compile.clearAppendM_valid dst 1 (by decide))
+      (Compile.compareRegsNoGrowM_exit_eq_lt sb src1 src2)
+      (Compile.compareRegsNoGrowM_exit_neq_lt sb src1 src2)
+      cfg0 h_cfg_lt [] 0 (Compile.encodeTape s ++ residue) hsymB hTrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_eq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_neq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        hTtraj k hk ck hck⟩)
+      hCrun' (Compile.haltingStateReached_of_halt (Compile.clearAppendM_exit_is_halt dst 2 (by decide)))
+    have hpos_traj := branchComposeFlatTM_no_early_halt_pos
+      (Compile.compareRegsNoGrowM_valid sb src1 src2)
+      (Compile.clearAppendM_valid dst 2 (by decide)) (Compile.clearAppendM_valid dst 1 (by decide))
+      (Compile.compareRegsNoGrowM_exit_eq_lt sb src1 src2)
+      (Compile.compareRegsNoGrowM_exit_neq_lt sb src1 src2)
+      cfg0 h_cfg_lt [] 0 (Compile.encodeTape s ++ residue) hsymB hTrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_eq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_neq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        hTtraj k hk ck hck⟩)
+      (fun k hk ck hck => hCtraj k hk ck (by rw [hCAstart2] at hck; exact hck))
+    have hstate_eq : Compile.clearAppendM_exit dst 2 (by decide)
+        + (Compile.compareRegsNoGrowM sb src1 src2).states = h1 := by
+      rw [hh1def, Compile.eqBitNGRawM_h1]; omega
+    rw [hstate_eq, hraweq] at hpos
+    rw [hraweq] at hpos_traj
+    obtain ⟨hjoin, hjoin_traj⟩ := Compile.joinTwoHalts_reaches_kept raw h1 h2 cfg0
+      _ ([], 0, Compile.encodeTape (s.set dst [1]) ++ (residue ++ List.replicate (s.get dst).length 0))
+      hpos.1 (fun k hk ck hck => hpos_traj k hk ck hck) hh1_is hh2_is
+    refine ⟨residue ++ List.replicate (s.get dst).length 0,
+      Compile.ValidResidue_append_replicate_zero residue _ hres_valid, ?_, _, ?_, hjoin_traj⟩
+    · rw [List.length_append, List.length_replicate, hres_len]
+    · rw [hisE]; exact hjoin
+  · -- NEQ: answer bit 0, Op.eval = s.set dst [0]; raw reaches h2 (demoted), bridges to h1.
+    have hisE : Op.eval (Op.eqBit dst src1 src2) s = s.set dst [0] := by
+      show s.set dst (if State.get s src1 = State.get s src2 then [1] else [0]) = s.set dst [0]
+      rw [if_neg he]
+    obtain ⟨residue, hres_valid, hres_len, tT, hTrun, hTtraj⟩ :=
+      Compile.compareRegsNoGrowM_run_neq s sb src1 src2 hsb hsb1 hsrc1L hsrc2L hsbsrc1 hsbsrc2
+        hsb1src2 he hsbe hsb1e hbit res_in hres_in
+    obtain ⟨tC, hCrun, hCtraj, _⟩ :=
+      Compile.clearAppendM_run s dst 0 (by omega) hdstL hbit residue hres_valid
+    have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ residue) = some v →
+        v < max (Compile.compareRegsNoGrowM sb src1 src2).sig
+              (max (Compile.clearAppendM dst 2 (by decide)).sig (Compile.clearAppendM dst 1 (by decide)).sig) := by
+      intro v hv
+      rw [Compile.compareRegsNoGrowM_sig, Compile.clearAppendM_sig, Compile.clearAppendM_sig,
+          Nat.max_self, Nat.max_self]
+      exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four s residue hbit hres_valid) _ v hv
+    have hCrun' : runFlatTM tC (Compile.clearAppendM dst 1 (by decide))
+        { state_idx := (Compile.clearAppendM dst 1 (by decide)).start,
+          tapes := [([], 0, Compile.encodeTape s ++ residue)] }
+        = some { state_idx := Compile.clearAppendM_exit dst 1 (by decide),
+                 tapes := [([], 0, Compile.encodeTape (s.set dst [0])
+                            ++ (residue ++ List.replicate (s.get dst).length 0))] } := by
+      rw [hCAstart1]; exact hCrun
+    have hneg := branchComposeFlatTM_run_neg
+      (Compile.compareRegsNoGrowM_exit_eq_ne_neq sb src1 src2)
+      (Compile.compareRegsNoGrowM_valid sb src1 src2)
+      (Compile.clearAppendM_valid dst 2 (by decide)) (Compile.clearAppendM_valid dst 1 (by decide))
+      (Compile.compareRegsNoGrowM_exit_eq_lt sb src1 src2)
+      (Compile.compareRegsNoGrowM_exit_neq_lt sb src1 src2)
+      cfg0 h_cfg_lt [] 0 (Compile.encodeTape s ++ residue) hsymB hTrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_eq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_neq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        hTtraj k hk ck hck⟩)
+      hCrun' (Compile.haltingStateReached_of_halt (Compile.clearAppendM_exit_is_halt dst 1 (by decide)))
+    have hneg_traj := branchComposeFlatTM_no_early_halt_neg
+      (Compile.compareRegsNoGrowM_exit_eq_ne_neq sb src1 src2)
+      (Compile.compareRegsNoGrowM_valid sb src1 src2)
+      (Compile.clearAppendM_valid dst 2 (by decide)) (Compile.clearAppendM_valid dst 1 (by decide))
+      (Compile.compareRegsNoGrowM_exit_eq_lt sb src1 src2)
+      (Compile.compareRegsNoGrowM_exit_neq_lt sb src1 src2)
+      cfg0 h_cfg_lt [] 0 (Compile.encodeTape s ++ residue) hsymB hTrun
+      (fun k hk ck hck => ⟨ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_eq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        ClearGadget.ne_of_not_halting
+          (Compile.compareRegsNoGrowM_exit_neq_is_halt sb src1 src2) (hTtraj k hk ck hck),
+        hTtraj k hk ck hck⟩)
+      (fun k hk ck hck => hCtraj k hk ck (by rw [hCAstart1] at hck; exact hck))
+    have hstate_eq : Compile.clearAppendM_exit dst 1 (by decide)
+        + ((Compile.compareRegsNoGrowM sb src1 src2).states + (Compile.clearAppendM dst 2 (by decide)).states) = h2 := by
+      rw [hh2def, Compile.eqBitNGRawM_h2]; omega
+    rw [hstate_eq, hraweq] at hneg
+    rw [hraweq] at hneg_traj
+    obtain ⟨hjoin, hjoin_traj⟩ := Compile.joinTwoHalts_reaches_demoted raw h1 h2 cfg0
+      _ [] (Compile.encodeTape (s.set dst [0]) ++ (residue ++ List.replicate (s.get dst).length 0)) 0
+      hneg.1 (fun k hk ck hck => hneg_traj k hk ck hck) hh1_is hh2_is hh_ne
+      (by
+        intro v hv
+        rw [show currentTapeSymbol (([] : List Nat), 0,
+              Compile.encodeTape (s.set dst [0]) ++ (residue ++ List.replicate (s.get dst).length 0))
+            = some 3 from rfl] at hv
+        rw [hrawdef, Compile.eqBitNGRawM_sig]
+        have : v = 3 := (Option.some.inj hv).symm
+        omega)
+    refine ⟨residue ++ List.replicate (s.get dst).length 0,
+      Compile.ValidResidue_append_replicate_zero residue _ hres_valid, ?_, _, ?_, hjoin_traj⟩
+    · rw [List.length_append, List.length_replicate, hres_len]
+    · rw [hisE]; exact hjoin
