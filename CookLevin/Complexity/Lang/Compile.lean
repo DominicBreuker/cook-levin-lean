@@ -25379,7 +25379,12 @@ theorem Compile.cmpNGPrefix_run (s : State) (sb src1 src2 : Var)
     ∧ (∀ k, k < t → ∀ ck,
         runFlatTM k (Compile.cmpNGPrefixM sb src1 src2)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
-        haltingStateReached (Compile.cmpNGPrefixM sb src1 src2) ck = false) := by
+        haltingStateReached (Compile.cmpNGPrefixM sb src1 src2) ck = false)
+    ∧ t ≤ ((State.get s src1).length + (State.get s src2).length + 2)
+            * (29 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                  + (State.get s src2).length) + 68)
+          + 6 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length) + 10 := by
   set g1 := State.get s src1 with hg1def
   set g2 := State.get s src2 with hg2def
   have hne : (sb : Var) ≠ sb + 1 := Nat.ne_of_lt (Nat.lt_succ_self sb)
@@ -25407,14 +25412,30 @@ theorem Compile.cmpNGPrefix_run (s : State) (sb src1 src2 : Var)
     rw [hs2def, State.get_set_ne _ _ _ _ hne, State.get_set_eq]
   have hs2sb1 : State.get s2 (sb + 1) = g2 := by rw [hs2def, State.get_set_eq]
   -- stage runs
-  obtain ⟨t1, hcp1_run, hcp1_traj, _⟩ := Compile.copyEmpty_run s sb src1 hsbsrc1 hsb hsrc1 hbit hsbe res hres
-  rw [← hg1def] at hcp1_run
-  obtain ⟨t2, hcp2_run, hcp2_traj, _⟩ :=
+  obtain ⟨t1, hcp1_run, hcp1_traj, hb1⟩ := Compile.copyEmpty_run s sb src1 hsbsrc1 hsb hsrc1 hbit hsbe res hres
+  rw [← hg1def] at hcp1_run hb1
+  obtain ⟨t2, hcp2_run, hcp2_traj, hb2⟩ :=
     Compile.copyEmpty_run (s.set sb g1) (sb + 1) src2 hsb1src2 hsb1_1 hsrc2_1 hbit1 hsb1e' res hres
+  rw [hg2eq] at hb2
   rw [hg2eq, ← hs2def] at hcp2_run
-  obtain ⟨t3, hcl_run, hcl_traj, _⟩ :=
+  rw [← hs2def] at hb2
+  obtain ⟨t3, hcl_run, hcl_traj, hb3⟩ :=
     Compile.compareLoop_run s2 sb (sb + 1) hne hsb_2 hsb1_2 hbit2 res hres
-  rw [hs2sb, hs2sb1] at hcl_run
+  rw [hs2sb, hs2sb1] at hcl_run hb3
+  -- tape-length facts: copy1 output is `L + |g1|`, copy2/compareLoop run on `M = L + |g1| + |g2|`
+  have hsb0 : (State.get s sb).length = 0 := by rw [hsbe]; rfl
+  have hbal1 : (Compile.encodeTape (s.set sb g1)).length = (Compile.encodeTape s).length + g1.length := by
+    have h := Compile.encodeTape_set_length s sb g1 hsb; rw [hsb0] at h; omega
+  have hsb1e0 : (State.get (s.set sb g1) (sb + 1)).length = 0 := by rw [hsb1e']; rfl
+  have hbal2 : (Compile.encodeTape s2).length = (Compile.encodeTape s).length + g1.length + g2.length := by
+    have h := Compile.encodeTape_set_length (s.set sb g1) (sb + 1) g2 hsb1_1
+    rw [← hs2def, hsb1e0, hbal1] at h; omega
+  have hL1eq : (Compile.encodeTape (s.set sb g1) ++ res).length
+      = (Compile.encodeTape s ++ res).length + g1.length := by
+    simp only [List.length_append, hbal1]; omega
+  have hL2eq : (Compile.encodeTape s2 ++ res).length
+      = (Compile.encodeTape s ++ res).length + g1.length + g2.length := by
+    simp only [List.length_append, hbal2]; omega
   -- symbol bound helper
   have hsymtape : ∀ (sX : State), Compile.BitState sX → ∀ v,
       currentTapeSymbol ([], 0, Compile.encodeTape sX ++ res) = some v → v < 4 := by
@@ -25503,9 +25524,29 @@ theorem Compile.cmpNGPrefix_run (s : State) (sb src1 src2 : Var)
     rw [hMB_states, Compile.cmpNGPrefixM_exit]
   have hrun := hCrun.1
   rw [hstate_eq] at hrun
-  refine ⟨_, hrun, ?_⟩
-  intro k hk ck hck
-  exact hCtraj k hk ck hck
+  refine ⟨_, hrun, ?_, ?_⟩
+  · intro k hk ck hck
+    exact hCtraj k hk ck hck
+  · -- budget: copy1 (tape `L + |g1|`) + copy2 + compareLoop (both tape `M = L + |g1| + |g2|`)
+    set M := (Compile.encodeTape s ++ res).length + g1.length + g2.length with hMdef
+    have hL2M : (Compile.encodeTape s2 ++ res).length = M := by rw [hL2eq]
+    have hm_le : Compile.matchLen g1 g2 ≤ g1.length := Compile.matchLen_le_left g1 g2
+    have B1 : t1 ≤ (g1.length + 1) * (5 * M + 23) + 3 * M + 4 := by
+      have hmul : (g1.length + 1) * (5 * (Compile.encodeTape (s.set sb g1) ++ res).length + 23)
+          ≤ (g1.length + 1) * (5 * M + 23) :=
+        Nat.mul_le_mul (Nat.le_refl _) (by rw [hL1eq]; omega)
+      have h3 : 3 * (Compile.encodeTape (s.set sb g1) ++ res).length ≤ 3 * M := by rw [hL1eq]; omega
+      omega
+    have B2 : t2 ≤ (g2.length + 1) * (5 * M + 23) + 3 * M + 4 := by rw [hL2M] at hb2; exact hb2
+    have B3 : t3 ≤ (g1.length + 1) * (24 * M + 45) := by
+      rw [hL2M] at hb3
+      exact le_trans hb3 (Nat.mul_le_mul (by omega) (Nat.le_refl _))
+    have key : (g1.length + 1) * (5 * M + 23) + (g2.length + 1) * (5 * M + 23)
+          + (g1.length + 1) * (24 * M + 45)
+        ≤ (g1.length + g2.length + 2) * (29 * M + 68) := by
+      nlinarith [Nat.zero_le g2.length, Nat.zero_le M,
+        Nat.mul_le_mul (Nat.le_refl (g2.length + 1)) (Nat.zero_le M)]
+    omega
 
 /-! ### No-grow branch wrap `compareRegsNoGrowM` — the 2-exit EQ/NEQ tester.
 Mirror of `compareRegsTM` with the no-grow prefix/cleanup. -/
@@ -25655,7 +25696,16 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
     ∧ (∀ k, k < t → ∀ ck,
         runFlatTM k (Compile.compareRegsNoGrowM sb src1 src2)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
-        haltingStateReached (Compile.compareRegsNoGrowM sb src1 src2) ck = false) := by
+        haltingStateReached (Compile.compareRegsNoGrowM sb src1 src2) ck = false)
+    ∧ t ≤ ((State.get s src1).length + (State.get s src2).length + 2)
+            * (29 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                  + (State.get s src2).length) + 68)
+          + 18 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length)
+              * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length)
+          + 20 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length) + 59 := by
   set g1 := State.get s src1 with hg1def
   set g2 := State.get s src2 with hg2def
   set n := Compile.matchLen g1 g2 with hndef
@@ -25698,16 +25748,37 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
     intro v hv
     exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hbit3 hres') _ v hv
   -- prefix run
-  obtain ⟨tP, hPrun, hPtraj⟩ := Compile.cmpNGPrefix_run s sb src1 src2 hsb hsb1 hsrc1 hsrc2
+  obtain ⟨tP, hPrun, hPtraj, hPbud⟩ := Compile.cmpNGPrefix_run s sb src1 src2 hsb hsb1 hsrc1 hsrc2
     hsbsrc1 hsbsrc2 hsb1src2 hsbe hsb1e hbit res hres
   rw [← hg1def, ← hg2def, ← hndef, ← hs2def, ← hs3def] at hPrun
+  rw [← hg1def, ← hg2def] at hPbud
   -- eqVerdict EQ run on `s3`
-  obtain ⟨tV, hVrun, hVtraj, _⟩ := Compile.eqVerdictM_run_eq s3 sb (sb + 1)
+  obtain ⟨tV, hVrun, hVtraj, hVbud⟩ := Compile.eqVerdictM_run_eq s3 sb (sb + 1)
     (res ++ List.replicate (2 * n) 0) hbit3 hsb_s3 hsb1_s3 hs3sbe hs3sb1e hres'
   -- cleanup run on `s3`, then restore the tape to `encodeTape s`
-  obtain ⟨tC, hCrun, hCtraj, _⟩ := Compile.cmpNGCleanup_run s3 sb hsb_s3 hsb1_s3 hbit3
+  obtain ⟨tC, hCrun, hCtraj, hCbud⟩ := Compile.cmpNGCleanup_run s3 sb hsb_s3 hsb1_s3 hbit3
     (res ++ List.replicate (2 * n) 0) hres'
   rw [hrestore] at hCrun
+  -- the eqVerdict/cleanup stage tape has length `M = L + |g1| + |g2|` (consume preserves
+  -- total length; the clears below move freed cells into the residue).
+  have htapeM : (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0)).length
+      = (Compile.encodeTape s ++ res).length + g1.length + g2.length := by
+    have hb_sb := Compile.encodeTape_set_length s3 sb [] hsb_s3
+    have hsb1_set : sb + 1 < (s3.set sb []).length := by
+      rw [Compile.length_set _ _ _ hsb_s3]; exact hsb1_s3
+    have hb_sb1 := Compile.encodeTape_set_length (s3.set sb []) (sb + 1) [] hsb1_set
+    rw [hrestore] at hb_sb1
+    have hgsb : (State.get s3 sb).length = g1.length - n := by rw [hs3sb', List.length_drop]
+    have hsetget' : State.get (s3.set sb []) (sb + 1) = State.get s3 (sb + 1) :=
+      State.get_set_ne _ _ _ _ (Ne.symm hne)
+    have hgsb1 : (State.get (s3.set sb []) (sb + 1)).length = g2.length - n := by
+      rw [hsetget', hs3sb1', List.length_drop]
+    have hn1 : n ≤ g1.length := Compile.matchLen_le_left g1 g2
+    have hn2 : n ≤ g2.length := Compile.matchLen_le_right g1 g2
+    simp only [List.length_append, List.length_replicate, List.length_nil, Nat.add_zero]
+      at hb_sb hb_sb1 ⊢
+    omega
+  rw [htapeM] at hVbud hCbud
   set residue := ((res ++ List.replicate (2 * n) 0) ++ List.replicate (State.get s3 sb).length 0)
       ++ List.replicate (State.get (s3.set sb []) (sb + 1)).length 0 with hresidue
   have hresidue_valid : Compile.ValidResidue residue :=
@@ -25759,7 +25830,7 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
     hsymB hVrun
     (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
     (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.cmpNGCleanupM_start] at hck; exact hck))
-  refine ⟨residue, hresidue_valid, hresidue_len, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  refine ⟨residue, hresidue_valid, hresidue_len, tP + 1 + (tV + 1 + tC), ?_, ?_, ?_⟩
   · have h := (composeFlatTM_run (Compile.cmpNGPrefixM_valid sb src1 src2)
       (Compile.cmpNGBranchM_valid sb)
       (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
@@ -25803,6 +25874,8 @@ theorem Compile.compareRegsNoGrowM_run_eq (s : State) (sb src1 src2 : Var)
         hPtraj k hk ck hck⟩)
       (by rw [Compile.cmpNGBranchM_start]; exact hbranchpos_traj)
     exact this k hk ck hck
+  · -- budget: prefix + verdict + cleanup; verdict/cleanup run on tape length `M`.
+    omega
 
 /-- **`compareRegsNoGrowM` run — NOT EQUAL.** Symmetric to the EQ case via the
 negative (NEQ) branch; both `src1 ≠ src2` sub-cases route to the NEQ exit, tape
@@ -25823,7 +25896,16 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
     ∧ (∀ k, k < t → ∀ ck,
         runFlatTM k (Compile.compareRegsNoGrowM sb src1 src2)
             { state_idx := 0, tapes := [([], 0, Compile.encodeTape s ++ res)] } = some ck →
-        haltingStateReached (Compile.compareRegsNoGrowM sb src1 src2) ck = false) := by
+        haltingStateReached (Compile.compareRegsNoGrowM sb src1 src2) ck = false)
+    ∧ t ≤ ((State.get s src1).length + (State.get s src2).length + 2)
+            * (29 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                  + (State.get s src2).length) + 68)
+          + 18 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length)
+              * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length)
+          + 20 * ((Compile.encodeTape s ++ res).length + (State.get s src1).length
+                + (State.get s src2).length) + 59 := by
   set g1 := State.get s src1 with hg1def
   set g2 := State.get s src2 with hg2def
   set n := Compile.matchLen g1 g2 with hndef
@@ -25861,11 +25943,12 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
       Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0)) = some v → v < 4 := by
     intro v hv
     exact Compile.sym_bound_of_lt_four _ (Compile.encodeTape_append_res_lt_four _ _ hbit3 hres') _ v hv
-  obtain ⟨tP, hPrun, hPtraj⟩ := Compile.cmpNGPrefix_run s sb src1 src2 hsb hsb1 hsrc1 hsrc2
+  obtain ⟨tP, hPrun, hPtraj, hPbud⟩ := Compile.cmpNGPrefix_run s sb src1 src2 hsb hsb1 hsrc1 hsrc2
     hsbsrc1 hsbsrc2 hsb1src2 hsbe hsb1e hbit res hres
   rw [← hg1def, ← hg2def, ← hndef, ← hs2def, ← hs3def] at hPrun
+  rw [← hg1def, ← hg2def] at hPbud
   -- eqVerdict NEQ run on `s3` (left/right operand suffix nonempty)
-  obtain ⟨tV, hVrun, hVtraj, _⟩ : ∃ tV,
+  obtain ⟨tV, hVrun, hVtraj, hVbud⟩ : ∃ tV,
       runFlatTM tV (Compile.eqVerdictM sb (sb + 1))
           { state_idx := 0, tapes := [([], 0, Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0))] }
         = some { state_idx := Compile.eqVerdictM_exit_neq sb,
@@ -25885,9 +25968,28 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
     · exact Compile.eqVerdictM_run_neq_left s3 sb (sb + 1)
         (res ++ List.replicate (2 * n) 0) hbit3 hsb_s3
         (by rw [hs3sb']; exact hd1) hres'
-  obtain ⟨tC, hCrun, hCtraj, _⟩ := Compile.cmpNGCleanup_run s3 sb hsb_s3 hsb1_s3 hbit3
+  obtain ⟨tC, hCrun, hCtraj, hCbud⟩ := Compile.cmpNGCleanup_run s3 sb hsb_s3 hsb1_s3 hbit3
     (res ++ List.replicate (2 * n) 0) hres'
   rw [hrestore] at hCrun
+  -- the eqVerdict/cleanup stage tape has length `M = L + |g1| + |g2|`.
+  have htapeM : (Compile.encodeTape s3 ++ (res ++ List.replicate (2 * n) 0)).length
+      = (Compile.encodeTape s ++ res).length + g1.length + g2.length := by
+    have hb_sb := Compile.encodeTape_set_length s3 sb [] hsb_s3
+    have hsb1_set : sb + 1 < (s3.set sb []).length := by
+      rw [Compile.length_set _ _ _ hsb_s3]; exact hsb1_s3
+    have hb_sb1 := Compile.encodeTape_set_length (s3.set sb []) (sb + 1) [] hsb1_set
+    rw [hrestore] at hb_sb1
+    have hgsb : (State.get s3 sb).length = g1.length - n := by rw [hs3sb', List.length_drop]
+    have hsetget' : State.get (s3.set sb []) (sb + 1) = State.get s3 (sb + 1) :=
+      State.get_set_ne _ _ _ _ (Ne.symm hne)
+    have hgsb1 : (State.get (s3.set sb []) (sb + 1)).length = g2.length - n := by
+      rw [hsetget', hs3sb1', List.length_drop]
+    have hn1 : n ≤ g1.length := Compile.matchLen_le_left g1 g2
+    have hn2 : n ≤ g2.length := Compile.matchLen_le_right g1 g2
+    simp only [List.length_append, List.length_replicate, List.length_nil, Nat.add_zero]
+      at hb_sb hb_sb1 ⊢
+    omega
+  rw [htapeM] at hVbud hCbud
   set residue := ((res ++ List.replicate (2 * n) 0) ++ List.replicate (State.get s3 sb).length 0)
       ++ List.replicate (State.get (s3.set sb []) (sb + 1)).length 0 with hresidue
   have hresidue_valid : Compile.ValidResidue residue :=
@@ -25938,7 +26040,7 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
     hsymB hVrun
     (fun k hk ck hck => ⟨(hVtraj k hk ck hck).2.1, (hVtraj k hk ck hck).1, (hVtraj k hk ck hck).2.2⟩)
     (fun k hk ck hck => hCtraj k hk ck (by rw [Compile.cmpNGCleanupM_start] at hck; exact hck))
-  refine ⟨residue, hresidue_valid, hresidue_len, tP + 1 + (tV + 1 + tC), ?_, ?_⟩
+  refine ⟨residue, hresidue_valid, hresidue_len, tP + 1 + (tV + 1 + tC), ?_, ?_, ?_⟩
   · have h := (composeFlatTM_run (Compile.cmpNGPrefixM_valid sb src1 src2)
       (Compile.cmpNGBranchM_valid sb)
       (Compile.cmpNGPrefixM_exit_lt sb src1 src2)
@@ -25982,6 +26084,8 @@ theorem Compile.compareRegsNoGrowM_run_neq (s : State) (sb src1 src2 : Var)
         hPtraj k hk ck hck⟩)
       (by rw [Compile.cmpNGBranchM_start]; exact hbranchneg_traj)
     exact this k hk ck hck
+  · -- budget: prefix + verdict + cleanup; verdict/cleanup run on tape length `M`.
+    omega
 
 /-! ### The `eqBit` op wrapper (Resolution B, no-grow) — HANDOFF bottom-up Task 1(b).
 
@@ -26118,6 +26222,28 @@ def Compile.opEqBitNG (sb dst src1 src2 : Var) : CompiledCmd where
   M_tapes := by rw [joinTwoHalts_tapes]; exact Compile.eqBitNGRawM_tapes sb dst src1 src2
   M_sig := by rw [joinTwoHalts_sig]; exact Compile.eqBitNGRawM_sig sb dst src1 src2
 
+/-- **`eqBit` budget arithmetic (HANDOFF bottom-up Task 1(a)).** The tester
+(`tT`), the bridge step, and the answer-bit `clearAppendM` (`tC`) compose to the
+per-op contract budget `(54·L²+54·L+180)·(cost+1)`. `M = L + a + b` is the working
+tape length, `a = |src1|`, `b = |src2|`, `cost = a + b + 1`. The `27·M²`
+cost-independent quadratic part fits because `a,b ≤ L` (each operand fits the tape,
+`a+3 ≤ L`), so `M ≤ 3L` and the two products `56·c² ≤ 112·L·c` (`hA`, from `c ≤ 2L`)
+and `141·L·c ≤ 54·L²·c` (`hB`, from `3 ≤ L`) close the certificate. Stated with
+`t ≤ tT+1+tC+1` so both the EQ exit (`tT+1+tC`) and the NEQ demoted-halt bridge
+(`tT+1+tC+1`) apply it. -/
+theorem Compile.eqBit_budget_arith (L a b tT tC t : Nat)
+    (ha3 : a + 3 ≤ L) (hb3 : b + 3 ≤ L)
+    (ht : t ≤ tT + 1 + tC + 1)
+    (hTbud : tT ≤ (a + b + 2) * (29 * (L + a + b) + 68)
+              + 18 * (L + a + b) * (L + a + b) + 20 * (L + a + b) + 59)
+    (hCAbud : tC ≤ 9 * (L + a + b) * (L + a + b) + 3 * (L + a + b) + 18) :
+    t ≤ (54 * L * L + 54 * L + 180) * (a + b + 1 + 1) := by
+  have hA : 56 * ((a + b) * (a + b)) ≤ 112 * (L * (a + b)) := by
+    nlinarith [ha3, hb3, Nat.zero_le (a + b)]
+  have hB : 141 * (L * (a + b)) ≤ 54 * (L * L * (a + b)) := by
+    nlinarith [hb3, Nat.zero_le L, Nat.zero_le (a + b)]
+  nlinarith [ht, hTbud, hCAbud, hA, hB, Nat.zero_le L, Nat.zero_le (a + b)]
+
 /-- **`opEqBitNG` run + trajectory (the behavioural part of the `eqBit` residue
 contract).** From head `0` on `encodeTape s ++ res_in`, with the two pre-existing empty
 interior scratch registers `sb`/`sb+1` (and the operands `dst,src1,src2 < sb`), the
@@ -26144,7 +26270,11 @@ theorem Compile.opEqBitNG_run (s : State) (sb dst src1 src2 : Var) (res_in : Lis
         runFlatTM k (Compile.opEqBitNG sb dst src1 src2).M
             (initFlatConfig (Compile.opEqBitNG sb dst src1 src2).M [Compile.encodeTape s ++ res_in]) = some ck →
         ck.state_idx ≠ (Compile.opEqBitNG sb dst src1 src2).exit ∧
-        haltingStateReached (Compile.opEqBitNG sb dst src1 src2).M ck = false) := by
+        haltingStateReached (Compile.opEqBitNG sb dst src1 src2).M ck = false)
+    ∧ t ≤ (54 * (Compile.encodeTape s ++ res_in).length
+               * (Compile.encodeTape s ++ res_in).length
+             + 54 * (Compile.encodeTape s ++ res_in).length + 180)
+          * (Op.cost (Op.eqBit dst src1 src2) s + 1) := by
   -- derived bounds / disjointness (omega can't see through `Var`; use explicit Nat lemmas)
   have hsb : sb < s.length := Nat.lt_of_succ_lt hsb1
   have hdstL : dst < s.length := Nat.lt_trans hdst hsb
@@ -26153,6 +26283,17 @@ theorem Compile.opEqBitNG_run (s : State) (sb dst src1 src2 : Var) (res_in : Lis
   have hsbsrc1 : (sb : Var) ≠ src1 := Ne.symm (Nat.ne_of_lt hsrc1)
   have hsbsrc2 : (sb : Var) ≠ src2 := Ne.symm (Nat.ne_of_lt hsrc2)
   have hsb1src2 : (sb + 1 : Var) ≠ src2 := Ne.symm (Nat.ne_of_lt (Nat.lt_succ_of_lt hsrc2))
+  -- each operand register fits in the tape: `|s.get srcᵢ| + 3 ≤ |encodeTape s ++ res_in|`.
+  have ha3 : (State.get s src1).length + 3 ≤ (Compile.encodeTape s ++ res_in).length := by
+    have hdec := congrArg List.length (Compile.encodeTape_reg_decomp_at s src1 hsrc1L).2
+    simp only [List.length_append, List.length_cons, Compile.shiftReg, List.length_map,
+      List.length_nil] at hdec
+    rw [List.length_append]; omega
+  have hb3 : (State.get s src2).length + 3 ≤ (Compile.encodeTape s ++ res_in).length := by
+    have hdec := congrArg List.length (Compile.encodeTape_reg_decomp_at s src2 hsrc2L).2
+    simp only [List.length_append, List.length_cons, Compile.shiftReg, List.length_map,
+      List.length_nil] at hdec
+    rw [List.length_append]; omega
   set raw := Compile.eqBitNGRawM sb dst src1 src2 with hrawdef
   set h1 := Compile.eqBitNGRawM_h1 sb dst src1 src2 with hh1def
   set h2 := Compile.eqBitNGRawM_h2 sb dst src1 src2 with hh2def
@@ -26187,11 +26328,17 @@ theorem Compile.opEqBitNG_run (s : State) (sb dst src1 src2 : Var) (res_in : Lis
     have hisE : Op.eval (Op.eqBit dst src1 src2) s = s.set dst [1] := by
       show s.set dst (if State.get s src1 = State.get s src2 then [1] else [0]) = s.set dst [1]
       rw [if_pos he]
-    obtain ⟨residue, hres_valid, hres_len, tT, hTrun, hTtraj⟩ :=
+    obtain ⟨residue, hres_valid, hres_len, tT, hTrun, hTtraj, hTbud⟩ :=
       Compile.compareRegsNoGrowM_run_eq s sb src1 src2 hsb hsb1 hsrc1L hsrc2L hsbsrc1 hsbsrc2
         hsb1src2 he hsbe hsb1e hbit res_in hres_in
-    obtain ⟨tC, hCrun, hCtraj, _⟩ :=
+    obtain ⟨tC, hCrun, hCtraj, hCAbud⟩ :=
       Compile.clearAppendM_run s dst 1 (by omega) hdstL hbit residue hres_valid
+    -- the clearAppend stage tape has length `M = L + |g1| + |g2|`.
+    have hclen : (Compile.encodeTape s ++ residue).length
+        = (Compile.encodeTape s ++ res_in).length + (State.get s src1).length
+            + (State.get s src2).length := by
+      simp only [List.length_append] at hres_len ⊢; omega
+    rw [hclen] at hCAbud
     -- symbol bound at the M1-exit tape (head 0): cell is the sentinel `3 < 4`.
     have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ residue) = some v →
         v < max (Compile.compareRegsNoGrowM sb src1 src2).sig
@@ -26241,18 +26388,26 @@ theorem Compile.opEqBitNG_run (s : State) (sb dst src1 src2 : Var) (res_in : Lis
       _ ([], 0, Compile.encodeTape (s.set dst [1]) ++ (residue ++ List.replicate (s.get dst).length 0))
       hpos.1 (fun k hk ck hck => hpos_traj k hk ck hck) hh1_is hh2_is
     refine ⟨residue ++ List.replicate (s.get dst).length 0,
-      Compile.ValidResidue_append_replicate_zero residue _ hres_valid, ?_, _, ?_, hjoin_traj⟩
+      Compile.ValidResidue_append_replicate_zero residue _ hres_valid, ?_, _, ?_, hjoin_traj, ?_⟩
     · rw [List.length_append, List.length_replicate, hres_len]
     · rw [hisE]; exact hjoin
+    · -- budget: tester (tT) + bridge + clearAppend (tC) ≤ contract quadratic × (cost+1).
+      simp only [Op.cost]
+      exact Compile.eqBit_budget_arith _ _ _ _ _ _ ha3 hb3 (by omega) hTbud hCAbud
   · -- NEQ: answer bit 0, Op.eval = s.set dst [0]; raw reaches h2 (demoted), bridges to h1.
     have hisE : Op.eval (Op.eqBit dst src1 src2) s = s.set dst [0] := by
       show s.set dst (if State.get s src1 = State.get s src2 then [1] else [0]) = s.set dst [0]
       rw [if_neg he]
-    obtain ⟨residue, hres_valid, hres_len, tT, hTrun, hTtraj⟩ :=
+    obtain ⟨residue, hres_valid, hres_len, tT, hTrun, hTtraj, hTbud⟩ :=
       Compile.compareRegsNoGrowM_run_neq s sb src1 src2 hsb hsb1 hsrc1L hsrc2L hsbsrc1 hsbsrc2
         hsb1src2 he hsbe hsb1e hbit res_in hres_in
-    obtain ⟨tC, hCrun, hCtraj, _⟩ :=
+    obtain ⟨tC, hCrun, hCtraj, hCAbud⟩ :=
       Compile.clearAppendM_run s dst 0 (by omega) hdstL hbit residue hres_valid
+    have hclen : (Compile.encodeTape s ++ residue).length
+        = (Compile.encodeTape s ++ res_in).length + (State.get s src1).length
+            + (State.get s src2).length := by
+      simp only [List.length_append] at hres_len ⊢; omega
+    rw [hclen] at hCAbud
     have hsymB : ∀ v, currentTapeSymbol (([] : List Nat), 0, Compile.encodeTape s ++ residue) = some v →
         v < max (Compile.compareRegsNoGrowM sb src1 src2).sig
               (max (Compile.clearAppendM dst 2 (by decide)).sig (Compile.clearAppendM dst 1 (by decide)).sig) := by
@@ -26310,6 +26465,9 @@ theorem Compile.opEqBitNG_run (s : State) (sb dst src1 src2 : Var) (res_in : Lis
         have : v = 3 := (Option.some.inj hv).symm
         omega)
     refine ⟨residue ++ List.replicate (s.get dst).length 0,
-      Compile.ValidResidue_append_replicate_zero residue _ hres_valid, ?_, _, ?_, hjoin_traj⟩
+      Compile.ValidResidue_append_replicate_zero residue _ hres_valid, ?_, _, ?_, hjoin_traj, ?_⟩
     · rw [List.length_append, List.length_replicate, hres_len]
     · rw [hisE]; exact hjoin
+    · -- budget: tester (tT) + bridge + clearAppend (tC) + demoted-halt bridge ≤ contract.
+      simp only [Op.cost]
+      exact Compile.eqBit_budget_arith _ _ _ _ _ _ ha3 hb3 (by omega) hTbud hCAbud
