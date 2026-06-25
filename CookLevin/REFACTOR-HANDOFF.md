@@ -236,15 +236,30 @@ split itself; the parallelism + incremental win is the main build speedup.
         file-scoped, so they were made **public on extraction** (strip the `private `
         modifier — widening visibility never breaks export rules). **Always scan the
         moved block for `private` decls used outside it.**
-  - [ ] `Compile/NonEmptyHead`, `Compile/CopyTail`, `Compile/EqBit`, `Compile/Move`.
-        **⚠ The handoff's coarse DAG was idealized — the real dependencies are finer
-        (discovered 2026-06-25):** `Move` is **not** a clean leaf after Core — the
-        move-one-bit transfer uses `bitReadTM` (head machinery), and the move block
-        also references the nonEmpty/head op machines + the encoding layer. **Corrected
-        order:** extract `NonEmptyHead` (the `bitReadTM`/`exactOneOneTM`/`testBit*` +
-        nonEmpty/head gadgets) and `CopyTail` *before* `Move`. Before each extraction,
-        run the dependency scan: `Compile.*` referenced in the block − defined in block
-        − (Core ∪ Encoding ∪ earlier modules) must be empty (modulo comment-only refs).
+  - [x] **`Compile/OpMachines` — DONE (2026-06-25).** Extracted **all** per-`Op`
+        TM machine *defs + shape lemmas* in one module (old L83–3670: append/clear,
+        the cursor-copy gadget + `copy`/`tail` machines, `nonEmpty`/`head` incl.
+        `bitReadTM`/`exactOneOneTM`/`testBit*`, the `eqBit` `compareRegsNoGrowM` tree
+        + `opEqBit`/`opEqBitNG`) into
+        `CookLevin/Complexity/Lang/Compile/OpMachines.lean` (3,621 lines). This is the
+        whole "everything before `compileOp`" region — a clean leaf depending only on
+        **Core + primitives** (it predates the encoding layer in the old file order,
+        so it has **0** `Compile/Encoding` refs; dependency scan: 0 external refs).
+        6 `private` decls → public (4 used downstream). `Compile.lean` 22,908 →
+        **19,321 lines**. `lake build` green (3361 jobs). Replaces the planned
+        per-op `NonEmptyHead`/`CopyTail`-defs split — extracting the contiguous
+        defs-region wholesale was simpler and bigger.
+  - [ ] **Next: the run-lemma blocks.** What remains in `Compile.lean` is largely the
+        op *run/behaviour* lemmas (`copy`/`tail`/`eqBit` run stacks, the move gadgets)
+        + `compileOp`/`compileCmd`/`forBnd`/`testBit` + the soundness contract +
+        assembly + WALL. The run-lemma blocks depend on `OpMachines` + `Encoding` (NOT
+        on `compileOp`/the contract), so they extract into a `Compile/RunLemmas` module
+        (or split per-op) imported *before* the contract. Then `compileOp`/`compileCmd`
+        → `Compile/Cmd`; the contract → `Compile/OpSound`; assembly → `Compile/Assembly`;
+        WALL → `Compile/Decider`; leaving `Compile.lean` a thin facade. **Before each:
+        run the dependency scan** (`Compile.*` referenced − defined-in-block −
+        (Core ∪ Encoding ∪ OpMachines ∪ earlier) = ∅ modulo comments) **and scan for
+        `private` decls used outside the block** (strip `private` → public).
 - [ ] Phase 2 — `Op`, `Cmd`.
 - [ ] Phase 3 — soundness/assembly/decider; facade.
 - [ ] Phase 4 — proof-perf (optional).
