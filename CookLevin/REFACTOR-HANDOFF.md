@@ -222,10 +222,29 @@ split itself; the parallelism + incremental win is the main build speedup.
         contiguous + low-risk. Core now imports the same list as `Compile.lean`
         (`rewindBracket` uses `ScanLeft.*`, available transitively via AppendGadget);
         a later pass could prune to minimal imports.
-  - [ ] `Compile/Move` (next) — move-one-bit transfer (old L8088–9801) +
-        `moveRegion2TM` (old L9802–12442). Imports Core. Self-contained gadget; big
-        line win (~4.3K).
-  - [ ] `Compile/NonEmptyHead`, `Compile/CopyTail`, `Compile/EqBit`.
+  - [x] **`Compile/Encoding` — DONE (2026-06-25).** Extracted the tape
+        encoding/decoding layer (old L4586–5261: `encodeTape`/`encodeRegs`/
+        `shiftReg`/`endMark`/`BitState`/`ValidResidue`, `decodeTape` +
+        `splitOnZero`/`unshiftReg`/`flattenTape`/`dropTrailingEmpty`, the round-trip
+        + `encodeTape` structure lemmas) into
+        `CookLevin/Complexity/Lang/Compile/Encoding.lean` (708 lines). Sibling of
+        Core (references no `CompiledCmd`/combinator — imports primitives only).
+        `Compile.lean` 23,583 → 22,908 lines. `lake build` green (3360 jobs).
+        **⚠ Method note (applies to every later extraction):** the block had **27
+        `private` decls** heavily used downstream (`shiftReg`: 222 external refs,
+        `encodeTape_split`: 30, `regBlocks_map_shiftReg`: 38, …). `private` is
+        file-scoped, so they were made **public on extraction** (strip the `private `
+        modifier — widening visibility never breaks export rules). **Always scan the
+        moved block for `private` decls used outside it.**
+  - [ ] `Compile/NonEmptyHead`, `Compile/CopyTail`, `Compile/EqBit`, `Compile/Move`.
+        **⚠ The handoff's coarse DAG was idealized — the real dependencies are finer
+        (discovered 2026-06-25):** `Move` is **not** a clean leaf after Core — the
+        move-one-bit transfer uses `bitReadTM` (head machinery), and the move block
+        also references the nonEmpty/head op machines + the encoding layer. **Corrected
+        order:** extract `NonEmptyHead` (the `bitReadTM`/`exactOneOneTM`/`testBit*` +
+        nonEmpty/head gadgets) and `CopyTail` *before* `Move`. Before each extraction,
+        run the dependency scan: `Compile.*` referenced in the block − defined in block
+        − (Core ∪ Encoding ∪ earlier modules) must be empty (modulo comment-only refs).
 - [ ] Phase 2 — `Op`, `Cmd`.
 - [ ] Phase 3 — soundness/assembly/decider; facade.
 - [ ] Phase 4 — proof-perf (optional).
