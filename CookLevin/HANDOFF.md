@@ -54,18 +54,21 @@ REAL REMAINING MATH under the assembly:
                            (`sb+1 < s.length`, `s.get sb/sb+1 = []`, 2026-06-22);
                            **7/12 ops FULLY PROVEN** (appendOne/appendZero/clear/
                            nonEmpty/head/copy/tail); 5 ops still raw SORRY
-                           (eqBit/concat/takeAt/dropAt/consLen))
+                           (eqBit/concat/takeAt/dropAt/consLen). eqBit's gadget
+                           `opEqBitNG_run` is now COMPLETE incl. budget — only the
+                           def-reorg + discharge remain (see "★ `eqBit`").)
   compileIfBit_sound_physical_residue  (✅ PROVEN —
                            real compileTestBit tester + branchCompose + joinTwoHalts)
   compileForBnd_sound_physical_residue (✅ PROVEN & axiom-clean 2026-06-14 — the
                            forBnd counted loop is fully assembled & discharged.)
 ```
 **The live `sat_NP` decider half now needs only ONE compiler gadget: `eqBit`** —
-the no-grow tester `compareRegsNoGrowM`, the **`Op.cost eqBit` bump**, AND now the
-**`opEqBit` wrapper + its behavioural run lemma `opEqBitNG_run`** (2026-06-24 bottom-up)
-are all PROVEN & axiom-clean. Discharging the `eqBit` contract case is gated on only
-three concrete bottom-up steps — **(A) thread the step budget to the wrapper, (B) the
-def-ordering reorg, (C) the contract discharge** — none a structural unknown. See the
+the no-grow tester `compareRegsNoGrowM`, the **`Op.cost eqBit` bump**, the
+**`opEqBit` wrapper + its run lemma `opEqBitNG_run`**, AND now the **full step
+budget on `opEqBitNG_run`** (`(54·L²+54·L+180)·(cost+1)`, the per-op contract form;
+2026-06-24 bottom-up, step A) are all PROVEN & axiom-clean. Discharging the `eqBit`
+contract case is gated on only **two concrete bottom-up steps — (B) the def-ordering
+reorg, (C) the contract discharge** — neither a structural unknown. See the
 "★ `eqBit`" section above for the full plan. With `compileForBnd` proven, `evalCnfCmd`'s
 only remaining stub op is `eqBit` (it is `consLen`/`takeAt`/`dropAt`-free); closing it
 makes the entire live decider chain (`sat_NP → … → Compile_run_physical_residue`)
@@ -138,12 +141,13 @@ stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
 
 ---
 
-## ★ `eqBit` — TESTER + WRAPPER PROVEN; only BUDGET-THREAD + DEF-REORG + DISCHARGE remain
+## ★ `eqBit` — TESTER + WRAPPER + BUDGET PROVEN; only DEF-REORG + DISCHARGE remain
 
-The no-grow EQ/NEQ tester, the **cost bump** (BLOCKER 1, top-down 2026-06-22), AND the
-**`opEqBit` wrapper + its behavioural run lemma** (this session, bottom-up 2026-06-24)
-are all proven & axiom-clean. **Three concrete bottom-up steps remain — none is a
-structural unknown:** (A) thread the step budget up to the wrapper, (B) the def-reorg,
+The no-grow EQ/NEQ tester, the **cost bump** (BLOCKER 1, top-down 2026-06-22), the
+**`opEqBit` wrapper + its behavioural run lemma** (bottom-up 2026-06-24), AND the
+**full step budget on `opEqBitNG_run`** (2026-06-24, step A — the RISK item, now
+discharged in Lean, not just probed) are all proven & axiom-clean. **Two concrete
+bottom-up steps remain — neither a structural unknown:** (B) the def-reorg,
 (C) discharge the contract `eqBit` case.
 
 **PROVEN & axiom-clean (`[propext, Classical.choice, Quot.sound]`), at the END of
@@ -160,12 +164,23 @@ Compile.lean:**
   need NO rewind (the tester exits at head 0). Full shape family
   (`eqBitNGRawM_{valid,tapes,sig,h1_ne_h2,halt_only,h1/h2_is_halt,h1/h2_lt}`) +
   `clearAppendM_start` / `clearAppendM_exit_lt`. **Port of `opNonEmpty`.**
-- **★ `Compile.opEqBitNG_run`** (this session) — behaviour + residue-length + trajectory:
+- **★ `Compile.opEqBitNG_run`** — behaviour + residue-length + trajectory + **budget**:
   from head 0 on `encodeTape s ++ res_in`, EQ writes bit 1 / NEQ writes bit 0 to a
   freshly-cleared `dst`, exiting at head 0 with `encodeTape (Op.eval (eqBit …) s) ++
-  res_out` and `|res_out| = |res_in| + |src1| + |src2| + |dst|` (the exact W-① residue
-  growth). Hyps: `BitState s`, `sb+1 < s.length`, `s.get sb = s.get (sb+1) = []`,
-  `dst,src1,src2 < sb`. **NO budget conjunct yet** (step A below).
+  res_out`, `|res_out| = |res_in| + |src1| + |src2| + |dst|` (the exact W-① residue
+  growth), AND **`t ≤ (54·L²+54·L+180)·(Op.cost (eqBit …) s + 1)`** (2026-06-24, step A —
+  the per-op contract budget form, EXACTLY, so step C passes it through with no
+  `opBudgetLoosen`). Hyps: `BitState s`, `sb+1 < s.length`, `s.get sb = s.get (sb+1) = []`,
+  `dst,src1,src2 < sb`. Budget threaded bottom-up through `cmpNGPrefix_run`
+  (`+ t ≤ (cost+1)(29M+68)+6M+10`) → `compareRegsNoGrowM_run_eq/_neq`
+  (`+ … +18M²+20M+59`), where `M = L + |src1| + |src2|` is every comparison stage's tape
+  length (`htapeM`, from the `encodeTape_set_length` clear balances).
+- **★ `Compile.eqBit_budget_arith`** (2026-06-24) — the reusable arithmetic certificate
+  closing the budget: from `a+3 ≤ L`, `b+3 ≤ L`, `t ≤ tT+1+tC+1`, the tester bound
+  (`…+18M²+20M+59`) and the clearAppend bound (`9M²+3M+18`), concludes
+  `t ≤ (54L²+54L+180)(a+b+1+1)`. The `27M²` fits via `a,b ≤ L` ⇒ `M ≤ 3L` and the two
+  products `56c²≤112Lc` / `141Lc≤54L²c` (isolating these makes `nlinarith` fast; the
+  inline version timed out). **Reuse this shape for any quadratic-times-cost budget.**
 - Restore algebra (reusable): `State.ext_of_get`, `consumeStep_frame`,
   `consumeStep_clear_restore`. Contract seam: `compileOp_sound_physical_residue` takes
   `(hbsb : Op.UsesBelow o sb)`.
@@ -173,42 +188,36 @@ Compile.lean:**
   done (`State.set_set`, `mcStep_acc_le`, `mcSkip` redefined). Do not re-touch.
 
 **▶ REMAINING — bottom-up Task 1, in order:**
-- **(A) Thread the step budget to `opEqBitNG_run` (the budget RISK; probe says it FITS).**
-  The sub-budgets all exist and are `O(L²)`: `copyEmpty_run` `(|src|+1)(5L'+23)+3L'+4`,
-  `compareLoop_run` `(matchLen+1)(24L'+45)`, `eqVerdictM_run_*` `6L'+2`,
-  `cmpNGCleanup_run` `18L'²+8L'+45`, `clearAppendM_run` `9L²+3L+18`. **But three lemmas
-  on the path currently DROP their `t`-bound** (`cmpNGPrefix_run` obtains the sub-budgets
-  with `_`; `compareRegsNoGrowM_run_*` and `opEqBitNG_run` have no budget conjunct).
-  Plan: add a `t ≤ …` conjunct to `cmpNGPrefix_run` (= copy1 `+1+` copy2 `+1+`
-  compareLoop), then to `compareRegsNoGrowM_run_*` (= prefix `+1+` verdict `+1+`
-  cleanup), then to `opEqBitNG_run` (= tester `+1+` clearAppend). **Key length facts:**
-  every intermediate tape has length `M := L + |g1| + |g2|` (copies grow the scratch,
-  consume shrinks it back as the residue grows — `encodeTape_set_length` with `s.get
-  sb = []` gives `|encodeTape (s.set sb g1) ++ res| = L + |g1|`); and `|g1|,|g2| ≤ L`,
-  `matchLen ≤ |g1|`, `cost = |g1|+|g2|+1`, so `M ≤ L + cost`. Target the contract form
-  `(54·L²+54·L+180)·(cost+1)` directly (the cost-independent quadratic part —
-  `cleanup 18M² + clearAppend 9M² = 27M²` — fits because when `cost` is small the copies
-  are small so `M ≈ L`; `nlinarith` with the `≤` facts closes it). The probe
-  `probes/EqBitBudgetProbe.lean` `#eval`-confirms the real machine fits at ~70%; the
-  no-grow sum is smaller than the (deleted) grow version it was measured on.
-- **(B) Def-reorg.** `compileOp` (~L2488) references the `opEqBit` stub
+- ✅ **(A) Budget thread — DONE (2026-06-24).** `opEqBitNG_run` now carries the exact
+  contract budget `(54·L²+54·L+180)·(cost+1)`; threaded through `cmpNGPrefix_run` and
+  `compareRegsNoGrowM_run_eq/_neq` + the `eqBit_budget_arith` certificate, all axiom-clean
+  (see the PROVEN bullets above). The budget RISK is retired.
+- **(B) Def-reorg — START HERE (the largest remaining chunk, the true structural
+  blocker).** `compileOp` (~L2488) references the `opEqBit` stub
   (`compiledCmd_default`, ~L1882). Move the consume-loop machine `def`s + **their shape
   theorems** (NOT the run lemmas — they consume late-stage primitives' run lemmas) above
   `compileOp`, rename `opEqBitNG → opEqBit` (replacing the stub), and wire. The def
   bodies are machine-checked to reference only pre-`compileOp` primitives + each other;
   the SHAPE theorems (`*_valid/_sig/_tapes/_exit*/_halt*`) for the whole
   `compareRegsNoGrowM` tree (`copyEmptyRawTM`/`compareLoopTM` ~L14214–18130/23478,
-  `cmpNG*` ~L25141+) must move too (the `opEqBit` CompiledCmd fields need them). **This
-  is the largest remaining chunk and the true structural blocker — assess a file-split
-  (extract the machinery into a module imported before the `compileOp` module) if the
-  in-file move proves unwieldy.** `opEqBitNG_run` stays where it is.
-- **(C) Discharge** the `eqBit` case of `compileOp_sound_physical_residue` (~L18378, raw
-  `sorry`). Template = the `nonEmpty` case (~L18379). W-① from `opEqBitNG_run`'s
-  residue-length (`|res_out| = |res_in|+|src1|+|src2|+|dst|`, and `Op.cost eqBit =
-  |src1|+|src2|+1` ⇒ equality); budget from step (A) via the `54→72` lift
-  (`opBudgetLoosen`); feed `hbsb`'s `dst,src1,src2 < sb` as the `opEqBitNG_run`
+  `cmpNG*` ~L25141+) must move too (the `opEqBit` CompiledCmd fields need them).
+  **Strongly recommend a file-split:** extract the `compareRegsNoGrowM` tree
+  (defs + shape theorems) into a new module imported *before* the `compileOp` module,
+  rather than an in-file move of ~10K lines (the dependency tree is deep — `copyEmptyRawTM`/
+  `compareLoopTM` → `compareBodyTM`/`testMachine`/`bitCompareM`/… → `navTestRewindM`/
+  `bitReadTM`/`opRewindToZero`). `opEqBitNG_run` + `eqBit_budget_arith` stay where they are
+  (they consume late-stage run lemmas). `compileOp`'s eqBit case then becomes
+  `Compile.opEqBit sb dst src1 src2 := opEqBitNG sb dst src1 src2` (or rename).
+- **(C) Discharge** the `eqBit` case of `compileOp_sound_physical_residue` (~L18392, raw
+  `sorry`). Template = the `nonEmpty` case (~L18393), but **simpler — no `opBudgetLoosen`**
+  (after the reorg `compileOp sb (eqBit …) = opEqBitNG …` by `rfl`, and `opEqBitNG_run`
+  already proves the contract budget form `(54·L²+54·L+180)·(cost+1)` EXACTLY, so the budget
+  field is `exact hbud`). `res_out = residue` from `opEqBitNG_run`; W-① is an **equality**:
+  `State.size (s.set dst [bit]) + |res_out| = State.size s + |res_in| + Op.cost eqBit` via
+  `State.size_set_add s dst [bit]` + `|res_out| = |res_in|+|src1|+|src2|+|dst|` (and `Op.cost
+  eqBit = |src1|+|src2|+1`). Feed `hbsb`'s `dst,src1,src2 < sb` as the `opEqBitNG_run`
   disjointness hyps; supply `sb+1 < s.length`/`s.get sb,(sb+1) = []` from the contract's
-  eqBit scratch hyps.
+  eqBit scratch hyps (`hsb1`/`hsbe`/`hsb1e`).
 
 **DEAD on Resolution B** (delete after (C) is green): `growEmptyTM`/`growTwoEmpty`,
 `shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM`, `compareRegsPrefixM`/`compareRegsTM`/
@@ -537,15 +546,16 @@ Compile.lean:**
   expose `residue.length = |res| + |src1| + |src2|`** (companion: `matchLen_le_right`). ⇒
   `compareRegsPrefixM`/`compareRegsTM`/`compareBranchM` (grow versions) are now superseded.
 - **★ `Compile.opEqBitNG`/`opEqBitNG_run` — the `eqBit` op WRAPPER is COMPLETE
-  (behaviourally), 2026-06-24 bottom-up.** `opEqBitNG sb dst src1 src2 := joinTwoHalts
+  (behaviour + budget), 2026-06-24 bottom-up.** `opEqBitNG sb dst src1 src2 := joinTwoHalts
   (branchComposeFlatTM (compareRegsNoGrowM sb src1 src2) (clearAppendM dst 2)
   (clearAppendM dst 1) exit_eq exit_neq) h1 h2` (port of `opNonEmpty`; branch bodies need
   NO rewind — the tester exits at head 0). `opEqBitNG_run`: behaviour + residue-length
-  (`|res_out| = |res_in|+|src1|+|src2|+|dst|`) + trajectory, head-0 exit on
-  `encodeTape (Op.eval (eqBit …) s) ++ res_out`. Axiom-clean. Helpers `clearAppendM_start`
-  /`clearAppendM_exit_lt`. **⚠ NO budget conjunct yet, and NOT yet wired into `compileOp`
-  (the stub still dispatches) — see "★ `eqBit`" steps (A)/(B)/(C). The reorg renames
-  `opEqBitNG → opEqBit`.**
+  (`|res_out| = |res_in|+|src1|+|src2|+|dst|`) + trajectory + **budget**
+  (`t ≤ (54·L²+54·L+180)·(Op.cost (eqBit …) s + 1)`, the exact per-op contract form —
+  step A, 2026-06-24), head-0 exit on `encodeTape (Op.eval (eqBit …) s) ++ res_out`.
+  Axiom-clean. Helpers `clearAppendM_start`/`clearAppendM_exit_lt`/`eqBit_budget_arith`.
+  **⚠ NOT yet wired into `compileOp` (the stub still dispatches) — see "★ `eqBit`"
+  steps (B) def-reorg + (C) discharge. The reorg renames `opEqBitNG → opEqBit`.**
 
 ---
 
@@ -590,7 +600,7 @@ The build is UNGATED for bottom-up. New frontier:
      Pick this if bottom-up has just landed `opEqBit`.
 0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
    Resolution-B `opEqBit` gadget).** When the `eqBit` case of
-   `compileOp_sound_physical_residue` (Compile.lean ~18361, currently raw `sorry`) is
+   `compileOp_sound_physical_residue` (Compile.lean ~18392, currently raw `sorry`) is
    discharged, the **entire live decider chain `sat_NP → … → Compile_run_physical_residue`
    becomes sorry-free** (`evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free). Concrete top-down
    work: `#print axioms sat_NP` / `inTimePolyTM_evalCnf` and confirm `sorryAx` is GONE from
@@ -640,23 +650,22 @@ ops** in `compileOp_sound_physical_residue` (Compile.lean ~18187 statement; raw
 half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
 
 1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
-   needs).** Tester + cost bump + **wrapper `opEqBitNG` + behavioural run lemma
-   `opEqBitNG_run`** are all PROVEN & axiom-clean (see the "★ `eqBit`" section above for
-   the full state). **THREE concrete steps remain, in order — (A) budget thread, (B)
-   def-reorg, (C) discharge.** Closing them discharges the `eqBit` case of
-   `compileOp_sound_physical_residue` (~L18378, raw `sorry`) and makes the entire live
-   decider chain `sat_NP → … → Compile_run_physical_residue` **sorry-free**.
+   needs).** Tester + cost bump + wrapper `opEqBitNG` + run lemma `opEqBitNG_run`
+   **+ its full step budget (step A, 2026-06-24)** are all PROVEN & axiom-clean (see the
+   "★ `eqBit`" section above for the full state). **TWO concrete steps remain, in order —
+   (B) def-reorg, (C) discharge.** Closing them discharges the `eqBit` case of
+   `compileOp_sound_physical_residue` (~L18392, raw `sorry`) and makes the entire live
+   decider chain `sat_NP → … → Compile_run_physical_residue` **sorry-free** (the first
+   headline soundness win).
 
-   **START HERE: (A) budget.** This is the only RISK item (a structural unknown? no —
-   the probe `#eval`-confirms it fits; the work is the symbolic proof). Add a `t ≤ …`
-   conjunct to, in dependency order: `cmpNGPrefix_run` → `compareRegsNoGrowM_run_eq` /
-   `_run_neq` → `opEqBitNG_run`, then the discharge consumes it. All sub-budgets exist
-   (`copyEmpty_run`/`compareLoop_run`/`eqVerdictM_run_*`/`cmpNGCleanup_run`/
-   `clearAppendM_run`); see the "★ `eqBit`" step (A) for the exact length facts
-   (`M := L + |g1| + |g2|`, `|g1|,|g2| ≤ L`, `matchLen ≤ |g1|`, `cost = |g1|+|g2|+1`) and
-   the `(54L²+54L+180)·(cost+1)` target. Then (B) the def-reorg (the big structural
-   move — consider a file split) and (C) the discharge (template = the `nonEmpty` case,
-   W-① from `opEqBitNG_run`'s residue-length). Full detail in the "★ `eqBit`" section.
+   **START HERE: (B) def-reorg.** The budget RISK is retired; what remains is the
+   structural move that wires the proven `opEqBitNG` into `compileOp`. **Strongly
+   recommend a file-split** (extract the `compareRegsNoGrowM` def tree + shape theorems
+   into a module imported before `compileOp`) over an in-file move of the deep tree —
+   full detail in the "★ `eqBit`" section, steps (B)/(C). After (B), step (C) is ~8 lines
+   (`opEqBitNG_run` already proves the exact contract budget, so no `opBudgetLoosen`;
+   W-① is an equality). The whole eqBit completion then makes `#print axioms sat_NP`
+   `sorryAx`-free for the decider — schedule the **top-down Task 0 checkpoint** right after.
 
    **Reusable proof gotchas (still valid):**
    - `omega` fails on `Var` atoms — use `Nat.*` lemmas or `simp only [Var] at *`. For
