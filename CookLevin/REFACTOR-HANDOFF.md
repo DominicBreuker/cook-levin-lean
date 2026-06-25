@@ -209,7 +209,23 @@ split itself; the parallelism + incremental win is the main build speedup.
       roots are `Basic`/`Complexity`), so harmless, but stale; delete them in a
       cleanup pass. Two stale comment mentions of `compareRegsTM` remain in
       `Compile.lean` (L18611, L19915) — harmless.
-- [ ] Phase 1 — leaf gadget modules.
+- [ ] Phase 1 — leaf gadget modules. **In progress.**
+  - [x] **`Compile/Core` — DONE (2026-06-25).** Extracted the combinator block
+        (L80–575: `CompiledCmd` record, `compiledCmd_default`, `joinTwoHalts` +
+        lemmas, `rewindComposite_halt_only`, `rewindBracket` + lemmas) into
+        `CookLevin/Complexity/Lang/Compile/Core.lean` (524 lines). `Compile.lean`
+        imports it; 24,078 → 23,583 lines. `lake build` green (3359 jobs).
+        **Scope note:** the handoff had lumped `encodeTape`/`decodeTape` + seam
+        helpers into Core, but those sit far down (old L5081–5757) intertwined with
+        `compileCmd`; **deferred** to a separate `Compile/Encoding` module (do it
+        when extracting `Cmd`, or as its own step) to keep this first extraction
+        contiguous + low-risk. Core now imports the same list as `Compile.lean`
+        (`rewindBracket` uses `ScanLeft.*`, available transitively via AppendGadget);
+        a later pass could prune to minimal imports.
+  - [ ] `Compile/Move` (next) — move-one-bit transfer (old L8088–9801) +
+        `moveRegion2TM` (old L9802–12442). Imports Core. Self-contained gadget; big
+        line win (~4.3K).
+  - [ ] `Compile/NonEmptyHead`, `Compile/CopyTail`, `Compile/EqBit`.
 - [ ] Phase 2 — `Op`, `Cmd`.
 - [ ] Phase 3 — soundness/assembly/decider; facade.
 - [ ] Phase 4 — proof-perf (optional).
