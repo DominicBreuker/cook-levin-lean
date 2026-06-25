@@ -98,11 +98,14 @@ compiler obligation** (`Compile_run_physical_residue`, Risk C2; the old
 `Compile_run_physical`/`Compile_sound` exact-tape forms were unsatisfiable and
 are deleted).
 
-**Caveat surfaced (do not under-estimate C2):** 6 of 12 `compileOp`s still lack
-a discharged soundness case (`tail`/`eqBit`/`concat`/`takeAt`/`dropAt`/`consLen`;
-real machines + FULLY PROVEN cases exist for `appendOne`/`appendZero`/`clear`/
-`nonEmpty`/`head`/`copy` — the cursor-copy run-lemma stack was completed
-axiom-clean 2026-06-12b). `Compile_sound` was false as stated for *three*
+**Caveat surfaced (do not under-estimate C2):** 4 of 12 `compileOp`s still lack
+a discharged soundness case (`concat`/`takeAt`/`dropAt`/`consLen`; FULLY PROVEN &
+axiom-clean for `appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/`tail`/
+`eqBit` — `eqBit` wired into `compileOp` and discharged in BU-C2-15, 2026-06-25).
+**None of the 4 remaining ops is on the live `sat_NP` decider path** (`evalCnfCmd`
+uses none of them), but the *generic* `compileOp_sound_physical_residue` still
+carries their 4 stub `sorry`s, so `SAT_inNP.sat_NP` is still `sorryAx` until an
+`Op.IsSupported` hypothesis isolates the live path (planned, HANDOFF top-down Task 0). `Compile_sound` was false as stated for *three*
 reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
 **unit cost** but `concat`/`copy` grow the state **multiplicatively** (output

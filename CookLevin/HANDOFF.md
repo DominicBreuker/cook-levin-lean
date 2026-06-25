@@ -52,27 +52,40 @@ REAL REMAINING MATH under the assembly:
   compileOp_sound_physical_residue   (Compile.lean ~18187 statement; now takes a
                            threaded scratch base `sb` + eqBit-only scratch hyps
                            (`sb+1 < s.length`, `s.get sb/sb+1 = []`, 2026-06-22);
-                           **7/12 ops FULLY PROVEN** (appendOne/appendZero/clear/
-                           nonEmpty/head/copy/tail); 5 ops still raw SORRY
-                           (eqBit/concat/takeAt/dropAt/consLen). eqBit's gadget
-                           `opEqBitNG_run` is now COMPLETE incl. budget — only the
-                           def-reorg + discharge remain (see "★ `eqBit`").)
+                           **8/12 ops FULLY PROVEN** (appendOne/appendZero/clear/
+                           nonEmpty/head/copy/tail/**eqBit** — BU-C2-15); 4 ops still
+                           raw SORRY (concat/takeAt/dropAt/consLen), none on the live
+                           `sat_NP` path. The whole theorem still carries `sorryAx`
+                           from those 4 — see the top "FINDING" + top-down Task 0.)
   compileIfBit_sound_physical_residue  (✅ PROVEN —
                            real compileTestBit tester + branchCompose + joinTwoHalts)
   compileForBnd_sound_physical_residue (✅ PROVEN & axiom-clean 2026-06-14 — the
                            forBnd counted loop is fully assembled & discharged.)
 ```
-**The live `sat_NP` decider half now needs only ONE compiler gadget: `eqBit`** —
-the no-grow tester `compareRegsNoGrowM`, the **`Op.cost eqBit` bump**, the
-**`opEqBit` wrapper + its run lemma `opEqBitNG_run`**, AND now the **full step
-budget on `opEqBitNG_run`** (`(54·L²+54·L+180)·(cost+1)`, the per-op contract form;
-2026-06-24 bottom-up, step A) are all PROVEN & axiom-clean. Discharging the `eqBit`
-contract case is gated on only **two concrete bottom-up steps — (B) the def-ordering
-reorg, (C) the contract discharge** — neither a structural unknown. See the
-"★ `eqBit`" section above for the full plan. With `compileForBnd` proven, `evalCnfCmd`'s
-only remaining stub op is `eqBit` (it is `consLen`/`takeAt`/`dropAt`-free); closing it
-makes the entire live decider chain (`sat_NP → … → Compile_run_physical_residue`)
-**sorry-free**.
+**✅ `eqBit` is DONE (BU-C2-15, 2026-06-25 bottom-up).** Both (B) the def-reorg
+(`opEqBitNG` relocated above `compileOp`, wired via `Compile.opEqBit := opEqBitNG`,
+replacing the `compiledCmd_default` stub) and (C) the contract discharge (the `eqBit`
+case of `compileOp_sound_physical_residue` is proven directly from `opEqBitNG_run`:
+`exact hbud` for the budget, equality W-①) are landed, green (3358 jobs), axiom-clean.
+`compileOp` now emits the real no-grow `eqBit` machine. **7→8/12 ops proven.**
+
+**⚠⚠ FINDING (BU-C2-15) — discharging `eqBit` did NOT make `sat_NP` sorry-free.**
+`#print axioms SAT_inNP.sat_NP` still shows `sorryAx`. Root cause: the live chain
+routes `sat_NP → … → Compile_run_physical_residue → run_physical_residue_gen`, whose
+op case calls the **generic** `compileOp_sound_physical_residue k o s …` for an
+arbitrary `o`. That theorem's proof term still references the **4 stub-op sorries**
+(`takeAt`/`dropAt`/`concat`/`consLen`), so `sorryAx` propagates **even though
+`evalCnfCmd` uses none of those ops**. `#print axioms` tracks the constant's whole
+body, not the branch taken at runtime. **The headline soundness win needs one of:**
+(i) **[TOP-DOWN, recommended, fastest]** thread an `Op.IsSupported` / `Cmd.AllOpsSupported`
+hypothesis through `compileOp_sound_physical_residue` + `run_physical_residue_gen` +
+the `DecidesLang` decider bridges; the 4 stub cases discharge by `absurd ho (by decide)`,
+`evalCnfCmd` proves `AllOpsSupported` by `decide`. Then `sat_NP` is sorry-free with the
+8 proven ops — **no need for concat / the unary trio**. (ii) **[BOTTOM-UP, slower]**
+discharge all 4 remaining ops (concat + the `takeAt`/`dropAt`/`consLen` unary trio).
+Option (i) is the clean "compiler is sound for the supported op set" statement and is
+the next top-down headline task; option (ii) is needed anyway for the reduction half /
+S3 endgame.
 Both the **canonical** path (`DecidesLang'` / `inNPLang_to_inNP`) and the **free/live**
 path (`DecidesLang` / `inTimePolyLang_to_inTimePoly`) are now assembled and bridge the
 same `paddedBitDecider_run` → `bitDecider_run`. **The decider half's only remaining
@@ -134,14 +147,46 @@ revisit — polynomial is the final boundary.**
 
 **The remaining pinned obligations** (now identical for both bridges, all BOTTOM-UP):
 ✅ `Compile.padRegsTM` is **DONE**; ✅ `evalCnfDecidesLang` is **DONE & axiom-clean**
-(2026-06-10 — verifier Cmds + all contracts proven). What's left under the decider
-bridges is just the **5 leaf ops + 1 combinator** (`compileOp_…` for `eqBit`/`concat`/
-`takeAt`/`dropAt`/`consLen`, plus `compileForBnd_sound_physical_residue`) — see the
-stream sections. The LIVE path needs only **`eqBit` + the `forBnd` combinator**.
+(2026-06-10 — verifier Cmds + all contracts proven). The `forBnd` combinator and the
+`eqBit` op are now PROVEN (2026-06-14 / BU-C2-15); what's left under the decider bridges
+is just the **4 leaf ops** (`compileOp_…` for `concat`/`takeAt`/`dropAt`/`consLen`) — see
+the stream sections. **The LIVE `sat_NP` path uses NONE of those 4**, so its only
+remaining `sorryAx` is the *generic* contract carrying their stub `sorry`s — retired by
+the top-down `IsSupported` threading (Task 0).
 
 ---
 
-## ★ `eqBit` — TESTER + WRAPPER + BUDGET PROVEN; only DEF-REORG + DISCHARGE remain
+## ✅ `eqBit` — DONE (BU-C2-15, 2026-06-25)
+
+The whole `eqBit` op is landed, green, axiom-clean. `compileOp` emits the real no-grow
+machine. How it was done (for reference / as a template for `concat`):
+- **(B) def-reorg.** Mechanical **in-file move** (a Python script relocating whole
+  declaration blocks; *not* the file-split — the run lemmas depend on copy/tail run
+  lemmas that sit after `compileOp`, so a clean module split was not possible).
+  Two passes: (1) the eqBit machine **defs + shape lemmas** (the `compareRegsNoGrowM`
+  tree: `opRewindToZero`/`navTestRewindM`/`readBitRewindM`/`eqVerdictM`/`bitCompareM`/
+  `bothNonemptyM`/`testMachine`/`compareBodyTM`/`compareLoopTM`/`copyEmptyRawTM`/`cmpNG*`/
+  `eqBitNGRawM`/`opEqBitNG` + the shared `compareLoopTM`/`copyEmptyRawTM` shape lemmas)
+  moved **above `compileOp`**; `Compile.opEqBit := opEqBitNG` replaced the stub. (2) the
+  eqBit **run stack** (`opEqBitNG_run`, `eqBit_budget_arith`, `compareRegsNoGrowM_run_*`,
+  `cmpNG{Cleanup,Prefix}_run`, `copyEmpty_run`, `consumeStep_*`, `State.ext_of_get`) moved
+  **above the per-op contract** so (C) can consume it. The run/semantic lemmas were left
+  at their original positions only where their dependencies allowed. **Method note for the
+  next such reorg:** compute the structural-def closure (qualified `Compile.X` refs only —
+  bare-name matching over-pulls via `Op`/`Cmd`/`compileOp`) and let `lake build` surface
+  any missed shape lemma; ~3 build iterations sufficed.
+- **(C) discharge.** The `eqBit` case of `compileOp_sound_physical_residue` is a direct
+  application of `opEqBitNG_run`: `res_out` from the gadget; budget `exact hbud` (the
+  gadget already proves the exact `(54·L²+54·L+180)·(cost+1)` form — **no `opBudgetLoosen`**);
+  run/traj by `rw [hM]` where `hM : compileOp sb (eqBit ..) = opEqBitNG .. := rfl`; W-① an
+  equality via `State.size_set_add` + the exact residue-length growth + `Op.cost eqBit`.
+
+**DEAD on Resolution B (now removable, low priority cleanup):** `growEmptyTM`/`growTwoEmpty`,
+`shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM`, `compareRegsPrefixM`/`compareRegsTM`/
+`compareBranchM` (grow/shrink scaffolding, still present, ~1.5K LOC). Deleting them shrinks
+Compile.lean but is not on any proof path.
+
+<details><summary>archived: the pre-BU-C2-15 eqBit build notes (tester/wrapper/budget)</summary>
 
 The no-grow EQ/NEQ tester, the **cost bump** (BLOCKER 1, top-down 2026-06-22), the
 **`opEqBit` wrapper + its behavioural run lemma** (bottom-up 2026-06-24), AND the
@@ -222,6 +267,8 @@ Compile.lean:**
 **DEAD on Resolution B** (delete after (C) is green): `growEmptyTM`/`growTwoEmpty`,
 `shrinkEmptyTM`/`shrinkTwoEmpty`/`compareCleanupM`, `compareRegsPrefixM`/`compareRegsTM`/
 `compareBranchM` (grow/shrink scaffolding).
+
+</details>
 
 ---
 
@@ -554,8 +601,8 @@ Compile.lean:**
   (`t ≤ (54·L²+54·L+180)·(Op.cost (eqBit …) s + 1)`, the exact per-op contract form —
   step A, 2026-06-24), head-0 exit on `encodeTape (Op.eval (eqBit …) s) ++ res_out`.
   Axiom-clean. Helpers `clearAppendM_start`/`clearAppendM_exit_lt`/`eqBit_budget_arith`.
-  **⚠ NOT yet wired into `compileOp` (the stub still dispatches) — see "★ `eqBit`"
-  steps (B) def-reorg + (C) discharge. The reorg renames `opEqBitNG → opEqBit`.**
+  **✅ WIRED into `compileOp` (BU-C2-15): `Compile.opEqBit := opEqBitNG`, and the `eqBit`
+  case of `compileOp_sound_physical_residue` is discharged. 8/12 ops proven.**
 
 ---
 
@@ -591,23 +638,32 @@ The build is UNGATED for bottom-up. New frontier:
    `eqBit`" BLOCKER 1 block for the details (new `State.set_set`/`mcStep_acc_le`, `mcSkip`
    redefined constant-cost). **The cost bump has landed; bottom-up Task 1(a) is unblocked.**
 
-   **▶ NEXT TOP-DOWN SESSION — pick one:**
-   - **Task 1 (CliqueRelTM)** — highest *standalone* value; replicate the proven EvalCnf
-     end-to-end template (see below). **Recommended next** — verifier-cost work is now done,
-     and CliqueRelTM is the only remaining large standalone top-down build (FlatClique→Clique).
-   - **Task 0 (eqBit-completion checkpoint)** — the session AFTER bottom-up closes the
-     eqBit case: audit `#print axioms sat_NP`, the first headline soundness win (below).
-     Pick this if bottom-up has just landed `opEqBit`.
-0. **`eqBit`-completion checkpoint (do this the session AFTER bottom-up closes the
-   Resolution-B `opEqBit` gadget).** When the `eqBit` case of
-   `compileOp_sound_physical_residue` (Compile.lean ~18392, currently raw `sorry`) is
-   discharged, the **entire live decider chain `sat_NP → … → Compile_run_physical_residue`
-   becomes sorry-free** (`evalCnfCmd` is `consLen`/`takeAt`/`dropAt`-free). Concrete top-down
-   work: `#print axioms sat_NP` / `inTimePolyTM_evalCnf` and confirm `sorryAx` is GONE from
-   the decider half (only `eqBit`'s sibling stub ops + S1/S2/S3 + `red_inNP` remain on
-   `CookLevin`). Update README/ROADMAP status tables (the "in-NP half reaches a `sorry`"
-   line in README "Not sound" becomes false for SAT). This is the **first headline soundness
-   win** and worth a careful audit. Then proceed to Task 1/2.
+   **▶ NEXT TOP-DOWN SESSION — Task 0 RECOMMENDED (it is now the fastest path to the first
+   headline soundness win; see the BU-C2-15 finding above):**
+0. **`Op.IsSupported` threading → make `sat_NP` sorry-free (HIGH VALUE — the first headline
+   soundness win).** BU-C2-15 closed the `eqBit` op but found `sat_NP` is **still `sorryAx`**:
+   the live chain calls the **generic** `compileOp_sound_physical_residue k o s …` (via
+   `run_physical_residue_gen`), whose body still contains the 4 stub-op `sorry`s
+   (`takeAt`/`dropAt`/`concat`/`consLen`), and `#print axioms` taints on the whole constant
+   regardless of which op branch runs. **Fix (no new gadgets needed):**
+   - Add `def Op.IsSupported : Op → Prop` (the 8 proven ops `↦ True`; the 4 stubs `↦ False`),
+     `Decidable`-derivable, and `def Cmd.AllOpsSupported : Cmd → Prop` (structural).
+   - Give `compileOp_sound_physical_residue` an extra hyp `(ho : Op.IsSupported o)`; the 4
+     stub cases become `exact absurd ho (by decide)` (or `(ho).elim`) — **the theorem is then
+     sorry-free**. The 8 proven cases ignore `ho`.
+   - Thread `AllOpsSupported` through `run_physical_residue_gen` (op case derives `ho` from
+     the Cmd predicate) → `Compile_run_physical_residue` → the `DecidesLang`/`DecidesLang'`
+     decider bridges (`bitDecider_run` / `paddedBitDecider_run`), as a new structure field.
+   - `evalCnfDecidesLang` proves `AllOpsSupported evalCnfCmd` by `decide` (it is
+     `takeAt`/`dropAt`/`concat`/`consLen`-free).
+   Then `#print axioms SAT_inNP.sat_NP` should drop `sorryAx` (only `propext`/`Classical.choice`/
+   `Quot.sound` remain). **Audit it, then update README/ROADMAP** (the "in-NP half reaches a
+   `sorry`" line in README "Not sound" becomes false for SAT). ⚠ Scope check first: this also
+   touches the `⪯p`/`toFrameworkWitness'` reduction path (`PolyTimeComputableLang`) — but that
+   path is NOT on `CookLevin`'s hardness route for the live SAT verifier, so the SAT-in-NP win
+   is local. Estimate ~0.5–1K LOC, mechanical. **This was previously mis-scoped as a free
+   audit; it is a real (but tractable) top-down task.** If Task 0's scope creeps, fall back
+   to Task 1 (CliqueRelTM) below.
 1. **CliqueRelTM — replicate the EvalCnf pattern (highest standalone top-down value).**
    `Deciders/CliqueRelTM.lean` is still the pre-pattern skeleton: `cliqueRelCmd`/
    `cliqueRelEncode` are `sorry` **defs** and every witness field is a raw `sorry`
@@ -644,48 +700,26 @@ combinator CLOSED (2026-06-11); ✅ the `copy`/`tail` ops CLOSED (2026-06-12b/c)
 ✅ the `forBnd` per-iteration chain + loop machine + BOTH `loopTM` contracts +
 fold invariants + budget fix CLOSED (2026-06-13/b/c); ✅ **`compileForBnd_sound_physical_residue`
 FULLY PROVEN & axiom-clean (2026-06-14)** — the forBnd counted loop is closed.
-Everything left bottom-up is TM-level compiler work in Compile.lean: the **5 stub
-ops** in `compileOp_sound_physical_residue` (Compile.lean ~18187 statement; raw
-`sorry`s at `eqBit`/`takeAt`/`dropAt`/`concat`/`consLen`, ~18374). Both the decider
-half (`sat_NP`) and the reduction half (`⪯p`/`toFrameworkWitness'`) rest on these ops.
+Everything left bottom-up is TM-level compiler work in Compile.lean: the **4 stub
+ops** in `compileOp_sound_physical_residue` (Compile.lean — raw `sorry`s at
+`takeAt`/`dropAt`/`concat`/`consLen`; `eqBit` is now PROVEN). These are NOT on the
+live `sat_NP` decider (`evalCnfCmd` uses none of them) but ARE on the reduction half
+(`⪯p`/`toFrameworkWitness'`) and are what keeps `compileOp_sound_physical_residue`
+carrying `sorryAx` (hence `sat_NP` is still `sorryAx` until the top-down Task 0
+`IsSupported` threading — see the BU-C2-15 finding at the top).
 
-1. **`eqBit` — THE highest-value item (the ONLY op the LIVE `sat_NP` decider still
-   needs).** Tester + cost bump + wrapper `opEqBitNG` + run lemma `opEqBitNG_run`
-   **+ its full step budget (step A, 2026-06-24)** are all PROVEN & axiom-clean (see the
-   "★ `eqBit`" section above for the full state). **TWO concrete steps remain, in order —
-   (B) def-reorg, (C) discharge.** Closing them discharges the `eqBit` case of
-   `compileOp_sound_physical_residue` (~L18392, raw `sorry`) and makes the entire live
-   decider chain `sat_NP → … → Compile_run_physical_residue` **sorry-free** (the first
-   headline soundness win).
+✅ **`eqBit` is DONE (BU-C2-15).** See the "✅ `eqBit` — DONE" section above. `compileOp`
+emits the real machine; the `eqBit` contract case is proven & axiom-clean. 8/12 ops done.
 
-   **START HERE: (B) def-reorg.** The budget RISK is retired; what remains is the
-   structural move that wires the proven `opEqBitNG` into `compileOp`. **Strongly
-   recommend a file-split** (extract the `compareRegsNoGrowM` def tree + shape theorems
-   into a module imported before `compileOp`) over an in-file move of the deep tree —
-   full detail in the "★ `eqBit`" section, steps (B)/(C). After (B), step (C) is ~8 lines
-   (`opEqBitNG_run` already proves the exact contract budget, so no `opBudgetLoosen`;
-   W-① is an equality). The whole eqBit completion then makes `#print axioms sat_NP`
-   `sorryAx`-free for the decider — schedule the **top-down Task 0 checkpoint** right after.
-
-   **Reusable proof gotchas (still valid):**
-   - `omega` fails on `Var` atoms — use `Nat.*` lemmas or `simp only [Var] at *`. For
-     `sb ≠ sb+1` use `Nat.ne_of_lt (Nat.lt_succ_self _)` (not `omega`).
-   - `composeFlatTM_halt_intro M1 M2 h2 glue` gives halt at `M1.states + h2` (this order);
-     get the `show` right or `exact h` whnf-times-out on the huge term.
-   - `composeFlatTM_run`'s M1-run/M1-traj take the config at `state_idx 0` (the gadget run
-     lemmas are stated at `0`); the M2 args take `M2.start` (rw the `_start` lemma).
-   - `copyEmpty_run`/`compareLoop_run`/`eqVerdictM_run_*`/`clearRegionTM_run` are stated at
-     `state_idx 0`; `composeFlatTM_run` witness is `t₁ + 1 + t₂` (chain for multi-stage).
-
-2. **`concat` (next after `eqBit`; reduction-half only, not live `sat_NP`).**
+1. **`concat` — START HERE (the only remaining op buildable without the unary migration).**
    `concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`. = `clear dst ⨾
    copy-append src1 ⨾ copy-append src2`. The copy op's `copyLoop` already appends
    `src` to `dst`'s end — but `copyLoop_run` assumes **`dst` empty**; `concat`'s
    second append needs a **`copyLoop_run` generalized to nonempty `dst`** (gives
    `s.set dst (dst ++ src)`). Generalize that one lemma, then `concat` is two
    `copyLoop`s. Cost `|src1|+|src2|+1` is generous. Then the value-as-length trio
-   `takeAt`/`dropAt`/`consLen` (canonical toolkit only — gated on Task 3).
-3. **Canonical product-toolkit unary migration** (separate from the live path; needed for
+   `takeAt`/`dropAt`/`consLen` (canonical toolkit only — gated on Task 2's migration).
+2. **Canonical product-toolkit unary migration** (separate from the live path; needed for
    S3 endgame, NOT for `sat_NP`). Restate `takeAt`/`dropAt`/`consLen` unary (count = the
    register's unary length, not `headD 0`); bump `consLen`'s `Op.cost`; re-lay the `Nat`/
    product/`List` canonical encodings bit-level (the product's single length-prefix cell →
