@@ -1,266 +1,160 @@
 # Handoff — refactoring the compiler (`Compile.lean`)
 
-This is the **working plan for the compiler refactor**, run as its own
-multi-session stream (parallel to the compiler *implementation* stream in
-[`HANDOFF.md`](HANDOFF.md)). Same workflow: build green between commits, keep this
-doc compact and forward-looking, hand off to the next refactoring agent.
+Working plan for the **compiler refactor**, run as its own multi-session stream
+(parallel to the compiler *implementation* stream in [`HANDOFF.md`](HANDOFF.md)).
+Same workflow: build green between commits, keep this doc compact and
+forward-looking, hand off to the next refactoring agent.
 
-**Goal.** `Compile.lean` has grown to **26.5K lines / 1.5 MB in a single Lean
-module**. Lean compiles a module as one unit, so this file is (a) the build's
-long pole — `lake build` spends the bulk of its wall-clock compiling this one
-file, with zero intra-file parallelism — and (b) unmaintainable: any one-line
-edit recompiles all 26K lines *and* everything downstream (`PolyTime.lean` + the
-whole proof). The bottom-up op work edits this file constantly. **Split it into a
-DAG of ~1–3K-line modules** so compilation parallelises and edits rebuild only
-the touched module + its dependents. Delete the dead code along the way.
+**Goal (achieved for the structural split).** `Compile.lean` had grown to a
+single **26.5K-line / 1.5 MB Lean module** — the build's long pole (no intra-file
+parallelism) and unmaintainable (any one-line edit recompiled all 26K lines + the
+whole downstream proof). It is now split into a **DAG of `Compile/*` modules**, so
+compilation parallelises and edits rebuild only the touched module + its
+dependents.
 
-**Coordinate with `HANDOFF.md`.** Both streams edit `Compile.lean`, so they will
-conflict. **Recommendation: land the refactor's Phase 0 + Phase 1 before the next
-op (`concat`) is implemented**, so new ops land in clean modules. If an op session
-must run first, it should rebase onto the latest refactor branch.
-
----
-
-## The key finding that makes the split tractable
-
-The HANDOFF previously recorded that a *clean module split was impossible* because
-"the eqBit run lemmas depend on copy/tail run lemmas that sit after `compileOp`."
-That is true **for an in-file move** but **false for a multi-file split**, and this
-is the crux of the whole refactor:
-
-- `compileOp` (the def, L4168) and `compileCmd` (L5055) reference the op machine
-  **defs** (which already sit *above* them).
-- The op **run lemmas** (`opCopy_run` L14276, `opTail_run` L15428, `opEqBitNG_run`
-  L19653, …) sit *after* `compileOp` in the file **but do not reference `compileOp`
-  or `compileCmd`** (verified: the only refs to those names between L4170 and the
-  per-op contract are the `compileCmd` def itself + comments). They were appended
-  chronologically, not for any dependency reason.
-
-So the real dependency graph is a clean DAG; the file is just **topologically
-mis-sorted**. In separate modules, a gadget's def + shape lemmas + run lemmas all
-live together in one module that depends only on the combinators + lower
-primitives; `compileOp` imports those modules; the per-op *soundness* contract
-imports `compileOp` + the gadget modules. No cycle. (This also retroactively
-explains why the eqBit in-file relocation in BU-C2-15 was so painful — a module
-split would have avoided it entirely.)
+**Coordinate with `HANDOFF.md`.** Both streams edit the compiler. The split is now
+done, so the op stream should land its next op (`concat`, the stub-op threading,
+etc.) **in the relevant submodule** — the per-op contract + stub ops live in
+`Compile/OpSound`; the op machines in `Compile/OpMachines`; run lemmas in
+`Compile/RunLemmas`. Edits there no longer rebuild the rest of the compiler.
 
 ---
 
-## Review: current `Compile.lean` structure (line ranges, 2026-06-25)
+## Current module structure (build green, 3366 jobs, 2026-06-25)
 
-1035 declarations. Logical blocks (current line order; **note the interleaving** —
-e.g. op run lemmas are far below their defs, and the per-op *contract* L19926 sits
-in the middle of the eqBit run-lemma block):
+`Compile.lean` is now a **39-line pure facade** (imports only; `PolyTime.lean`
+still `import`s `Complexity.Lang.Compile` and gets everything). The DAG, under
+`CookLevin/Complexity/Lang/Compile/`:
 
-| Lines | Block | Target module |
+```
+(primitives: Syntax Semantics Frame Navigate ScanPast ScanLeft ShiftTape
+             AppendGadget ClearGadget; TMPrimitives, TapeMono)
+      │
+  Core (524)          CompiledCmd, joinTwoHalts, rewindBracket, combinators
+      ├───────────────┐
+  Encoding (708)      encodeTape/decodeTape, BitState, ValidResidue, structure lemmas
+      │               │   (sibling of Core; primitives only)
+  OpMachines (3621)   every per-Op TM machine *def* + shape lemmas (the
+      │               whole "before compileOp" region)
+  Cmd (950)           compileOp/Seq/IfBit/TestBit + forBnd machines + compileCmd
+      │
+  RunLemmas (14150)   ★ every per-op *run/behaviour* lemma + residue toolkit
+      │               (append soundness, clear, move×2, copy, tail, eqBit, testBit)
+  OpSound (558)       compileOp_sound_physical_residue (8 ops ✓, 4 stub sorries)
+      │               + compileSeq physical/residue soundness
+  Assembly (2740)     C6 bitTestTM, assembly toolkit (physStepBudget, NoConsLen,
+      │               eval_preserves_BitState), compileIfBit/compileForBnd soundness
+      │               + forBnd loop run stack, run_physical_residue_gen,
+      │               Compile_run_physical_residue, bitDeciderTM/bitDecider_run
+  Decider (991)       the WALL: padRegsTM / paddedBitDecider / paddedCompute
+      │
+  Compile.lean (39)   facade: imports all of the above
+```
+
+Axiom invariant (unchanged throughout): `#print axioms
+compileOp_sound_physical_residue` / `paddedBitDecider_run` / `paddedCompute_run`
+= `[propext, sorryAx, Classical.choice, Quot.sound]` (the `sorryAx` is the 4 stub
+ops in the contract — `concat`/`takeAt`/`dropAt`/`consLen`, none on the live
+`sat_NP` path).
+
+---
+
+## What's left (recommended next steps, in priority order)
+
+### 1. Split `RunLemmas` (14,150 lines) — the only remaining build pole. ★ highest value
+
+Everything else is ≤ 3.6K. `RunLemmas` is now the single longest compile. Its run
+lemmas are independent per gadget and split along clean section boundaries (line
+ranges in `Compile/RunLemmas.lean`, 2026-06-25):
+
+| Lines | Block | Suggested module |
 |---|---|---|
-| 80–644 | `CompiledCmd` record, `joinTwoHalts`, `rewindBracket`, combinators | `Compile/Core` |
-| 644–1873 | `copy`/`tail` cursor-copy machine **defs** + shapes | `Compile/CopyTail` |
-| 1874–2467 | `nonEmpty`, `head` machine defs | `Compile/NonEmptyHead` |
-| 2468–4167 | `eqBit` (`compareRegsNoGrowM` tree) machine **defs** + shapes | `Compile/EqBit` |
-| 4168–4273 | **`compileOp`** dispatch | `Compile/Op` |
-| 4274–4699 | `compileIfBit` + `compileTestBit` | `Compile/Op` |
-| 4700–5037 | `forBnd` loop machines | `Compile/Op` |
-| 5038–5079 | `compileCmd`, `Compile`, `Compile.exit` | `Compile/Cmd` |
-| 5081–5434 | `encodeTape`/`decodeTape` + round-trip lemmas | `Compile/Core` |
-| 5435–5757 | cost notes + encoding-seam helpers | `Compile/Core` |
-| 5757–6113 | append-op soundness | `Compile/OpSound` |
-| 6114–6378 | `compileSeq_sound_physical_residue` (composition) | `Compile/OpSound` |
-| 6379–8087 | `clear` run lemmas | `Compile/ClearRun` (or `CopyTail`) |
-| 8088–9801 | move-one-bit transfer gadget | `Compile/Move` |
-| 9802–12442 | `moveRegion2TM` dual-target move | `Compile/Move` |
-| 12443–14764 | cursor-copy **run** lemmas (`copy`) | `Compile/CopyTail` |
-| 14765–15887 | `tail` op **run** lemmas | `Compile/CopyTail` |
-| 15888–19925 | `eqBit` consume-loop body machines + **run** lemmas | `Compile/EqBit` |
-| 19926–20269 | **`compileOp_sound_physical_residue`** (per-op contract; 4 stub sorries L20142–45) | `Compile/OpSound` |
-| 20270–20486 | residue-composition validation + `bitTestTM` (C6) | `Compile/Assembly` |
-| 20487–21118 | C2 assembly toolkit + `run_physical_residue_gen` + ifBit/forBnd contracts | `Compile/Assembly` |
-| 21119–23116 | `forBnd` fold invariants + loop run | `Compile/Assembly` |
-| 23117–24078 | the WALL: `padRegsTM`, `paddedBitDecider`, `paddedCompute` | `Compile/Decider` |
-| **24079–26493** | **DEAD** grow/shrink/`compareRegsTM` scaffolding (101 decls) + orphan comments | **delete** |
+| 36–392 | `appendOne`/`appendZero` per-op soundness | `RunClear` (or shared base) |
+| 393–432 | `compileSeq_compose_physical` (uses `compileSeq`) | `RunClear` |
+| 433–657 | residue toolkit (`ValidResidue`/`TapeOK` helpers, `set_*`/`BitState_*`) — **shared** | base of `RunClear` |
+| 658–2366 | `clear` run stack + `clearRegionTM_run` | `RunClear` |
+| 2367–4080 | move-one-bit transfer gadget + `navTestReg` reading | `RunMove` |
+| 4081–6721 | dual-target `moveRegion2TM` | `RunMove` |
+| 6722–9043 | cursor-copy (`copy`) run stack | `RunCopyTail` |
+| 9044–10166 | `tail` run stack | `RunCopyTail` |
+| 10167–EOF | `eqBit` no-grow consume-loop stack (ends `opEqBitNG_run`) | `RunEqBit` |
 
-### Dead code (verified, 2026-06-25)
+Dependency order **Clear → Move → CopyTail → EqBit** (eqBit reuses copy/tail
+machinery; copy/tail use the cursor/`navTestReg` helpers; the residue toolkit is
+shared by all). Mechanics are the same as the splits already done (see method
+below). This buys real parallelism: a `copy` edit no longer rebuilds the `eqBit`
+stack, etc. Estimate 4 modules, ~1 build each.
 
-The grow/shrink/`compareRegsTM` scaffolding from the *superseded* eqBit Resolution-A
-(replaced by the no-grow Resolution B that is now live above `compileOp`): the whole
-tail **L24079→EOF (L26493), 101 declarations, ~2.4K lines**. Verified deletable: all
-of `growEmptyTM`/`growTwoEmptyM`/`growScanInsM`/`growInsertM`/`shrinkEmptyTM`/
-`shrinkTwoEmptyM`/`shrinkComputeM`/`compareCleanupM`/`compareRegsPrefixM`/
-`compareRegsTM`/`compareBranchM` (+ the dead `copyEmptyTM` variant) are referenced
-**only within that block and in comments** — zero live-code references (the live
-no-grow path uses `copyEmptyRawTM`/`cmpNGPrefixM`/`clearAppendM`, all defined above
-`compileOp`). The trailing L26445–26493 are orphaned section-comments whose defs were
-relocated in BU-C2-15. Deleting to EOF leaves the file ending at `paddedCompute_run`,
-still inside `namespace Complexity.Lang` (the only open namespace; `namespace Compile`
-is opened+closed at L210/575, everything else is fully-qualified `Compile.X`).
+### 2. Phase 4 (optional) — tame slow proofs
+
+With modules isolated, profile the slowest (`lean --profile`, or
+`mcp__lean-lsp__lean_profile_proof`). Known hot spots: `nlinarith`/`omega` on
+quadratic budgets (`eqBit_budget_arith`, `forBndBudget_arith`), big `simp`.
+Replace with explicit `Nat.*` term steps where they dominate. Lower priority than
+the `RunLemmas` split.
+
+### 3. Cleanup (cheap, do alongside)
+
+- Stale `probes/*Probe.lean` (`GrowEmpty`/`ShrinkEmpty`/`CompareRegs*`/`EqBit*`…)
+  reference symbols deleted in Phase 0; **not in the build** (`lean_lib` roots are
+  `Basic`/`Complexity`), so harmless but dead — delete them.
+- `push_neg` deprecation warnings in `Compile/Cmd.lean` (L126/462/469): prefer
+  `push Not`.
+- Minimal-imports prune: each new module imports the full primitive list; could be
+  trimmed to actual deps (cosmetic).
 
 ---
 
-## Target module DAG
+## Method (used for every split this stream — reuse it)
 
-Files live under `CookLevin/Complexity/Lang/Compile/` (Lean allows both a
-`Compile.lean` facade *and* a `Compile/` subdir). Each module re-opens
-`namespace Complexity.Lang`, imports its deps, and uses fully-qualified `Compile.X`
-names (matching today's style — no `namespace Compile` block needed except for the
-combinator section that currently uses one).
+1. **Pick a cut at a section boundary** (`/-! ### …`), not mid-decl. A `theorem`
+   moves whole.
+2. **Dependency scan** (static, before building): the block must only reference
+   decls in already-imported modules + itself. Compute
+   `{Compile|Op|Cmd|State}.X` referenced − defined-in-block − (imported modules) =
+   ∅ (modulo comments — most stray refs are in doc comments; spot-check with
+   `sed -n`). Also check **unqualified** lemma names. (`comm -12` of sorted
+   ref/def lists is the quick check.)
+3. **Scan for `private` decls used outside the block** → strip `private` (widening
+   visibility never breaks exports). E.g. `haltingStateReached_of_halt` had to go
+   public when `RunLemmas` was carved out.
+4. Create `Compile/<Name>.lean`: the standard import header (primitives + the
+   prior modules) + `namespace Complexity.Lang` + `open TMPrimitives` +
+   `open scoped BigOperators`, then the moved block. Import it into the next
+   module / facade; delete the moved range from the source.
+5. **Build is the oracle** (`export PATH="$HOME/.elan/bin:$PATH"; lake build` —
+   lake is **not** on PATH, which is also why most MCP/LSP features fail). First
+   build is slow; kick it off in the background early. Per-module:
+   `lake build Complexity.Lang.Compile.<Name>`.
+6. **Axiom-clean check** after each phase via a scratch file
+   (`env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean`,
+   `#print axioms …`) — must stay the 4-axiom set above (no *new* `sorryAx`).
+7. Commit per module (green), module name in the message.
 
-```
-(existing primitives: Syntax Semantics Frame Navigate ScanPast ScanLeft
-                      ShiftTape AppendGadget ClearGadget; + TMPrimitives, TapeMono)
-        │
-   Compile/Core      CompiledCmd, joinTwoHalts, rewindBracket, combinators,
-        │            encodeTape/decodeTape + round-trip, cost/seam helpers
-        ├────────────────────────┬───────────────────────┐
-   Compile/Move            Compile/NonEmptyHead      (Core-only gadgets)
-        │                        │
-   Compile/CopyTail  ←───────────┘   (copy/tail defs+shapes+runs; clear runs)
-        │
-   Compile/EqBit     (compareRegsNoGrowM tree + opEqBitNG; imports CopyTail —
-        │             eqBit run lemmas reuse copy/tail run lemmas)
-   Compile/Op        compileOp + compileIfBit/testBit + forBnd machines
-        │            (imports CopyTail, NonEmptyHead, EqBit, Move)
-   Compile/Cmd       compileCmd, Compile, exit
-        │
-   Compile/OpSound   append/clear soundness, compileSeq composition,
-        │            compileOp_sound_physical_residue  ← the 4 stub ops live here
-   Compile/Assembly  run_physical_residue_gen, ifBit/forBnd contracts,
-        │            forBnd loop run, bitTestTM, assembly toolkit
-   Compile/Decider   padRegsTM (WALL), paddedBitDecider, paddedCompute
-        │
-   Compile.lean      thin facade: `import`s all of the above (PolyTime imports this)
-```
+### Gotchas
 
-Each module targets ~1–3K lines. Biggest single module will be `Compile/EqBit`
-(the consume-loop tree is large) and `Compile/Assembly`.
-
----
-
-## The plan (sequenced, build-green between every step)
-
-**Phase 0 — delete dead code.** Remove L24079→EOF. ~2.4K lines gone, ~9% smaller,
-zero risk. One `lake build` to confirm green + `#print axioms` on
-`Compile.compileOp_sound_physical_residue` and `Compile.paddedBitDecider_run`
-unchanged. **← DO THIS FIRST. (Status: see bottom.)**
-
-**Phase 1 — carve off the leaf gadget modules**, one per build, in dependency
-order. For each: create `Compile/<Name>.lean` with the imports + namespace header,
-**move both** the def/shape block *and* the run-lemma block (they're far apart in
-the current file — grab both ranges), `import Complexity.Lang.Compile.<Name>` into
-`Compile.lean` at the top, delete the moved ranges from `Compile.lean`, build the
-new module alone (`lake build Complexity.Lang.Compile.<Name>`), then the facade.
-Order: `Core` → `Move` → `NonEmptyHead` → `CopyTail` → `EqBit`.
-
-**Phase 2 — `Op` and `Cmd`.** Move `compileOp`/`compileIfBit`/`compileTestBit`/
-`forBnd` machines into `Compile/Op`, then `compileCmd`/`Compile`/`exit` into
-`Compile/Cmd`.
-
-**Phase 3 — soundness + assembly + decider.** Move `compileOp_sound_physical_residue`
-(+ append/clear/seq soundness) into `Compile/OpSound`; `run_physical_residue_gen` +
-the loop/branch contracts + assembly toolkit into `Compile/Assembly`; the WALL into
-`Compile/Decider`. `Compile.lean` becomes a pure facade (imports only).
-
-**Phase 4 (optional, bonus) — tame slow proofs.** With modules isolated, profile
-the slowest (`lean --profile`, or `mcp__lean-lsp__lean_profile_proof`). Known
-hot spots from the implementation HANDOFF: `nlinarith`/`omega` on quadratic-times-
-cost budgets (`eqBit_budget_arith`, `forBndBudget_arith`), big `simp` calls. Replace
-with explicit `Nat.*` term-mode steps where they dominate. Lower priority than the
-split itself; the parallelism + incremental win is the main build speedup.
-
----
-
-## Gotchas for the refactoring agent
-
-- **Build:** `export PATH="$HOME/.elan/bin:$PATH"; lake build` (lake is **not** on
-  PATH; most MCP/LSP features can't find it). **First build is slow** — kick it off
-  as a background job early. Per-module: `lake build Complexity.Lang.Compile.<Name>`.
-- **Verify each move with a real build** — the deps were derived by static analysis,
-  but Lean will catch any missed shape lemma. Expect ~2–3 build iterations per
-  module (a missing helper surfaces as an unknown-identifier error → move it too).
-  Method: compute the qualified-`Compile.X` reference closure of the block you're
-  moving; pull every referenced decl not already in an imported module.
-- **Move defs and their run lemmas together** — they're in separate file regions
-  today (see the table). A `theorem` must move whole; don't split mid-proof.
-- **Namespace:** open `namespace Complexity.Lang` at the top of each new module.
-  The combinator block (`Compile/Core`) is the only part that currently uses an
-  explicit `namespace Compile … end Compile` (L210–575) — preserve it there.
-- **`set_option autoImplicit false` / `relaxedAutoImplicit false`** are set
-  package-wide in `lakefile.lean`, so new modules inherit them — don't re-add.
-- **`⨾` / `composeFlatTM` / `branchComposeFlatTM` / `loopTM`** come from
-  `Complexity.Complexity.TMPrimitives`; make sure each gadget module imports it.
-- **Axiom-clean check** after each phase: `#print axioms Compile.<key lemma>` via a
-  scratch file (`env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean`) —
-  must stay `[propext, Classical.choice, Quot.sound]` (no new `sorryAx` beyond the
-  4 known stub ops in `compileOp_sound_physical_residue`).
-- **Don't touch `PolyTime.lean`'s import** beyond pointing it at the facade — it
-  imports `Complexity.Lang.Compile` today; keep that working.
-- Commit per module (green), with the module name in the message. Easy to bisect.
+- `set_option autoImplicit false` / `relaxedAutoImplicit false` are package-wide
+  (`lakefile.lean`); new modules inherit them — don't re-add.
+- `⨾` / `composeFlatTM` / `branchComposeFlatTM` / `loopTM` come from
+  `Complexity.Complexity.TMPrimitives` — every gadget module needs it imported.
+- **Don't double-background builds.** Use the harness's `run_in_background`
+  *or* a shell `&`, never both (it detaches the wrapper and you lose the exit
+  code; a stray `pkill` then shows up as exit 137/144, not a real error).
+- Don't touch `PolyTime.lean`'s import — it imports `Complexity.Lang.Compile`
+  (the facade); keep that working.
 
 ---
 
 ## Status
 
-- [x] **Phase 0 — dead-code deletion (L24079→EOF) — DONE (2026-06-25).** Removed
-      2,415 lines (101 dead decls + orphan comments); `Compile.lean` 26,493 → 24,078
-      lines. `lake build` green (3358 jobs); `#print axioms
-      Compile.paddedBitDecider_run` unchanged (`[propext, sorryAx, Classical.choice,
-      Quot.sound]` — `sorryAx` from the 4 stub ops only, as before). ⚠ The
-      now-obsolete `probes/{GrowEmpty,ShrinkEmpty,CompareRegs*,CompareBody,EqBit*}Probe.lean`
-      still reference deleted symbols — they are **not in the build** (`lean_lib`
-      roots are `Basic`/`Complexity`), so harmless, but stale; delete them in a
-      cleanup pass. Two stale comment mentions of `compareRegsTM` remain in
-      `Compile.lean` (L18611, L19915) — harmless.
-- [ ] Phase 1 — leaf gadget modules. **In progress.**
-  - [x] **`Compile/Core` — DONE (2026-06-25).** Extracted the combinator block
-        (L80–575: `CompiledCmd` record, `compiledCmd_default`, `joinTwoHalts` +
-        lemmas, `rewindComposite_halt_only`, `rewindBracket` + lemmas) into
-        `CookLevin/Complexity/Lang/Compile/Core.lean` (524 lines). `Compile.lean`
-        imports it; 24,078 → 23,583 lines. `lake build` green (3359 jobs).
-        **Scope note:** the handoff had lumped `encodeTape`/`decodeTape` + seam
-        helpers into Core, but those sit far down (old L5081–5757) intertwined with
-        `compileCmd`; **deferred** to a separate `Compile/Encoding` module (do it
-        when extracting `Cmd`, or as its own step) to keep this first extraction
-        contiguous + low-risk. Core now imports the same list as `Compile.lean`
-        (`rewindBracket` uses `ScanLeft.*`, available transitively via AppendGadget);
-        a later pass could prune to minimal imports.
-  - [x] **`Compile/Encoding` — DONE (2026-06-25).** Extracted the tape
-        encoding/decoding layer (old L4586–5261: `encodeTape`/`encodeRegs`/
-        `shiftReg`/`endMark`/`BitState`/`ValidResidue`, `decodeTape` +
-        `splitOnZero`/`unshiftReg`/`flattenTape`/`dropTrailingEmpty`, the round-trip
-        + `encodeTape` structure lemmas) into
-        `CookLevin/Complexity/Lang/Compile/Encoding.lean` (708 lines). Sibling of
-        Core (references no `CompiledCmd`/combinator — imports primitives only).
-        `Compile.lean` 23,583 → 22,908 lines. `lake build` green (3360 jobs).
-        **⚠ Method note (applies to every later extraction):** the block had **27
-        `private` decls** heavily used downstream (`shiftReg`: 222 external refs,
-        `encodeTape_split`: 30, `regBlocks_map_shiftReg`: 38, …). `private` is
-        file-scoped, so they were made **public on extraction** (strip the `private `
-        modifier — widening visibility never breaks export rules). **Always scan the
-        moved block for `private` decls used outside it.**
-  - [x] **`Compile/OpMachines` — DONE (2026-06-25).** Extracted **all** per-`Op`
-        TM machine *defs + shape lemmas* in one module (old L83–3670: append/clear,
-        the cursor-copy gadget + `copy`/`tail` machines, `nonEmpty`/`head` incl.
-        `bitReadTM`/`exactOneOneTM`/`testBit*`, the `eqBit` `compareRegsNoGrowM` tree
-        + `opEqBit`/`opEqBitNG`) into
-        `CookLevin/Complexity/Lang/Compile/OpMachines.lean` (3,621 lines). This is the
-        whole "everything before `compileOp`" region — a clean leaf depending only on
-        **Core + primitives** (it predates the encoding layer in the old file order,
-        so it has **0** `Compile/Encoding` refs; dependency scan: 0 external refs).
-        6 `private` decls → public (4 used downstream). `Compile.lean` 22,908 →
-        **19,321 lines**. `lake build` green (3361 jobs). Replaces the planned
-        per-op `NonEmptyHead`/`CopyTail`-defs split — extracting the contiguous
-        defs-region wholesale was simpler and bigger.
-  - [ ] **Next: the run-lemma blocks.** What remains in `Compile.lean` is largely the
-        op *run/behaviour* lemmas (`copy`/`tail`/`eqBit` run stacks, the move gadgets)
-        + `compileOp`/`compileCmd`/`forBnd`/`testBit` + the soundness contract +
-        assembly + WALL. The run-lemma blocks depend on `OpMachines` + `Encoding` (NOT
-        on `compileOp`/the contract), so they extract into a `Compile/RunLemmas` module
-        (or split per-op) imported *before* the contract. Then `compileOp`/`compileCmd`
-        → `Compile/Cmd`; the contract → `Compile/OpSound`; assembly → `Compile/Assembly`;
-        WALL → `Compile/Decider`; leaving `Compile.lean` a thin facade. **Before each:
-        run the dependency scan** (`Compile.*` referenced − defined-in-block −
-        (Core ∪ Encoding ∪ OpMachines ∪ earlier) = ∅ modulo comments) **and scan for
-        `private` decls used outside the block** (strip `private` → public).
-- [ ] Phase 2 — `Op`, `Cmd`.
-- [ ] Phase 3 — soundness/assembly/decider; facade.
-- [ ] Phase 4 — proof-perf (optional).
-</content>
+- [x] **Phase 0 — dead-code deletion** (L24079→EOF, 2,415 lines / 101 dead decls).
+- [x] **Phase 1 — leaf modules:** `Core`, `Encoding`, `OpMachines`.
+- [x] **Phase 2 — compiler defs:** `Cmd` (compileOp/Seq/IfBit/TestBit + forBnd
+      machines + compileCmd).
+- [x] **Phase 3 — run lemmas + soundness + assembly + decider + facade:**
+      `RunLemmas`, `OpSound`, `Assembly`, `Decider`; `Compile.lean` reduced to a
+      39-line facade. Monolith 18,407 → 39 lines this session (whole-stream:
+      26,493 → 39). Build green (3366 jobs), axioms unchanged.
+- [ ] **Phase 1-refinement — split `RunLemmas`** into `RunClear`/`RunMove`/
+      `RunCopyTail`/`RunEqBit` (see "What's left #1"). **← recommended next.**
+- [ ] **Phase 4 (optional)** — proof-perf.
