@@ -209,7 +209,57 @@ split itself; the parallelism + incremental win is the main build speedup.
       roots are `Basic`/`Complexity`), so harmless, but stale; delete them in a
       cleanup pass. Two stale comment mentions of `compareRegsTM` remain in
       `Compile.lean` (L18611, L19915) — harmless.
-- [ ] Phase 1 — leaf gadget modules.
+- [ ] Phase 1 — leaf gadget modules. **In progress.**
+  - [x] **`Compile/Core` — DONE (2026-06-25).** Extracted the combinator block
+        (L80–575: `CompiledCmd` record, `compiledCmd_default`, `joinTwoHalts` +
+        lemmas, `rewindComposite_halt_only`, `rewindBracket` + lemmas) into
+        `CookLevin/Complexity/Lang/Compile/Core.lean` (524 lines). `Compile.lean`
+        imports it; 24,078 → 23,583 lines. `lake build` green (3359 jobs).
+        **Scope note:** the handoff had lumped `encodeTape`/`decodeTape` + seam
+        helpers into Core, but those sit far down (old L5081–5757) intertwined with
+        `compileCmd`; **deferred** to a separate `Compile/Encoding` module (do it
+        when extracting `Cmd`, or as its own step) to keep this first extraction
+        contiguous + low-risk. Core now imports the same list as `Compile.lean`
+        (`rewindBracket` uses `ScanLeft.*`, available transitively via AppendGadget);
+        a later pass could prune to minimal imports.
+  - [x] **`Compile/Encoding` — DONE (2026-06-25).** Extracted the tape
+        encoding/decoding layer (old L4586–5261: `encodeTape`/`encodeRegs`/
+        `shiftReg`/`endMark`/`BitState`/`ValidResidue`, `decodeTape` +
+        `splitOnZero`/`unshiftReg`/`flattenTape`/`dropTrailingEmpty`, the round-trip
+        + `encodeTape` structure lemmas) into
+        `CookLevin/Complexity/Lang/Compile/Encoding.lean` (708 lines). Sibling of
+        Core (references no `CompiledCmd`/combinator — imports primitives only).
+        `Compile.lean` 23,583 → 22,908 lines. `lake build` green (3360 jobs).
+        **⚠ Method note (applies to every later extraction):** the block had **27
+        `private` decls** heavily used downstream (`shiftReg`: 222 external refs,
+        `encodeTape_split`: 30, `regBlocks_map_shiftReg`: 38, …). `private` is
+        file-scoped, so they were made **public on extraction** (strip the `private `
+        modifier — widening visibility never breaks export rules). **Always scan the
+        moved block for `private` decls used outside it.**
+  - [x] **`Compile/OpMachines` — DONE (2026-06-25).** Extracted **all** per-`Op`
+        TM machine *defs + shape lemmas* in one module (old L83–3670: append/clear,
+        the cursor-copy gadget + `copy`/`tail` machines, `nonEmpty`/`head` incl.
+        `bitReadTM`/`exactOneOneTM`/`testBit*`, the `eqBit` `compareRegsNoGrowM` tree
+        + `opEqBit`/`opEqBitNG`) into
+        `CookLevin/Complexity/Lang/Compile/OpMachines.lean` (3,621 lines). This is the
+        whole "everything before `compileOp`" region — a clean leaf depending only on
+        **Core + primitives** (it predates the encoding layer in the old file order,
+        so it has **0** `Compile/Encoding` refs; dependency scan: 0 external refs).
+        6 `private` decls → public (4 used downstream). `Compile.lean` 22,908 →
+        **19,321 lines**. `lake build` green (3361 jobs). Replaces the planned
+        per-op `NonEmptyHead`/`CopyTail`-defs split — extracting the contiguous
+        defs-region wholesale was simpler and bigger.
+  - [ ] **Next: the run-lemma blocks.** What remains in `Compile.lean` is largely the
+        op *run/behaviour* lemmas (`copy`/`tail`/`eqBit` run stacks, the move gadgets)
+        + `compileOp`/`compileCmd`/`forBnd`/`testBit` + the soundness contract +
+        assembly + WALL. The run-lemma blocks depend on `OpMachines` + `Encoding` (NOT
+        on `compileOp`/the contract), so they extract into a `Compile/RunLemmas` module
+        (or split per-op) imported *before* the contract. Then `compileOp`/`compileCmd`
+        → `Compile/Cmd`; the contract → `Compile/OpSound`; assembly → `Compile/Assembly`;
+        WALL → `Compile/Decider`; leaving `Compile.lean` a thin facade. **Before each:
+        run the dependency scan** (`Compile.*` referenced − defined-in-block −
+        (Core ∪ Encoding ∪ OpMachines ∪ earlier) = ∅ modulo comments) **and scan for
+        `private` decls used outside the block** (strip `private` → public).
 - [ ] Phase 2 — `Op`, `Cmd`.
 - [ ] Phase 3 — soundness/assembly/decider; facade.
 - [ ] Phase 4 — proof-perf (optional).
