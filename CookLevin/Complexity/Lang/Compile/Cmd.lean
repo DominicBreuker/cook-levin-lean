@@ -123,7 +123,7 @@ def compileSeq (r1 r2 : CompiledCmd) : CompiledCmd where
       -- hi : (if i < r1.M.states then some false else none) = some true
       simp [hlt] at hi
     · -- right segment: i ≥ r1.M.states
-      push_neg at hlt
+      push Not at hlt
       have h_ge : (List.replicate r1.M.states false).length ≤ i := by
         rw [List.length_replicate]; exact hlt
       rw [List.getElem?_append_right h_ge, List.length_replicate] at hi
@@ -459,14 +459,14 @@ theorem branchCompose_halt_only_at_exits
       rw [List.getElem?_replicate] at hi
       simp [h_inner] at hi
     · -- Falls into rT.M.halt segment
-      push_neg at h_inner
+      push Not at h_inner
       have h_rep_le : (List.replicate tester.M.states false).length ≤ i := by
         rw [List.length_replicate]; exact h_inner
       rw [List.getElem?_append_right h_rep_le, List.length_replicate] at hi
       have h_idx : i - tester.M.states = rT.exit := rT.halt_unique _ hi
       right; omega
   · -- Falls into rE.M.halt segment
-    push_neg at h_outer
+    push Not at h_outer
     rw [List.getElem?_append_right h_outer] at hi
     have h_outer_len :
         (List.replicate tester.M.states false ++ rT.M.halt).length
