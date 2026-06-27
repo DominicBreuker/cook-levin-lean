@@ -42,15 +42,15 @@ this session):
       │                     shared ValidResidue/TapeOK residue toolkit, clear stack
   RunMove (4382, 11s)       move-one-bit / dual-target transfer gadgets,
       │                     navTestReg reading, compileTestBit run lemmas
-  RunCopyTail (3471, 14–15s) cursor-copy (copy) + tail run stacks  ← next perf lever
-      │
-  RunEqBit (4011, ★18s→13s)  eqBit no-grow consume-loop run stack (opEqBitNG_run)
+  RunCopyTail (3471, ★~11s)  cursor-copy (copy) + tail run stacks; step lemmas
+      │                     de-simp_all'd this session — now structurally bound
+  RunEqBit (4011, 13s)      eqBit no-grow consume-loop run stack (opEqBitNG_run)
       │
   RunLemmas (25, 2.3s)      facade: imports the four Run* modules
       │
   OpSound (558, 3.4s)       compileOp_sound_physical_residue (8 ops ✓, 4 stub sorries)
       │
-  Assembly (2740, ★~10s)    C6 bitTestTM, assembly toolkit, compileIfBit/compileForBnd
+  Assembly (2740, ~10s)     C6 bitTestTM, assembly toolkit, compileIfBit/compileForBnd
       │                     soundness + forBnd loop run stack, Compile_run_physical_residue
   Decider (991, 5.8s)       the WALL: padRegsTM / paddedBitDecider / paddedCompute
       │
@@ -67,32 +67,30 @@ ops in the contract, none on the live `sat_NP` path).
 
 ## What's left (recommended next steps, priority order)
 
-The structural split is done; **proof-perf is the remaining lever.**
+The structural split is done; **proof-perf is the remaining lever.** The two
+biggest Run* perf levers (`RunEqBit`, `RunCopyTail`) are now spent — what
+remains is smaller (`Decider`/`Assembly`) or structural.
 
-### 1. ★ Phase 4 continued — `RunCopyTail` `simp_all` step lemmas. Biggest open win.
+### 1. ★ Phase 4 — profile `Decider` (5.8s, the WALL) — best remaining unknown.
 
-`RunCopyTail` (~14–15s) is dominated by **`simp` (13.6s cumulative)**, almost
-entirely **7 `simp_all` calls of ~1.4–2.0s each** in the per-step TM-simulation
-lemmas (pattern `interval_cases b <;> simp_all [stepFlatTM, …, applyTransitionEntry,
-tapeStep, writeCurrentTapeSymbol, moveTapeHead]`). Sites: `markBitTM_step` (L46),
-`restoreStepTM_step` (L87), `skipReadTM` steps (L2359, L2386), and the analogous
-copy/tail step lemmas. **Hypothesis to test:** these `simp_all` calls simplify
-*all* hypotheses to a fixpoint when they really only need to rewrite by the
-symbol facts (`hsym`/`hget`) and unfold the step defs — a targeted
-`simp only [hsym, hget, stepFlatTM, …]` (goal-directed, not `simp_all`) should be
-much cheaper. **Risky** (step-sim proofs are load-bearing): iterate one lemma at
-a time with `lake build Complexity.Lang.Compile.RunCopyTail` (~15s/iter) as the
-oracle; keep the slow `simp_all` if `simp only` won't close it. `RunMove` (11s)
-profiled clean (no tactic >1s) — its time is structural, leave it.
+`Decider` (`padRegsTM`/`paddedBitDecider`/`paddedCompute`) is the only module
+**never profiled** in Phase 4. It is the WALL of the DAG (everything downstream
+waits on it), so any win there shortens the critical path directly. Profile with
+`lake env lean -Dprofiler=true CookLevin/Complexity/Lang/Compile/Decider.lean`,
+sort the `took …` lines, and look for the same patterns already exploited:
+`simp_all`/`nlinarith` hot spots. Likely-cheap analogue of this session's win:
+any `simp_all` doing a goal-directed job → plain `simp [<hyps>, <defs>]`
+(see method below). Unknown whether such sites exist — that's why it's the next
+thing to look at.
 
-### 2. Phase 4 — finish `Assembly`/`Decider` if they become felt.
+### 2. Phase 4 — `Assembly` (~10s) only if felt.
 
 `Assembly` still carries one `nlinarith` (the `core` inside `forBndBudget_arith`)
 whose goal genuinely needs nonlinear reasoning (`q = iters²−iters` binds the
 negative `iters` terms; a manual case-split is painful — **not worth it**). That
 single `nlinarith` keeps the per-module nlinarith-interpreter load, so Assembly
-won't drop below ~10s without removing it. `Decider` (5.8s, the WALL) unprofiled
-this session.
+won't drop below ~10s without removing it. Low priority unless it becomes a felt
+bottleneck.
 
 ### 3. (Optional) split the largest Run* modules further — low value.
 
@@ -147,6 +145,16 @@ each other (a chain), so the parallelism gain is modest.
    linear over the monomial atoms — `linarith`/`omega` treat `L*L`, `L*(a+b)` as
    atoms; `omega` even abstracts a nonlinear subterm as a nonneg atom after you
    `rw` it into view). A sum-of-budgets `nlinarith` → `linarith`.
+3b. **`simp_all` → plain `simp` for goal-directed step lemmas (this session's
+   win).** The per-step TM-simulation lemmas (`stepFlatTM … = some {…}`) were
+   proven with `simp_all [stepFlatTM, …]`, which re-simplifies *every* hypothesis
+   to a fixpoint — ~0.9s each. They only need the goal rewritten by the symbol
+   fact (`hsym`) and (when the entry writes a symbol) `dif_pos` discharged from
+   `hlt`. **Fix:** `simp [hsym, hlt, <same step defs>]` — plain `simp` (goal-only)
+   keeps simp's automatic `decide`/length/`find?` handling (so no fragile
+   `simp only` lemma list) but skips the hypothesis fixpoint. Dropped 7 calls from
+   6.4s to ~0.1s reported. Omit `hlt` when the entry's `dst_write_vals` is `[none]`
+   (no `writeCurrentTapeSymbol` branch — the unused-simp-arg linter flags it).
 4. **Iterate fast** on a self-contained pure-`Nat` lemma in a scratch file with
    `import Mathlib.Tactic.Linarith`/`.Ring` (≈4s/build) instead of the full
    `import Mathlib` (≈50s) or the module rebuild — but the **module rebuild is the
@@ -185,10 +193,17 @@ each other (a chain), so the parallelism gain is modest.
       Monolith reduction: 26,493 → 39 lines.
 - [x] **Phase 1-refinement** — split `RunLemmas` (14,150 lines) into
       `RunClear`/`RunMove`/`RunCopyTail`/`RunEqBit` (2026-06-26).
-- [x] **Phase 4 (started, 2026-06-27)** — proof-perf: killed the slow budget
+- [x] **Phase 4 (2026-06-27a)** — proof-perf: killed the slow budget
       `nlinarith`s. **RunEqBit 18s → 13s** (the ~11s `key` cancellation call +
       `eqBit_budget_arith` rewritten to explicit `Nat` steps; module now has zero
       `nlinarith`). `Assembly` budget `nlinarith`s simplified. Build green,
       axioms unchanged.
-- [ ] **Phase 4 (continue)** — **`RunCopyTail` `simp_all` step lemmas (13.6s
-      simp)** is the next-biggest lever. ← recommended next.
+- [x] **Phase 4 (2026-06-27b)** — proof-perf: **`RunCopyTail` step lemmas
+      de-`simp_all`'d.** The 7 per-step TM-sim `simp_all` calls (`markBitTM_step`,
+      `restoreStepTM_step`, `skipReadTM_step_delim/_bit`) → goal-directed plain
+      `simp [hsym, hlt, …]`. Reported simp 6.4s → ~0.1s; module now has **no
+      tactic over ~0.2s** (structurally bound, like `RunMove`). Build green
+      (3370 jobs), axioms unchanged.
+- [ ] **Phase 4 (continue)** — profile **`Decider` (5.8s, the WALL)**, the only
+      Phase-4-unprofiled module and the DAG's critical-path tail. ← recommended
+      next (see §1).
