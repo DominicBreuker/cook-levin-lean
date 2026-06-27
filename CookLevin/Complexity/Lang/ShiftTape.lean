@@ -127,8 +127,8 @@ theorem insertCarryTM_step_nonblank (ins s y : Nat) (hs : s < 5) (hy : y < 4)
   have hsym : currentTapeSymbol (left, head, right) = some y := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases s <;> interval_cases y <;>
-    simp_all [owed, stepFlatTM, insertCarryTM, insertCarryTrans, mkE, entryMatchesConfig,
-      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+    simp [hsym, hlt, owed, stepFlatTM, insertCarryTM, insertCarryTrans, mkE,
+      entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
 /-- One step on a blank cell: write the owed value (appending) and halt. -/
 theorem insertCarryTM_step_blank (ins s : Nat) (hs : s < 5)
@@ -141,8 +141,8 @@ theorem insertCarryTM_step_blank (ins s : Nat) (hs : s < 5)
   have hsym : currentTapeSymbol (left, head, right) = none :=
     currentTapeSymbol_out_of_range hge
   interval_cases s <;>
-    simp_all [owed, stepFlatTM, insertCarryTM, insertCarryTrans, mkE, entryMatchesConfig,
-      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+    simp [hsym, hge, owed, stepFlatTM, insertCarryTM, insertCarryTrans, mkE,
+      entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
 /-- Unfold one non-halting step of a run. -/
 private theorem run_succ_of_step (M : FlatTM) (cfg c' : FlatTMConfig) (n : Nat)
@@ -428,8 +428,8 @@ theorem deleteCarryTM_read_nonblank (y : Nat) (hy : y < 4)
   have hsym : currentTapeSymbol (left, head, right) = some y := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases y <;>
-    simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
-      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+    simp [hsym, stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE,
+      entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
 /-- **read step (blank).** From state `0` on the blank past the end, halt. -/
 theorem deleteCarryTM_read_blank (left right : List Nat) (head : Nat)
@@ -438,7 +438,7 @@ theorem deleteCarryTM_read_blank (left right : List Nat) (head : Nat)
       = some { state_idx := 6, tapes := [(left, head, right)] } := by
   have hsym : currentTapeSymbol (left, head, right) = none :=
     currentTapeSymbol_out_of_range hge
-  simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
+  simp [hsym, stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
     applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
 /-- **write step.** From the write state `1 + v` (carrying `v`), reading an
@@ -453,8 +453,8 @@ theorem deleteCarryTM_write (v y : Nat) (hv : v < 4) (hy : y < 4)
   have hsym : currentTapeSymbol (left, head, right) = some y := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases v <;> interval_cases y <;>
-    simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
-      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+    simp [hsym, hlt, stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE,
+      entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
 /-- **skip step.** From skip state `5`, reading an in-range cell, write `0`
 (clearing the stale cell), move right, switch back to read. -/
@@ -467,8 +467,8 @@ theorem deleteCarryTM_skip (y : Nat) (hy : y < 4)
   have hsym : currentTapeSymbol (left, head, right) = some y := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases y <;>
-    simp_all [stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE, entryMatchesConfig,
-      applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
+    simp [hsym, hlt, stepFlatTM, deleteCarryTM, deleteCarryTrans, mkE,
+      entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
 /-- Non-halt states `0 … 5` of the delete-carry machine. -/
 private theorem delete_not_halt (s : Nat) (hs : s < 6) (cfg : FlatTMConfig)
