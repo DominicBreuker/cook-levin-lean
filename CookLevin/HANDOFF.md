@@ -115,31 +115,55 @@ copy-append src2` is then **WRONG**: `clear dst` destroys an aliased source (e.g
 scratch first. The contract already provisions scratch (`sb`, `sb+1`; `hsb1`/`hsbe`/
 `hsb1e`/`hbsb : Op.UsesBelow o sb` give `dst,src1,src2 < sb`).
 
-**Corrected design — 4 stages, ONE scratch register `sb`, aliasing-safe:**
+**Design — 4 stages, ONE scratch register `sb`, aliasing-safe (PROBE-VALIDATED,
+`probes/ConcatScratchProbe.lean`):**
 ```
 opCopy sb src1     -- sb := src1                (sb fresh ⇒ safe even if src1 = dst)
 copyAppend sb src2 -- sb := src1 ++ src2        (nonempty-dst append; uses copyLoopAppend_run)
 opCopy dst sb      -- dst := src1 ++ src2
 clear sb           -- restore scratch empty
 ```
-This is correct for **every** alias combination (operands are saved in `sb` before
-`dst` is touched). `sb+1` is not needed for concat (only `sb`); leave the `hsb1e`
-hyp available but unused.
+Correct for **every** alias combination (operands are saved in `sb` before `dst`
+is touched). `sb+1` is unused for concat (only `sb`); leave `hsb1e` available.
+
+**⚠⚠ W-INVARIANT FINDING + REQUIRED FIX — bump `Op.cost concat` (do this FIRST).**
+The probe shows the scratch round-trip dumps `|s.get dst| + |s.get src1 ++ s.get
+src2|` zeros into the residue (clearing old `dst` AND clearing scratch, which
+holds the full result `V`). The contract ① allows residue growth ≤ `cost −
+sizeGrowth`, which for the current `cost = |src1|+|src2|+1` is `|s.get dst| + 1` —
+i.e. **`|V|` short**. So the scratch design is **UNPROVABLE under the current
+cost** (probe: residue `{6,5,7,6,6}` vs allowed `{3,3,3,3,2}` — fails every case).
+**Fix: in `Lang/Semantics.lean` set `Op.cost (.concat _ src1 src2) s :=
+2*((s.get src1).length + (s.get src2).length) + 1`** (probe: residue then fits
+`{7,6,8,7,7}`, slack 1, every case). This is **faithful** (the round-trip really
+takes ~2|V| TM steps) and cheap: `Op.size_eval_le` (Semantics.lean ~L218) still
+closes (more slack), it is a constant factor so `inOPoly`/degree are unchanged,
+and it only ripples as a 2× on concat terms in endgame `Cmd.cost`. *(Alternative,
+no cost change but TWO new gadgets + 4-case compile-time branching: cases
+`dst∉{s1,s2}`/`dst=src1`/`dst=src1=src2` are W-clean with the current cost via
+`clear?⨾copyAppend⨾copyAppend`, but `dst=src2` needs an in-place **prepend**
+gadget — heavier. The cost-bump uniform design is recommended.)*
 
 **The ONE new gadget needed: `copyAppendTM dst src` = `opCopy` minus the clear**
 (`navigateToRegTM src ⨾ copyLoopTM dst ⨾ justRewindTM`, boundary halt demoted via
-`joinTwoHalts`). Mirror `copyRegionFullTM`/`opCopy`/`opCopy_run` (OpMachines + the
-new run lemma in RunCopyTail) but **drop the `clearRegionTM` phase** — so its
-residue is just `res_in` (no `replicate |dst₀| 0`) and it produces `s.set dst
-(s.get dst ++ s.get src)` directly from `copyLoopAppend_run`. ~60 lines of machine
-shape lemmas + a ~150-line run lemma adapted from `opCopy_run`.
+`joinTwoHalts`). Mirror `copyRegionFullTM`/`opCopy` (OpMachines) + a run lemma in
+RunCopyTail adapted from `opCopy_run` (~250 lines) but **drop the `clearRegionTM`
+phase** (3 compose levels not 4): residue is just `res_in` (no `replicate |dst₀|
+0`), output `s.set dst (s.get dst ++ s.get src)` straight from `copyLoopAppend_run`
+(phase 3) — note the rewind (phase 4) now runs on the *grown* tape, so state its
+budget over the OUTPUT tape length. `dst ≠ src` required (in concat, gadget-`src`
+is always an operand and gadget-`dst` is always `sb`/`dst`, never equal).
 
-**Then assemble** `compileOp sb (concat …)` as a **sequential composition of the
-four existing `CompiledCmd` pieces** (`opCopy`, `copyAppend`, `opClear`) via the
-proven seq combinator (`compileSeq_compose_physical` — same machinery `compileForBnd`
-used), and discharge the contract case from the four per-piece run lemmas. Budget
-`Op.cost concat = |src1|+|src2|+1`; the cost-scaled contract `(…)·(cost+1)` has room.
-This avoids a monolithic `opConcat_run`. Cross-check W-① with `State.size_set_add`.
+**Then assemble** `Compile.opConcat sb dst src1 src2` (in `Cmd.lean`, after
+`compileSeq`) as the `compileSeq` chain of the four `CompiledCmd` pieces
+(`opCopy`, `copyAppend`, `opClear`), wire `compileOp`'s `concat` case to it, and
+discharge the OpSound case by chaining the four per-piece run lemmas through
+`compileSeq_sound_physical_residue` / `_traj_physical_residue` (OpSound L457/505 —
+the residue threads automatically; mid-states are `BitState`). **Budget caveat:**
+intermediate tapes grow (V lives in scratch), so each stage's budget is over a
+*longer* L (≤ input L + |V| ≤ 2L); the cost-scaled contract `(54L²+…)·(cost'+1)`
+with the loose `54 = 6·9` constants absorbs this. Cross-check W-① with
+`State.size_set_add` (probe already did the arithmetic).
 
 ### 2. Unary migration (bottom-up; gated for the trio; needed for S3 anyway)
 The value-as-length trio `takeAt`/`dropAt`/`consLen` is meaningless under `BitState`
