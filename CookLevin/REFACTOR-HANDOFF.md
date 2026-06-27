@@ -82,15 +82,18 @@ The only remaining big single-tactic costs in the DAG: a `refine ⟨…⟩` (1.7
 (1.8s, `paddedCompute_run` L990). These are **big-term `isDefEq`/elaboration**
 (matching `runFlatTM <big budget Nat> (paddedComputeTM c k)` against the
 composed-run hypothesis whose machine is the unfolded `composeFlatTM …`), **not**
-`simp`/`nlinarith`. The explicit-args trick (§Method 3c) does **not** directly
-apply (`M` is already explicit); the cost is the budget-Nat + machine defeq.
-Possible levers (unverified, **risky** — these are the load-bearing decider
-assembly): `set`/`generalize` the budget Nat before the `exact` so unification
-doesn't re-traverse it; or restate `hcrun` in `paddedComputeTM` form up front so
-no machine unfold is needed. Profile first
-(`lake env lean -Dprofiler=true …/Decider.lean`), iterate with the single-file
-`lean` oracle (~6s). Modest payoff (~1.7s on a 5.8s module, 2.3s of which is the
-fixed import). Only worth it if Decider's critical-path position is felt.
+`simp`/`nlinarith`. The explicit-args trick (§Method 3c) does **not** apply
+(`M` is already explicit). **TRIED & FAILED (2026-06-27c):** `set N := <budget>`
+before the `exact` (to stop re-elaborating the big budget Nat) gave **no change**
+(still 1.7s/1.8s) — so the cost is **not** the budget but the **machine defeq**
+`paddedComputeTM c k ≡ composeFlatTM (padRegsTM K) (Compile k c) (padRegsExit K)`,
+which compares the *built* transition tables of two big composed machines
+(traversing `Compile k c`). Remaining lever (untried, **risky** — load-bearing
+decider assembly): rewrite the goal's `paddedComputeTM`/`paddedBitDeciderTM` to
+the `composeFlatTM` form via a one-shot `rfl`-bridge so the machine matches
+`hcrun` syntactically — the snag is also bridging `initFlatConfig (padRegsTM K)`
+vs `initFlatConfig (paddedComputeTM c k)`. Modest payoff (~1.7s on a 5.8s module,
+2.3s of which is fixed import). Only worth it if Decider's position is felt.
 
 ### 2. Phase 4 — `Assembly` `nlinarith` (~10s) — almost certainly not worth it.
 
