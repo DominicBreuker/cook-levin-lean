@@ -46,7 +46,8 @@ this session):
       │                     de-simp_all'd this session — now structurally bound
   RunEqBit (4011, 13s)      eqBit no-grow consume-loop run stack (opEqBitNG_run)
       │
-  RunLemmas (25, 2.3s)      facade: imports the four Run* modules
+      │   RunLemmas (2.3s)  ★ no-content facade — now imported ONLY by Compile.lean
+      │   (off path)        (OpSound/Assembly/Decider import the 4 Run mods direct)
       │
   OpSound (558, 3.4s)       compileOp_sound_physical_residue (8 ops ✓, 4 stub sorries)
       │
@@ -54,7 +55,7 @@ this session):
       │                     soundness + forBnd loop run stack, Compile_run_physical_residue
   Decider (991, 5.8s)       the WALL: padRegsTM / paddedBitDecider / paddedCompute
       │
-  Compile.lean (39)         facade
+  Compile.lean (39)         facade (imports Decider + RunLemmas)
 ```
 
 Axiom invariant (unchanged): `#print axioms` of
@@ -88,12 +89,16 @@ before the `exact` (to stop re-elaborating the big budget Nat) gave **no change*
 (still 1.7s/1.8s) — so the cost is **not** the budget but the **machine defeq**
 `paddedComputeTM c k ≡ composeFlatTM (padRegsTM K) (Compile k c) (padRegsExit K)`,
 which compares the *built* transition tables of two big composed machines
-(traversing `Compile k c`). Remaining lever (untried, **risky** — load-bearing
-decider assembly): rewrite the goal's `paddedComputeTM`/`paddedBitDeciderTM` to
-the `composeFlatTM` form via a one-shot `rfl`-bridge so the machine matches
-`hcrun` syntactically — the snag is also bridging `initFlatConfig (padRegsTM K)`
-vs `initFlatConfig (paddedComputeTM c k)`. Modest payoff (~1.7s on a 5.8s module,
-2.3s of which is fixed import). Only worth it if Decider's position is felt.
+(traversing `Compile k c`). **Also TRIED & FAILED (2026-06-27d):** the one-shot
+`rfl`-bridge `have hM : paddedComputeTM c k = composeFlatTM (padRegsTM K)
+(Compile k c) (padRegsExit K) := rfl; rw [hM]` (to make the machine match `hcrun`
+syntactically) — `exact` **still 1.72s**, so the cost is **not** the machine
+defeq either; it is the intrinsic elaboration of the big goal type (the result
+config carries `encodeTape (c.eval (s ++ replicate K []))`). Both cheap angles
+are exhausted; a real win needs deep restructuring (e.g. making the composed
+machines genuinely opaque/irreducible throughout — ripples through many proofs).
+Modest payoff (~1.7s on a 5.8s module, 2.3s of which is fixed import). **Likely
+not worth it.**
 
 ### 2. Phase 4 — `Assembly` `nlinarith` (~10s) — almost certainly not worth it.
 
@@ -193,7 +198,18 @@ each other (a chain), so the parallelism gain is modest.
    stay the 4-axiom set (no *new* `sorryAx`).
 7. Commit per coherent change (green), module name(s) in the message.
 
-### Gotchas
+### Build-graph perf (orthogonal to proof-perf)
+
+8. **A no-content facade on the critical path is a pure import gate — bypass it.**
+   `RunLemmas` only re-imports the four Run modules. As a node *on* the serial
+   `RunEqBit → OpSound → … → Decider` chain it cost ~2.3s (load all four Run
+   oleans, emit an empty olean) for zero elaboration. **Fix:** point the internal
+   consumers (`OpSound`/`Assembly`/`Decider`) at the four Run modules **directly**
+   (same transitive scope ⇒ strictly safe); keep the facade only for the public
+   `Compile.lean` import (which is past `Decider`, the long pole, so the facade is
+   off the path). Generalises: any pure re-export facade sitting between two heavy
+   modules is removable from the critical path this way. (Cannot do this for
+   `Compile.lean` itself — `PolyTime` imports the facade by contract, README.)
 
 - `autoImplicit false` / `relaxedAutoImplicit false` are package-wide
   (`lakefile.lean`); new modules inherit them — don't re-add `relaxedAutoImplicit`.
@@ -235,8 +251,17 @@ each other (a chain), so the parallelism gain is modest.
       metavar unification. Made them explicit → all three <0.3s; **OpMachines
       9.7s → 7.7s** (upstream of everything ⇒ shortens the serial critical path).
       Build green (3370 jobs), axioms unchanged.
-- [ ] **Phase 4 (continue)** — remaining big single-tactic costs are only in
-      **`Decider`** (~3.4s of structural `isDefEq` `refine`/`exact`; §1, modest +
-      risky) and **`Assembly`** (1.2s fixed `nlinarith` load; §2, not worth it).
-      Every other Compile module is structurally bound (no tactic >0.3s). The
-      cheap proof-perf wins are essentially spent.
+- [x] **Phase 4 (2026-06-27d)** — build-graph: **bypassed the `RunLemmas`
+      facade** on the critical path (OpSound/Assembly/Decider now import the four
+      Run modules directly; RunLemmas kept only for `Compile.lean`). Removes a
+      ~2.3s import-only serial gate between `RunEqBit` and `OpSound`. Build green
+      (3370 jobs), axioms unchanged.
+- [ ] **Phase 4 (continue) — essentially spent.** Remaining big single-tactic
+      costs are only **`Decider`** (~3.4s structural `isDefEq` `refine`/`exact`;
+      §1 — **two cheap fixes TRIED & FAILED**: budget-`set` and the `composeFlatTM`
+      `rfl`-bridge, both no-change, so it needs risky deep restructuring) and
+      **`Assembly`** (1.2s fixed `nlinarith` load; §2 — goal is genuinely
+      nonlinear, confirmed by hand, not worth it). Every other Compile module is
+      structurally bound (no tactic >0.3s) and the one removable facade gate is
+      gone. Further build-time gains need either accepting risk on the Decider
+      assembly proofs or out-of-scope work (mathlib import surface).
