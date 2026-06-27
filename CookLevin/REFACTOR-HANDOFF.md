@@ -256,6 +256,17 @@ each other (a chain), so the parallelism gain is modest.
       Run modules directly; RunLemmas kept only for `Compile.lean`). Removes a
       ~2.3s import-only serial gate between `RunEqBit` and `OpSound`. Build green
       (3370 jobs), axioms unchanged.
+- [x] **Phase 4 (2026-06-27e)** — **project-wide build-time scan** (clean rebuild,
+      keeping mathlib cache). Found the slowest live-path module is NOT in
+      `Compile/` but the gadget primitive **`Lang/ShiftTape` (~33s)** — its
+      `insertCarryTM`/`deleteCarryTM` step lemmas closed 20+ `interval_cases` with
+      `simp_all`. Applied the §Method-3b fix (6 `simp_all` → `simp [hsym, hlt, …]`):
+      **ShiftTape ~33s → ~8s** (simp 46.6s → 6.8s). Primitive ⇒ on the whole
+      Compile layer's critical path. Build green (3370), axioms unchanged. The
+      other top poles (`BinaryCC_to_FSAT` ~32s = Tseytin, `FSAT_to_SAT` ~11s,
+      `TMPrimitives` ~11s) are **structural** (≤2 `simp_all` each) — no cheap win,
+      and the sound-tail ones are README-"do not touch content" (perf-only tactic
+      swaps would be in-bounds but there's no `simp_all` lever there).
 - [ ] **Phase 4 (continue) — essentially spent.** Remaining big single-tactic
       costs are only **`Decider`** (~3.4s structural `isDefEq` `refine`/`exact`;
       §1 — **two cheap fixes TRIED & FAILED**: budget-`set` and the `composeFlatTM`
