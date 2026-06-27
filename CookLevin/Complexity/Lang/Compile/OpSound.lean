@@ -8,7 +8,10 @@ import Complexity.Lang.Compile.Core
 import Complexity.Lang.Compile.Encoding
 import Complexity.Lang.Compile.OpMachines
 import Complexity.Lang.Compile.Cmd
-import Complexity.Lang.Compile.RunLemmas
+import Complexity.Lang.Compile.RunClear
+import Complexity.Lang.Compile.RunMove
+import Complexity.Lang.Compile.RunCopyTail
+import Complexity.Lang.Compile.RunEqBit
 
 set_option autoImplicit false
 

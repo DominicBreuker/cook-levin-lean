@@ -8,8 +8,12 @@ import Complexity.Lang.Compile.RunEqBit
 This file is now a thin **facade**: the per-op run/behaviour layer was split
 into a four-module DAG (refactor Phase 1-refinement, see `REFACTOR-HANDOFF.md`)
 so that an edit to one gadget's run stack no longer recompiles the others.
-Downstream modules (`OpSound`, `Assembly`, `Decider`) still
-`import Complexity.Lang.Compile.RunLemmas` and get everything.
+Kept as the single public entry point for the run layer (the top-level
+`Compile.lean` facade imports it). The internal consumers (`OpSound`, `Assembly`,
+`Decider`) import the four Run modules **directly** instead, so this facade is
+**off their build critical path**: a no-content facade is a pure ~2.3s import
+gate, and bypassing it shortens the serial `RunEqBit → OpSound → … → Decider`
+chain.
 
 The DAG, in dependency order:
 
