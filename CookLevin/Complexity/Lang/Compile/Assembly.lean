@@ -2188,10 +2188,27 @@ theorem Compile.forBndBudget_arith (G iters SC S2 : Nat)
   have hcost : 1 + SC + iters * iters = 1 + (SC + iters) + q := by omega
   rw [hcost, ← Compile.physStepBudget_seq]
   have hS2q : 2 * S2 = q + 4 * iters := by omega
-  simp only [Compile.physStepBudget]
-  nlinarith [hS2q, hq, Nat.zero_le G, Nat.zero_le iters, Nat.zero_le q, Nat.zero_le SC,
-    Nat.zero_le (G * q), Nat.zero_le (G * G * q), Nat.zero_le (G * iters), Nat.zero_le (G * G * iters),
-    Nat.zero_le (G * G), Nat.mul_le_mul_left (9 * G * G + 9 * G + 30) (show iters ≤ q + iters from by omega)]
+  -- The `physStepBudget G (SC + iters)` term occurs on both sides; cancel it and
+  -- prove the SC-free `core` so the `nlinarith` works on a smaller goal.
+  have core : (9 * G * G + 9 * G + 30) * (iters + 2) + 1
+        + (9 * G * G + 9 * G + 30) * S2 + iters * (12 * G + 33) + (6 * G + 13)
+        + 1 + (9 * G * G + 9)
+      ≤ 1 + Compile.physStepBudget G q := by
+    simp only [Compile.physStepBudget]
+    nlinarith [hS2q, hq, Nat.zero_le G, Nat.zero_le iters, Nat.zero_le q,
+      Nat.zero_le (G * q), Nat.zero_le (G * G * q), Nat.zero_le (G * iters),
+      Nat.zero_le (G * G * iters), Nat.zero_le (G * G),
+      Nat.mul_le_mul_left (9 * G * G + 9 * G + 30) (show iters ≤ q + iters from by omega)]
+  calc (9 * G * G + 9 * G + 30) * (iters + 2) + 1
+          + ((9 * G * G + 9 * G + 30) * S2 + Compile.physStepBudget G (SC + iters)
+              + iters * (12 * G + 33) + (6 * G + 13))
+          + 1 + (9 * G * G + 9)
+      = ((9 * G * G + 9 * G + 30) * (iters + 2) + 1
+          + (9 * G * G + 9 * G + 30) * S2 + iters * (12 * G + 33) + (6 * G + 13)
+          + 1 + (9 * G * G + 9)) + Compile.physStepBudget G (SC + iters) := by ring
+    _ ≤ (1 + Compile.physStepBudget G q) + Compile.physStepBudget G (SC + iters) :=
+        Nat.add_le_add_right core _
+    _ = Compile.physStepBudget G (SC + iters) + 1 + Compile.physStepBudget G q := by ring
 
 /-- **Residue-tolerant `compileForBnd` contract (GAP 1 — RE-PINNED 2026-06-11,
 `sorry`).** The scratch-register fix for the snapshot-vs-clobber gap: the previous
@@ -2321,7 +2338,9 @@ theorem compileForBnd_sound_physical_residue
     rcases iters with _ | _ | n
     · omega
     · omega
-    · nlinarith [Nat.zero_le n]
+    · -- `3(n+2) ≤ 2 + (n+2)² = n*n + 4n + 6`; `omega` closes once `n*n` is exposed.
+      have h : (n + 1 + 1) * (n + 1 + 1) = n * n + 4 * n + 4 := by ring
+      rw [h]; omega
   have hsumW : (∑ j ∈ Finset.range iters, (j + cc j + 1))
       = (∑ j ∈ Finset.range iters, j) + (∑ j ∈ Finset.range iters, cc j) + iters := by
     rw [Finset.sum_add_distrib, Finset.sum_add_distrib, Finset.sum_const, Finset.card_range,
@@ -2495,7 +2514,10 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
         -- `54 ≤ 72 = 8·9`: the loosened constant still sits under physStepBudget's `(·)·(8·cost+8)`.
         have h2 : (54 * G * G + 54 * G + 180) * (Op.cost o s + 1)
                   ≤ (9 * G * G + 9 * G + 33) * (8 * Op.cost o s + 8) :=
-          le_trans (Nat.mul_le_mul_right _ (by nlinarith [Nat.zero_le (G * G), Nat.zero_le G] :
+          le_trans (Nat.mul_le_mul_right _ (by
+              have hG : 54 * G ≤ 72 * G := Nat.mul_le_mul_right G (by norm_num)
+              have hGG : 54 * G * G ≤ 72 * G * G := Nat.mul_le_mul_right G hG
+              omega :
               54 * G * G + 54 * G + 180 ≤ 72 * G * G + 72 * G + 264))
             (Nat.le_of_eq (by ring))
         show t ≤ Compile.physStepBudget G (Op.cost o s)
