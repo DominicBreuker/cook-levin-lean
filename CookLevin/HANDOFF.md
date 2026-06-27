@@ -12,12 +12,19 @@ the owner says **`bottom-up`** or **`top-down`**:
 - **Top-down** — work the final assembly, design its proofs, create supporting
   lemmas with `sorry` when reasonably provable, and surface gaps early.
 
-> **⚠ A parallel refactor stream is also running** — see
-> [`REFACTOR-HANDOFF.md`](REFACTOR-HANDOFF.md). It splits the 26K-line
-> `Compile.lean` into a `Compile/` module DAG for build speed + maintainability.
-> **Both streams edit `Compile.lean`; coordinate.** Line numbers below are as of
-> 2026-06-25 and will move into submodules as the refactor lands. Prefer landing
-> the refactor's Phase 0+1 before the next op so new ops go into clean modules.
+> **The compiler refactor is DONE** (`Compile.lean` is now a 39-line facade over a
+> `Compile/` module DAG; the old refactor stream is closed). **Where new code goes:**
+> per-op contract + stub-op cases in `Compile/OpSound.lean`; op-machine `def`s +
+> shape lemmas in `Compile/OpMachines.lean`; run lemmas in the per-gadget
+> `Compile/Run*` modules (`RunClear` → `RunMove` → `RunCopyTail` → `RunEqBit`, a
+> serial chain); assembly/decider in `Compile/Assembly.lean`/`Decider.lean`.
+> **Iteration cost:** editing a `Run*` module rebuilds it + everything downstream
+> (`OpSound`/`Assembly`/`Decider` ≈ 30s); editing `OpMachines` rebuilds the whole
+> chain (~2–3 min) — so prototype run lemmas *first*, add the machine `def` last.
+> Profile a module with `lake env lean -Dprofiler=true CookLevin/.../Compile/<Mod>.lean`.
+> All Compile modules are now structurally bound (no tactic >0.3s) except `Decider`
+> (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
+> investigated and judged not worth further perf work.
 
 ---
 
@@ -93,13 +100,46 @@ W-invariant ①; per-op budget `(54·L²+54·L+180)·(Op.cost+1)`):
 ## The plan to 12 ops
 
 ### 1. `concat` — START HERE (bottom-up; buildable without the unary migration)
-`concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)` = `clear dst ⨾
-copy-append src1 ⨾ copy-append src2`. The proven `copyLoop` already appends `src`
-to `dst`'s end, but `copyLoop_run` assumes **`dst` empty**. **Generalize that one
-lemma to nonempty `dst`** (giving `s.set dst (dst ++ src)`); then `concat` is two
-`copyLoop`s after a `clear dst`. Cost `|src1|+|src2|+1` is generous. Template: the
-`copy`/`tail`/`eqBit` op builds — real `CompiledCmd` + a residue-exact run lemma +
-discharge the contract case (W-① an equality via `State.size_set_add`).
+`concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`.
+
+**✅ Foundation DONE (this session): `Compile.copyLoopAppend_run`** (`RunCopyTail.lean`,
+axiom-clean) — the cursor loop now appends `src` to a **nonempty** `dst`, producing
+`s.set dst (s.get dst ++ s.get src)` with exact residue. `copyLoop_run` (the
+empty-`dst` form) is kept as a thin corollary so `opCopy_run`/eqBit are unchanged.
+
+**⚠ ALIASING FINDING (corrects the naive plan).** `Op.inBounds (concat …)` is just
+`dst<k ∧ src1<k ∧ src2<k` — it does **NOT** require the three registers distinct,
+so `dst` may alias `src1`/`src2`. The naive `clear dst ⨾ copy-append src1 ⨾
+copy-append src2` is then **WRONG**: `clear dst` destroys an aliased source (e.g.
+`concat d d s2` wants `old_d ++ s2` but clears `d` first). Must copy operands to
+scratch first. The contract already provisions scratch (`sb`, `sb+1`; `hsb1`/`hsbe`/
+`hsb1e`/`hbsb : Op.UsesBelow o sb` give `dst,src1,src2 < sb`).
+
+**Corrected design — 4 stages, ONE scratch register `sb`, aliasing-safe:**
+```
+opCopy sb src1     -- sb := src1                (sb fresh ⇒ safe even if src1 = dst)
+copyAppend sb src2 -- sb := src1 ++ src2        (nonempty-dst append; uses copyLoopAppend_run)
+opCopy dst sb      -- dst := src1 ++ src2
+clear sb           -- restore scratch empty
+```
+This is correct for **every** alias combination (operands are saved in `sb` before
+`dst` is touched). `sb+1` is not needed for concat (only `sb`); leave the `hsb1e`
+hyp available but unused.
+
+**The ONE new gadget needed: `copyAppendTM dst src` = `opCopy` minus the clear**
+(`navigateToRegTM src ⨾ copyLoopTM dst ⨾ justRewindTM`, boundary halt demoted via
+`joinTwoHalts`). Mirror `copyRegionFullTM`/`opCopy`/`opCopy_run` (OpMachines + the
+new run lemma in RunCopyTail) but **drop the `clearRegionTM` phase** — so its
+residue is just `res_in` (no `replicate |dst₀| 0`) and it produces `s.set dst
+(s.get dst ++ s.get src)` directly from `copyLoopAppend_run`. ~60 lines of machine
+shape lemmas + a ~150-line run lemma adapted from `opCopy_run`.
+
+**Then assemble** `compileOp sb (concat …)` as a **sequential composition of the
+four existing `CompiledCmd` pieces** (`opCopy`, `copyAppend`, `opClear`) via the
+proven seq combinator (`compileSeq_compose_physical` — same machinery `compileForBnd`
+used), and discharge the contract case from the four per-piece run lemmas. Budget
+`Op.cost concat = |src1|+|src2|+1`; the cost-scaled contract `(…)·(cost+1)` has room.
+This avoids a monolithic `opConcat_run`. Cross-check W-① with `State.size_set_add`.
 
 ### 2. Unary migration (bottom-up; gated for the trio; needed for S3 anyway)
 The value-as-length trio `takeAt`/`dropAt`/`consLen` is meaningless under `BitState`
@@ -156,7 +196,9 @@ The op builds below are templates; the helper stacks are axiom-clean.
   `branchComposeFlatTM` + `joinTwoHalts`).
 - **The op gadget stacks** (each = real `CompiledCmd` + run lemma + contract case),
   all axiom-clean: `opCopy`/`copyLoop_run`/`opCopy_run` (cursor-copy, marked-tape
-  toolkit), `opTail`/`opTail_run`, `opNonEmpty`, `opHead`/`bitReadTM` (nested 2-way
+  toolkit) + **`copyLoopAppend_run`** (the nonempty-`dst` generalisation, appends
+  `src` to `s.get dst`; the `concat`/second-copy primitive), `opTail`/`opTail_run`,
+  `opNonEmpty`, `opHead`/`bitReadTM` (nested 2-way
   branches), `opEqBitNG`/`opEqBitNG_run` (the `compareRegsNoGrowM` consume-loop tree:
   `copyEmptyRawTM`/`compareLoopTM`/`eqVerdictM`/`bitCompareM`/`bothNonemptyM`/
   `testMachine`/`compareBodyTM` + `consumeStep`/`matchLen` semantics + the
