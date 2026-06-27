@@ -3154,7 +3154,8 @@ theorem Compile.cmpNGCleanup_run (x : State) (sb : Var)
   · intro k hk ck hck
     rw [Compile.cmpNGCleanupM] at hck ⊢
     exact htraj k hk ck hck
-  · nlinarith [htbA, htbB]
+  · -- linear sum of the two clear-stage budgets (`L*L` treated as an atom)
+    linarith [htbA, htbB]
 
 /-- **No-grow prefix run.** Copies `src1`/`src2` into the pre-existing empty scratch
 `sb`/`sb+1`, then consumes the matched common prefix. Exits at head `0` on
@@ -3345,8 +3346,16 @@ theorem Compile.cmpNGPrefix_run (s : State) (sb src1 src2 : Var)
     have key : (g1.length + 1) * (5 * M + 23) + (g2.length + 1) * (5 * M + 23)
           + (g1.length + 1) * (24 * M + 45)
         ≤ (g1.length + g2.length + 2) * (29 * M + 68) := by
-      nlinarith [Nat.zero_le g2.length, Nat.zero_le M,
-        Nat.mul_le_mul (Nat.le_refl (g2.length + 1)) (Nat.zero_le M)]
+      -- RHS − LHS = (24*M+45)*(g2.length+1) ≥ 0 exactly; avoid the slow nlinarith
+      -- search by splitting `29*M+68 = (5*M+23) + (24*M+45)` and cancelling.
+      have e1 : (g1.length + g2.length + 2) * (29 * M + 68)
+          = (g1.length + 1) * (5 * M + 23) + (g2.length + 1) * (5 * M + 23)
+            + (g1.length + g2.length + 2) * (24 * M + 45) := by ring
+      rw [e1]
+      have h1 : (g1.length + 1) * (24 * M + 45)
+          ≤ (g1.length + g2.length + 2) * (24 * M + 45) :=
+        Nat.mul_le_mul (by omega) (Nat.le_refl _)
+      omega
     omega
 
 /-- **`compareRegsNoGrowM` run — EQUAL.** With pre-existing empty scratch at the
@@ -3775,11 +3784,31 @@ theorem Compile.eqBit_budget_arith (L a b tT tC t : Nat)
               + 18 * (L + a + b) * (L + a + b) + 20 * (L + a + b) + 59)
     (hCAbud : tC ≤ 9 * (L + a + b) * (L + a + b) + 3 * (L + a + b) + 18) :
     t ≤ (54 * L * L + 54 * L + 180) * (a + b + 1 + 1) := by
-  have hA : 56 * ((a + b) * (a + b)) ≤ 112 * (L * (a + b)) := by
-    nlinarith [ha3, hb3, Nat.zero_le (a + b)]
-  have hB : 141 * (L * (a + b)) ≤ 54 * (L * L * (a + b)) := by
-    nlinarith [hb3, Nat.zero_le L, Nat.zero_le (a + b)]
-  nlinarith [ht, hTbud, hCAbud, hA, hB, Nat.zero_le L, Nat.zero_le (a + b)]
+  -- All steps stay linear over the monomial atoms (`L*L`, `L*(a+b)`,
+  -- `(a+b)*(a+b)`, `L*L*(a+b)`); the only nonlinear facts are `hA`/`hB`, proved
+  -- by monotonicity, then `core`/`hexp` reduce the goal to a `linarith`. This
+  -- replaces a slow top-level `nlinarith` (~5s of certificate search).
+  have hS2L : a + b ≤ 2 * L := by omega
+  have h54L : 141 ≤ 54 * L := by omega
+  have hA : 56 * ((a + b) * (a + b)) ≤ 112 * (L * (a + b)) :=
+    calc 56 * ((a + b) * (a + b))
+        ≤ 56 * (2 * L * (a + b)) :=
+          Nat.mul_le_mul (Nat.le_refl _) (Nat.mul_le_mul hS2L (Nat.le_refl _))
+      _ = 112 * (L * (a + b)) := by ring
+  have hB : 141 * (L * (a + b)) ≤ 54 * (L * L * (a + b)) :=
+    calc 141 * (L * (a + b))
+        ≤ 54 * L * (L * (a + b)) := Nat.mul_le_mul_right _ h54L
+      _ = 54 * (L * L * (a + b)) := by ring
+  have core : 29 * (L * (a + b)) + 56 * ((a + b) * (a + b))
+      ≤ 54 * (L * L * (a + b)) + 81 * (L * L) + 27 * L + 31 * (a + b) + 145 := by
+    linarith [hA, hB, Nat.zero_le (L * L), Nat.zero_le L, Nat.zero_le (a + b)]
+  have hexp : (a + b + 2) * (29 * (L + a + b) + 68)
+              + 18 * (L + a + b) * (L + a + b) + 20 * (L + a + b) + 59
+              + (9 * (L + a + b) * (L + a + b) + 3 * (L + a + b) + 18) + 2
+            + (54 * (L * L * (a + b)) + 81 * (L * L) + 27 * L + 31 * (a + b) + 145)
+          = (54 * L * L + 54 * L + 180) * (a + b + 1 + 1)
+            + (29 * (L * (a + b)) + 56 * ((a + b) * (a + b))) := by ring
+  linarith [ht, hTbud, hCAbud, core, hexp]
 
 /-- **`opEqBitNG` run + trajectory (the behavioural part of the `eqBit` residue
 contract).** From head `0` on `encodeTape s ++ res_in`, with the two pre-existing empty
