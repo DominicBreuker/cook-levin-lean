@@ -44,7 +44,7 @@ theorem Compile.markBitTM_step (b : Nat) (hb : b ≤ 1) (left right : List Nat)
   have hsym : currentTapeSymbol (left, head, right) = some (b + 1) := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases b <;>
-    simp_all [stepFlatTM, Compile.markBitTM, Compile.markBitEntry,
+    simp [hsym, hlt, stepFlatTM, Compile.markBitTM, Compile.markBitEntry,
       entryMatchesConfig, applyTransitionEntry, tapeStep,
       writeCurrentTapeSymbol, moveTapeHead]
 
@@ -85,7 +85,7 @@ theorem Compile.restoreStepTM_step (b : Nat) (hb : b ≤ 1) (left right : List N
   have hsym : currentTapeSymbol (left, head, right) = some 3 := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases b <;>
-    simp_all [stepFlatTM, Compile.restoreStepTM, Compile.restoreStepEntry,
+    simp [hsym, hlt, stepFlatTM, Compile.restoreStepTM, Compile.restoreStepEntry,
       entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol,
       moveTapeHead]
 
@@ -2356,7 +2356,7 @@ theorem Compile.skipReadTM_step_delim (left right : List Nat) (head : Nat)
       = some { state_idx := 1, tapes := [(left, head, right)] } := by
   have hsym : currentTapeSymbol (left, head, right) = some 0 := by
     rw [currentTapeSymbol_in_range hlt, hget]
-  simp_all [stepFlatTM, Compile.skipReadTM, Compile.skipReadDelimEntry,
+  simp [hsym, stepFlatTM, Compile.skipReadTM, Compile.skipReadDelimEntry,
     Compile.skipReadBitEntry, entryMatchesConfig, applyTransitionEntry, tapeStep,
     writeCurrentTapeSymbol, moveTapeHead]
 
@@ -2383,7 +2383,7 @@ theorem Compile.skipReadTM_step_bit (b : Nat) (hb : b ≤ 1) (left right : List 
   have hsym : currentTapeSymbol (left, head, right) = some (b + 1) := by
     rw [currentTapeSymbol_in_range hlt, hget]
   interval_cases b <;>
-    simp_all [stepFlatTM, Compile.skipReadTM, Compile.skipReadDelimEntry,
+    simp [hsym, stepFlatTM, Compile.skipReadTM, Compile.skipReadDelimEntry,
       Compile.skipReadBitEntry, entryMatchesConfig, applyTransitionEntry, tapeStep,
       writeCurrentTapeSymbol, moveTapeHead]
 

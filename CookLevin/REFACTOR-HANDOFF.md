@@ -33,7 +33,7 @@ this session):
       ├───────────────┐
   Encoding (708)      encodeTape/decodeTape, BitState, ValidResidue, structure lemmas
       │               │
-  OpMachines (3621)   every per-Op TM machine *def* + shape lemmas
+  OpMachines (3621, ★7.7s) every per-Op TM machine *def* + shape lemmas
       │
   Cmd (950, 3.4s)     compileOp/Seq/IfBit/TestBit + forBnd machines + compileCmd
       │
@@ -42,19 +42,20 @@ this session):
       │                     shared ValidResidue/TapeOK residue toolkit, clear stack
   RunMove (4382, 11s)       move-one-bit / dual-target transfer gadgets,
       │                     navTestReg reading, compileTestBit run lemmas
-  RunCopyTail (3471, 14–15s) cursor-copy (copy) + tail run stacks  ← next perf lever
+  RunCopyTail (3471, ★~11s)  cursor-copy (copy) + tail run stacks; step lemmas
+      │                     de-simp_all'd this session — now structurally bound
+  RunEqBit (4011, 13s)      eqBit no-grow consume-loop run stack (opEqBitNG_run)
       │
-  RunEqBit (4011, ★18s→13s)  eqBit no-grow consume-loop run stack (opEqBitNG_run)
-      │
-  RunLemmas (25, 2.3s)      facade: imports the four Run* modules
+      │   RunLemmas (2.3s)  ★ no-content facade — now imported ONLY by Compile.lean
+      │   (off path)        (OpSound/Assembly/Decider import the 4 Run mods direct)
       │
   OpSound (558, 3.4s)       compileOp_sound_physical_residue (8 ops ✓, 4 stub sorries)
       │
-  Assembly (2740, ★~10s)    C6 bitTestTM, assembly toolkit, compileIfBit/compileForBnd
+  Assembly (2740, ~10s)     C6 bitTestTM, assembly toolkit, compileIfBit/compileForBnd
       │                     soundness + forBnd loop run stack, Compile_run_physical_residue
   Decider (991, 5.8s)       the WALL: padRegsTM / paddedBitDecider / paddedCompute
       │
-  Compile.lean (39)         facade
+  Compile.lean (39)         facade (imports Decider + RunLemmas)
 ```
 
 Axiom invariant (unchanged): `#print axioms` of
@@ -67,32 +68,45 @@ ops in the contract, none on the live `sat_NP` path).
 
 ## What's left (recommended next steps, priority order)
 
-The structural split is done; **proof-perf is the remaining lever.**
+The structural split is done; **proof-perf is the remaining lever.** The cheap
+big wins are largely spent: the slow `simp_all`/`nlinarith` calls and the
+`_`-underscore unification blowups have been killed across `RunEqBit`,
+`RunCopyTail`, and `OpMachines`. **Every Compile module now profiles with no
+single tactic over ~0.3s except: `Decider` (2 structural `isDefEq` exacts) and
+`Assembly` (one `nlinarith` interpreter load).** Remaining work is harder /
+lower-value.
 
-### 1. ★ Phase 4 continued — `RunCopyTail` `simp_all` step lemmas. Biggest open win.
+### 1. Phase 4 — `Decider` `paddedBitDecider_run` / `paddedCompute_run` (~3.4s).
 
-`RunCopyTail` (~14–15s) is dominated by **`simp` (13.6s cumulative)**, almost
-entirely **7 `simp_all` calls of ~1.4–2.0s each** in the per-step TM-simulation
-lemmas (pattern `interval_cases b <;> simp_all [stepFlatTM, …, applyTransitionEntry,
-tapeStep, writeCurrentTapeSymbol, moveTapeHead]`). Sites: `markBitTM_step` (L46),
-`restoreStepTM_step` (L87), `skipReadTM` steps (L2359, L2386), and the analogous
-copy/tail step lemmas. **Hypothesis to test:** these `simp_all` calls simplify
-*all* hypotheses to a fixpoint when they really only need to rewrite by the
-symbol facts (`hsym`/`hget`) and unfold the step defs — a targeted
-`simp only [hsym, hget, stepFlatTM, …]` (goal-directed, not `simp_all`) should be
-much cheaper. **Risky** (step-sim proofs are load-bearing): iterate one lemma at
-a time with `lake build Complexity.Lang.Compile.RunCopyTail` (~15s/iter) as the
-oracle; keep the slow `simp_all` if `simp only` won't close it. `RunMove` (11s)
-profiled clean (no tactic >1s) — its time is structural, leave it.
+The only remaining big single-tactic costs in the DAG: a `refine ⟨…⟩` (1.7s,
+`paddedBitDecider_run` L796) and `exact runFlatTM_extend (M := …) hcrun hchalt`
+(1.8s, `paddedCompute_run` L990). These are **big-term `isDefEq`/elaboration**
+(matching `runFlatTM <big budget Nat> (paddedComputeTM c k)` against the
+composed-run hypothesis whose machine is the unfolded `composeFlatTM …`), **not**
+`simp`/`nlinarith`. The explicit-args trick (§Method 3c) does **not** apply
+(`M` is already explicit). **TRIED & FAILED (2026-06-27c):** `set N := <budget>`
+before the `exact` (to stop re-elaborating the big budget Nat) gave **no change**
+(still 1.7s/1.8s) — so the cost is **not** the budget but the **machine defeq**
+`paddedComputeTM c k ≡ composeFlatTM (padRegsTM K) (Compile k c) (padRegsExit K)`,
+which compares the *built* transition tables of two big composed machines
+(traversing `Compile k c`). **Also TRIED & FAILED (2026-06-27d):** the one-shot
+`rfl`-bridge `have hM : paddedComputeTM c k = composeFlatTM (padRegsTM K)
+(Compile k c) (padRegsExit K) := rfl; rw [hM]` (to make the machine match `hcrun`
+syntactically) — `exact` **still 1.72s**, so the cost is **not** the machine
+defeq either; it is the intrinsic elaboration of the big goal type (the result
+config carries `encodeTape (c.eval (s ++ replicate K []))`). Both cheap angles
+are exhausted; a real win needs deep restructuring (e.g. making the composed
+machines genuinely opaque/irreducible throughout — ripples through many proofs).
+Modest payoff (~1.7s on a 5.8s module, 2.3s of which is fixed import). **Likely
+not worth it.**
 
-### 2. Phase 4 — finish `Assembly`/`Decider` if they become felt.
+### 2. Phase 4 — `Assembly` `nlinarith` (~10s) — almost certainly not worth it.
 
-`Assembly` still carries one `nlinarith` (the `core` inside `forBndBudget_arith`)
-whose goal genuinely needs nonlinear reasoning (`q = iters²−iters` binds the
-negative `iters` terms; a manual case-split is painful — **not worth it**). That
-single `nlinarith` keeps the per-module nlinarith-interpreter load, so Assembly
-won't drop below ~10s without removing it. `Decider` (5.8s, the WALL) unprofiled
-this session.
+`Assembly`'s only >0.3s cost is `interpretation of …nlinarith…_boxed` (1.2s) —
+the **fixed nlinarith interpreter load**, paid once because `forBndBudget_arith`'s
+`core` carries the module's lone `nlinarith`. Its goal genuinely needs nonlinear
+reasoning (`q = iters²−iters` binds the negative `iters` terms; manual case-split
+is painful). Removing it is the only way under ~9s but the cost/risk is poor.
 
 ### 3. (Optional) split the largest Run* modules further — low value.
 
@@ -147,6 +161,29 @@ each other (a chain), so the parallelism gain is modest.
    linear over the monomial atoms — `linarith`/`omega` treat `L*L`, `L*(a+b)` as
    atoms; `omega` even abstracts a nonlinear subterm as a nonneg atom after you
    `rw` it into view). A sum-of-budgets `nlinarith` → `linarith`.
+3b. **`simp_all` → plain `simp` for goal-directed step lemmas (2026-06-27b
+   win).** The per-step TM-simulation lemmas (`stepFlatTM … = some {…}`) were
+   proven with `simp_all [stepFlatTM, …]`, which re-simplifies *every* hypothesis
+   to a fixpoint — ~0.9s each. They only need the goal rewritten by the symbol
+   fact (`hsym`) and (when the entry writes a symbol) `dif_pos` discharged from
+   `hlt`. **Fix:** `simp [hsym, hlt, <same step defs>]` — plain `simp` (goal-only)
+   keeps simp's automatic `decide`/length/`find?` handling (so no fragile
+   `simp only` lemma list) but skips the hypothesis fixpoint. Dropped 7 calls from
+   6.4s to ~0.1s reported. Omit `hlt` when the entry's `dst_write_vals` is `[none]`
+   (no `writeCurrentTapeSymbol` branch — the unused-simp-arg linter flags it).
+3c. **Explicit args kill `_`-underscore unification blowups (2026-06-27c win).**
+   The `*_is_halt`/`*_halt_only` lemmas applied a `branchComposeFlatTM_*` halt
+   lemma with ALL machine/index args as `_` (`exact lemma _ _ _ _ _ _ (h2v) …`),
+   after a `rw […machineDef]` that unfolds the goal to a big composed-machine
+   term. Lean then infers the 6–8 metavars by **unifying the lemma conclusion
+   against that big term** — `compareBodyTM_exitDone_is_halt` cost **4.1s** this
+   way. **Fix:** pass the machine and exit-index args **explicitly** (read them
+   off the machine's `def`: e.g. `branchComposeFlatTM_M3_halt_intro (testMachine …)
+   (iterTailsTM …) idTM (exit_iter …) (exit_done …) 0 (h2v) (h)`). With the
+   metavars pre-assigned there is no search; the three OpMachines calls dropped
+   from ~7.4s combined to <0.3s each (module 9.7s → 7.7s). **Caveat:** this does
+   NOT help when the slow defeq is over a *budget Nat* with the machine already
+   explicit (the Decider `runFlatTM_extend` exacts — §1).
 4. **Iterate fast** on a self-contained pure-`Nat` lemma in a scratch file with
    `import Mathlib.Tactic.Linarith`/`.Ring` (≈4s/build) instead of the full
    `import Mathlib` (≈50s) or the module rebuild — but the **module rebuild is the
@@ -161,7 +198,18 @@ each other (a chain), so the parallelism gain is modest.
    stay the 4-axiom set (no *new* `sorryAx`).
 7. Commit per coherent change (green), module name(s) in the message.
 
-### Gotchas
+### Build-graph perf (orthogonal to proof-perf)
+
+8. **A no-content facade on the critical path is a pure import gate — bypass it.**
+   `RunLemmas` only re-imports the four Run modules. As a node *on* the serial
+   `RunEqBit → OpSound → … → Decider` chain it cost ~2.3s (load all four Run
+   oleans, emit an empty olean) for zero elaboration. **Fix:** point the internal
+   consumers (`OpSound`/`Assembly`/`Decider`) at the four Run modules **directly**
+   (same transitive scope ⇒ strictly safe); keep the facade only for the public
+   `Compile.lean` import (which is past `Decider`, the long pole, so the facade is
+   off the path). Generalises: any pure re-export facade sitting between two heavy
+   modules is removable from the critical path this way. (Cannot do this for
+   `Compile.lean` itself — `PolyTime` imports the facade by contract, README.)
 
 - `autoImplicit false` / `relaxedAutoImplicit false` are package-wide
   (`lakefile.lean`); new modules inherit them — don't re-add `relaxedAutoImplicit`.
@@ -185,10 +233,46 @@ each other (a chain), so the parallelism gain is modest.
       Monolith reduction: 26,493 → 39 lines.
 - [x] **Phase 1-refinement** — split `RunLemmas` (14,150 lines) into
       `RunClear`/`RunMove`/`RunCopyTail`/`RunEqBit` (2026-06-26).
-- [x] **Phase 4 (started, 2026-06-27)** — proof-perf: killed the slow budget
+- [x] **Phase 4 (2026-06-27a)** — proof-perf: killed the slow budget
       `nlinarith`s. **RunEqBit 18s → 13s** (the ~11s `key` cancellation call +
       `eqBit_budget_arith` rewritten to explicit `Nat` steps; module now has zero
       `nlinarith`). `Assembly` budget `nlinarith`s simplified. Build green,
       axioms unchanged.
-- [ ] **Phase 4 (continue)** — **`RunCopyTail` `simp_all` step lemmas (13.6s
-      simp)** is the next-biggest lever. ← recommended next.
+- [x] **Phase 4 (2026-06-27b)** — proof-perf: **`RunCopyTail` step lemmas
+      de-`simp_all`'d.** The 7 per-step TM-sim `simp_all` calls (`markBitTM_step`,
+      `restoreStepTM_step`, `skipReadTM_step_delim/_bit`) → goal-directed plain
+      `simp [hsym, hlt, …]`. Reported simp 6.4s → ~0.1s; module now has **no
+      tactic over ~0.2s** (structurally bound, like `RunMove`). Build green
+      (3370 jobs), axioms unchanged.
+- [x] **Phase 4 (2026-06-27c)** — proof-perf: **`OpMachines` halt lemmas
+      de-`_`'d.** Three halt-characterization `exact`s (`compareBodyTM_exitDone_is_halt`
+      4.1s, `testMachineRawM_done_is_halt` 1.7s, `testMachineRawM_halt_only` 1.6s)
+      passed all `branchComposeFlatTM_*` machine/index args as `_`, forcing big-term
+      metavar unification. Made them explicit → all three <0.3s; **OpMachines
+      9.7s → 7.7s** (upstream of everything ⇒ shortens the serial critical path).
+      Build green (3370 jobs), axioms unchanged.
+- [x] **Phase 4 (2026-06-27d)** — build-graph: **bypassed the `RunLemmas`
+      facade** on the critical path (OpSound/Assembly/Decider now import the four
+      Run modules directly; RunLemmas kept only for `Compile.lean`). Removes a
+      ~2.3s import-only serial gate between `RunEqBit` and `OpSound`. Build green
+      (3370 jobs), axioms unchanged.
+- [x] **Phase 4 (2026-06-27e)** — **project-wide build-time scan** (clean rebuild,
+      keeping mathlib cache). Found the slowest live-path module is NOT in
+      `Compile/` but the gadget primitive **`Lang/ShiftTape` (~33s)** — its
+      `insertCarryTM`/`deleteCarryTM` step lemmas closed 20+ `interval_cases` with
+      `simp_all`. Applied the §Method-3b fix (6 `simp_all` → `simp [hsym, hlt, …]`):
+      **ShiftTape ~33s → ~8s** (simp 46.6s → 6.8s). Primitive ⇒ on the whole
+      Compile layer's critical path. Build green (3370), axioms unchanged. The
+      other top poles (`BinaryCC_to_FSAT` ~32s = Tseytin, `FSAT_to_SAT` ~11s,
+      `TMPrimitives` ~11s) are **structural** (≤2 `simp_all` each) — no cheap win,
+      and the sound-tail ones are README-"do not touch content" (perf-only tactic
+      swaps would be in-bounds but there's no `simp_all` lever there).
+- [ ] **Phase 4 (continue) — essentially spent.** Remaining big single-tactic
+      costs are only **`Decider`** (~3.4s structural `isDefEq` `refine`/`exact`;
+      §1 — **two cheap fixes TRIED & FAILED**: budget-`set` and the `composeFlatTM`
+      `rfl`-bridge, both no-change, so it needs risky deep restructuring) and
+      **`Assembly`** (1.2s fixed `nlinarith` load; §2 — goal is genuinely
+      nonlinear, confirmed by hand, not worth it). Every other Compile module is
+      structurally bound (no tactic >0.3s) and the one removable facade gate is
+      gone. Further build-time gains need either accepting risk on the Decider
+      assembly proofs or out-of-scope work (mathlib import surface).
