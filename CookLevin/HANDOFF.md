@@ -183,8 +183,10 @@ loop bound (`forBnd`); `takeAt`/`dropAt` are counter-driven cursor copies (reuse
 `opCopy`/`copyLoop_run`, `loopBudget_le`); `consLen` writes `replicate |lenSrc| 1 ++ [0]`
 then appends `src` (an `appendOne`-loop + the `concat`/`opCopyAppend` toolkit). Discharge
 the three cases of `compileOp_sound_physical_residue`. After this all 12 ops are proven →
-`compileOp_sound_physical_residue` is sorry-free → `sat_NP` drops `sorryAx` automatically
-(Route B). Feasibility of all three is probe-asserted (counted loops over proven gadgets).
+`compileOp_sound_physical_residue` is sorry-free *unconditionally*, which lets Route B
+**delete the `Op.IsSupported` wall** (`sat_NP` is already sorry-free via Route A; the
+wall is then pure overhead). Feasibility of all three is probe-asserted (counted loops
+over proven gadgets).
 
 ### 4. Close out
 
