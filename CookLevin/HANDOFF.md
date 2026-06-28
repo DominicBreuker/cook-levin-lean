@@ -33,25 +33,34 @@ the owner says **`bottom-up`** or **`top-down`**:
 The compiler `Compile : Cmd → FlatTM` is sound iff every `Op` has a discharged
 soundness case in `compileOp_sound_physical_residue`. **9/12 are done; the plan is
 to finish the remaining 3** (`takeAt`, `dropAt`, `consLen` — the value-as-length
-trio, all gated on the unary migration). Why all 12 (not the `Op.IsSupported`
-shortcut that would isolate only the live SAT path):
+trio, all gated on the unary migration).
 
-- We need them anyway — the **reduction half** (`⪯p` / `toFrameworkWitness'`, the
-  S3 endgame that compiles the whole reduction chain to `Cmd`s) uses the full op
-  set, including the value-as-length trio.
-- Once all 12 are discharged, `compileOp_sound_physical_residue` is **sorry-free**,
-  so `SAT_inNP.sat_NP` becomes sorry-free **automatically** — no extra threading.
-  (`#print axioms` taints on the whole constant body, so today the 4 stub `sorry`s
-  keep `sat_NP` at `sorryAx` even though `evalCnfCmd` uses none of them.)
+> **★ HEADLINE (2026-06-28, Route A — DONE): `SAT_inNP.sat_NP` is now SORRY-FREE.**
+> `#print axioms SAT_inNP.sat_NP = [propext, Classical.choice, Quot.sound]` — the
+> **in-NP half of Cook–Levin is axiom-clean.** Achieved by threading an
+> op-supportedness wall (`Op.IsSupported` / `Cmd.AllOpsSupported`, Syntax.lean)
+> through the decider chain so the *live* trio-free path (`evalCnfCmd`) discharges
+> its op cases without touching the 3 stub `sorry`s. The headline `CookLevin`
+> theorem **still** depends on `sorryAx` — but now *only* via the **hardness half**
+> (`NPhard_GenNP` → `hasDeciderClassical`, plus the S1/S2/S3 vacuity); the in-NP
+> route no longer contributes any `sorry`.
 
-**The live dependency chain `sat_NP` walks:**
+Why still finish all 12 (rather than stop at the wall): the **reduction half**
+(`⪯p` / `toFrameworkWitness'`, the S3 endgame that compiles the whole reduction
+chain to `Cmd`s) uses the full op set including the trio, and Route B then drops
+the wall entirely (`compileOp_sound_physical_residue` becomes unconditionally
+sorry-free).
+
+**The live dependency chain `sat_NP` walks (all ✅, wall-isolated):**
 ```
 sat_NP (EvalCnfTM.lean)
   → inTimePolyLang_to_inTimePoly → DecidesLang.toInTimePoly/.toDecidesBy   (PolyTime.lean; ✅)
        → Compile.paddedBitDecider_run → Compile.bitDecider_run            (Compile.lean; ✅)
-            → Compile_run_physical_residue → run_physical_residue_gen      (✅ from the assembly)
-                 → compileOp_sound_physical_residue                        (⚠ 3 stub sorries)
-       evalCnfDecidesLang : DecidesLang …                                  (✅ COMPLETE, axiom-clean)
+            → Compile_run_physical_residue → run_physical_residue_gen      (✅, threads AllOpsSupported)
+                 → compileOp_sound_physical_residue                        (✅ for supported ops;
+                                                                            trio cases = absurd hsupp)
+       evalCnfDecidesLang : DecidesLang …                                  (✅ COMPLETE, axiom-clean,
+                                                                            supplies allOpsSupported)
 ```
 `evalCnfCmd` is `concat`/`takeAt`/`dropAt`/`consLen`-free, budget quartic
 (`200000·(n+1)^4`), `regBound = 16`. The verifier layer is **done**. Both bridges
@@ -177,25 +186,20 @@ the three cases of `compileOp_sound_physical_residue`. After this all 12 ops are
 `compileOp_sound_physical_residue` is sorry-free → `sat_NP` drops `sorryAx` automatically
 (Route B). Feasibility of all three is probe-asserted (counted loops over proven gadgets).
 
-### 4. Close out — two independent routes to the headline soundness win
+### 4. Close out
 
-**Route A (top-down, do this FIRST — does NOT wait for the trio): `Op.IsSupported`
-threading.** The live `sat_NP` path (`evalCnfCmd`) uses none of `takeAt`/`dropAt`/
-`consLen`, yet `#print axioms SAT_inNP.sat_NP` is still `sorryAx` because it walks
-the *generic* `compileOp_sound_physical_residue` whose body still has the 3 stub
-sorries (`#print axioms` taints on the whole constant). Fix: add a predicate
-`Op.IsSupported` (true for the 9 proven ops, false for the trio) + `Cmd.AllOpsSupported`,
-thread it as a hypothesis through `compileOp_sound_physical_residue` →
-`run_physical_residue_gen` → `bitDecider_run` → … so the trio cases discharge by
-`exact absurd … (by simp [Op.IsSupported])` instead of `sorry`. `evalCnfCmd`
-satisfies `AllOpsSupported` by `decide`. This makes `sat_NP` sorry-free — the first
-headline soundness win — **without** the unary migration. Estimate: medium (the
-threading touches the assembly chain but each step is mechanical).
+**Route A — ✅ DONE (2026-06-28).** `Op.IsSupported`/`Cmd.AllOpsSupported`
+(Syntax.lean) threaded through the decider chain; `sat_NP` is sorry-free &
+axiom-clean. The wall is now **proven, reusable infrastructure** (see below). No
+further work on the in-NP soundness win.
 
-**Route B (after all 12 proven): unconditional close-out.** Once the trio is done
-(steps 2–3), `compileOp_sound_physical_residue` is sorry-free outright, so `sat_NP`
-drops `sorryAx` automatically (no `IsSupported` plumbing needed). Then **update
-README + ROADMAP** (the "in-NP half reaches a `sorry`" line becomes false for SAT).
+**Route B (after all 12 proven): unconditional close-out + drop the wall.** Once
+the trio is done (steps 2–3), `compileOp_sound_physical_residue`'s trio cases
+become real, so the `Op.IsSupported` hypothesis is satisfiable for *every* `Cmd`.
+Then **delete the wall** (`hsupp`/`allOpsSupported` field + the two reduction-side
+`c_allOpsSupported` sorries at `PolyTime.lean`) — they exist only to isolate the
+trio. This also lets the reduction-side `c_noConsLen` sorries go (consLen becomes
+`BitState`-preserving). Mechanical reverse of Route A's threading.
 
 ⚠ **Cost-bump ripple note (for whoever touches the product toolkit / endgame
 `Cmd.cost`):** `Op.cost concat = 2(|src1|+|src2|)+1` now. The product-toolkit
@@ -203,15 +207,21 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 `7·cost_bound + 18·n + 31` (PolyTime.lean). `enc_size` is `|enc x| ≤ 2·size+1`
 (NOT `≤ size`) — budget bounds that look "off by 2×" are usually this.
 
-### Standalone top-down work (not on the 12-op critical path)
-- **CliqueRelTM** (`Deciders/CliqueRelTM.lean`, still raw `sorry` defs+fields):
-  replicate the proven EvalCnf end-to-end template (probe→step-lemma→invariant→
-  `cost_forBnd_le`; uniform-bound cost fixes degree per loop nest; be generous with
-  scratch). Gates `FlatClique_in_NP → Clique_complete` (a secondary theorem).
-- **Framework `red_inNP`** (`NP.lean:291`): blocked by design — `inNP` exposes an
-  opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework `inNP`/`inTimePoly`
-  layer-native (carry a `DecidesLang`), then it collapses to `red_inNP_of_lang`.
-  Deep S3-migration item; design with ROADMAP step 2.
+### TOP-DOWN follow-up (concrete next top-down session; Route A is done)
+Pick one — both are independent of the bottom-up trio work:
+- **CliqueRelTM** (`Deciders/CliqueRelTM.lean`, still raw `sorry` defs+fields,
+  incl. the new `allOpsSupported := by sorry` — trivial once `cliqueRelCmd` is
+  concrete & trio-free): replicate the proven EvalCnf end-to-end template
+  (probe→step-lemma→invariant→`cost_forBnd_le`; uniform-bound cost fixes degree per
+  loop nest; be generous with scratch). This makes `FlatClique`'s in-NP half
+  axiom-clean too (same `allOpsSupported`-wall win as SAT, for free once the
+  fields are real). Gates `FlatClique_in_NP → Clique_complete`. **Recommended next
+  top-down** — it is the EvalCnf template applied once more, low structural risk.
+- **Framework `red_inNP`** (`NP.lean:291`) / **S3 migration**: blocked by design —
+  `inNP` exposes an opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework
+  `inNP`/`inTimePoly` layer-native (carry a `DecidesLang`), then it collapses to
+  `red_inNP_of_lang`. Deep S3-migration item; design with ROADMAP step 2. Higher
+  structural risk; do CliqueRelTM first.
 
 ---
 
@@ -219,6 +229,19 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 
 The op builds below are templates; the helper stacks are axiom-clean.
 
+- **The op-supportedness wall (Route A) is closed.** `Op.IsSupported`/
+  `Cmd.AllOpsSupported` (Syntax.lean) + the field `allOpsSupported` on
+  `DecidesLang`/`PolyTimeComputableLang`, threaded through
+  `compileOp_sound_physical_residue` (`hsupp`; trio cases = `simp only
+  [Op.IsSupported] at hsupp`) → `run_physical_residue_gen` →
+  `Compile_run_physical_residue` → `bitDecider_run` →
+  `paddedBitDecider_run`/`paddedCompute_run`. The wall rides *parallel* to the
+  `NoConsLen` wall (it only needs to reach the op leaf; the deep `forBnd`
+  `hnc_body` machinery is untouched). `evalCnfCmd_allOpsSupported` is the real
+  supply (mirrors `evalCnfCmd_noConsLen`); reduction-side `c_allOpsSupported` are
+  sorry placeholders (same status as `c_noConsLen`). **Reuse this pattern for any
+  new concrete trio-free decider** (e.g. CliqueRelTM) to get its in-NP half
+  axiom-clean. Delete the whole wall in Route B once the trio is proven.
 - **Assembly is closed.** `run_physical_residue_gen` (residue induction; op/seq
   proven, ifBit/forBnd dispatch to their combinators; W-① + budget ② + scratch
   invariant threaded), `compileSeq_sound_physical_residue` (+`_traj`) — now placed
