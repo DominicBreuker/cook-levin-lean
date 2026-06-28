@@ -3250,6 +3250,76 @@ theorem Compile.copyEmptyRawTM_exit_lt (dst src : Var) :
     Compile.copyEmptyRawTM_exit dst src < (Compile.copyEmptyRawTM dst src).states := by
   rw [Compile.copyEmptyRawTM_states, Compile.copyEmptyRawTM_exit]; omega
 
+/-- The (unreachable) boundary halt of the raw chain: `justRewindTM`'s reject
+state `2`, shifted. -/
+def Compile.copyEmptyRawTM_reject (dst src : Var) : Nat := Compile.copyEmptyPreStates dst src + 2
+
+/-- `justRewindTM`'s reject state `2`, shifted, IS a halt of the raw chain. -/
+theorem Compile.copyEmptyRawTM_reject_is_halt (dst src : Nat) :
+    (Compile.copyEmptyRawTM dst src).halt[Compile.copyEmptyRawTM_reject dst src]?
+      = some true := by
+  have h := ScanLeft.composeFlatTM_halt_some_intro
+    (composeFlatTM (ClearGadget.navigateToRegTM src) (Compile.copyLoopTM dst)
+      (ClearGadget.navigateToRegTM_exit src))
+    ClearGadget.justRewindTM
+    ((2 + 3 * src) + (55 + 6 * dst))
+    2 (by rfl)
+  have hpre : (composeFlatTM (ClearGadget.navigateToRegTM src) (Compile.copyLoopTM dst)
+      (ClearGadget.navigateToRegTM_exit src)).states = Compile.copyEmptyPreStates dst src := by
+    rw [composeFlatTM_states, ClearGadget.navigateToRegTM_states, Compile.copyLoopTM_states]
+    rfl
+  rw [hpre] at h
+  exact h
+
+/-- Halt characterization of the raw chain: only `justRewindTM`'s two halt states
+(shifted) are halting. Mirrors `copyRegionFullTM_halt_only`. -/
+theorem Compile.copyEmptyRawTM_halt_only (dst src : Nat) :
+    ∀ i, (Compile.copyEmptyRawTM dst src).halt[i]? = some true →
+      i = Compile.copyEmptyRawTM_exit dst src ∨
+      i = Compile.copyEmptyRawTM_reject dst src := by
+  intro i hi
+  obtain ⟨hge, hh⟩ := ScanLeft.composeFlatTM_halt_some_imp _ _ _ i hi
+  have honly := ScanLeft.scanLeftUntilTM_halt_only 4 3 (i - _) hh
+  have hpre : (composeFlatTM (ClearGadget.navigateToRegTM src) (Compile.copyLoopTM dst)
+      (ClearGadget.navigateToRegTM_exit src)).states = Compile.copyEmptyPreStates dst src := by
+    rw [composeFlatTM_states, ClearGadget.navigateToRegTM_states, Compile.copyLoopTM_states]
+    rfl
+  rw [hpre] at hge hh honly
+  rcases honly with h | h
+  · left; show i = Compile.copyEmptyPreStates dst src + 1; omega
+  · right; show i = Compile.copyEmptyPreStates dst src + 2; omega
+
+/-- Compile a NON-destructive cursor-copy that **appends** `src` to `dst` (no
+clear). The raw `copyEmptyRawTM` (navigate ⨾ cursor loop ⨾ rewind) with the
+rewind's boundary halt demoted (`joinTwoHalts`) for `halt_unique`. This is
+`opCopy` minus the `clear` phase — the second-copy primitive for `concat`. -/
+def Compile.opCopyAppend (dst src : Var) : CompiledCmd :=
+  { M := Compile.joinTwoHalts (Compile.copyEmptyRawTM dst src)
+      (Compile.copyEmptyRawTM_exit dst src) (Compile.copyEmptyRawTM_reject dst src)
+    exit := Compile.copyEmptyRawTM_exit dst src
+    exit_lt := by
+      show _ < (Compile.joinTwoHalts _ _ _).states
+      rw [Compile.joinTwoHalts_states, Compile.copyEmptyRawTM_states]
+      show Compile.copyEmptyPreStates dst src + 1 < Compile.copyEmptyPreStates dst src + 3
+      omega
+    exit_is_halt :=
+      Compile.joinTwoHalts_h1_is_halt _ _ _
+        (by show Compile.copyEmptyPreStates dst src + 1 ≠ Compile.copyEmptyPreStates dst src + 2
+            omega)
+        (Compile.copyEmptyRawTM_exit_is_halt dst src)
+    halt_unique :=
+      Compile.joinTwoHalts_halt_unique _ _ _ (Compile.copyEmptyRawTM_halt_only dst src)
+    M_valid := Compile.joinTwoHalts_valid _ _ _ (Compile.copyEmptyRawTM_valid dst src)
+      (by rw [Compile.copyEmptyRawTM_states]
+          show Compile.copyEmptyPreStates dst src + 1 < Compile.copyEmptyPreStates dst src + 3
+          omega)
+      (by rw [Compile.copyEmptyRawTM_states]
+          show Compile.copyEmptyPreStates dst src + 2 < Compile.copyEmptyPreStates dst src + 3
+          omega)
+      (Compile.copyEmptyRawTM_tapes dst src)
+    M_tapes := Compile.copyEmptyRawTM_tapes dst src
+    M_sig := Compile.copyEmptyRawTM_sig dst src }
+
 theorem Compile.compareLoopTM_valid (sc1 sc2 : Var) :
     validFlatTM (Compile.compareLoopTM sc1 sc2) :=
   loopTM_valid _ _ _ (Compile.compareBodyTM_valid sc1 sc2)

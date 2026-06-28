@@ -33,24 +33,6 @@ namespace Complexity.Lang
 
 open TMPrimitives
 open scoped BigOperators
-/-- Compile a single primitive operation `Op` to a `CompiledCmd`
-by dispatching on the constructor. The actual TM construction
-lives in the per-`Op` helpers above. -/
-def compileOp (sb : Nat) : Op → CompiledCmd
-  | .clear dst                 => Compile.opClear dst
-  | .appendOne dst             => Compile.opAppendOne dst
-  | .appendZero dst            => Compile.opAppendZero dst
-  | .copy dst src              => Compile.opCopy dst src
-  | .tail dst src              => Compile.opTail dst src
-  | .head dst src              => Compile.opHead dst src
-  | .eqBit dst src1 src2       => Compile.opEqBit sb dst src1 src2
-  | .nonEmpty dst src          => Compile.opNonEmpty dst src
-  -- Length-as-value ops (C5a). Stubs, like the other non-bit ops: their physical
-  -- soundness folds into the (already assumed) `Compile_sound` gap.
-  | .takeAt _dst _src _lenReg  => compiledCmd_default
-  | .dropAt _dst _src _lenReg  => compiledCmd_default
-  | .concat _dst _src1 _src2   => compiledCmd_default
-  | .consLen _dst _lenSrc _src => compiledCmd_default
 
 /-- Compile `seq c1 c2` from already-compiled sub-machines.
 
@@ -905,6 +887,41 @@ def compileForBnd (counter bound : Var) (sb : Nat) (rbody : CompiledCmd) :
     CompiledCmd :=
   compileSeq (Compile.opCopy sb bound)
     (compileSeq (Compile.forBndLoopCmd counter sb rbody) (Compile.opClear (sb + 1)))
+
+/-- Compile `Op.concat dst src1 src2` (= `s.set dst (s.get src1 ++ s.get src2)`).
+
+`Op.inBounds (concat …)` does NOT force `dst`/`src1`/`src2` distinct, so `dst`
+may alias a source — the naive `clear dst ⨾ copy src1 ⨾ copy src2` would destroy
+an aliased operand. The aliasing-safe design saves the operands to scratch `sb`
+(`> all operands`, empty — supplied by the contract) BEFORE touching `dst`:
+
+    opCopy sb src1  ⨾  copyAppend sb src2  ⨾  opCopy dst sb  ⨾  clear sb
+
+`sb` first becomes `src1`, then `src1 ++ src2`, which is copied to `dst`; finally
+scratch is restored to `[]`. Correct for every aliasing combination
+(probe-validated, `probes/ConcatScratchProbe.lean`). -/
+def Compile.opConcat (sb dst src1 src2 : Var) : CompiledCmd :=
+  compileSeq (Compile.opCopy sb src1)
+    (compileSeq (Compile.opCopyAppend sb src2)
+      (compileSeq (Compile.opCopy dst sb) (Compile.opClear sb)))
+
+/-- Compile a single primitive operation `Op` to a `CompiledCmd`
+by dispatching on the constructor. The actual TM construction
+lives in the per-`Op` helpers above. -/
+def compileOp (sb : Nat) : Op → CompiledCmd
+  | .clear dst                 => Compile.opClear dst
+  | .appendOne dst             => Compile.opAppendOne dst
+  | .appendZero dst            => Compile.opAppendZero dst
+  | .copy dst src              => Compile.opCopy dst src
+  | .tail dst src              => Compile.opTail dst src
+  | .head dst src              => Compile.opHead dst src
+  | .eqBit dst src1 src2       => Compile.opEqBit sb dst src1 src2
+  | .nonEmpty dst src          => Compile.opNonEmpty dst src
+  | .concat dst src1 src2      => Compile.opConcat sb dst src1 src2
+  -- Length-as-value ops (C5a). Stubs, gated on the unary migration (HANDOFF).
+  | .takeAt _dst _src _lenReg  => compiledCmd_default
+  | .dropAt _dst _src _lenReg  => compiledCmd_default
+  | .consLen _dst _lenSrc _src => compiledCmd_default
 
 /-! ## The compiler -/
 

@@ -88,7 +88,7 @@ def Op.cost : Op → State → Nat
   | .nonEmpty   _ _,          _ => 1
   | .takeAt     _ src _,      s => (s.get src).length + 1
   | .dropAt     _ src _,      s => (s.get src).length + 1
-  | .concat     _ src1 src2,  s => (s.get src1).length + (s.get src2).length + 1
+  | .concat     _ src1 src2,  s => 2 * ((s.get src1).length + (s.get src2).length) + 1
   | .consLen    _ _ src,      s => (s.get src).length + 1
 
 /-! ## Size accounting (the cost-model soundness invariant)
@@ -216,7 +216,7 @@ theorem Op.size_eval_le (o : Op) (s : State) :
         by rw [List.length_drop]; omega
       omega
   | concat dst s1 s2 =>
-      refine State.size_set_le_cost s dst _ ((s.get s1).length + (s.get s2).length + 1) ?_
+      refine State.size_set_le_cost s dst _ (2 * ((s.get s1).length + (s.get s2).length) + 1) ?_
       rw [List.length_append]; omega
   | consLen dst lenSrc src =>
       refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
