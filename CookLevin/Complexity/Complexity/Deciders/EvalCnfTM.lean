@@ -106,6 +106,9 @@ noncomputable def evalCnfDecidesLang :
   -- Like the canonical `c_noConsLen`, this field is dropped entirely once
   -- `Op.consLen` is re-laid UNARY (HANDOFF.md bottom-up Task 4).
   noConsLen := EvalCnfCmd.evalCnfCmd_noConsLen
+  -- (Route A) `evalCnfCmd` is trio-free, so its op cases are all proven —
+  -- this is what keeps `SAT_inNP.sat_NP` axiom-clean.
+  allOpsSupported := EvalCnfCmd.evalCnfCmd_allOpsSupported
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_evalCnf :

@@ -16,7 +16,8 @@ register before working.
 | | |
 |---|---|
 | `lake build` | ✅ green (3357 jobs) |
-| `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`** (both the hardness and the in-NP halves reach a `sorry`). |
+| `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`**, now **only via the hardness half** (`NPhard_GenNP`). |
+| `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
 | Genuine `sorry`s on the proof path | ~31 (Group C — completion) |
 | `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |
@@ -74,8 +75,12 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   (`GenNP_is_hard.lean`) builds its reduction with output-size bound `fun _ =>
   0` (vacuous over the size-0 `instEncodableDefault`) **and** relies on
   `hasDeciderClassical`, a flat `sorry` asserting a `DecidesBy` for *any*
-  predicate. The in-NP half is conditional too: `SAT_inNP` routes through the
-  layer verifier `evalCnfCmd`, whose `decides`/`cost_bound` are `sorry`.
+  predicate. **This is now the *only* `sorry` reaching the headline `CookLevin`**:
+  the in-NP half (`SAT_inNP.sat_NP`, routed through the layer verifier
+  `evalCnfCmd`) is **sorry-free & axiom-clean** as of 2026-06-28 (Route A — an
+  `Op.IsSupported`/`Cmd.AllOpsSupported` wall isolates the live trio-free decider
+  path from the 3 remaining stub ops). So `sorryAx` on `CookLevin` is now wholly a
+  *hardness*-side fact.
 
 ## The strategy: a higher-level computable layer
 
@@ -105,9 +110,10 @@ all gated on a unary-encoding migration; FULLY PROVEN & axiom-clean for
 `concat` assembled as the aliasing-safe 4-stage scratch chain `opConcat` and
 discharged via `opConcat_run`, 2026-06-28).
 **None of the 3 remaining ops is on the live `sat_NP` decider path** (`evalCnfCmd`
-uses none of them), but the *generic* `compileOp_sound_physical_residue` still
-carries their 3 stub `sorry`s, so `SAT_inNP.sat_NP` is still `sorryAx` until an
-`Op.IsSupported` hypothesis isolates the live path (planned, HANDOFF top-down Task 0). `Compile_sound` was false as stated for *three*
+uses none of them); the *generic* `compileOp_sound_physical_residue` still carries
+their 3 stub `sorry`s, but an `Op.IsSupported`/`Cmd.AllOpsSupported` wall (2026-06-28,
+Route A — DONE) isolates the live path, so **`SAT_inNP.sat_NP` is now sorry-free &
+axiom-clean**. `Compile_sound` was false as stated for *three*
 reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
 **unit cost** but `concat`/`copy` grow the state **multiplicatively** (output
