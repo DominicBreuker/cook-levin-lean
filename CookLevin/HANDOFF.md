@@ -69,8 +69,10 @@ W-invariant ①; per-op budget `(54·L²+54·L+180)·(Op.cost+1)`):
 
 **Remaining (raw `sorry`, `Compile/OpSound.lean` `compileOp_sound_physical_residue`):**
 `takeAt`, `dropAt`, `consLen` — the value-as-length trio, all **gated on the unary
-migration** (step 2 below). There is no more "buildable without the migration" op;
-the next bottom-up work is the migration itself.
+migration** (step 2 below, **design now ✅ probe-validated**). There is no more
+"buildable without the migration" op; the next bottom-up work is the migration. Its
+one additive (independently-committable, green) sub-step is `extractLeadingOnes`
+(step 2a); the rest is one atomic batch.
 
 ---
 
@@ -115,20 +117,65 @@ and the **4-stage `compileSeq_sound_physical_residue` composition pattern** with
 its `nlinarith`-over-ℤ budget certificate `concat_budget_arith`.
 
 ### 2. Unary migration — **START HERE** (bottom-up; gates the trio; needed for S3 anyway)
-The value-as-length trio `takeAt`/`dropAt`/`consLen` is meaningless under `BitState`
-with the current `.headD 0` length. Re-state them with **count = the register's
-unary length**; bump `consLen`'s `Op.cost`; re-lay the `Nat`/product/`List` canonical
-encodings bit-level (the product's single length-prefix cell → a unary block) +
-`BitEncodable` instances; re-derive `swapCmd`/`mapFstCmd`/`mapSndCmd` correctness.
-After this, `consLen` preserves `BitState` and the `NoConsLen` side-conditions
-(`DecidesLang'.c_noConsLen`, `PolyTimeComputableLang'.c_noConsLen`,
-`DecidesLang.noConsLen`) can be **dropped**. ⚠ Ripples to the proven product-toolkit
-`normalizes`/cost proofs — schedule as its own batch.
+**✅ DESIGN VALIDATED 2026-06-28** (`probes/UnaryMigrationProbe.lean`, axiom-free
+`#eval`; `lean probes/UnaryMigrationProbe.lean` → all `true`). It is a single
+**coupled atomic batch** — `Op.eval` for the trio breaks BOTH `swapCmd` and
+`mapFstCmd` in `PolyTime.lean` at once, so they all re-derive together (nothing
+decouples; blast radius is otherwise contained — the product toolkit has **no
+external consumers**, only `PolyTime.lean` references it). The validated design:
 
-### 3. `takeAt` / `dropAt` / `consLen` (bottom-up; after step 2)
-Build on the unary length register as a loop counter (the same counted-loop pattern
-as `copy`/`forBnd`). Reuse `loopBudget_le`, the cursor-copy toolkit, and the
-counter-driven block transfer.
+- **Bit-level product encoding** (replaces the single non-bit length-prefix cell):
+  `enc(x,y) = replicate |enc x| 1 ++ [0] ++ enc x ++ enc y` (unary length prefix,
+  `0` separator, then the two components). `BitState`-clean; the `0` separator makes
+  the leading 1-run unambiguous even when `enc x` is empty or itself starts with `1`s.
+  New `dec` = (count leading 1s = L; `rest := drop (L+1)`; `(rest.take L, rest.drop L)`).
+- **New trio semantics** (count = the register's **unary length**, not `.headD 0`):
+  `takeAt dst src lenReg := (s.get src).take (s.get lenReg).length`; `dropAt` mirror;
+  **`consLen dst lenSrc src := replicate (s.get lenSrc).length 1 ++ [0] ++ s.get src`**
+  (now writes a unary block → **preserves `BitState`**, so `Op.consLen_breaks_BitState`
+  becomes false and the `NoConsLen` walls can eventually be dropped — but leave that
+  threading for a follow-up; restating `consLen` does not require dropping it).
+  Bump `Op.cost consLen` (it now materialises `|lenSrc|` cells).
+
+- **★ KEY FINDING (the old "just re-derive swap" was an under-estimate).** Product
+  *unpacking* must recover `L = |enc x|` from the unary prefix, which the current op
+  set **cannot do** (`head` peels one cell; `takeAt`/`dropAt` need the very count they
+  seek). Two routes, BOTH `#eval`-validated in the probe:
+  * **Option L (RECOMMENDED)** — a reusable DSL subroutine `extractLeadingOnes dst src`
+    (scratch params) built from EXISTING ops + one `forBnd` over `src`:
+    `head HD SC ⨾ ifBit DONE (noop) (ifBit HD (appendOne dst) (appendOne DONE)) ⨾ tail SC SC`.
+    **No new op, no new gadget, op count stays 12.** Correctness = a `forBnd` fold
+    invariant (DONE flag), the same pattern as the proven `EvalCnfCmd.memberCheck`.
+    Build it once; `swap`/`mapFst`/`mapSnd` consume it. Cost becomes quadratic
+    (`forBnd`'s `iters²`) — fine, only `inOPoly`/`monotonic` is needed downstream.
+  * **Option H** — a new op `headOnes dst src := (s.get src).takeWhile (·==1)`. Cleaner
+    straight-line `swap`, but adds a 13th op + its counted-loop gadget + a contract
+    case + ~13 exhaustive-match arms. Rejected unless Option L's loop proof stalls.
+
+- **`BitEncodable` plumbing:** add `[BitEncodable X] [BitEncodable Y]` to `swap`/`mapFst`/
+  `mapSnd`; give `BitEncodable (X × Y)` (bit-level product); set `enc_bit :=
+  BitEncodable.enc_bit` — this **discharges the two live `enc_bit := sorry`s**
+  (`PolyTime.lean:1321`, `:1733`). ⚠ `BitEncodable (List Nat)` is FALSE under the
+  `id` encoding (cells can be ≥2) — do NOT claim it; the generic witnesses are over
+  abstract `X`/`Y` so they don't need it. Migrating `List Nat` to a bit-level encoding
+  (drop the `id` shortcut for the length-prefixed `encListGen`) is a SEPARATE, later
+  ripple — not needed for this batch.
+
+**Concrete batch order:** (a) `extractLeadingOnes` def + fold-invariant correctness
+lemma (additive, green — the only piece that can land as its own commit); (b) restate
+trio `Op.eval`/`Op.cost`; (c) new product `enc`/`dec`/`dec_enc`/`enc_size` + `BitEncodable`;
+(d) rewrite `swapCmd`/`mapFstCmd`/`mapSndCmd` (`_eval`/`_cost`/`normalizes`/`usesBelow`/
+`enc_bit`) against the new design; (e) fix the trio `Op.inBounds`/`BitState`-preservation
+cases in `Compile/RunClear.lean`. Steps (b)–(e) land together (atomic).
+
+### 3. `takeAt` / `dropAt` / `consLen` TM gadgets (bottom-up; after step 2 — the actual op-soundness deliverable)
+Each is a **counted loop** reusing proven patterns: the unary `lenReg`/`lenSrc` is a
+loop bound (`forBnd`); `takeAt`/`dropAt` are counter-driven cursor copies (reuse
+`opCopy`/`copyLoop_run`, `loopBudget_le`); `consLen` writes `replicate |lenSrc| 1 ++ [0]`
+then appends `src` (an `appendOne`-loop + the `concat`/`opCopyAppend` toolkit). Discharge
+the three cases of `compileOp_sound_physical_residue`. After this all 12 ops are proven →
+`compileOp_sound_physical_residue` is sorry-free → `sat_NP` drops `sorryAx` automatically
+(Route B). Feasibility of all three is probe-asserted (counted loops over proven gadgets).
 
 ### 4. Close out — two independent routes to the headline soundness win
 
