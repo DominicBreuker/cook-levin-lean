@@ -125,9 +125,11 @@ re-derive — see "Proven, reusable" below): `opCopyAppend`/`copyAppendRaw_run`/
 and the **4-stage `compileSeq_sound_physical_residue` composition pattern** with
 its `nlinarith`-over-ℤ budget certificate `concat_budget_arith`.
 
-### 2. Unary migration — **START HERE** (bottom-up; gates the trio; needed for S3 anyway)
+### 2. Unary migration — **NEXT BOTTOM-UP** (step 2a ✅ done; do steps 2b–2e next)
 **✅ DESIGN VALIDATED 2026-06-28** (`probes/UnaryMigrationProbe.lean`, axiom-free
-`#eval`; `lean probes/UnaryMigrationProbe.lean` → all `true`). It is a single
+`#eval`; `lean probes/UnaryMigrationProbe.lean` → all `true`). **Step 2a (the
+additive piece) is now PROVEN** — see `extractLeadingOnes` below. The remaining
+steps 2b–2e are the **coupled atomic batch**. It is a single
 **coupled atomic batch** — `Op.eval` for the trio breaks BOTH `swapCmd` and
 `mapFstCmd` in `PolyTime.lean` at once, so they all re-derive together (nothing
 decouples; blast radius is otherwise contained — the product toolkit has **no
@@ -150,13 +152,15 @@ external consumers**, only `PolyTime.lean` references it). The validated design:
   *unpacking* must recover `L = |enc x|` from the unary prefix, which the current op
   set **cannot do** (`head` peels one cell; `takeAt`/`dropAt` need the very count they
   seek). Two routes, BOTH `#eval`-validated in the probe:
-  * **Option L (RECOMMENDED)** — a reusable DSL subroutine `extractLeadingOnes dst src`
-    (scratch params) built from EXISTING ops + one `forBnd` over `src`:
-    `head HD SC ⨾ ifBit DONE (noop) (ifBit HD (appendOne dst) (appendOne DONE)) ⨾ tail SC SC`.
-    **No new op, no new gadget, op count stays 12.** Correctness = a `forBnd` fold
-    invariant (DONE flag), the same pattern as the proven `EvalCnfCmd.memberCheck`.
-    Build it once; `swap`/`mapFst`/`mapSnd` consume it. Cost becomes quadratic
-    (`forBnd`'s `iters²`) — fine, only `inOPoly`/`monotonic` is needed downstream.
+  * **Option L (CHOSEN, ✅ BUILT) — `CookLevin/Complexity/Lang/ExtractOnes.lean`.**
+    `extractLeadingOnes dst src SC HD DONE NOOP CNT : Cmd` (existing ops + one
+    `forBnd` over `src`; no new op, op count stays 12). **PROVEN & axiom-clean:**
+    `extractLeadingOnes_get_dst` (`dst = replicate (leadingOnes src) 1`, via the
+    `forBnd` DONE-flag fold invariant) + `extractLeadingOnes_usesBelow`. ⚠ it
+    imports `Mathlib.Tactic` (the `Lang/*` modules are core-only; `rcases`/`set`/
+    `obtain`/`simpa` need it). `swap`/`mapFst`/`mapSnd` **consume** this in step 2d.
+    Cost is quadratic (`forBnd`'s `iters²`) — fine, only `inOPoly`/`monotonic` is
+    needed downstream.
   * **Option H** — a new op `headOnes dst src := (s.get src).takeWhile (·==1)`. Cleaner
     straight-line `swap`, but adds a 13th op + its counted-loop gadget + a contract
     case + ~13 exhaustive-match arms. Rejected unless Option L's loop proof stalls.
@@ -170,12 +174,13 @@ external consumers**, only `PolyTime.lean` references it). The validated design:
   (drop the `id` shortcut for the length-prefixed `encListGen`) is a SEPARATE, later
   ripple — not needed for this batch.
 
-**Concrete batch order:** (a) `extractLeadingOnes` def + fold-invariant correctness
-lemma (additive, green — the only piece that can land as its own commit); (b) restate
-trio `Op.eval`/`Op.cost`; (c) new product `enc`/`dec`/`dec_enc`/`enc_size` + `BitEncodable`;
-(d) rewrite `swapCmd`/`mapFstCmd`/`mapSndCmd` (`_eval`/`_cost`/`normalizes`/`usesBelow`/
-`enc_bit`) against the new design; (e) fix the trio `Op.inBounds`/`BitState`-preservation
-cases in `Compile/RunClear.lean`. Steps (b)–(e) land together (atomic).
+**Concrete batch order:** (a) ✅ **DONE** — `extractLeadingOnes` def + correctness
+(`ExtractOnes.lean`); (b) restate trio `Op.eval`/`Op.cost`; (c) new product
+`enc`/`dec`/`dec_enc`/`enc_size` + `BitEncodable`; (d) rewrite `swapCmd`/`mapFstCmd`/
+`mapSndCmd` (`_eval`/`_cost`/`normalizes`/`usesBelow`/`enc_bit`) against the new
+design — **wire in `extractLeadingOnes` here** (it gives the unary `L` block that
+feeds the restated `takeAt`/`dropAt`); (e) fix the trio `Op.inBounds`/`BitState`-
+preservation cases in `Compile/RunClear.lean`. Steps (b)–(e) land together (atomic).
 
 ### 3. `takeAt` / `dropAt` / `consLen` TM gadgets (bottom-up; after step 2 — the actual op-soundness deliverable)
 Each is a **counted loop** reusing proven patterns: the unary `lenReg`/`lenSrc` is a
@@ -231,6 +236,11 @@ Pick one — both are independent of the bottom-up trio work:
 
 The op builds below are templates; the helper stacks are axiom-clean.
 
+- **`extractLeadingOnes` (unary-migration step 2a) is PROVEN** —
+  `Lang/ExtractOnes.lean`, axiom-clean. Recovers the unary length prefix
+  `L = leadingOnes src` as `replicate L 1` in `dst`, via a `forBnd` DONE-flag fold
+  invariant (template: `EvalCnfCmd.memberCheck`). `extractLeadingOnes_get_dst` +
+  `_usesBelow`. The unpacking primitive `swap`/`mapFst`/`mapSnd` need in step 2d.
 - **The op-supportedness wall (Route A) is closed.** `Op.IsSupported`/
   `Cmd.AllOpsSupported` (Syntax.lean) + the field `allOpsSupported` on
   `DecidesLang`/`PolyTimeComputableLang`, threaded through
