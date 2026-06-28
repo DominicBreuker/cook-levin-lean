@@ -31,9 +31,10 @@ the owner says **`bottom-up`** or **`top-down`**:
 ## The goal of this stream: all 12 `compileOp`s proven
 
 The compiler `Compile : Cmd → FlatTM` is sound iff every `Op` has a discharged
-soundness case in `compileOp_sound_physical_residue`. **8/12 are done; the plan is
-to finish the remaining 4** (`concat`, `takeAt`, `dropAt`, `consLen`). Why all 12
-(not the `Op.IsSupported` shortcut that would isolate only the live SAT path):
+soundness case in `compileOp_sound_physical_residue`. **9/12 are done; the plan is
+to finish the remaining 3** (`takeAt`, `dropAt`, `consLen` — the value-as-length
+trio, all gated on the unary migration). Why all 12 (not the `Op.IsSupported`
+shortcut that would isolate only the live SAT path):
 
 - We need them anyway — the **reduction half** (`⪯p` / `toFrameworkWitness'`, the
   S3 endgame that compiles the whole reduction chain to `Cmd`s) uses the full op
@@ -49,7 +50,7 @@ sat_NP (EvalCnfTM.lean)
   → inTimePolyLang_to_inTimePoly → DecidesLang.toInTimePoly/.toDecidesBy   (PolyTime.lean; ✅)
        → Compile.paddedBitDecider_run → Compile.bitDecider_run            (Compile.lean; ✅)
             → Compile_run_physical_residue → run_physical_residue_gen      (✅ from the assembly)
-                 → compileOp_sound_physical_residue                        (⚠ 4 stub sorries)
+                 → compileOp_sound_physical_residue                        (⚠ 3 stub sorries)
        evalCnfDecidesLang : DecidesLang …                                  (✅ COMPLETE, axiom-clean)
 ```
 `evalCnfCmd` is `concat`/`takeAt`/`dropAt`/`consLen`-free, budget quartic
@@ -59,14 +60,17 @@ sat_NP (EvalCnfTM.lean)
 
 ---
 
-## Current op status (8/12)
+## Current op status (9/12)
 
 **Proven & axiom-clean** in `compileOp_sound_physical_residue` (each carries the
 W-invariant ①; per-op budget `(54·L²+54·L+180)·(Op.cost+1)`):
-`appendOne`, `appendZero`, `clear`, `nonEmpty`, `head`, `copy`, `tail`, `eqBit`.
+`appendOne`, `appendZero`, `clear`, `nonEmpty`, `head`, `copy`, `tail`, `eqBit`,
+**`concat`** (done this session — `Compile/OpSound.lean`, via `opConcat_run`).
 
-**Remaining (raw `sorry`, Compile.lean ~L20142–45):**
-`concat`, `takeAt`, `dropAt`, `consLen`.
+**Remaining (raw `sorry`, `Compile/OpSound.lean` `compileOp_sound_physical_residue`):**
+`takeAt`, `dropAt`, `consLen` — the value-as-length trio, all **gated on the unary
+migration** (step 2 below). There is no more "buildable without the migration" op;
+the next bottom-up work is the migration itself.
 
 ---
 
@@ -99,73 +103,18 @@ W-invariant ①; per-op budget `(54·L²+54·L+180)·(Op.cost+1)`):
 
 ## The plan to 12 ops
 
-### 1. `concat` — START HERE (bottom-up; buildable without the unary migration)
-`concat dst src1 src2 = s.set dst (s.get src1 ++ s.get src2)`.
+### 1. `concat` — ✅ DONE (this session, axiom-clean)
+`Compile.opConcat` (Cmd.lean) = the aliasing-safe 4-stage scratch chain
+`opCopy sb src1 ⨾ opCopyAppend sb src2 ⨾ opCopy dst sb ⨾ clear sb`; the OpSound
+case is discharged by `Compile.opConcat_run` (OpSound.lean). `Op.cost concat` was
+bumped to `2(|src1|+|src2|)+1` (the scratch round-trip dumps ~2|V| into the
+residue; needed for the W-invariant). New **reusable** infrastructure (do not
+re-derive — see "Proven, reusable" below): `opCopyAppend`/`copyAppendRaw_run`/
+`opCopyAppend_run` (the nonempty-`dst` cursor copy = `opCopy` minus the clear),
+and the **4-stage `compileSeq_sound_physical_residue` composition pattern** with
+its `nlinarith`-over-ℤ budget certificate `concat_budget_arith`.
 
-**✅ Foundation DONE (this session): `Compile.copyLoopAppend_run`** (`RunCopyTail.lean`,
-axiom-clean) — the cursor loop now appends `src` to a **nonempty** `dst`, producing
-`s.set dst (s.get dst ++ s.get src)` with exact residue. `copyLoop_run` (the
-empty-`dst` form) is kept as a thin corollary so `opCopy_run`/eqBit are unchanged.
-
-**⚠ ALIASING FINDING (corrects the naive plan).** `Op.inBounds (concat …)` is just
-`dst<k ∧ src1<k ∧ src2<k` — it does **NOT** require the three registers distinct,
-so `dst` may alias `src1`/`src2`. The naive `clear dst ⨾ copy-append src1 ⨾
-copy-append src2` is then **WRONG**: `clear dst` destroys an aliased source (e.g.
-`concat d d s2` wants `old_d ++ s2` but clears `d` first). Must copy operands to
-scratch first. The contract already provisions scratch (`sb`, `sb+1`; `hsb1`/`hsbe`/
-`hsb1e`/`hbsb : Op.UsesBelow o sb` give `dst,src1,src2 < sb`).
-
-**Design — 4 stages, ONE scratch register `sb`, aliasing-safe (PROBE-VALIDATED,
-`probes/ConcatScratchProbe.lean`):**
-```
-opCopy sb src1     -- sb := src1                (sb fresh ⇒ safe even if src1 = dst)
-copyAppend sb src2 -- sb := src1 ++ src2        (nonempty-dst append; uses copyLoopAppend_run)
-opCopy dst sb      -- dst := src1 ++ src2
-clear sb           -- restore scratch empty
-```
-Correct for **every** alias combination (operands are saved in `sb` before `dst`
-is touched). `sb+1` is unused for concat (only `sb`); leave `hsb1e` available.
-
-**⚠⚠ W-INVARIANT FINDING + REQUIRED FIX — bump `Op.cost concat` (do this FIRST).**
-The probe shows the scratch round-trip dumps `|s.get dst| + |s.get src1 ++ s.get
-src2|` zeros into the residue (clearing old `dst` AND clearing scratch, which
-holds the full result `V`). The contract ① allows residue growth ≤ `cost −
-sizeGrowth`, which for the current `cost = |src1|+|src2|+1` is `|s.get dst| + 1` —
-i.e. **`|V|` short**. So the scratch design is **UNPROVABLE under the current
-cost** (probe: residue `{6,5,7,6,6}` vs allowed `{3,3,3,3,2}` — fails every case).
-**Fix: in `Lang/Semantics.lean` set `Op.cost (.concat _ src1 src2) s :=
-2*((s.get src1).length + (s.get src2).length) + 1`** (probe: residue then fits
-`{7,6,8,7,7}`, slack 1, every case). This is **faithful** (the round-trip really
-takes ~2|V| TM steps) and cheap: `Op.size_eval_le` (Semantics.lean ~L218) still
-closes (more slack), it is a constant factor so `inOPoly`/degree are unchanged,
-and it only ripples as a 2× on concat terms in endgame `Cmd.cost`. *(Alternative,
-no cost change but TWO new gadgets + 4-case compile-time branching: cases
-`dst∉{s1,s2}`/`dst=src1`/`dst=src1=src2` are W-clean with the current cost via
-`clear?⨾copyAppend⨾copyAppend`, but `dst=src2` needs an in-place **prepend**
-gadget — heavier. The cost-bump uniform design is recommended.)*
-
-**The ONE new gadget needed: `copyAppendTM dst src` = `opCopy` minus the clear**
-(`navigateToRegTM src ⨾ copyLoopTM dst ⨾ justRewindTM`, boundary halt demoted via
-`joinTwoHalts`). Mirror `copyRegionFullTM`/`opCopy` (OpMachines) + a run lemma in
-RunCopyTail adapted from `opCopy_run` (~250 lines) but **drop the `clearRegionTM`
-phase** (3 compose levels not 4): residue is just `res_in` (no `replicate |dst₀|
-0`), output `s.set dst (s.get dst ++ s.get src)` straight from `copyLoopAppend_run`
-(phase 3) — note the rewind (phase 4) now runs on the *grown* tape, so state its
-budget over the OUTPUT tape length. `dst ≠ src` required (in concat, gadget-`src`
-is always an operand and gadget-`dst` is always `sb`/`dst`, never equal).
-
-**Then assemble** `Compile.opConcat sb dst src1 src2` (in `Cmd.lean`, after
-`compileSeq`) as the `compileSeq` chain of the four `CompiledCmd` pieces
-(`opCopy`, `copyAppend`, `opClear`), wire `compileOp`'s `concat` case to it, and
-discharge the OpSound case by chaining the four per-piece run lemmas through
-`compileSeq_sound_physical_residue` / `_traj_physical_residue` (OpSound L457/505 —
-the residue threads automatically; mid-states are `BitState`). **Budget caveat:**
-intermediate tapes grow (V lives in scratch), so each stage's budget is over a
-*longer* L (≤ input L + |V| ≤ 2L); the cost-scaled contract `(54L²+…)·(cost'+1)`
-with the loose `54 = 6·9` constants absorbs this. Cross-check W-① with
-`State.size_set_add` (probe already did the arithmetic).
-
-### 2. Unary migration (bottom-up; gated for the trio; needed for S3 anyway)
+### 2. Unary migration — **START HERE** (bottom-up; gates the trio; needed for S3 anyway)
 The value-as-length trio `takeAt`/`dropAt`/`consLen` is meaningless under `BitState`
 with the current `.headD 0` length. Re-state them with **count = the register's
 unary length**; bump `consLen`'s `Op.cost`; re-lay the `Nat`/product/`List` canonical
@@ -181,11 +130,31 @@ Build on the unary length register as a loop counter (the same counted-loop patt
 as `copy`/`forBnd`). Reuse `loopBudget_le`, the cursor-copy toolkit, and the
 counter-driven block transfer.
 
-### 4. Close out (top-down, after all 12 proven)
-With `compileOp_sound_physical_residue` sorry-free, confirm `#print axioms
-SAT_inNP.sat_NP` drops `sorryAx` (only `propext`/`Classical.choice`/`Quot.sound`),
-then **update README + ROADMAP** (the "in-NP half reaches a `sorry`" line becomes
-false for SAT). This is the first headline soundness win.
+### 4. Close out — two independent routes to the headline soundness win
+
+**Route A (top-down, do this FIRST — does NOT wait for the trio): `Op.IsSupported`
+threading.** The live `sat_NP` path (`evalCnfCmd`) uses none of `takeAt`/`dropAt`/
+`consLen`, yet `#print axioms SAT_inNP.sat_NP` is still `sorryAx` because it walks
+the *generic* `compileOp_sound_physical_residue` whose body still has the 3 stub
+sorries (`#print axioms` taints on the whole constant). Fix: add a predicate
+`Op.IsSupported` (true for the 9 proven ops, false for the trio) + `Cmd.AllOpsSupported`,
+thread it as a hypothesis through `compileOp_sound_physical_residue` →
+`run_physical_residue_gen` → `bitDecider_run` → … so the trio cases discharge by
+`exact absurd … (by simp [Op.IsSupported])` instead of `sorry`. `evalCnfCmd`
+satisfies `AllOpsSupported` by `decide`. This makes `sat_NP` sorry-free — the first
+headline soundness win — **without** the unary migration. Estimate: medium (the
+threading touches the assembly chain but each step is mechanical).
+
+**Route B (after all 12 proven): unconditional close-out.** Once the trio is done
+(steps 2–3), `compileOp_sound_physical_residue` is sorry-free outright, so `sat_NP`
+drops `sorryAx` automatically (no `IsSupported` plumbing needed). Then **update
+README + ROADMAP** (the "in-NP half reaches a `sorry`" line becomes false for SAT).
+
+⚠ **Cost-bump ripple note (for whoever touches the product toolkit / endgame
+`Cmd.cost`):** `Op.cost concat = 2(|src1|+|src2|)+1` now. The product-toolkit
+witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
+`7·cost_bound + 18·n + 31` (PolyTime.lean). `enc_size` is `|enc x| ≤ 2·size+1`
+(NOT `≤ size`) — budget bounds that look "off by 2×" are usually this.
 
 ### Standalone top-down work (not on the 12-op critical path)
 - **CliqueRelTM** (`Deciders/CliqueRelTM.lean`, still raw `sorry` defs+fields):
@@ -205,11 +174,12 @@ The op builds below are templates; the helper stacks are axiom-clean.
 
 - **Assembly is closed.** `run_physical_residue_gen` (residue induction; op/seq
   proven, ifBit/forBnd dispatch to their combinators; W-① + budget ② + scratch
-  invariant threaded), `compileSeq_sound_physical_residue` (+`_traj`),
-  `bitDecider_run`, `paddedBitDecider_run`, `paddedComputeTM`/`paddedCompute_run`
+  invariant threaded), `compileSeq_sound_physical_residue` (+`_traj`) — now placed
+  **above** the op contract in OpSound so per-op gadgets (e.g. `opConcat_run`) can
+  chain stages; `bitDecider_run`, `paddedBitDecider_run`, `paddedComputeTM`/`paddedCompute_run`
   (function-side WALL). Both decider bridges + the reduction bridge
   (`PolyTimeComputableLang.toFrameworkWitness'` on `paddedCompute_run`) + layer
-  composition / NP-routing (`red_inNP_of_lang`) are sorry-free modulo the 4 ops.
+  composition / NP-routing (`red_inNP_of_lang`) are sorry-free modulo the 3 ops.
   ⚠ `Compile_sound`/`Compile_run_physical`/`Compile_polyBound` are DEAD/superseded
   — do not attempt to prove.
 - **`compileForBnd_sound_physical_residue`** — the counted loop, FULLY PROVEN &
@@ -221,7 +191,14 @@ The op builds below are templates; the helper stacks are axiom-clean.
 - **The op gadget stacks** (each = real `CompiledCmd` + run lemma + contract case),
   all axiom-clean: `opCopy`/`copyLoop_run`/`opCopy_run` (cursor-copy, marked-tape
   toolkit) + **`copyLoopAppend_run`** (the nonempty-`dst` generalisation, appends
-  `src` to `s.get dst`; the `concat`/second-copy primitive), `opTail`/`opTail_run`,
+  `src` to `s.get dst`) + **`opCopyAppend`/`copyAppendRaw_run`/`opCopyAppend_run`**
+  (the CompiledCmd cursor-copy WITHOUT the clear = `opCopy` minus phase 1; appends
+  `src` to `dst`, residue unchanged — the `concat` second-copy primitive),
+  **`opConcat`/`opConcat_run`** (the 4-stage scratch chain + its `concat_budget_arith`
+  ℤ-`nlinarith` certificate; the **template for any multi-`CompiledCmd` op**: chain
+  per-stage run/traj lemmas through `compileSeq_sound_physical_residue`/`_traj`, then
+  bound the additive-seam budget `Σtᵢ+3` by per-stage tape-length equalities + a
+  cert), `opTail`/`opTail_run`,
   `opNonEmpty`, `opHead`/`bitReadTM` (nested 2-way
   branches), `opEqBitNG`/`opEqBitNG_run` (the `compareRegsNoGrowM` consume-loop tree:
   `copyEmptyRawTM`/`compareLoopTM`/`eqVerdictM`/`bitCompareM`/`bothNonemptyM`/
