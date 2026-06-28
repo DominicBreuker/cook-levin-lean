@@ -2469,6 +2469,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
     (huses : Cmd.UsesBelow c k)
     (hscratch : ∀ r, k ≤ r → State.get s r = [])
     (hnc : Cmd.NoConsLen c)
+    (hsupp : Cmd.AllOpsSupported c)
     (hres0 : Compile.ValidResidue res0)
     (hG : State.size s + s.length + res0.length + c.cost s + 2 ≤ G) :
     ∃ (t : Nat) (res : List Nat),
@@ -2495,7 +2496,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hsbe : State.get s k = [] := hscratch k (Nat.le_refl k)
       have hsb1e : State.get s (k + 1) = [] := hscratch (k + 1) (Nat.le_succ k)
       obtain ⟨t, res_out, hres, hW, hrun, htraj, hbud⟩ :=
-        compileOp_sound_physical_residue k o s res0 hbit hbnd hres0 hsb1 hsbe hsb1e huses
+        compileOp_sound_physical_residue k o s res0 hbit hbnd hres0 hsb1 hsbe hsb1e huses hsupp
       refine ⟨t, res_out, hres, hW, hrun, htraj, ?_⟩
       · -- ② budget: `(9·L²+9·L+30)·(cost+1) ≤ physStepBudget G (Op.cost o s)`, since
         -- `L ≤ G` and `(9G²+9G+30)·(cost+1)` sits termwise under `(9G²+9G+33)·(8·cost+8)`.
@@ -2532,7 +2533,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hG1 : State.size s + s.length + res0.length + c1.cost s + 2 ≤ G := by
         rw [Cmd.cost_seq] at hG; omega
       obtain ⟨t1, res1, hres1, hW1, hrun1, htraj1, hbud1⟩ :=
-        ih1 k s res0 G hbit hk1' huses.1 hscratch hnc.1 hres0 hG1
+        ih1 k s res0 G hbit hk1' huses.1 hscratch hnc.1 hsupp.1 hres0 hG1
       have hbit_mid : Compile.BitState (c1.eval s) :=
         Cmd.eval_preserves_BitState c1 k s huses.1 hks hnc.1 hbit
       have hmidge : s.length ≤ (c1.eval s).length := Cmd.eval_length_ge c1 s
@@ -2545,7 +2546,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
                     + c2.cost (c1.eval s) + 2 ≤ G := by
         rw [Cmd.cost_seq] at hG; omega
       obtain ⟨t2, res2, hres2, hW2, hrun2, htraj2, hbud2⟩ :=
-        ih2 k (c1.eval s) res1 G hbit_mid hk2' huses.2 hscratch_mid hnc.2 hres1 hG2
+        ih2 k (c1.eval s) res1 G hbit_mid hk2' huses.2 hscratch_mid hnc.2 hsupp.2 hres1 hG2
       have hhalt2 : haltingStateReached (compileCmd k c2).M
           { state_idx := (compileCmd k c2).exit,
             tapes := [([], 0, Compile.encodeTape (c2.eval (c1.eval s)) ++ res2)] } = true := by
@@ -2573,10 +2574,10 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hdE : cE.loopDepth ≤ max cT.loopDepth cE.loopDepth := Nat.le_max_right _ _
       have hks : k ≤ s.length := by omega
       have hT : s.get tt = [1] → _ := fun htrue =>
-        ihT k s res0 G hbit (by omega) huses.2.1 hscratch hnc.1 hres0 (by
+        ihT k s res0 G hbit (by omega) huses.2.1 hscratch hnc.1 hsupp.1 hres0 (by
           have hc := Cmd.cost_ifBit_true tt cT cE s htrue; rw [hc] at hG; omega)
       have hE : s.get tt ≠ [1] → _ := fun hfalse =>
-        ihE k s res0 G hbit (by omega) huses.2.2 hscratch hnc.2 hres0 (by
+        ihE k s res0 G hbit (by omega) huses.2.2 hscratch hnc.2 hsupp.2 hres0 (by
           have hc := Cmd.cost_ifBit_false tt cT cE s hfalse; rw [hc] at hG; omega)
       have htlt : tt < s.length := Nat.lt_of_lt_of_le huses.1 hks
       have hG' : State.size s + s.length + res0.length + 2 ≤ G := by omega
@@ -2605,7 +2606,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
         G s res0 hbit huses.1 huses.2.1 (by omega) huses.2.2 hnc hscratch hres0 hG
         (fun s' res' G' hb hlen' hscr' hr hg =>
           ihbody (k + 2) s' res' G' hb hlen'
-            (Cmd.UsesBelow_mono (by omega) huses.2.2) hscr' hnc hr hg)
+            (Cmd.UsesBelow_mono (by omega) huses.2.2) hscr' hnc hsupp hr hg)
 /-- **★ The C2 obligation, residue-tolerant physical compiler contract (Risk C2),
 PROVEN from the assembly** — the `res0 = []` instance of
 `Compile.run_physical_residue_gen`. Accounts for the tape never shrinking: the
@@ -2631,7 +2632,8 @@ theorem Compile_run_physical_residue (c : Cmd) (k : Nat) (s : State)
     (hbit : Compile.BitState s) (hk : k + 2 * c.loopDepth + 2 ≤ s.length)
     (huses : Cmd.UsesBelow c k)
     (hscratch : ∀ r, k ≤ r → State.get s r = [])
-    (hnc : Cmd.NoConsLen c) :
+    (hnc : Cmd.NoConsLen c)
+    (hsupp : Cmd.AllOpsSupported c) :
     ∃ (t : Nat) (res : List Nat),
       Compile.ValidResidue res ∧
       runFlatTM t (Compile k c) (initFlatConfig (Compile k c) [Compile.encodeTape s])
@@ -2645,7 +2647,7 @@ theorem Compile_run_physical_residue (c : Cmd) (k : Nat) (s : State)
       t ≤ Compile.physStepBudget (State.size s + s.length + c.cost s + 2) (c.cost s) := by
   obtain ⟨t, res, hres, _hW, hrun, htraj, hbud⟩ :=
     Compile.run_physical_residue_gen c k s [] (State.size s + s.length + c.cost s + 2)
-      hbit hk huses hscratch hnc Compile.ValidResidue_nil (by rw [List.length_nil]; omega)
+      hbit hk huses hscratch hnc hsupp Compile.ValidResidue_nil (by rw [List.length_nil]; omega)
   refine ⟨t, res, hres, ?_, ?_, hbud⟩
   · rw [List.append_nil] at hrun; exact hrun
   · intro k' hk' ck hck
@@ -2689,6 +2691,7 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
     (huses : Cmd.UsesBelow c k)
     (hscratch : ∀ r, k ≤ r → State.get s r = [])
     (hnc : Cmd.NoConsLen c)
+    (hsupp : Cmd.AllOpsSupported c)
     (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
     ∃ cfg,
       runFlatTM (Compile.physStepBudget (State.size s + s.length + c.cost s + 2)
@@ -2698,7 +2701,7 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
       cfg.state_idx = (if b = 1 then 1 else 2) + (Compile k c).states := by
   obtain ⟨tl0, htl0⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
   obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ :=
-    Compile_run_physical_residue c k s hbitst hk huses hscratch hnc
+    Compile_run_physical_residue c k s hbitst hk huses hscratch hnc hsupp
   -- Rewrite the physical exit tape via the encoding lemma (leading sentinel).
   -- The residue trails the encoded output; the gadget reads only positions 0–1,
   -- so fold the residue into the tail `tl := tl0 ++ res`.

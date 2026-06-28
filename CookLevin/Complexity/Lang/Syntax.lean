@@ -117,6 +117,31 @@ def Cmd.loopDepth : Cmd → Nat
   | .ifBit _ cT cE      => max cT.loopDepth cE.loopDepth
   | .forBnd _ _ body    => body.loopDepth + 1
 
+/-- **An `Op` whose soundness case in `compileOp_sound_physical_residue` is
+discharged (9/12).** The value-as-length trio `takeAt`/`dropAt`/`consLen` is the
+only unsupported set; their soundness cases are still `sorry` (gated on the unary
+migration — HANDOFF bottom-up step 2). This predicate isolates the proven ops so
+the *live* `sat_NP` decider path (whose program uses none of the trio) discharges
+its op cases without touching the stub `sorry`s — see `Cmd.AllOpsSupported`. -/
+def Op.IsSupported : Op → Prop
+  | .takeAt _ _ _  => False
+  | .dropAt _ _ _  => False
+  | .consLen _ _ _ => False
+  | _              => True
+
+/-- A `Cmd` all of whose ops have a discharged soundness case (`Op.IsSupported`).
+This is the wall that makes a *concrete* trio-free decider (e.g. `evalCnfCmd`)
+yield a `sorry`-free `compileOp_sound_physical_residue` discharge, so its
+`bitDecider_run` (and hence `SAT_inNP.sat_NP`) is axiom-clean even while the trio
+remains stubbed. Strictly stronger than `Cmd.NoConsLen` (it also rules out
+`takeAt`/`dropAt`); dropped once the trio is proven (HANDOFF bottom-up step 2–3,
+Route B). -/
+def Cmd.AllOpsSupported : Cmd → Prop
+  | .op o            => Op.IsSupported o
+  | .seq c1 c2       => Cmd.AllOpsSupported c1 ∧ Cmd.AllOpsSupported c2
+  | .ifBit _ cT cE   => Cmd.AllOpsSupported cT ∧ Cmd.AllOpsSupported cE
+  | .forBnd _ _ body => Cmd.AllOpsSupported body
+
 /-- Output convention: a state `s` is `accept` iff register 0
 contains exactly `[1]`. -/
 def State.isAccept (s : State) : Bool := s.get 0 == [1]

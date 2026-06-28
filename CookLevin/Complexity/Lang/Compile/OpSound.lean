@@ -490,7 +490,12 @@ theorem compileOp_sound_physical_residue (sb : Nat) (o : Op) (s : State) (res_in
     -- **Operands live below the scratch base** (eqBit/concat only; from the gen lemma's
     -- `huses : Op.UsesBelow o k` with the scratch base `sb = k`). The eqBit gadget copies
     -- the operands into scratch `sb`/`sb+1`, so it needs them disjoint from scratch.
-    (hbsb : Op.UsesBelow o sb) :
+    (hbsb : Op.UsesBelow o sb)
+    -- **Op-supportedness wall (Route A).** The trio `takeAt`/`dropAt`/`consLen`
+    -- is still stubbed (gated on the unary migration); this hypothesis discharges
+    -- their cases by `absurd` so the body is `sorry`-free. A concrete trio-free
+    -- decider (`evalCnfCmd`) supplies it through `Cmd.AllOpsSupported`.
+    (hsupp : Op.IsSupported o) :
     ∃ (t : Nat) (res_out : List Nat),
       Compile.ValidResidue res_out ∧
       -- ① the **W-invariant** (joint size+residue grows by ≤ cost). Non-compounding;
@@ -694,13 +699,13 @@ theorem compileOp_sound_physical_residue (sb : Nat) (o : Op) (s : State) (res_in
         rw [hv] at h
         simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
         omega
-  | takeAt dst src lenReg => sorry
-  | dropAt dst src lenReg => sorry
+  | takeAt dst src lenReg => simp only [Op.IsSupported] at hsupp
+  | dropAt dst src lenReg => simp only [Op.IsSupported] at hsupp
   | concat dst src1 src2 =>
       obtain ⟨hdst_sb, hsrc1_sb, hsrc2_sb⟩ := hbsb
       exact Compile.opConcat_run s sb dst src1 src2 hbit hbnd.1 hbnd.2.1 hbnd.2.2
         hsb1 hsbe hdst_sb hsrc1_sb hsrc2_sb res_in hres_in
-  | consLen dst lenSrc src => sorry
+  | consLen dst lenSrc src => simp only [Op.IsSupported] at hsupp
 
 /-- **Physical-contract `compileSeq` composition (PROVEN).** Given two
 sub-machines each satisfying the physical contract (head-`0` exit, exact tape,

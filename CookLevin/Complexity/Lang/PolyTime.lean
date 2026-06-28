@@ -103,6 +103,12 @@ structure DecidesLang {X : Type} [encodable X]
   UNARY (HANDOFF bottom-up Task 4), it breaks `BitState`; this field is the `NoConsLen` side-condition
   `Compile.paddedBitDecider_run` needs. Dropped entirely once `consLen` is unary. -/
   noConsLen : Cmd.NoConsLen c
+  /-- **(Route A) Op-supportedness wall.** Every op in `c` has a discharged
+  soundness case (`Op.IsSupported`), so `Compile.paddedBitDecider_run`'s op cases
+  never reach the trio stub `sorry`s — making a *concrete* trio-free decider's
+  `toDecidesBy` (hence `SAT_inNP.sat_NP`) axiom-clean. Dropped once the trio is
+  proven (HANDOFF bottom-up step 2–3, Route B). -/
+  allOpsSupported : Cmd.AllOpsSupported c
 
 /-- `P` is in polynomial time *at the layer level*: there is a
 `DecidesLang` witness with polynomially bounded cost. -/
@@ -145,6 +151,9 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   /-- **(WALL, Risk C2 — bottom-up) `consLen`-free** — mirrors `DecidesLang.noConsLen`;
   dropped once `Op.consLen` is re-laid UNARY (HANDOFF bottom-up Task 4). -/
   noConsLen : Cmd.NoConsLen c
+  /-- **(Route A) Op-supportedness wall** — mirrors `DecidesLang.allOpsSupported`;
+  every op in `c` has a discharged soundness case. Dropped once the trio is proven. -/
+  allOpsSupported : Cmd.AllOpsSupported c
   /-- **(WALL, Risk C2) Decode is padding-insensitive.** Widening the input by
   empty registers (any count `m` — the padded machine uses
   `regBound + 2 * c.loopDepth`, program frame plus compiler scratch) does not
@@ -391,7 +400,7 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
       have hbit_in : Compile.BitState (W.encodeIn x) := W.enc_bit x
       obtain ⟨res, _hres, hrun, hhalt⟩ :=
         Compile.paddedCompute_run W.c (W.encodeIn x) W.regBound hbit_in (W.width_le x)
-          W.usesBelow W.noConsLen
+          W.usesBelow W.noConsLen W.allOpsSupported
       set wide : State := W.encodeIn x ++ List.replicate RB [] with hwide
       have hbit_w : Compile.BitState wide := by
         rw [hwide]; exact Compile.BitState_append_replicate_nil (W.encodeIn x) RB hbit_in
@@ -761,6 +770,19 @@ private theorem PolyTimeComputableLang'.c_noConsLen
     Cmd.NoConsLen W.c := by
   sorry
 
+/-- **(WALL — pinned bottom-up gap, Route A analogue of `c_noConsLen`.)** The
+canonical product machinery (`map_fst`/`swap`) emits the value-as-length trio
+(`takeAt`/`dropAt`/`consLen`), whose soundness cases are still stubbed, so
+`AllOpsSupported W.c` is FALSE for composed witnesses until the unary migration
+re-lays the trio (HANDOFF bottom-up step 2–3). Same status the reduction side
+already carried for `c_noConsLen`; the live `sat_NP` *decider* path does not go
+through this (it uses a concrete trio-free `DecidesLang`). -/
+private theorem PolyTimeComputableLang'.c_allOpsSupported
+    {X Y : Type} [encodable X] [encodable Y] [LangEncodable X] [LangEncodable Y]
+    {f : X → Y} (W : PolyTimeComputableLang' f) :
+    Cmd.AllOpsSupported W.c := by
+  sorry
+
 /-- A canonical witness is in particular a free-encoding
 `PolyTimeComputableLang` witness (using the canonical encode/decode). This
 plugs C9 into the S3 bridge `toFrameworkWitness'`. -/
@@ -789,6 +811,7 @@ def PolyTimeComputableLang'.toLang
   usesBelow := W.usesBelow
   width_le := fun x => Cmd.UsesBelow_pos W.usesBelow
   noConsLen := W.c_noConsLen
+  allOpsSupported := W.c_allOpsSupported
   decode_agree := fun x m => by
     have hag := Cmd.eval_agree W.c W.regBound W.usesBelow
       (fun r _ =>
@@ -1973,6 +1996,15 @@ private theorem DecidesLang'.c_noConsLen {X : Type} [encodable X] [LangEncodable
     Cmd.NoConsLen D.c := by
   sorry
 
+/-- **(WALL — Route A analogue of `c_noConsLen`.)** As above, the canonical
+product machinery emits the still-stubbed trio, so `AllOpsSupported D.c` is FALSE
+for composed canonical deciders until the unary migration. The live `sat_NP` path
+uses a concrete trio-free `DecidesLang` instead, so it is unaffected. -/
+private theorem DecidesLang'.c_allOpsSupported {X : Type} [encodable X] [LangEncodable X]
+    {P : X → Prop} {dBound : Nat → Nat} (D : DecidesLang' P dBound) :
+    Cmd.AllOpsSupported D.c := by
+  sorry
+
 /-- **C6 bridge (WALL resolved):** a canonical layer decider `DecidesLang' P dBound`
 yields a framework-level `DecidesBy P` whose time budget is polynomial in `dBound`.
 The machine is `Compile.paddedBitDeciderTM D.c D.regBound` — it pads the tape to
@@ -2015,7 +2047,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
       Compile.paddedBitDecider_run D.c (LangEncodable.encodeState x) 1 D.regBound
         (D.enc_bit x)
         (by rw [DecidesLang'.encodeState_length x]; exact Cmd.UsesBelow_pos D.usesBelow)
-        D.usesBelow D.c_noConsLen (Or.inr rfl) hb
+        D.usesBelow D.c_noConsLen D.c_allOpsSupported (Or.inr rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (LangEncodable.encodeState x))
@@ -2043,7 +2075,7 @@ def DecidesLang'.toDecidesBy {X : Type} [encodable X] [LangEncodable X]
       Compile.paddedBitDecider_run D.c (LangEncodable.encodeState x) 0 D.regBound
         (D.enc_bit x)
         (by rw [DecidesLang'.encodeState_length x]; exact Cmd.UsesBelow_pos D.usesBelow)
-        D.usesBelow D.c_noConsLen (Or.inl rfl) hb
+        D.usesBelow D.c_noConsLen D.c_allOpsSupported (Or.inl rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (LangEncodable.encodeState x))
@@ -2214,7 +2246,7 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
       eq_of_beq ((D.decides x).1.mp hPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
       Compile.paddedBitDecider_run D.c (D.encodeIn x) 1 D.regBound
-        (D.enc_bit x) (D.width_le x) D.usesBelow D.noConsLen (Or.inr rfl) hb
+        (D.enc_bit x) (D.width_le x) D.usesBelow D.noConsLen D.allOpsSupported (Or.inr rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (D.encodeIn x))
@@ -2240,7 +2272,7 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
       eq_of_beq ((D.decides x).2.mp hnPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
       Compile.paddedBitDecider_run D.c (D.encodeIn x) 0 D.regBound
-        (D.enc_bit x) (D.width_le x) D.usesBelow D.noConsLen (Or.inl rfl) hb
+        (D.enc_bit x) (D.width_le x) D.usesBelow D.noConsLen D.allOpsSupported (Or.inl rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (D.encodeIn x))

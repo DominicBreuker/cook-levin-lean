@@ -76,6 +76,7 @@ noncomputable def cliqueRelDecidesLang :
   usesBelow := by sorry                -- TODO(C2): Cmd.UsesBelow cliqueRelCmd regBound
   width_le := by intro x; sorry        -- TODO(C2): (cliqueRelEncode x).length ≤ regBound
   noConsLen := by sorry                -- TODO(C2): dropped once consLen is unary (HANDOFF bottom-up Task 4)
+  allOpsSupported := by sorry          -- TODO(C2): trivial once cliqueRelCmd is concrete & trio-free
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_cliqueRel :
