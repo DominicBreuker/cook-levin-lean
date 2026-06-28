@@ -98,13 +98,15 @@ compiler obligation** (`Compile_run_physical_residue`, Risk C2; the old
 `Compile_run_physical`/`Compile_sound` exact-tape forms were unsatisfiable and
 are deleted).
 
-**Caveat surfaced (do not under-estimate C2):** 4 of 12 `compileOp`s still lack
-a discharged soundness case (`concat`/`takeAt`/`dropAt`/`consLen`; FULLY PROVEN &
-axiom-clean for `appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/`tail`/
-`eqBit` — `eqBit` wired into `compileOp` and discharged in BU-C2-15, 2026-06-25).
-**None of the 4 remaining ops is on the live `sat_NP` decider path** (`evalCnfCmd`
+**Caveat surfaced (do not under-estimate C2):** 3 of 12 `compileOp`s still lack
+a discharged soundness case (`takeAt`/`dropAt`/`consLen`, the value-as-length trio,
+all gated on a unary-encoding migration; FULLY PROVEN & axiom-clean for
+`appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/`tail`/`eqBit`/`concat` —
+`concat` assembled as the aliasing-safe 4-stage scratch chain `opConcat` and
+discharged via `opConcat_run`, 2026-06-28).
+**None of the 3 remaining ops is on the live `sat_NP` decider path** (`evalCnfCmd`
 uses none of them), but the *generic* `compileOp_sound_physical_residue` still
-carries their 4 stub `sorry`s, so `SAT_inNP.sat_NP` is still `sorryAx` until an
+carries their 3 stub `sorry`s, so `SAT_inNP.sat_NP` is still `sorryAx` until an
 `Op.IsSupported` hypothesis isolates the live path (planned, HANDOFF top-down Task 0). `Compile_sound` was false as stated for *three*
 reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were

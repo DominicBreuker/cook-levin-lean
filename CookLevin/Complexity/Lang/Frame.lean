@@ -393,8 +393,8 @@ theorem Op.cost_agree (o : Op) (k : Nat) (h : Op.UsesBelow o k)
           = (s₂.get src1).length + (s₂.get src2).length + 1
       rw [hagree src1 h.2.1, hagree src2 h.2.2]
   | concat _ src1 src2 =>
-      show (s₁.get src1).length + (s₁.get src2).length + 1
-          = (s₂.get src1).length + (s₂.get src2).length + 1
+      show 2 * ((s₁.get src1).length + (s₁.get src2).length) + 1
+          = 2 * ((s₂.get src1).length + (s₂.get src2).length) + 1
       rw [hagree src1 h.2.1, hagree src2 h.2.2]
   | consLen _ _ src =>
       show (s₁.get src).length + 1 = (s₂.get src).length + 1
