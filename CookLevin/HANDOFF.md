@@ -26,6 +26,16 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
+> **Most recent session (2026-06-29, TOP-DOWN): CliqueRel ENCODING done.** The
+> FlatClique verifier's input encoding is now concrete, bit-level, probe-validated
+> (`probes/CliqueRelProbe.lean`), and its encoding-side `DecidesLang` fields are
+> proven axiom-clean (see TOP-DOWN follow-up below). **Recommended next:** another
+> **top-down** session to transcribe the (probe-validated) `cliqueRelCmd` program —
+> low structural risk, finishes `FlatClique ∈ NP` axiom-clean. The bottom-up
+> **unary migration** (step 2, below) remains the critical-path blocker for the
+> last 3 ops but is a wide-blast-radius atomic batch over the core `Semantics.lean`
+> (slow iteration) — schedule it when a session can be dedicated to it.
+
 ---
 
 ## The goal of this stream: all 12 `compileOp`s proven
@@ -216,14 +226,24 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 
 ### TOP-DOWN follow-up (concrete next top-down session; Route A is done)
 Pick one — both are independent of the bottom-up trio work:
-- **CliqueRelTM** (`Deciders/CliqueRelTM.lean`, still raw `sorry` defs+fields,
-  incl. the new `allOpsSupported := by sorry` — trivial once `cliqueRelCmd` is
-  concrete & trio-free): replicate the proven EvalCnf end-to-end template
-  (probe→step-lemma→invariant→`cost_forBnd_le`; uniform-bound cost fixes degree per
-  loop nest; be generous with scratch). This makes `FlatClique`'s in-NP half
-  axiom-clean too (same `allOpsSupported`-wall win as SAT, for free once the
-  fields are real). Gates `FlatClique_in_NP → Clique_complete`. **Recommended next
-  top-down** — it is the EvalCnf template applied once more, low structural risk.
+- **CliqueRelTM — the verifier PROGRAM** (`Deciders/CliqueRelTM.lean`). **★ 2026-06-29
+  — the ENCODING half is DONE:** `cliqueRelEncode` is concrete + bit-level + design
+  probe-validated (`probes/CliqueRelProbe.lean`), and its `DecidesLang` fields
+  `encodeIn_size`/`enc_bit`/`width_le`/`regBound` are PROVEN & axiom-clean;
+  `timeBound` bumped to quartic. **Remaining = transcribe the program** `cliqueRelCmd`
+  (still `sorry`) into the DSL and prove `decides`/`cost_bound`/`usesBelow`/
+  `noConsLen`/`allOpsSupported`. The 5-check design is in the file's program block +
+  the probe (1: `fgraph_wf` edge-scan; 2: `list_ofFlatType` vertex-scan; 3:
+  `l.length=k` via `eqBit` on the tallies; 4: `l.Nodup` outer/inner pair-scan; 5:
+  clique = triple-nested membership over the edge stream, the `EvalCnfCmd.memberCheck`
+  pattern with TWO unary compares/edge). Replicate the proven EvalCnf end-to-end
+  template (probe→step-lemma→invariant→`cost_forBnd_le`; uniform-bound cost fixes
+  degree per loop nest; scratch is generous, `regBound = 32`). Closing all 5 fields
+  makes `FlatClique`'s in-NP half axiom-clean (the `allOpsSupported`-wall win, for
+  free since the program is trio-free). Gates `FlatClique_in_NP → Clique_complete`.
+  **Recommended next top-down** — the encoding is fixed/validated, so it is now pure
+  EvalCnf-template grind, low structural risk. ⚠ The clique check is *one loop nest
+  deeper* than EvalCnf (triple vs double), so budget extra invariant effort there.
 - **Framework `red_inNP`** (`NP.lean:291`) / **S3 migration**: blocked by design —
   `inNP` exposes an opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework
   `inNP`/`inTimePoly` layer-native (carry a `DecidesLang`), then it collapses to
