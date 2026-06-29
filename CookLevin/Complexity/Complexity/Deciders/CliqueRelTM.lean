@@ -236,34 +236,287 @@ theorem cliqueRelEncode_size_bound (x : (fgraph × Nat) × List fvertex) :
 
 /-! ## The verifier program in the layer
 
-**Probe-validated design (`probes/CliqueRelProbe.lean`).** The program ANDs five
-checks into `OUTPUT` (start `[1]`; set `[0]` on any failure), mirroring
-`EvalCnfCmd`'s clause-AND structure. Sub-checks, each a `forBnd` over a tally:
-1. **`fgraph_wf G`** — scan `EDGE_STREAM` (bound = edge tally): per edge parse
-   both unary endpoints, compare each length against `NUMV` (unary `<`).
-2. **`list_ofFlatType G.1 l`** — scan `VERT_STREAM`: each vertex `< numV`.
-3. **`l.length = k`** — `eqBit` on the vertex tally vs `K`.
-4. **`l.Nodup`** — outer/inner `forBnd` over (a copy of) `VERT_STREAM`,
-   `eqBit`-compare distinct vertices.
-5. **clique** — triple nested: outer/inner over `l`, innermost membership scan
-   over `EDGE_STREAM` for the ordered pair (the `EvalCnfCmd.memberCheck` pattern,
-   comparing TWO unary values per edge).
+**Probe-validated design** (`probes/CliqueRelProbe.lean` for the 5-check
+algorithm; `probes/CliqueLtProbe.lean` for the novel unary-`<` gadget). The
+program ANDs five checks into `OUTPUT` (start `[1]`; set `[0]` on any failure),
+mirroring `EvalCnfCmd`'s clause-AND structure.
 
-Transcription is mechanical against the proven `EvalCnfCmd` gadgets (stream
-parse = `head ⨾ tail ⨾ ifBit`; unary accumulate = `appendOne`; unary compare =
-`eqBit`). The hard part is the correctness invariants (one fold invariant per
-loop nest, à la `EvalCnfCmd.CInv`/`MCInv`). -/
+**Register frame** (all `< regBound = 32`; the originals 1–6 are never consumed,
+each scan works on a fresh copy so the checks compose in any order):
 
-/-- The FlatClique verifier as a `Lang.Cmd`. **Design probe-validated**
-(`probes/CliqueRelProbe.lean`); DSL transcription is the next top-down task. -/
-noncomputable def cliqueRelCmd : Cmd := sorry  -- TODO(top-down Task 1): transcribe the
-  -- probe-validated 5-check program (see the design block above + EvalCnfCmd template).
+| Reg | Name          | Role                                                |
+|-----|---------------|-----------------------------------------------------|
+| 0   | `OUTPUT`      | accept `[1]` / reject `[0]`                          |
+| 1   | `NUMV`        | `replicate G.1 1` (read-only)                       |
+| 2   | `EDGE_STREAM` | edge stream (read-only; copied per scan)            |
+| 3   | `K`           | `replicate k 1` (read-only)                          |
+| 4   | `VERT_STREAM` | vertex stream (read-only; copied per scan)          |
+| 5   | `EDGE_TALLY`  | `replicate edges.length 1` (edge loop bound)        |
+| 6   | `VERT_TALLY`  | `replicate l.length 1` (vertex loop bound)          |
+| 7   | `IDX1`        | loop counter, nesting depth 1                       |
+| 8   | `IDX2`        | loop counter, nesting depth 2                       |
+| 9   | `IDX3`        | loop counter, nesting depth 3                       |
+| 10  | `IDX4`        | loop counter, nesting depth 4 (`readNum` in clique) |
+| 11  | `ESCAN`       | edge-stream scan copy (`fgraph_wf`)                 |
+| 12  | `VSCAN`       | vertex-stream scan copy (outer)                     |
+| 13  | `VSCAN2`      | vertex-stream scan copy (inner)                     |
+| 14  | `ESCAN2`      | edge-stream scan copy (membership)                  |
+| 15  | `HEAD`        | `readNum` head-cell scratch                         |
+| 16  | `INBLK`       | `readNum` in-block parse flag                       |
+| 17  | `VALA`        | unary value accumulator A (outer vertex / endpoint) |
+| 18  | `VALB`        | unary value accumulator B (inner vertex / endpoint) |
+| 19  | `VALC`        | unary value C (membership edge endpoint 1)          |
+| 20  | `VALD`        | unary value D (membership edge endpoint 2)          |
+| 21  | `LT_A`        | `ltBit` operand copy A                              |
+| 22  | `LT_B`        | `ltBit` operand copy B                              |
+| 23  | `RES1`        | result/branch flag 1                                |
+| 24  | `RES2`        | result/branch flag 2                                |
+| 25  | `FOUND`       | membership found flag (clique)                      |
+| 26  | `SKIPR`       | `cSkip` no-op target                                |
+
+⚠ **FINDING (2026-06-29, top-down): two patterns here are NOT in the proven
+`EvalCnfCmd` template** (the handoff's "pure EvalCnf grind" understated this):
+* **unary `<`** — checks 1–2 need a strict-order test on unary blocks, but the
+  only comparison op is `eqBit` (equality). Built as `ltBit` (a lockstep
+  consume loop; design `#eval`-validated in `probes/CliqueLtProbe.lean` over a
+  7×7 grid). EvalCnf only ever compares for equality.
+* **loop-counter reads** — `Nodup` (check 4) must skip the diagonal `i = j`, so
+  its body reads the *unary loop counters* `IDX1`/`IDX2` (= `replicate i 1`) and
+  `eqBit`s them; EvalCnf never reads a counter. (The clique check 5 instead
+  skips by *value* equality, matching the spec, so it needs no counter read.)
+
+Both are sound and shallow, but each needs its own fold-invariant lemma in the
+correctness proof — budget for them. -/
+
+def OUTPUT      : Var := 0
+def NUMV        : Var := 1
+def EDGE_STREAM : Var := 2
+def K           : Var := 3
+def VERT_STREAM : Var := 4
+def EDGE_TALLY  : Var := 5
+def VERT_TALLY  : Var := 6
+def IDX1        : Var := 7
+def IDX2        : Var := 8
+def IDX3        : Var := 9
+def IDX4        : Var := 10
+def ESCAN       : Var := 11
+def VSCAN       : Var := 12
+def VSCAN2      : Var := 13
+def ESCAN2      : Var := 14
+def HEAD        : Var := 15
+def INBLK       : Var := 16
+def VALA        : Var := 17
+def VALB        : Var := 18
+def VALC        : Var := 19
+def VALD        : Var := 20
+def LT_A        : Var := 21
+def LT_B        : Var := 22
+def RES1        : Var := 23
+def RES2        : Var := 24
+def FOUND       : Var := 25
+def SKIPR       : Var := 26
+
+/-- Constant-cost no-op (`SKIPR := [1]`), the idle branch of guarded bodies.
+`clear ⨾ appendOne` so the cost is state-independent (mirrors `EvalCnfCmd.mcSkip`,
+needed since `eqBit` is size-aware). -/
+def cSkip : Cmd := Cmd.op (.clear SKIPR) ;; Cmd.op (.appendOne SKIPR)
+
+/-- **`reject`**: set `OUTPUT := [0]`. -/
+def cReject : Cmd := Cmd.op (.clear OUTPUT) ;; Cmd.op (.appendZero OUTPUT)
+
+/-- `dst := [0]` (used as `ltBit`'s "a ≥ b" branch; `clear ⨾ appendZero` on an
+arbitrary register). -/
+def cReject_to (dst : Var) : Cmd :=
+  Cmd.op (.clear dst) ;; Cmd.op (.appendZero dst)
+
+/-- Read one terminated unary block `replicate v 1 ++ [0]` off the front of
+`stream` into `dst` (as `replicate v 1`), consuming the block + terminator from
+`stream`. `idx` is the loop counter; the loop bound is `stream`'s entry length
+(generous — once the block's `0` terminator clears `INBLK`, the remaining
+iterations idle). Mirrors `EvalCnfCmd.varExtractBody`. -/
+def readNum (dst stream idx : Var) : Cmd :=
+  Cmd.op (.clear dst) ;;
+  Cmd.op (.clear INBLK) ;; Cmd.op (.appendOne INBLK) ;;
+  Cmd.forBnd idx stream
+    (Cmd.ifBit INBLK
+      (Cmd.op (.head HEAD stream) ;;
+       Cmd.op (.tail stream stream) ;;
+       Cmd.ifBit HEAD
+         (Cmd.op (.appendOne dst))
+         (Cmd.op (.clear INBLK)))
+      cSkip)
+
+/-- **Unary strict-less-than** (`probes/CliqueLtProbe.lean`): `dst := [1]` if the
+unary value in `A` is `< ` the unary value in `B`, else `[0]`. Lockstep-consume
+copies of both operands (`|A|` iterations is enough); afterwards `a < b` iff `A`
+empties and `B` does not. `idx` is the loop counter. -/
+def ltBit (dst A B idx : Var) : Cmd :=
+  Cmd.op (.copy LT_A A) ;; Cmd.op (.copy LT_B B) ;;
+  Cmd.forBnd idx LT_A
+    (Cmd.ifBit LT_A
+      (Cmd.ifBit LT_B
+        (Cmd.op (.tail LT_A LT_A) ;; Cmd.op (.tail LT_B LT_B))
+        cSkip)
+      cSkip) ;;
+  Cmd.op (.nonEmpty dst LT_A) ;;
+  Cmd.ifBit dst
+    (cReject_to dst)                -- A had leftover ⇒ a ≥ b ⇒ dst := [0]
+    (Cmd.op (.nonEmpty dst LT_B))   -- A empty ⇒ dst := (B nonempty) = (a < b)
+
+/-- **Check 1 — `fgraph_wf G`**: every edge endpoint `< numV`. Scan a copy of the
+edge stream (bound = edge tally); per edge read both unary endpoints and `ltBit`
+each against `NUMV`. -/
+def checkWf : Cmd :=
+  Cmd.op (.copy ESCAN EDGE_STREAM) ;;
+  Cmd.forBnd IDX1 EDGE_TALLY
+    (readNum VALA ESCAN IDX2 ;;
+     readNum VALB ESCAN IDX2 ;;
+     ltBit RES1 VALA NUMV IDX3 ;;
+     ltBit RES2 VALB NUMV IDX3 ;;
+     Cmd.ifBit RES1
+       (Cmd.ifBit RES2 cSkip cReject)
+       cReject)
+
+/-- **Check 2 — `list_ofFlatType G.1 l`**: every vertex `< numV`. Scan a copy of
+the vertex stream (bound = vertex tally); per vertex `ltBit` against `NUMV`. -/
+def checkOfType : Cmd :=
+  Cmd.op (.copy VSCAN VERT_STREAM) ;;
+  Cmd.forBnd IDX1 VERT_TALLY
+    (readNum VALA VSCAN IDX2 ;;
+     ltBit RES1 VALA NUMV IDX3 ;;
+     Cmd.ifBit RES1 cSkip cReject)
+
+/-- **Check 3 — `l.length = k`**: `eqBit` the vertex tally against `K` (both
+unary). -/
+def checkLen : Cmd :=
+  Cmd.op (.eqBit RES1 VERT_TALLY K) ;;
+  Cmd.ifBit RES1 cSkip cReject
+
+/-- **Check 4 — `l.Nodup`**: for every pair of *positions* `i ≠ j`, the vertices
+differ. Outer scan consumes `VSCAN` (so the outer body reads `l[i]`); inner scan
+is over a fresh full copy `VSCAN2`. Positions are the unary loop counters
+`IDX1`/`IDX2`; `eqBit IDX1 IDX2` detects the diagonal `i = j` (skipped). -/
+def checkNodup : Cmd :=
+  Cmd.op (.copy VSCAN VERT_STREAM) ;;
+  Cmd.forBnd IDX1 VERT_TALLY
+    (readNum VALA VSCAN IDX2 ;;
+     Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+     Cmd.forBnd IDX2 VERT_TALLY
+       (readNum VALB VSCAN2 IDX3 ;;
+        Cmd.op (.eqBit RES1 IDX1 IDX2) ;;          -- i = j ?
+        Cmd.ifBit RES1
+          cSkip                                     -- diagonal: skip
+          (Cmd.op (.eqBit RES2 VALA VALB) ;;        -- l[i] = l[j] ?
+           Cmd.ifBit RES2 cReject cSkip)))
+
+/-- Membership scan: `FOUND := [1]` iff the ordered pair (`VALA`, `VALB`) occurs
+in the edge stream. Scan a copy of the edge stream (bound = edge tally); per edge
+read both endpoints (`VALC`/`VALD`) and `eqBit` them against `VALA`/`VALB`. The
+`EvalCnfCmd.memberCheck` pattern, comparing TWO unary values per edge. -/
+def memberEdge : Cmd :=
+  Cmd.op (.clear FOUND) ;; Cmd.op (.appendZero FOUND) ;;
+  Cmd.op (.copy ESCAN2 EDGE_STREAM) ;;
+  Cmd.forBnd IDX3 EDGE_TALLY
+    (readNum VALC ESCAN2 IDX4 ;;
+     readNum VALD ESCAN2 IDX4 ;;
+     Cmd.op (.eqBit RES1 VALC VALA) ;;
+     Cmd.op (.eqBit RES2 VALD VALB) ;;
+     Cmd.ifBit RES1
+       (Cmd.ifBit RES2
+         (Cmd.op (.clear FOUND) ;; Cmd.op (.appendOne FOUND))
+         cSkip)
+       cSkip)
+
+/-- **Check 5 — clique**: every pair of list elements with *distinct values* is
+an edge. Outer scan reads `l[i]` (`VALA`), inner scan reads `l[j]` (`VALB`); when
+`VALA ≠ VALB`, require (`VALA`,`VALB`) ∈ edges via `memberEdge`. (Value-equality
+skip matches the spec `∀ v₁ v₂ ∈ l, v₁ ≠ v₂ → (v₁,v₂) ∈ G.2`.) Nesting depth 4. -/
+def checkClique : Cmd :=
+  Cmd.op (.copy VSCAN VERT_STREAM) ;;
+  Cmd.forBnd IDX1 VERT_TALLY
+    (readNum VALA VSCAN IDX2 ;;
+     Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+     Cmd.forBnd IDX2 VERT_TALLY
+       (readNum VALB VSCAN2 IDX3 ;;
+        Cmd.op (.eqBit RES1 VALA VALB) ;;          -- v₁ = v₂ ?
+        Cmd.ifBit RES1
+          cSkip                                     -- equal values: skip
+          (memberEdge ;;
+           Cmd.ifBit FOUND cSkip cReject)))
+
+/-- The FlatClique verifier as a `Lang.Cmd`. Start `OUTPUT := [1]`, then AND the
+five probe-validated checks. **Concrete & transcribed** (2026-06-29); the
+correctness/cost proofs are the remaining work (HANDOFF top-down Task 1). -/
+def cliqueRelCmd : Cmd :=
+  Cmd.op (.appendOne OUTPUT) ;;
+  checkWf ;;
+  checkOfType ;;
+  checkLen ;;
+  checkNodup ;;
+  checkClique
+
+/-! ### Structural fields (PROVEN — purely syntactic over the concrete program) -/
+
+/-- Register-frame helper: unfold one check to its op leaves and discharge the
+resulting conjunction of literal `_ < 32`. Per-check so each `decide`'s
+`Decidable`-synthesis term stays small (the monolithic conjunction over the whole
+program defeats both `decide` and `omega`). -/
+private theorem checkWf_usesBelow : Cmd.UsesBelow checkWf 32 := by
+  simp [checkWf, readNum, ltBit, cSkip, cReject, cReject_to, Cmd.UsesBelow,
+    Op.UsesBelow, NUMV, EDGE_STREAM, EDGE_TALLY, OUTPUT, IDX1, IDX2, IDX3,
+    ESCAN, HEAD, INBLK, VALA, VALB, LT_A, LT_B, RES1, RES2, SKIPR]
+
+private theorem checkOfType_usesBelow : Cmd.UsesBelow checkOfType 32 := by
+  simp [checkOfType, readNum, ltBit, cSkip, cReject, cReject_to,
+    Cmd.UsesBelow, Op.UsesBelow, NUMV, VERT_STREAM, VERT_TALLY, OUTPUT, IDX1,
+    IDX2, IDX3, VSCAN, HEAD, INBLK, VALA, LT_A, LT_B, RES1, SKIPR]
+
+private theorem checkLen_usesBelow : Cmd.UsesBelow checkLen 32 := by
+  simp [checkLen, cSkip, cReject, Cmd.UsesBelow, Op.UsesBelow, VERT_TALLY,
+    K, OUTPUT, RES1, SKIPR]
+
+private theorem checkNodup_usesBelow : Cmd.UsesBelow checkNodup 32 := by
+  simp [checkNodup, readNum, cSkip, cReject, Cmd.UsesBelow, Op.UsesBelow,
+    VERT_STREAM, VERT_TALLY, OUTPUT, IDX1, IDX2, IDX3, VSCAN, VSCAN2, HEAD,
+    INBLK, VALA, VALB, RES1, RES2, SKIPR]
+
+private theorem checkClique_usesBelow : Cmd.UsesBelow checkClique 32 := by
+  simp [checkClique, readNum, memberEdge, cSkip, cReject, Cmd.UsesBelow,
+    Op.UsesBelow, VERT_STREAM, VERT_TALLY, EDGE_STREAM, EDGE_TALLY, OUTPUT,
+    IDX1, IDX2, IDX3, IDX4, VSCAN, VSCAN2, ESCAN2, HEAD, INBLK, VALA, VALB,
+    VALC, VALD, RES1, RES2, FOUND, SKIPR]
+
+/-- Every register the verifier touches is `< 32` (assembled from the per-check
+helpers). -/
+theorem cliqueRelCmd_usesBelow : Cmd.UsesBelow cliqueRelCmd 32 := by
+  refine ⟨?_, checkWf_usesBelow, checkOfType_usesBelow, checkLen_usesBelow,
+    checkNodup_usesBelow, checkClique_usesBelow⟩
+  show OUTPUT < 32
+  decide
+
+/-- The verifier is `consLen`-free (it uses no `consLen` op). -/
+theorem cliqueRelCmd_noConsLen : Cmd.NoConsLen cliqueRelCmd := by
+  simp only [cliqueRelCmd, checkWf, checkOfType, checkLen, checkNodup,
+    checkClique, memberEdge, readNum, ltBit, cSkip, cReject, cReject_to,
+    Cmd.NoConsLen, Op.NotConsLen]
+  trivial
+
+/-- Op-supportedness (Route A): the verifier uses only proven ops (it is
+`takeAt`/`dropAt`/`consLen`-free), so its `compileOp_sound_physical_residue`
+discharge is axiom-clean. -/
+theorem cliqueRelCmd_allOpsSupported : Cmd.AllOpsSupported cliqueRelCmd := by
+  simp only [cliqueRelCmd, checkWf, checkOfType, checkLen, checkNodup,
+    checkClique, memberEdge, readNum, ltBit, cSkip, cReject, cReject_to,
+    Cmd.AllOpsSupported, Op.IsSupported]
+  trivial
 
 /-- The Lang-level decider witness for the FlatClique verifier.
 
-**Encoding-side fields PROVEN & axiom-clean** (2026-06-29): `encodeIn_size`,
-`enc_bit`, `width_le`, `regBound`. **Program-side fields `sorry`** pending the
-concrete `cliqueRelCmd` (probe-validated; HANDOFF top-down Task 1). -/
+**Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
+(encoding side), and `usesBelow`, `noConsLen`, `allOpsSupported` (structural,
+from the now-concrete `cliqueRelCmd`). **`decides`/`cost_bound` remain `sorry`** —
+the per-check correctness invariants and the per-loop `cost_forBnd_le` cost bound
+(HANDOFF top-down Task 1). -/
 noncomputable def cliqueRelDecidesLang :
     DecidesLang
       (fun Gkl : (fgraph × Nat) × List fvertex => cliqueRel Gkl.1 Gkl.2)
@@ -279,18 +532,18 @@ noncomputable def cliqueRelDecidesLang :
         Nat.le_self_pow (by norm_num) _
       omega
     exact h1.trans h2
-  decides := by sorry                  -- TODO(top-down Task 1): correctness invariants
+  decides := by sorry                  -- TODO(top-down Task 1): per-check correctness invariants
   cost_bound := by intro x; sorry      -- TODO(top-down Task 1): per-loop `cost_forBnd_le`
   enc_bit := cliqueRelEncode_bit
   regBound := regBound
-  usesBelow := by sorry                -- TODO(top-down Task 1): `Cmd.UsesBelow cliqueRelCmd regBound`
+  usesBelow := cliqueRelCmd_usesBelow
   width_le := by
     intro x; obtain ⟨⟨G, k⟩, l⟩ := x
     show (cliqueRelEncode ((G, k), l)).length ≤ regBound
     simp only [cliqueRelEncode, regBound, List.length_cons, List.length_nil]
     omega
-  noConsLen := by sorry                -- TODO(top-down Task 1): trio-free program ⇒ `simp`/`decide`
-  allOpsSupported := by sorry          -- TODO(top-down Task 1): trio-free program ⇒ `simp`/`decide`
+  noConsLen := cliqueRelCmd_noConsLen
+  allOpsSupported := cliqueRelCmd_allOpsSupported
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_cliqueRel :
