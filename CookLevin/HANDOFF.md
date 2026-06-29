@@ -26,25 +26,36 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-06-29, BOTTOM-UP): ⚠⚠ BLOCKING FINDING — the unary
-> product migration as designed is SIZE-UNSOUND.** Attempting to kick off the
-> unary migration (step 2) surfaced that the probe-validated bit-level product
-> encoding `enc(x,y) = replicate |enc x| 1 ++ [0] ++ enc x ++ enc y` **violates the
+> **Most recent session (2026-06-29, TOP-DOWN, CliqueRelTM): ✅ the verifier
+> PROGRAM is now CONCRETE + the structural `DecidesLang` fields are PROVEN.**
+> `cliqueRelCmd` (was `sorry`) is the probe-validated 5-check FlatClique verifier
+> transcribed into the DSL (`Deciders/CliqueRelTM.lean`), built only from the proven
+> trio-free ops, and `usesBelow`/`noConsLen`/`allOpsSupported` are PROVEN &
+> axiom-clean (joining the already-proven encoding fields). **Remaining CliqueRel
+> sorries: just `decides` + `cost_bound`** (top-down Task 1 below). ⚠ **Risk-based
+> finding (the prior "pure EvalCnf grind" framing understated this):** two patterns
+> here are NOT in the EvalCnf template — (1) **unary `<`** (checks 1–2 need a strict
+> order test, but the only comparison op is `eqBit`/equality), built as the lockstep
+> gadget `ltBit`, design `#eval`-validated in the new `probes/CliqueLtProbe.lean`
+> (agrees with `<` over a 7×7 grid); (2) **loop-counter reads** (`Nodup` reads the
+> unary `forBnd` counters to skip the diagonal `i=j`; EvalCnf never reads a
+> counter). Both are sound and shallow but each needs its own fold-invariant lemma
+> in `decides` — budget for them. The clique check is also **loop-nest depth 4**
+> (vs EvalCnf's 3). **Recommended next: continue TOP-DOWN on CliqueRel `decides`**
+> (low structural risk now the program is fixed). Bottom-up remains BLOCKED on the
+> encoding-design decision (unchanged — see step 2).
+>
+> **Prior finding still open (2026-06-29, BOTTOM-UP): the unary product migration as
+> designed is SIZE-UNSOUND.** The bit-level product encoding
+> `enc(x,y) = replicate |enc x| 1 ++ [0] ++ enc x ++ enc y` **violates the
 > `LangEncodable.enc_size` contract** (`(enc x).length ≤ 2·size x + 1`,
-> `PolyTime.lean:572`) — and not marginally: the unary prefix doubles `|enc x|` per
-> nesting level, so a depth-`d` left-nested pair has `|enc| = 2^d·(m+1)−1` while
-> `encodable.size = m+d`. **No polynomial bound** can satisfy the generic instance's
-> obligation `B(a+b+1) ≥ 2·B(a)+B(b)` — so the generic `LangEncodable (X × Y)`
-> instance for this encoding **cannot exist** (its `enc_size` field is *false*, not
-> just hard). Machine-checked, axiom-free: `probes/UnaryProductSizeProbe.lean`
-> (`#eval` → `enc((10,5),0)` length `53` > bound `35`; depth table `8,17,35,71,143,
-> 287,575`). The 2026-06-28 `UnaryMigrationProbe` validated round-trip + `BitState`
-> but **never checked `enc_size`**. No code changed (the migration is an atomic
-> batch; a partial rewrite would hit this wall and be discarded — risk-based
-> development). **The bottom-up trio/product migration is BLOCKED pending an
-> encoding-design decision (owner-level — it touches `enc_size`/S3); see redesigned
-> step 2 below.** **Recommended next: switch to TOP-DOWN (CliqueRelTM)** — unblocked,
-> low structural risk, finishes `FlatClique ∈ NP` axiom-clean (TOP-DOWN follow-up).
+> `PolyTime.lean:572`): the unary prefix doubles `|enc x|` per nesting level
+> (depth-`d`: `|enc| = 2^d·(m+1)−1` while `encodable.size = m+d`), so the generic
+> instance's obligation `B(a+b+1) ≥ 2·B(a)+B(b)` has **no polynomial solution** — the
+> field is *false*, the generic instance cannot exist. Machine-checked, axiom-free:
+> `probes/UnaryProductSizeProbe.lean`. **The bottom-up trio/product migration is
+> BLOCKED pending an encoding-design decision (owner-level — touches `enc_size`/S3);
+> see step 2.**
 
 ---
 
@@ -101,8 +112,18 @@ W-invariant ①; per-op budget `(54·L²+54·L+180)·(Op.cost+1)`):
 migration, which is now ⚠ BLOCKED** (the 2026-06-28 design is size-unsound — see
 step 2 below). These three are **off the live `sat_NP` path** (isolated by the
 Route-A wall), so they are *not* required for the in-NP half; finishing them only
-buys Route B (drop the wall — cosmetic). Until the encoding redesign is decided,
-**bottom-up has no green-committable trio work** — do top-down instead.
+buys Route B (drop the wall — cosmetic).
+
+> **Concrete next BOTTOM-UP action (no owner sign-off needed — it is analysis, and
+> may render the whole migration moot):** scope **option (B)** of step 2 — audit the
+> *future* S3 reduction chain (the sound-tail reductions as `Cmd`s) and determine
+> whether any of them actually needs the *generic* `LangEncodable (X × Y)` product
+> trio, or whether each can use a bespoke bit-level free `encodeIn` the way the live
+> `evalCnfCmd`/`cliqueRelCmd` do (neither uses the trio). If none needs it, the
+> trio/product migration is **unnecessary**, the Route-A wall stays permanently, and
+> bottom-up's remaining work is documentation + deleting dead scaffolding. Only if a
+> generic bit-level canonical product is genuinely required does the (A) binary/Elias
+> length-prefix redesign (owner decision) become necessary.
 
 ---
 
@@ -232,24 +253,39 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 
 ### TOP-DOWN follow-up (concrete next top-down session; Route A is done)
 Pick one — both are independent of the bottom-up trio work:
-- **CliqueRelTM — the verifier PROGRAM** (`Deciders/CliqueRelTM.lean`). **★ 2026-06-29
-  — the ENCODING half is DONE:** `cliqueRelEncode` is concrete + bit-level + design
-  probe-validated (`probes/CliqueRelProbe.lean`), and its `DecidesLang` fields
-  `encodeIn_size`/`enc_bit`/`width_le`/`regBound` are PROVEN & axiom-clean;
-  `timeBound` bumped to quartic. **Remaining = transcribe the program** `cliqueRelCmd`
-  (still `sorry`) into the DSL and prove `decides`/`cost_bound`/`usesBelow`/
-  `noConsLen`/`allOpsSupported`. The 5-check design is in the file's program block +
-  the probe (1: `fgraph_wf` edge-scan; 2: `list_ofFlatType` vertex-scan; 3:
-  `l.length=k` via `eqBit` on the tallies; 4: `l.Nodup` outer/inner pair-scan; 5:
-  clique = triple-nested membership over the edge stream, the `EvalCnfCmd.memberCheck`
-  pattern with TWO unary compares/edge). Replicate the proven EvalCnf end-to-end
-  template (probe→step-lemma→invariant→`cost_forBnd_le`; uniform-bound cost fixes
-  degree per loop nest; scratch is generous, `regBound = 32`). Closing all 5 fields
-  makes `FlatClique`'s in-NP half axiom-clean (the `allOpsSupported`-wall win, for
-  free since the program is trio-free). Gates `FlatClique_in_NP → Clique_complete`.
-  **Recommended next top-down** — the encoding is fixed/validated, so it is now pure
-  EvalCnf-template grind, low structural risk. ⚠ The clique check is *one loop nest
-  deeper* than EvalCnf (triple vs double), so budget extra invariant effort there.
+- **★ CliqueRelTM — finish `decides` + `cost_bound`** (`Deciders/CliqueRelTM.lean`).
+  **2026-06-29: the program + 3 structural fields + 4 encoding fields are DONE &
+  axiom-clean.** Only two `DecidesLang` fields remain `sorry`:
+  - **`decides`** — `Cmd.decides cliqueRelCmd cliqueRelEncode (cliqueRel …)`. The
+    program is `appendOne OUTPUT ⨾ checkWf ⨾ checkOfType ⨾ checkLen ⨾ checkNodup ⨾
+    checkClique` (each a named `def`). Prove a `*_run` contract per check (output bit
+    = the check's truth value, frame = OUTPUT + that check's scratch) then AND them:
+    `OUTPUT` starts `[1]`, each check only ever *rejects* (sets `[0]`), so the final
+    bit is the conjunction. Replicate the EvalCnf template (probe→per-iteration
+    step-lemma→fold invariant via `Cmd.foldlState_range_induct`). **Build the
+    reusable leaf lemmas first** (each used by several checks):
+    - `readNum_run` — one terminated unary block off a stream into `dst`
+      (`= replicate v 1`), stream loses the block. Invariant = `EvalCnfCmd.varExtractBody`
+      (an `IN_BLOCK` flag fold); the parser automaton is the only new fold.
+    - `ltBit_run` — **NEW vs EvalCnf** (`ltBit dst A B`): `dst = [if a<b then 1 else 0]`.
+      Lockstep-consume invariant over `min`-truncation; design validated in
+      `probes/CliqueLtProbe.lean`. Spec: after `|A|` steps `a<b ⇔ LT_A=[] ∧ LT_B≠[]`.
+    - `memberEdge_run` — `FOUND = [if (a,b)∈edges then 1 else 0]`; this is exactly
+      `EvalCnfCmd.memberCheck` with TWO unary `eqBit`s per edge.
+    Then `checkWf`/`checkOfType` = a `forBnd` of (readNum ⨾ ltBit); `checkLen` = one
+    `eqBit`; `checkNodup` = a double `forBnd` reading the **unary loop counters**
+    `IDX1`/`IDX2` to skip `i=j` (**also NEW vs EvalCnf** — needs a counter-value fact
+    from the `forBnd` toolkit; the counter is `replicate i 1` at iteration `i`);
+    `checkClique` = depth-4 (outer/inner `forBnd` + `memberEdge`).
+  - **`cost_bound`** — `cliqueRelCmd.cost (cliqueRelEncode x) ≤ timeBound (size x)`
+    (`200000·(n+1)^4`, already quartic). Per-loop `Cmd.cost_forBnd_le` with a uniform
+    per-iteration bound (mirror `evalCnfCmd_cost_bound`); the depth-4 clique nest is
+    the dominant term — confirm degree ≤ 4 against the budget, bump the `200000`
+    constant if needed (downstream only needs `inOPoly`/`monotonic`).
+  Closing both makes `FlatClique`'s in-NP half axiom-clean (the trio-free
+  `allOpsSupported`-wall win, for free). Gates `FlatClique_in_NP → Clique_complete`.
+  **Recommended next top-down** — the program is fixed, so this is invariant grind;
+  the only structural unknowns (`ltBit`/counter-read) are isolated leaf lemmas.
 - **Framework `red_inNP`** (`NP.lean:291`) / **S3 migration**: blocked by design —
   `inNP` exposes an opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework
   `inNP`/`inTimePoly` layer-native (carry a `DecidesLang`), then it collapses to
@@ -322,7 +358,17 @@ The op builds below are templates; the helper stacks are axiom-clean.
 - **EvalCnf verifier (LIVE) — DONE & axiom-clean** (`EvalCnfCmd.lean`): unary/
   bit-level encoding (`encodeState_bit`, the `encsize_list_foldr`/`length_le_encsize`
   size helpers, `encodeState_size_bound ≤ 6·size`), all inner bodies + contracts +
-  assembly (`evalCnfDecidesLang`). Reusable for CliqueRelTM.
+  assembly (`evalCnfDecidesLang`). **The template for CliqueRel** (probe→step→fold
+  invariant→`cost_forBnd_le`; structural fields via full `simp` over the op leaves —
+  NB: full `simp` with the register `def`s, not `simp only … decide`; `decide` fails
+  `Decidable`-synthesis on the larger checks' conjunctions).
+- **CliqueRel verifier (TOP-DOWN) — program CONCRETE, structural fields PROVEN**
+  (`Deciders/CliqueRelTM.lean`, 2026-06-29). `cliqueRelCmd` + the 5 check `def`s
+  (`checkWf`/`checkOfType`/`checkLen`/`checkNodup`/`checkClique` + `memberEdge`) +
+  helpers (`readNum`/`ltBit`/`cSkip`/`cReject`) are concrete & trio-free;
+  `cliqueRelCmd_usesBelow`/`_noConsLen`/`_allOpsSupported` + the 4 encoding fields are
+  PROVEN & axiom-clean. Probes: `CliqueRelProbe` (algorithm), `CliqueLtProbe` (the
+  unary-`<` lockstep gadget). Only `decides`/`cost_bound` remain (top-down Task 1).
 - **Threading toolkit:** `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow`,
   `Cmd.eval_length_ge/_le`, `Cmd.size_eval_le`, `State.set_set`/`set_length_ge`,
   `BitState_set_pad`, `consumeStep_frame`/`_clear_restore`, `State.ext_of_get`.
