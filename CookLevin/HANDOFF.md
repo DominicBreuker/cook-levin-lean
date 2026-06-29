@@ -26,15 +26,25 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-06-29, TOP-DOWN): CliqueRel ENCODING done.** The
-> FlatClique verifier's input encoding is now concrete, bit-level, probe-validated
-> (`probes/CliqueRelProbe.lean`), and its encoding-side `DecidesLang` fields are
-> proven axiom-clean (see TOP-DOWN follow-up below). **Recommended next:** another
-> **top-down** session to transcribe the (probe-validated) `cliqueRelCmd` program —
-> low structural risk, finishes `FlatClique ∈ NP` axiom-clean. The bottom-up
-> **unary migration** (step 2, below) remains the critical-path blocker for the
-> last 3 ops but is a wide-blast-radius atomic batch over the core `Semantics.lean`
-> (slow iteration) — schedule it when a session can be dedicated to it.
+> **Most recent session (2026-06-29, BOTTOM-UP): ⚠⚠ BLOCKING FINDING — the unary
+> product migration as designed is SIZE-UNSOUND.** Attempting to kick off the
+> unary migration (step 2) surfaced that the probe-validated bit-level product
+> encoding `enc(x,y) = replicate |enc x| 1 ++ [0] ++ enc x ++ enc y` **violates the
+> `LangEncodable.enc_size` contract** (`(enc x).length ≤ 2·size x + 1`,
+> `PolyTime.lean:572`) — and not marginally: the unary prefix doubles `|enc x|` per
+> nesting level, so a depth-`d` left-nested pair has `|enc| = 2^d·(m+1)−1` while
+> `encodable.size = m+d`. **No polynomial bound** can satisfy the generic instance's
+> obligation `B(a+b+1) ≥ 2·B(a)+B(b)` — so the generic `LangEncodable (X × Y)`
+> instance for this encoding **cannot exist** (its `enc_size` field is *false*, not
+> just hard). Machine-checked, axiom-free: `probes/UnaryProductSizeProbe.lean`
+> (`#eval` → `enc((10,5),0)` length `53` > bound `35`; depth table `8,17,35,71,143,
+> 287,575`). The 2026-06-28 `UnaryMigrationProbe` validated round-trip + `BitState`
+> but **never checked `enc_size`**. No code changed (the migration is an atomic
+> batch; a partial rewrite would hit this wall and be discarded — risk-based
+> development). **The bottom-up trio/product migration is BLOCKED pending an
+> encoding-design decision (owner-level — it touches `enc_size`/S3); see redesigned
+> step 2 below.** **Recommended next: switch to TOP-DOWN (CliqueRelTM)** — unblocked,
+> low structural risk, finishes `FlatClique ∈ NP` axiom-clean (TOP-DOWN follow-up).
 
 ---
 
@@ -88,10 +98,11 @@ W-invariant ①; per-op budget `(54·L²+54·L+180)·(Op.cost+1)`):
 
 **Remaining (raw `sorry`, `Compile/OpSound.lean` `compileOp_sound_physical_residue`):**
 `takeAt`, `dropAt`, `consLen` — the value-as-length trio, all **gated on the unary
-migration** (step 2 below, **design now ✅ probe-validated**). There is no more
-"buildable without the migration" op; the next bottom-up work is the migration. Its
-one additive (independently-committable, green) sub-step is `extractLeadingOnes`
-(step 2a); the rest is one atomic batch.
+migration, which is now ⚠ BLOCKED** (the 2026-06-28 design is size-unsound — see
+step 2 below). These three are **off the live `sat_NP` path** (isolated by the
+Route-A wall), so they are *not* required for the in-NP half; finishing them only
+buys Route B (drop the wall — cosmetic). Until the encoding redesign is decided,
+**bottom-up has no green-committable trio work** — do top-down instead.
 
 ---
 
@@ -135,65 +146,60 @@ re-derive — see "Proven, reusable" below): `opCopyAppend`/`copyAppendRaw_run`/
 and the **4-stage `compileSeq_sound_physical_residue` composition pattern** with
 its `nlinarith`-over-ℤ budget certificate `concat_budget_arith`.
 
-### 2. Unary migration — **NEXT BOTTOM-UP** (step 2a ✅ done; do steps 2b–2e next)
-**✅ DESIGN VALIDATED 2026-06-28** (`probes/UnaryMigrationProbe.lean`, axiom-free
-`#eval`; `lean probes/UnaryMigrationProbe.lean` → all `true`). **Step 2a (the
-additive piece) is now PROVEN** — see `extractLeadingOnes` below. The remaining
-steps 2b–2e are the **coupled atomic batch**. It is a single
-**coupled atomic batch** — `Op.eval` for the trio breaks BOTH `swapCmd` and
-`mapFstCmd` in `PolyTime.lean` at once, so they all re-derive together (nothing
-decouples; blast radius is otherwise contained — the product toolkit has **no
-external consumers**, only `PolyTime.lean` references it). The validated design:
+### 2. Unary migration — **⚠ BLOCKED: size-unsound as designed (2026-06-29); needs an encoding-design decision before any code**
+**The 2026-06-28 design is wrong.** The bit-level product encoding
+`enc(x,y) = replicate |enc x| 1 ++ [0] ++ enc x ++ enc y` is **exponential-size
+under nested products** (`probes/UnaryProductSizeProbe.lean`, machine-checked):
+the unary prefix has length `|enc x|`, so `|enc(x,y)| = 2·|enc x| + 1 + |enc y|` —
+the first component **doubles per nesting level**. The generic `LangEncodable
+(X × Y)` instance must prove `enc_size : (enc x).length ≤ 2·size x + 1`
+(`PolyTime.lean:572`), which needs `B(a+b+1) ≥ 2·B(a)+B(b)`; that recurrence has
+only **exponential** solutions, so **no polynomial `B` works** — the field is
+*false*, the instance cannot exist. (Old size-tight encoding `|enc x| :: (enc x ++
+enc y)` satisfies it but is not `BitState` — the cell holds the *value* `|enc x|`.)
 
-- **Bit-level product encoding** (replaces the single non-bit length-prefix cell):
-  `enc(x,y) = replicate |enc x| 1 ++ [0] ++ enc x ++ enc y` (unary length prefix,
-  `0` separator, then the two components). `BitState`-clean; the `0` separator makes
-  the leading 1-run unambiguous even when `enc x` is empty or itself starts with `1`s.
-  New `dec` = (count leading 1s = L; `rest := drop (L+1)`; `(rest.take L, rest.drop L)`).
-- **New trio semantics** (count = the register's **unary length**, not `.headD 0`):
-  `takeAt dst src lenReg := (s.get src).take (s.get lenReg).length`; `dropAt` mirror;
-  **`consLen dst lenSrc src := replicate (s.get lenSrc).length 1 ++ [0] ++ s.get src`**
-  (now writes a unary block → **preserves `BitState`**, so `Op.consLen_breaks_BitState`
-  becomes false and the `NoConsLen` walls can eventually be dropped — but leave that
-  threading for a follow-up; restating `consLen` does not require dropping it).
-  Bump `Op.cost consLen` (it now materialises `|lenSrc|` cells).
+**Why this blocks the whole bottom-up critical path.** Finishing the trio ops
+(step 3 → Route B) requires restating `consLen` to a `BitState`-preserving form;
+that restatement (and the trio count-by-length restatement) **breaks
+`swapCmd`/`mapFstCmd`** (their only consumers), and re-proving those needs a
+bit-level *and* size-sound *and* generic product encoding — which the above shows
+cannot use a unary prefix. So: **no green increment is possible until the encoding
+is redesigned.** `extractLeadingOnes` (step 2a, `ExtractOnes.lean`, proven) reads a
+*unary* prefix and is only reusable if a redesign keeps one.
 
-- **★ KEY FINDING (the old "just re-derive swap" was an under-estimate).** Product
-  *unpacking* must recover `L = |enc x|` from the unary prefix, which the current op
-  set **cannot do** (`head` peels one cell; `takeAt`/`dropAt` need the very count they
-  seek). Two routes, BOTH `#eval`-validated in the probe:
-  * **Option L (CHOSEN, ✅ BUILT) — `CookLevin/Complexity/Lang/ExtractOnes.lean`.**
-    `extractLeadingOnes dst src SC HD DONE NOOP CNT : Cmd` (existing ops + one
-    `forBnd` over `src`; no new op, op count stays 12). **PROVEN & axiom-clean:**
-    `extractLeadingOnes_get_dst` (`dst = replicate (leadingOnes src) 1`, via the
-    `forBnd` DONE-flag fold invariant) + `extractLeadingOnes_usesBelow`. ⚠ it
-    imports `Mathlib.Tactic` (the `Lang/*` modules are core-only; `rcases`/`set`/
-    `obtain`/`simpa` need it). `swap`/`mapFst`/`mapSnd` **consume** this in step 2d.
-    Cost is quadratic (`forBnd`'s `iters²`) — fine, only `inOPoly`/`monotonic` is
-    needed downstream.
-  * **Option H** — a new op `headOnes dst src := (s.get src).takeWhile (·==1)`. Cleaner
-    straight-line `swap`, but adds a 13th op + its counted-loop gadget + a contract
-    case + ~13 exhaustive-match arms. Rejected unless Option L's loop proof stalls.
+**Fundamental constraint.** Bit-level + polynomial-size + generic-nestable is
+*unachievable with any inline self-delimiting prefix* (unary, continuation-bit
+interleave, bit-doubling escape all cost `Ω(|enc x|)` and compound). The only
+`O(log)`-overhead bit-level option is a **binary length prefix**.
 
-- **`BitEncodable` plumbing:** add `[BitEncodable X] [BitEncodable Y]` to `swap`/`mapFst`/
-  `mapSnd`; give `BitEncodable (X × Y)` (bit-level product); set `enc_bit :=
-  BitEncodable.enc_bit` — this **discharges the two live `enc_bit := sorry`s**
-  (`PolyTime.lean:1321`, `:1733`). ⚠ `BitEncodable (List Nat)` is FALSE under the
-  `id` encoding (cells can be ≥2) — do NOT claim it; the generic witnesses are over
-  abstract `X`/`Y` so they don't need it. Migrating `List Nat` to a bit-level encoding
-  (drop the `id` shortcut for the length-prefixed `encListGen`) is a SEPARATE, later
-  ripple — not needed for this batch.
+**Redesign options (owner decision — both change the documented S3 plan):**
+- **(A) Binary/Elias-γ length prefix + loosen `enc_size` to a polynomial.**
+  `enc(x,y) = eliasγ(|enc x|) ++ enc x ++ enc y` (self-delimiting, bit-level,
+  `O(log)` overhead → no compounding). Forces: (i) `LangEncodable.enc_size` from the
+  tight `2·size+1` to a **quadratic** (a linear bound still fails — the `log` term;
+  a quadratic closes; downstream only needs `inOPoly`/`monotonic`, so the ripple
+  through `size_encodeState`/`comp`/witness cost-bounds is mechanical but wide); and
+  (ii) a runtime **binary→unary** count gadget (replaces `extractLeadingOnes`) so the
+  restated count-by-length trio can loop, plus a `consLen` that *writes* an Elias-γ
+  prefix. Self-contained and fully general, but sizeable (bigger than the old
+  estimate). **Audit `enc_size`'s consumers first** before committing.
+- **(B) Decouple — don't make the canonical product bit-level at all.** `sat_NP` is
+  already sorry-free (Route A) via the **free `DecidesLang` path with a bespoke
+  bit-level `encodeIn`** (EvalCnf-style), *not* a canonical `LangEncodable` product.
+  Recommendation: build the future S3 reduction chain the same way (bespoke bit-level
+  free encodings + loop/concat repackaging), leaving the canonical `swap`/`mapFst`
+  `enc_bit` as documented residuals and keeping the Route-A wall permanently. Then
+  the trio/product migration may be **unnecessary** — verify whether any live S3
+  reduction actually needs the generic trio (EvalCnf needs none). Lowest-risk;
+  matches the working live architecture; defers/avoids the encoding redesign.
 
-**Concrete batch order:** (a) ✅ **DONE** — `extractLeadingOnes` def + correctness
-(`ExtractOnes.lean`); (b) restate trio `Op.eval`/`Op.cost`; (c) new product
-`enc`/`dec`/`dec_enc`/`enc_size` + `BitEncodable`; (d) rewrite `swapCmd`/`mapFstCmd`/
-`mapSndCmd` (`_eval`/`_cost`/`normalizes`/`usesBelow`/`enc_bit`) against the new
-design — **wire in `extractLeadingOnes` here** (it gives the unary `L` block that
-feeds the restated `takeAt`/`dropAt`); (e) fix the trio `Op.inBounds`/`BitState`-
-preservation cases in `Compile/RunClear.lean`. Steps (b)–(e) land together (atomic).
+**Recommended:** investigate **(B)** first (cheap to scope: does the S3 chain need
+the generic trio? if not, the whole migration is moot and the wall stays). Pursue
+**(A)** only if a generic bit-level canonical product is genuinely required.
 
-### 3. `takeAt` / `dropAt` / `consLen` TM gadgets (bottom-up; after step 2 — the actual op-soundness deliverable)
-Each is a **counted loop** reusing proven patterns: the unary `lenReg`/`lenSrc` is a
+### 3. `takeAt` / `dropAt` / `consLen` TM gadgets (bottom-up; **gated on step 2's redesign** — the actual op-soundness deliverable)
+*Only reachable once step 2's encoding redesign lands and the trio `Op.eval` is
+restated.* Each is a **counted loop** reusing proven patterns: the unary `lenReg`/`lenSrc` is a
 loop bound (`forBnd`); `takeAt`/`dropAt` are counter-driven cursor copies (reuse
 `opCopy`/`copyLoop_run`, `loopBudget_le`); `consLen` writes `replicate |lenSrc| 1 ++ [0]`
 then appends `src` (an `appendOne`-loop + the `concat`/`opCopyAppend` toolkit). Discharge
