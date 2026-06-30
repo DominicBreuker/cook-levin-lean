@@ -1570,6 +1570,363 @@ theorem memberEdge_run (st : State) (va vb : Nat) (edges : List fedge)
     rw [hframefin r hrF hrE hrVC hrVD hrR1 hrR2 hrH hrI hrS hr3 hr4,
       State.get_set_ne _ _ _ _ hrE, State.get_set_ne _ _ _ _ hrF]
 
+/-! ### `checkNodup`: the duplicate-free check (nested loop, counter reads) -/
+
+/-- Inner-loop accumulator: scanning the first `m` positions `j'`, every
+off-diagonal position (`i ≠ j'`) must differ in value from the outer value `va`. -/
+def innerAll (i va : Nat) (l : List fvertex) (m : Nat) : Bool :=
+  (List.range m).all (fun j' => decide (i = j') || decide (va ≠ l.getD j' 0))
+
+private theorem innerAll_succ (i va : Nat) (l : List fvertex) (m : Nat) :
+    innerAll i va l (m + 1)
+      = (innerAll i va l m && (decide (i = m) || decide (va ≠ l.getD m 0))) := by
+  rw [innerAll, innerAll, List.range_succ, List.all_append, List.all_cons,
+    List.all_nil, Bool.and_true]
+
+/-- `Bool`-valued `l.Nodup`: scanning every outer position `i`, the inner scan
+over all positions must place every distinct pair at distinct values. -/
+def nodupB (l : List fvertex) : Bool :=
+  (List.range l.length).all (fun i => innerAll i (l.getD i 0) l l.length)
+
+theorem nodupB_eq_true_iff (l : List fvertex) : nodupB l = true ↔ l.Nodup := by
+  rw [List.nodup_iff_injective_getElem]
+  simp only [nodupB, innerAll, List.all_eq_true, List.mem_range, Bool.or_eq_true,
+    decide_eq_true_eq]
+  constructor
+  · intro h a b hl
+    obtain ⟨a, ha⟩ := a; obtain ⟨b, hb⟩ := b
+    simp only at hl
+    rcases h a ha b hb with hij | hne
+    · exact Fin.ext hij
+    · exact absurd (by rw [List.getD_eq_getElem _ _ ha, List.getD_eq_getElem _ _ hb]; exact hl) hne
+  · intro hinj i hi j hj
+    by_cases hij : i = j
+    · exact Or.inl hij
+    · refine Or.inr ?_
+      rw [List.getD_eq_getElem _ _ hi, List.getD_eq_getElem _ _ hj]
+      intro heq
+      exact hij (congrArg Fin.val (@hinj ⟨i, hi⟩ ⟨j, hj⟩ heq))
+
+/-- The inner-loop guard `ifBit RES1 cSkip (eqBit RES2 VALA VALB ;; ifBit RES2
+cReject cSkip)` only ever writes `{OUTPUT, RES2, SKIPR}`. -/
+private theorem ifNodup_frame (t : State) (r : Var) (hrO : r ≠ OUTPUT)
+    (hrR2 : r ≠ RES2) (hrS : r ≠ SKIPR) :
+    ((Cmd.ifBit RES1 cSkip
+        (Cmd.op (.eqBit RES2 VALA VALB) ;; Cmd.ifBit RES2 cReject cSkip)).eval t).get r
+      = t.get r := by
+  by_cases hb1 : t.get RES1 = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hb1, cSkip_eval, State.get_set_ne _ _ _ _ hrS]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hb1, Cmd.eval_seq]
+    have he : (Cmd.op (.eqBit RES2 VALA VALB)).eval t
+        = t.set RES2 (if t.get VALA = t.get VALB then [1] else [0]) := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    rw [he]
+    by_cases hb2 : (t.set RES2 (if t.get VALA = t.get VALB then [1] else [0])).get RES2 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hb2, cReject_eval,
+        State.get_set_ne _ _ _ _ hrO, State.get_set_ne _ _ _ _ hrR2]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hb2, cSkip_eval,
+        State.get_set_ne _ _ _ _ hrS, State.get_set_ne _ _ _ _ hrR2]
+
+/-- The `checkNodup` inner-loop invariant (fixed outer position `i`, value `va`):
+through inner iteration `j` it has scanned `j` positions, ANDing each
+off-diagonal-distinctness test into `OUTPUT`. Frame relative to inner-entry `st`
+(`IDX1`/`VALA` survive — they are outside the inner write set). -/
+private def NInnerInv (l : List fvertex) (i va : Nat) (b' : Bool) (st : State)
+    (j : Nat) (s : State) : Prop :=
+  s.get VSCAN2 = encVerts (l.drop j)
+  ∧ s.get OUTPUT = [if b' && innerAll i va l j then 1 else 0]
+  ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ VSCAN2 → r ≠ VALB → r ≠ IDX2 → r ≠ IDX3 →
+      r ≠ RES1 → r ≠ RES2 → r ≠ HEAD → r ≠ INBLK → r ≠ SKIPR →
+      s.get r = st.get r)
+
+private theorem checkNodupInner_step (l : List fvertex) (i va : Nat) (b' : Bool)
+    (st : State) (hIDX1 : st.get IDX1 = List.replicate i 1)
+    (hVALA : st.get VALA = List.replicate va 1)
+    (j : Nat) (s : State) (hj : j < l.length) (h : NInnerInv l i va b' st j s) :
+    NInnerInv l i va b' st (j + 1)
+      ((readNum VALB VSCAN2 IDX3 ;;
+        Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+        Cmd.ifBit RES1
+          cSkip
+          (Cmd.op (.eqBit RES2 VALA VALB) ;;
+           Cmd.ifBit RES2 cReject cSkip)).eval (s.set IDX2 (List.replicate j 1))) := by
+  obtain ⟨hVSCAN2, hOUT, hframe⟩ := h
+  rw [show (readNum VALB VSCAN2 IDX3 ;; Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+        Cmd.ifBit RES1 cSkip
+          (Cmd.op (.eqBit RES2 VALA VALB) ;; Cmd.ifBit RES2 cReject cSkip)).eval
+          (s.set IDX2 (List.replicate j 1))
+      = (Cmd.ifBit RES1 cSkip
+          (Cmd.op (.eqBit RES2 VALA VALB) ;; Cmd.ifBit RES2 cReject cSkip)).eval
+          ((Cmd.op (.eqBit RES1 IDX1 IDX2)).eval
+            ((readNum VALB VSCAN2 IDX3).eval (s.set IDX2 (List.replicate j 1))))
+      from by rw [Cmd.eval_seq, Cmd.eval_seq]]
+  have hVS_in : (s.set IDX2 (List.replicate j 1)).get VSCAN2
+      = List.replicate (l[j]'hj) 1 ++ 0 :: encVerts (l.drop (j + 1)) := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VSCAN2 : Var) ≠ IDX2), hVSCAN2,
+      List.drop_eq_getElem_cons hj, encVerts_cons]
+  obtain ⟨hVALB, hVSCAN2', hRNframe⟩ := readNum_run (s.set IDX2 (List.replicate j 1))
+    (l[j]'hj) (encVerts (l.drop (j + 1))) VALB VSCAN2 IDX3 hVS_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALB VSCAN2 IDX3).eval (s.set IDX2 (List.replicate j 1)) with hs1
+  have hIDX1_1 : s1.get IDX1 = List.replicate i 1 := by
+    rw [hRNframe IDX1 (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_ne _ _ _ _ (by decide : (IDX1 : Var) ≠ IDX2),
+      hframe IDX1 (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide), hIDX1]
+  have hIDX2_1 : s1.get IDX2 = List.replicate j 1 := by
+    rw [hRNframe IDX2 (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_eq]
+  have hVALA1 : s1.get VALA = List.replicate va 1 := by
+    rw [hRNframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ IDX2),
+      hframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide), hVALA]
+  have hOUT1 : s1.get OUTPUT = [if b' && innerAll i va l j then 1 else 0] := by
+    rw [hRNframe OUTPUT (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ IDX2),
+      hOUT]
+  have e2 : (Cmd.op (.eqBit RES1 IDX1 IDX2)).eval s1
+      = s1.set RES1 [if i = j then 1 else 0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hIDX1_1, hIDX2_1, eqBit_replicate]
+  rw [e2]
+  set s2 := s1.set RES1 [if i = j then 1 else 0] with hs2
+  have hRES1_2 : s2.get RES1 = [if i = j then 1 else 0] := State.get_set_eq _ _ _
+  have hVALA2 : s2.get VALA = List.replicate va 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ RES1), hVALA1]
+  have hVALB2 : s2.get VALB = List.replicate (l[j]'hj) 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ RES1), hVALB]
+  have hVSCAN2_2 : s2.get VSCAN2 = encVerts (l.drop (j + 1)) := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VSCAN2 : Var) ≠ RES1), hVSCAN2']
+  have hOUT2 : s2.get OUTPUT = [if b' && innerAll i va l j then 1 else 0] := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ RES1), hOUT1]
+  have hgetD : l.getD j 0 = l[j]'hj := List.getD_eq_getElem _ _ hj
+  refine ⟨?_, ?_, ?_⟩
+  · rw [ifNodup_frame _ _ (by decide) (by decide) (by decide), hVSCAN2_2]
+  · rw [innerAll_succ, hgetD]
+    by_cases hij : i = j
+    · rw [Cmd.eval_ifBit_true _ _ _ _ (by rw [hRES1_2, if_pos hij]), cSkip_eval,
+        State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ SKIPR), hOUT2]
+      have hd : decide (i = j) = true := by simp only [decide_eq_true_eq]; exact hij
+      rw [hd]; simp
+    · rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hRES1_2, if_neg hij]; decide), Cmd.eval_seq]
+      have he : (Cmd.op (.eqBit RES2 VALA VALB)).eval s2
+          = s2.set RES2 [if va = l[j]'hj then 1 else 0] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVALA2, hVALB2, eqBit_replicate]
+      rw [he]
+      have hd1 : decide (i = j) = false := by simp only [decide_eq_false_iff_not]; exact hij
+      by_cases hvl : va = l[j]'hj
+      · rw [Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq, if_pos hvl]),
+          cReject_eval, State.get_set_eq]
+        have hd2 : decide (va ≠ l[j]'hj) = false := by
+          simp only [decide_eq_false_iff_not, not_not]; exact hvl
+        rw [hd1, hd2]; simp
+      · rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [State.get_set_eq, if_neg hvl]; decide),
+          cSkip_eval, State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ SKIPR),
+          State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ RES2), hOUT2]
+        have hd2 : decide (va ≠ l[j]'hj) = true := by simp only [decide_eq_true_eq]; exact hvl
+        rw [hd1, hd2]; simp
+  · intro r hrO hrV hrVB hr2 hr3 hrR1 hrR2 hrH hrI hrS
+    rw [ifNodup_frame _ _ hrO hrR2 hrS, State.get_set_ne _ _ _ _ hrR1,
+      hRNframe r hrV hrVB hrI hrH hrS hr3, State.get_set_ne _ _ _ _ hr2,
+      hframe r hrO hrV hrVB hr2 hr3 hrR1 hrR2 hrH hrI hrS]
+
+/-- **The `checkNodup` inner loop is correct.** From inner-entry with `VSCAN2`
+holding the full vertex stream, `IDX1`/`VALA` the outer position/value, and
+`OUTPUT = [if b' then 1 else 0]`, the inner `forBnd` produces
+`OUTPUT = [if b' && innerAll i va l l.length then 1 else 0]`, preserving every
+register outside its scratch set (in particular `VSCAN`, `IDX1`, `VALA`). -/
+private theorem checkNodupInner_run (st : State) (l : List fvertex) (i va : Nat)
+    (b' : Bool)
+    (hVSCAN2 : st.get VSCAN2 = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hIDX1 : st.get IDX1 = List.replicate i 1)
+    (hVALA : st.get VALA = List.replicate va 1)
+    (hO : st.get OUTPUT = [if b' then 1 else 0]) :
+    ((Cmd.forBnd IDX2 VERT_TALLY
+        (readNum VALB VSCAN2 IDX3 ;;
+         Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+         Cmd.ifBit RES1 cSkip
+           (Cmd.op (.eqBit RES2 VALA VALB) ;;
+            Cmd.ifBit RES2 cReject cSkip))).eval st).get OUTPUT
+        = [if b' && innerAll i va l l.length then 1 else 0]
+    ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ VSCAN2 → r ≠ VALB → r ≠ IDX2 → r ≠ IDX3 →
+        r ≠ RES1 → r ≠ RES2 → r ≠ HEAD → r ≠ INBLK → r ≠ SKIPR →
+        ((Cmd.forBnd IDX2 VERT_TALLY
+          (readNum VALB VSCAN2 IDX3 ;;
+           Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+           Cmd.ifBit RES1 cSkip
+             (Cmd.op (.eqBit RES2 VALA VALB) ;;
+              Cmd.ifBit RES2 cReject cSkip))).eval st).get r = st.get r) := by
+  have hblen : (st.get VERT_TALLY).length = l.length := by
+    rw [hVT, List.length_replicate]
+  have hbase : NInnerInv l i va b' st 0 st := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hVSCAN2, List.drop_zero]
+    · rw [hO]; simp [innerAll]
+  have hInv : NInnerInv l i va b' st l.length
+      ((Cmd.forBnd IDX2 VERT_TALLY
+        (readNum VALB VSCAN2 IDX3 ;;
+         Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+         Cmd.ifBit RES1 cSkip
+           (Cmd.op (.eqBit RES2 VALA VALB) ;;
+            Cmd.ifBit RES2 cReject cSkip))).eval st) := by
+    rw [Cmd.eval_forBnd, hblen]
+    exact Cmd.foldlState_range_induct _ IDX2 l.length st
+      (NInnerInv l i va b' st) hbase
+      (fun j s hj h => checkNodupInner_step l i va b' st hIDX1 hVALA j s hj h)
+  obtain ⟨_, hOUTfin, hframefin⟩ := hInv
+  exact ⟨hOUTfin, hframefin⟩
+
+/-- The `checkNodup` outer-loop invariant: through outer iteration `i` the loop
+has scanned `i` outer positions, ANDing each one's full inner row into `OUTPUT`.
+Frame relative to the loop-entry state `st`. -/
+private def CNodupInv (l : List fvertex) (b : Bool) (st : State)
+    (i : Nat) (s : State) : Prop :=
+  s.get VSCAN = encVerts (l.drop i)
+  ∧ s.get OUTPUT = [if b && (List.range i).all (fun i' => innerAll i' (l.getD i' 0) l l.length)
+      then 1 else 0]
+  ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ VSCAN → r ≠ VSCAN2 → r ≠ VALA → r ≠ VALB →
+      r ≠ IDX1 → r ≠ IDX2 → r ≠ IDX3 → r ≠ RES1 → r ≠ RES2 → r ≠ HEAD →
+      r ≠ INBLK → r ≠ SKIPR → s.get r = st.get r)
+
+private theorem checkNodup_step (l : List fvertex) (b : Bool) (st : State)
+    (hVERT : st.get VERT_STREAM = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (i : Nat) (s : State) (hi : i < l.length) (h : CNodupInv l b st i s) :
+    CNodupInv l b st (i + 1)
+      ((readNum VALA VSCAN IDX2 ;;
+        Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+        Cmd.forBnd IDX2 VERT_TALLY
+          (readNum VALB VSCAN2 IDX3 ;;
+           Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+           Cmd.ifBit RES1 cSkip
+             (Cmd.op (.eqBit RES2 VALA VALB) ;;
+              Cmd.ifBit RES2 cReject cSkip))).eval (s.set IDX1 (List.replicate i 1))) := by
+  obtain ⟨hVSCAN, hOUT, hframe⟩ := h
+  rw [show (readNum VALA VSCAN IDX2 ;; Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+        Cmd.forBnd IDX2 VERT_TALLY
+          (readNum VALB VSCAN2 IDX3 ;;
+           Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+           Cmd.ifBit RES1 cSkip
+             (Cmd.op (.eqBit RES2 VALA VALB) ;;
+              Cmd.ifBit RES2 cReject cSkip))).eval (s.set IDX1 (List.replicate i 1))
+      = (Cmd.forBnd IDX2 VERT_TALLY
+          (readNum VALB VSCAN2 IDX3 ;;
+           Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+           Cmd.ifBit RES1 cSkip
+             (Cmd.op (.eqBit RES2 VALA VALB) ;;
+              Cmd.ifBit RES2 cReject cSkip))).eval
+          ((Cmd.op (.copy VSCAN2 VERT_STREAM)).eval
+            ((readNum VALA VSCAN IDX2).eval (s.set IDX1 (List.replicate i 1))))
+      from by rw [Cmd.eval_seq, Cmd.eval_seq]]
+  have hVS_in : (s.set IDX1 (List.replicate i 1)).get VSCAN
+      = List.replicate (l[i]'hi) 1 ++ 0 :: encVerts (l.drop (i + 1)) := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ IDX1), hVSCAN,
+      List.drop_eq_getElem_cons hi, encVerts_cons]
+  obtain ⟨hVALA, hVSCAN', hRNframe⟩ := readNum_run (s.set IDX1 (List.replicate i 1))
+    (l[i]'hi) (encVerts (l.drop (i + 1))) VALA VSCAN IDX2 hVS_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALA VSCAN IDX2).eval (s.set IDX1 (List.replicate i 1)) with hs1
+  have hVERT1 : s1.get VERT_STREAM = encVerts l := by
+    rw [hRNframe VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ IDX1),
+      hframe VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide), hVERT]
+  have ecopy : (Cmd.op (.copy VSCAN2 VERT_STREAM)).eval s1 = s1.set VSCAN2 (encVerts l) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVERT1]
+  rw [ecopy]
+  set s2 := s1.set VSCAN2 (encVerts l) with hs2
+  have hVSCAN2_2 : s2.get VSCAN2 = encVerts l := State.get_set_eq _ _ _
+  have hVT2 : s2.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN2),
+      hRNframe VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ IDX1),
+      hframe VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide), hVT]
+  have hIDX1_2 : s2.get IDX1 = List.replicate i 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (IDX1 : Var) ≠ VSCAN2),
+      hRNframe IDX1 (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_eq]
+  have hVALA2 : s2.get VALA = List.replicate (l[i]'hi) 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ VSCAN2), hVALA]
+  have hOUT2 : s2.get OUTPUT
+      = [if b && (List.range i).all (fun i' => innerAll i' (l.getD i' 0) l l.length)
+          then 1 else 0] := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ VSCAN2),
+      hRNframe OUTPUT (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ IDX1),
+      hOUT]
+  have hgetD : l.getD i 0 = l[i]'hi := List.getD_eq_getElem _ _ hi
+  obtain ⟨hInnerOut, hInnerFrame⟩ := checkNodupInner_run s2 l i (l[i]'hi)
+    (b && (List.range i).all (fun i' => innerAll i' (l.getD i' 0) l l.length))
+    hVSCAN2_2 hVT2 hIDX1_2 hVALA2 hOUT2
+  refine ⟨?_, ?_, ?_⟩
+  · rw [hInnerFrame VSCAN (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide),
+      State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ VSCAN2), hVSCAN']
+  · rw [hInnerOut, List.range_succ, List.all_append, List.all_cons, List.all_nil,
+      Bool.and_true, hgetD, Bool.and_assoc]
+  · intro r hrO hrV hrV2 hrVA hrVB hr1 hr2 hr3 hrR1 hrR2 hrH hrI hrS
+    rw [hInnerFrame r hrO hrV2 hrVB hr2 hr3 hrR1 hrR2 hrH hrI hrS,
+      State.get_set_ne _ _ _ _ hrV2,
+      hRNframe r hrV hrVA hrI hrH hrS hr2, State.get_set_ne _ _ _ _ hr1,
+      hframe r hrO hrV hrV2 hrVA hrVB hr1 hr2 hr3 hrR1 hrR2 hrH hrI hrS]
+
+/-- **Check 4 — `l.Nodup`** (no repeated vertex), ANDed into `OUTPUT`. A double
+`forBnd`: the outer scan reads `l[i]` into `VALA` (counter `IDX1`); the inner
+scan over a fresh copy `VSCAN2` reads `l[j]` and, off the diagonal `i = j`
+(detected by `eqBit IDX1 IDX2` on the unary counters), rejects if `l[i] = l[j]`. -/
+theorem checkNodup_run (st : State) (l : List fvertex) (b : Bool)
+    (hVS : st.get VERT_STREAM = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0]) :
+    (checkNodup.eval st).get OUTPUT = [if b && nodupB l then 1 else 0]
+    ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ VSCAN → r ≠ VSCAN2 → r ≠ VALA → r ≠ VALB →
+        r ≠ IDX1 → r ≠ IDX2 → r ≠ IDX3 → r ≠ RES1 → r ≠ RES2 → r ≠ HEAD →
+        r ≠ INBLK → r ≠ SKIPR → (checkNodup.eval st).get r = st.get r) := by
+  have eInit : (Cmd.op (.copy VSCAN VERT_STREAM)).eval st = st.set VSCAN (encVerts l) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVS]
+  have eP : checkNodup.eval st
+      = (Cmd.forBnd IDX1 VERT_TALLY
+          (readNum VALA VSCAN IDX2 ;;
+           Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+           Cmd.forBnd IDX2 VERT_TALLY
+             (readNum VALB VSCAN2 IDX3 ;;
+              Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+              Cmd.ifBit RES1 cSkip
+                (Cmd.op (.eqBit RES2 VALA VALB) ;;
+                 Cmd.ifBit RES2 cReject cSkip)))).eval (st.set VSCAN (encVerts l)) := by
+    show (Cmd.op (.copy VSCAN VERT_STREAM) ;; _).eval st = _
+    rw [Cmd.eval_seq, eInit]
+  have hblen : ((st.set VSCAN (encVerts l)).get VERT_TALLY).length = l.length := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN), hVT,
+      List.length_replicate]
+  have hbase : CNodupInv l b (st.set VSCAN (encVerts l)) 0 (st.set VSCAN (encVerts l)) := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [State.get_set_eq, List.drop_zero]
+    · rw [State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ VSCAN), hO]; simp
+  have hVERT0 : (st.set VSCAN (encVerts l)).get VERT_STREAM = encVerts l := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ VSCAN), hVS]
+  have hVT0 : (st.set VSCAN (encVerts l)).get VERT_TALLY = List.replicate l.length 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN), hVT]
+  have hInv : CNodupInv l b (st.set VSCAN (encVerts l)) l.length (checkNodup.eval st) := by
+    rw [eP, Cmd.eval_forBnd, hblen]
+    exact Cmd.foldlState_range_induct _ IDX1 l.length (st.set VSCAN (encVerts l))
+      (CNodupInv l b (st.set VSCAN (encVerts l))) hbase
+      (fun i s hi h => checkNodup_step l b (st.set VSCAN (encVerts l)) hVERT0 hVT0 i s hi h)
+  obtain ⟨_, hOUTfin, hframefin⟩ := hInv
+  refine ⟨?_, ?_⟩
+  · rw [hOUTfin,
+      show nodupB l = (List.range l.length).all (fun i => innerAll i (l.getD i 0) l l.length)
+        from rfl]
+  · intro r hrO hrV hrV2 hrVA hrVB hr1 hr2 hr3 hrR1 hrR2 hrH hrI hrS
+    rw [hframefin r hrO hrV hrV2 hrVA hrVB hr1 hr2 hr3 hrR1 hrR2 hrH hrI hrS,
+      State.get_set_ne _ _ _ _ hrV]
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
