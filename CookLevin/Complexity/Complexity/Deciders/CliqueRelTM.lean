@@ -122,6 +122,12 @@ private theorem length_le_encsize {α : Type} [encodable α] (xs : List α) :
   | nil => simp
   | cons x xs ih => simp only [List.foldr_cons, List.length_cons]; omega
 
+/-- Peel one vertex block off the front of the vertex stream. -/
+theorem encVerts_cons (v : fvertex) (rest : List fvertex) :
+    encVerts (v :: rest) = List.replicate v 1 ++ 0 :: encVerts rest := by
+  simp only [encVerts, List.map_cons, List.flatten_cons, encNum]
+  rw [List.append_assoc]; rfl
+
 /-- The vertex stream's length equals the list's encoded size (`size Nat = id`
 makes the unary block of a vertex `v` cost exactly `v + 1`). -/
 theorem encVerts_length (l : List fvertex) :
@@ -631,6 +637,22 @@ private theorem replicate_one_snoc (n : Nat) :
     List.replicate n (1 : Nat) ++ [1] = List.replicate (n + 1) 1 :=
   List.replicate_succ'.symm
 
+private theorem replicate_one_eq_iff {a b : Nat} :
+    (List.replicate a (1 : Nat) = List.replicate b 1) ↔ a = b := by
+  constructor
+  · intro h; have := congrArg List.length h; simpa using this
+  · rintro rfl; rfl
+
+/-- `cReject` sets `OUTPUT := [0]` (and touches nothing else). -/
+private theorem cReject_eval (s : State) : cReject.eval s = s.set OUTPUT [0] := by
+  show ((Cmd.op (.clear OUTPUT)) ;; Cmd.op (.appendZero OUTPUT)).eval s = _
+  rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+  simp only [Op.eval, State.get_set_eq, List.nil_append, State.set_set]
+
+private theorem cReject_cost (s : State) : cReject.cost s = 3 := by
+  show ((Cmd.op (.clear OUTPUT)) ;; Cmd.op (.appendZero OUTPUT)).cost s = _
+  rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]; rfl
+
 /-- The `readNum` loop invariant (cf. `EvalCnfCmd.LVInv`). Through iteration `v`
 the loop consumes the unary block (one cell/iteration) into `dst`; at iteration
 `v` it consumes the `0` terminator and clears `INBLK`; afterwards it idles. The
@@ -858,6 +880,213 @@ theorem readNum_run (st : State) (v : Nat) (rest : List Nat)
   rw [hframe r hrs hrd hri hrh hrsk hridx,
     State.get_set_ne _ _ _ _ hri, State.get_set_ne _ _ _ _ hri,
     State.get_set_ne _ _ _ _ hrd]
+
+/-! ### Per-check run-lemmas (AND-into-`OUTPUT`)
+
+Each check ANDs its predicate into `OUTPUT`: starting from `OUTPUT = [if b then 1
+else 0]`, after the check `OUTPUT = [if b && decide P then 1 else 0]` (the check
+only ever *rejects*, never accepts), and the read-only input registers (1–6) are
+preserved. The assembly (`cliqueRelCmd`) starts `OUTPUT = [1]` and chains them, so
+the final bit is the conjunction of all five predicates = `cliqueRel`. -/
+
+/-- **Check 3 — `l.length = k`.** The smallest check: one `eqBit` of the two
+unary tallies, ANDed into `OUTPUT`. -/
+theorem checkLen_run (st : State) (k llen : Nat) (b : Bool)
+    (hVT : st.get VERT_TALLY = List.replicate llen 1)
+    (hK : st.get K = List.replicate k 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0]) :
+    (checkLen.eval st).get OUTPUT = [if b && decide (llen = k) then 1 else 0]
+    ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ RES1 → r ≠ SKIPR →
+        (checkLen.eval st).get r = st.get r) := by
+  have heq : (if st.get VERT_TALLY = st.get K then ([1] : List Nat) else [0])
+      = [if llen = k then 1 else 0] := by
+    rw [hVT, hK]
+    by_cases h : llen = k
+    · rw [if_pos (by rw [h]), if_pos h]
+    · rw [if_neg (by rw [replicate_one_eq_iff]; exact h), if_neg h]
+  have he : checkLen.eval st
+      = (Cmd.ifBit RES1 cSkip cReject).eval
+          (st.set RES1 [if llen = k then 1 else 0]) := by
+    show (Cmd.op (.eqBit RES1 VERT_TALLY K) ;; Cmd.ifBit RES1 cSkip cReject).eval st = _
+    rw [Cmd.eval_seq, Cmd.eval_op]; simp only [Op.eval]; rw [heq]
+  rw [he]
+  by_cases hlk : llen = k
+  · have hR : (st.set RES1 [if llen = k then 1 else 0]).get RES1 = [1] := by
+      rw [State.get_set_eq, if_pos hlk]
+    rw [Cmd.eval_ifBit_true _ _ _ _ hR, cSkip_eval]
+    refine ⟨?_, ?_⟩
+    · rw [State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ SKIPR),
+        State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ RES1), hO]
+      simp [hlk]
+    · intro r hrO hrR hrS
+      rw [State.get_set_ne _ _ _ _ hrS, State.get_set_ne _ _ _ _ hrR]
+  · have hR : (st.set RES1 [if llen = k then 1 else 0]).get RES1 ≠ [1] := by
+      rw [State.get_set_eq, if_neg hlk]; decide
+    rw [Cmd.eval_ifBit_false _ _ _ _ hR, cReject_eval]
+    refine ⟨?_, ?_⟩
+    · rw [State.get_set_eq]; simp [hlk]
+    · intro r hrO hrR hrS
+      rw [State.get_set_ne _ _ _ _ hrO, State.get_set_ne _ _ _ _ hrR]
+
+/-- `Bool`-valued "every element `< numV`" (avoids the flaky `Decidable
+(∀ x ∈ l, …)` instance; bridges to `list_ofFlatType` via `allLt_eq_true_iff`). -/
+def allLt (numV : Nat) (l : List fvertex) : Bool := l.all (fun x => decide (x < numV))
+
+theorem allLt_eq_true_iff (numV : Nat) (l : List fvertex) :
+    allLt numV l = true ↔ list_ofFlatType numV l := by
+  simp only [allLt, List.all_eq_true, decide_eq_true_eq, list_ofFlatType, ofFlatType]
+
+/-- One element peeled off the front: `allLt` over `take (i+1)`. -/
+private theorem allLt_take_succ (numV : Nat) (l : List fvertex) (i : Nat)
+    (hi : i < l.length) :
+    allLt numV (l.take (i + 1))
+      = (allLt numV (l.take i) && decide (l[i]'hi < numV)) := by
+  rw [allLt, allLt, List.take_succ_eq_append_getElem hi, List.all_append,
+    List.all_cons, List.all_nil, Bool.and_true]
+
+/-- `ifBit RES1 cSkip cReject` only ever writes `{SKIPR, OUTPUT}`. -/
+private theorem ifReject_frame (t : State) (r : Var) (hrS : r ≠ SKIPR)
+    (hrO : r ≠ OUTPUT) :
+    ((Cmd.ifBit RES1 cSkip cReject).eval t).get r = t.get r := by
+  by_cases hb : t.get RES1 = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hb, cSkip_eval, State.get_set_ne _ _ _ _ hrS]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hb, cReject_eval, State.get_set_ne _ _ _ _ hrO]
+
+/-- The `checkOfType` outer-loop invariant: through iteration `i` the loop has
+consumed `i` vertex blocks from `VSCAN` and ANDed each `< numV` test into
+`OUTPUT`. The frame is relative to the loop-entry state `st`. -/
+private def COInv (l : List fvertex) (numV : Nat) (b : Bool) (st : State)
+    (i : Nat) (s : State) : Prop :=
+  s.get VSCAN = encVerts (l.drop i)
+  ∧ s.get OUTPUT = [if b && allLt numV (l.take i) then 1 else 0]
+  ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ VSCAN → r ≠ VALA → r ≠ RES1 → r ≠ LT_B →
+      r ≠ HEAD → r ≠ INBLK → r ≠ SKIPR → r ≠ IDX1 → r ≠ IDX2 → r ≠ IDX3 →
+      s.get r = st.get r)
+
+private theorem checkOfType_step (l : List fvertex) (numV : Nat) (b : Bool)
+    (st : State) (hNUMV : st.get NUMV = List.replicate numV 1)
+    (i : Nat) (s : State) (hi : i < l.length) (h : COInv l numV b st i s) :
+    COInv l numV b st (i + 1)
+      ((readNum VALA VSCAN IDX2 ;;
+        ltBit RES1 VALA NUMV IDX3 ;;
+        Cmd.ifBit RES1 cSkip cReject).eval (s.set IDX1 (List.replicate i 1))) := by
+  obtain ⟨hVSCAN, hOUT, hframe⟩ := h
+  -- expose the body as `ifBit (ltBit (readNum …))` (avoid whnf on the `;;` chain)
+  rw [show (readNum VALA VSCAN IDX2 ;; ltBit RES1 VALA NUMV IDX3 ;;
+        Cmd.ifBit RES1 cSkip cReject).eval (s.set IDX1 (List.replicate i 1))
+      = (Cmd.ifBit RES1 cSkip cReject).eval
+          ((ltBit RES1 VALA NUMV IDX3).eval
+            ((readNum VALA VSCAN IDX2).eval (s.set IDX1 (List.replicate i 1))))
+      from by rw [Cmd.eval_seq, Cmd.eval_seq]]
+  -- stream shape at the head of `VSCAN`
+  have hVS : (s.set IDX1 (List.replicate i 1)).get VSCAN
+      = List.replicate (l[i]'hi) 1 ++ 0 :: encVerts (l.drop (i + 1)) := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ IDX1), hVSCAN,
+      List.drop_eq_getElem_cons hi, encVerts_cons]
+  -- run `readNum VALA VSCAN IDX2`
+  obtain ⟨hVALA, hVS2, hRNframe⟩ := readNum_run (s.set IDX1 (List.replicate i 1))
+    (l[i]'hi) (encVerts (l.drop (i + 1))) VALA VSCAN IDX2 hVS
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  -- `NUMV` survives `readNum`
+  have hNUMV1 : ((readNum VALA VSCAN IDX2).eval
+      (s.set IDX1 (List.replicate i 1))).get NUMV = List.replicate numV 1 := by
+    rw [hRNframe NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ IDX1),
+      hframe NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+      hNUMV]
+  -- run `ltBit RES1 VALA NUMV IDX3`
+  obtain ⟨hRES1, hLTframe⟩ := ltBit_run
+    ((readNum VALA VSCAN IDX2).eval (s.set IDX1 (List.replicate i 1)))
+    (l[i]'hi) numV RES1 VALA NUMV IDX3 hVALA hNUMV1 (by decide) (by decide)
+  -- the post-`ltBit` state, abbreviated
+  set s2 := (ltBit RES1 VALA NUMV IDX3).eval
+    ((readNum VALA VSCAN IDX2).eval (s.set IDX1 (List.replicate i 1))) with hs2
+  -- `VSCAN` and `OUTPUT` after `ltBit`
+  have hVS3 : s2.get VSCAN = encVerts (l.drop (i + 1)) := by
+    rw [hLTframe VSCAN (by decide) (by decide) (by decide), hVS2]
+  have hOUT3 : s2.get OUTPUT
+      = [if b && allLt numV (l.take i) then 1 else 0] := by
+    rw [hLTframe OUTPUT (by decide) (by decide) (by decide),
+      hRNframe OUTPUT (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ IDX1), hOUT]
+  refine ⟨?_, ?_, ?_⟩
+  · -- VSCAN
+    rw [ifReject_frame _ _ (by decide) (by decide), hVS3]
+  · -- OUTPUT
+    by_cases hlt : l[i]'hi < numV
+    · have hR : s2.get RES1 = [1] := by rw [hRES1, if_pos hlt]
+      rw [Cmd.eval_ifBit_true _ _ _ _ hR, cSkip_eval,
+        State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ SKIPR), hOUT3,
+        allLt_take_succ numV l i hi]
+      have hd : decide (l[i]'hi < numV) = true := by
+        simp only [decide_eq_true_eq]; exact hlt
+      rw [hd, Bool.and_true]
+    · have hR : s2.get RES1 ≠ [1] := by rw [hRES1, if_neg hlt]; decide
+      rw [Cmd.eval_ifBit_false _ _ _ _ hR, cReject_eval, State.get_set_eq,
+        allLt_take_succ numV l i hi]
+      have hd : decide (l[i]'hi < numV) = false := by
+        simp only [decide_eq_false_iff_not]; exact hlt
+      simp [hd]
+  · -- frame
+    intro r hrO hrV hrVA hrR hrLT hrH hrI hrS hr1 hr2 hr3
+    rw [ifReject_frame _ _ hrS hrO, hLTframe r hrLT hr3 hrR,
+      hRNframe r hrV hrVA hrI hrH hrS hr2,
+      State.get_set_ne _ _ _ _ hr1,
+      hframe r hrO hrV hrVA hrR hrLT hrH hrI hrS hr1 hr2 hr3]
+
+/-- **Check 2 — `list_ofFlatType numV l`** (every vertex `< numV`), ANDed into
+`OUTPUT`. The representative single-loop check: an outer `forBnd` over the vertex
+tally whose body `readNum`s one vertex and `ltBit`s it against `NUMV`. -/
+theorem checkOfType_run (st : State) (l : List fvertex) (numV : Nat) (b : Bool)
+    (hVS : st.get VERT_STREAM = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hNUMV : st.get NUMV = List.replicate numV 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0]) :
+    (checkOfType.eval st).get OUTPUT
+        = [if b && allLt numV l then 1 else 0]
+    ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ VSCAN → r ≠ VALA → r ≠ RES1 → r ≠ LT_B →
+        r ≠ HEAD → r ≠ INBLK → r ≠ SKIPR → r ≠ IDX1 → r ≠ IDX2 → r ≠ IDX3 →
+        (checkOfType.eval st).get r = st.get r) := by
+  -- init: `copy VSCAN VERT_STREAM`
+  have eInit : (Cmd.op (.copy VSCAN VERT_STREAM)).eval st
+      = st.set VSCAN (encVerts l) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVS]
+  have eP : checkOfType.eval st
+      = (Cmd.forBnd IDX1 VERT_TALLY
+          (readNum VALA VSCAN IDX2 ;;
+           ltBit RES1 VALA NUMV IDX3 ;;
+           Cmd.ifBit RES1 cSkip cReject)).eval (st.set VSCAN (encVerts l)) := by
+    show (Cmd.op (.copy VSCAN VERT_STREAM) ;; _).eval st = _
+    rw [Cmd.eval_seq, eInit]
+  have hblen : ((st.set VSCAN (encVerts l)).get VERT_TALLY).length = l.length := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN), hVT,
+      List.length_replicate]
+  have hbase : COInv l numV b (st.set VSCAN (encVerts l)) 0
+      (st.set VSCAN (encVerts l)) := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [State.get_set_eq, List.drop_zero]
+    · rw [State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ VSCAN), hO,
+        List.take_zero]
+      simp only [allLt, List.all_nil, Bool.and_true]
+  have hNUMV0 : (st.set VSCAN (encVerts l)).get NUMV = List.replicate numV 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ VSCAN), hNUMV]
+  have hInv : COInv l numV b (st.set VSCAN (encVerts l)) l.length
+      (checkOfType.eval st) := by
+    rw [eP, Cmd.eval_forBnd, hblen]
+    exact Cmd.foldlState_range_induct _ IDX1 l.length (st.set VSCAN (encVerts l))
+      (COInv l numV b (st.set VSCAN (encVerts l))) hbase
+      (fun i s hi h => checkOfType_step l numV b (st.set VSCAN (encVerts l))
+        hNUMV0 i s hi h)
+  obtain ⟨_, hOUTfin, hframefin⟩ := hInv
+  refine ⟨?_, ?_⟩
+  · rw [hOUTfin, List.take_length]
+  · intro r hrO hrV hrVA hrR hrLT hrH hrI hrS hr1 hr2 hr3
+    rw [hframefin r hrO hrV hrVA hrR hrLT hrH hrI hrS hr1 hr2 hr3,
+      State.get_set_ne _ _ _ _ hrV]
 
 /-- The Lang-level decider witness for the FlatClique verifier.
 
