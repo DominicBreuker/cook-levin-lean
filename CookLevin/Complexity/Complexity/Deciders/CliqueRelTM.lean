@@ -11,16 +11,15 @@ relation
 `fun (Gkl : (fgraph × Nat) × List fvertex) => cliqueRel Gkl.1 Gkl.2`
 — i.e., the witness that `FlatClique ∈ NP`.
 
-**Skeleton status (2026-06-29, top-down).** The input **encoding is now
-concrete, probe-validated, and bit-level** (`cliqueRelEncode`), and its
-encoding-side witness fields (`encodeIn_size`/`enc_bit`/`width_le`/`regBound`)
-are PROVEN & axiom-clean. The verifier **program** `cliqueRelCmd` is still
-`sorry` — its design is `#eval`-validated in `probes/CliqueRelProbe.lean` (the
-encoding round-trips, stays `BitState`, and a stream-driven reference verifier
-agrees with `cliqueRel`); transcribing it into the DSL (mirroring the proven
-`EvalCnfCmd` template) is the next top-down session's task. The program-side
-fields (`decides`/`cost_bound`/`usesBelow`/`noConsLen`/`allOpsSupported`) stay
-`sorry` until then. See HANDOFF.md top-down Task 1.
+**Status (2026-06-30b, top-down).** The input **encoding** (`cliqueRelEncode`) +
+all encoding/structural witness fields are PROVEN & axiom-clean. The verifier
+**program** `cliqueRelCmd` is concrete and trio-free. The **correctness layer** is
+being built bottom-up against the proven `EvalCnfCmd` template: the leaves
+`ltBit_run` + `readNum_run` and 3 of the 5 per-check run-lemmas
+(`checkLen_run`/`checkOfType_run`/`checkWf_run`) are PROVEN & axiom-clean. The two
+remaining `DecidesLang` fields `decides`/`cost_bound` stay `sorry` pending the
+nested-loop checks (`memberEdge`/`checkNodup`/`checkClique`) + the assembly. See
+HANDOFF.md top-down Task 1 for the concrete remaining steps.
 
 Note: `inTimePolyTM_cliqueRel` keeps its full name + signature so
 `FlatClique_in_NP` (below) does not need to change.
