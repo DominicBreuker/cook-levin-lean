@@ -606,6 +606,259 @@ theorem ltBit_run (st : State) (a b : Nat) (dst A B idx : Var)
     rw [State.get_set_ne _ _ _ _ hrdst, hfr2 r hrLT hridx,
       State.get_set_ne _ _ _ _ hrLT]
 
+/-! ### `readNum`: the unary-block reader (keystone leaf, used by all 5 checks)
+
+`readNum dst stream idx` reads one terminated unary block `replicate v 1 ++ [0]`
+off the front of `stream` into `dst` (as `replicate v 1`), consuming the block and
+its terminator from `stream`. The structure mirrors the PROVEN
+`EvalCnfCmd.varExtractBody` loop (`LVInv`/`LVInv_step`/`processOneLiteral_main`),
+generalised so `dst`/`stream`/`idx` are *parameters* — hence the explicit
+register-distinctness hypotheses (the EvalCnf proof used `by decide` on fixed
+register `def`s). Callers discharge them by `decide` on the concrete registers
+(`dst ∈ {17..20}`, `stream ∈ {11..14}`, `idx ∈ {8,9,10}`, `HEAD = 15`,
+`INBLK = 16`, `SKIPR = 26` pairwise distinct). -/
+
+private theorem cSkip_eval (s : State) : cSkip.eval s = s.set SKIPR [1] := by
+  show ((Cmd.op (.clear SKIPR)) ;; Cmd.op (.appendOne SKIPR)).eval s = _
+  rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+  simp only [Op.eval, State.get_set_eq, List.nil_append, State.set_set]
+
+private theorem cSkip_cost (s : State) : cSkip.cost s = 3 := by
+  show ((Cmd.op (.clear SKIPR)) ;; Cmd.op (.appendOne SKIPR)).cost s = _
+  rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]; rfl
+
+private theorem replicate_one_snoc (n : Nat) :
+    List.replicate n (1 : Nat) ++ [1] = List.replicate (n + 1) 1 :=
+  List.replicate_succ'.symm
+
+/-- The `readNum` loop invariant (cf. `EvalCnfCmd.LVInv`). Through iteration `v`
+the loop consumes the unary block (one cell/iteration) into `dst`; at iteration
+`v` it consumes the `0` terminator and clears `INBLK`; afterwards it idles. The
+frame is relative to `st`, the loop-entry (post-init) state. -/
+private def RNInv (v : Nat) (rest : List Nat) (dst stream idx : Var) (st : State)
+    (i : Nat) (s : State) : Prop :=
+  (if i ≤ v then
+    s.get INBLK = [1] ∧ s.get dst = List.replicate i 1
+      ∧ s.get stream = List.replicate (v - i) 1 ++ 0 :: rest
+  else
+    s.get INBLK = [] ∧ s.get dst = List.replicate v 1
+      ∧ s.get stream = rest)
+  ∧ ∀ r : Var, r ≠ stream → r ≠ dst → r ≠ INBLK → r ≠ HEAD → r ≠ SKIPR →
+      r ≠ idx → s.get r = st.get r
+
+/-- The `readNum` body shape (the `forBnd` iteration body). -/
+private def readNumBody (dst stream : Var) : Cmd :=
+  Cmd.ifBit INBLK
+    (Cmd.op (.head HEAD stream) ;;
+     Cmd.op (.tail stream stream) ;;
+     Cmd.ifBit HEAD (Cmd.op (.appendOne dst)) (Cmd.op (.clear INBLK)))
+    cSkip
+
+private theorem readNum_step (v : Nat) (rest : List Nat) (dst stream idx : Var)
+    (st : State)
+    (hsd : stream ≠ dst) (hsi : stream ≠ idx) (hdi : dst ≠ idx)
+    (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR)
+    (hdHead : dst ≠ HEAD) (hdInbk : dst ≠ INBLK) (hdSkip : dst ≠ SKIPR)
+    (hiHead : idx ≠ HEAD) (hiInbk : idx ≠ INBLK) (hiSkip : idx ≠ SKIPR)
+    (i : Nat) (s : State) (h : RNInv v rest dst stream idx st i s) :
+    RNInv v rest dst stream idx st (i + 1)
+      ((readNumBody dst stream).eval (s.set idx (List.replicate i 1))) := by
+  obtain ⟨hphase, hframe⟩ := h
+  by_cases hiv : i ≤ v
+  · rw [if_pos hiv] at hphase
+    obtain ⟨hIB, hDS, hCS⟩ := hphase
+    have hIB' : (s.set idx (List.replicate i 1)).get INBLK = [1] := by
+      rw [State.get_set_ne _ _ _ _ hiInbk.symm]; exact hIB
+    have hCS' : (s.set idx (List.replicate i 1)).get stream
+        = List.replicate (v - i) 1 ++ 0 :: rest := by
+      rw [State.get_set_ne _ _ _ _ hsi]; exact hCS
+    have hDS' : (s.set idx (List.replicate i 1)).get dst
+        = List.replicate i 1 := by
+      rw [State.get_set_ne _ _ _ _ hdi]; exact hDS
+    have heval : (readNumBody dst stream).eval (s.set idx (List.replicate i 1))
+        = (Cmd.op (.head HEAD stream) ;;
+           Cmd.op (.tail stream stream) ;;
+           Cmd.ifBit HEAD (Cmd.op (.appendOne dst))
+             (Cmd.op (.clear INBLK))).eval
+            (s.set idx (List.replicate i 1)) := by
+      show (Cmd.ifBit INBLK _ _).eval _ = _
+      rw [Cmd.eval_ifBit_true _ _ _ _ hIB']
+    by_cases hiv2 : i < v
+    · -- interior `1` cell of the unary block
+      have hsplit : List.replicate (v - i) (1 : Nat) ++ 0 :: rest
+          = 1 :: (List.replicate (v - (i + 1)) 1 ++ 0 :: rest) := by
+        have hvi : v - i = (v - (i + 1)) + 1 := by omega
+        rw [hvi, List.replicate_succ, List.cons_append]
+      rw [hsplit] at hCS'
+      have e1 : (Cmd.op (.head HEAD stream)).eval
+          (s.set idx (List.replicate i 1))
+          = (s.set idx (List.replicate i 1)).set HEAD [1] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS']
+      have e2 : (Cmd.op (.tail stream stream)).eval
+          ((s.set idx (List.replicate i 1)).set HEAD [1])
+          = ((s.set idx (List.replicate i 1)).set HEAD [1]).set
+              stream (List.replicate (v - (i + 1)) 1 ++ 0 :: rest) := by
+        rw [Cmd.eval_op]; simp only [Op.eval]
+        rw [State.get_set_ne _ _ _ _ hsHead, hCS', List.tail_cons]
+      have hHC : (((s.set idx (List.replicate i 1)).set HEAD [1]).set
+          stream (List.replicate (v - (i + 1)) 1 ++ 0 :: rest)).get HEAD
+          = [1] := by
+        rw [State.get_set_ne _ _ _ _ hsHead.symm, State.get_set_eq]
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_ifBit_true _ _ _ _ hHC,
+        Cmd.eval_op] at heval
+      simp only [Op.eval] at heval
+      rw [State.get_set_ne _ _ _ _ hsd.symm,
+        State.get_set_ne _ _ _ _ hdHead,
+        State.get_set_ne _ _ _ _ hdi, hDS, replicate_one_snoc] at heval
+      rw [heval]
+      constructor
+      · rw [if_pos (by omega : i + 1 ≤ v)]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ hdInbk.symm,
+            State.get_set_ne _ _ _ _ hsInbk.symm,
+            State.get_set_ne _ _ _ _ (by decide : (INBLK : Var) ≠ HEAD),
+            State.get_set_ne _ _ _ _ hiInbk.symm]
+          exact hIB
+        · rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ hsd, State.get_set_eq]
+      · intro r hrs hrd hri hrh hrsk hridx
+        rw [State.get_set_ne _ _ _ _ hrd, State.get_set_ne _ _ _ _ hrs,
+          State.get_set_ne _ _ _ _ hrh, State.get_set_ne _ _ _ _ hridx]
+        exact hframe r hrs hrd hri hrh hrsk hridx
+    · -- the `0` terminator (`i = v`)
+      have hiv3 : i = v := by omega
+      subst hiv3
+      have hsplit : List.replicate (i - i) (1 : Nat) ++ 0 :: rest
+          = 0 :: rest := by
+        rw [Nat.sub_self]; rfl
+      rw [hsplit] at hCS'
+      have e1 : (Cmd.op (.head HEAD stream)).eval
+          (s.set idx (List.replicate i 1))
+          = (s.set idx (List.replicate i 1)).set HEAD [0] := by
+        rw [Cmd.eval_op]; simp only [Op.eval]; rw [hCS']
+      have e2 : (Cmd.op (.tail stream stream)).eval
+          ((s.set idx (List.replicate i 1)).set HEAD [0])
+          = ((s.set idx (List.replicate i 1)).set HEAD [0]).set
+              stream rest := by
+        rw [Cmd.eval_op]; simp only [Op.eval]
+        rw [State.get_set_ne _ _ _ _ hsHead, hCS', List.tail_cons]
+      have hHC : (((s.set idx (List.replicate i 1)).set HEAD [0]).set
+          stream rest).get HEAD ≠ [1] := by
+        rw [State.get_set_ne _ _ _ _ hsHead.symm, State.get_set_eq]; decide
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_ifBit_false _ _ _ _ hHC,
+        Cmd.eval_op] at heval
+      simp only [Op.eval] at heval
+      rw [heval]
+      constructor
+      · rw [if_neg (by omega : ¬ i + 1 ≤ i)]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_eq]
+        · rw [State.get_set_ne _ _ _ _ hdInbk,
+            State.get_set_ne _ _ _ _ hsd.symm,
+            State.get_set_ne _ _ _ _ hdHead,
+            State.get_set_ne _ _ _ _ hdi]
+          exact hDS
+        · rw [State.get_set_ne _ _ _ _ hsInbk, State.get_set_eq]
+      · intro r hrs hrd hri hrh hrsk hridx
+        rw [State.get_set_ne _ _ _ _ hri, State.get_set_ne _ _ _ _ hrs,
+          State.get_set_ne _ _ _ _ hrh, State.get_set_ne _ _ _ _ hridx]
+        exact hframe r hrs hrd hri hrh hrsk hridx
+  · -- idle phase
+    rw [if_neg hiv] at hphase
+    obtain ⟨hIB, hDS, hCS⟩ := hphase
+    have hIB' : (s.set idx (List.replicate i 1)).get INBLK ≠ [1] := by
+      rw [State.get_set_ne _ _ _ _ hiInbk.symm, hIB]; decide
+    have heval : (readNumBody dst stream).eval (s.set idx (List.replicate i 1))
+        = (s.set idx (List.replicate i 1)).set SKIPR [1] := by
+      show (Cmd.ifBit INBLK _ _).eval _ = _
+      rw [Cmd.eval_ifBit_false _ _ _ _ hIB', cSkip_eval]
+    rw [heval]
+    constructor
+    · rw [if_neg (by omega : ¬ i + 1 ≤ v)]
+      refine ⟨?_, ?_, ?_⟩
+      · rw [State.get_set_ne _ _ _ _ (by decide : (INBLK : Var) ≠ SKIPR),
+          State.get_set_ne _ _ _ _ hiInbk.symm]
+        exact hIB
+      · rw [State.get_set_ne _ _ _ _ hdSkip,
+          State.get_set_ne _ _ _ _ hdi]
+        exact hDS
+      · rw [State.get_set_ne _ _ _ _ hsSkip,
+          State.get_set_ne _ _ _ _ hsi]
+        exact hCS
+    · intro r hrs hrd hri hrh hrsk hridx
+      rw [State.get_set_ne _ _ _ _ hrsk, State.get_set_ne _ _ _ _ hridx]
+      exact hframe r hrs hrd hri hrh hrsk hridx
+
+/-- **The unary-block reader is correct.** With one terminated unary block
+`replicate v 1 ++ [0] ++ rest` at the head of `stream`, `readNum dst stream idx`
+writes `replicate v 1` into `dst`, advances `stream` past the block to `rest`, and
+leaves every register outside `{stream, dst, INBLK, HEAD, SKIPR, idx}` untouched. -/
+theorem readNum_run (st : State) (v : Nat) (rest : List Nat)
+    (dst stream idx : Var)
+    (hstream : st.get stream = List.replicate v 1 ++ 0 :: rest)
+    (hsd : stream ≠ dst) (hsi : stream ≠ idx) (hdi : dst ≠ idx)
+    (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR)
+    (hdHead : dst ≠ HEAD) (hdInbk : dst ≠ INBLK) (hdSkip : dst ≠ SKIPR)
+    (hiHead : idx ≠ HEAD) (hiInbk : idx ≠ INBLK) (hiSkip : idx ≠ SKIPR) :
+    ((readNum dst stream idx).eval st).get dst = List.replicate v 1
+    ∧ ((readNum dst stream idx).eval st).get stream = rest
+    ∧ (∀ r : Var, r ≠ stream → r ≠ dst → r ≠ INBLK → r ≠ HEAD → r ≠ SKIPR →
+        r ≠ idx → ((readNum dst stream idx).eval st).get r = st.get r) := by
+  -- evaluate the `clear dst ;; clear INBLK ;; appendOne INBLK` init prefix
+  have e1 : (Cmd.op (.clear dst)).eval st = st.set dst [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e2 : (Cmd.op (.clear INBLK)).eval (st.set dst [])
+      = (st.set dst []).set INBLK [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e3 : (Cmd.op (.appendOne INBLK)).eval ((st.set dst []).set INBLK [])
+      = ((st.set dst []).set INBLK []).set INBLK [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_eq, List.nil_append]
+  have eP : (readNum dst stream idx).eval st
+      = (Cmd.forBnd idx stream (readNumBody dst stream)).eval
+          (((st.set dst []).set INBLK []).set INBLK [1]) := by
+    show (Cmd.eval (_ ;; _ ;; _ ;; _) st) = _
+    rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3]
+    rfl
+  have hslen : ((((st.set dst []).set INBLK []).set INBLK [1]).get stream).length
+      = v + 1 + rest.length := by
+    rw [State.get_set_ne _ _ _ _ hsInbk, State.get_set_ne _ _ _ _ hsInbk,
+      State.get_set_ne _ _ _ _ hsd, hstream]
+    simp only [List.length_append, List.length_replicate, List.length_cons]
+    omega
+  have hbase : RNInv v rest dst stream idx
+      (((st.set dst []).set INBLK []).set INBLK [1]) 0
+      (((st.set dst []).set INBLK []).set INBLK [1]) := by
+    refine ⟨?_, fun r _ _ _ _ _ _ => rfl⟩
+    rw [if_pos (Nat.zero_le v)]
+    refine ⟨?_, ?_, ?_⟩
+    · rw [State.get_set_eq]
+    · show _ = List.replicate 0 1
+      rw [State.get_set_ne _ _ _ _ hdInbk, State.get_set_ne _ _ _ _ hdInbk,
+        State.get_set_eq]
+      rfl
+    · rw [Nat.sub_zero, State.get_set_ne _ _ _ _ hsInbk,
+        State.get_set_ne _ _ _ _ hsInbk, State.get_set_ne _ _ _ _ hsd, hstream]
+  have hInv : RNInv v rest dst stream idx
+      (((st.set dst []).set INBLK []).set INBLK [1]) (v + 1 + rest.length)
+      ((readNum dst stream idx).eval st) := by
+    rw [eP, Cmd.eval_forBnd, hslen]
+    exact Cmd.foldlState_range_induct (readNumBody dst stream) idx
+      (v + 1 + rest.length) (((st.set dst []).set INBLK []).set INBLK [1])
+      (RNInv v rest dst stream idx (((st.set dst []).set INBLK []).set INBLK [1]))
+      hbase
+      (fun i s _ h => readNum_step v rest dst stream idx
+        (((st.set dst []).set INBLK []).set INBLK [1])
+        hsd hsi hdi hsHead hsInbk hsSkip hdHead hdInbk hdSkip
+        hiHead hiInbk hiSkip i s h)
+  obtain ⟨hphase, hframe⟩ := hInv
+  rw [if_neg (by omega : ¬ (v + 1 + rest.length ≤ v))] at hphase
+  obtain ⟨_, hDSfin, hSTfin⟩ := hphase
+  refine ⟨hDSfin, hSTfin, ?_⟩
+  intro r hrs hrd hri hrh hrsk hridx
+  rw [hframe r hrs hrd hri hrh hrsk hridx,
+    State.get_set_ne _ _ _ _ hri, State.get_set_ne _ _ _ _ hri,
+    State.get_set_ne _ _ _ _ hrd]
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
