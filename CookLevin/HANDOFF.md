@@ -26,24 +26,28 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-06-29, TOP-DOWN, CliqueRelTM): ✅ the verifier
-> PROGRAM is now CONCRETE + the structural `DecidesLang` fields are PROVEN.**
-> `cliqueRelCmd` (was `sorry`) is the probe-validated 5-check FlatClique verifier
-> transcribed into the DSL (`Deciders/CliqueRelTM.lean`), built only from the proven
-> trio-free ops, and `usesBelow`/`noConsLen`/`allOpsSupported` are PROVEN &
-> axiom-clean (joining the already-proven encoding fields). **Remaining CliqueRel
-> sorries: just `decides` + `cost_bound`** (top-down Task 1 below). ⚠ **Risk-based
-> finding (the prior "pure EvalCnf grind" framing understated this):** two patterns
-> here are NOT in the EvalCnf template — (1) **unary `<`** (checks 1–2 need a strict
-> order test, but the only comparison op is `eqBit`/equality), built as the lockstep
-> gadget `ltBit`, design `#eval`-validated in the new `probes/CliqueLtProbe.lean`
-> (agrees with `<` over a 7×7 grid); (2) **loop-counter reads** (`Nodup` reads the
-> unary `forBnd` counters to skip the diagonal `i=j`; EvalCnf never reads a
-> counter). Both are sound and shallow but each needs its own fold-invariant lemma
-> in `decides` — budget for them. The clique check is also **loop-nest depth 4**
-> (vs EvalCnf's 3). **Recommended next: continue TOP-DOWN on CliqueRel `decides`**
-> (low structural risk now the program is fixed). Bottom-up remains BLOCKED on the
-> encoding-design decision (unchanged — see step 2).
+> **Most recent session (2026-06-30, TOP-DOWN, CliqueRelTM): ⚠ found + fixed a
+> verifier BUG in `ltBit`, and ✅ proved `ltBit_run` (axiom-clean).** Risk-based
+> review of the (only `#eval`-validated) program surfaced that the transcribed
+> `ltBit` (the novel unary-`<` gadget) was **wrong**: it guarded its lockstep
+> consume with `Cmd.ifBit LT_A`/`Cmd.ifBit LT_B`, but `Cmd.ifBit t` branches on
+> `s.get t = [1]` *exactly* (single `1`-cell), **not** nonemptiness — so for
+> operands of magnitude `> 1` the loop body never fired and the gadget returned the
+> wrong verdict (`ltBit 2 5` → `[0]` though `2 < 5`). The probe modelled the guard
+> as nonemptiness, which `ifBit` does not give. **Fixed to a simpler, provably
+> correct form** (`tail []` is `[]`, so an *unconditional* drain needs no guard):
+> `copy LT_B B ;; forBnd idx A (tail LT_B LT_B) ;; nonEmpty dst LT_B` — after `a`
+> iterations `LT_B = replicate (b−a) 1`, non-empty iff `a < b`. **`ltBit_run`
+> (behaviour + frame) is PROVEN & axiom-clean** (`[propext, Quot.sound]`), and
+> `probes/CliqueLtProbe.lean` now carries a `ltBitDrain` model matching the proven
+> code. The other novelty — `checkNodup`'s **loop-counter reads** — was confirmed
+> *de-risked*: the `forBnd` toolkit sets the counter to `replicate i 1` before each
+> iteration and exposes it in the motive (`foldlState_range_induct`/
+> `cost_forBnd_le`), and the outer counter `IDX1` survives the inner loop (the inner
+> body only reads it). **So both EvalCnf-novel patterns are now resolved; the rest
+> of `decides`/`cost_bound` is EvalCnf-style grind.** **Recommended next: continue
+> TOP-DOWN on CliqueRel — build `readNum_run` next** (top-down Task 1). Bottom-up
+> remains BLOCKED on the encoding-design decision (unchanged — see step 2).
 >
 > **Prior finding still open (2026-06-29, BOTTOM-UP): the unary product migration as
 > designed is SIZE-UNSOUND.** The bit-level product encoding
@@ -254,38 +258,55 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 ### TOP-DOWN follow-up (concrete next top-down session; Route A is done)
 Pick one — both are independent of the bottom-up trio work:
 - **★ CliqueRelTM — finish `decides` + `cost_bound`** (`Deciders/CliqueRelTM.lean`).
-  **2026-06-29: the program + 3 structural fields + 4 encoding fields are DONE &
-  axiom-clean.** Only two `DecidesLang` fields remain `sorry`:
-  - **`decides`** — `Cmd.decides cliqueRelCmd cliqueRelEncode (cliqueRel …)`. The
-    program is `appendOne OUTPUT ⨾ checkWf ⨾ checkOfType ⨾ checkLen ⨾ checkNodup ⨾
-    checkClique` (each a named `def`). Prove a `*_run` contract per check (output bit
-    = the check's truth value, frame = OUTPUT + that check's scratch) then AND them:
-    `OUTPUT` starts `[1]`, each check only ever *rejects* (sets `[0]`), so the final
-    bit is the conjunction. Replicate the EvalCnf template (probe→per-iteration
-    step-lemma→fold invariant via `Cmd.foldlState_range_induct`). **Build the
-    reusable leaf lemmas first** (each used by several checks):
-    - `readNum_run` — one terminated unary block off a stream into `dst`
-      (`= replicate v 1`), stream loses the block. Invariant = `EvalCnfCmd.varExtractBody`
-      (an `IN_BLOCK` flag fold); the parser automaton is the only new fold.
-    - `ltBit_run` — **NEW vs EvalCnf** (`ltBit dst A B`): `dst = [if a<b then 1 else 0]`.
-      Lockstep-consume invariant over `min`-truncation; design validated in
-      `probes/CliqueLtProbe.lean`. Spec: after `|A|` steps `a<b ⇔ LT_A=[] ∧ LT_B≠[]`.
-    - `memberEdge_run` — `FOUND = [if (a,b)∈edges then 1 else 0]`; this is exactly
-      `EvalCnfCmd.memberCheck` with TWO unary `eqBit`s per edge.
-    Then `checkWf`/`checkOfType` = a `forBnd` of (readNum ⨾ ltBit); `checkLen` = one
-    `eqBit`; `checkNodup` = a double `forBnd` reading the **unary loop counters**
-    `IDX1`/`IDX2` to skip `i=j` (**also NEW vs EvalCnf** — needs a counter-value fact
-    from the `forBnd` toolkit; the counter is `replicate i 1` at iteration `i`);
-    `checkClique` = depth-4 (outer/inner `forBnd` + `memberEdge`).
+  **State: program + 3 structural + 4 encoding fields DONE & axiom-clean;
+  `ltBit_run` (the novel `<` gadget) DONE & axiom-clean (2026-06-30).** Only the two
+  `DecidesLang` fields `decides` + `cost_bound` remain `sorry`. **Both EvalCnf-novel
+  patterns are now resolved** (unary-`<` proven; counter-read infra confirmed), so
+  this is now pure EvalCnf-style grind. Strategy: a `*_run` contract per check
+  (output bit = the check's truth value, frame = OUTPUT + that check's scratch),
+  then AND them — `OUTPUT` starts `[1]`, each check only ever *rejects* (sets `[0]`),
+  so the final bit is the conjunction. **Concrete next steps, in order:**
+  1. **`readNum_run`** (the keystone leaf — used by all 5 checks; **do this first**).
+     Contract: with `st.get stream = replicate v 1 ++ 0 :: rest`, after
+     `readNum dst stream idx` we have `dst = replicate v 1`, `stream = rest`, frame
+     elsewhere. It is a **near-verbatim rename of the PROVEN `EvalCnfCmd.LVInv` /
+     `LVInv_step`** (lines ~880–1030; `IN_BLOCK`→`INBLK`, `LIT_VAR`→`dst`,
+     `CNF_STREAM`→`stream`, `HEAD_CELL`→`HEAD`, `INNER_IDX`→`idx`, `mcSkip`→`cSkip`),
+     plus a `clear dst ⨾ clear INBLK ⨾ appendOne INBLK` init wrapper and the
+     `forBnd`-over-`stream` assembly (mirror `processOneLiteral_main`, lines ~1109+).
+     ⚠ **The one real cost vs EvalCnf:** `dst`/`stream`/`idx` are *parameters*, so the
+     proof can't use `State.get_set_ne … (by decide)` — thread ~6 register-distinctness
+     hypotheses (`dst≠stream`, `dst≠idx`, `stream≠idx`, and `≠ HEAD/INBLK/SKIPR`) and
+     replace each `by decide` with the matching hyp. Callers discharge them by `decide`
+     on the concrete registers (`dst∈{17..20}`, `stream∈{11..14}`, `idx∈{8,9,10}`,
+     `HEAD=15`, `INBLK=16`, `SKIPR=26` are pairwise distinct).
+  2. **`ltBit_run`** — ✅ DONE (`State.get … dst = [if a<b then 1 else 0]` + frame).
+     Reuse directly.
+  3. **`memberEdge_run`** — `FOUND = [if (a,b)∈edges then 1 else 0]`; a `forBnd` of
+     `readNum ⨾ readNum ⨾ eqBit ⨾ eqBit ⨾ ifBit` over the edge stream. Same shape as
+     `EvalCnfCmd.memberCheck` with TWO unary `eqBit`s per edge.
+  4. Per-check `*_run`: `checkWf`/`checkOfType` = a `forBnd` of (`readNum ⨾ ltBit`);
+     `checkLen` = one `eqBit` (smallest — a good warm-up); `checkNodup` = double
+     `forBnd` reading the unary loop counters `IDX1`/`IDX2` (the counter is
+     `replicate i 1` at iteration `i` — available from the toolkit motive; the outer
+     `IDX1` survives the inner loop since the inner body only reads it);
+     `checkClique` = depth-4 (outer/inner `forBnd` + `memberEdge`).
   - **`cost_bound`** — `cliqueRelCmd.cost (cliqueRelEncode x) ≤ timeBound (size x)`
     (`200000·(n+1)^4`, already quartic). Per-loop `Cmd.cost_forBnd_le` with a uniform
     per-iteration bound (mirror `evalCnfCmd_cost_bound`); the depth-4 clique nest is
     the dominant term — confirm degree ≤ 4 against the budget, bump the `200000`
-    constant if needed (downstream only needs `inOPoly`/`monotonic`).
+    constant if needed (downstream only needs `inOPoly`/`monotonic`). Prove each leaf's
+    `_cost` alongside its `_run` (share the invariant), as EvalCnf does.
   Closing both makes `FlatClique`'s in-NP half axiom-clean (the trio-free
   `allOpsSupported`-wall win, for free). Gates `FlatClique_in_NP → Clique_complete`.
-  **Recommended next top-down** — the program is fixed, so this is invariant grind;
-  the only structural unknowns (`ltBit`/counter-read) are isolated leaf lemmas.
+  **Recommended next top-down** — pure invariant grind now both novelties are retired.
+  ⚠ **Methodology reminder (learned the hard way this session): the program was only
+  `#eval`-probe-validated, and one gadget (`ltBit`) was still wrong because the probe
+  modelled `ifBit` as nonemptiness when it tests `= [1]`. When proving each check,
+  re-derive the gadget semantics from `Cmd.eval_ifBit_*` rather than trusting the
+  probe — `ifBit t` fires iff `s.get t = [1]` EXACTLY, so it is only valid on
+  single-bit (`[0]`/`[1]`) registers (flags, `head` cells, `eqBit`/`nonEmpty`
+  outputs), never on multi-cell unary blocks.**
 - **Framework `red_inNP`** (`NP.lean:291`) / **S3 migration**: blocked by design —
   `inNP` exposes an opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework
   `inNP`/`inTimePoly` layer-native (carry a `DecidesLang`), then it collapses to
@@ -362,13 +383,18 @@ The op builds below are templates; the helper stacks are axiom-clean.
   invariant→`cost_forBnd_le`; structural fields via full `simp` over the op leaves —
   NB: full `simp` with the register `def`s, not `simp only … decide`; `decide` fails
   `Decidable`-synthesis on the larger checks' conjunctions).
-- **CliqueRel verifier (TOP-DOWN) — program CONCRETE, structural fields PROVEN**
-  (`Deciders/CliqueRelTM.lean`, 2026-06-29). `cliqueRelCmd` + the 5 check `def`s
-  (`checkWf`/`checkOfType`/`checkLen`/`checkNodup`/`checkClique` + `memberEdge`) +
-  helpers (`readNum`/`ltBit`/`cSkip`/`cReject`) are concrete & trio-free;
-  `cliqueRelCmd_usesBelow`/`_noConsLen`/`_allOpsSupported` + the 4 encoding fields are
-  PROVEN & axiom-clean. Probes: `CliqueRelProbe` (algorithm), `CliqueLtProbe` (the
-  unary-`<` lockstep gadget). Only `decides`/`cost_bound` remain (top-down Task 1).
+- **CliqueRel verifier (TOP-DOWN) — program CONCRETE, structural fields PROVEN,
+  `ltBit_run` PROVEN** (`Deciders/CliqueRelTM.lean`, 2026-06-30). `cliqueRelCmd` +
+  the 5 check `def`s (`checkWf`/`checkOfType`/`checkLen`/`checkNodup`/`checkClique` +
+  `memberEdge`) + helpers (`readNum`/`ltBit`/`cSkip`/`cReject`) are concrete &
+  trio-free; `cliqueRelCmd_usesBelow`/`_noConsLen`/`_allOpsSupported` + the 4 encoding
+  fields are PROVEN & axiom-clean. **`ltBit_run`** (the corrected unary-`<` gadget;
+  see the 2026-06-30 finding above) is PROVEN & axiom-clean — `ltBit dst A B idx`
+  writes `[if a<b then 1 else 0]` to `dst` given `A=replicate a 1`, `B=replicate b 1`,
+  with frame; reuse it directly in the check proofs. Helpers `tail_replicate_one`/
+  `isEmpty_replicate_one` are local. Probes: `CliqueRelProbe` (algorithm),
+  `CliqueLtProbe` (now carries the proven `ltBitDrain` model). Only `decides`/
+  `cost_bound` remain (top-down Task 1).
 - **Threading toolkit:** `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow`,
   `Cmd.eval_length_ge/_le`, `Cmd.size_eval_le`, `State.set_set`/`set_length_ge`,
   `BitState_set_pad`, `consumeStep_frame`/`_clear_restore`, `State.ext_of_get`.
