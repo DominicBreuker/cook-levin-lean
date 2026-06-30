@@ -26,41 +26,39 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-06-30b, TOP-DOWN, CliqueRelTM): ✅ proved the
-> keystone `readNum_run` + 3 of the 5 per-check run-lemmas (all axiom-clean).**
-> Built the verifier-correctness layer bottom-up against the proven `EvalCnfCmd`
-> template:
-> - **`readNum_run`** — the unary-block reader used by all 5 checks. A
->   generalisation of the proven `EvalCnfCmd.LVInv`/`processOneLiteral_main` to
->   *parametric* `dst`/`stream`/`idx` (12 explicit register-distinctness hyps
->   replace EvalCnf's `by decide` on fixed `def`s; callers discharge by `decide`).
->   Helpers: `RNInv` invariant, `readNum_step`, `cSkip_eval`/`_cost`,
->   `replicate_one_snoc`.
-> - **The per-check AND-into-`OUTPUT` contract** is now established and proven for
->   the 3 single-loop checks: **`checkLen_run`** (eqBit on tallies — smallest),
->   **`checkOfType_run`** (outer `forBnd` + `readNum` + `ltBit`, via `COInv`), and
->   **`checkWf_run`** (two `readNum`s + two `ltBit`s + nested reject, via `CWfInv`).
->   Contract shape: from `OUTPUT = [if b then 1 else 0]`, after the check
->   `OUTPUT = [if b && <predicate> then 1 else 0]`, and registers 1–6 preserved.
-> - Reusable infra added (all axiom-clean): the `Bool` helpers `allLt`/`edgesWf`
->   (with `_eq_true_iff` bridges to `list_ofFlatType`/`fgraph_wf` — **avoid
->   `decide (∀ x ∈ l, …)`, its `Decidable` instance is flaky in tactic context**),
->   `encVerts_cons`/`encEdges_cons` (stream-peel), `ifReject_frame`/`ifReject2_frame`
->   (the single/nested reject-guard frames), `cReject_eval`/`_cost`.
+> **Most recent session (2026-06-30c, TOP-DOWN, CliqueRelTM): ✅ proved ALL FIVE
+> per-check run-lemmas + the `decides` assembly (all axiom-clean). The ONLY
+> remaining `sorry` in `cliqueRelDecidesLang` is `cost_bound`.**
+> - **`memberEdge_run`** — the FOUND-flag leaf (single `forBnd` over the edge
+>   tally, `eqBit` on both endpoints; phase-free `MEInv`). New helpers `memB` +
+>   `memB_eq_true_iff`, `eqBit_replicate`, `setFound_eval`, `ifFound_frame`.
+> - **`checkNodup_run`** (double `forBnd`, `l.Nodup`) and **`checkClique_run`**
+>   (depth-4: outer/inner `forBnd` + `memberEdge` in the body, clique adjacency).
+>   The **nested-loop pattern is now established**: an inner-run lemma
+>   (`checkNodupInner_run`/`checkCliqueInner_run`, proven by `foldlState_range_induct`
+>   over an inner invariant `NInnerInv`/`CliqueInnerInv`) is *called inside* the
+>   outer step (mirrors EvalCnf's `CInv_step` calling `processOneLiteral_run`). The
+>   outer counter `IDX1` survives the inner loop as a frame fact. New Bool helpers
+>   `innerAll`/`nodupB`/`cliqueInnerAll`/`cliqueB` + the bridges `nodupB_eq_true_iff`
+>   (via `List.nodup_iff_injective_getElem`) / `cliqueB_eq_true_iff`, plus
+>   `ifNodup_frame`.
+> - **`cliqueRelCmd_decides`** — chains the 5 checks (`appendOne OUTPUT` → `[1]`,
+>   then each check ANDs its predicate while preserving regs 1–6), bridged to
+>   `cliqueRel` by **`cliqueRel_iff_checks`**. Wired into `DecidesLang.decides`.
 >
-> **Both EvalCnf-novelties stay retired** (`ltBit_run` proven prior session; counter
-> reads confirmed de-risked). **Recommended next: continue TOP-DOWN on CliqueRel —
-> the two nested-loop checks then the assembly** (top-down Task 1, re-scoped below).
-> Bottom-up remains BLOCKED on the encoding-design decision (unchanged — step 2).
+> **Recommended next: continue TOP-DOWN — prove `cost_bound` (top-down Task 1,
+> step 5; the ONLY remaining `sorry` in `cliqueRelDecidesLang`).** Closing it makes
+> `FlatClique`'s in-NP half axiom-clean. Bottom-up remains BLOCKED on the
+> encoding-design decision (unchanged — step 2).
 >
-> **Prior session (2026-06-30a): found+fixed the `ltBit` verifier BUG and proved
-> `ltBit_run`.** `ltBit` had guarded its consume-loop with `Cmd.ifBit` (which tests
-> `= [1]` *exactly*, not nonemptiness), mis-deciding operands `> 1`; fixed to the
-> unconditional-drain form (`copy LT_B B ;; forBnd idx A (tail LT_B LT_B) ;;
-> nonEmpty dst LT_B`) and proved. ⚠ **Methodology lesson:** the program was only
-> `#eval`-probe-validated; re-derive each gadget's semantics from `Cmd.eval_ifBit_*`
-> when proving — `ifBit t` fires iff `s.get t = [1]` EXACTLY (valid only on
-> single-bit registers, never multi-cell unary blocks).
+> ⚠ **Gotchas confirmed this session:** (a) `if (b : Bool) then 1 else 0` does NOT
+> auto-`rfl` for `b = true` — close with an explicit `rfl`. (b) `cliqueRel` is a
+> pattern-match def, so `unfold`/`simp only [cliqueRel]` is a no-op on
+> `cliqueRel (G,k) l`; use `show (fgraph_wf G ∧ isfKClique k G l) ↔ _` (defeq)
+> first. (c) `Function.Injective`'s binders are strict-implicit — `@hinj a b h`,
+> not named args. (d) an `N`-exclusion invariant frame needs exactly `N` `_`s in
+> the `fun r _ … _ => rfl` base case (off-by-one is the usual first error).
+> **`ltBit_run` (prior session) stays retired**; both EvalCnf-novelties de-risked.
 >
 > **Prior finding still open (2026-06-29, BOTTOM-UP): the unary product migration as
 > designed is SIZE-UNSOUND.** The bit-level product encoding
@@ -268,83 +266,63 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 `7·cost_bound + 18·n + 31` (PolyTime.lean). `enc_size` is `|enc x| ≤ 2·size+1`
 (NOT `≤ size`) — budget bounds that look "off by 2×" are usually this.
 
-### ★ TOP-DOWN Task 1 — CliqueRelTM `decides` + `cost_bound` (the recommended next top-down session)
-`Deciders/CliqueRelTM.lean`. **State (2026-06-30b): program + 3 structural + 4
-encoding fields DONE & axiom-clean; `ltBit_run` + `readNum_run` (keystone leaf) +
-3 of 5 per-check run-lemmas (`checkLen_run`/`checkOfType_run`/`checkWf_run`) DONE
-& axiom-clean.** Only `decides` + `cost_bound` (`cliqueRelDecidesLang`) remain
-`sorry`. The per-check **AND-into-`OUTPUT` contract** is established (each `*_run`:
-from `OUTPUT = [if b then 1 else 0]`, after the check `OUTPUT = [if b && <pred>
-then 1 else 0]` with **regs 1–6 preserved** — a 11/13-register `≠`-frame; the
-assembly then chains them with `OUTPUT` starting `[1]`, so the final bit is the
-conjunction = `cliqueRel`). **Concrete remaining steps, in order:**
+### ★ TOP-DOWN Task 1 — CliqueRelTM `cost_bound` (the recommended next top-down session)
+`Deciders/CliqueRelTM.lean`. **State (2026-06-30c): program + 3 structural + 4
+encoding fields, `ltBit_run` + `readNum_run` (leaves), ALL FIVE per-check
+run-lemmas (`checkLen_run`/`checkOfType_run`/`checkWf_run`/`checkNodup_run`/
+`checkClique_run`, incl. the inner-run lemmas `checkNodupInner_run`/
+`checkCliqueInner_run`), `memberEdge_run`, and the `decides` field
+(`cliqueRelCmd_decides` + bridge `cliqueRel_iff_checks`) are ALL DONE &
+axiom-clean.** The ONLY remaining `sorry` in `cliqueRelDecidesLang` (and the whole
+file) is **`cost_bound`** (`cliqueRelCmd.cost (cliqueRelEncode x) ≤ timeBound (size
+x)`, `timeBound = 200000·(n+1)^4`).
 
-1. **`memberEdge_run`** — the FOUND-flag leaf (a `forBnd` over the edge tally;
-   body = two `readNum` + two `eqBit` + nested set-`FOUND`). Contract:
-   `FOUND = [if memB (a,b) edges then 1 else 0]`, regs preserved. **Use the
-   `checkWf_step` template almost verbatim** (same two-`readNum`/nested-`ifBit`
-   shape) but the inner-then sets `FOUND := [1]` instead of `cSkip`, and the
-   accumulator is `FOUND` (a `Bool`-`any` over edges), not a per-iter AND into
-   `OUTPUT`. Define a `Bool` helper `memB (a b) (edges) := edges.any (fun e =>
-   decide (e.1 = a) && decide (e.2 = b))` + a `memB_eq_true_iff` bridge (mirror
-   `edgesWf`/`allLt`). `eqBit RES1 VALC VALA` gives `[if replicate e.1 1 =
-   replicate va 1 then 1 else 0] = [if e.1 = va …]` via `replicate_one_eq_iff`.
-2. **`checkNodup_run`** — DOUBLE `forBnd` (outer consumes `VSCAN`, inner over a
-   fresh copy `VSCAN2`). The inner body reads the **unary loop counters**
-   `IDX1`/`IDX2` (= `replicate i 1`/`replicate j 1`, available from the toolkit
-   motive) and `eqBit`s them to skip the diagonal `i = j`. Two-layer invariant:
-   the **inner** invariant (a `CWfInv`-style fold over `VSCAN2`, parametric in the
-   fixed outer `VALA`/`IDX1`) nests inside the **outer** invariant (mirror
-   `EvalCnfCmd`'s `processOneClause` nesting `processOneLiteral` — outer fold whose
-   per-iteration body is itself proven by an inner fold lemma). ⚠ The outer counter
-   `IDX1` must survive the inner loop: the inner body only *reads* it, so it does
-   (thread it as a frame fact through the inner invariant; it is a register the
-   inner `forBnd`'s body never writes). Predicate: `l.Nodup`. Map to a `Bool`
-   double-`all` over positions with the `i ≠ j → l[i] ≠ l[j]` body; bridge to
-   `List.Nodup` via `List.nodup_iff_getElem?_ne_getElem?` or pairwise.
-3. **`checkClique_run`** — depth-4: outer/inner `forBnd` over `VSCAN`/`VSCAN2`
-   reading `l[i]`/`l[j]`, and when `VALA ≠ VALB` (value-equality skip, via `eqBit
-   VALA VALB`) require `memberEdge` (which is itself a `forBnd`). Same outer/inner
-   nesting as `checkNodup` but the inner body invokes `memberEdge_run` (step 1).
-   Predicate: `∀ v₁ v₂ ∈ l, v₁ ≠ v₂ → (v₁,v₂) ∈ G.2`.
-4. **Assemble `decides`** — `cliqueRelCmd = appendOne OUTPUT ;; checkWf ;;
-   checkOfType ;; checkLen ;; checkNodup ;; checkClique`. Start: `appendOne OUTPUT`
-   on `[]` gives `OUTPUT = [1]` (b = true). Chain the 5 `*_run` lemmas: each needs
-   regs 1–6 = the encoded values (preserved by the previous check's frame) and
-   `OUTPUT = [if b_prev then 1 else 0]`; the result `b` accumulates the
-   conjunction. Final `OUTPUT = [if (wf && oftype && len && nodup && clique) then
-   1 else 0]`. Then `Cmd.decides` = (`isAccept ↔ P`) ∧ (`isReject ↔ ¬P`): unfold
-   `cliqueRel = fgraph_wf ∧ isfKClique` and bridge each Bool to its Prop via the
-   `_eq_true_iff` lemmas (`edgesWf_eq_true_iff`, `allLt_eq_true_iff`,
-   `replicate_one_eq_iff` for len, the new nodup/clique bridges). ⚠ The encoded
-   `cliqueRelEncode` lays regs 1–6 as `replicate G.1 1`, `encEdges G.2`,
-   `replicate k 1`, `encVerts l`, `replicate G.2.length 1`, `replicate l.length 1`
-   — feed these as the `*_run` hypotheses.
-5. **`cost_bound`** — `cliqueRelCmd.cost (cliqueRelEncode x) ≤ timeBound (size x)`
-   (`200000·(n+1)^4`, already quartic). Prove each leaf/check's `_cost` alongside
-   its `_run` (share the invariant), `Cmd.cost_forBnd_le` per loop with a uniform
-   per-iteration bound (mirror `evalCnfCmd_cost_bound`/`processOneLiteral_cost`);
-   the depth-4 clique nest dominates — confirm degree ≤ 4, bump the `200000`
-   constant if needed (downstream needs only `inOPoly`/`monotonic`). NB: the
-   per-check `_run` frames must be *extended* with a uniform `_cost` bound (none of
-   the 3 done checks carries a cost conjunct yet — add it when doing costs).
+**`cost_bound` — concrete plan (mirror `EvalCnfCmd`'s `_cost` quartet exactly):**
+The behaviour proofs do NOT need touching — `Cmd.cost_forBnd_le` reuses the SAME
+invariant (`RNInv`/`COInv`/`CWfInv`/`MEInv`/`NInnerInv`/`CliqueInnerInv`/…) you
+already have, and additionally asks for a *uniform per-iteration body-cost bound*
+`hC : ∀ i s, i < n → M i s → body.cost (s.set cnt (replicate i 1)) ≤ B`. So add a
+separate `_cost` lemma for each gadget, bottom-up, each closed by `cost_forBnd_le`
++ `Op.cost`/`Cmd.cost_seq`/`Cmd.cost_ifBit_*` accounting (template:
+`EvalCnfCmd.LVInv_cost` → `processOneLiteral_cost`, `CInv_cost` →
+`processOneClause` → `evalCnfCmd_cost_bound`):
+1. **`readNum_cost`** (forBnd over `stream`; body = `ifBit` of head/tail/append; per
+   iter `≤` const + the cell length, so loop `≤ 1 + iters·B + iters²`).
+2. **`ltBit_cost`** (forBnd over `A`; body = `tail`, cost 1).
+3. **`checkLen_cost`** (one `eqBit` reads two `≤`-`size` tallies + an `ifBit`).
+4. **`checkOfType_cost` / `checkWf_cost` / `memberEdge_cost`** (single `forBnd`;
+   body = `readNum`(s) + `ltBit`/`eqBit`(s) + nested `ifBit`; the readNum cost
+   dominates → quadratic per check).
+5. **`checkNodupInner_cost` / `checkCliqueInner_cost`** then the **outer**
+   `checkNodup_cost`/`checkClique_cost` (each outer `forBnd` charges
+   `iters · (uniform inner-cost bound)`; the clique inner-cost itself contains
+   `memberEdge_cost` → the depth-4 nest dominates, degree 4).
+6. **`cliqueRelCmd_cost_bound`** — sum the six check costs (`Cmd.cost_seq` is
+   additive) + the `appendOne`; bound by `200000·(n+1)^4` with
+   `n = encodable.size x` (use `encVerts_length`/`encEdges_length_le`/
+   `length_le_encsize` to turn register lengths into `≤ size`-facts; the existing
+   `cliqueRelEncode_size_bound` is the model). Bump the `200000` constant freely —
+   downstream needs only `inOPoly`/`monotonic`, both already proven for `timeBound`.
 
-Closing 1–5 makes `FlatClique`'s in-NP half axiom-clean (the trio-free
-`allOpsSupported`-wall win, for free) → gates `FlatClique_in_NP →
-Clique_complete`. **Reusable infra already in place** (do not re-derive):
-`readNum_run`/`ltBit_run` (leaves), `COInv`/`CWfInv` (outer-loop invariant
-templates), `allLt`/`edgesWf` + bridges, `encVerts_cons`/`encEdges_cons`,
-`ifReject_frame`/`ifReject2_frame`, `cReject_eval`/`cSkip_eval`,
-`replicate_one_eq_iff`/`replicate_one_snoc`.
-⚠ **Two gotchas hit this session:** (a) **`decide (∀ x ∈ l, …)` instance synthesis
-is flaky** in tactic `have`s (works in `def`s) — use a `Bool` `List.all`/`.any`
-helper + a `_eq_true_iff` bridge instead. (b) **Never `show`/`set` over a `;;`
-chain to reshape it** (whnf heartbeat timeout) — `rw [Cmd.eval_seq, …]` the body
-into nested `eval`-form *first*, then `set` the intermediate states.
-⚠ **Methodology reminder:** the program was only `#eval`-validated; one gadget
-(`ltBit`) was still wrong. Re-derive each gadget's semantics from
-`Cmd.eval_ifBit_*` — `ifBit t` fires iff `s.get t = [1]` EXACTLY (single-bit regs
-only, never multi-cell unary blocks).
+⚠ **Cost-accounting gotchas** (from `EvalCnfCmd`): the `cost_forBnd_le` `B` is over
+the loop-*entry* register lengths (what the invariant hands you), and the inner
+loops re-bound per outer iteration — keep a single uniform `B` (worst-case over all
+iterations), not a per-`i` bound. Use `Cmd.cost_ifBit_true/false` to bound BOTH
+branches by the same constant (the reject/skip branches cost `≤ 4`/`3`).
+
+Closing `cost_bound` makes `cliqueRelDecidesLang` sorry-free → `FlatClique`'s in-NP
+half axiom-clean (the trio-free `allOpsSupported`-wall win, for free) → gates
+`FlatClique_in_NP → Clique_complete`. **Reusable infra already in place** (do not
+re-derive): all the `*_run`/`*Inner_run` lemmas + their invariants, the Bool
+helpers `allLt`/`edgesWf`/`memB`/`innerAll`/`nodupB`/`cliqueInnerAll`/`cliqueB` +
+`_eq_true_iff` bridges, the frames `ifReject_frame`/`ifReject2_frame`/`ifFound_frame`/
+`ifNodup_frame`, `cReject_eval`/`cSkip_eval` (+ `_cost`!), `eqBit_replicate`,
+`encVerts_cons`/`encEdges_cons`, `replicate_one_eq_iff`/`replicate_one_snoc`.
+⚠ **Methodology reminders:** (a) re-derive gadget semantics from
+`Cmd.eval_ifBit_*` (`ifBit t` fires iff `s.get t = [1]` EXACTLY — single-bit regs
+only). (b) `if (b:Bool) then 1 else 0` needs an explicit `rfl` to reduce at `b =
+true`. (c) `cliqueRel` is a pattern-match def — `show (fgraph_wf G ∧ isfKClique k G
+l) ↔ _` before unfolding. (d) frame-lambda arity = invariant exclusion count.
 - **Framework `red_inNP`** (`NP.lean:291`) / **S3 migration**: blocked by design —
   `inNP` exposes an opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework
   `inNP`/`inTimePoly` layer-native (carry a `DecidesLang`), then it collapses to
@@ -421,26 +399,34 @@ The op builds below are templates; the helper stacks are axiom-clean.
   invariant→`cost_forBnd_le`; structural fields via full `simp` over the op leaves —
   NB: full `simp` with the register `def`s, not `simp only … decide`; `decide` fails
   `Decidable`-synthesis on the larger checks' conjunctions).
-- **CliqueRel verifier (TOP-DOWN) — program CONCRETE, structural + encoding fields
-  PROVEN, keystone leaf + 3/5 checks PROVEN** (`Deciders/CliqueRelTM.lean`,
-  2026-06-30b). `cliqueRelCmd` + the 5 check `def`s + helpers are concrete &
-  trio-free; `cliqueRelCmd_usesBelow`/`_noConsLen`/`_allOpsSupported` + the 4
-  encoding fields PROVEN & axiom-clean. **Proven & axiom-clean correctness layer
-  (`[propext, Quot.sound]`), reuse directly:**
-  - **`ltBit_run`** — `ltBit dst A B idx` writes `[if a<b then 1 else 0]` (A,B unary)
-    + frame. **`readNum_run`** — `readNum dst stream idx` reads one terminated unary
-    block off `stream` into `dst` (= `replicate v 1`), advances `stream`, frame
-    (takes 12 register-distinctness hyps, all caller-`decide`d).
-  - **`checkLen_run`/`checkOfType_run`/`checkWf_run`** — the 3 single-loop checks,
-    each `OUTPUT = [if b && <pred> then 1 else 0]` + regs-1–6 frame. Invariants
-    `COInv` (single readNum+ltBit loop) / `CWfInv` (two readNum + two ltBit loop) are
-    the **templates for `memberEdge`/`checkNodup`/`checkClique`**.
-  - Helpers: `allLt`/`edgesWf` (`Bool`, with `_eq_true_iff` bridges),
-    `encVerts_cons`/`encEdges_cons`, `ifReject_frame`/`ifReject2_frame`,
-    `cReject_eval`/`cSkip_eval`, `replicate_one_eq_iff`/`replicate_one_snoc`,
+- **CliqueRel verifier (TOP-DOWN) — `decides` DONE; only `cost_bound` left**
+  (`Deciders/CliqueRelTM.lean`, 2026-06-30c). `cliqueRelCmd` + the 5 check `def`s +
+  helpers are concrete & trio-free; `cliqueRelCmd_usesBelow`/`_noConsLen`/
+  `_allOpsSupported` + the 4 encoding fields + **the `decides` field** all PROVEN &
+  axiom-clean. **Proven & axiom-clean correctness layer (`[propext,
+  Classical.choice, Quot.sound]`), reuse directly:**
+  - **`ltBit_run`** / **`readNum_run`** — the leaves (`ltBit` writes `[a<b]`;
+    `readNum` reads one terminated unary block, advances `stream`, frame; 12
+    caller-`decide`d distinctness hyps).
+  - **All 5 per-check run-lemmas:** `checkLen_run` (eqBit on tallies),
+    `checkOfType_run` (`COInv`), `checkWf_run` (`CWfInv`), `checkNodup_run`
+    (`CNodupInv` outer + `NInnerInv` inner, via `checkNodupInner_run`),
+    `checkClique_run` (`CCliqueInv` outer + `CliqueInnerInv` inner, via
+    `checkCliqueInner_run`, calling `memberEdge_run` in the body). Each:
+    `OUTPUT = [if b && <pred> then 1 else 0]` + regs-1–6 frame.
+  - **`memberEdge_run`** — FOUND-flag leaf (`MEInv`); **the nested-loop template**:
+    inner-run lemma proven by `foldlState_range_induct` over an inner invariant,
+    *called inside* the outer step (the outer counter survives as a frame fact).
+  - **`cliqueRelCmd_decides`** + **`cliqueRel_iff_checks`** (the 5 Bool predicates =
+    `cliqueRel`) — the assembly; wired into `DecidesLang.decides`.
+  - Helpers: `allLt`/`edgesWf`/`memB`/`innerAll`/`nodupB`/`cliqueInnerAll`/`cliqueB`
+    (`Bool`, with `_eq_true_iff` bridges), `eqBit_replicate`,
+    `encVerts_cons`/`encEdges_cons`, `ifReject_frame`/`ifReject2_frame`/
+    `ifFound_frame`/`ifNodup_frame`, `cReject_eval`/`cSkip_eval`/`setFound_eval`,
+    `replicate_one_eq_iff`/`replicate_one_snoc`,
     `tail_replicate_one`/`isEmpty_replicate_one`.
-  Probes: `CliqueRelProbe`, `CliqueLtProbe`. Only `memberEdge`/`checkNodup`/
-  `checkClique` + the `decides` assembly + `cost_bound` remain (top-down Task 1).
+  Probes: `CliqueRelProbe`, `CliqueLtProbe`. **Only `cost_bound` remains** (top-down
+  Task 1, step 5 — the precise plan is in that section above).
 - **Threading toolkit:** `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow`,
   `Cmd.eval_length_ge/_le`, `Cmd.size_eval_le`, `State.set_set`/`set_length_ge`,
   `BitState_set_pad`, `consumeStep_frame`/`_clear_restore`, `State.ext_of_get`.
