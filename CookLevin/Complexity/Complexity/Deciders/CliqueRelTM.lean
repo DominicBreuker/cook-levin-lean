@@ -347,21 +347,28 @@ def readNum (dst stream idx : Var) : Cmd :=
       cSkip)
 
 /-- **Unary strict-less-than** (`probes/CliqueLtProbe.lean`): `dst := [1]` if the
-unary value in `A` is `< ` the unary value in `B`, else `[0]`. Lockstep-consume
-copies of both operands (`|A|` iterations is enough); afterwards `a < b` iff `A`
-empties and `B` does not. `idx` is the loop counter. -/
+unary value in `A` is `< ` the unary value in `B`, else `[0]`.
+
+⚠ **2026-06-30 design fix (top-down): the prior lockstep realization was
+INCORRECT.** It guarded the per-iteration consume with `Cmd.ifBit LT_A` /
+`Cmd.ifBit LT_B`, but `Cmd.ifBit t` branches on `s.get t = [1]` *exactly*
+(`Semantics.Cmd.eval_ifBit_true`), i.e. it is true only when the register holds a
+SINGLE `1`-cell — not "nonempty". So on operands of magnitude `> 1` the loop body
+never fired and the gadget returned the wrong verdict (e.g. `ltBit 2 5` gave
+`[0]` although `2 < 5`). The probe modelled the guard as *nonemptiness*, which
+`ifBit` does not provide.
+
+**Correct (and simpler) realization** — `tail []` is `[]`, so an *unconditional*
+lockstep drain needs no guard: copy `B` into `LT_B`, then `tail LT_B` once per
+cell of `A` (`|A| = a` iterations). After `a` iterations `LT_B = replicate (b−a) 1`
+(truncated subtraction), so `LT_B` is non-empty iff `b > a` iff `a < b`. Read the
+verdict with one `nonEmpty`. (`A` is the loop *bound* — `forBnd` reads its length
+once at entry, so `A` is never consumed; only `LT_B`, `idx`, `dst` are written.)
+Proven in `ltBit_run`. -/
 def ltBit (dst A B idx : Var) : Cmd :=
-  Cmd.op (.copy LT_A A) ;; Cmd.op (.copy LT_B B) ;;
-  Cmd.forBnd idx LT_A
-    (Cmd.ifBit LT_A
-      (Cmd.ifBit LT_B
-        (Cmd.op (.tail LT_A LT_A) ;; Cmd.op (.tail LT_B LT_B))
-        cSkip)
-      cSkip) ;;
-  Cmd.op (.nonEmpty dst LT_A) ;;
-  Cmd.ifBit dst
-    (cReject_to dst)                -- A had leftover ⇒ a ≥ b ⇒ dst := [0]
-    (Cmd.op (.nonEmpty dst LT_B))   -- A empty ⇒ dst := (B nonempty) = (a < b)
+  Cmd.op (.copy LT_B B) ;;
+  Cmd.forBnd idx A (Cmd.op (.tail LT_B LT_B)) ;;
+  Cmd.op (.nonEmpty dst LT_B)
 
 /-- **Check 1 — `fgraph_wf G`**: every edge endpoint `< numV`. Scan a copy of the
 edge stream (bound = edge tally); per edge read both unary endpoints and `ltBit`
@@ -462,14 +469,14 @@ resulting conjunction of literal `_ < 32`. Per-check so each `decide`'s
 `Decidable`-synthesis term stays small (the monolithic conjunction over the whole
 program defeats both `decide` and `omega`). -/
 private theorem checkWf_usesBelow : Cmd.UsesBelow checkWf 32 := by
-  simp [checkWf, readNum, ltBit, cSkip, cReject, cReject_to, Cmd.UsesBelow,
+  simp [checkWf, readNum, ltBit, cSkip, cReject, Cmd.UsesBelow,
     Op.UsesBelow, NUMV, EDGE_STREAM, EDGE_TALLY, OUTPUT, IDX1, IDX2, IDX3,
-    ESCAN, HEAD, INBLK, VALA, VALB, LT_A, LT_B, RES1, RES2, SKIPR]
+    ESCAN, HEAD, INBLK, VALA, VALB, LT_B, RES1, RES2, SKIPR]
 
 private theorem checkOfType_usesBelow : Cmd.UsesBelow checkOfType 32 := by
-  simp [checkOfType, readNum, ltBit, cSkip, cReject, cReject_to,
+  simp [checkOfType, readNum, ltBit, cSkip, cReject,
     Cmd.UsesBelow, Op.UsesBelow, NUMV, VERT_STREAM, VERT_TALLY, OUTPUT, IDX1,
-    IDX2, IDX3, VSCAN, HEAD, INBLK, VALA, LT_A, LT_B, RES1, SKIPR]
+    IDX2, IDX3, VSCAN, HEAD, INBLK, VALA, LT_B, RES1, SKIPR]
 
 private theorem checkLen_usesBelow : Cmd.UsesBelow checkLen 32 := by
   simp [checkLen, cSkip, cReject, Cmd.UsesBelow, Op.UsesBelow, VERT_TALLY,
@@ -497,7 +504,7 @@ theorem cliqueRelCmd_usesBelow : Cmd.UsesBelow cliqueRelCmd 32 := by
 /-- The verifier is `consLen`-free (it uses no `consLen` op). -/
 theorem cliqueRelCmd_noConsLen : Cmd.NoConsLen cliqueRelCmd := by
   simp only [cliqueRelCmd, checkWf, checkOfType, checkLen, checkNodup,
-    checkClique, memberEdge, readNum, ltBit, cSkip, cReject, cReject_to,
+    checkClique, memberEdge, readNum, ltBit, cSkip, cReject,
     Cmd.NoConsLen, Op.NotConsLen]
   trivial
 
@@ -506,9 +513,98 @@ theorem cliqueRelCmd_noConsLen : Cmd.NoConsLen cliqueRelCmd := by
 discharge is axiom-clean. -/
 theorem cliqueRelCmd_allOpsSupported : Cmd.AllOpsSupported cliqueRelCmd := by
   simp only [cliqueRelCmd, checkWf, checkOfType, checkLen, checkNodup,
-    checkClique, memberEdge, readNum, ltBit, cSkip, cReject, cReject_to,
+    checkClique, memberEdge, readNum, ltBit, cSkip, cReject,
     Cmd.AllOpsSupported, Op.IsSupported]
   trivial
+
+/-! ### Leaf run-lemmas for the verifier checks (top-down Task 1)
+
+The reusable per-gadget correctness contracts the per-check loop invariants
+consume. Built bottom-up; `ltBit_run` (the novel unary-`<` gadget) first, since
+its design carried the most risk. -/
+
+/-- `(replicate n 1).tail = replicate (n-1) 1` (the loop step of `ltBit`'s
+drain). -/
+private theorem tail_replicate_one (n : Nat) :
+    (List.replicate n (1 : Nat)).tail = List.replicate (n - 1) 1 := by
+  cases n with
+  | zero => rfl
+  | succ m => rfl
+
+/-- `(replicate n 1).isEmpty = decide (n = 0)` (the verdict read of `ltBit`). -/
+private theorem isEmpty_replicate_one (n : Nat) :
+    (List.replicate n (1 : Nat)).isEmpty = decide (n = 0) := by
+  cases n with
+  | zero => rfl
+  | succ m => rfl
+
+/-- **The unary strict-less-than gadget is correct.** If `A` holds `replicate a 1`
+and `B` holds `replicate b 1`, and the scratch register `LT_B`, the loop counter
+`idx` and the output `dst` are disjoint from the operands, then `ltBit dst A B
+idx` writes `[if a < b then 1 else 0]` to `dst` and leaves every register outside
+`{LT_B, idx, dst}` untouched.
+
+The loop drains `LT_B` (a copy of `B`) once per cell of `A` (`a` iterations);
+after the loop `LT_B = replicate (b − a) 1`, non-empty iff `b > a`. -/
+theorem ltBit_run (st : State) (a b : Nat) (dst A B idx : Var)
+    (hA : State.get st A = List.replicate a 1)
+    (hB : State.get st B = List.replicate b 1)
+    (hALT : A ≠ LT_B) (hidxLT : idx ≠ LT_B) :
+    State.get ((ltBit dst A B idx).eval st) dst = [if a < b then 1 else 0]
+    ∧ (∀ r : Var, r ≠ LT_B → r ≠ idx → r ≠ dst →
+        State.get ((ltBit dst A B idx).eval st) r = State.get st r) := by
+  -- Phase 1 — the copy `LT_B := B`.
+  have hcopy : (Cmd.op (.copy LT_B B)).eval st = State.set st LT_B (List.replicate b 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hB]
+  -- Unfold `ltBit` into `loop ;; nonEmpty` over the post-copy state `st1`.
+  have heval : (ltBit dst A B idx).eval st
+      = (Cmd.op (.nonEmpty dst LT_B)).eval
+          ((Cmd.forBnd idx A (Cmd.op (.tail LT_B LT_B))).eval
+            (State.set st LT_B (List.replicate b 1))) := by
+    simp only [ltBit]; rw [Cmd.eval_seq, Cmd.eval_seq, hcopy]
+  rw [heval]
+  -- The loop is a `foldlState` over `List.range a` (the bound `A`'s length).
+  rw [Cmd.eval_forBnd]
+  have hAlen : (State.get (State.set st LT_B (List.replicate b 1)) A).length = a := by
+    rw [State.get_set_ne _ _ _ _ hALT, hA, List.length_replicate]
+  rw [hAlen]
+  -- Loop invariant: after `i` iterations `LT_B = replicate (b − i) 1`, and every
+  -- register outside `{LT_B, idx}` is unchanged from the post-copy state.
+  obtain ⟨hLT2, hfr2⟩ :
+      State.get (Cmd.foldlState (Cmd.op (.tail LT_B LT_B)) idx (List.range a)
+          (State.set st LT_B (List.replicate b 1))) LT_B = List.replicate (b - a) 1
+      ∧ (∀ r : Var, r ≠ LT_B → r ≠ idx →
+          State.get (Cmd.foldlState (Cmd.op (.tail LT_B LT_B)) idx (List.range a)
+            (State.set st LT_B (List.replicate b 1))) r
+            = State.get (State.set st LT_B (List.replicate b 1)) r) := by
+    refine Cmd.foldlState_range_induct (Cmd.op (.tail LT_B LT_B)) idx a
+      (State.set st LT_B (List.replicate b 1))
+      (fun i s => State.get s LT_B = List.replicate (b - i) 1
+        ∧ ∀ r : Var, r ≠ LT_B → r ≠ idx →
+            State.get s r = State.get (State.set st LT_B (List.replicate b 1)) r)
+      ⟨by rw [State.get_set_eq, Nat.sub_zero], fun _ _ _ => rfl⟩ ?_
+    intro i s _ hM
+    obtain ⟨hLT, hfr⟩ := hM
+    refine ⟨?_, ?_⟩
+    · rw [Cmd.eval_op]; simp only [Op.eval]
+      rw [State.get_set_eq, State.get_set_ne _ _ _ _ (Ne.symm hidxLT), hLT,
+        tail_replicate_one, Nat.sub_sub]
+    · intro r hrLT hridx
+      rw [Cmd.eval_op]; simp only [Op.eval]
+      rw [State.get_set_ne _ _ _ _ hrLT, State.get_set_ne _ _ _ _ hridx]
+      exact hfr r hrLT hridx
+  -- Phase 3 — read the verdict with `nonEmpty dst LT_B`.
+  refine ⟨?_, ?_⟩
+  · rw [Cmd.eval_op]
+    simp only [Op.eval, State.get_set_eq, hLT2, isEmpty_replicate_one,
+      decide_eq_true_eq]
+    by_cases hab : a < b
+    · rw [if_neg (show ¬ (b - a = 0) by omega), if_pos hab]
+    · rw [if_pos (show b - a = 0 by omega), if_neg hab]
+  · intro r hrLT hridx hrdst
+    rw [Cmd.eval_op]; simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ hrdst, hfr2 r hrLT hridx,
+      State.get_set_ne _ _ _ _ hrLT]
 
 /-- The Lang-level decider witness for the FlatClique verifier.
 

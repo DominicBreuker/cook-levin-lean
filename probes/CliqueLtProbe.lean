@@ -12,20 +12,28 @@ This probe settles the realization at the register-arithmetic level (no real
 machines): a **lockstep consume loop** decides `a < b` on unary blocks
 `replicate a 1` / `replicate b 1`.
 
-Design (mirrors the `eqBit` compare-loop shape — copy both operands to scratch,
-consume in lockstep, read off the verdict from which empties first):
+⚠ **2026-06-30 FINDING + design fix (top-down).** The first realization
+transcribed into `CliqueRelTM.ltBit` was a guarded lockstep loop:
 
-  ltBit dst A B:
-    copy  sa A ;; copy sb B
-    forBnd idx sa                       -- |A| iterations is enough
+    forBnd idx sa                       -- WRONG
       ifBit sa (ifBit sb (tail sa ;; tail sb) skip) skip
-    nonEmpty fa sa ;; nonEmpty fb sb    -- fa = "A leftover", fb = "B leftover"
-    dst := (¬fa) ∧ fb                   -- a<b iff A empties strictly first
 
-Reasoning: each active iteration tails both blocks while both are non-empty, so
-after the loop the shorter block is empty and the longer one keeps
-`|longer|-|shorter|` cells. `a < b` ⇔ `a` empties and `b` does not ⇔
-`sa = [] ∧ sb ≠ []`.
+`Cmd.ifBit t` branches on `s.get t = [1]` **exactly** (single `1`-cell), NOT on
+nonemptiness — so on operands of magnitude `> 1` the body never fired and the
+gadget returned the wrong verdict (`ltBit 2 5` gave `[0]` though `2 < 5`). The
+`lockstep` model below correctly captures nonemptiness, but `ifBit` does not
+provide it. **The fix is simpler, not more complex:** `tail []` is `[]`, so an
+*unconditional* drain needs no guard at all —
+
+    ltBit dst A B idx:
+      copy  LT_B B
+      forBnd idx A (tail LT_B LT_B)      -- |A| = a iterations; A is only the bound
+      nonEmpty dst LT_B                  -- LT_B = replicate (b−a) 1 ⇒ a<b iff non-empty
+
+After `a` iterations `LT_B = replicate (b − a) 1` (truncated subtraction), which is
+non-empty iff `b > a` iff `a < b`. This is the realization PROVEN in
+`CliqueRelTM.ltBit_run` (axiom-clean). The two `#eval` models below
+(`lockstep`-based `ltBit`, and the `drain`-based `ltBitDrain`) both agree with `<`.
 
 Run: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean probes/CliqueLtProbe.lean`
 (every `#eval` must print `true`). -/
@@ -51,6 +59,14 @@ def ltBit (a b : Nat) : Bool :=
   let (sa, sb) := lockstepN A.length (A, B)
   sa.isEmpty && !sb.isEmpty
 
+/-- The PROVEN realization (`CliqueRelTM.ltBit` / `ltBit_run`): unconditional
+drain of `B`'s copy, `|A|` times, then a non-emptiness read. `tail []` is `[]`,
+so no guard is needed. -/
+def ltBitDrain (a b : Nat) : Bool :=
+  let B : List Nat := List.replicate b 1
+  let drained := (List.range a).foldl (fun r _ => r.tail) B    -- tail B, a times
+  !drained.isEmpty
+
 /-- Reference: actual `<` on the underlying Nats. -/
 def ltSpec (a b : Nat) : Bool := a < b
 
@@ -60,6 +76,7 @@ def grid : List (Nat × Nat) :=
   (List.range 7).flatMap (fun a => (List.range 7).map (fun b => (a, b)))
 
 #eval grid.all (fun p => ltBit p.1 p.2 == ltSpec p.1 p.2)
+#eval grid.all (fun p => ltBitDrain p.1 p.2 == ltSpec p.1 p.2)   -- the PROVEN gadget
 
 -- spot checks (eyeball)
 #eval ltBit 0 0   -- false
