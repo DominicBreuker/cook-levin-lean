@@ -2323,13 +2323,172 @@ theorem checkClique_run (st : State) (edges : List fedge) (l : List fvertex) (b 
     rw [hframefin r hrO hrV hrV2 hrVA hrVB hrF hrE2 hrVC hrVD hr1 hr2 hr3 hr4 hrR1 hrR2
         hrH hrI hrS, State.get_set_ne _ _ _ _ hrV]
 
+/-! ### `decides` assembly — the 5 checks chained into `OUTPUT` -/
+
+/-- The conjunction of the 5 Bool checks is exactly `cliqueRel`. -/
+theorem cliqueRel_iff_checks (G : fgraph) (k : Nat) (l : List fvertex) :
+    cliqueRel (G, k) l
+      ↔ (edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l
+          && cliqueB G.2 l) = true := by
+  rw [Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true, Bool.and_eq_true,
+    edgesWf_eq_true_iff, allLt_eq_true_iff, decide_eq_true_eq, nodupB_eq_true_iff,
+    cliqueB_eq_true_iff]
+  show (fgraph_wf G ∧ isfKClique k G l) ↔ _
+  unfold fgraph_wf isfKClique isfClique
+  tauto
+
+/-- **The verifier program decides `cliqueRel`.** Start `OUTPUT := [1]`, then chain
+the five proven per-check run-lemmas (each ANDs its predicate into `OUTPUT` while
+preserving the read-only input registers 1–6), so the final bit is the
+conjunction of all five predicates = `cliqueRel`. -/
+theorem cliqueRelCmd_decides :
+    Cmd.decides cliqueRelCmd cliqueRelEncode
+      (fun Gkl : (fgraph × Nat) × List fvertex => cliqueRel Gkl.1 Gkl.2) := by
+  intro x
+  obtain ⟨⟨G, k⟩, l⟩ := x
+  -- encode facts
+  have hO0 : (cliqueRelEncode ((G, k), l)).get OUTPUT = [] := rfl
+  have hN0 : (cliqueRelEncode ((G, k), l)).get NUMV = List.replicate G.1 1 := rfl
+  have hE0 : (cliqueRelEncode ((G, k), l)).get EDGE_STREAM = encEdges G.2 := rfl
+  have hK0 : (cliqueRelEncode ((G, k), l)).get K = List.replicate k 1 := rfl
+  have hVS0 : (cliqueRelEncode ((G, k), l)).get VERT_STREAM = encVerts l := rfl
+  have hET0 : (cliqueRelEncode ((G, k), l)).get EDGE_TALLY = List.replicate G.2.length 1 := rfl
+  have hVT0 : (cliqueRelEncode ((G, k), l)).get VERT_TALLY = List.replicate l.length 1 := rfl
+  -- unfold the program into nested check evals
+  have heval : cliqueRelCmd.eval (cliqueRelEncode ((G, k), l))
+      = checkClique.eval (checkNodup.eval (checkLen.eval (checkOfType.eval
+          (checkWf.eval ((Cmd.op (.appendOne OUTPUT)).eval
+            (cliqueRelEncode ((G, k), l))))))) := by
+    show (Cmd.op (.appendOne OUTPUT) ;; checkWf ;; checkOfType ;; checkLen ;;
+      checkNodup ;; checkClique).eval _ = _
+    rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  -- step 0: `appendOne OUTPUT` makes `OUTPUT = [1]`
+  set s1 := (Cmd.op (.appendOne OUTPUT)).eval (cliqueRelEncode ((G, k), l)) with hs1
+  have hs1eq : s1 = (cliqueRelEncode ((G, k), l)).set OUTPUT [1] := by
+    rw [hs1, Cmd.eval_op]; simp only [Op.eval, hO0, List.nil_append]
+  have hO1 : s1.get OUTPUT = [if true then 1 else 0] := by
+    rw [hs1eq, State.get_set_eq]; rfl
+  have hN1 : s1.get NUMV = List.replicate G.1 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ OUTPUT), hN0]
+  have hE1 : s1.get EDGE_STREAM = encEdges G.2 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ OUTPUT), hE0]
+  have hK1 : s1.get K = List.replicate k 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (K : Var) ≠ OUTPUT), hK0]
+  have hVS1 : s1.get VERT_STREAM = encVerts l := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ OUTPUT), hVS0]
+  have hET1 : s1.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ OUTPUT), hET0]
+  have hVT1 : s1.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ OUTPUT), hVT0]
+  -- check 1: fgraph_wf
+  obtain ⟨hWfOut, hWfFr⟩ := checkWf_run s1 G.2 G.1 true hE1 hET1 hN1 hO1
+  set s2 := checkWf.eval s1 with hs2
+  have hN2 : s2.get NUMV = List.replicate G.1 1 := by
+    rw [hWfFr NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hN1]
+  have hK2 : s2.get K = List.replicate k 1 := by
+    rw [hWfFr K (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hK1]
+  have hVS2 : s2.get VERT_STREAM = encVerts l := by
+    rw [hWfFr VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hVS1]
+  have hVT2 : s2.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hWfFr VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hVT1]
+  have hE2 : s2.get EDGE_STREAM = encEdges G.2 := by
+    rw [hWfFr EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hE1]
+  have hET2 : s2.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    rw [hWfFr EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hET1]
+  -- check 2: list_ofFlatType
+  obtain ⟨hOtOut, hOtFr⟩ := checkOfType_run s2 l G.1 (true && edgesWf G.1 G.2)
+    hVS2 hVT2 hN2 hWfOut
+  set s3 := checkOfType.eval s2 with hs3
+  have hK3 : s3.get K = List.replicate k 1 := by
+    rw [hOtFr K (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hK2]
+  have hVS3 : s3.get VERT_STREAM = encVerts l := by
+    rw [hOtFr VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hVS2]
+  have hVT3 : s3.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hOtFr VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hVT2]
+  have hE3 : s3.get EDGE_STREAM = encEdges G.2 := by
+    rw [hOtFr EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hE2]
+  have hET3 : s3.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    rw [hOtFr EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hET2]
+  -- check 3: l.length = k
+  obtain ⟨hLenOut, hLenFr⟩ := checkLen_run s3 k l.length
+    (true && edgesWf G.1 G.2 && allLt G.1 l) hVT3 hK3 hOtOut
+  set s4 := checkLen.eval s3 with hs4
+  have hVS4 : s4.get VERT_STREAM = encVerts l := by
+    rw [hLenFr VERT_STREAM (by decide) (by decide) (by decide), hVS3]
+  have hVT4 : s4.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hLenFr VERT_TALLY (by decide) (by decide) (by decide), hVT3]
+  have hE4 : s4.get EDGE_STREAM = encEdges G.2 := by
+    rw [hLenFr EDGE_STREAM (by decide) (by decide) (by decide), hE3]
+  have hET4 : s4.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    rw [hLenFr EDGE_TALLY (by decide) (by decide) (by decide), hET3]
+  -- check 4: l.Nodup
+  obtain ⟨hNodupOut, hNodupFr⟩ := checkNodup_run s4 l
+    (true && edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k)) hVS4 hVT4 hLenOut
+  set s5 := checkNodup.eval s4 with hs5
+  have hVS5 : s5.get VERT_STREAM = encVerts l := by
+    rw [hNodupFr VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hVS4]
+  have hVT5 : s5.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hNodupFr VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hVT4]
+  have hE5 : s5.get EDGE_STREAM = encEdges G.2 := by
+    rw [hNodupFr EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hE4]
+  have hET5 : s5.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    rw [hNodupFr EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hET4]
+  -- check 5: clique adjacency
+  obtain ⟨hClqOut, _⟩ := checkClique_run s5 G.2 l
+    (true && edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l)
+    hVS5 hVT5 hE5 hET5 hNodupOut
+  -- the final output bit
+  have hfinal : (cliqueRelCmd.eval (cliqueRelEncode ((G, k), l))).get OUTPUT
+      = [if (edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l
+            && cliqueB G.2 l) then 1 else 0] := by
+    rw [heval, hClqOut]
+    simp only [Bool.true_and]
+  -- bridge to `cliqueRel`
+  have hO0' : (cliqueRelCmd.eval (cliqueRelEncode ((G, k), l))).get (0 : Var)
+      = [if (edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l
+            && cliqueB G.2 l) then 1 else 0] := hfinal
+  refine ⟨?_, ?_⟩
+  · show cliqueRel (G, k) l ↔ _
+    rw [cliqueRel_iff_checks G k l, State.isAccept, hO0']
+    cases (edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l
+      && cliqueB G.2 l) <;> simp
+  · show ¬ cliqueRel (G, k) l ↔ _
+    rw [cliqueRel_iff_checks G k l, State.isReject, hO0']
+    cases (edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l
+      && cliqueB G.2 l) <;> simp
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
-(encoding side), and `usesBelow`, `noConsLen`, `allOpsSupported` (structural,
-from the now-concrete `cliqueRelCmd`). **`decides`/`cost_bound` remain `sorry`** —
-the per-check correctness invariants and the per-loop `cost_forBnd_le` cost bound
-(HANDOFF top-down Task 1). -/
+(encoding side), `usesBelow`, `noConsLen`, `allOpsSupported` (structural), and
+**`decides`** (the 5-check assembly, `cliqueRelCmd_decides`). **`cost_bound`
+remains `sorry`** — the per-loop `cost_forBnd_le` cost bound (HANDOFF top-down
+Task 1, step 5). -/
 noncomputable def cliqueRelDecidesLang :
     DecidesLang
       (fun Gkl : (fgraph × Nat) × List fvertex => cliqueRel Gkl.1 Gkl.2)
@@ -2345,8 +2504,8 @@ noncomputable def cliqueRelDecidesLang :
         Nat.le_self_pow (by norm_num) _
       omega
     exact h1.trans h2
-  decides := by sorry                  -- TODO(top-down Task 1): per-check correctness invariants
-  cost_bound := by intro x; sorry      -- TODO(top-down Task 1): per-loop `cost_forBnd_le`
+  decides := cliqueRelCmd_decides
+  cost_bound := by intro x; sorry      -- TODO(top-down Task 1, step 5): per-loop `cost_forBnd_le`
   enc_bit := cliqueRelEncode_bit
   regBound := regBound
   usesBelow := cliqueRelCmd_usesBelow
