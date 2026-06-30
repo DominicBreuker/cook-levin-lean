@@ -128,6 +128,13 @@ theorem encVerts_cons (v : fvertex) (rest : List fvertex) :
   simp only [encVerts, List.map_cons, List.flatten_cons, encNum]
   rw [List.append_assoc]; rfl
 
+/-- Peel one edge (two unary blocks) off the front of the edge stream. -/
+theorem encEdges_cons (e : fedge) (rest : List fedge) :
+    encEdges (e :: rest)
+      = List.replicate e.1 1 ++ 0 :: (List.replicate e.2 1 ++ 0 :: encEdges rest) := by
+  simp only [encEdges, List.map_cons, List.flatten_cons, encEdge, encNum]
+  rw [List.append_assoc, List.append_assoc, List.append_assoc]; rfl
+
 /-- The vertex stream's length equals the list's encoded size (`size Nat = id`
 makes the unary block of a vertex `v` cost exactly `v + 1`). -/
 theorem encVerts_length (l : List fvertex) :
@@ -944,6 +951,37 @@ private theorem allLt_take_succ (numV : Nat) (l : List fvertex) (i : Nat)
   rw [allLt, allLt, List.take_succ_eq_append_getElem hi, List.all_append,
     List.all_cons, List.all_nil, Bool.and_true]
 
+/-- `Bool`-valued "every edge endpoint `< numV`" (the `fgraph_wf` body). -/
+def edgesWf (numV : Nat) (edges : List fedge) : Bool :=
+  edges.all (fun e => decide (e.1 < numV) && decide (e.2 < numV))
+
+theorem edgesWf_eq_true_iff (numV : Nat) (edges : List fedge) :
+    edgesWf numV edges = true ↔ ∀ e ∈ edges, e.1 < numV ∧ e.2 < numV := by
+  simp only [edgesWf, List.all_eq_true, Bool.and_eq_true, decide_eq_true_eq]
+
+private theorem edgesWf_take_succ (numV : Nat) (edges : List fedge) (i : Nat)
+    (hi : i < edges.length) :
+    edgesWf numV (edges.take (i + 1))
+      = (edgesWf numV (edges.take i)
+          && (decide ((edges[i]'hi).1 < numV) && decide ((edges[i]'hi).2 < numV))) := by
+  rw [edgesWf, edgesWf, List.take_succ_eq_append_getElem hi, List.all_append,
+    List.all_cons, List.all_nil, Bool.and_true]
+
+/-- `ifBit RES1 (ifBit RES2 then cReject) cReject` only ever writes
+`{SKIPR, OUTPUT}` (the nested "reject unless both bits set" guard). -/
+private theorem ifReject2_frame (then2 : Cmd)
+    (hthen2 : ∀ (u : State) (r : Var), r ≠ SKIPR → r ≠ OUTPUT →
+      (then2.eval u).get r = u.get r)
+    (t : State) (r : Var) (hrS : r ≠ SKIPR) (hrO : r ≠ OUTPUT) :
+    ((Cmd.ifBit RES1 (Cmd.ifBit RES2 then2 cReject) cReject).eval t).get r
+      = t.get r := by
+  by_cases hb1 : t.get RES1 = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hb1]
+    by_cases hb2 : t.get RES2 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hb2]; exact hthen2 t r hrS hrO
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hb2, cReject_eval, State.get_set_ne _ _ _ _ hrO]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hb1, cReject_eval, State.get_set_ne _ _ _ _ hrO]
+
 /-- `ifBit RES1 cSkip cReject` only ever writes `{SKIPR, OUTPUT}`. -/
 private theorem ifReject_frame (t : State) (r : Var) (hrS : r ≠ SKIPR)
     (hrO : r ≠ OUTPUT) :
@@ -1087,6 +1125,184 @@ theorem checkOfType_run (st : State) (l : List fvertex) (numV : Nat) (b : Bool)
   · intro r hrO hrV hrVA hrR hrLT hrH hrI hrS hr1 hr2 hr3
     rw [hframefin r hrO hrV hrVA hrR hrLT hrH hrI hrS hr1 hr2 hr3,
       State.get_set_ne _ _ _ _ hrV]
+
+/-- The `checkWf` outer-loop invariant: through iteration `i` the loop has
+consumed `i` edges from `ESCAN` and ANDed each "both endpoints `< numV`" test
+into `OUTPUT`. Frame relative to the loop-entry state `st`. -/
+private def CWfInv (edges : List fedge) (numV : Nat) (b : Bool) (st : State)
+    (i : Nat) (s : State) : Prop :=
+  s.get ESCAN = encEdges (edges.drop i)
+  ∧ s.get OUTPUT = [if b && edgesWf numV (edges.take i) then 1 else 0]
+  ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ ESCAN → r ≠ VALA → r ≠ VALB → r ≠ RES1 →
+      r ≠ RES2 → r ≠ LT_B → r ≠ HEAD → r ≠ INBLK → r ≠ SKIPR → r ≠ IDX1 →
+      r ≠ IDX2 → r ≠ IDX3 → s.get r = st.get r)
+
+private theorem checkWf_step (edges : List fedge) (numV : Nat) (b : Bool)
+    (st : State) (hNUMV : st.get NUMV = List.replicate numV 1)
+    (i : Nat) (s : State) (hi : i < edges.length) (h : CWfInv edges numV b st i s) :
+    CWfInv edges numV b st (i + 1)
+      ((readNum VALA ESCAN IDX2 ;;
+        readNum VALB ESCAN IDX2 ;;
+        ltBit RES1 VALA NUMV IDX3 ;;
+        ltBit RES2 VALB NUMV IDX3 ;;
+        Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject).eval
+          (s.set IDX1 (List.replicate i 1))) := by
+  obtain ⟨hESCAN, hOUT, hframe⟩ := h
+  rw [show (readNum VALA ESCAN IDX2 ;; readNum VALB ESCAN IDX2 ;;
+        ltBit RES1 VALA NUMV IDX3 ;; ltBit RES2 VALB NUMV IDX3 ;;
+        Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject).eval
+          (s.set IDX1 (List.replicate i 1))
+      = (Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject).eval
+          ((ltBit RES2 VALB NUMV IDX3).eval
+            ((ltBit RES1 VALA NUMV IDX3).eval
+              ((readNum VALB ESCAN IDX2).eval
+                ((readNum VALA ESCAN IDX2).eval (s.set IDX1 (List.replicate i 1))))))
+      from by rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]]
+  -- the edge at the head of `ESCAN`
+  have hESCAN_in : (s.set IDX1 (List.replicate i 1)).get ESCAN
+      = List.replicate (edges[i]'hi).1 1 ++ 0 ::
+          (List.replicate (edges[i]'hi).2 1 ++ 0 :: encEdges (edges.drop (i + 1))) := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (ESCAN : Var) ≠ IDX1), hESCAN,
+      List.drop_eq_getElem_cons hi, encEdges_cons]
+  -- rn1: read `e.1` into `VALA`
+  obtain ⟨hVALA, hESCAN1, hRN1frame⟩ := readNum_run (s.set IDX1 (List.replicate i 1))
+    (edges[i]'hi).1
+    (List.replicate (edges[i]'hi).2 1 ++ 0 :: encEdges (edges.drop (i + 1)))
+    VALA ESCAN IDX2 hESCAN_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALA ESCAN IDX2).eval (s.set IDX1 (List.replicate i 1)) with hs1
+  -- rn2: read `e.2` into `VALB`
+  obtain ⟨hVALB, hESCAN2, hRN2frame⟩ := readNum_run s1
+    (edges[i]'hi).2 (encEdges (edges.drop (i + 1)))
+    VALB ESCAN IDX2 hESCAN1
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s2 := (readNum VALB ESCAN IDX2).eval s1 with hs2
+  have hVALA2 : s2.get VALA = List.replicate (edges[i]'hi).1 1 := by
+    rw [hRN2frame VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hVALA]
+  have hNUMV2 : s2.get NUMV = List.replicate numV 1 := by
+    rw [hRN2frame NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      hRN1frame NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ IDX1),
+      hframe NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide), hNUMV]
+  -- ltBit1: `RES1 := [e.1 < numV]`
+  obtain ⟨hRES1, hLT1frame⟩ := ltBit_run s2 (edges[i]'hi).1 numV RES1 VALA NUMV IDX3
+    hVALA2 hNUMV2 (by decide) (by decide)
+  set s3 := (ltBit RES1 VALA NUMV IDX3).eval s2 with hs3
+  have hVALB3 : s3.get VALB = List.replicate (edges[i]'hi).2 1 := by
+    rw [hLT1frame VALB (by decide) (by decide) (by decide), hVALB]
+  have hNUMV3 : s3.get NUMV = List.replicate numV 1 := by
+    rw [hLT1frame NUMV (by decide) (by decide) (by decide), hNUMV2]
+  -- ltBit2: `RES2 := [e.2 < numV]`
+  obtain ⟨hRES2, hLT2frame⟩ := ltBit_run s3 (edges[i]'hi).2 numV RES2 VALB NUMV IDX3
+    hVALB3 hNUMV3 (by decide) (by decide)
+  set s4 := (ltBit RES2 VALB NUMV IDX3).eval s3 with hs4
+  have hRES1' : s4.get RES1 = [if (edges[i]'hi).1 < numV then 1 else 0] := by
+    rw [hLT2frame RES1 (by decide) (by decide) (by decide), hRES1]
+  have hESCAN4 : s4.get ESCAN = encEdges (edges.drop (i + 1)) := by
+    rw [hLT2frame ESCAN (by decide) (by decide) (by decide),
+      hLT1frame ESCAN (by decide) (by decide) (by decide), hESCAN2]
+  have hOUT4 : s4.get OUTPUT = [if b && edgesWf numV (edges.take i) then 1 else 0] := by
+    rw [hLT2frame OUTPUT (by decide) (by decide) (by decide),
+      hLT1frame OUTPUT (by decide) (by decide) (by decide),
+      hRN2frame OUTPUT (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      hRN1frame OUTPUT (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ IDX1), hOUT]
+  have hcSkipFrame : ∀ (u : State) (r : Var), r ≠ SKIPR → r ≠ OUTPUT →
+      (cSkip.eval u).get r = u.get r := by
+    intro u r hrS _; rw [cSkip_eval, State.get_set_ne _ _ _ _ hrS]
+  refine ⟨?_, ?_, ?_⟩
+  · -- ESCAN
+    rw [ifReject2_frame cSkip hcSkipFrame _ _ (by decide) (by decide), hESCAN4]
+  · -- OUTPUT
+    rw [edgesWf_take_succ numV edges i hi]
+    by_cases h1 : (edges[i]'hi).1 < numV
+    · rw [Cmd.eval_ifBit_true _ _ _ _ (by rw [hRES1', if_pos h1])]
+      by_cases h2 : (edges[i]'hi).2 < numV
+      · rw [Cmd.eval_ifBit_true _ _ _ _ (by rw [hRES2, if_pos h2]), cSkip_eval,
+          State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ SKIPR), hOUT4]
+        have hd1 : decide ((edges[i]'hi).1 < numV) = true := by
+          simp only [decide_eq_true_eq]; exact h1
+        have hd2 : decide ((edges[i]'hi).2 < numV) = true := by
+          simp only [decide_eq_true_eq]; exact h2
+        rw [hd1, hd2, Bool.and_true, Bool.and_true]
+      · rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hRES2, if_neg h2]; decide),
+          cReject_eval, State.get_set_eq]
+        have hd2 : decide ((edges[i]'hi).2 < numV) = false := by
+          simp only [decide_eq_false_iff_not]; exact h2
+        simp [hd2]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hRES1', if_neg h1]; decide),
+        cReject_eval, State.get_set_eq]
+      have hd1 : decide ((edges[i]'hi).1 < numV) = false := by
+        simp only [decide_eq_false_iff_not]; exact h1
+      simp [hd1]
+  · -- frame
+    intro r hrO hrE hrVA hrVB hrR1 hrR2 hrLT hrH hrI hrS hr1 hr2 hr3
+    rw [ifReject2_frame cSkip hcSkipFrame _ _ hrS hrO,
+      hLT2frame r hrLT hr3 hrR2, hLT1frame r hrLT hr3 hrR1,
+      hRN2frame r hrE hrVB hrI hrH hrS hr2,
+      hRN1frame r hrE hrVA hrI hrH hrS hr2,
+      State.get_set_ne _ _ _ _ hr1,
+      hframe r hrO hrE hrVA hrVB hrR1 hrR2 hrLT hrH hrI hrS hr1 hr2 hr3]
+
+/-- **Check 1 — `fgraph_wf G`** (every edge endpoint `< numV`), ANDed into
+`OUTPUT`. Outer `forBnd` over the edge tally; the body `readNum`s both unary
+endpoints and `ltBit`s each against `NUMV`, rejecting unless both pass. -/
+theorem checkWf_run (st : State) (edges : List fedge) (numV : Nat) (b : Bool)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hNUMV : st.get NUMV = List.replicate numV 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0]) :
+    (checkWf.eval st).get OUTPUT = [if b && edgesWf numV edges then 1 else 0]
+    ∧ (∀ r : Var, r ≠ OUTPUT → r ≠ ESCAN → r ≠ VALA → r ≠ VALB → r ≠ RES1 →
+        r ≠ RES2 → r ≠ LT_B → r ≠ HEAD → r ≠ INBLK → r ≠ SKIPR → r ≠ IDX1 →
+        r ≠ IDX2 → r ≠ IDX3 → (checkWf.eval st).get r = st.get r) := by
+  have eInit : (Cmd.op (.copy ESCAN EDGE_STREAM)).eval st
+      = st.set ESCAN (encEdges edges) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hES]
+  have eP : checkWf.eval st
+      = (Cmd.forBnd IDX1 EDGE_TALLY
+          (readNum VALA ESCAN IDX2 ;; readNum VALB ESCAN IDX2 ;;
+           ltBit RES1 VALA NUMV IDX3 ;; ltBit RES2 VALB NUMV IDX3 ;;
+           Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject)).eval
+          (st.set ESCAN (encEdges edges)) := by
+    show (Cmd.op (.copy ESCAN EDGE_STREAM) ;; _).eval st = _
+    rw [Cmd.eval_seq, eInit]
+  have hblen : ((st.set ESCAN (encEdges edges)).get EDGE_TALLY).length
+      = edges.length := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ ESCAN), hET,
+      List.length_replicate]
+  have hbase : CWfInv edges numV b (st.set ESCAN (encEdges edges)) 0
+      (st.set ESCAN (encEdges edges)) := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [State.get_set_eq, List.drop_zero]
+    · rw [State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ ESCAN), hO,
+        List.take_zero]
+      simp only [edgesWf, List.all_nil, Bool.and_true]
+  have hNUMV0 : (st.set ESCAN (encEdges edges)).get NUMV = List.replicate numV 1 := by
+    rw [State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ ESCAN), hNUMV]
+  have hInv : CWfInv edges numV b (st.set ESCAN (encEdges edges)) edges.length
+      (checkWf.eval st) := by
+    rw [eP, Cmd.eval_forBnd, hblen]
+    exact Cmd.foldlState_range_induct _ IDX1 edges.length
+      (st.set ESCAN (encEdges edges))
+      (CWfInv edges numV b (st.set ESCAN (encEdges edges))) hbase
+      (fun i s hi h => checkWf_step edges numV b (st.set ESCAN (encEdges edges))
+        hNUMV0 i s hi h)
+  obtain ⟨_, hOUTfin, hframefin⟩ := hInv
+  refine ⟨?_, ?_⟩
+  · rw [hOUTfin, List.take_length]
+  · intro r hrO hrE hrVA hrVB hrR1 hrR2 hrLT hrH hrI hrS hr1 hr2 hr3
+    rw [hframefin r hrO hrE hrVA hrVB hrR1 hrR2 hrLT hrH hrI hrS hr1 hr2 hr3,
+      State.get_set_ne _ _ _ _ hrE]
 
 /-- The Lang-level decider witness for the FlatClique verifier.
 
