@@ -26,39 +26,59 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-06-30c, TOP-DOWN, CliqueRelTM): ✅ proved ALL FIVE
-> per-check run-lemmas + the `decides` assembly (all axiom-clean). The ONLY
-> remaining `sorry` in `cliqueRelDecidesLang` is `cost_bound`.**
-> - **`memberEdge_run`** — the FOUND-flag leaf (single `forBnd` over the edge
->   tally, `eqBit` on both endpoints; phase-free `MEInv`). New helpers `memB` +
->   `memB_eq_true_iff`, `eqBit_replicate`, `setFound_eval`, `ifFound_frame`.
-> - **`checkNodup_run`** (double `forBnd`, `l.Nodup`) and **`checkClique_run`**
->   (depth-4: outer/inner `forBnd` + `memberEdge` in the body, clique adjacency).
->   The **nested-loop pattern is now established**: an inner-run lemma
->   (`checkNodupInner_run`/`checkCliqueInner_run`, proven by `foldlState_range_induct`
->   over an inner invariant `NInnerInv`/`CliqueInnerInv`) is *called inside* the
->   outer step (mirrors EvalCnf's `CInv_step` calling `processOneLiteral_run`). The
->   outer counter `IDX1` survives the inner loop as a frame fact. New Bool helpers
->   `innerAll`/`nodupB`/`cliqueInnerAll`/`cliqueB` + the bridges `nodupB_eq_true_iff`
->   (via `List.nodup_iff_injective_getElem`) / `cliqueB_eq_true_iff`, plus
->   `ifNodup_frame`.
-> - **`cliqueRelCmd_decides`** — chains the 5 checks (`appendOne OUTPUT` → `[1]`,
->   then each check ANDs its predicate while preserving regs 1–6), bridged to
->   `cliqueRel` by **`cliqueRel_iff_checks`**. Wired into `DecidesLang.decides`.
+> **Most recent session (2026-07-01, TOP-DOWN, CliqueRelTM): ✅ proved `cost_bound`
+> — `cliqueRelDecidesLang` is SORRY-FREE and `FlatClique_in_NP` is AXIOM-CLEAN**
+> (`#print axioms FlatClique_in_NP = [propext, Classical.choice, Quot.sound]`).
+> The in-NP half of FlatClique/Clique now joins SAT (2026-06-28). `Clique_complete`
+> depends on `sorryAx` ONLY via the hardness half now.
+> - **Cost lemmas mirror `EvalCnfCmd`'s `_cost` quartet, one per gadget, bottom-up:**
+>   `readNum_cost`/`ltBit_cost`/`checkLen_cost`/`checkOfType_cost`/`checkWf_cost`/
+>   `memberEdge_cost`/`checkNodup_cost` (double loop)/`checkClique_cost` (depth-4),
+>   then `cliqueRelCmd_cost_bound` sums the six checks. All axiom-clean.
+> - **★ KEY SIMPLIFICATION — cost proofs use LENGTH-ONLY loop invariants**
+>   (`M i s := (s.get reg).length ≤ P`), NOT the behavioural `RNInv`/`COInv`/…: body
+>   cost depends only on register *lengths*, which are non-increasing through every
+>   loop here, so the invariant is preserved regardless of control-flow branch. For
+>   the *outer* cost `hM` step the existing behavioural `*_step`/`*Inner_cost`
+>   lemmas are reused verbatim (they establish the register *values* the inner cost
+>   needs); only `hC` (the uniform per-iteration body-cost bound) is new work. New
+>   reusable helpers: `readNum_stream_le` (readNum never grows its stream),
+>   `vert_getElem_le`/`edge_getElem_le` (element ≤ stream-length ceiling, proved in
+>   a *clean context* — see gotcha (b)), `encVerts_drop_length_le`/
+>   `encEdges_drop_length_le`, `readNumBody_effect`.
+> - **★ FINDING — `timeBound` bumped from quartic to QUINTIC `(n+1)^5`.** Under
+>   uniform-bound accounting the depth-4 `checkClique` nest is degree **5**, not 4:
+>   the innermost `readNum` costs `Θ(S²)` (a `tail` per drained cell) and sits under
+>   three `forBnd`s (`|l|²·|edges|·|stream|²`). The *true* TM cost is quartic
+>   (`readNum` on a block of size `v` from a stream `S` is `Θ(v·S)`, and `Σv = S`
+>   amortises one `S` away) but amortisation is invisible to `Cmd.cost_forBnd_le`.
+>   `timeBound_inOPoly`/`_monotonic`/`encodeIn_size` updated. Only `inOPoly`/
+>   `monotonic` are needed downstream, so the degree is free.
 >
-> **Recommended next: continue TOP-DOWN — prove `cost_bound` (top-down Task 1,
-> step 5; the ONLY remaining `sorry` in `cliqueRelDecidesLang`).** Closing it makes
-> `FlatClique`'s in-NP half axiom-clean. Bottom-up remains BLOCKED on the
-> encoding-design decision (unchanged — step 2).
+> **Recommended next: a session on the HARDNESS side (both in-NP verifiers are now
+> axiom-clean, so all remaining `sorryAx` on `CookLevin`/`Clique_complete` is
+> hardness-side).** Concrete top-down + bottom-up follow-ups are planned below
+> (top-down Task 1 is DONE; see "★ TOP-DOWN — next targets" and bottom-up step 2).
 >
-> ⚠ **Gotchas confirmed this session:** (a) `if (b : Bool) then 1 else 0` does NOT
-> auto-`rfl` for `b = true` — close with an explicit `rfl`. (b) `cliqueRel` is a
-> pattern-match def, so `unfold`/`simp only [cliqueRel]` is a no-op on
-> `cliqueRel (G,k) l`; use `show (fgraph_wf G ∧ isfKClique k G l) ↔ _` (defeq)
-> first. (c) `Function.Injective`'s binders are strict-implicit — `@hinj a b h`,
-> not named args. (d) an `N`-exclusion invariant frame needs exactly `N` `_`s in
-> the `fun r _ … _ => rfl` base case (off-by-one is the usual first error).
-> **`ltBit_run` (prior session) stays retired**; both EvalCnf-novelties de-risked.
+> ⚠ **Gotchas confirmed this session (cost proofs):**
+> (a) **`omega` needs GROUPED products.** `2*P*P` parses as `(2*P)*P`, a distinct
+>   atom from `P*P`; write `2*(P*P)` everywhere so omega/nlinarith can merge
+>   coefficients. Use `nlinarith [h, Nat.mul_le_mul h h]` for monotone `x² ≤ P²`
+>   steps.
+> (b) **`omega` atom-pollution under nested `set`.** In a body with `set w`/`set s1`/
+>   `set s2` over `State.set`, `omega` fragments `getElem`/length atoms and fails on
+>   goals it proves in isolation. Fix: extract the pure length/getElem fact as a
+>   standalone helper (clean context) — `vert_getElem_le`/`edge_getElem_le` — or
+>   bound via a named `have hlen : (s.get reg).length ≤ P` and feed *that* to omega,
+>   never the raw `l[i]`.
+> (c) **`show` forces full defeq → whnf timeout on deep states.** Never `show
+>   (State.get s2 …)` where `s2` is a nested `.eval`; use `Cmd.cost_op ;;
+>   simp only [Op.cost]` (rewrites only the head) instead. Same for materialising an
+>   `if State.get s1 a = State.get s1 b` — route round it with `State.get_set_ne`.
+> (d) **`rw [← hsN]` after `set sN`** often finds nothing: `set` retro-folds the
+>   `ecopy`/`he2` eval-equation, so its RHS is *already* `sN` in the goal — drop the
+>   `← hsN`. And an `N`-hyp invariant frame base needs exactly `N` `_`s in
+>   `fun r _ … _ => rfl` (CWfInv=13, NInnerInv=10, CliqueInnerInv=15, CCliqueInv=18).
 >
 > **Prior finding still open (2026-06-29, BOTTOM-UP): the unary product migration as
 > designed is SIZE-UNSOUND.** The bit-level product encoding
@@ -266,68 +286,42 @@ witnesses absorbed this — `swapCmd` bound is `12·n+22`, `mapFstCmd` is
 `7·cost_bound + 18·n + 31` (PolyTime.lean). `enc_size` is `|enc x| ≤ 2·size+1`
 (NOT `≤ size`) — budget bounds that look "off by 2×" are usually this.
 
-### ★ TOP-DOWN Task 1 — CliqueRelTM `cost_bound` (the recommended next top-down session)
-`Deciders/CliqueRelTM.lean`. **State (2026-06-30c): program + 3 structural + 4
-encoding fields, `ltBit_run` + `readNum_run` (leaves), ALL FIVE per-check
-run-lemmas (`checkLen_run`/`checkOfType_run`/`checkWf_run`/`checkNodup_run`/
-`checkClique_run`, incl. the inner-run lemmas `checkNodupInner_run`/
-`checkCliqueInner_run`), `memberEdge_run`, and the `decides` field
-(`cliqueRelCmd_decides` + bridge `cliqueRel_iff_checks`) are ALL DONE &
-axiom-clean.** The ONLY remaining `sorry` in `cliqueRelDecidesLang` (and the whole
-file) is **`cost_bound`** (`cliqueRelCmd.cost (cliqueRelEncode x) ≤ timeBound (size
-x)`, `timeBound = 200000·(n+1)^4`).
+### ★ TOP-DOWN Task 1 — CliqueRelTM (✅ DONE 2026-07-01)
+`Deciders/CliqueRelTM.lean` is **sorry-free & axiom-clean**; `FlatClique_in_NP :
+inNP FlatClique` is axiom-clean. Both in-NP verifiers (SAT `evalCnfCmd`, FlatClique
+`cliqueRelCmd`) are done. Nothing left here. The full cost-lemma stack
+(`readNum_cost` → … → `cliqueRelCmd_cost_bound`) is reusable infra — see the recent
+session block for the length-only-invariant methodology and gotchas.
 
-**`cost_bound` — concrete plan (mirror `EvalCnfCmd`'s `_cost` quartet exactly):**
-The behaviour proofs do NOT need touching — `Cmd.cost_forBnd_le` reuses the SAME
-invariant (`RNInv`/`COInv`/`CWfInv`/`MEInv`/`NInnerInv`/`CliqueInnerInv`/…) you
-already have, and additionally asks for a *uniform per-iteration body-cost bound*
-`hC : ∀ i s, i < n → M i s → body.cost (s.set cnt (replicate i 1)) ≤ B`. So add a
-separate `_cost` lemma for each gadget, bottom-up, each closed by `cost_forBnd_le`
-+ `Op.cost`/`Cmd.cost_seq`/`Cmd.cost_ifBit_*` accounting (template:
-`EvalCnfCmd.LVInv_cost` → `processOneLiteral_cost`, `CInv_cost` →
-`processOneClause` → `evalCnfCmd_cost_bound`):
-1. **`readNum_cost`** (forBnd over `stream`; body = `ifBit` of head/tail/append; per
-   iter `≤` const + the cell length, so loop `≤ 1 + iters·B + iters²`).
-2. **`ltBit_cost`** (forBnd over `A`; body = `tail`, cost 1).
-3. **`checkLen_cost`** (one `eqBit` reads two `≤`-`size` tallies + an `ifBit`).
-4. **`checkOfType_cost` / `checkWf_cost` / `memberEdge_cost`** (single `forBnd`;
-   body = `readNum`(s) + `ltBit`/`eqBit`(s) + nested `ifBit`; the readNum cost
-   dominates → quadratic per check).
-5. **`checkNodupInner_cost` / `checkCliqueInner_cost`** then the **outer**
-   `checkNodup_cost`/`checkClique_cost` (each outer `forBnd` charges
-   `iters · (uniform inner-cost bound)`; the clique inner-cost itself contains
-   `memberEdge_cost` → the depth-4 nest dominates, degree 4).
-6. **`cliqueRelCmd_cost_bound`** — sum the six check costs (`Cmd.cost_seq` is
-   additive) + the `appendOne`; bound by `200000·(n+1)^4` with
-   `n = encodable.size x` (use `encVerts_length`/`encEdges_length_le`/
-   `length_le_encsize` to turn register lengths into `≤ size`-facts; the existing
-   `cliqueRelEncode_size_bound` is the model). Bump the `200000` constant freely —
-   downstream needs only `inOPoly`/`monotonic`, both already proven for `timeBound`.
+### ★ TOP-DOWN — next targets (pick one; all are hardness-side now)
+The whole in-NP side of Cook–Levin is done. **Every remaining `sorryAx` on
+`CookLevin` and `Clique_complete` is on the HARDNESS / reduction side.** Ordered by
+tractability:
 
-⚠ **Cost-accounting gotchas** (from `EvalCnfCmd`): the `cost_forBnd_le` `B` is over
-the loop-*entry* register lengths (what the invariant hands you), and the inner
-loops re-bound per outer iteration — keep a single uniform `B` (worst-case over all
-iterations), not a per-`i` bound. Use `Cmd.cost_ifBit_true/false` to bound BOTH
-branches by the same constant (the reject/skip branches cost `≤ 4`/`3`).
+1. **Framework `inNP`/`inTimePoly` layer-native migration (structural; the S3
+   linchpin).** `NP.lean` `red_inNP` (~L268) and `PolyTime.lean`'s reduction-side
+   `c_noConsLen`/`c_allOpsSupported` sorries (L767/780/1282/1598/1994/2003) exist
+   because the framework `inNP` exposes an *opaque* `FlatTM` with no recoverable
+   `Cmd`. Now that TWO concrete layer-native deciders exist (`evalCnfDecidesLang`,
+   `cliqueRelDecidesLang`), make `inNP`/`inTimePoly` carry a `DecidesLang` directly
+   so `red_inNP` collapses to the proven `red_inNP_of_lang`. This retires S3's
+   output-size-only `⪯p` in favour of `polyTimeComputable'`. Design with ROADMAP
+   step 2; medium structural risk, high leverage (unblocks the sound-tail reductions
+   carrying real programs).
+2. **The sound-tail reductions as `Cmd`s (gated on #1).** `flatTCC_to_flatCC`
+   (cheap) → `FlatCC_to_BinaryCC` (medium) → `BinaryCC_to_FSAT` (Tseytin, the
+   expensive ~1K-LOC item). Each is a `PolyTimeComputableLang'` witness; `map`-over-
+   lists (`parked/MapNatList_WIP.lean`) gates the whole chain. At this point S1/S2
+   *stop typechecking* until honest.
+3. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K LOC) —
+   the deepest unsoundness, the real front reduction. Largest item; do after #1/#2.
 
-Closing `cost_bound` makes `cliqueRelDecidesLang` sorry-free → `FlatClique`'s in-NP
-half axiom-clean (the trio-free `allOpsSupported`-wall win, for free) → gates
-`FlatClique_in_NP → Clique_complete`. **Reusable infra already in place** (do not
-re-derive): all the `*_run`/`*Inner_run` lemmas + their invariants, the Bool
-helpers `allLt`/`edgesWf`/`memB`/`innerAll`/`nodupB`/`cliqueInnerAll`/`cliqueB` +
-`_eq_true_iff` bridges, the frames `ifReject_frame`/`ifReject2_frame`/`ifFound_frame`/
-`ifNodup_frame`, `cReject_eval`/`cSkip_eval` (+ `_cost`!), `eqBit_replicate`,
-`encVerts_cons`/`encEdges_cons`, `replicate_one_eq_iff`/`replicate_one_snoc`.
-⚠ **Methodology reminders:** (a) re-derive gadget semantics from
-`Cmd.eval_ifBit_*` (`ifBit t` fires iff `s.get t = [1]` EXACTLY — single-bit regs
-only). (b) `if (b:Bool) then 1 else 0` needs an explicit `rfl` to reduce at `b =
-true`. (c) `cliqueRel` is a pattern-match def — `show (fgraph_wf G ∧ isfKClique k G
-l) ↔ _` before unfolding. (d) frame-lambda arity = invariant exclusion count.
-- **Framework `red_inNP`** (`NP.lean:291`) / **S3 migration**: blocked by design —
-  `inNP` exposes an opaque `FlatTM`, no `Cmd` recoverable. Fix = make framework
-  `inNP`/`inTimePoly` layer-native (carry a `DecidesLang`), then it collapses to
-  `red_inNP_of_lang`. Deep S3-migration item; design with ROADMAP step 2. Higher
-  structural risk; do CliqueRelTM first.
+⚠ **Reusable infra for a NEW concrete layer decider** (should one be needed): the
+CliqueRelTM cost-lemma stack is the template — length-only loop invariants for
+`hC`, reuse the behavioural `*_step` for `hM`, `cost_forBnd_le` per loop, sum with
+`Cmd.cost_seq`, and the arithmetic pattern (grouped products → `^`-powers via
+`Nat.pow_le_pow_left`/`_right` → bump the `timeBound` constant). Watch the four
+cost-proof gotchas in the recent-session block.
 
 ---
 
@@ -399,12 +393,16 @@ The op builds below are templates; the helper stacks are axiom-clean.
   invariant→`cost_forBnd_le`; structural fields via full `simp` over the op leaves —
   NB: full `simp` with the register `def`s, not `simp only … decide`; `decide` fails
   `Decidable`-synthesis on the larger checks' conjunctions).
-- **CliqueRel verifier (TOP-DOWN) — `decides` DONE; only `cost_bound` left**
-  (`Deciders/CliqueRelTM.lean`, 2026-06-30c). `cliqueRelCmd` + the 5 check `def`s +
-  helpers are concrete & trio-free; `cliqueRelCmd_usesBelow`/`_noConsLen`/
-  `_allOpsSupported` + the 4 encoding fields + **the `decides` field** all PROVEN &
-  axiom-clean. **Proven & axiom-clean correctness layer (`[propext,
-  Classical.choice, Quot.sound]`), reuse directly:**
+- **CliqueRel verifier (TOP-DOWN) — ✅ COMPLETE & AXIOM-CLEAN** (`FlatClique_in_NP`
+  is `[propext, Classical.choice, Quot.sound]`, 2026-07-01). `Deciders/CliqueRelTM.lean`
+  is sorry-free: program, 4 encoding fields, 3 structural fields, `decides`, AND
+  `cost_bound` all proven. The full cost stack (`readNum_cost`/`readNumBody_effect`/
+  `readNum_stream_le`/`ltBit_cost`/`checkLen_cost`/`checkOfType_cost`/`checkWf_cost`/
+  `memberEdge_cost`/`checkNodup{Inner}_cost`/`checkClique{Inner}_cost`/
+  `cliqueRelCmd_cost_bound` + helpers `vert_getElem_le`/`edge_getElem_le`/
+  `encVerts_drop_length_le`/`encEdges_drop_length_le`) is the reusable template for
+  any future concrete layer decider (see recent-session block). **Correctness layer
+  (reuse directly):**
   - **`ltBit_run`** / **`readNum_run`** — the leaves (`ltBit` writes `[a<b]`;
     `readNum` reads one terminated unary block, advances `stream`, frame; 12
     caller-`decide`d distinctness hyps).
@@ -425,8 +423,8 @@ The op builds below are templates; the helper stacks are axiom-clean.
     `ifFound_frame`/`ifNodup_frame`, `cReject_eval`/`cSkip_eval`/`setFound_eval`,
     `replicate_one_eq_iff`/`replicate_one_snoc`,
     `tail_replicate_one`/`isEmpty_replicate_one`.
-  Probes: `CliqueRelProbe`, `CliqueLtProbe`. **Only `cost_bound` remains** (top-down
-  Task 1, step 5 — the precise plan is in that section above).
+  Probes: `CliqueRelProbe`, `CliqueLtProbe`. **All fields proven** (top-down Task 1
+  DONE).
 - **Threading toolkit:** `Cmd.eval_preserves_BitState`, `Op.inBounds_of_UsesBelow`,
   `Cmd.eval_length_ge/_le`, `Cmd.size_eval_le`, `State.set_set`/`set_length_ge`,
   `BitState_set_pad`, `consumeStep_frame`/`_clear_restore`, `State.ext_of_get`.
