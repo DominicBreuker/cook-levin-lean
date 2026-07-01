@@ -36,24 +36,33 @@ open Complexity.Lang
 charges a *uniform* worst-case per-iteration bound, so the clique verifier's
 nested loops (outer scan over `l`, inner scan over `l`, innermost membership
 scan over the edge stream — `|l|²·|edges|·numV`) compound to degree ≥ 4.
-Downstream only needs `inOPoly`/`monotonic`, so the degree is free. The `200000`
-constant is a generous placeholder; tighten/justify it when `cost_bound` is
-proven (it must dominate `cliqueRelCmd.cost (cliqueRelEncode x)`). -/
-def timeBound (n : Nat) : Nat := 200000 * (n + 1) ^ 4
+Downstream only needs `inOPoly`/`monotonic`, so the degree is free.
+
+**⚠ 2026-07-01 (top-down): bumped to QUINTIC `(n+1)^5`.** Proving `cost_bound`
+surfaced that the depth-4 `checkClique` nest is degree **5** under uniform-bound
+accounting, NOT 4: the innermost `readNum` costs `Θ(S²)` (a `tail` per drained
+cell), and it sits under three `forBnd`s (outer `l` × inner `l` × `memberEdge`'s
+edge scan), giving `|l|²·|edges|·|stream|² ~ n^5`. The true TM cost is quartic
+(`readNum` on a block of size `v` out of a stream of length `S` costs `Θ(v·S)`,
+and `Σ v = S` amortises one factor away), but amortisation is invisible to
+`Cmd.cost_forBnd_le`'s uniform worst-case bound and building an amortised
+`cost_forBnd` is unjustified when only `inOPoly` is needed. The `200000` constant
+is generous. -/
+def timeBound (n : Nat) : Nat := 200000 * (n + 1) ^ 5
 
 theorem timeBound_inOPoly : inOPoly timeBound := by
-  refine ⟨4, ⟨3200000, 1, ?_⟩⟩
+  refine ⟨5, ⟨6400000, 1, ?_⟩⟩
   intro n hn
   have hle : n + 1 ≤ n + n := Nat.add_le_add_left hn n
-  show 200000 * (n + 1) ^ 4 ≤ 3200000 * n ^ 4
-  calc 200000 * (n + 1) ^ 4
-      ≤ 200000 * (n + n) ^ 4 :=
-        Nat.mul_le_mul_left 200000 (Nat.pow_le_pow_left hle 4)
-    _ = 3200000 * n ^ 4 := by ring
+  show 200000 * (n + 1) ^ 5 ≤ 6400000 * n ^ 5
+  calc 200000 * (n + 1) ^ 5
+      ≤ 200000 * (n + n) ^ 5 :=
+        Nat.mul_le_mul_left 200000 (Nat.pow_le_pow_left hle 5)
+    _ = 6400000 * n ^ 5 := by ring
 
 theorem timeBound_monotonic : monotonic timeBound :=
   fun _ _ h =>
-    Nat.mul_le_mul_left 200000 (Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 4)
+    Nat.mul_le_mul_left 200000 (Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 5)
 
 /-! ## Input encoding (bit-level, unary, self-delimiting)
 
@@ -3466,6 +3475,127 @@ private theorem checkNodup_cost (st : State) (l : List fvertex) (b : Bool) (P : 
       = 2 * (P * P * P * P) + 14 * (P * P * P) + 25 * (P * P) + 11 * P := by ring
   omega
 
+/-- Uniform per-iteration body-cost bound for the `checkClique` INNER loop
+(contains `memberEdge`, hence cubic in `P`). -/
+private theorem checkCliqueInner_body_cost (edges : List fedge) (l : List fvertex)
+    (va : Nat) (b' : Bool) (P : Nat) (st : State)
+    (hVALA : st.get VALA = List.replicate va 1)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hvaP : va ≤ P) (hVP : (encVerts l).length ≤ P) (hmP : l.length ≤ P)
+    (hEP : (encEdges edges).length ≤ P) (hmEP : edges.length ≤ P)
+    (j : Nat) (s : State) (hj : j < l.length) (h : CliqueInnerInv edges l va b' st j s) :
+    (readNum VALB VSCAN2 IDX3 ;;
+      Cmd.op (.eqBit RES1 VALA VALB) ;;
+      Cmd.ifBit RES1 cSkip
+        (memberEdge ;; Cmd.ifBit FOUND cSkip cReject)).cost
+        (s.set IDX2 (List.replicate j 1))
+      ≤ 4 * (P * P * P) + 22 * (P * P) + 39 * P + 28 := by
+  obtain ⟨hVSCAN2, _, hframe⟩ := h
+  set w := s.set IDX2 (List.replicate j 1) with hw
+  have hVSlen : (State.get w VSCAN2).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN2 : Var) ≠ IDX2), hVSCAN2]
+    exact (encVerts_drop_length_le l j).trans hVP
+  have hlj : l[j]'hj ≤ P := vert_getElem_le l j hj P ((encVerts_drop_length_le l j).trans hVP)
+  have hVS_in : State.get w VSCAN2
+      = List.replicate (l[j]'hj) 1 ++ 0 :: encVerts (l.drop (j + 1)) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN2 : Var) ≠ IDX2), hVSCAN2,
+      List.drop_eq_getElem_cons hj, encVerts_cons]
+  obtain ⟨hVALB1, hVSCAN2', hRNframe⟩ := readNum_run w (l[j]'hj)
+    (encVerts (l.drop (j + 1))) VALB VSCAN2 IDX3 hVS_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALB VSCAN2 IDX3).eval w with hs1
+  have hVALA1 : s1.get VALA = List.replicate va 1 := by
+    rw [hRNframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw, State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ IDX2),
+      hframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide), hVALA]
+  have hES1 : s1.get EDGE_STREAM = encEdges edges := by
+    rw [hRNframe EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ IDX2),
+      hframe EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide), hES]
+  have hET1 : s1.get EDGE_TALLY = List.replicate edges.length 1 := by
+    rw [hRNframe EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ IDX2),
+      hframe EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide), hET]
+  -- eqBit RES1 VALA VALB (materialised over Nats — safe, no nested-state `if`)
+  have e2 : (Cmd.op (.eqBit RES1 VALA VALB)).eval s1
+      = s1.set RES1 [if va = l[j]'hj then 1 else 0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVALA1, hVALB1, eqBit_replicate]
+  set s2 := s1.set RES1 [if va = l[j]'hj then 1 else 0] with hs2
+  have hVALA2 : s2.get VALA = List.replicate va 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ RES1), hVALA1]
+  have hVALB2 : s2.get VALB = List.replicate (l[j]'hj) 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ RES1), hVALB1]
+  have hES2 : s2.get EDGE_STREAM = encEdges edges := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ RES1), hES1]
+  have hET2 : s2.get EDGE_TALLY = List.replicate edges.length 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ RES1), hET1]
+  -- cost pieces
+  have b1 : (readNum VALB VSCAN2 IDX3).cost w ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost w VALB VSCAN2 IDX3 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hVSlen, Nat.mul_le_mul hVSlen hVSlen]
+  have b2 : (Cmd.op (.eqBit RES1 VALA VALB)).cost s1 ≤ 2 * P + 1 := by
+    have hva : (State.get s1 VALA).length ≤ P := by rw [hVALA1, List.length_replicate]; exact hvaP
+    have hvb : (State.get s1 VALB).length ≤ P := by rw [hVALB1, List.length_replicate]; exact hlj
+    rw [Cmd.cost_op]; simp only [Op.cost]; omega
+  have b3 : (Cmd.ifBit RES1 cSkip (memberEdge ;; Cmd.ifBit FOUND cSkip cReject)).cost s2
+      ≤ 4 * (P * P * P) + 20 * (P * P) + 30 * P + 18 := by
+    by_cases h1 : State.get s2 RES1 = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ h1, cSkip_cost]; omega
+    · rw [Cmd.cost_ifBit_false _ _ _ _ h1, Cmd.cost_seq]
+      have hmem := memberEdge_cost s2 va (l[j]'hj) edges P hVALA2 hVALB2 hES2 hET2
+        hEP hmEP hvaP hlj
+      have hif2 : (Cmd.ifBit FOUND cSkip cReject).cost (memberEdge.eval s2) ≤ 4 := by
+        by_cases h2 : State.get (memberEdge.eval s2) FOUND = [1]
+        · rw [Cmd.cost_ifBit_true _ _ _ _ h2, cSkip_cost]
+        · rw [Cmd.cost_ifBit_false _ _ _ _ h2, cReject_cost]
+      omega
+  rw [Cmd.cost_seq, Cmd.cost_seq, ← hs1, e2]
+  omega
+
+/-- **`checkClique` inner-loop cost bound** (quartic — `memberEdge` × the inner
+scan over `l`). -/
+private theorem checkCliqueInner_cost (edges : List fedge) (l : List fvertex)
+    (va : Nat) (b' : Bool) (P : Nat) (st : State)
+    (hVALA : st.get VALA = List.replicate va 1)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hvaP : va ≤ P) (hVP : (encVerts l).length ≤ P) (hmP : l.length ≤ P)
+    (hEP : (encEdges edges).length ≤ P) (hmEP : edges.length ≤ P)
+    (hVSCAN2 : st.get VSCAN2 = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hO : st.get OUTPUT = [if b' then 1 else 0]) :
+    (Cmd.forBnd IDX2 VERT_TALLY
+        (readNum VALB VSCAN2 IDX3 ;;
+         Cmd.op (.eqBit RES1 VALA VALB) ;;
+         Cmd.ifBit RES1 cSkip
+           (memberEdge ;; Cmd.ifBit FOUND cSkip cReject))).cost st
+      ≤ 1 + l.length * (4 * (P * P * P) + 22 * (P * P) + 39 * P + 28)
+          + l.length * l.length := by
+  have hblen : (st.get VERT_TALLY).length = l.length := by
+    rw [hVT, List.length_replicate]
+  have hbase : CliqueInnerInv edges l va b' st 0 st := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hVSCAN2, List.drop_zero]
+    · rw [hO]; simp [cliqueInnerAll]
+  have h := Cmd.cost_forBnd_le IDX2 VERT_TALLY
+    (readNum VALB VSCAN2 IDX3 ;; Cmd.op (.eqBit RES1 VALA VALB) ;;
+     Cmd.ifBit RES1 cSkip (memberEdge ;; Cmd.ifBit FOUND cSkip cReject)) st
+    (4 * (P * P * P) + 22 * (P * P) + 39 * P + 28) (CliqueInnerInv edges l va b' st) hbase
+    (fun j s hj h => checkCliqueInner_step edges l va b' st hVALA hES hET j s
+      (by rwa [hblen] at hj) h)
+    (fun j s hj h => checkCliqueInner_body_cost edges l va b' P st hVALA hES hET
+      hvaP hVP hmP hEP hmEP j s (by rwa [hblen] at hj) h)
+  rw [hblen] at h; exact h
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
@@ -3483,8 +3613,8 @@ noncomputable def cliqueRelDecidesLang :
     intro x
     have h1 := cliqueRelEncode_size_bound x
     have h2 : 3 * encodable.size x ≤ timeBound (encodable.size x) := by
-      show 3 * encodable.size x ≤ 200000 * (encodable.size x + 1) ^ 4
-      have hself : encodable.size x + 1 ≤ (encodable.size x + 1) ^ 4 :=
+      show 3 * encodable.size x ≤ 200000 * (encodable.size x + 1) ^ 5
+      have hself : encodable.size x + 1 ≤ (encodable.size x + 1) ^ 5 :=
         Nat.le_self_pow (by norm_num) _
       omega
     exact h1.trans h2
