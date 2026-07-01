@@ -3202,6 +3202,118 @@ private theorem memberEdge_cost (st : State) (va vb : Nat) (edges : List fedge) 
   have h4 : P * (4 * (P * P) + 18 * P + 26) = 4 * (P * P * P) + 18 * (P * P) + 26 * P := by ring
   omega
 
+/-- Uniform per-iteration body-cost bound for the `checkNodup` INNER loop. -/
+private theorem checkNodupInner_body_cost (l : List fvertex) (i va : Nat) (b' : Bool)
+    (P : Nat) (st : State) (hIDX1P : (st.get IDX1).length ≤ P)
+    (hVALAP : (st.get VALA).length ≤ P) (hVP : (encVerts l).length ≤ P) (hmP : l.length ≤ P)
+    (j : Nat) (s : State) (hj : j < l.length) (h : NInnerInv l i va b' st j s) :
+    (readNum VALB VSCAN2 IDX3 ;; Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+      Cmd.ifBit RES1 cSkip
+        (Cmd.op (.eqBit RES2 VALA VALB) ;; Cmd.ifBit RES2 cReject cSkip)).cost
+        (s.set IDX2 (List.replicate j 1))
+      ≤ 2 * (P * P) + 11 * P + 17 := by
+  obtain ⟨hVSCAN2, _, hframe⟩ := h
+  set w := s.set IDX2 (List.replicate j 1) with hw
+  have hVSlen : (State.get w VSCAN2).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN2 : Var) ≠ IDX2), hVSCAN2]
+    exact (encVerts_drop_length_le l j).trans hVP
+  have hlj : l[j]'hj ≤ P := vert_getElem_le l j hj P ((encVerts_drop_length_le l j).trans hVP)
+  have hVS_in : State.get w VSCAN2
+      = List.replicate (l[j]'hj) 1 ++ 0 :: encVerts (l.drop (j + 1)) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN2 : Var) ≠ IDX2), hVSCAN2,
+      List.drop_eq_getElem_cons hj, encVerts_cons]
+  have hIDX1w : (State.get w IDX1).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (IDX1 : Var) ≠ IDX2),
+      hframe IDX1 (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hIDX1P
+  have hVALAw : (State.get w VALA).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ IDX2),
+      hframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hVALAP
+  have hIDX2w : (State.get w IDX2).length = j := by
+    rw [hw, State.get_set_eq, List.length_replicate]
+  -- run readNum VALB
+  obtain ⟨hVALB1, hVSCAN2', hRNframe⟩ := readNum_run w (l[j]'hj)
+    (encVerts (l.drop (j + 1))) VALB VSCAN2 IDX3 hVS_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALB VSCAN2 IDX3).eval w with hs1
+  have hIDX1s1 : (State.get s1 IDX1).length ≤ P := by
+    rw [hRNframe IDX1 (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)]; exact hIDX1w
+  have hIDX2s1 : (State.get s1 IDX2).length ≤ P := by
+    rw [hRNframe IDX2 (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hIDX2w]; omega
+  have hVALAs1 : (State.get s1 VALA).length ≤ P := by
+    rw [hRNframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)]; exact hVALAw
+  have hVALBs1 : (State.get s1 VALB).length ≤ P := by
+    rw [hVALB1, List.length_replicate]; exact hlj
+  -- VALA, VALB after eqBit1 (preserved, no `if`-materialization)
+  have hVALAs2 : (State.get ((Cmd.op (.eqBit RES1 IDX1 IDX2)).eval s1) VALA).length ≤ P := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ RES1)]; exact hVALAs1
+  have hVALBs2 : (State.get ((Cmd.op (.eqBit RES1 IDX1 IDX2)).eval s1) VALB).length ≤ P := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ RES1)]; exact hVALBs1
+  have b1 : (readNum VALB VSCAN2 IDX3).cost w ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost w VALB VSCAN2 IDX3 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hVSlen, Nat.mul_le_mul hVSlen hVSlen]
+  have b2 : (Cmd.op (.eqBit RES1 IDX1 IDX2)).cost s1 ≤ 2 * P + 1 := by
+    rw [Cmd.cost_op]; simp only [Op.cost]; omega
+  have b3 : (Cmd.ifBit RES1 cSkip
+      (Cmd.op (.eqBit RES2 VALA VALB) ;; Cmd.ifBit RES2 cReject cSkip)).cost
+      ((Cmd.op (.eqBit RES1 IDX1 IDX2)).eval s1) ≤ 2 * P + 7 := by
+    set s2 := (Cmd.op (.eqBit RES1 IDX1 IDX2)).eval s1 with hs2
+    by_cases h1 : State.get s2 RES1 = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ h1, cSkip_cost]; omega
+    · rw [Cmd.cost_ifBit_false _ _ _ _ h1, Cmd.cost_seq, Cmd.cost_op]
+      have hif2 : (Cmd.ifBit RES2 cReject cSkip).cost
+          ((Cmd.op (.eqBit RES2 VALA VALB)).eval s2) ≤ 4 := by
+        by_cases h2 : State.get ((Cmd.op (.eqBit RES2 VALA VALB)).eval s2) RES2 = [1]
+        · rw [Cmd.cost_ifBit_true _ _ _ _ h2, cReject_cost]
+        · rw [Cmd.cost_ifBit_false _ _ _ _ h2, cSkip_cost]
+      simp only [Op.cost]; omega
+  rw [Cmd.cost_seq, Cmd.cost_seq, ← hs1]
+  omega
+
+/-- **`checkNodup` inner-loop cost bound.** -/
+private theorem checkNodupInner_cost (l : List fvertex) (i va : Nat) (b' : Bool)
+    (P : Nat) (st : State) (hIDX1P : (st.get IDX1).length ≤ P)
+    (hVALAP : (st.get VALA).length ≤ P) (hVP : (encVerts l).length ≤ P)
+    (hmP : l.length ≤ P)
+    (hVSCAN2 : st.get VSCAN2 = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hIDX1 : st.get IDX1 = List.replicate i 1)
+    (hVALA : st.get VALA = List.replicate va 1)
+    (hO : st.get OUTPUT = [if b' then 1 else 0]) :
+    (Cmd.forBnd IDX2 VERT_TALLY
+        (readNum VALB VSCAN2 IDX3 ;;
+         Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+         Cmd.ifBit RES1 cSkip
+           (Cmd.op (.eqBit RES2 VALA VALB) ;;
+            Cmd.ifBit RES2 cReject cSkip))).cost st
+      ≤ 1 + l.length * (2 * (P * P) + 11 * P + 17) + l.length * l.length := by
+  have hblen : (st.get VERT_TALLY).length = l.length := by
+    rw [hVT, List.length_replicate]
+  have hbase : NInnerInv l i va b' st 0 st := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hVSCAN2, List.drop_zero]
+    · rw [hO]; simp [innerAll]
+  have h := Cmd.cost_forBnd_le IDX2 VERT_TALLY
+    (readNum VALB VSCAN2 IDX3 ;; Cmd.op (.eqBit RES1 IDX1 IDX2) ;;
+     Cmd.ifBit RES1 cSkip
+       (Cmd.op (.eqBit RES2 VALA VALB) ;; Cmd.ifBit RES2 cReject cSkip)) st
+    (2 * (P * P) + 11 * P + 17) (NInnerInv l i va b' st) hbase
+    (fun j s hj h => checkNodupInner_step l i va b' st hIDX1 hVALA j s
+      (by rwa [hblen] at hj) h)
+    (fun j s hj h => checkNodupInner_body_cost l i va b' P st hIDX1P hVALAP hVP hmP j s
+      (by rwa [hblen] at hj) h)
+  rw [hblen] at h; exact h
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
