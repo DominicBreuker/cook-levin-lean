@@ -3596,6 +3596,185 @@ private theorem checkCliqueInner_cost (edges : List fedge) (l : List fvertex)
       hvaP hVP hmP hEP hmEP j s (by rwa [hblen] at hj) h)
   rw [hblen] at h; exact h
 
+/-- Uniform per-iteration body-cost bound for the `checkClique` OUTER loop. -/
+private theorem checkClique_body_cost (edges : List fedge) (l : List fvertex) (b : Bool)
+    (P : Nat) (st : State)
+    (hVERT : st.get VERT_STREAM = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hVP : (encVerts l).length ≤ P) (hmP : l.length ≤ P)
+    (hEP : (encEdges edges).length ≤ P) (hmEP : edges.length ≤ P)
+    (i : Nat) (s : State) (hi : i < l.length) (h : CCliqueInv edges l b st i s) :
+    (readNum VALA VSCAN IDX2 ;;
+      Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+      Cmd.forBnd IDX2 VERT_TALLY
+        (readNum VALB VSCAN2 IDX3 ;;
+         Cmd.op (.eqBit RES1 VALA VALB) ;;
+         Cmd.ifBit RES1 cSkip
+           (memberEdge ;; Cmd.ifBit FOUND cSkip cReject))).cost (s.set IDX1 (List.replicate i 1))
+      ≤ 4 * (P * P * P * P) + 22 * (P * P * P) + 42 * (P * P) + 36 * P + 11 := by
+  obtain ⟨hVSCAN, hOUT, hframe⟩ := h
+  set w := s.set IDX1 (List.replicate i 1) with hw
+  have hVS_in : State.get w VSCAN
+      = List.replicate (l[i]'hi) 1 ++ 0 :: encVerts (l.drop (i + 1)) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ IDX1), hVSCAN,
+      List.drop_eq_getElem_cons hi, encVerts_cons]
+  have hVSlen : (State.get w VSCAN).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ IDX1), hVSCAN]
+    exact (encVerts_drop_length_le l i).trans hVP
+  have hli : l[i]'hi ≤ P := vert_getElem_le l i hi P ((encVerts_drop_length_le l i).trans hVP)
+  obtain ⟨hVALA, hVSCAN', hRNframe⟩ := readNum_run w (l[i]'hi)
+    (encVerts (l.drop (i + 1))) VALA VSCAN IDX2 hVS_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALA VSCAN IDX2).eval w with hs1
+  have hVERT1 : s1.get VERT_STREAM = encVerts l := by
+    rw [hRNframe VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ IDX1),
+      hframe VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hVERT]
+  have ecopy : (Cmd.op (.copy VSCAN2 VERT_STREAM)).eval s1 = s1.set VSCAN2 (encVerts l) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVERT1]
+  set s2 := s1.set VSCAN2 (encVerts l) with hs2
+  have hVSCAN2_2 : s2.get VSCAN2 = encVerts l := State.get_set_eq _ _ _
+  have hVT2 : s2.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN2),
+      hRNframe VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ IDX1),
+      hframe VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hVT]
+  have hVALA2 : s2.get VALA = List.replicate (l[i]'hi) 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ VSCAN2), hVALA]
+  have hES2 : s2.get EDGE_STREAM = encEdges edges := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ VSCAN2),
+      hRNframe EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ IDX1),
+      hframe EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hES]
+  have hET2 : s2.get EDGE_TALLY = List.replicate edges.length 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ VSCAN2),
+      hRNframe EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ IDX1),
+      hframe EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hET]
+  have hOUT2 : s2.get OUTPUT
+      = [if b && (List.range i).all (fun i' => cliqueInnerAll (l.getD i' 0) edges l l.length)
+          then 1 else 0] := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ VSCAN2),
+      hRNframe OUTPUT (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw, State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ IDX1),
+      hOUT]
+  have hVERT1len : (State.get s1 VERT_STREAM).length ≤ P := by rw [hVERT1]; exact hVP
+  have b1 : (readNum VALA VSCAN IDX2).cost w ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost w VALA VSCAN IDX2 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hVSlen, Nat.mul_le_mul hVSlen hVSlen]
+  have b2 : (Cmd.op (.copy VSCAN2 VERT_STREAM)).cost s1 ≤ P + 1 := by
+    rw [Cmd.cost_op]; simp only [Op.cost]; omega
+  have b3 := checkCliqueInner_cost edges l (l[i]'hi)
+    (b && (List.range i).all (fun i' => cliqueInnerAll (l.getD i' 0) edges l l.length)) P s2
+    hVALA2 hES2 hET2 hli hVP hmP hEP hmEP hVSCAN2_2 hVT2 hOUT2
+  rw [Cmd.cost_seq, Cmd.cost_seq, ← hs1, ecopy]
+  have hmul : l.length * (4 * (P * P * P) + 22 * (P * P) + 39 * P + 28)
+      ≤ P * (4 * (P * P * P) + 22 * (P * P) + 39 * P + 28) := Nat.mul_le_mul_right _ hmP
+  have hmul2 : l.length * l.length ≤ P * P := Nat.mul_le_mul hmP hmP
+  have hexp : P * (4 * (P * P * P) + 22 * (P * P) + 39 * P + 28)
+      = 4 * (P * P * P * P) + 22 * (P * P * P) + 39 * (P * P) + 28 * P := by ring
+  omega
+
+/-- **`checkClique` cost bound** (depth-4 nest, quintic in the length ceiling `P`). -/
+private theorem checkClique_cost (st : State) (edges : List fedge) (l : List fvertex)
+    (b : Bool) (P : Nat)
+    (hVS : st.get VERT_STREAM = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0])
+    (hVP : (encVerts l).length ≤ P) (hmP : l.length ≤ P)
+    (hEP : (encEdges edges).length ≤ P) (hmEP : edges.length ≤ P) :
+    checkClique.cost st
+      ≤ 4 * (P * P * P * P * P) + 22 * (P * P * P * P) + 42 * (P * P * P)
+          + 38 * (P * P) + 13 * P + 3 := by
+  have eInit : (Cmd.op (.copy VSCAN VERT_STREAM)).eval st = st.set VSCAN (encVerts l) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVS]
+  have hcost_eq : checkClique.cost st
+      = (encVerts l).length + 2
+          + (Cmd.forBnd IDX1 VERT_TALLY
+              (readNum VALA VSCAN IDX2 ;;
+               Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+               Cmd.forBnd IDX2 VERT_TALLY
+                 (readNum VALB VSCAN2 IDX3 ;;
+                  Cmd.op (.eqBit RES1 VALA VALB) ;;
+                  Cmd.ifBit RES1 cSkip
+                    (memberEdge ;; Cmd.ifBit FOUND cSkip cReject)))).cost
+              (st.set VSCAN (encVerts l)) := by
+    show (Cmd.cost (Cmd.op (.copy VSCAN VERT_STREAM) ;; _) st) = _
+    rw [Cmd.cost_seq, Cmd.cost_op, eInit]; simp only [Op.cost]; rw [hVS]; omega
+  set s0 := st.set VSCAN (encVerts l) with hs0
+  have hVERT0 : s0.get VERT_STREAM = encVerts l := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ VSCAN), hVS]
+  have hVT0 : s0.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN), hVT]
+  have hES0 : s0.get EDGE_STREAM = encEdges edges := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ VSCAN), hES]
+  have hET0 : s0.get EDGE_TALLY = List.replicate edges.length 1 := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ VSCAN), hET]
+  have hO0 : s0.get OUTPUT = [if b then 1 else 0] := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ VSCAN), hO]
+  have hbase : CCliqueInv edges l b s0 0 s0 := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hs0, State.get_set_eq, List.drop_zero]
+    · rw [hO0]; simp
+  have hblen : (s0.get VERT_TALLY).length = l.length := by
+    rw [hVT0, List.length_replicate]
+  have hloop : (Cmd.forBnd IDX1 VERT_TALLY
+      (readNum VALA VSCAN IDX2 ;;
+       Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+       Cmd.forBnd IDX2 VERT_TALLY
+         (readNum VALB VSCAN2 IDX3 ;;
+          Cmd.op (.eqBit RES1 VALA VALB) ;;
+          Cmd.ifBit RES1 cSkip
+            (memberEdge ;; Cmd.ifBit FOUND cSkip cReject)))).cost s0
+      ≤ 1 + l.length * (4 * (P * P * P * P) + 22 * (P * P * P) + 42 * (P * P) + 36 * P + 11)
+          + l.length * l.length := by
+    have h := Cmd.cost_forBnd_le IDX1 VERT_TALLY
+      (readNum VALA VSCAN IDX2 ;;
+       Cmd.op (.copy VSCAN2 VERT_STREAM) ;;
+       Cmd.forBnd IDX2 VERT_TALLY
+         (readNum VALB VSCAN2 IDX3 ;;
+          Cmd.op (.eqBit RES1 VALA VALB) ;;
+          Cmd.ifBit RES1 cSkip
+            (memberEdge ;; Cmd.ifBit FOUND cSkip cReject))) s0
+      (4 * (P * P * P * P) + 22 * (P * P * P) + 42 * (P * P) + 36 * P + 11)
+      (CCliqueInv edges l b s0) hbase
+      (fun i s hi h => checkClique_step edges l b s0 hVERT0 hVT0 hES0 hET0 i s
+        (by rwa [hblen] at hi) h)
+      (fun i s hi h => checkClique_body_cost edges l b P s0 hVERT0 hVT0 hES0 hET0
+        hVP hmP hEP hmEP i s (by rwa [hblen] at hi) h)
+    rw [hblen] at h; exact h
+  rw [hcost_eq]
+  have h1 : l.length * (4 * (P * P * P * P) + 22 * (P * P * P) + 42 * (P * P) + 36 * P + 11)
+      ≤ P * (4 * (P * P * P * P) + 22 * (P * P * P) + 42 * (P * P) + 36 * P + 11) :=
+    Nat.mul_le_mul_right _ hmP
+  have h2 : l.length * l.length ≤ P * P := Nat.mul_le_mul hmP hmP
+  have h4 : P * (4 * (P * P * P * P) + 22 * (P * P * P) + 42 * (P * P) + 36 * P + 11)
+      = 4 * (P * P * P * P * P) + 22 * (P * P * P * P) + 42 * (P * P * P) + 36 * (P * P)
+          + 11 * P := by ring
+  omega
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
