@@ -123,6 +123,28 @@ theorem inTimePolyTM_evalCnf :
     inTimePolyTM (fun Na : cnf × assgn => satisfiesCnf Na.2 Na.1) :=
   inTimePolyLang_to_inTimePoly inTimePolyLang_evalCnf
 
+/-- **Free-encoding layer-native NP witness for SAT** (S3-linchpin foundation).
+Bundles the live free-encoding `evalCnf` verifier (`evalCnfDecidesLang`, a
+`DecidesLang`) with the certificate relation (a satisfying assignment). Unlike the
+opaque framework `inNP SAT`, this keeps the verifier program a recoverable `Cmd`,
+which is what a future layer-routed `red_inNP` needs to precompose. `sat_NP` is now
+re-derived from this via `inNPLangFree_to_inNP` (identical decider path — stays
+axiom-clean). -/
+theorem SAT_inNPLangFree : inNPLangFree SAT :=
+  ⟨assgn, inferInstance, ⟨{
+    rel := fun N a => satisfiesCnf a N
+    dBound := timeBound
+    dBound_poly := timeBound_inOPoly
+    dBound_mono := timeBound_monotonic
+    verifier := evalCnfDecidesLang
+    rel_correct := ⟨⟨fun n => n ^ 2 + 1,
+      fun N a h => ⟨a, h⟩,
+      fun N ⟨a, ha⟩ => ⟨SAT_inNP.compressAssignment a N,
+        (SAT_inNP.compressAssignment_cnf_equiv a N).mp ha,
+        SAT_inNP.compressAssignment_size_bound a N⟩,
+      ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
+      fun a b h => by nlinarith [Nat.pow_le_pow_left h 2]⟩⟩ }⟩⟩
+
 end EvalCnfTM
 
 /-! ## `SAT ∈ NP` (unchanged from the pre-pivot version)
@@ -133,17 +155,10 @@ pivot; only its construction internals changed. -/
 
 namespace SAT_inNP
 
-theorem sat_NP : inNP SAT := by
-  refine inNP_intro SAT (fun N a => satisfiesCnf a N) ?_ ?_
-  · -- inTimePoly slot: the layer-backed evalCnf decider.
-    exact EvalCnfTM.inTimePolyTM_evalCnf
-  · -- polyCertRel slot: certificate compression (unchanged).
-    refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
-    · intro N a h; exact ⟨a, h⟩
-    · intro N ⟨a, ha⟩
-      exact ⟨compressAssignment a N, (compressAssignment_cnf_equiv a N).mp ha,
-             compressAssignment_size_bound a N⟩
-    · exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
-    · intro a b h; nlinarith [Nat.pow_le_pow_left h 2]
+theorem sat_NP : inNP SAT :=
+  -- Routed through the free-encoding layer-native NP witness, so the verifier `Cmd`
+  -- is preserved (recoverable) up to this bridge. Same decider path as before ⇒
+  -- still `[propext, Classical.choice, Quot.sound]`.
+  Complexity.Lang.inNPLangFree_to_inNP EvalCnfTM.SAT_inNPLangFree
 
 end SAT_inNP

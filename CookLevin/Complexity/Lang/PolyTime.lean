@@ -2363,6 +2363,81 @@ theorem inNPLang_to_inNP {Y : Type} [encodable Y] [LangEncodable Y]
   letI := lC
   exact inNP_intro Q W.rel (W.verifier.toInTimePoly W.dBound_poly W.dBound_mono) W.rel_correct
 
+/-! ## Free-encoding layer-native NP (`inNPLangFree`) — the S3 linchpin foundation
+
+`inNPLang` above requires the verifier to be a **canonical** `DecidesLang'` (a
+per-type `LangEncodable` encoding). That form is currently *unpopulatable* for the
+live problems: a canonical `DecidesLang'` verifier for a certificate relation on a
+pair `X × Cert` needs the canonical `LangEncodable (X × Cert)` product encoding,
+which is **size-unsound** (HANDOFF bottom-up step 2 — no polynomial `enc_size`), so
+no `inNPLang SAT` / `inNPLang FlatClique` can be built.
+
+The two *live, axiom-clean* verifiers (`evalCnfDecidesLang`, `cliqueRelDecidesLang`)
+are instead **free-encoding** `DecidesLang`s: a bespoke `encodeIn : X × Cert → State`
+laying the whole pair out directly, with no per-type canonical encoding. This block
+is the free-encoding analogue of `InNPWitnessLang` / `inNPLang` / `inNPLang_to_inNP`
+— the form that genuinely "carries a `DecidesLang` directly" for the live path.
+
+**What this buys.** The framework `inNP P` (built via `inNP_intro`) immediately
+erases its verifier into an opaque `inTimePoly` (a `FlatTM`), from which no `Cmd`
+is recoverable — which is exactly why `red_inNP` (`NP.lean`) cannot route through the
+layer. An `inNPLangFree P` witness instead *preserves* the free verifier `Cmd`, so a
+future free reduction-closure (`red_inNPLangFree`, see the obligation note below) can
+precompose it. This is the load-bearing foundation for retiring S3's opaque `inNP`.
+
+**Not yet built (the remaining obligation, deliberately not sorry'd here).** The free
+reduction closure `red_inNPLangFree : PolyTimeComputableLang f → (∀ x, P x ↔ Q (f x))
+→ inNPLangFree Q → inNPLangFree P` needs to *precompose* the free reduction program
+`Wf.c` (output via `Wf.decodeOut`) with the free verifier `W.verifier.c` (input via
+`W.verifier.encodeIn`). Unlike the canonical `DecidesLang'.ofReduction` (which works
+because both programs share ONE canonical `State` layout), free encodings do not share
+a layout, so this needs an explicit **re-encoding `Cmd`** bridging `Wf`'s output layout
+to the verifier's input layout (the same gap `comp_computes_of_bridge` isolates). That
+re-encoder is the next top-down deliverable; see HANDOFF. -/
+
+/-- **Free-encoding layer-native NP witness.** The analogue of the framework's
+`InNPWitness` and the canonical `InNPWitnessLang`, but with the certificate relation
+decided by a *free-encoding* `DecidesLang` (the bespoke-`encodeIn` form the live
+verifiers `evalCnfDecidesLang`/`cliqueRelDecidesLang` actually have), NOT a canonical
+`DecidesLang'`. The verifier program is a recoverable `Cmd`, so it can be precomposed
+with a (free) reduction — which an opaque `FlatTM` `inNP` cannot offer, and which the
+canonical `InNPWitnessLang` cannot even be populated for while the canonical product
+encoding is size-unsound. Unlike `InNPWitnessLang`, no `LangEncodable Cert` instance is
+needed: the free verifier encodes the whole pair `X × Cert` bespokely. -/
+structure InNPWitnessLangFree {X Cert : Type} [encodable X] [encodable Cert]
+    (P : X → Prop) where
+  /-- The certificate relation. -/
+  rel : X → Cert → Prop
+  /-- Verifier cost bound. -/
+  dBound : Nat → Nat
+  dBound_poly : inOPoly dBound
+  dBound_mono : monotonic dBound
+  /-- The verifier: a *free-encoding* layer decider for the certificate relation,
+  read as a predicate on the pair `(input, certificate)`. -/
+  verifier : DecidesLang (fun xc : X × Cert => rel xc.1 xc.2) dBound
+  /-- The relation is a sound and complete, polynomially-bounded certificate
+  relation for `P` (the predicate-level NP content, identical to the framework). -/
+  rel_correct : polyCertRel P rel
+
+/-- `P` is in NP *at the layer level, free-encoding*: there is a certificate type
+with a free-encoding layer verifier (`DecidesLang`) and a polynomial certificate
+relation. Mirrors `inNP`, existentially quantifying the certificate type and its
+`encodable` instance (but not a `LangEncodable` — the free verifier needs none). -/
+def inNPLangFree {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∃ Cert : Type, ∃ _ : encodable Cert, Nonempty (@InNPWitnessLangFree X Cert _ _ P)
+
+/-- **Framework decider bridge (free path).** `inNPLangFree Q → inNP Q`: a
+free-encoding layer-native NP witness yields a framework-level NP witness. The
+verifier crosses via `DecidesLang.toInTimePoly` (the *identical* path the live
+`sat_NP` / `FlatClique_in_NP` already take, so it preserves axiom-cleanliness); the
+certificate relation is carried verbatim. This is the free-encoding analogue of
+`inNPLang_to_inNP`. -/
+theorem inNPLangFree_to_inNP {Y : Type} [encodable Y]
+    {Q : Y → Prop} (h : inNPLangFree Q) : inNP Q := by
+  obtain ⟨Cert, eC, ⟨W⟩⟩ := h
+  letI := eC
+  exact inNP_intro Q W.rel (W.verifier.toInTimePoly W.dBound_poly W.dBound_mono) W.rel_correct
+
 /-! ## Routing the framework's `⪯p` / `red_inNP` through the layer
 
 These two corollaries are the **engine** the S3 migration targets, now assembled

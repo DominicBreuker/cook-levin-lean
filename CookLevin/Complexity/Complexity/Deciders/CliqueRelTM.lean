@@ -3991,17 +3991,33 @@ theorem inTimePolyTM_cliqueRel :
       (fun Gkl : (fgraph × Nat) × List fvertex => cliqueRel Gkl.1 Gkl.2) :=
   inTimePolyLang_to_inTimePoly inTimePolyLang_cliqueRel
 
+/-- **Free-encoding layer-native NP witness for FlatClique** (S3-linchpin
+foundation). Bundles the live free-encoding `cliqueRel` verifier
+(`cliqueRelDecidesLang`, a `DecidesLang`) with the certificate relation (a
+`k`-clique vertex list). Keeps the verifier program a recoverable `Cmd`, unlike the
+opaque framework `inNP FlatClique`. `FlatClique_in_NP` is re-derived from this via
+`inNPLangFree_to_inNP` (identical decider path — stays axiom-clean). -/
+theorem FlatClique_inNPLangFree : inNPLangFree FlatClique :=
+  ⟨List fvertex, inferInstance, ⟨{
+    rel := cliqueRel
+    dBound := timeBound
+    dBound_poly := timeBound_inOPoly
+    dBound_mono := timeBound_monotonic
+    verifier := cliqueRelDecidesLang
+    rel_correct := by
+      refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
+      · rintro ⟨G, k⟩ l ⟨hwf, hclq⟩
+        exact ⟨l, hwf, hclq⟩
+      · rintro ⟨G, k⟩ ⟨l, hwf, hclq⟩
+        exact ⟨l, ⟨hwf, hclq⟩, clique_size_bound _ l ⟨hwf, hclq⟩⟩
+      · exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
+      · intro a b h; nlinarith [Nat.pow_le_pow_left h 2] }⟩⟩
+
 end CliqueRelTM
 
 /-! ## `FlatClique ∈ NP` (unchanged from the pre-pivot version) -/
 
-theorem FlatClique_in_NP : inNP FlatClique := by
-  refine inNP_intro FlatClique cliqueRel ?_ ?_
-  · exact CliqueRelTM.inTimePolyTM_cliqueRel
-  · refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
-    · rintro ⟨G, k⟩ l ⟨hwf, hclq⟩
-      exact ⟨l, hwf, hclq⟩
-    · rintro ⟨G, k⟩ ⟨l, hwf, hclq⟩
-      exact ⟨l, ⟨hwf, hclq⟩, clique_size_bound _ l ⟨hwf, hclq⟩⟩
-    · exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
-    · intro a b h; nlinarith [Nat.pow_le_pow_left h 2]
+theorem FlatClique_in_NP : inNP FlatClique :=
+  -- Routed through the free-encoding layer-native NP witness (recoverable verifier
+  -- `Cmd`). Same decider path as before ⇒ still `[propext, Classical.choice, Quot.sound]`.
+  Complexity.Lang.inNPLangFree_to_inNP CliqueRelTM.FlatClique_inNPLangFree
