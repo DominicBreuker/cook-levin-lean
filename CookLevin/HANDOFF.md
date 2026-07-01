@@ -26,39 +26,50 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-07-01, TOP-DOWN, CliqueRelTM): ✅ proved `cost_bound`
-> — `cliqueRelDecidesLang` is SORRY-FREE and `FlatClique_in_NP` is AXIOM-CLEAN**
-> (`#print axioms FlatClique_in_NP = [propext, Classical.choice, Quot.sound]`).
-> The in-NP half of FlatClique/Clique now joins SAT (2026-06-28). `Clique_complete`
-> depends on `sorryAx` ONLY via the hardness half now.
-> - **Cost lemmas mirror `EvalCnfCmd`'s `_cost` quartet, one per gadget, bottom-up:**
->   `readNum_cost`/`ltBit_cost`/`checkLen_cost`/`checkOfType_cost`/`checkWf_cost`/
->   `memberEdge_cost`/`checkNodup_cost` (double loop)/`checkClique_cost` (depth-4),
->   then `cliqueRelCmd_cost_bound` sums the six checks. All axiom-clean.
-> - **★ KEY SIMPLIFICATION — cost proofs use LENGTH-ONLY loop invariants**
->   (`M i s := (s.get reg).length ≤ P`), NOT the behavioural `RNInv`/`COInv`/…: body
->   cost depends only on register *lengths*, which are non-increasing through every
->   loop here, so the invariant is preserved regardless of control-flow branch. For
->   the *outer* cost `hM` step the existing behavioural `*_step`/`*Inner_cost`
->   lemmas are reused verbatim (they establish the register *values* the inner cost
->   needs); only `hC` (the uniform per-iteration body-cost bound) is new work. New
->   reusable helpers: `readNum_stream_le` (readNum never grows its stream),
->   `vert_getElem_le`/`edge_getElem_le` (element ≤ stream-length ceiling, proved in
->   a *clean context* — see gotcha (b)), `encVerts_drop_length_le`/
->   `encEdges_drop_length_le`, `readNumBody_effect`.
-> - **★ FINDING — `timeBound` bumped from quartic to QUINTIC `(n+1)^5`.** Under
->   uniform-bound accounting the depth-4 `checkClique` nest is degree **5**, not 4:
->   the innermost `readNum` costs `Θ(S²)` (a `tail` per drained cell) and sits under
->   three `forBnd`s (`|l|²·|edges|·|stream|²`). The *true* TM cost is quartic
->   (`readNum` on a block of size `v` from a stream `S` is `Θ(v·S)`, and `Σv = S`
->   amortises one `S` away) but amortisation is invisible to `Cmd.cost_forBnd_le`.
->   `timeBound_inOPoly`/`_monotonic`/`encodeIn_size` updated. Only `inOPoly`/
->   `monotonic` are needed downstream, so the degree is free.
+> **Most recent session (2026-07-01, TOP-DOWN, S3 linchpin — `inNPLangFree`): ✅ the
+> free-encoding layer-native NP class is BUILT and both live `inNP` witnesses now carry
+> a recoverable verifier `Cmd`.** New in `PolyTime.lean` (sorry-free, axiom-clean):
+> `InNPWitnessLangFree`/`inNPLangFree` (analogue of `InNPWitnessLang`/`inNPLang` but on
+> the **free** `DecidesLang`, not the canonical `DecidesLang'`) + the framework bridge
+> `inNPLangFree_to_inNP`. `EvalCnfTM.SAT_inNPLangFree : inNPLangFree SAT` and
+> `CliqueRelTM.FlatClique_inNPLangFree : inNPLangFree FlatClique` bundle the live
+> `evalCnfDecidesLang`/`cliqueRelDecidesLang`; `sat_NP`/`FlatClique_in_NP` are re-derived
+> through `inNPLangFree_to_inNP` (same decider path ⇒ **still axiom-clean**;
+> `CookLevin`/`Clique_complete` unchanged, `sorryAx` via hardness only). Build green (3370).
+> - **★ KEY RISK FINDING — the pre-existing canonical `red_inNP_of_lang`/`inNPLang`
+>   engine is UNPOPULATABLE for the live path, so the migration had to re-base on the
+>   FREE encoding.** `InNPWitnessLang.verifier` is a *canonical* `DecidesLang'`, which
+>   needs `LangEncodable (X × Cert)` — the size-unsound product encoding (bottom-up
+>   step 2, BLOCKED). No `inNPLang SAT`/`inNPLang FlatClique` can be built. The live
+>   verifiers are **free** `DecidesLang`s (bespoke `encodeIn` on the whole pair), so
+>   `inNPLangFree` is the form that actually carries the live verifiers. This
+>   contradicts the old top-down note that implied `inNPLang` was ready to consume.
+> - **★ KEY RISK FINDING — `red_inNP` (NP.lean:291) is DOUBLY blocked, not just
+>   ⪯p-blocked.** To collapse it needs BOTH (a) the verifier `Cmd` *precomposed* with
+>   `f`'s output (free encodings share no layout ⇒ needs an explicit **re-encoder
+>   `Cmd`**) AND (b) the reduction `f` as a program (the ⪯p→`polyTimeComputable'`
+>   migration — breaks S1/S2, ROADMAP step 2).
+> - **✅ Blocker (a) is now SOLVED at the engine level.** `DecidesLang.precomposeFree`
+>   + `InNPWitnessLangFree.precompose` + `red_inNP_of_langFree` (`PolyTime.lean`,
+>   sorry-free, axiom-clean) are the **free analogue of `DecidesLang'.precompose` /
+>   `red_inNP_of_lang`**. The whole free-precompose obligation is concentrated,
+>   sorry-free, into ONE `DecidesLang.FreePrecomposeData` value (a concrete re-encoder
+>   `Cmd` + its bounds + the register-agreement `bridge` law — the free analogue of
+>   `PolyTimeComputableLang'.normalizes`). `decides` is proved from `bridge` via
+>   `Cmd.eval_agree` at register 0; all else passes through. Concrete witnesses
+>   `SAT_inNPWitnessLangFree`/`FlatClique_inNPWitnessLangFree` are exposed for it.
+>   **Reachability probe passed**: `red_inNP_of_langFree` typechecks to `inNP (kSAT 3)`
+>   given only `Wf` + `data` — no structural unknown, no vacuity landmine (`newBound`
+>   is a free polynomial; nothing like the canonical `enc_size` recurrence).
 >
-> **Recommended next: a session on the HARDNESS side (both in-NP verifiers are now
-> axiom-clean, so all remaining `sorryAx` on `CookLevin`/`Clique_complete` is
-> hardness-side).** Concrete top-down + bottom-up follow-ups are planned below
-> (top-down Task 1 is DONE; see "★ TOP-DOWN — next targets" and bottom-up step 2).
+> **Recommended next: TOP-DOWN — build a concrete `FreePrecomposeData` (the re-encoder).**
+> The engine is done; the remaining top-down work is one *concrete* re-encoder `Cmd`
+> (like `mapFstCmd` + its frame/run lemmas, but targeting a verifier's bespoke layout)
+> + its `bridge`/bounds. Pair it with blocker (b) — a real `PolyTimeComputableLang`
+> reduction — to finally close a live `red_inNP` (e.g. `inNP_kSAT`). See targets #1.
+> Bottom-up remains BLOCKED on the encoding decision (step 2) — a bottom-up session
+> should first scope option (B): does any live S3 reduction actually need the generic
+> canonical trio? (almost certainly not — none of the free verifiers do).
 >
 > ⚠ **Gotchas confirmed this session (cost proofs):**
 > (a) **`omega` needs GROUPED products.** `2*P*P` parses as `(2*P)*P`, a distinct
@@ -159,6 +170,13 @@ buys Route B (drop the wall — cosmetic).
 > bottom-up's remaining work is documentation + deleting dead scaffolding. Only if a
 > generic bit-level canonical product is genuinely required does the (A) binary/Elias
 > length-prefix redesign (owner decision) become necessary.
+>
+> **★ 2026-07-01 corroboration (top-down):** the S3 migration was just re-based onto the
+> **free** `inNPLangFree` line precisely because the canonical `LangEncodable`-product
+> path is blocked — so the sound-tail reductions (top-down #2) are now *planned* as free
+> `PolyTimeComputableLang` witnesses, needing **no** generic trio. This makes option (B)
+> the near-certain answer. Scoping it is the concrete way to formally retire the trio
+> and delete the blocked canonical scaffolding.
 
 ---
 
@@ -298,21 +316,40 @@ The whole in-NP side of Cook–Levin is done. **Every remaining `sorryAx` on
 `CookLevin` and `Clique_complete` is on the HARDNESS / reduction side.** Ordered by
 tractability:
 
-1. **Framework `inNP`/`inTimePoly` layer-native migration (structural; the S3
-   linchpin).** `NP.lean` `red_inNP` (~L268) and `PolyTime.lean`'s reduction-side
-   `c_noConsLen`/`c_allOpsSupported` sorries (L767/780/1282/1598/1994/2003) exist
-   because the framework `inNP` exposes an *opaque* `FlatTM` with no recoverable
-   `Cmd`. Now that TWO concrete layer-native deciders exist (`evalCnfDecidesLang`,
-   `cliqueRelDecidesLang`), make `inNP`/`inTimePoly` carry a `DecidesLang` directly
-   so `red_inNP` collapses to the proven `red_inNP_of_lang`. This retires S3's
-   output-size-only `⪯p` in favour of `polyTimeComputable'`. Design with ROADMAP
-   step 2; medium structural risk, high leverage (unblocks the sound-tail reductions
-   carrying real programs).
-2. **The sound-tail reductions as `Cmd`s (gated on #1).** `flatTCC_to_flatCC`
+1. **S3 linchpin — a CONCRETE re-encoder `FreePrecomposeData` (continues this PR).**
+   The layer-native FOUNDATION *and the precompose ENGINE* are now built (all in
+   `PolyTime.lean`, sorry-free & axiom-clean): `inNPLangFree`/`InNPWitnessLangFree` +
+   `inNPLangFree_to_inNP`, then `DecidesLang.precomposeFree` +
+   `InNPWitnessLangFree.precompose` + `red_inNP_of_langFree` (the free analogue of
+   `DecidesLang'.precompose`/`red_inNP_of_lang`). Concrete witnesses
+   `SAT_inNPWitnessLangFree`/`FlatClique_inNPWitnessLangFree` are exposed. `inNP SAT`/
+   `inNP FlatClique` now carry a recoverable free verifier `Cmd`. **The two blockers to
+   collapsing a live `red_inNP` are now precisely isolated as the engine's two inputs:**
+   - **(a) the re-encoder `data : FreePrecomposeData` — the next concrete deliverable.**
+     A `Cmd` that runs the reduction and re-lays its output into the verifier's bespoke
+     input layout, satisfying `bridge : AgreeBelow D.regBound (mfc.eval (eIn v))
+     (D.encodeIn (gmap v))` (free analogue of `PolyTimeComputableLang'.normalizes`) plus
+     cost/frame/bit bounds. This is ordinary verifier-program engineering (template:
+     `mapFstCmd` + its frame/run lemmas, but targeting a fixed bespoke layout — e.g.
+     `EvalCnfCmd.encodeState`'s 12 registers). **No structural unknown** (reachability
+     probe confirms `red_inNP_of_langFree` → `inNP (kSAT 3)` given `data` + `Wf`). This
+     is the recommended next top-down deliverable.
+   - **(b) ⪯p carries a real program (ROADMAP step 2).** The engine's `Wf :
+     PolyTimeComputableLang f` input. Swapping `ReductionWitness` from size-only
+     `polyTimeComputable` to `polyTimeComputable'` is what supplies it. This is the
+     ripple that makes **S1/S2 stop typechecking** — so do it only *with* the honest
+     sound-tail witnesses (#2), as a coordinated batch (the conditional theorem breaks
+     until they land). NB a *free* `PolyTimeComputableLang` (not canonical `'`) suffices
+     for `red_inNP_of_langFree`, sidestepping the blocked product encoding.
+   - **⚠ Do NOT try to use the canonical `red_inNP_of_lang`/`inNPLang` engine** — it is
+     unpopulatable (needs `LangEncodable (X×Cert)`, the size-unsound product encoding).
+     Use the free `inNPLangFree`/`red_inNP_of_langFree` line.
+2. **The sound-tail reductions as `Cmd`s (couples with 1b).** `flatTCC_to_flatCC`
    (cheap) → `FlatCC_to_BinaryCC` (medium) → `BinaryCC_to_FSAT` (Tseytin, the
-   expensive ~1K-LOC item). Each is a `PolyTimeComputableLang'` witness; `map`-over-
-   lists (`parked/MapNatList_WIP.lean`) gates the whole chain. At this point S1/S2
-   *stop typechecking* until honest.
+   expensive ~1K-LOC item). Each is a free `PolyTimeComputableLang` witness (canonical
+   `'` is blocked by the product encoding); `map`-over-lists
+   (`parked/MapNatList_WIP.lean`) gates the whole chain. At this point S1/S2 *stop
+   typechecking* until honest.
 3. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K LOC) —
    the deepest unsoundness, the real front reduction. Largest item; do after #1/#2.
 
@@ -329,6 +366,23 @@ cost-proof gotchas in the recent-session block.
 
 The op builds below are templates; the helper stacks are axiom-clean.
 
+- **Free-encoding layer-native NP class + precompose ENGINE (S3 linchpin) — BUILT &
+  axiom-clean** (`PolyTime.lean`, 2026-07-01). **This is the line the S3 migration runs
+  on** (the canonical `DecidesLang'`-based `inNPLang`/`red_inNP_of_lang` is
+  unpopulatable — size-unsound product encoding). Do not re-derive:
+  - `InNPWitnessLangFree`/`inNPLangFree` (certificate relation + a **free** `DecidesLang`
+    verifier + `polyCertRel`; no `LangEncodable Cert` needed) + bridge
+    `inNPLangFree_to_inNP` (via `DecidesLang.toInTimePoly` + `inNP_intro`). Concrete
+    witnesses `SAT_inNPWitnessLangFree`/`FlatClique_inNPWitnessLangFree` (feed these to
+    the engine); existential wrappers `SAT_inNPLangFree`/`FlatClique_inNPLangFree`.
+  - `DecidesLang.FreePrecomposeData D gmap` — the re-encoder bundle (the sole
+    per-reduction obligation: `mfc`, `eIn`, `newBound`+poly/mono, the `bridge` agree
+    law, cost/size/frame/bit bounds of `mfc ;; D.c`).
+  - `DecidesLang.precomposeFree` — proves `decides` from `bridge` via `Cmd.eval_agree`
+    at register 0 (mirrors `DecidesLang'.precompose`; all other fields pass through).
+  - `InNPWitnessLangFree.precompose` (witness-level closure; transports `rel_correct`
+    exactly as `red_inNPLang`) + `red_inNP_of_langFree` (framework corollary → `inNP P`).
+  Next: a concrete `FreePrecomposeData` for a live reduction (top-down target #1).
 - **`extractLeadingOnes` (unary-migration step 2a) is PROVEN** —
   `Lang/ExtractOnes.lean`, axiom-clean. Recovers the unary length prefix
   `L = leadingOnes src` as `replicate L 1` in `dst`, via a `forBnd` DONE-flag fold

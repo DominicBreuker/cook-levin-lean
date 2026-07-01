@@ -2363,6 +2363,220 @@ theorem inNPLang_to_inNP {Y : Type} [encodable Y] [LangEncodable Y]
   letI := lC
   exact inNP_intro Q W.rel (W.verifier.toInTimePoly W.dBound_poly W.dBound_mono) W.rel_correct
 
+/-! ## Free-encoding layer-native NP (`inNPLangFree`) — the S3 linchpin foundation
+
+`inNPLang` above requires the verifier to be a **canonical** `DecidesLang'` (a
+per-type `LangEncodable` encoding). That form is currently *unpopulatable* for the
+live problems: a canonical `DecidesLang'` verifier for a certificate relation on a
+pair `X × Cert` needs the canonical `LangEncodable (X × Cert)` product encoding,
+which is **size-unsound** (HANDOFF bottom-up step 2 — no polynomial `enc_size`), so
+no `inNPLang SAT` / `inNPLang FlatClique` can be built.
+
+The two *live, axiom-clean* verifiers (`evalCnfDecidesLang`, `cliqueRelDecidesLang`)
+are instead **free-encoding** `DecidesLang`s: a bespoke `encodeIn : X × Cert → State`
+laying the whole pair out directly, with no per-type canonical encoding. This block
+is the free-encoding analogue of `InNPWitnessLang` / `inNPLang` / `inNPLang_to_inNP`
+— the form that genuinely "carries a `DecidesLang` directly" for the live path.
+
+**What this buys.** The framework `inNP P` (built via `inNP_intro`) immediately
+erases its verifier into an opaque `inTimePoly` (a `FlatTM`), from which no `Cmd`
+is recoverable — which is exactly why `red_inNP` (`NP.lean`) cannot route through the
+layer. An `inNPLangFree P` witness instead *preserves* the free verifier `Cmd`, so a
+future free reduction-closure (`red_inNPLangFree`, see the obligation note below) can
+precompose it. This is the load-bearing foundation for retiring S3's opaque `inNP`.
+
+**Not yet built (the remaining obligation, deliberately not sorry'd here).** The free
+reduction closure `red_inNPLangFree : PolyTimeComputableLang f → (∀ x, P x ↔ Q (f x))
+→ inNPLangFree Q → inNPLangFree P` needs to *precompose* the free reduction program
+`Wf.c` (output via `Wf.decodeOut`) with the free verifier `W.verifier.c` (input via
+`W.verifier.encodeIn`). Unlike the canonical `DecidesLang'.ofReduction` (which works
+because both programs share ONE canonical `State` layout), free encodings do not share
+a layout, so this needs an explicit **re-encoding `Cmd`** bridging `Wf`'s output layout
+to the verifier's input layout (the same gap `comp_computes_of_bridge` isolates). That
+re-encoder is the next top-down deliverable; see HANDOFF. -/
+
+/-- **Free-encoding layer-native NP witness.** The analogue of the framework's
+`InNPWitness` and the canonical `InNPWitnessLang`, but with the certificate relation
+decided by a *free-encoding* `DecidesLang` (the bespoke-`encodeIn` form the live
+verifiers `evalCnfDecidesLang`/`cliqueRelDecidesLang` actually have), NOT a canonical
+`DecidesLang'`. The verifier program is a recoverable `Cmd`, so it can be precomposed
+with a (free) reduction — which an opaque `FlatTM` `inNP` cannot offer, and which the
+canonical `InNPWitnessLang` cannot even be populated for while the canonical product
+encoding is size-unsound. Unlike `InNPWitnessLang`, no `LangEncodable Cert` instance is
+needed: the free verifier encodes the whole pair `X × Cert` bespokely. -/
+structure InNPWitnessLangFree {X Cert : Type} [encodable X] [encodable Cert]
+    (P : X → Prop) where
+  /-- The certificate relation. -/
+  rel : X → Cert → Prop
+  /-- Verifier cost bound. -/
+  dBound : Nat → Nat
+  dBound_poly : inOPoly dBound
+  dBound_mono : monotonic dBound
+  /-- The verifier: a *free-encoding* layer decider for the certificate relation,
+  read as a predicate on the pair `(input, certificate)`. -/
+  verifier : DecidesLang (fun xc : X × Cert => rel xc.1 xc.2) dBound
+  /-- The relation is a sound and complete, polynomially-bounded certificate
+  relation for `P` (the predicate-level NP content, identical to the framework). -/
+  rel_correct : polyCertRel P rel
+
+/-- `P` is in NP *at the layer level, free-encoding*: there is a certificate type
+with a free-encoding layer verifier (`DecidesLang`) and a polynomial certificate
+relation. Mirrors `inNP`, existentially quantifying the certificate type and its
+`encodable` instance (but not a `LangEncodable` — the free verifier needs none). -/
+def inNPLangFree {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∃ Cert : Type, ∃ _ : encodable Cert, Nonempty (@InNPWitnessLangFree X Cert _ _ P)
+
+/-- **Framework decider bridge (free path).** `inNPLangFree Q → inNP Q`: a
+free-encoding layer-native NP witness yields a framework-level NP witness. The
+verifier crosses via `DecidesLang.toInTimePoly` (the *identical* path the live
+`sat_NP` / `FlatClique_in_NP` already take, so it preserves axiom-cleanliness); the
+certificate relation is carried verbatim. This is the free-encoding analogue of
+`inNPLang_to_inNP`. -/
+theorem inNPLangFree_to_inNP {Y : Type} [encodable Y]
+    {Q : Y → Prop} (h : inNPLangFree Q) : inNP Q := by
+  obtain ⟨Cert, eC, ⟨W⟩⟩ := h
+  letI := eC
+  exact inNP_intro Q W.rel (W.verifier.toInTimePoly W.dBound_poly W.dBound_mono) W.rel_correct
+
+/-! ## Free precompose — the free analogue of `DecidesLang'.precompose`
+
+The canonical `DecidesLang'.precompose` chains `Wg.c ;; D.c` and reduces to `D`
+running on `encodeState (g x)` via `Wg.normalizes` (canonical normal form: the two
+programs share ONE `LangEncodable` `State`). Free encodings have **no shared layout**,
+so the reduction map's output must be **re-encoded** into the decider's bespoke input
+layout by an explicit `Cmd` — the `mfc` below — satisfying a register-wise agreement
+law (`bridge`). This is the free analogue of `normalizes`, and exactly the re-encoder
+gap `PolyTimeComputableLang.comp_computes_of_bridge` isolated.
+
+Everything except the *decides* law is passed through as data about the composite
+`mfc ;; D.c` (cost / size / frame / bit); `precomposeFree` proves `decides` from
+`bridge` alone (mirroring `precompose`). The whole per-reduction obligation is thus
+concentrated, **sorry-free**, in one `FreePrecomposeData` value — a concrete
+re-encoder program plus its bounds. Building that value for a specific reduction is
+ordinary verifier engineering (like any `DecidesLang`), NOT a structural unknown. -/
+
+/-- The re-encoder bundle for free precomposition of a decider `D : DecidesLang Q`
+with a map `gmap : V → W`: a `Cmd` `mfc` and an input encoding `eIn : V → State` such
+that `mfc.eval (eIn v)` agrees, on `D`'s register frame, with `D.encodeIn (gmap v)`
+(so running `D.c` afterwards decides `Q (gmap v)`), together with the composite's
+cost/size/frame/bit bounds. The **only** per-reduction obligation. -/
+structure DecidesLang.FreePrecomposeData {V W : Type} [encodable V] [encodable W]
+    {Q : W → Prop} {dBound : Nat → Nat} (D : DecidesLang Q dBound) (gmap : V → W) where
+  /-- The re-encoder: computes `gmap v` (running the reduction) and re-lays it into
+  `D`'s bespoke input layout. -/
+  mfc : Cmd
+  /-- The composite decider's input encoding. -/
+  eIn : V → State
+  /-- Cost/size bound of the composite. -/
+  newBound : Nat → Nat
+  newBound_poly : inOPoly newBound
+  newBound_mono : monotonic newBound
+  /-- **The re-encoding law** (free analogue of `PolyTimeComputableLang'.normalizes`):
+  after `mfc`, the state agrees with `D`'s canonical input on `D`'s register frame. -/
+  bridge : ∀ v, AgreeBelow D.regBound (mfc.eval (eIn v)) (D.encodeIn (gmap v))
+  encodeIn_size : ∀ v, State.size (eIn v) ≤ newBound (encodable.size v)
+  cost_bound : ∀ v, (mfc ;; D.c).cost (eIn v) ≤ newBound (encodable.size v)
+  enc_bit : ∀ v, Compile.BitState (eIn v)
+  regBound : Nat
+  usesBelow : Cmd.UsesBelow (mfc ;; D.c) regBound
+  width_le : ∀ v, (eIn v).length ≤ regBound
+  noConsLen : Cmd.NoConsLen (mfc ;; D.c)
+  allOpsSupported : Cmd.AllOpsSupported (mfc ;; D.c)
+
+/-- **Free precompose.** Given a free decider `D : DecidesLang Q` and a re-encoder
+bundle for `gmap`, produce a free decider for `fun v => Q (gmap v)`. Only the
+`decides` law is proved here (via `bridge` + `Cmd.eval_agree` at register `0`, where
+accept/reject is read); all other fields are the composite bounds carried by `data`.
+Sorry-free. The free-encoding engine of `red_inNP` at the layer. -/
+def DecidesLang.precomposeFree {V W : Type} [encodable V] [encodable W]
+    {Q : W → Prop} {dBound : Nat → Nat} (D : DecidesLang Q dBound) (gmap : V → W)
+    (data : D.FreePrecomposeData gmap) :
+    DecidesLang (fun v => Q (gmap v)) data.newBound where
+  c := data.mfc ;; D.c
+  encodeIn := data.eIn
+  encodeIn_size := data.encodeIn_size
+  decides := fun v => by
+    have hagree : AgreeBelow D.regBound (D.c.eval (data.mfc.eval (data.eIn v)))
+        (D.c.eval (D.encodeIn (gmap v))) :=
+      Cmd.eval_agree D.c D.regBound D.usesBelow (data.bridge v)
+    have h0 : State.get ((data.mfc ;; D.c).eval (data.eIn v)) 0
+        = State.get (D.c.eval (D.encodeIn (gmap v))) 0 := by
+      rw [Cmd.eval_seq]
+      exact hagree 0 (Cmd.UsesBelow_pos D.usesBelow)
+    have hacc : ((data.mfc ;; D.c).eval (data.eIn v)).isAccept
+        = (D.c.eval (D.encodeIn (gmap v))).isAccept := by
+      show (State.get ((data.mfc ;; D.c).eval (data.eIn v)) 0 == [1])
+          = (State.get (D.c.eval (D.encodeIn (gmap v))) 0 == [1])
+      rw [h0]
+    have hrej : ((data.mfc ;; D.c).eval (data.eIn v)).isReject
+        = (D.c.eval (D.encodeIn (gmap v))).isReject := by
+      show (State.get ((data.mfc ;; D.c).eval (data.eIn v)) 0 == [0])
+          = (State.get (D.c.eval (D.encodeIn (gmap v))) 0 == [0])
+      rw [h0]
+    refine ⟨?_, ?_⟩
+    · rw [hacc]; exact (D.decides (gmap v)).1
+    · rw [hrej]; exact (D.decides (gmap v)).2
+  cost_bound := data.cost_bound
+  enc_bit := data.enc_bit
+  regBound := data.regBound
+  usesBelow := data.usesBelow
+  width_le := data.width_le
+  noConsLen := data.noConsLen
+  allOpsSupported := data.allOpsSupported
+
+/-- **Free-encoding reduction closure at the witness level.** From a concrete
+free-encoding NP witness `W : InNPWitnessLangFree Q`, a reduction `f` (with a
+size-bound witness `Wf`), a re-encoder bundle for the pair-map `(x,c) ↦ (f x, c)`,
+and correctness `P x ↔ Q (f x)`, build an `InNPWitnessLangFree P`. The verifier is
+`W.verifier.precomposeFree`; the certificate relation transports exactly as in the
+framework's `red_inNP` / the canonical `red_inNPLang`.
+
+Unlike the canonical `red_inNPLang`, this operates on the **concrete** witness `W`
+(not the existential `inNPLangFree Q`): the re-encoder depends on `W.verifier`'s
+bespoke `encodeIn`, which is not recoverable from `Wf` alone (the free encodings do
+not share a layout), so it must be supplied against a known verifier. -/
+def InNPWitnessLangFree.precompose {X Y Cert : Type}
+    [encodable X] [encodable Y] [encodable Cert]
+    {P : X → Prop} {Q : Y → Prop} {f : X → Y}
+    (W : @InNPWitnessLangFree Y Cert _ _ Q) (Wf : PolyTimeComputableLang f)
+    (data : W.verifier.FreePrecomposeData (fun xc : X × Cert => (f xc.1, xc.2)))
+    (hcorrect : ∀ x, P x ↔ Q (f x)) :
+    @InNPWitnessLangFree X Cert _ _ P where
+  rel := fun x c => W.rel (f x) c
+  dBound := data.newBound
+  dBound_poly := data.newBound_poly
+  dBound_mono := data.newBound_mono
+  verifier := W.verifier.precomposeFree (fun xc : X × Cert => (f xc.1, xc.2)) data
+  rel_correct := by
+    obtain ⟨cert_bound, hsound_R, hcomplete_R, hcert_poly_R, hcert_mono_R⟩ := W.rel_correct
+    refine ⟨⟨cert_bound ∘ Wf.cost_bound, ?_, ?_,
+      inOPoly_comp Wf.cost_bound_poly hcert_poly_R,
+      monotonic_comp Wf.cost_bound_mono hcert_mono_R⟩⟩
+    · intro x c hrel
+      exact (hcorrect x).mpr (hsound_R hrel)
+    · intro x hx
+      rcases hcomplete_R ((hcorrect x).mp hx) with ⟨c, hc, hsize⟩
+      refine ⟨c, hc, ?_⟩
+      calc encodable.size c
+          ≤ cert_bound (encodable.size (f x)) := hsize
+        _ ≤ cert_bound (Wf.cost_bound (encodable.size x)) :=
+            hcert_mono_R _ _ (Wf.output_size_le x)
+
+/-- **The free-encoding layer-routed `red_inNP`.** From a concrete free NP witness
+for `Q`, a reduction `f` with size bound `Wf`, a re-encoder bundle, and `P x ↔ Q (f x)`,
+conclude the framework's `inNP P`. Composes `InNPWitnessLangFree.precompose` with the
+framework bridge `inNPLangFree_to_inNP`. This is the free analogue of `red_inNP_of_lang`
+— and the one that is actually populatable for the live path (the canonical
+`red_inNP_of_lang` needs the size-unsound product encoding). The remaining input, the
+re-encoder `data`, is per-reduction engineering with **no structural unknown**. -/
+theorem red_inNP_of_langFree {X Y Cert : Type}
+    [encodable X] [encodable Y] [encodable Cert]
+    {P : X → Prop} {Q : Y → Prop} {f : X → Y}
+    (W : @InNPWitnessLangFree Y Cert _ _ Q) (Wf : PolyTimeComputableLang f)
+    (data : W.verifier.FreePrecomposeData (fun xc : X × Cert => (f xc.1, xc.2)))
+    (hcorrect : ∀ x, P x ↔ Q (f x)) : inNP P :=
+  inNPLangFree_to_inNP ⟨Cert, inferInstance, ⟨W.precompose Wf data hcorrect⟩⟩
+
 /-! ## Routing the framework's `⪯p` / `red_inNP` through the layer
 
 These two corollaries are the **engine** the S3 migration targets, now assembled
