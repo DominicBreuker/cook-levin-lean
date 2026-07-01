@@ -3020,6 +3020,188 @@ private theorem checkWf_cost (st : State) (edges : List fedge) (numV P : Nat) (b
   have h4 : P * (8 * (P * P) + 18 * P + 33) = 8 * (P * P * P) + 18 * (P * P) + 33 * P := by ring
   omega
 
+/-- Uniform per-iteration body-cost bound for the `memberEdge` loop. -/
+private theorem memberEdge_body_cost (va vb : Nat) (edges : List fedge) (P : Nat)
+    (st : State) (hVALA : (st.get VALA).length ≤ P) (hVALB : (st.get VALB).length ≤ P)
+    (hEP : (encEdges edges).length ≤ P)
+    (i : Nat) (s : State) (hi : i < edges.length) (h : MEInv va vb edges st i s) :
+    (readNum VALC ESCAN2 IDX4 ;; readNum VALD ESCAN2 IDX4 ;;
+      Cmd.op (.eqBit RES1 VALC VALA) ;; Cmd.op (.eqBit RES2 VALD VALB) ;;
+      Cmd.ifBit RES1
+        (Cmd.ifBit RES2 (Cmd.op (.clear FOUND) ;; Cmd.op (.appendOne FOUND)) cSkip)
+        cSkip).cost (s.set IDX3 (List.replicate i 1))
+      ≤ 4 * (P * P) + 18 * P + 26 := by
+  obtain ⟨hESCAN, _, hframe⟩ := h
+  set w := s.set IDX3 (List.replicate i 1) with hw
+  have hESCAN_in : State.get w ESCAN2
+      = List.replicate (edges[i]'hi).1 1 ++ 0 ::
+          (List.replicate (edges[i]'hi).2 1 ++ 0 :: encEdges (edges.drop (i + 1))) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (ESCAN2 : Var) ≠ IDX3), hESCAN,
+      List.drop_eq_getElem_cons hi, encEdges_cons]
+  have hESlen : (State.get w ESCAN2).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (ESCAN2 : Var) ≠ IDX3), hESCAN]
+    exact (encEdges_drop_length_le edges i).trans hEP
+  obtain ⟨he1, he2⟩ := edge_getElem_le edges i hi P
+    ((encEdges_drop_length_le edges i).trans hEP)
+  have hVALAw : (State.get w VALA).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ IDX3),
+      hframe VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hVALA
+  have hVALBw : (State.get w VALB).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ IDX3),
+      hframe VALB (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hVALB
+  -- run the two readNums
+  obtain ⟨hVALC1, hESCAN1, hRN1frame⟩ := readNum_run w (edges[i]'hi).1
+    (List.replicate (edges[i]'hi).2 1 ++ 0 :: encEdges (edges.drop (i + 1)))
+    VALC ESCAN2 IDX4 hESCAN_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALC ESCAN2 IDX4).eval w with hs1
+  obtain ⟨hVALD2, hESCAN2', hRN2frame⟩ := readNum_run s1 (edges[i]'hi).2
+    (encEdges (edges.drop (i + 1))) VALD ESCAN2 IDX4 hESCAN1
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s2 := (readNum VALD ESCAN2 IDX4).eval s1 with hs2
+  -- register lengths at s2 (eqBit1 entry)
+  have hVALC2 : (State.get s2 VALC).length ≤ P := by
+    rw [hRN2frame VALC (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hVALC1, List.length_replicate]; exact he1
+  have hVALA2 : (State.get s2 VALA).length ≤ P := by
+    rw [hRN2frame VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hRN1frame VALA (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)]; exact hVALAw
+  -- s3 = eqBit1.eval s2 ; register lengths at s3 (eqBit2 entry)
+  have he3eval : (Cmd.op (.eqBit RES1 VALC VALA)).eval s2
+      = s2.set RES1 (if State.get s2 VALC = State.get s2 VALA then [1] else [0]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set s3 := s2.set RES1 (if State.get s2 VALC = State.get s2 VALA then [1] else [0]) with hs3
+  have hVALD3 : (State.get s3 VALD).length ≤ P := by
+    rw [hs3, State.get_set_ne _ _ _ _ (by decide : (VALD : Var) ≠ RES1),
+      hVALD2, List.length_replicate]; exact he2
+  have hVALB3 : (State.get s3 VALB).length ≤ P := by
+    rw [hs3, State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ RES1),
+      hRN2frame VALB (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hRN1frame VALB (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide)]; exact hVALBw
+  -- five cost pieces
+  have b1 : (readNum VALC ESCAN2 IDX4).cost w ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost w VALC ESCAN2 IDX4 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hESlen, Nat.mul_le_mul hESlen hESlen]
+  have hES1len : (State.get s1 ESCAN2).length ≤ P :=
+    (readNum_stream_le w VALC ESCAN2 IDX4 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans hESlen
+  have b2 : (readNum VALD ESCAN2 IDX4).cost s1 ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost s1 VALD ESCAN2 IDX4 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hES1len, Nat.mul_le_mul hES1len hES1len]
+  have b3 : (Cmd.op (.eqBit RES1 VALC VALA)).cost s2 ≤ 2 * P + 1 := by
+    show (State.get s2 VALC).length + (State.get s2 VALA).length + 1 ≤ 2 * P + 1
+    omega
+  have b4 : (Cmd.op (.eqBit RES2 VALD VALB)).cost s3 ≤ 2 * P + 1 := by
+    show (State.get s3 VALD).length + (State.get s3 VALB).length + 1 ≤ 2 * P + 1
+    omega
+  have b5 : (Cmd.ifBit RES1
+      (Cmd.ifBit RES2 (Cmd.op (.clear FOUND) ;; Cmd.op (.appendOne FOUND)) cSkip)
+      cSkip).cost ((Cmd.op (.eqBit RES2 VALD VALB)).eval s3) ≤ 5 := by
+    set X := (Cmd.op (.eqBit RES2 VALD VALB)).eval s3 with hX
+    by_cases h1 : State.get X RES1 = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ h1]
+      by_cases h2 : State.get X RES2 = [1]
+      · rw [Cmd.cost_ifBit_true _ _ _ _ h2, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+        simp only [Op.cost]; omega
+      · rw [Cmd.cost_ifBit_false _ _ _ _ h2, cSkip_cost]
+    · rw [Cmd.cost_ifBit_false _ _ _ _ h1, cSkip_cost]; omega
+  rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, ← hs1, ← hs2, he3eval]
+  omega
+
+/-- **`memberEdge` cost bound** (single loop, cubic in the length ceiling `P`). -/
+private theorem memberEdge_cost (st : State) (va vb : Nat) (edges : List fedge) (P : Nat)
+    (hVALA : st.get VALA = List.replicate va 1)
+    (hVALB : st.get VALB = List.replicate vb 1)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hEP : (encEdges edges).length ≤ P) (hmP : edges.length ≤ P)
+    (hvaP : va ≤ P) (hvbP : vb ≤ P) :
+    memberEdge.cost st ≤ 4 * (P * P * P) + 20 * (P * P) + 30 * P + 8 := by
+  set st' := (st.set FOUND [0]).set ESCAN2 (encEdges edges) with hst'
+  have e1 : (Cmd.op (.clear FOUND)).eval st = st.set FOUND [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e2 : (Cmd.op (.appendZero FOUND)).eval (st.set FOUND []) = st.set FOUND [0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_eq, List.nil_append, State.set_set]
+  have e3 : (Cmd.op (.copy ESCAN2 EDGE_STREAM)).eval (st.set FOUND [0]) = st' := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ FOUND), hES]
+  have hcost_eq : memberEdge.cost st
+      = (encEdges edges).length + 6
+          + (Cmd.forBnd IDX3 EDGE_TALLY
+              (readNum VALC ESCAN2 IDX4 ;; readNum VALD ESCAN2 IDX4 ;;
+               Cmd.op (.eqBit RES1 VALC VALA) ;; Cmd.op (.eqBit RES2 VALD VALB) ;;
+               Cmd.ifBit RES1
+                 (Cmd.ifBit RES2 (Cmd.op (.clear FOUND) ;; Cmd.op (.appendOne FOUND)) cSkip)
+                 cSkip)).cost st' := by
+    show (Cmd.cost (Cmd.op (.clear FOUND) ;; Cmd.op (.appendZero FOUND) ;;
+      Cmd.op (.copy ESCAN2 EDGE_STREAM) ;; _) st) = _
+    rw [Cmd.cost_seq, e1, Cmd.cost_seq, e2, Cmd.cost_seq, e3, Cmd.cost_op,
+      Cmd.cost_op, Cmd.cost_op]
+    simp only [Op.cost]
+    rw [State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ FOUND), hES]
+    omega
+  have hVALAe : st'.get VALA = List.replicate va 1 := by
+    rw [hst', State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ ESCAN2),
+      State.get_set_ne _ _ _ _ (by decide : (VALA : Var) ≠ FOUND), hVALA]
+  have hVALBe : st'.get VALB = List.replicate vb 1 := by
+    rw [hst', State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ ESCAN2),
+      State.get_set_ne _ _ _ _ (by decide : (VALB : Var) ≠ FOUND), hVALB]
+  have hVALA' : (st'.get VALA).length ≤ P := by
+    rw [hVALAe, List.length_replicate]; exact hvaP
+  have hVALB' : (st'.get VALB).length ≤ P := by
+    rw [hVALBe, List.length_replicate]; exact hvbP
+  have hES0' : st'.get EDGE_STREAM = encEdges edges := by
+    rw [hst', State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ ESCAN2),
+      State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ FOUND), hES]
+  have hET0' : st'.get EDGE_TALLY = List.replicate edges.length 1 := by
+    rw [hst', State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ ESCAN2),
+      State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ FOUND), hET]
+  have hESCAN0' : st'.get ESCAN2 = encEdges edges := by
+    rw [hst', State.get_set_eq]
+  have hFOUND0' : st'.get FOUND = [0] := by
+    rw [hst', State.get_set_ne _ _ _ _ (by decide : (FOUND : Var) ≠ ESCAN2),
+      State.get_set_eq]
+  have hbase : MEInv va vb edges st' 0 st' := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hESCAN0', List.drop_zero]
+    · rw [hFOUND0', List.take_zero]; simp [memB]
+  have hblen : (st'.get EDGE_TALLY).length = edges.length := by
+    rw [hET0', List.length_replicate]
+  have hloop : (Cmd.forBnd IDX3 EDGE_TALLY
+      (readNum VALC ESCAN2 IDX4 ;; readNum VALD ESCAN2 IDX4 ;;
+       Cmd.op (.eqBit RES1 VALC VALA) ;; Cmd.op (.eqBit RES2 VALD VALB) ;;
+       Cmd.ifBit RES1
+         (Cmd.ifBit RES2 (Cmd.op (.clear FOUND) ;; Cmd.op (.appendOne FOUND)) cSkip)
+         cSkip)).cost st'
+      ≤ 1 + edges.length * (4 * (P * P) + 18 * P + 26) + edges.length * edges.length := by
+    have h := Cmd.cost_forBnd_le IDX3 EDGE_TALLY
+      (readNum VALC ESCAN2 IDX4 ;; readNum VALD ESCAN2 IDX4 ;;
+       Cmd.op (.eqBit RES1 VALC VALA) ;; Cmd.op (.eqBit RES2 VALD VALB) ;;
+       Cmd.ifBit RES1
+         (Cmd.ifBit RES2 (Cmd.op (.clear FOUND) ;; Cmd.op (.appendOne FOUND)) cSkip)
+         cSkip) st' (4 * (P * P) + 18 * P + 26) (MEInv va vb edges st') hbase
+      (fun i s hi h => memberEdge_step va vb edges st'
+        hVALAe hVALBe i s (by rwa [hblen] at hi) h)
+      (fun i s hi h => memberEdge_body_cost va vb edges P st' hVALA' hVALB' hEP i s
+        (by rwa [hblen] at hi) h)
+    rw [hblen] at h; exact h
+  rw [hcost_eq]
+  have h1 : edges.length * (4 * (P * P) + 18 * P + 26) ≤ P * (4 * (P * P) + 18 * P + 26) :=
+    Nat.mul_le_mul_right _ hmP
+  have h2 : edges.length * edges.length ≤ P * P := Nat.mul_le_mul hmP hmP
+  have h4 : P * (4 * (P * P) + 18 * P + 26) = 4 * (P * P * P) + 18 * (P * P) + 26 * P := by ring
+  omega
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
