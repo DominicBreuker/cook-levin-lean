@@ -2482,6 +2482,138 @@ theorem cliqueRelCmd_decides :
     cases (edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l
       && cliqueB G.2 l) <;> simp
 
+/-! ### Cost lemmas (top-down Task 1, step 5)
+
+Mirrors `EvalCnfCmd`'s `_cost` quartet. **Key simplification (this session): the
+cost proofs use *length-only* loop invariants** (`M i s := (s.get reg).length ≤ …`)
+rather than the behavioural invariants (`RNInv`/`COInv`/…) the run-lemmas use.
+Body cost depends only on the register *lengths* it touches, and those lengths are
+non-increasing through every loop here (streams are consumed by `tail`, scratch
+copies only shrink), so a length bound is preserved by `hM` regardless of the
+control-flow branch — no need to track the exact stream contents or the accumulated
+predicate. Each loop is closed by `Cmd.cost_forBnd_le` with `B` = a uniform
+per-iteration body-cost bound. -/
+
+/-- `readNumBody` never grows `stream` and costs at most `S + 7` when
+`|stream| ≤ S`. The uniform per-iteration ingredient for `readNum_cost`. -/
+private theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
+    (hsd : stream ≠ dst) (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK)
+    (hsSkip : stream ≠ SKIPR) (hw : (State.get w stream).length ≤ S) :
+    (State.get ((readNumBody dst stream).eval w) stream).length ≤ S
+    ∧ (readNumBody dst stream).cost w ≤ S + 7 := by
+  -- the inner `ifBit HEAD (appendOne dst) (clear INBLK)` never touches `stream`,
+  -- and costs at most `2`
+  have hif_frame : ∀ t : State,
+      State.get ((Cmd.ifBit HEAD (Cmd.op (.appendOne dst))
+          (Cmd.op (.clear INBLK))).eval t) stream = State.get t stream := by
+    intro t
+    by_cases hh : State.get t HEAD = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hh, Cmd.eval_op]; simp only [Op.eval]
+      rw [State.get_set_ne _ _ _ _ hsd]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hh, Cmd.eval_op]; simp only [Op.eval]
+      rw [State.get_set_ne _ _ _ _ hsInbk]
+  have hif_cost : ∀ t : State,
+      (Cmd.ifBit HEAD (Cmd.op (.appendOne dst)) (Cmd.op (.clear INBLK))).cost t ≤ 2 := by
+    intro t
+    by_cases hh : State.get t HEAD = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hh]; simp [Cmd.cost_op, Op.cost]
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hh]; simp [Cmd.cost_op, Op.cost]
+  by_cases hIB : State.get w INBLK = [1]
+  · -- active branch: head ;; tail stream ;; ifBit
+    have hhead : State.get ((Cmd.op (.head HEAD stream)).eval w) stream
+        = State.get w stream := by
+      rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_ne _ _ _ _ hsHead]
+    have htail : State.get ((Cmd.op (.tail stream stream)).eval
+        ((Cmd.op (.head HEAD stream)).eval w)) stream
+        = (State.get w stream).tail := by
+      rw [Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]; rw [hhead]
+    constructor
+    · -- length
+      have heval : (readNumBody dst stream).eval w
+          = (Cmd.ifBit HEAD (Cmd.op (.appendOne dst)) (Cmd.op (.clear INBLK))).eval
+              ((Cmd.op (.tail stream stream)).eval ((Cmd.op (.head HEAD stream)).eval w)) := by
+        show (Cmd.ifBit INBLK _ _).eval w = _
+        rw [Cmd.eval_ifBit_true _ _ _ _ hIB, Cmd.eval_seq, Cmd.eval_seq]
+      rw [heval, hif_frame, htail, List.length_tail]
+      omega
+    · -- cost
+      have hcost : (readNumBody dst stream).cost w
+          = 1 + (Cmd.op (.head HEAD stream) ;; Cmd.op (.tail stream stream) ;;
+              Cmd.ifBit HEAD (Cmd.op (.appendOne dst)) (Cmd.op (.clear INBLK))).cost w := by
+        show (Cmd.ifBit INBLK _ _).cost w = _
+        rw [Cmd.cost_ifBit_true _ _ _ _ hIB]
+      rw [hcost, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_seq, Cmd.cost_op]
+      have htlcost : Op.cost (.tail stream stream) ((Cmd.op (.head HEAD stream)).eval w)
+          = (State.get w stream).length + 1 := by
+        show (State.get ((Cmd.op (.head HEAD stream)).eval w) stream).length + 1 = _
+        rw [hhead]
+      rw [htlcost]
+      have hile := hif_cost ((Cmd.op (.tail stream stream)).eval
+        ((Cmd.op (.head HEAD stream)).eval w))
+      simp only [Op.cost]
+      omega
+  · -- idle branch: cSkip
+    have heval : (readNumBody dst stream).eval w = w.set SKIPR [1] := by
+      show (Cmd.ifBit INBLK _ _).eval w = _
+      rw [Cmd.eval_ifBit_false _ _ _ _ hIB, cSkip_eval]
+    have hcost : (readNumBody dst stream).cost w = 1 + 3 := by
+      show (Cmd.ifBit INBLK _ _).cost w = _
+      rw [Cmd.cost_ifBit_false _ _ _ _ hIB, cSkip_cost]
+    constructor
+    · rw [heval, State.get_set_ne _ _ _ _ hsSkip]; exact hw
+    · omega
+
+/-- **`readNum` cost bound.** Reading a unary block off `stream` costs
+`≤ 2·S² + 7·S + 7` where `S = |stream|` at entry. -/
+private theorem readNum_cost (st : State) (v : Nat) (rest : List Nat)
+    (dst stream idx : Var)
+    (hstream : st.get stream = List.replicate v 1 ++ 0 :: rest)
+    (hsd : stream ≠ dst) (hsi : stream ≠ idx)
+    (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR) :
+    (readNum dst stream idx).cost st
+      ≤ 2 * (v + 1 + rest.length) * (v + 1 + rest.length)
+          + 7 * (v + 1 + rest.length) + 7 := by
+  set S := v + 1 + rest.length with hS
+  have hstreamlen : (State.get st stream).length = S := by
+    rw [hstream]; simp only [List.length_append, List.length_replicate,
+      List.length_cons]; omega
+  -- init prefix evaluation
+  have e1 : (Cmd.op (.clear dst)).eval st = st.set dst [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e2 : (Cmd.op (.clear INBLK)).eval (st.set dst [])
+      = (st.set dst []).set INBLK [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e3 : (Cmd.op (.appendOne INBLK)).eval ((st.set dst []).set INBLK [])
+      = ((st.set dst []).set INBLK []).set INBLK [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_eq, List.nil_append]
+  set s0 := ((st.set dst []).set INBLK []).set INBLK [1] with hs0
+  have hcost_eq : (readNum dst stream idx).cost st
+      = 6 + (Cmd.forBnd idx stream (readNumBody dst stream)).cost s0 := by
+    show (Cmd.cost (_ ;; _ ;; _ ;; _) st) = _
+    rw [Cmd.cost_seq, e1, Cmd.cost_seq, e2, Cmd.cost_seq, e3, Cmd.cost_op,
+      Cmd.cost_op, Cmd.cost_op]
+    simp only [Op.cost, readNumBody]; omega
+  have hs0stream : State.get s0 stream = State.get st stream := by
+    rw [State.get_set_ne _ _ _ _ hsInbk, State.get_set_ne _ _ _ _ hsInbk,
+      State.get_set_ne _ _ _ _ hsd]
+  have hbound : (State.get s0 stream).length = S := by rw [hs0stream, hstreamlen]
+  have hloop : (Cmd.forBnd idx stream (readNumBody dst stream)).cost s0
+      ≤ 1 + S * (S + 7) + S * S := by
+    have h := Cmd.cost_forBnd_le idx stream (readNumBody dst stream) s0 (S + 7)
+      (fun _ s => (State.get s stream).length ≤ S)
+      hbound.le
+      (fun i s _ hM => (readNumBody_effect dst stream S (s.set idx (List.replicate i 1))
+          hsd hsHead hsInbk hsSkip
+          (by rw [State.get_set_ne _ _ _ _ hsi]; exact hM)).1)
+      (fun i s _ hM => (readNumBody_effect dst stream S (s.set idx (List.replicate i 1))
+          hsd hsHead hsInbk hsSkip
+          (by rw [State.get_set_ne _ _ _ _ hsi]; exact hM)).2)
+    rw [hbound] at h; exact h
+  rw [hcost_eq]
+  have hr1 : S * (S + 7) = S * S + 7 * S := by ring
+  have hr2 : 2 * S * S = S * S + S * S := by ring
+  omega
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
