@@ -2520,6 +2520,33 @@ private theorem encEdges_drop_length_le (edges : List fedge) (i : Nat) :
       refine (ih edges).trans ?_
       rw [encEdges_cons]; simp only [List.length_append, List.length_cons]; omega
 
+/-- A vertex value is bounded by any ceiling on its stream's encoding (proved in
+a clean context to avoid `omega` atom-pollution from the loop-body state). -/
+private theorem vert_getElem_le (l : List fvertex) (i : Nat) (hi : i < l.length)
+    (P : Nat) (hP : (encVerts (l.drop i)).length ≤ P) : l[i]'hi ≤ P := by
+  refine Nat.le_trans ?_ hP
+  rw [List.drop_eq_getElem_cons hi, encVerts_cons, List.length_append,
+    List.length_replicate]
+  exact Nat.le_add_right _ _
+
+/-- Both endpoints of an edge are bounded by any ceiling on the edge stream's
+encoding (clean-context helper, as `vert_getElem_le`). -/
+private theorem edge_getElem_le (edges : List fedge) (i : Nat) (hi : i < edges.length)
+    (P : Nat) (hP : (encEdges (edges.drop i)).length ≤ P) :
+    (edges[i]'hi).1 ≤ P ∧ (edges[i]'hi).2 ≤ P := by
+  constructor
+  · refine Nat.le_trans ?_ hP
+    rw [List.drop_eq_getElem_cons hi, encEdges_cons, List.length_append,
+      List.length_replicate]
+    exact Nat.le_add_right _ _
+  · refine Nat.le_trans ?_ hP
+    rw [List.drop_eq_getElem_cons hi, encEdges_cons, List.length_append]
+    refine Nat.le_trans ?_ (Nat.le_add_left _ _)
+    rw [List.length_cons]
+    refine Nat.le_trans ?_ (Nat.le_succ _)
+    rw [List.length_append, List.length_replicate]
+    exact Nat.le_add_right _ _
+
 /-- `readNumBody` never grows `stream` and costs at most `S + 7` when
 `|stream| ≤ S`. The uniform per-iteration ingredient for `readNum_cost`. -/
 private theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
@@ -2636,6 +2663,39 @@ private theorem readNum_cost (st : State) (dst stream idx : Var)
   have hr1 : S * (S + 7) = S * S + 7 * S := by ring
   have hr2 : 2 * S * S = S * S + S * S := by ring
   omega
+
+/-- **`readNum` never grows its stream** (it drains one block, leaving a shorter
+suffix). Used to bound the second `readNum`'s stream in double-read loops. -/
+private theorem readNum_stream_le (st : State) (dst stream idx : Var)
+    (hsd : stream ≠ dst) (hsi : stream ≠ idx) (hsHead : stream ≠ HEAD)
+    (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR) :
+    (State.get ((readNum dst stream idx).eval st) stream).length
+      ≤ (State.get st stream).length := by
+  set S := (State.get st stream).length with hS
+  have e1 : (Cmd.op (.clear dst)).eval st = st.set dst [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e2 : (Cmd.op (.clear INBLK)).eval (st.set dst [])
+      = (st.set dst []).set INBLK [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e3 : (Cmd.op (.appendOne INBLK)).eval ((st.set dst []).set INBLK [])
+      = ((st.set dst []).set INBLK []).set INBLK [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [State.get_set_eq, List.nil_append]
+  set s0 := ((st.set dst []).set INBLK []).set INBLK [1] with hs0
+  have eP : (readNum dst stream idx).eval st
+      = (Cmd.forBnd idx stream (readNumBody dst stream)).eval s0 := by
+    show (Cmd.eval (_ ;; _ ;; _ ;; _) st) = _
+    rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3]; rfl
+  have hs0stream : State.get s0 stream = State.get st stream := by
+    rw [State.get_set_ne _ _ _ _ hsInbk, State.get_set_ne _ _ _ _ hsInbk,
+      State.get_set_ne _ _ _ _ hsd]
+  rw [eP, Cmd.eval_forBnd]
+  exact Cmd.foldlState_range_induct (readNumBody dst stream) idx
+    (State.get s0 stream).length s0
+    (fun _ s => (State.get s stream).length ≤ S)
+    (le_of_eq (congrArg List.length hs0stream))
+    (fun i s _ hM => (readNumBody_effect dst stream S (s.set idx (List.replicate i 1))
+        hsd hsHead hsInbk hsSkip
+        (by rw [State.get_set_ne _ _ _ _ hsi]; exact hM)).1)
 
 /-- **`ltBit` cost bound.** The unary-`<` gadget costs `≤ a² + a·b + a + b + 5`
 where `a = |A|`, `b = |B|` at entry (`copy` + a lockstep drain of `|A|` iterations,
@@ -2815,6 +2875,149 @@ private theorem checkOfType_cost (st : State) (l : List fvertex) (numV P : Nat) 
   have h2 : l.length * l.length ≤ P * P := Nat.mul_le_mul hmP hmP
   have h3 : (encVerts l).length ≤ P := hVP
   have h4 : P * (4 * (P * P) + 9 * P + 18) = 4 * (P * P * P) + 9 * (P * P) + 18 * P := by ring
+  omega
+
+/-- Uniform per-iteration body-cost bound for the `checkWf` loop. -/
+private theorem checkWf_body_cost (edges : List fedge) (numV P : Nat) (b : Bool)
+    (st : State) (hNUMV : st.get NUMV = List.replicate numV 1)
+    (hEP : (encEdges edges).length ≤ P) (hnP : numV ≤ P)
+    (i : Nat) (s : State) (hi : i < edges.length) (h : CWfInv edges numV b st i s) :
+    (readNum VALA ESCAN IDX2 ;; readNum VALB ESCAN IDX2 ;;
+      ltBit RES1 VALA NUMV IDX3 ;; ltBit RES2 VALB NUMV IDX3 ;;
+      Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject).cost
+        (s.set IDX1 (List.replicate i 1))
+      ≤ 8 * (P * P) + 18 * P + 33 := by
+  obtain ⟨hESCAN, _, hframe⟩ := h
+  set w := s.set IDX1 (List.replicate i 1) with hw
+  have hwNUMV : State.get w NUMV = State.get s NUMV := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ IDX1)]
+  have hESCAN_in : State.get w ESCAN
+      = List.replicate (edges[i]'hi).1 1 ++ 0 ::
+          (List.replicate (edges[i]'hi).2 1 ++ 0 :: encEdges (edges.drop (i + 1))) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (ESCAN : Var) ≠ IDX1), hESCAN,
+      List.drop_eq_getElem_cons hi, encEdges_cons]
+  have hESlen : (State.get w ESCAN).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (ESCAN : Var) ≠ IDX1), hESCAN]
+    exact (encEdges_drop_length_le edges i).trans hEP
+  obtain ⟨he1, he2⟩ := edge_getElem_le edges i hi P
+    ((encEdges_drop_length_le edges i).trans hEP)
+  -- run the two readNums to expose the mid-state registers
+  obtain ⟨hVALA1, hESCAN1, hRN1frame⟩ := readNum_run w (edges[i]'hi).1
+    (List.replicate (edges[i]'hi).2 1 ++ 0 :: encEdges (edges.drop (i + 1)))
+    VALA ESCAN IDX2 hESCAN_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s1 := (readNum VALA ESCAN IDX2).eval w with hs1
+  obtain ⟨hVALB2, hESCAN2, hRN2frame⟩ := readNum_run s1 (edges[i]'hi).2
+    (encEdges (edges.drop (i + 1))) VALB ESCAN IDX2 hESCAN1
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  set s2 := (readNum VALB ESCAN IDX2).eval s1 with hs2
+  have hVALA2 : s2.get VALA = List.replicate (edges[i]'hi).1 1 := by
+    rw [hRN2frame VALA (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hVALA1]
+  have hNUMV2 : s2.get NUMV = List.replicate numV 1 := by
+    rw [hRN2frame NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide),
+      hRN1frame NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hwNUMV,
+      hframe NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide), hNUMV]
+  obtain ⟨hRES1, hLT1frame⟩ := ltBit_run s2 (edges[i]'hi).1 numV RES1 VALA NUMV IDX3
+    hVALA2 hNUMV2 (by decide) (by decide)
+  set s3 := (ltBit RES1 VALA NUMV IDX3).eval s2 with hs3
+  have hVALB3 : s3.get VALB = List.replicate (edges[i]'hi).2 1 := by
+    rw [hLT1frame VALB (by decide) (by decide) (by decide), hVALB2]
+  have hNUMV3 : s3.get NUMV = List.replicate numV 1 := by
+    rw [hLT1frame NUMV (by decide) (by decide) (by decide), hNUMV2]
+  -- length ceiling on ESCAN at s1 (readNum does not grow it)
+  have hES1len : (State.get s1 ESCAN).length ≤ P :=
+    (readNum_stream_le w VALA ESCAN IDX2 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans hESlen
+  -- the five cost pieces
+  have b1 : (readNum VALA ESCAN IDX2).cost w ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost w VALA ESCAN IDX2 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hESlen, Nat.mul_le_mul hESlen hESlen]
+  have b2 : (readNum VALB ESCAN IDX2).cost s1 ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine (readNum_cost s1 VALB ESCAN IDX2 (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ?_
+    nlinarith [hES1len, Nat.mul_le_mul hES1len hES1len]
+  have b3 : (ltBit RES1 VALA NUMV IDX3).cost s2 ≤ 2 * (P * P) + 2 * P + 5 := by
+    refine (ltBit_cost s2 RES1 VALA NUMV IDX3 (by decide) (by decide)).trans ?_
+    rw [hVALA2, hNUMV2, List.length_replicate, List.length_replicate]
+    nlinarith [he1, hnP, Nat.mul_le_mul he1 he1, Nat.mul_le_mul he1 hnP]
+  have b4 : (ltBit RES2 VALB NUMV IDX3).cost s3 ≤ 2 * (P * P) + 2 * P + 5 := by
+    refine (ltBit_cost s3 RES2 VALB NUMV IDX3 (by decide) (by decide)).trans ?_
+    rw [hVALB3, hNUMV3, List.length_replicate, List.length_replicate]
+    nlinarith [he2, hnP, Nat.mul_le_mul he2 he2, Nat.mul_le_mul he2 hnP]
+  have b5 : (Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject).cost
+      ((ltBit RES2 VALB NUMV IDX3).eval s3) ≤ 5 := by
+    set X := (ltBit RES2 VALB NUMV IDX3).eval s3 with hX
+    by_cases h1 : State.get X RES1 = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ h1]
+      by_cases h2 : State.get X RES2 = [1]
+      · rw [Cmd.cost_ifBit_true _ _ _ _ h2, cSkip_cost]
+      · rw [Cmd.cost_ifBit_false _ _ _ _ h2, cReject_cost]
+    · rw [Cmd.cost_ifBit_false _ _ _ _ h1, cReject_cost]; omega
+  rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, ← hs1, ← hs2, ← hs3]
+  omega
+
+
+/-- **`checkWf` cost bound** (single loop, cubic in the length ceiling `P`). -/
+private theorem checkWf_cost (st : State) (edges : List fedge) (numV P : Nat) (b : Bool)
+    (hES : st.get EDGE_STREAM = encEdges edges)
+    (hET : st.get EDGE_TALLY = List.replicate edges.length 1)
+    (hNUMV : st.get NUMV = List.replicate numV 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0])
+    (hEP : (encEdges edges).length ≤ P) (hmP : edges.length ≤ P) (hnP : numV ≤ P) :
+    checkWf.cost st ≤ 8 * (P * P * P) + 20 * (P * P) + 35 * P + 3 := by
+  have eInit : (Cmd.op (.copy ESCAN EDGE_STREAM)).eval st = st.set ESCAN (encEdges edges) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hES]
+  have hcost_eq : checkWf.cost st
+      = 1 + ((encEdges edges).length + 1)
+          + (Cmd.forBnd IDX1 EDGE_TALLY
+              (readNum VALA ESCAN IDX2 ;; readNum VALB ESCAN IDX2 ;;
+               ltBit RES1 VALA NUMV IDX3 ;; ltBit RES2 VALB NUMV IDX3 ;;
+               Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject)).cost
+              (st.set ESCAN (encEdges edges)) := by
+    show (Cmd.cost (Cmd.op (.copy ESCAN EDGE_STREAM) ;; _) st) = _
+    rw [Cmd.cost_seq, Cmd.cost_op, eInit]; simp only [Op.cost]; rw [hES]
+  set s0 := st.set ESCAN (encEdges edges) with hs0
+  have hNUMV0 : s0.get NUMV = List.replicate numV 1 := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ ESCAN), hNUMV]
+  have hES0 : s0.get EDGE_STREAM = encEdges edges := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ ESCAN), hES]
+  have hET0 : s0.get EDGE_TALLY = List.replicate edges.length 1 := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ ESCAN), hET]
+  have hO0 : s0.get OUTPUT = [if b then 1 else 0] := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ ESCAN), hO]
+  have hbase : CWfInv edges numV b s0 0 s0 := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hs0, State.get_set_eq, List.drop_zero]
+    · rw [hO0, List.take_zero]; simp only [edgesWf, List.all_nil, Bool.and_true]
+  have hblen : (s0.get EDGE_TALLY).length = edges.length := by
+    rw [hET0, List.length_replicate]
+  have hloop : (Cmd.forBnd IDX1 EDGE_TALLY
+      (readNum VALA ESCAN IDX2 ;; readNum VALB ESCAN IDX2 ;;
+       ltBit RES1 VALA NUMV IDX3 ;; ltBit RES2 VALB NUMV IDX3 ;;
+       Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject)).cost s0
+      ≤ 1 + edges.length * (8 * (P * P) + 18 * P + 33) + edges.length * edges.length := by
+    have h := Cmd.cost_forBnd_le IDX1 EDGE_TALLY
+      (readNum VALA ESCAN IDX2 ;; readNum VALB ESCAN IDX2 ;;
+       ltBit RES1 VALA NUMV IDX3 ;; ltBit RES2 VALB NUMV IDX3 ;;
+       Cmd.ifBit RES1 (Cmd.ifBit RES2 cSkip cReject) cReject) s0
+      (8 * (P * P) + 18 * P + 33) (CWfInv edges numV b s0) hbase
+      (fun i s hi h => checkWf_step edges numV b s0 hNUMV0 i s (by rwa [hblen] at hi) h)
+      (fun i s hi h => checkWf_body_cost edges numV P b s0 hNUMV0 hEP hnP i s
+        (by rwa [hblen] at hi) h)
+    rw [hblen] at h; exact h
+  rw [hcost_eq]
+  have h1 : edges.length * (8 * (P * P) + 18 * P + 33) ≤ P * (8 * (P * P) + 18 * P + 33) :=
+    Nat.mul_le_mul_right _ hmP
+  have h2 : edges.length * edges.length ≤ P * P := Nat.mul_le_mul hmP hmP
+  have h4 : P * (8 * (P * P) + 18 * P + 33) = 8 * (P * P * P) + 18 * (P * P) + 33 * P := by ring
   omega
 
 /-- The Lang-level decider witness for the FlatClique verifier.
