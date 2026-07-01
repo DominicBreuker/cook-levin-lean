@@ -2614,6 +2614,66 @@ private theorem readNum_cost (st : State) (v : Nat) (rest : List Nat)
   have hr2 : 2 * S * S = S * S + S * S := by ring
   omega
 
+/-- **`ltBit` cost bound.** The unary-`<` gadget costs `≤ a² + a·b + a + b + 5`
+where `a = |A|`, `b = |B|` at entry (`copy` + a lockstep drain of `|A|` iterations,
+each a `tail` on a register of length `≤ b`). -/
+private theorem ltBit_cost (st : State) (dst A B idx : Var)
+    (hALT : A ≠ LT_B) (hidxLT : idx ≠ LT_B) :
+    (ltBit dst A B idx).cost st
+      ≤ (State.get st A).length * (State.get st A).length
+          + (State.get st A).length * (State.get st B).length
+          + (State.get st A).length + (State.get st B).length + 5 := by
+  set a := (State.get st A).length with ha
+  set b := (State.get st B).length with hb
+  have ecopy : (Cmd.op (.copy LT_B B)).eval st = st.set LT_B (State.get st B) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set s1 := st.set LT_B (State.get st B) with hs1
+  have hLT1 : (State.get s1 LT_B).length = b := by rw [State.get_set_eq]
+  have hA1 : (State.get s1 A).length = a := by rw [State.get_set_ne _ _ _ _ hALT]
+  have hcost_eq : (ltBit dst A B idx).cost st
+      = 4 + b + (Cmd.forBnd idx A (Cmd.op (.tail LT_B LT_B))).cost s1 := by
+    show (Cmd.cost (_ ;; _ ;; _) st) = _
+    rw [Cmd.cost_seq, ecopy, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+    simp only [Op.cost]; omega
+  have hloop : (Cmd.forBnd idx A (Cmd.op (.tail LT_B LT_B))).cost s1
+      ≤ 1 + a * (b + 1) + a * a := by
+    have h := Cmd.cost_forBnd_le idx A (Cmd.op (.tail LT_B LT_B)) s1 (b + 1)
+      (fun _ s => (State.get s LT_B).length ≤ b)
+      hLT1.le
+      (fun i s _ hM => by
+        show (State.get ((Cmd.op (.tail LT_B LT_B)).eval
+            (s.set idx (List.replicate i 1))) LT_B).length ≤ b
+        rw [Cmd.eval_op]; simp only [Op.eval, State.get_set_eq, List.length_tail]
+        rw [State.get_set_ne _ _ _ _ (Ne.symm hidxLT)]
+        have : (State.get s LT_B).length ≤ b := hM
+        omega)
+      (fun i s _ hM => by
+        show (State.get (s.set idx (List.replicate i 1)) LT_B).length + 1 ≤ b + 1
+        rw [State.get_set_ne _ _ _ _ (Ne.symm hidxLT)]
+        have : (State.get s LT_B).length ≤ b := hM
+        omega)
+    rw [hA1] at h; exact h
+  rw [hcost_eq]
+  have hr : a * (b + 1) = a * b + a := by ring
+  omega
+
+/-- **`checkLen` cost bound.** Constant-cost above the two tally lengths. -/
+private theorem checkLen_cost (st : State) :
+    checkLen.cost st
+      ≤ (State.get st VERT_TALLY).length + (State.get st K).length + 6 := by
+  have he : checkLen.cost st
+      = 1 + ((State.get st VERT_TALLY).length + (State.get st K).length + 1)
+          + (Cmd.ifBit RES1 cSkip cReject).cost
+              ((Cmd.op (.eqBit RES1 VERT_TALLY K)).eval st) := by
+    show (Cmd.cost (_ ;; _) st) = _
+    rw [Cmd.cost_seq, Cmd.cost_op]; simp only [Op.cost]
+  have hif : (Cmd.ifBit RES1 cSkip cReject).cost
+      ((Cmd.op (.eqBit RES1 VERT_TALLY K)).eval st) ≤ 4 := by
+    by_cases hbit : State.get ((Cmd.op (.eqBit RES1 VERT_TALLY K)).eval st) RES1 = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hbit, cSkip_cost]
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hbit, cReject_cost]
+  omega
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
