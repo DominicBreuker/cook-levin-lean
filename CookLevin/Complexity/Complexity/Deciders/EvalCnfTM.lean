@@ -123,27 +123,32 @@ theorem inTimePolyTM_evalCnf :
     inTimePolyTM (fun Na : cnf × assgn => satisfiesCnf Na.2 Na.1) :=
   inTimePolyLang_to_inTimePoly inTimePolyLang_evalCnf
 
-/-- **Free-encoding layer-native NP witness for SAT** (S3-linchpin foundation).
-Bundles the live free-encoding `evalCnf` verifier (`evalCnfDecidesLang`, a
-`DecidesLang`) with the certificate relation (a satisfying assignment). Unlike the
-opaque framework `inNP SAT`, this keeps the verifier program a recoverable `Cmd`,
-which is what a future layer-routed `red_inNP` needs to precompose. `sat_NP` is now
-re-derived from this via `inNPLangFree_to_inNP` (identical decider path — stays
+/-- **Free-encoding layer-native NP witness for SAT** (S3-linchpin foundation),
+CONCRETE form. Bundles the live free-encoding `evalCnf` verifier
+(`evalCnfDecidesLang`, a `DecidesLang`) with the certificate relation (a satisfying
+assignment). Unlike the opaque framework `inNP SAT`, this keeps the verifier program a
+recoverable `Cmd`. Exposed as the *concrete* `InNPWitnessLangFree` (not the existential
+`inNPLangFree`) so it can be fed directly to `red_inNP_of_langFree` (the free
+layer-routed `red_inNP`) once a reduction into SAT and its re-encoder are supplied. -/
+noncomputable def SAT_inNPWitnessLangFree : @InNPWitnessLangFree cnf assgn _ _ SAT where
+  rel := fun N a => satisfiesCnf a N
+  dBound := timeBound
+  dBound_poly := timeBound_inOPoly
+  dBound_mono := timeBound_monotonic
+  verifier := evalCnfDecidesLang
+  rel_correct := ⟨⟨fun n => n ^ 2 + 1,
+    fun N a h => ⟨a, h⟩,
+    fun N ⟨a, ha⟩ => ⟨SAT_inNP.compressAssignment a N,
+      (SAT_inNP.compressAssignment_cnf_equiv a N).mp ha,
+      SAT_inNP.compressAssignment_size_bound a N⟩,
+    ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
+    fun a b h => by nlinarith [Nat.pow_le_pow_left h 2]⟩⟩
+
+/-- `inNPLangFree SAT` — the existential wrapper of `SAT_inNPWitnessLangFree`. `sat_NP`
+is re-derived from this via `inNPLangFree_to_inNP` (identical decider path — stays
 axiom-clean). -/
 theorem SAT_inNPLangFree : inNPLangFree SAT :=
-  ⟨assgn, inferInstance, ⟨{
-    rel := fun N a => satisfiesCnf a N
-    dBound := timeBound
-    dBound_poly := timeBound_inOPoly
-    dBound_mono := timeBound_monotonic
-    verifier := evalCnfDecidesLang
-    rel_correct := ⟨⟨fun n => n ^ 2 + 1,
-      fun N a h => ⟨a, h⟩,
-      fun N ⟨a, ha⟩ => ⟨SAT_inNP.compressAssignment a N,
-        (SAT_inNP.compressAssignment_cnf_equiv a N).mp ha,
-        SAT_inNP.compressAssignment_size_bound a N⟩,
-      ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
-      fun a b h => by nlinarith [Nat.pow_le_pow_left h 2]⟩⟩ }⟩⟩
+  ⟨assgn, inferInstance, ⟨SAT_inNPWitnessLangFree⟩⟩
 
 end EvalCnfTM
 

@@ -3992,26 +3992,32 @@ theorem inTimePolyTM_cliqueRel :
   inTimePolyLang_to_inTimePoly inTimePolyLang_cliqueRel
 
 /-- **Free-encoding layer-native NP witness for FlatClique** (S3-linchpin
-foundation). Bundles the live free-encoding `cliqueRel` verifier
-(`cliqueRelDecidesLang`, a `DecidesLang`) with the certificate relation (a
-`k`-clique vertex list). Keeps the verifier program a recoverable `Cmd`, unlike the
-opaque framework `inNP FlatClique`. `FlatClique_in_NP` is re-derived from this via
-`inNPLangFree_to_inNP` (identical decider path — stays axiom-clean). -/
+foundation), CONCRETE form. Bundles the live free-encoding `cliqueRel` verifier
+(`cliqueRelDecidesLang`, a `DecidesLang`) with the certificate relation (a `k`-clique
+vertex list). Keeps the verifier program a recoverable `Cmd`, unlike the opaque
+framework `inNP FlatClique`. Exposed as the *concrete* `InNPWitnessLangFree` so it can
+be fed to `red_inNP_of_langFree`. -/
+noncomputable def FlatClique_inNPWitnessLangFree :
+    @InNPWitnessLangFree (fgraph × Nat) (List fvertex) _ _ FlatClique where
+  rel := cliqueRel
+  dBound := timeBound
+  dBound_poly := timeBound_inOPoly
+  dBound_mono := timeBound_monotonic
+  verifier := cliqueRelDecidesLang
+  rel_correct := by
+    refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
+    · rintro ⟨G, k⟩ l ⟨hwf, hclq⟩
+      exact ⟨l, hwf, hclq⟩
+    · rintro ⟨G, k⟩ ⟨l, hwf, hclq⟩
+      exact ⟨l, ⟨hwf, hclq⟩, clique_size_bound _ l ⟨hwf, hclq⟩⟩
+    · exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
+    · intro a b h; nlinarith [Nat.pow_le_pow_left h 2]
+
+/-- `inNPLangFree FlatClique` — the existential wrapper. `FlatClique_in_NP` is
+re-derived from this via `inNPLangFree_to_inNP` (identical decider path — stays
+axiom-clean). -/
 theorem FlatClique_inNPLangFree : inNPLangFree FlatClique :=
-  ⟨List fvertex, inferInstance, ⟨{
-    rel := cliqueRel
-    dBound := timeBound
-    dBound_poly := timeBound_inOPoly
-    dBound_mono := timeBound_monotonic
-    verifier := cliqueRelDecidesLang
-    rel_correct := by
-      refine ⟨⟨fun n => n ^ 2 + 1, ?_, ?_, ?_, ?_⟩⟩
-      · rintro ⟨G, k⟩ l ⟨hwf, hclq⟩
-        exact ⟨l, hwf, hclq⟩
-      · rintro ⟨G, k⟩ ⟨l, hwf, hclq⟩
-        exact ⟨l, ⟨hwf, hclq⟩, clique_size_bound _ l ⟨hwf, hclq⟩⟩
-      · exact ⟨2, ⟨2, 1, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩
-      · intro a b h; nlinarith [Nat.pow_le_pow_left h 2] }⟩⟩
+  ⟨List fvertex, inferInstance, ⟨FlatClique_inNPWitnessLangFree⟩⟩
 
 end CliqueRelTM
 
