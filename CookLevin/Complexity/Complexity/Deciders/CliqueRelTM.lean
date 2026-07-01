@@ -11,15 +11,13 @@ relation
 `fun (Gkl : (fgraph × Nat) × List fvertex) => cliqueRel Gkl.1 Gkl.2`
 — i.e., the witness that `FlatClique ∈ NP`.
 
-**Status (2026-06-30b, top-down).** The input **encoding** (`cliqueRelEncode`) +
-all encoding/structural witness fields are PROVEN & axiom-clean. The verifier
-**program** `cliqueRelCmd` is concrete and trio-free. The **correctness layer** is
-being built bottom-up against the proven `EvalCnfCmd` template: the leaves
-`ltBit_run` + `readNum_run` and 3 of the 5 per-check run-lemmas
-(`checkLen_run`/`checkOfType_run`/`checkWf_run`) are PROVEN & axiom-clean. The two
-remaining `DecidesLang` fields `decides`/`cost_bound` stay `sorry` pending the
-nested-loop checks (`memberEdge`/`checkNodup`/`checkClique`) + the assembly. See
-HANDOFF.md top-down Task 1 for the concrete remaining steps.
+**Status (2026-07-01, top-down): ✅ COMPLETE & AXIOM-CLEAN.** This file is
+sorry-free; `cliqueRelDecidesLang` proves every `DecidesLang` field (encoding,
+structural, `decides`, and `cost_bound`), so `FlatClique_in_NP` is axiom-clean
+(`[propext, Classical.choice, Quot.sound]`). The correctness layer was built
+bottom-up against the proven `EvalCnfCmd` template (the `*_run` lemmas), and the
+cost layer with per-gadget `_cost` lemmas using **length-only loop invariants**
+(see HANDOFF.md — the cost methodology + gotchas). `timeBound` is quintic.
 
 Note: `inTimePolyTM_cliqueRel` keeps its full name + signature so
 `FlatClique_in_NP` (below) does not need to change.
@@ -3947,11 +3945,10 @@ theorem cliqueRelCmd_cost_bound (x : (fgraph × Nat) × List fvertex) :
 
 /-- The Lang-level decider witness for the FlatClique verifier.
 
-**Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
-(encoding side), `usesBelow`, `noConsLen`, `allOpsSupported` (structural), and
-**`decides`** (the 5-check assembly, `cliqueRelCmd_decides`). **`cost_bound`
-remains `sorry`** — the per-loop `cost_forBnd_le` cost bound (HANDOFF top-down
-Task 1, step 5). -/
+**All fields PROVEN & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`,
+`regBound` (encoding side), `usesBelow`, `noConsLen`, `allOpsSupported`
+(structural), **`decides`** (the 5-check assembly, `cliqueRelCmd_decides`), and
+**`cost_bound`** (`cliqueRelCmd_cost_bound`, the six-check cost sum). -/
 noncomputable def cliqueRelDecidesLang :
     DecidesLang
       (fun Gkl : (fgraph × Nat) × List fvertex => cliqueRel Gkl.1 Gkl.2)
