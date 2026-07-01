@@ -3775,6 +3775,176 @@ private theorem checkClique_cost (st : State) (edges : List fedge) (l : List fve
           + 11 * P := by ring
   omega
 
+/-! ### The cost bound assembly (top-down Task 1, step 6) -/
+
+/-- **`cliqueRelCmd`'s cost is within the polynomial budget.** Sums the six check
+costs (each bounded via its `_cost` lemma at the appropriate threaded state, with
+every input register preserved by the preceding checks) and bounds the quintic
+total by `timeBound = 200000·(n+1)^5`. Mirrors `cliqueRelCmd_decides`'s threading. -/
+theorem cliqueRelCmd_cost_bound (x : (fgraph × Nat) × List fvertex) :
+    cliqueRelCmd.cost (cliqueRelEncode x) ≤ timeBound (encodable.size x) := by
+  obtain ⟨⟨G, k⟩, l⟩ := x
+  -- length ceiling `P = 2 · size`
+  set n := encodable.size ((G, k), l) with hn
+  have hdecomp : n = G.1 + encodable.size G.2 + k + encodable.size l + 3 := by
+    show encodable.size ((G, k), l) = G.1 + encodable.size G.2 + k + encodable.size l + 3
+    show encodable.size ((G, k) : fgraph × Nat) + encodable.size l + 1
+        = G.1 + encodable.size G.2 + k + encodable.size l + 3
+    show ((encodable.size G.1 + encodable.size G.2 + 1) + k + 1) + encodable.size l + 1
+        = G.1 + encodable.size G.2 + k + encodable.size l + 3
+    show ((G.1 + encodable.size G.2 + 1) + k + 1) + encodable.size l + 1
+        = G.1 + encodable.size G.2 + k + encodable.size l + 3
+    omega
+  set P := 2 * n with hP
+  have hEP : (encEdges G.2).length ≤ P := by
+    have h := encEdges_length_le G.2; omega
+  have hmEP : G.2.length ≤ P := by have h := length_le_encsize G.2; omega
+  have hVPl : (encVerts l).length ≤ P := by have h := encVerts_length l; omega
+  have hmP : l.length ≤ P := by have h := length_le_encsize l; omega
+  have hG1P : G.1 ≤ P := by omega
+  -- encode facts + threading (mirrors `cliqueRelCmd_decides`)
+  have hO0 : (cliqueRelEncode ((G, k), l)).get OUTPUT = [] := rfl
+  have hN0 : (cliqueRelEncode ((G, k), l)).get NUMV = List.replicate G.1 1 := rfl
+  have hE0 : (cliqueRelEncode ((G, k), l)).get EDGE_STREAM = encEdges G.2 := rfl
+  have hK0 : (cliqueRelEncode ((G, k), l)).get K = List.replicate k 1 := rfl
+  have hVS0 : (cliqueRelEncode ((G, k), l)).get VERT_STREAM = encVerts l := rfl
+  have hET0 : (cliqueRelEncode ((G, k), l)).get EDGE_TALLY = List.replicate G.2.length 1 := rfl
+  have hVT0 : (cliqueRelEncode ((G, k), l)).get VERT_TALLY = List.replicate l.length 1 := rfl
+  set s1 := (Cmd.op (.appendOne OUTPUT)).eval (cliqueRelEncode ((G, k), l)) with hs1
+  have hs1eq : s1 = (cliqueRelEncode ((G, k), l)).set OUTPUT [1] := by
+    rw [hs1, Cmd.eval_op]; simp only [Op.eval, hO0, List.nil_append]
+  have hO1 : s1.get OUTPUT = [if true then 1 else 0] := by rw [hs1eq, State.get_set_eq]; rfl
+  have hN1 : s1.get NUMV = List.replicate G.1 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ OUTPUT), hN0]
+  have hE1 : s1.get EDGE_STREAM = encEdges G.2 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (EDGE_STREAM : Var) ≠ OUTPUT), hE0]
+  have hK1 : s1.get K = List.replicate k 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (K : Var) ≠ OUTPUT), hK0]
+  have hVS1 : s1.get VERT_STREAM = encVerts l := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ OUTPUT), hVS0]
+  have hET1 : s1.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (EDGE_TALLY : Var) ≠ OUTPUT), hET0]
+  have hVT1 : s1.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hs1eq, State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ OUTPUT), hVT0]
+  obtain ⟨hWfOut, hWfFr⟩ := checkWf_run s1 G.2 G.1 true hE1 hET1 hN1 hO1
+  set s2 := checkWf.eval s1 with hs2
+  have hN2 : s2.get NUMV = List.replicate G.1 1 := by
+    rw [hWfFr NUMV (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hN1]
+  have hVS2 : s2.get VERT_STREAM = encVerts l := by
+    rw [hWfFr VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hVS1]
+  have hVT2 : s2.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hWfFr VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hVT1]
+  have hK2 : s2.get K = List.replicate k 1 := by
+    rw [hWfFr K (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hK1]
+  obtain ⟨hOtOut, hOtFr⟩ := checkOfType_run s2 l G.1 (true && edgesWf G.1 G.2) hVS2 hVT2 hN2 hWfOut
+  set s3 := checkOfType.eval s2 with hs3
+  have hK3 : s3.get K = List.replicate k 1 := by
+    rw [hOtFr K (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide), hK2]
+  have hVS3 : s3.get VERT_STREAM = encVerts l := by
+    rw [hOtFr VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide), hVS2]
+  have hVT3 : s3.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hOtFr VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide), hVT2]
+  obtain ⟨hLenOut, hLenFr⟩ := checkLen_run s3 k l.length
+    (true && edgesWf G.1 G.2 && allLt G.1 l) hVT3 hK3 hOtOut
+  set s4 := checkLen.eval s3 with hs4
+  have hVS4 : s4.get VERT_STREAM = encVerts l := by
+    rw [hLenFr VERT_STREAM (by decide) (by decide) (by decide), hVS3]
+  have hVT4 : s4.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hLenFr VERT_TALLY (by decide) (by decide) (by decide), hVT3]
+  obtain ⟨hNodupOut, hNodupFr⟩ := checkNodup_run s4 l
+    (true && edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k)) hVS4 hVT4 hLenOut
+  set s5 := checkNodup.eval s4 with hs5
+  have hVS5 : s5.get VERT_STREAM = encVerts l := by
+    rw [hNodupFr VERT_STREAM (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hVS4]
+  have hVT5 : s5.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hNodupFr VERT_TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hVT4]
+  have hE5 : s5.get EDGE_STREAM = encEdges G.2 := by
+    have hE2 : s2.get EDGE_STREAM = encEdges G.2 := by
+      rw [hWfFr EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hE1]
+    have hE3 : s3.get EDGE_STREAM = encEdges G.2 := by
+      rw [hOtFr EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide), hE2]
+    have hE4 : s4.get EDGE_STREAM = encEdges G.2 := by
+      rw [hLenFr EDGE_STREAM (by decide) (by decide) (by decide), hE3]
+    rw [hNodupFr EDGE_STREAM (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hE4]
+  have hET5 : s5.get EDGE_TALLY = List.replicate G.2.length 1 := by
+    have hET2 : s2.get EDGE_TALLY = List.replicate G.2.length 1 := by
+      rw [hWfFr EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hET1]
+    have hET3 : s3.get EDGE_TALLY = List.replicate G.2.length 1 := by
+      rw [hOtFr EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide), hET2]
+    have hET4 : s4.get EDGE_TALLY = List.replicate G.2.length 1 := by
+      rw [hLenFr EDGE_TALLY (by decide) (by decide) (by decide), hET3]
+    rw [hNodupFr EDGE_TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide), hET4]
+  -- cost decomposition
+  have hcostdecomp : cliqueRelCmd.cost (cliqueRelEncode ((G, k), l))
+      = 5 + 1 + checkWf.cost s1 + checkOfType.cost s2 + checkLen.cost s3
+          + checkNodup.cost s4 + checkClique.cost s5 := by
+    show (Cmd.cost (Cmd.op (.appendOne OUTPUT) ;; checkWf ;; checkOfType ;; checkLen ;;
+      checkNodup ;; checkClique) (cliqueRelEncode ((G, k), l))) = _
+    rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq,
+      Cmd.cost_op, ← hs1, ← hs2, ← hs3, ← hs4, ← hs5]
+    simp only [Op.cost]; omega
+  -- the six check-cost bounds
+  have bwf := checkWf_cost s1 G.2 G.1 P true hE1 hET1 hN1 hO1 hEP hmEP hG1P
+  have bot := checkOfType_cost s2 l G.1 P (true && edgesWf G.1 G.2) hVS2 hVT2 hN2 hWfOut
+    hVPl hmP hG1P
+  have blen : checkLen.cost s3 ≤ 2 * P + 6 := by
+    have h := checkLen_cost s3
+    rw [hVT3, hK3, List.length_replicate, List.length_replicate] at h
+    omega
+  have bnodup := checkNodup_cost s4 l
+    (true && edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k)) P hVS4 hVT4 hLenOut hVPl hmP
+  have bclq := checkClique_cost s5 G.2 l
+    (true && edgesWf G.1 G.2 && allLt G.1 l && decide (l.length = k) && nodupB l) P
+    hVS5 hVT5 hE5 hET5 hNodupOut hVPl hmP hEP hmEP
+  have htotal : cliqueRelCmd.cost (cliqueRelEncode ((G, k), l))
+      ≤ 4 * (P * P * P * P * P) + 24 * (P * P * P * P) + 69 * (P * P * P)
+          + 96 * (P * P) + 83 * P + 24 := by
+    rw [hcostdecomp]; omega
+  -- final arithmetic: quintic in `P = 2·n` bounded by `200000·(n+1)^5`
+  refine htotal.trans ?_
+  have hconv : 4 * (P * P * P * P * P) + 24 * (P * P * P * P) + 69 * (P * P * P)
+      + 96 * (P * P) + 83 * P + 24
+      = 4 * P ^ 5 + 24 * P ^ 4 + 69 * P ^ 3 + 96 * P ^ 2 + 83 * P + 24 := by ring
+  rw [hconv]
+  have hPQ : P ≤ 2 * (n + 1) := by omega
+  have base_ge : (1 : Nat) ≤ 2 * (n + 1) := by omega
+  have p5 : P ^ 5 ≤ 32 * (n + 1) ^ 5 := by
+    calc P ^ 5 ≤ (2 * (n + 1)) ^ 5 := Nat.pow_le_pow_left hPQ 5
+      _ = 32 * (n + 1) ^ 5 := by ring
+  have p4 : P ^ 4 ≤ 32 * (n + 1) ^ 5 := by
+    calc P ^ 4 ≤ (2 * (n + 1)) ^ 4 := Nat.pow_le_pow_left hPQ 4
+      _ ≤ (2 * (n + 1)) ^ 5 := Nat.pow_le_pow_right base_ge (by omega)
+      _ = 32 * (n + 1) ^ 5 := by ring
+  have p3 : P ^ 3 ≤ 32 * (n + 1) ^ 5 := by
+    calc P ^ 3 ≤ (2 * (n + 1)) ^ 3 := Nat.pow_le_pow_left hPQ 3
+      _ ≤ (2 * (n + 1)) ^ 5 := Nat.pow_le_pow_right base_ge (by omega)
+      _ = 32 * (n + 1) ^ 5 := by ring
+  have p2 : P ^ 2 ≤ 32 * (n + 1) ^ 5 := by
+    calc P ^ 2 ≤ (2 * (n + 1)) ^ 2 := Nat.pow_le_pow_left hPQ 2
+      _ ≤ (2 * (n + 1)) ^ 5 := Nat.pow_le_pow_right base_ge (by omega)
+      _ = 32 * (n + 1) ^ 5 := by ring
+  have hself : n + 1 ≤ (n + 1) ^ 5 := Nat.le_self_pow (by norm_num) _
+  have p1 : P ≤ 32 * (n + 1) ^ 5 := by omega
+  have p0 : (1 : Nat) ≤ (n + 1) ^ 5 := Nat.one_le_pow _ _ (by omega)
+  show 4 * P ^ 5 + 24 * P ^ 4 + 69 * P ^ 3 + 96 * P ^ 2 + 83 * P + 24
+    ≤ 200000 * (n + 1) ^ 5
+  omega
+
 /-- The Lang-level decider witness for the FlatClique verifier.
 
 **Proven & axiom-clean**: `encodeIn_size`, `enc_bit`, `width_le`, `regBound`
@@ -3798,7 +3968,7 @@ noncomputable def cliqueRelDecidesLang :
       omega
     exact h1.trans h2
   decides := cliqueRelCmd_decides
-  cost_bound := by intro x; sorry      -- TODO(top-down Task 1, step 5): per-loop `cost_forBnd_le`
+  cost_bound := cliqueRelCmd_cost_bound
   enc_bit := cliqueRelEncode_bit
   regBound := regBound
   usesBelow := cliqueRelCmd_usesBelow
