@@ -2494,6 +2494,32 @@ control-flow branch — no need to track the exact stream contents or the accumu
 predicate. Each loop is closed by `Cmd.cost_forBnd_le` with `B` = a uniform
 per-iteration body-cost bound. -/
 
+/-- Dropping a prefix of the vertex list only shortens its encoding. -/
+private theorem encVerts_drop_length_le (l : List fvertex) (i : Nat) :
+    (encVerts (l.drop i)).length ≤ (encVerts l).length := by
+  induction i generalizing l with
+  | zero => simp
+  | succ i ih =>
+    cases l with
+    | nil => simp
+    | cons v l =>
+      rw [List.drop_succ_cons]
+      refine (ih l).trans ?_
+      rw [encVerts_cons]; simp only [List.length_append, List.length_cons]; omega
+
+/-- Dropping a prefix of the edge list only shortens its encoding. -/
+private theorem encEdges_drop_length_le (edges : List fedge) (i : Nat) :
+    (encEdges (edges.drop i)).length ≤ (encEdges edges).length := by
+  induction i generalizing edges with
+  | zero => simp
+  | succ i ih =>
+    cases edges with
+    | nil => simp
+    | cons e edges =>
+      rw [List.drop_succ_cons]
+      refine (ih edges).trans ?_
+      rw [encEdges_cons]; simp only [List.length_append, List.length_cons]; omega
+
 /-- `readNumBody` never grows `stream` and costs at most `S + 7` when
 `|stream| ≤ S`. The uniform per-iteration ingredient for `readNum_cost`. -/
 private theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
@@ -2563,20 +2589,17 @@ private theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
     · rw [heval, State.get_set_ne _ _ _ _ hsSkip]; exact hw
     · omega
 
-/-- **`readNum` cost bound.** Reading a unary block off `stream` costs
-`≤ 2·S² + 7·S + 7` where `S = |stream|` at entry. -/
-private theorem readNum_cost (st : State) (v : Nat) (rest : List Nat)
-    (dst stream idx : Var)
-    (hstream : st.get stream = List.replicate v 1 ++ 0 :: rest)
+/-- **`readNum` cost bound.** Reading (draining) `stream` costs `≤ 2·S² + 7·S + 7`
+where `S = |stream|` at entry. No block-form hypothesis: the bound holds for any
+stream content (the loop drains one cell/iteration, each a `tail` of cost `≤ S`). -/
+private theorem readNum_cost (st : State) (dst stream idx : Var)
     (hsd : stream ≠ dst) (hsi : stream ≠ idx)
     (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR) :
     (readNum dst stream idx).cost st
-      ≤ 2 * (v + 1 + rest.length) * (v + 1 + rest.length)
-          + 7 * (v + 1 + rest.length) + 7 := by
-  set S := v + 1 + rest.length with hS
-  have hstreamlen : (State.get st stream).length = S := by
-    rw [hstream]; simp only [List.length_append, List.length_replicate,
-      List.length_cons]; omega
+      ≤ 2 * (State.get st stream).length * (State.get st stream).length
+          + 7 * (State.get st stream).length + 7 := by
+  set S := (State.get st stream).length with hS
+  have hstreamlen : (State.get st stream).length = S := hS.symm
   -- init prefix evaluation
   have e1 : (Cmd.op (.clear dst)).eval st = st.set dst [] := by
     rw [Cmd.eval_op]; simp only [Op.eval]
@@ -2672,6 +2695,126 @@ private theorem checkLen_cost (st : State) :
     by_cases hbit : State.get ((Cmd.op (.eqBit RES1 VERT_TALLY K)).eval st) RES1 = [1]
     · rw [Cmd.cost_ifBit_true _ _ _ _ hbit, cSkip_cost]
     · rw [Cmd.cost_ifBit_false _ _ _ _ hbit, cReject_cost]
+  omega
+
+/-- Uniform per-iteration body-cost bound for the `checkOfType` loop, given a
+length ceiling `P` on the encoded vertex stream and `numV`. Mirrors
+`checkOfType_step` but accounts costs. -/
+private theorem checkOfType_body_cost (l : List fvertex) (numV P : Nat) (b : Bool)
+    (st : State) (hNUMV : st.get NUMV = List.replicate numV 1)
+    (hVP : (encVerts l).length ≤ P) (hnP : numV ≤ P)
+    (i : Nat) (s : State) (hi : i < l.length) (h : COInv l numV b st i s) :
+    (readNum VALA VSCAN IDX2 ;; ltBit RES1 VALA NUMV IDX3 ;;
+      Cmd.ifBit RES1 cSkip cReject).cost (s.set IDX1 (List.replicate i 1))
+      ≤ 4 * (P * P) + 9 * P + 18 := by
+  obtain ⟨hVSCAN, _, hframe⟩ := h
+  set w := s.set IDX1 (List.replicate i 1) with hw
+  have hVS_in : State.get w VSCAN
+      = List.replicate (l[i]'hi) 1 ++ 0 :: encVerts (l.drop (i + 1)) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ IDX1), hVSCAN,
+      List.drop_eq_getElem_cons hi, encVerts_cons]
+  -- length ceiling on VSCAN at loop entry
+  have hVSlen : (State.get w VSCAN).length ≤ P := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide : (VSCAN : Var) ≠ IDX1), hVSCAN]
+    exact (encVerts_drop_length_le l i).trans hVP
+  have hli : l[i]'hi ≤ P := by
+    have h1 : l[i]'hi ≤ (encVerts (l.drop i)).length := by
+      rw [List.drop_eq_getElem_cons hi, encVerts_cons, List.length_append,
+        List.length_replicate]
+      exact Nat.le_add_right _ _
+    exact h1.trans ((encVerts_drop_length_le l i).trans hVP)
+  -- run `readNum` to expose the mid-state registers
+  obtain ⟨hVALA, hVS2, hRNframe⟩ := readNum_run w
+    (l[i]'hi) (encVerts (l.drop (i + 1))) VALA VSCAN IDX2 hVS_in
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  have hNUMV1 : ((readNum VALA VSCAN IDX2).eval w).get NUMV = List.replicate numV 1 := by
+    rw [hRNframe NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ IDX1),
+      hframe NUMV (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+      hNUMV]
+  -- cost decomposition
+  have hcost : (readNum VALA VSCAN IDX2 ;; ltBit RES1 VALA NUMV IDX3 ;;
+      Cmd.ifBit RES1 cSkip cReject).cost w
+      = 1 + (readNum VALA VSCAN IDX2).cost w
+          + (1 + (ltBit RES1 VALA NUMV IDX3).cost ((readNum VALA VSCAN IDX2).eval w)
+             + (Cmd.ifBit RES1 cSkip cReject).cost
+                 ((ltBit RES1 VALA NUMV IDX3).eval ((readNum VALA VSCAN IDX2).eval w))) := by
+    rw [Cmd.cost_seq, Cmd.cost_seq]
+  -- bound the three pieces
+  have hrn := readNum_cost w VALA VSCAN IDX2 (by decide) (by decide) (by decide)
+    (by decide) (by decide)
+  have hrn' : (readNum VALA VSCAN IDX2).cost w ≤ 2 * (P * P) + 7 * P + 7 := by
+    refine hrn.trans ?_
+    nlinarith [hVSlen, Nat.mul_le_mul hVSlen hVSlen]
+  have hlt := ltBit_cost ((readNum VALA VSCAN IDX2).eval w) RES1 VALA NUMV IDX3
+    (by decide) (by decide)
+  have hlt' : (ltBit RES1 VALA NUMV IDX3).cost ((readNum VALA VSCAN IDX2).eval w)
+      ≤ 2 * (P * P) + 2 * P + 5 := by
+    refine hlt.trans ?_
+    rw [hVALA, hNUMV1, List.length_replicate, List.length_replicate]
+    nlinarith [hli, hnP, Nat.mul_le_mul hli hli, Nat.mul_le_mul hli hnP]
+  have hif : (Cmd.ifBit RES1 cSkip cReject).cost
+      ((ltBit RES1 VALA NUMV IDX3).eval ((readNum VALA VSCAN IDX2).eval w)) ≤ 4 := by
+    by_cases hbit : State.get ((ltBit RES1 VALA NUMV IDX3).eval
+        ((readNum VALA VSCAN IDX2).eval w)) RES1 = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hbit, cSkip_cost]
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hbit, cReject_cost]
+  rw [hcost]; omega
+
+/-- **`checkOfType` cost bound** (single loop, cubic in the length ceiling `P`). -/
+private theorem checkOfType_cost (st : State) (l : List fvertex) (numV P : Nat) (b : Bool)
+    (hVS : st.get VERT_STREAM = encVerts l)
+    (hVT : st.get VERT_TALLY = List.replicate l.length 1)
+    (hNUMV : st.get NUMV = List.replicate numV 1)
+    (hO : st.get OUTPUT = [if b then 1 else 0])
+    (hVP : (encVerts l).length ≤ P) (hmP : l.length ≤ P) (hnP : numV ≤ P) :
+    checkOfType.cost st ≤ 5 * (P * P * P) + 11 * (P * P) + 20 * P + 3 := by
+  have eInit : (Cmd.op (.copy VSCAN VERT_STREAM)).eval st = st.set VSCAN (encVerts l) := by
+    rw [Cmd.eval_op]; simp only [Op.eval]; rw [hVS]
+  have hcost_eq : checkOfType.cost st
+      = 1 + ((encVerts l).length + 1)
+          + (Cmd.forBnd IDX1 VERT_TALLY
+              (readNum VALA VSCAN IDX2 ;; ltBit RES1 VALA NUMV IDX3 ;;
+               Cmd.ifBit RES1 cSkip cReject)).cost (st.set VSCAN (encVerts l)) := by
+    show (Cmd.cost (Cmd.op (.copy VSCAN VERT_STREAM) ;; _) st) = _
+    rw [Cmd.cost_seq, Cmd.cost_op, eInit]
+    simp only [Op.cost]; rw [hVS]
+  set s0 := st.set VSCAN (encVerts l) with hs0
+  have hNUMV0 : s0.get NUMV = List.replicate numV 1 := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (NUMV : Var) ≠ VSCAN), hNUMV]
+  have hVS0 : s0.get VERT_STREAM = encVerts l := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (VERT_STREAM : Var) ≠ VSCAN), hVS]
+  have hVT0 : s0.get VERT_TALLY = List.replicate l.length 1 := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (VERT_TALLY : Var) ≠ VSCAN), hVT]
+  have hO0 : s0.get OUTPUT = [if b then 1 else 0] := by
+    rw [hs0, State.get_set_ne _ _ _ _ (by decide : (OUTPUT : Var) ≠ VSCAN), hO]
+  have hbase : COInv l numV b s0 0 s0 := by
+    refine ⟨?_, ?_, fun r _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hs0, State.get_set_eq, List.drop_zero]
+    · rw [hO0, List.take_zero]; simp only [allLt, List.all_nil, Bool.and_true]
+  have hblen : (s0.get VERT_TALLY).length = l.length := by
+    rw [hVT0, List.length_replicate]
+  have hloop : (Cmd.forBnd IDX1 VERT_TALLY
+      (readNum VALA VSCAN IDX2 ;; ltBit RES1 VALA NUMV IDX3 ;;
+       Cmd.ifBit RES1 cSkip cReject)).cost s0
+      ≤ 1 + l.length * (4 * (P * P) + 9 * P + 18) + l.length * l.length := by
+    have h := Cmd.cost_forBnd_le IDX1 VERT_TALLY
+      (readNum VALA VSCAN IDX2 ;; ltBit RES1 VALA NUMV IDX3 ;;
+       Cmd.ifBit RES1 cSkip cReject) s0 (4 * (P * P) + 9 * P + 18)
+      (COInv l numV b s0) hbase
+      (fun i s hi h => checkOfType_step l numV b s0 hNUMV0 i s (by rwa [hblen] at hi) h)
+      (fun i s hi h => checkOfType_body_cost l numV P b s0 hNUMV0 hVP hnP i s
+        (by rwa [hblen] at hi) h)
+    rw [hblen] at h; exact h
+  rw [hcost_eq]
+  have h1 : l.length * (4 * (P * P) + 9 * P + 18) ≤ P * (4 * (P * P) + 9 * P + 18) :=
+    Nat.mul_le_mul_right _ hmP
+  have h2 : l.length * l.length ≤ P * P := Nat.mul_le_mul hmP hmP
+  have h3 : (encVerts l).length ≤ P := hVP
+  have h4 : P * (4 * (P * P) + 9 * P + 18) = 4 * (P * P * P) + 9 * (P * P) + 18 * P := by ring
   omega
 
 /-- The Lang-level decider witness for the FlatClique verifier.
