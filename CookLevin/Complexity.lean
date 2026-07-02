@@ -9,5 +9,6 @@ import Complexity.Complexity.Deciders.EvalCnfTM
 import Complexity.Complexity.Deciders.CliqueRelTM
 import Complexity.NP.SAT.CookLevin
 import Complexity.NP.kSAT_to_SAT_free
+import Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC_free
 
 set_option autoImplicit false
