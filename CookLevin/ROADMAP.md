@@ -24,6 +24,8 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms FlatClique_in_NP` | `[propext, Classical.choice, Quot.sound]` — **FlatClique in-NP half sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete) |
 | `#print axioms KSat3Free.inNP_kSAT3_free` | `[propext, Classical.choice, Quot.sound]` — **first live `red_inNP` through the free layer engine** (concrete re-encoder + reduction program, `NP/kSAT_to_SAT_free.lean`, 2026-07-02) |
 | `#print axioms KSat3Free.kSAT3_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first live honest `⪯p'` on the real chain** (`kSAT 3 ⪯p' SAT` via `reducesPolyMO'_of_langFree`, 2026-07-02) |
+| `#print axioms FlatTCCFree.flatTCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first sound-tail step as a live honest `⪯p'`** (`FlatTCC ⪯p' FlatCC`, unguarded map, `Reductions/FlatTCC_to_FlatCC_free.lean`, 2026-07-02) |
+| `NPhard'` endgame design | **SETTLED & machine-validated** (2026-07-02): `SeamData`/`PolyTimeComputableLang.comp` fully proven; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
 | Genuine `sorry`s (Group C) | **7 in built code** (4 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau; 3 in dead code `MultiToSingle`) — down from ~13 after the 2026-07-02 canonical-layer retirement deleted 6 permanently-unprovable wall sorries |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
@@ -358,20 +360,26 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
 2. **Retire S3 — migrate `⪯p` to `polyTimeComputable'`.** Swap
    `ReductionWitness.reduction_poly` to the TM-backed witness (the strengthening
    lemma keeps size-bound lemmas valid). Infrastructure is built **on the free
-   line** (`⪯p'`, `reducesPolyMO'_of_langFree`; first live instance
-   `kSAT3_reducesPolyMO' : kSAT 3 ⪯p' SAT`, 2026-07-02). The work:
+   line** (`⪯p'`, `reducesPolyMO'_of_langFree`; live instances
+   `kSAT3_reducesPolyMO' : kSAT 3 ⪯p' SAT` and `flatTCC_reducesPolyMO' :
+   FlatTCC ⪯p' FlatCC`). The work:
    - **The sound-tail reductions as free `PolyTimeComputableLang` witnesses**
-     (template: `NP/kSAT_to_SAT_free.lean`) — `flatTCC_to_flatCC` cheap,
-     `FlatCC_to_BinaryCC` medium, **`BinaryCC_to_FSAT` (Tseytin) the expensive
-     tail item** (~1K-LOC formula builder re-expressed as a `Cmd`).
-     `map`-over-lists gates parts (near-complete draft at
-     `parked/MapNatList_WIP.lean`).
-   - **⚠ Open design question (settle top-down FIRST):** the migrated
-     `NPhard'` transport. There is deliberately **no generic
-     `⪯p'`-transitivity** (opaque TM-backed witnesses cannot be honestly
-     composed), so `red_NPhard`'s pattern does not carry over — chains must
-     compose at the `Cmd` level (per-seam re-encoders, pinned layouts) before
-     bridging once to `⪯p'`.
+     (templates: `NP/kSAT_to_SAT_free.lean` and — for the sound-tail
+     unguarded-map pattern — `Reductions/FlatTCC_to_FlatCC_free.lean`).
+     ✅ `flatTCC_to_flatCC` DONE (2026-07-02, unguarded map, probe-validated).
+     Remaining: `FlatCC_to_BinaryCC` medium, **`BinaryCC_to_FSAT` (Tseytin)
+     the expensive tail item** (~1K-LOC formula builder re-expressed as a
+     `Cmd`), `FSAT_to_SAT`. `map`-over-lists gates parts (near-complete draft
+     at `parked/MapNatList_WIP.lean`).
+   - **✅ SETTLED (2026-07-02): the migrated `NPhard'` transport.** There is
+     deliberately **no generic `⪯p'`-transitivity**; the answer is
+     `PolyTimeComputableLang.SeamData`/`comp` (fully proven, `PolyTime.lean`):
+     chains fold into ONE witness through concrete per-seam re-encoder `Cmd`s
+     (bridge = `AgreeBelow` on the right frame), then bridge once.
+     `NPhard'`/`NPcomplete'` are defined; **`NPhard'` is proven at chain
+     endpoints only** — C8 must emit the per-`Q` front witness *with its
+     `SeamData` into the fixed chain head*. Next validation step: the first
+     LIVE seam (`flatTCC` ⨾ `FlatCC_to_BinaryCC`), HANDOFF top-down task 2.
    - At this point **S1 and S2 stop typechecking**; the conditional theorem
      breaks until they are honest — plan the swap as one coordinated batch.
    *Estimate ~2–4K LOC.*
@@ -414,7 +422,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Location | Status / fix |
 |---|-----|----------|--------------|
-| **S3** | `⪯p` bounds **output size only** — the enabling weakness that lets S1/S2 typecheck and makes `NPcomplete` too weak to be faithful. | `NP.lean`, `Lang/PolyTime.lean` | **Engine live.** Honest target `polyTimeComputable'`/`⪯p'` built on the free line; first live chain instance `kSAT3_reducesPolyMO' : kSAT 3 ⪯p' SAT` (axiom-clean, 2026-07-02). Execute via plan step 2 — ⚠ settle the `NPhard'` transport design first (no generic `⪯p'`-transitivity). |
+| **S3** | `⪯p` bounds **output size only** — the enabling weakness that lets S1/S2 typecheck and makes `NPcomplete` too weak to be faithful. | `NP.lean`, `Lang/PolyTime.lean` | **Engine live & endgame design SETTLED.** Honest target `polyTimeComputable'`/`⪯p'` built on the free line; live chain instances `kSAT3_reducesPolyMO'` and `flatTCC_reducesPolyMO'` (first sound-tail step, 2026-07-02). The `NPhard'` transport is settled & machine-validated: `SeamData`/`comp` (Cmd-level chain composition, fully proven) + `NPhard'`/`NPcomplete'`, hardness at endpoints only. Execute via plan step 2. |
 | **S1** | **if-on-the-answer** `FlatSingleTMGenNP ⪯p FlatTCC` (all-zeros tableau, never simulates `M`). Deepest unsoundness. | `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean` | **Probed feasible but expensive (~6–11K LOC).** Real fix = Cook 2D tableau (`Simulators/CookTableau.lean`). Gated on S3 (plan step 3). |
 | **S2** | **dummy TM bridges** — `bridgeMachine` discards `M`; predicates ignore `M`. | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean` | **No simulator needed** (probed). Collapse phantom bridges; **folds into C8**. |
 | **S0** | **hardness reduction is vacuous** — `NPhard_GenNP` uses output-size bound `fun _ => 0` (only "valid" via size-0 `instEncodableDefault`) and `hasDeciderClassical` (`sorry`). | `GenNP_is_hard.lean` | Closes with C8 (real universal decider) + Part 0.1 (real `encodable.size`). |
