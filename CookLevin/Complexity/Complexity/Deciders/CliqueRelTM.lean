@@ -637,20 +637,20 @@ register `def`s). Callers discharge them by `decide` on the concrete registers
 (`dst ∈ {17..20}`, `stream ∈ {11..14}`, `idx ∈ {8,9,10}`, `HEAD = 15`,
 `INBLK = 16`, `SKIPR = 26` pairwise distinct). -/
 
-private theorem cSkip_eval (s : State) : cSkip.eval s = s.set SKIPR [1] := by
+theorem cSkip_eval (s : State) : cSkip.eval s = s.set SKIPR [1] := by
   show ((Cmd.op (.clear SKIPR)) ;; Cmd.op (.appendOne SKIPR)).eval s = _
   rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
   simp only [Op.eval, State.get_set_eq, List.nil_append, State.set_set]
 
-private theorem cSkip_cost (s : State) : cSkip.cost s = 3 := by
+theorem cSkip_cost (s : State) : cSkip.cost s = 3 := by
   show ((Cmd.op (.clear SKIPR)) ;; Cmd.op (.appendOne SKIPR)).cost s = _
   rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]; rfl
 
-private theorem replicate_one_snoc (n : Nat) :
+theorem replicate_one_snoc (n : Nat) :
     List.replicate n (1 : Nat) ++ [1] = List.replicate (n + 1) 1 :=
   List.replicate_succ'.symm
 
-private theorem replicate_one_eq_iff {a b : Nat} :
+theorem replicate_one_eq_iff {a b : Nat} :
     (List.replicate a (1 : Nat) = List.replicate b 1) ↔ a = b := by
   constructor
   · intro h; have := congrArg List.length h; simpa using this
@@ -1341,7 +1341,7 @@ private theorem memB_take_succ (va vb : Nat) (edges : List fedge) (i : Nat)
 
 /-- `if replicate a 1 = replicate b 1 then [1] else [0]` collapses to the unary
 equality test `[if a = b then 1 else 0]` (the `eqBit`-on-unary-blocks read). -/
-private theorem eqBit_replicate (a b : Nat) :
+theorem eqBit_replicate (a b : Nat) :
     (if (List.replicate a (1 : Nat)) = List.replicate b 1 then ([1] : List Nat) else [0])
       = [if a = b then 1 else 0] := by
   by_cases h : a = b
@@ -2556,7 +2556,7 @@ private theorem edge_getElem_le (edges : List fedge) (i : Nat) (hi : i < edges.l
 
 /-- `readNumBody` never grows `stream` and costs at most `S + 7` when
 `|stream| ≤ S`. The uniform per-iteration ingredient for `readNum_cost`. -/
-private theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
+theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
     (hsd : stream ≠ dst) (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK)
     (hsSkip : stream ≠ SKIPR) (hw : (State.get w stream).length ≤ S) :
     (State.get ((readNumBody dst stream).eval w) stream).length ≤ S
@@ -2626,7 +2626,7 @@ private theorem readNumBody_effect (dst stream : Var) (S : Nat) (w : State)
 /-- **`readNum` cost bound.** Reading (draining) `stream` costs `≤ 2·S² + 7·S + 7`
 where `S = |stream|` at entry. No block-form hypothesis: the bound holds for any
 stream content (the loop drains one cell/iteration, each a `tail` of cost `≤ S`). -/
-private theorem readNum_cost (st : State) (dst stream idx : Var)
+theorem readNum_cost (st : State) (dst stream idx : Var)
     (hsd : stream ≠ dst) (hsi : stream ≠ idx)
     (hsHead : stream ≠ HEAD) (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR) :
     (readNum dst stream idx).cost st
@@ -2673,7 +2673,7 @@ private theorem readNum_cost (st : State) (dst stream idx : Var)
 
 /-- **`readNum` never grows its stream** (it drains one block, leaving a shorter
 suffix). Used to bound the second `readNum`'s stream in double-read loops. -/
-private theorem readNum_stream_le (st : State) (dst stream idx : Var)
+theorem readNum_stream_le (st : State) (dst stream idx : Var)
     (hsd : stream ≠ dst) (hsi : stream ≠ idx) (hsHead : stream ≠ HEAD)
     (hsInbk : stream ≠ INBLK) (hsSkip : stream ≠ SKIPR) :
     (State.get ((readNum dst stream idx).eval st) stream).length
