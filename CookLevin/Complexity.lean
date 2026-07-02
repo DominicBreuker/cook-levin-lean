@@ -8,5 +8,6 @@ import Complexity.Complexity.Deciders.EvalCnfCmd
 import Complexity.Complexity.Deciders.EvalCnfTM
 import Complexity.Complexity.Deciders.CliqueRelTM
 import Complexity.NP.SAT.CookLevin
+import Complexity.NP.kSAT_to_SAT_free
 
 set_option autoImplicit false

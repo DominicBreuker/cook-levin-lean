@@ -15,10 +15,11 @@ register before working.
 
 | | |
 |---|---|
-| `lake build` | ✅ green (3357 jobs) |
+| `lake build` | ✅ green (3371 jobs) |
 | `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`**, now **only via the hardness half** (`NPhard_GenNP`). |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
+| `#print axioms KSat3Free.inNP_kSAT3_free` | **`[propext, Classical.choice, Quot.sound]`** — the **first live `red_inNP` routed through the free layer engine** (`red_inNP_of_langFree` + a concrete re-encoder & reduction program, 2026-07-02). |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
 | Genuine `sorry`s on the proof path | ~31 (Group C — completion) |
 | `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |

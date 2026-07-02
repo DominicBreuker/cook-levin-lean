@@ -26,70 +26,77 @@ the owner says **`bottom-up`** or **`top-down`**:
 > (~3.4s structural `isDefEq`) and `Assembly` (~1.2s `nlinarith` load) — both
 > investigated and judged not worth further perf work.
 
-> **Most recent session (2026-07-01, TOP-DOWN, S3 linchpin — `inNPLangFree`): ✅ the
-> free-encoding layer-native NP class is BUILT and both live `inNP` witnesses now carry
-> a recoverable verifier `Cmd`.** New in `PolyTime.lean` (sorry-free, axiom-clean):
-> `InNPWitnessLangFree`/`inNPLangFree` (analogue of `InNPWitnessLang`/`inNPLang` but on
-> the **free** `DecidesLang`, not the canonical `DecidesLang'`) + the framework bridge
-> `inNPLangFree_to_inNP`. `EvalCnfTM.SAT_inNPLangFree : inNPLangFree SAT` and
-> `CliqueRelTM.FlatClique_inNPLangFree : inNPLangFree FlatClique` bundle the live
-> `evalCnfDecidesLang`/`cliqueRelDecidesLang`; `sat_NP`/`FlatClique_in_NP` are re-derived
-> through `inNPLangFree_to_inNP` (same decider path ⇒ **still axiom-clean**;
-> `CookLevin`/`Clique_complete` unchanged, `sorryAx` via hardness only). Build green (3370).
-> - **★ KEY RISK FINDING — the pre-existing canonical `red_inNP_of_lang`/`inNPLang`
->   engine is UNPOPULATABLE for the live path, so the migration had to re-base on the
->   FREE encoding.** `InNPWitnessLang.verifier` is a *canonical* `DecidesLang'`, which
->   needs `LangEncodable (X × Cert)` — the size-unsound product encoding (bottom-up
->   step 2, BLOCKED). No `inNPLang SAT`/`inNPLang FlatClique` can be built. The live
->   verifiers are **free** `DecidesLang`s (bespoke `encodeIn` on the whole pair), so
->   `inNPLangFree` is the form that actually carries the live verifiers. This
->   contradicts the old top-down note that implied `inNPLang` was ready to consume.
-> - **★ KEY RISK FINDING — `red_inNP` (NP.lean:291) is DOUBLY blocked, not just
->   ⪯p-blocked.** To collapse it needs BOTH (a) the verifier `Cmd` *precomposed* with
->   `f`'s output (free encodings share no layout ⇒ needs an explicit **re-encoder
->   `Cmd`**) AND (b) the reduction `f` as a program (the ⪯p→`polyTimeComputable'`
->   migration — breaks S1/S2, ROADMAP step 2).
-> - **✅ Blocker (a) is now SOLVED at the engine level.** `DecidesLang.precomposeFree`
->   + `InNPWitnessLangFree.precompose` + `red_inNP_of_langFree` (`PolyTime.lean`,
->   sorry-free, axiom-clean) are the **free analogue of `DecidesLang'.precompose` /
->   `red_inNP_of_lang`**. The whole free-precompose obligation is concentrated,
->   sorry-free, into ONE `DecidesLang.FreePrecomposeData` value (a concrete re-encoder
->   `Cmd` + its bounds + the register-agreement `bridge` law — the free analogue of
->   `PolyTimeComputableLang'.normalizes`). `decides` is proved from `bridge` via
->   `Cmd.eval_agree` at register 0; all else passes through. Concrete witnesses
->   `SAT_inNPWitnessLangFree`/`FlatClique_inNPWitnessLangFree` are exposed for it.
->   **Reachability probe passed**: `red_inNP_of_langFree` typechecks to `inNP (kSAT 3)`
->   given only `Wf` + `data` — no structural unknown, no vacuity landmine (`newBound`
->   is a free polynomial; nothing like the canonical `enc_size` recurrence).
+> **Most recent session (2026-07-02, TOP-DOWN, S3 linchpin — the concrete re-encoder):
+> ✅ top-down target #1 is DONE — the first LIVE `red_inNP` is closed through the free
+> engine, sorry-free & axiom-clean.** New `NP/kSAT_to_SAT_free.lean` (~1.3K LOC, 0
+> sorries): `KSat3Free.inNP_kSAT3_free : inNP (kSAT 3)` `= red_inNP_of_langFree
+> SAT_inNPWitnessLangFree kSAT3_reductionLang kSAT3_precomposeData (kSAT_to_SAT_correct
+> 3)` — BOTH per-reduction engine inputs discharged honestly by ONE concrete program
+> `kCnf3Check` (copies the CNF stream, parses it clause-by-clause with
+> `CliqueRelTM.readNum`, unary-counts literals against `THREE = [1,1,1]`, and on a
+> failed `kCNF 3` check rewrites regs 1/2 to the `[[]]` layout; probe:
+> `probes/KCnf3ReencoderProbe.lean`). Build green (3371).
+> - **(a) `kSAT3_precomposeData : FreePrecomposeData`** — `eIn := encodeState` (the SAT
+>   verifier's OWN pair layout), `mfc := kCnf3Check`. `bridge` falls out of the ONE
+>   generic run lemma `kCnf3Check_run` (run + per-register frame + cost in a single
+>   statement, over ANY base state carrying regs 1/2 — this is what lets one program
+>   serve both witnesses; reuse the pattern).
+> - **(b) `kSAT3_reductionLang : PolyTimeComputableLang (kSAT_to_SAT_reduction 3)`** —
+>   the SAME program on the minimal natural layout `[[], replicate |N| 1, encodeCnf N]`;
+>   `decodeOut := Function.invFun encodeCnf` backed by `encodeCnf_injective`
+>   (prefix-free literal/clause blocks). The tight `encodeIn_size ≤ 2·size+1` IS
+>   satisfiable: `encodeCnf_tally_tight` (`|encodeCnf N| + |N| ≤ 2·size N`) — the
+>   learned `5·size` bound (`encodeCnf_length`) is loose, don't let it scare you off
+>   the free `PolyTimeComputableLang` form.
+> - **★ KEY RISK FINDING — `FreePrecomposeData` / `PolyTimeComputableLang` do NOT
+>   enforce honesty.** `eIn` and `decodeOut` are *unconstrained functions*: the trivial
+>   instantiation `eIn := D.encodeIn ∘ gmap`, `mfc := no-op` satisfies EVERY field of
+>   `FreePrecomposeData` (and `c := no-op`, `decodeOut := f ∘ decode` populates
+>   `PolyTimeComputableLang`). This is the S3 encoding-hides-computation weakness one
+>   level up; the structures buy composition, not honesty. Today honesty is per-witness
+>   DISCIPLINE — `eIn` must be the natural layout of the *input* (never of `gmap v`),
+>   with all reduction work in the `Cmd`. The S3 endgame must eventually PIN encodings
+>   (canonical instances, or chain-composition where stage `n`'s `eIn` is stage
+>   `n−1`'s output layout). Review every future witness against this.
+> - **Blocker (b) of the old `red_inNP` note is now half-open.** A live free
+>   `PolyTimeComputableLang` exists (this file); what remains of ROADMAP step 2 is the
+>   `⪯p`/`ReductionWitness` re-typing itself + honest witnesses for the REST of the
+>   chain (the sound-tail reductions, target #2 below) — S1/S2 stop typechecking when
+>   that lands, so it stays a coordinated batch.
+> - De-privated in `CliqueRelTM.lean` (now reusable): `readNum_cost`,
+>   `readNum_stream_le`, `readNumBody_effect`, `cSkip_eval`/`cSkip_cost`,
+>   `replicate_one_snoc`/`replicate_one_eq_iff`, `eqBit_replicate`.
 >
-> **Recommended next: TOP-DOWN — build a concrete `FreePrecomposeData` (the re-encoder).**
-> The engine is done; the remaining top-down work is one *concrete* re-encoder `Cmd`
-> (like `mapFstCmd` + its frame/run lemmas, but targeting a verifier's bespoke layout)
-> + its `bridge`/bounds. Pair it with blocker (b) — a real `PolyTimeComputableLang`
-> reduction — to finally close a live `red_inNP` (e.g. `inNP_kSAT`). See targets #1.
-> Bottom-up remains BLOCKED on the encoding decision (step 2) — a bottom-up session
-> should first scope option (B): does any live S3 reduction actually need the generic
-> canonical trio? (almost certainly not — none of the free verifiers do).
+> **Recommended next: BOTTOM-UP — scope option (B) / retire the trio (step 2).** The
+> kSAT3 session is fresh corroboration: a live S3 reduction needed NO generic product
+> trio, NO canonical `LangEncodable` — a bespoke free layout + `kCnf3Check_run`-style
+> lemma sufficed, and even the tight `2·size+1` was satisfiable. A bottom-up session
+> should now audit the remaining planned reductions (target #2 chain + the C8 decider)
+> the same way and, if none needs the trio, formally retire the unary migration
+> (HANDOFF step 2), keep the Route-A wall permanently, and delete the blocked canonical
+> scaffolding. Top-down alternative: start target #2 (`flatTCC_to_flatCC` as the
+> cheapest next `PolyTimeComputableLang`, using this session's file as the template).
 >
-> ⚠ **Gotchas confirmed this session (cost proofs):**
-> (a) **`omega` needs GROUPED products.** `2*P*P` parses as `(2*P)*P`, a distinct
->   atom from `P*P`; write `2*(P*P)` everywhere so omega/nlinarith can merge
->   coefficients. Use `nlinarith [h, Nat.mul_le_mul h h]` for monotone `x² ≤ P²`
->   steps.
-> (b) **`omega` atom-pollution under nested `set`.** In a body with `set w`/`set s1`/
->   `set s2` over `State.set`, `omega` fragments `getElem`/length atoms and fails on
->   goals it proves in isolation. Fix: extract the pure length/getElem fact as a
->   standalone helper (clean context) — `vert_getElem_le`/`edge_getElem_le` — or
->   bound via a named `have hlen : (s.get reg).length ≤ P` and feed *that* to omega,
->   never the raw `l[i]`.
-> (c) **`show` forces full defeq → whnf timeout on deep states.** Never `show
->   (State.get s2 …)` where `s2` is a nested `.eval`; use `Cmd.cost_op ;;
->   simp only [Op.cost]` (rewrites only the head) instead. Same for materialising an
->   `if State.get s1 a = State.get s1 b` — route round it with `State.get_set_ne`.
-> (d) **`rw [← hsN]` after `set sN`** often finds nothing: `set` retro-folds the
->   `ecopy`/`he2` eval-equation, so its RHS is *already* `sN` in the goal — drop the
->   `← hsN`. And an `N`-hyp invariant frame base needs exactly `N` `_`s in
->   `fun r _ … _ => rfl` (CWfInv=13, NInnerInv=10, CliqueInnerInv=15, CCliqueInv=18).
+> ⚠ **Gotchas confirmed this session (verifier-program engineering):**
+> (a) **`omega` needs GROUPED products** — write `2*(P*P)`, never `2*P*P` (distinct
+>   atom). Budget certs: expand BOTH sides into monomials with `ring`-proved `have`s,
+>   then `omega` closes by coefficient domination (see `kCheckBudget_le_poly`).
+> (b) **`omega` cannot use atoms typed by the `var`/`Var` abbrevs** — e.g. `v` from
+>   `rcases l with ⟨p, v⟩` (`l : literal`): even `v + 1 ≤ 0 + v + 1` fails ("no usable
+>   constraints"). Retype FIRST: `obtain ⟨w, hw⟩ : ∃ w : Nat, w = v := ⟨v, rfl⟩; subst
+>   hw`. (`encodable.size p` for `p : Bool` is also opaque — `cases p` first.)
+> (c) **`l[i]` after a `Cmd.cost` hypothesis = whnf TIMEOUT.** Elaborating `N[i]`
+>   invokes `get_elem_tactic`, whose `assumption` pass defeq-checks `i < N.length`
+>   against EVERY hypothesis; against `h : c.cost s ≤ …` that whnf-unfolds the whole
+>   program. Hoist every `l[i]`-bearing `have` BEFORE `obtain`-ing a run/cost lemma.
+> (d) **`set` retro-folds eval equations** — after `set s4 := … with hs4`, the goal
+>   already shows `s4`; a `rw [← hs4]` finds nothing (drop it). And `rw` matches
+>   registers SYNTACTICALLY: `hge 26 … : r ≠ 26` will not rewrite a `set SKIPR` term
+>   (`SKIPR` is an irreducible `def`) — wrap as `(by exact hge 26 (by omega))` so the
+>   expected type drives elaboration.
+> (e) **`simp` with `List.take_succ` can hit max-recursion in a fat context** — use
+>   the explicit `rw [List.take_add_one, List.getElem?_eq_getElem hi]` +
+>   `rw [Option.toList_some, List.all_append, …]` chain (`take_succ` is deprecated).
 >
 > **Prior finding still open (2026-06-29, BOTTOM-UP): the unary product migration as
 > designed is SIZE-UNSOUND.** The bit-level product encoding
@@ -316,40 +323,27 @@ The whole in-NP side of Cook–Levin is done. **Every remaining `sorryAx` on
 `CookLevin` and `Clique_complete` is on the HARDNESS / reduction side.** Ordered by
 tractability:
 
-1. **S3 linchpin — a CONCRETE re-encoder `FreePrecomposeData` (continues this PR).**
-   The layer-native FOUNDATION *and the precompose ENGINE* are now built (all in
-   `PolyTime.lean`, sorry-free & axiom-clean): `inNPLangFree`/`InNPWitnessLangFree` +
-   `inNPLangFree_to_inNP`, then `DecidesLang.precomposeFree` +
-   `InNPWitnessLangFree.precompose` + `red_inNP_of_langFree` (the free analogue of
-   `DecidesLang'.precompose`/`red_inNP_of_lang`). Concrete witnesses
-   `SAT_inNPWitnessLangFree`/`FlatClique_inNPWitnessLangFree` are exposed. `inNP SAT`/
-   `inNP FlatClique` now carry a recoverable free verifier `Cmd`. **The two blockers to
-   collapsing a live `red_inNP` are now precisely isolated as the engine's two inputs:**
-   - **(a) the re-encoder `data : FreePrecomposeData` — the next concrete deliverable.**
-     A `Cmd` that runs the reduction and re-lays its output into the verifier's bespoke
-     input layout, satisfying `bridge : AgreeBelow D.regBound (mfc.eval (eIn v))
-     (D.encodeIn (gmap v))` (free analogue of `PolyTimeComputableLang'.normalizes`) plus
-     cost/frame/bit bounds. This is ordinary verifier-program engineering (template:
-     `mapFstCmd` + its frame/run lemmas, but targeting a fixed bespoke layout — e.g.
-     `EvalCnfCmd.encodeState`'s 12 registers). **No structural unknown** (reachability
-     probe confirms `red_inNP_of_langFree` → `inNP (kSAT 3)` given `data` + `Wf`). This
-     is the recommended next top-down deliverable.
-   - **(b) ⪯p carries a real program (ROADMAP step 2).** The engine's `Wf :
-     PolyTimeComputableLang f` input. Swapping `ReductionWitness` from size-only
-     `polyTimeComputable` to `polyTimeComputable'` is what supplies it. This is the
-     ripple that makes **S1/S2 stop typechecking** — so do it only *with* the honest
-     sound-tail witnesses (#2), as a coordinated batch (the conditional theorem breaks
-     until they land). NB a *free* `PolyTimeComputableLang` (not canonical `'`) suffices
-     for `red_inNP_of_langFree`, sidestepping the blocked product encoding.
-   - **⚠ Do NOT try to use the canonical `red_inNP_of_lang`/`inNPLang` engine** — it is
+1. **S3 linchpin — ✅ DONE (2026-07-02).** The free engine
+   (`inNPLangFree`/`red_inNP_of_langFree`, `PolyTime.lean`) **and its first live
+   application** (`NP/kSAT_to_SAT_free.lean`: `inNP_kSAT3_free`, re-encoder
+   `kSAT3_precomposeData` + reduction program `kSAT3_reductionLang`) are sorry-free &
+   axiom-clean. Nothing left here; the file is **the template for every further free
+   reduction witness**. Two standing warnings:
+   - **⚠ Do NOT use the canonical `red_inNP_of_lang`/`inNPLang` engine** — it is
      unpopulatable (needs `LangEncodable (X×Cert)`, the size-unsound product encoding).
      Use the free `inNPLangFree`/`red_inNP_of_langFree` line.
-2. **The sound-tail reductions as `Cmd`s (couples with 1b).** `flatTCC_to_flatCC`
-   (cheap) → `FlatCC_to_BinaryCC` (medium) → `BinaryCC_to_FSAT` (Tseytin, the
-   expensive ~1K-LOC item). Each is a free `PolyTimeComputableLang` witness (canonical
-   `'` is blocked by the product encoding); `map`-over-lists
-   (`parked/MapNatList_WIP.lean`) gates the whole chain. At this point S1/S2 *stop
-   typechecking* until honest.
+   - **⚠ Honesty is per-witness discipline** (see the session block's key risk
+     finding): `eIn` must be the natural layout of the INPUT, all reduction work in
+     the `Cmd`. The structures do not enforce it.
+2. **The sound-tail reductions as `Cmd`s — the next top-down deliverable.**
+   `flatTCC_to_flatCC` (cheap) → `FlatCC_to_BinaryCC` (medium) → `BinaryCC_to_FSAT`
+   (Tseytin, the expensive ~1K-LOC item). Each is a free `PolyTimeComputableLang`
+   witness (canonical `'` is blocked by the product encoding) — **build each exactly
+   like `kSAT3_reductionLang`**: bespoke bit-level layout, ONE generic run+frame+cost
+   lemma per program, `decodeOut := invFun enc` + an injectivity induction, tight
+   size lemma if `≤ 2·size+1` bites. `map`-over-lists (`parked/MapNatList_WIP.lean`)
+   gates the chain. Coupled with the `⪯p`/`ReductionWitness` re-typing (ROADMAP step
+   2): S1/S2 *stop typechecking* when that lands, so plan it as a coordinated batch.
 3. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K LOC) —
    the deepest unsoundness, the real front reduction. Largest item; do after #1/#2.
 
@@ -366,6 +360,25 @@ cost-proof gotchas in the recent-session block.
 
 The op builds below are templates; the helper stacks are axiom-clean.
 
+- **The kSAT3 free-reduction stack (S3 linchpin, LIVE) — DONE & axiom-clean**
+  (`NP/kSAT_to_SAT_free.lean`, 2026-07-02). **The template for every further free
+  reduction witness** (top-down target #2). Do not re-derive:
+  - `kCnf3Check` — the re-encoder/reduction `Cmd` (registers ≥ 17 scratch + readNum's
+    `HEAD`/`INBLK`/`SKIPR`; final `clear HEAD` scrubs the one below-16 register).
+  - `kCnf3Check_run` — the ONE generic run lemma (regs-1/2 rewrite + per-register
+    frame + `kCheckBudget` cost, over ANY base state carrying regs 1/2) serving BOTH
+    witnesses; built from `litScan_lit`/`_end`/`_idle` → `CSInv`/`litScan_step` →
+    `clauseScan_run` → `KInv`/`clauseScan_step` (each level: run+frame+cost in one
+    statement — cheaper than CliqueRel's split behavioural/cost stacks).
+  - `kSAT3_precomposeData` (bridge via `interval_cases r` over the 16-register frame)
+    and `kSAT3_reductionLang` (`decodeOut := Function.invFun encodeCnf`).
+  - `encodeCnf_injective` (+ `encodeClause_append_inj`/`encodeLit_append_inj`/
+    `replicate_block_inj` — the prefix-free-block induction pattern for any stream
+    decoder), `encodeCnf_tally_tight` (`|encodeCnf N| + |N| ≤ 2·size N` — makes the
+    tight `PolyTimeComputableLang.encodeIn_size` satisfiable), `encodeCnf_cons`/
+    `encodeClause_cons`/`encodeCnf_append`/`encodeClause_length_ge` stream-structure
+    lemmas, and the `kCheckBudget_le_poly` monomial-domination budget pattern
+    (`ring`-expand both sides, `omega` finishes).
 - **Free-encoding layer-native NP class + precompose ENGINE (S3 linchpin) — BUILT &
   axiom-clean** (`PolyTime.lean`, 2026-07-01). **This is the line the S3 migration runs
   on** (the canonical `DecidesLang'`-based `inNPLang`/`red_inNP_of_lang` is
