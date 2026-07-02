@@ -21,6 +21,8 @@ register before working.
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
 | `#print axioms KSat3Free.inNP_kSAT3_free` | **`[propext, Classical.choice, Quot.sound]`** — the **first live `red_inNP` routed through the free layer engine** (`red_inNP_of_langFree` + a concrete re-encoder & reduction program, 2026-07-02). |
 | `#print axioms KSat3Free.kSAT3_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — the **first live honest TM-backed reduction on the real chain** (`kSAT 3 ⪯p' SAT`, 2026-07-02). |
+| `#print axioms FlatTCCFree.flatTCC_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — the **first sound-tail chain step as a live honest TM-backed reduction** (`FlatTCC ⪯p' FlatCC` via the unguarded structural map, 2026-07-02). |
+| `NPhard'` endgame design | **SETTLED & machine-validated** (2026-07-02): `PolyTimeComputableLang.SeamData`/`comp` (Cmd-level chain composition, fully proven) + `NPhard'`/`NPcomplete'`; hardness is proven at chain endpoints only — see `CookLevin/HANDOFF.md`. |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
 | Genuine `sorry`s in built code | **7** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau (S1), 3× MultiToSingle (dead code) |
 | `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |
@@ -102,7 +104,11 @@ sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
 …). The S3 layer→framework bridge is built **on the free-encoding line** and is
 LIVE & axiom-clean (`toFrameworkWitness'`, `inNPLangFree`/`inNPLangFree_to_inNP`,
 `FreePrecomposeData`/`red_inNP_of_langFree`, `reducesPolyMO'_of_langFree` — live
-instances `inNP_kSAT3_free` and `kSAT3_reducesPolyMO'`). A canonical
+instances `inNP_kSAT3_free`, `kSAT3_reducesPolyMO'`, and
+`flatTCC_reducesPolyMO'`). Chains of reduction witnesses compose **at the
+`Cmd` level** via `PolyTimeComputableLang.SeamData`/`comp` (fully proven,
+2026-07-02) — the honest replacement for `⪯p'`-transitivity, which deliberately
+does not exist. A canonical
 shared-encoding alternative (`LangEncodable`/`PolyTimeComputableLang'` +
 `swap`/`map_fst`/`map_snd`) was built and then **retired & deleted
 (2026-07-02)** — its generic product encoding is size-unsound

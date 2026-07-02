@@ -7,141 +7,146 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-02)
+## Where the proof stands (2026-07-02, evening)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
-  `KSat3Free.inNP_kSAT3_free` (the first live `red_inNP` through the free
-  engine), and `KSat3Free.kSAT3_reducesPolyMO'` (`kSAT 3 ⪯p' SAT`, the first
-  live honest TM-backed reduction) are all
-  `[propext, Classical.choice, Quot.sound]`.
+  `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` (`kSAT 3 ⪯p' SAT`)
+  are all `[propext, Classical.choice, Quot.sound]`.
+- **The S3 migration is now EXECUTING.** Two live honest `⪯p'` witnesses
+  (`kSAT3_reducesPolyMO'` and **`FlatTCCFree.flatTCC_reducesPolyMO' :
+  FlatTCC.FlatTCCLang ⪯p' FlatCCLang`**, the first *sound-tail* step, this
+  session), and the **`NPhard'` endgame design is SETTLED & machine-validated**
+  (`PolyTimeComputableLang.SeamData`/`comp` fully proven — see below).
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
   `MultiToSingle` (dead code). Plus the `sorry`-free **vacuous** defs (S1/S2 +
-  size-0 hardness reduction) that `#print axioms` cannot see — Group S in the
-  ROADMAP.
+  size-0 hardness reduction) invisible to `#print axioms` — Group S.
 - **The compiler (Risk C2) is DONE for everything the proof needs.** 9 ops
-  proven; the value-as-length trio (`takeAt`/`dropAt`/`consLen`) is **RETIRED**
-  (see below), isolated behind the `Op.IsSupported`/`Cmd.AllOpsSupported` wall.
-  `Compile.lean` is a 39-line facade over `Compile/`; new run lemmas go in the
-  per-gadget `Compile/Run*` modules, contracts in `Compile/OpSound.lean`.
-  Iteration cost: editing a `Run*` module rebuilds it + downstream (~30s);
-  editing `OpMachines` rebuilds the chain (~2–3 min). All Compile modules are
-  structurally bound except `Decider` (~3.4s) and `Assembly` (~1.2s) — judged
-  not worth further perf work.
+  proven; the value-as-length trio is retired behind the `Op.IsSupported`/
+  `Cmd.AllOpsSupported` wall, awaiting deletion (bottom-up task below).
 
-## ★ SETTLED (2026-07-02, bottom-up audit): the trio & the canonical layer are RETIRED
+## ★ SETTLED (2026-07-02, top-down): the `NPhard'` endgame design
 
-The audit of the remaining proof path (sound-tail reductions, C8 decider, S1
-tableau reduction, `⪯p'` re-typing) confirmed **option (B)**: *nothing* needs
-the generic `LangEncodable (X × Y)` product trio — every witness is a bespoke
-bit-level **free** witness (`PolyTimeComputableLang`/`DecidesLang`), the pattern
-proven live three times (`EvalCnfCmd`, `CliqueRelTM`, `kSAT_to_SAT_free`).
-Consequences, all executed:
+`PolyTime.lean` now carries the whole migrated-hardness architecture,
+**sorry-free**:
 
-- **The owner decision on an encoding redesign (Elias-γ prefix, old step 2
-  option A) is OBSOLETE.** The unary product migration is dead; do not revive it.
-  (Why it was blocked: the bit-level product encoding is size-unsound under
-  nesting — machine-checked in `probes/UnaryProductSizeProbe.lean`.)
-- **The canonical scaffolding is DELETED** (~1.8K LOC from `PolyTime.lean`:
-  `LangEncodable`/`BitEncodable` + instances, `PolyTimeComputableLang'`,
-  `DecidesLang'`, `inNPLang`/`red_inNPLang`/`inNPLang_to_inNP`,
-  `red_inNP_of_lang`, `swap`/`map_fst`/`map_snd`, `ExtractOnes.lean`). This
-  removed 6 permanently-unprovable wall `sorry`s. **Do not rebuild it** — the
-  free line covers every role it had (see "The free line" below).
-- **The Route-A wall is permanent** until the trio ops themselves are deleted
-  (the concrete next bottom-up task, below).
+- **`PolyTimeComputableLang.SeamData`/`comp`** — the Cmd-level chain
+  composition (the migrated `red_NPhard`). A seam = a concrete re-encoder
+  `Cmd` `mfc` with bridge law `AgreeBelow Wg.regBound ((Wf.c ;; mfc).eval …)
+  (Wg.encodeIn (f x))` (same shape as the live `kCnf3Check_bridge`), a
+  `decode_frame` law (`Wg.decodeOut` reads only `Wg`'s frame — true of every
+  honest decode), and `mfc`'s cost bound. `comp` discharges **all** composite
+  witness fields from the seam — chains fold into ONE witness, then bridge
+  once via `reducesPolyMO'_of_langFree`.
+- **`NPhard'`/`NPcomplete'`** (mirroring `NPhard` over `⪯p'`) + strengthening
+  bridges `NPhard'_to_NPhard`/`NPcomplete'_to_NPcomplete`.
+- **The rule: `NPhard'` is proven at chain ENDPOINTS only** — never state it
+  of an intermediate (no `⪯p'`-transitivity exists, deliberately). C8 must
+  produce, per NP problem `Q`, the front witness `W_Q` **together with its
+  `SeamData W_Q W_chain`** (output pinned to the chain's fixed input layout);
+  `NPhard' SAT := fun Y _ Q hQ => reducesPolyMO'_of_langFree (W_Q.comp … ) …`.
+- **Seam discipline (the new standing obligation):** every chain-step witness
+  should exit with the canonical layout of its *output type* on the next
+  witness's frame — scrub scratch on-machine, or let the seam's `mfc` (short
+  copy/clear program) do it. The live `flatTCC_reductionLang` currently leaves
+  scratch (regs 9–13, 15, 16, 26) dirty; its first seam's `mfc` must scrub or
+  the witness gets a scrubbing epilogue then.
 
 ## The free line — the working architecture (use this, and only this)
 
-- **Verifiers**: free `DecidesLang` with a bespoke bit-level `encodeIn`
-  (numbers UNARY), bridged by `DecidesLang.toDecidesBy`/`toInTimePoly` →
-  `inTimePolyLang_to_inTimePoly` (live: `evalCnfDecidesLang`,
-  `cliqueRelDecidesLang`).
-- **NP witnesses**: `InNPWitnessLangFree`/`inNPLangFree` (+ `inNPLangFree_to_inNP`);
-  the verifier `Cmd` stays recoverable for precomposition.
-- **Reductions**: free `PolyTimeComputableLang` → `toFrameworkWitness'` gives
-  `polyTimeComputable'`; `reducesPolyMO'_of_langFree` gives `P ⪯p' Q`;
-  `red_inNP_of_langFree` gives the `red_inNP` step (verifier precomposition via
-  `DecidesLang.FreePrecomposeData`/`precomposeFree`).
-- **Composition happens at the `Cmd` level, per seam.** Free encodings share no
-  layout, so each seam needs a concrete re-encoder `Cmd` (`FreePrecomposeData`
-  pattern; `comp_computes_of_bridge` is the map-side statement of the seam).
-- **`NP/kSAT_to_SAT_free.lean` is the template for every further free witness**:
-  bespoke layout, ONE generic run+frame+cost lemma per program
-  (`kCnf3Check_run`-style, over any base state carrying the input registers —
-  that is what lets one program serve several witnesses), `decodeOut :=
-  Function.invFun enc` backed by a prefix-free-block injectivity induction, and
-  a tight size lemma if `encodeIn_size ≤ 2·size+1` bites
-  (`encodeCnf_tally_tight`-style; the loose learned bounds usually scare you off
-  a satisfiable obligation).
+- **Verifiers**: free `DecidesLang` with bespoke bit-level `encodeIn`
+  (numbers UNARY) → `DecidesLang.toDecidesBy`/`toInTimePoly` (live:
+  `evalCnfDecidesLang`, `cliqueRelDecidesLang`).
+- **NP witnesses**: `InNPWitnessLangFree`/`inNPLangFree` (+ `inNPLangFree_to_inNP`).
+- **Reductions**: free `PolyTimeComputableLang` → `toFrameworkWitness'`/
+  `reducesPolyMO'_of_langFree`; verifier precomposition via
+  `DecidesLang.FreePrecomposeData`/`red_inNP_of_langFree`; **witness-witness
+  composition via `SeamData`/`comp`** (no live seam yet — first one is the
+  `flatTCC → FlatCC_to_BinaryCC` join, top-down task 2).
+- **Templates for new reduction witnesses** — copy these, not first principles:
+  - `NP/kSAT_to_SAT_free.lean`: re-encoder + reduction sharing one program,
+    fold invariants, tight `encodeIn_size`, `FreePrecomposeData`.
+  - `NP/SAT/CookLevin/Reductions/FlatTCC_to_FlatCC_free.lean`: **the sound-tail
+    pattern** — drop the input-validity guard when invalid maps to invalid
+    (`flatTCC_to_flatCC_isValidFlattening`-style backward transfer + an
+    unconditional correctness iff), shared-layout registers for identity
+    fields, `blockMove`/`halfMove` stream re-formatting over
+    `CliqueRelTM.readNum`, sentinel-list encoding `encSList` + prefix-free
+    injectivity, and multi-field decode via `Function.invFun encKey` over an
+    extracted register tuple.
+- **The canonical `LangEncodable` layer stays DEAD** (deleted 2026-07-02;
+  generic product encoding is size-unsound —
+  `probes/UnaryProductSizeProbe.lean`). Do not rebuild it.
 
-### ⚠ Two standing architecture risks — check every new witness against these
+### ⚠ Standing architecture risks — check every new witness against these
 
-1. **Honesty is per-witness discipline, not enforced.** `FreePrecomposeData`
-   /`PolyTimeComputableLang` have unconstrained `eIn`/`decodeOut`; the trivial
-   dishonest instantiation (`eIn := D.encodeIn ∘ gmap`, `mfc := no-op`)
-   satisfies every field. `eIn` must be the natural layout of the *input*
-   (never of `gmap v`), all reduction work in the `Cmd`. The S3 endgame must
-   eventually PIN encodings (per-type pinned layouts, or chain composition
-   where stage *n*'s `eIn` is stage *n−1*'s output layout).
-2. **There is NO generic `⪯p'`-transitivity, deliberately.** Two opaque
-   `polyTimeComputable'` witnesses cannot be honestly composed (no re-encoder
-   is recoverable). Today's `red_NPhard` leans on `reducesPolyMO_transitive`
-   (size-only — fine); the **migrated** `NPhard'` transport cannot work that
-   way. The endgame design must compose chains at the `Cmd` level *first* (the
-   C8 wrapper program's output layout pinned to the chain's input layout), then
-   bridge once to `⪯p'`. **This is the key open design question of ROADMAP
-   step 2 — settle it top-down before building the chain witnesses' seams.**
+1. **Honesty is per-witness discipline, not enforced.** `eIn`/`encodeIn` must
+   be the natural layout of the *input* (never of `gmap v`), `decodeOut` the
+   inverse of the natural *output* layout, all reduction work in the `Cmd`.
+   The trivial dishonest instantiation satisfies every field — review each
+   witness. (Shared-layout registers for fields the map leaves identical are
+   fine — the honest program for an identity field costs nothing.)
+2. **Seam discipline** (successor of the old "no `⪯p'`-transitivity" risk,
+   which is now *answered* by `SeamData`/`comp`): seams are per-pair concrete
+   engineering; layouts are pinned by discipline, not types. Watch that C8's
+   per-`Q` witness can actually target the chain's fixed input layout — probe
+   this when C8 is scoped.
 
 ---
 
 ## NEXT BOTTOM-UP session — delete the trio ops (Route B by deletion)
 
-The trio is retired, so finishing Route B is now *deletion*, not proof. One
-atomic batch (editing `Syntax.lean` rebuilds everything — plan a full-rebuild
-session):
+Unchanged plan; one atomic batch (editing `Syntax.lean` rebuilds everything —
+plan a full-rebuild session):
 
 1. Remove `takeAt`/`dropAt`/`consLen` from the `Op` inductive (`Syntax.lean`)
    and their case arms everywhere (`Semantics.lean`, `Frame.lean`,
-   `Compile/OpSound.lean` wall-discharged cases, any `decide`/`simp` sets over
-   `Op`).
+   `Compile/OpSound.lean` wall-discharged cases, `decide`/`simp` sets over `Op`).
 2. Delete **both walls**: `Cmd.NoConsLen` and `Op.IsSupported`/
-   `Cmd.AllOpsSupported` (Syntax.lean) + the `noConsLen`/`allOpsSupported`
-   fields on `DecidesLang`/`PolyTimeComputableLang`/`FreePrecomposeData` + their
-   supplies (`evalCnfCmd_noConsLen`/`_allOpsSupported`,
-   `cliqueRelCmd_*`, `kCnf3Check_*`) + the `hsupp`/`hnc` threading through
+   `Cmd.AllOpsSupported` + the `noConsLen`/`allOpsSupported` fields on
+   `DecidesLang`/`PolyTimeComputableLang`/`FreePrecomposeData`/**`SeamData`**
+   + their supplies (`evalCnfCmd_*`, `cliqueRelCmd_*`, `kCnf3Check_*`,
+   `cardConvert_*`) + the `hsupp`/`hnc` threading through
    `compileOp_sound_physical_residue` → `run_physical_residue_gen` →
    `Compile_run_physical_residue` → `bitDecider_run` → `paddedBitDecider_run`/
-   `paddedCompute_run`. (Mechanical reverse of the Route-A threading; the deep
-   `forBnd` `hnc_body` machinery is the fiddliest spot.)
-3. Re-check axioms of the four headline results + build green.
+   `paddedCompute_run`. (The deep `forBnd` `hnc_body` machinery is the
+   fiddliest spot.)
+3. Re-check axioms of the headline results + build green.
 
-`compileOp_sound_physical_residue` then covers **all** ops unconditionally.
-Alternative if the batch overruns: the wall is proven infrastructure and can
-stay forever — the deletion buys cleanliness, not soundness. Time-box it.
+The wall is proven infrastructure and can stay forever — the deletion buys
+cleanliness, not soundness. Time-box it; if it overruns, revert and record.
 
-## NEXT TOP-DOWN session — start target #2: the sound-tail reductions as free witnesses
+## NEXT TOP-DOWN session — continue target #2: the sound tail as free witnesses
 
 All remaining `sorryAx` on `CookLevin`/`Clique_complete` is hardness-side.
 Ordered:
 
-1. **`flatTCC_to_flatCC` as a free `PolyTimeComputableLang`** — the cheapest
-   next reduction witness; build it exactly like `kSAT_to_SAT_free.lean` (the
-   template). Then `FlatCC_to_BinaryCC` (medium), `BinaryCC_to_FSAT` (Tseytin,
-   the expensive ~1K-LOC item). `map`-over-lists (`parked/MapNatList_WIP.lean`,
-   near-complete draft) gates parts of the chain.
-2. **Settle the `NPhard'`/`⪯p'` migration design** (see standing risk 2): how
-   hardness transports once `⪯p` is re-typed — Cmd-level chain composition with
-   pinned layouts, `NPhard'` proven at the chain endpoint. S1/S2 *stop
-   typechecking* when the re-typing lands, so plan the swap as a coordinated
-   batch with honest witnesses for the whole tail.
-3. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K
-   LOC) — the deepest unsoundness, the real front reduction. After #1/#2.
-4. **C8** — the universal-source decider (`hasDeciderClassical`,
-   `GenNP_is_hard.lean`), single-tape via free `DecidesLang`; subsumes S2
-   (collapse the phantom bridges here). Also requires Part 0.1 (real
-   `encodable.size` on chain intermediates).
+1. **`FlatCC_to_BinaryCC` as a free `PolyTimeComputableLang`** (medium). Use
+   the `FlatTCC_to_FlatCC_free.lean` template. Work through the same design
+   questions FIRST, in this order: (a) can the `isValidFlattening` guard be
+   dropped (invalid → invalid)? — probe the correctness iff on paper before
+   coding; (b) the map does real work here (unary block encoding of symbols
+   over `Sigma`), so the program needs per-symbol block expansion — probe the
+   program with `#eval` before proving (`probes/` pattern); (c) `map`-over-lists
+   may be needed — a near-complete draft exists at `parked/MapNatList_WIP.lean`.
+2. **The FIRST LIVE `SeamData`**: join `flatTCC_reductionLang` to the new
+   `FlatCC_to_BinaryCC` witness via `PolyTimeComputableLang.comp` and check
+   the composite's axioms. This validates the settled endgame design on real
+   witnesses (the seam `mfc` re-encodes the flatTCC output registers
+   `{1,6,7,2,8,4,5}` + scrubs scratch into the new witness's input layout).
+   Budget it as its own work item — the bridge proof is a `cardConvert_run`-
+   style frame argument, not a formality.
+3. **`BinaryCC_to_FSAT` (Tseytin) as a free witness** — the expensive tail
+   item (~1K-LOC formula builder re-expressed as a `Cmd`); after it,
+   `FSAT_to_SAT`. Only then is the whole sound tail one composable chain.
+4. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K
+   LOC) — the deepest unsoundness, the real front reduction.
+5. **C8** — the universal-source decider (`hasDeciderClassical`), single-tape
+   via free `DecidesLang`; subsumes S2 (collapse the phantom bridges here).
+   Must now ALSO produce the per-`Q` `SeamData` into the chain head (see the
+   settled design). Requires Part 0.1 (real `encodable.size` on chain
+   intermediates).
 
 ---
 
@@ -151,53 +156,50 @@ Ordered:
   alphabet; `encodeTape` shifts cells `+1` (`0→1`,`1→2`), `0` separates
   registers, `3` terminates/anchors. Every tape-touching state must be
   `Compile.BitState` (cells `∈ {0,1}`). Numbers unary (`enc n = replicate n 1`).
-  Owner-settled.
 - **Runtime tape-padding resolves the register-count WALL.** `Compile.padRegsTM
   k` grows the tape during the run; `paddedBitDecider_run`/`paddedCompute_run`
-  are proven with **no `k ≤ s.length`**. Padding reserves
-  `k + 2·loopDepth + 2` registers.
+  are proven with **no `k ≤ s.length`**.
 - **`physStepBudget G cost = (9G²+9G+33)·(8·cost+8) + cost`** is the only
-  composable budget shape (`_seq` superadditive, `_mono`, cubic `_poly` const
-  817). Never an `overhead`/`(·+1)²` shape (quadratics don't compose).
-- **`DecidesBy.encode_size` is per-decider POLYNOMIAL** (`encodeBound`). Final
-  boundary — do not re-tighten to linear.
-- **Per-op contract takes a threaded scratch base `sb`** (`Compile k c`); eqBit-
-  style ops use pre-existing interior scratch at `sb`/`sb+1`.
+  composable budget shape. Never an `overhead`/`(·+1)²` shape.
+- **`DecidesBy.encode_size` is per-decider POLYNOMIAL** (`encodeBound`).
+- **Per-op contract takes a threaded scratch base `sb`**; eqBit-style ops use
+  pre-existing interior scratch at `sb`/`sb+1`.
 - **`Op.cost eqBit = |src1|+|src2|+1`**, **`Op.cost concat =
-  2(|src1|+|src2|)+1`** (size-aware costs; budget bounds that look "off by 2×"
-  are usually the `enc_size ≤ 2·size+1` slack).
+  2(|src1|+|src2|)+1`** (size-aware costs).
+- **`NPhard'` endpoint-only; chains compose via `SeamData`/`comp`** (settled
+  2026-07-02, above). No generic `⪯p'`-transitivity — do not attempt one.
 
 ## Proven, reusable — do not re-derive
 
+- **The flatTCC free-reduction stack** (`Reductions/FlatTCC_to_FlatCC_free.lean`):
+  `blockMove_run`/`halfMove_run` (bare-block → sentinel-element stream
+  transport over `readNum`), `cardStep_step` (clamped-`drop`/`take` single
+  invariant covering work+idle phases), `encSList` + `encSList_append_inj`
+  (prefix-free sentinel lists — reuse for any nested-list layout),
+  `encKey_injective`/`extractKey` (multi-field record decode via one
+  `Function.invFun`), `flatTCC_to_flatCC_correct` (unguarded-map iff).
+- **The chain-composition engine** (`PolyTime.lean`): `SeamData`/`comp`,
+  `State.get_append_replicate_nil`, `NPhard'`/`NPcomplete'` + bridges.
 - **The kSAT3 free-reduction stack** (`NP/kSAT_to_SAT_free.lean`): `kCnf3Check`
-  + `kCnf3Check_run` (run+frame+cost in one statement) + `kSAT3_precomposeData`
-  + `kSAT3_reductionLang` + `encodeCnf_injective` (prefix-free-block induction)
-  + `encodeCnf_tally_tight` + the `kCheckBudget_le_poly` monomial-domination
+  + run lemma + `kSAT3_precomposeData` + `encodeCnf_injective` +
+  `encodeCnf_tally_tight` + the `kCheckBudget_le_poly` monomial-domination
   pattern (`ring`-expand both sides, `omega` finishes).
 - **The free engine** (`PolyTime.lean`): `InNPWitnessLangFree`/`inNPLangFree`
-  + `inNPLangFree_to_inNP`, `DecidesLang.FreePrecomposeData`/`precomposeFree`,
-  `InNPWitnessLangFree.precompose`, `red_inNP_of_langFree`,
-  `reducesPolyMO'_of_langFree`; concrete witnesses
-  `SAT_inNPWitnessLangFree`/`FlatClique_inNPWitnessLangFree`.
-- **The verifier stacks** — `EvalCnfCmd.lean` (SAT; probe→step→fold
-  invariant→`cost_forBnd_le`) and `CliqueRelTM.lean` (FlatClique; `readNum_run`
-  /`ltBit_run` leaves, the 5 per-check run lemmas, `memberEdge_run` as the
-  nested-loop template, the length-only-invariant cost stack
-  `readNum_cost`→`cliqueRelCmd_cost_bound`). De-privated & reusable:
-  `readNum_cost`, `readNum_stream_le`, `readNumBody_effect`,
-  `cSkip_eval`/`cSkip_cost`, `replicate_one_snoc`/`replicate_one_eq_iff`,
-  `eqBit_replicate`.
+  + `inNPLangFree_to_inNP`, `FreePrecomposeData`/`precomposeFree`,
+  `red_inNP_of_langFree`, `reducesPolyMO'_of_langFree`.
+- **The verifier stacks** — `EvalCnfCmd.lean` (SAT) and `CliqueRelTM.lean`
+  (FlatClique; `readNum_run`/`readNum_cost`/`ltBit_run`, `memberEdge_run`
+  nested-loop template, length-only-invariant cost stack). De-privated:
+  `readNum_cost`, `readNum_stream_le`, `cSkip_eval`/`cSkip_cost`,
+  `replicate_one_snoc`/`replicate_one_eq_iff`, `eqBit_replicate`.
 - **The compiler assembly** (`Compile/`): `run_physical_residue_gen`,
-  `compileSeq_sound_physical_residue`(+`_traj`), `compileForBnd_…` (counted
-  loop, fully proven), `compileIfBit_…`, `bitDecider_run`,
-  `paddedBitDecider_run`, `paddedComputeTM`/`paddedCompute_run`; the op gadget
-  stacks (`opCopy`/`opCopyAppend`/`opConcat`/`opTail`/`opNonEmpty`/`opHead`/
-  `opEqBitNG` + run lemmas); the branch/loop/move toolkit (`joinTwoHalts*`,
-  `rewindBracket`, `loopTM`, `moveRegionTM` — the move gadgets are
-  residue-costly, one-shot bookkeeping only); the threading toolkit
-  (`Cmd.eval_preserves_BitState`, `Cmd.size_eval_le`, `State.ext_of_get`, …).
-  ⚠ `Compile_sound`/`Compile_run_physical`/`Compile_polyBound` are
-  DEAD/superseded — do not attempt to prove.
+  `compileSeq_sound_physical_residue`(+`_traj`), `compileForBnd_…`,
+  `compileIfBit_…`, `bitDecider_run`, `paddedBitDecider_run`,
+  `paddedComputeTM`/`paddedCompute_run`; the op gadget stacks; the
+  branch/loop/move toolkit; the threading toolkit (`Cmd.eval_preserves_BitState`,
+  `Cmd.size_eval_le`, `State.ext_of_get`, `AgreeBelow`, `Cmd.eval_agree`/
+  `cost_agree`, …). ⚠ `Compile_sound`/`Compile_run_physical`/`Compile_polyBound`
+  are DEAD/superseded — do not attempt to prove.
 
 ## Conventions & hard-won gotchas
 
@@ -205,22 +207,29 @@ Ordered:
   PATH; LSP/most MCP can't find it). First build slow — kick off in background.
   Iterate one module: `lake build Complexity.Lang.PolyTime`. Commit per logical
   step, green. Headline: `Complexity.NP.SAT.CookLevin`.
-- **Probe** a machine end-to-end (`#eval`/`runFlatTM`) *before* proving its run
-  lemma: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/x.lean`. Every
-  gadget exits with its head on the trailing terminator — rewind-bracket it.
+- **Probe** a machine/program end-to-end (`#eval`) *before* proving its run
+  lemma: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean probes/X.lean`.
+  Every TM gadget exits with its head on the trailing terminator — rewind-
+  bracket it.
 - **Axiom-check** via a scratch file: `#print axioms <name>` — only
   `propext`/`Classical.choice`/`Quot.sound` for new sorry-free results.
 - **`omega` gotchas:** cannot see through `Var := Nat` variables
-  (`simp only [Var] at *` first) or through `var`-typed rcases products
-  (retype via `obtain ⟨w, hw⟩ : ∃ w : Nat, w = v`); needs GROUPED products
-  (`2*(P*P)`, never `2*P*P`); never splits `(l ++ r).length` (hand it
-  `List.length_append`); times out on products of two non-literal atoms
-  (`generalize` them). Budget certs: `ring`-expand both sides into monomials
-  via `have`s, `omega` closes by coefficient domination.
+  (`simp only [Var] at *` first), `var`-typed rcases products (retype via
+  `obtain ⟨w, hw⟩ : ∃ w : Nat, w = v`), **or `encodable.size (n : Nat)`**
+  (rewrite with `(fun n => rfl : ∀ n : Nat, encodable.size n = n)` first);
+  needs GROUPED products (`2*(P*P)`, never `2*P*P`); never splits
+  `(l ++ r).length` (hand it `List.length_append`); times out on products of
+  two non-literal atoms (`generalize` them). Budget certs: `ring`-expand both
+  sides into monomials via `have`s, `omega` closes by coefficient domination.
+  Un-beta-reduced structure-field lambdas are opaque atoms — `show` the
+  beta-reduced form first.
 - **`l[i]` after a `Cmd.cost` hypothesis = whnf TIMEOUT** (`get_elem_tactic`'s
   `assumption` pass defeq-checks against every hypothesis). Hoist every
   `l[i]`-bearing `have` BEFORE `obtain`-ing a run/cost lemma.
-- **`set` retro-folds eval equations** (a later `rw [← hs]` finds nothing);
+- **`set` retro-folds eval equations but not terms produced by later `rw`** —
+  fold new occurrences with `rw [← hs]`. `State.get_set_eq` can't see through
+  a `set`-bound local (`s3.get OUT` where `s3 := _.set OUT v`) — state a
+  `have hs3OUT : … := by rw [hs3]; exact State.get_set_eq _ _ _` first.
   `rw` matches registers SYNTACTICALLY — wrap as `(by exact hge 26 (by omega))`
   so the expected type drives elaboration. Avoid nested `set`/`let` over
   `State.set`/`.get` (`isDefEq` ×8/level) — flatten with

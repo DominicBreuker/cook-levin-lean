@@ -478,6 +478,146 @@ theorem PolyTimeComputableLang.comp_computes_of_bridge
   rw [Cmd.eval_seq, Cmd.eval_seq, h_bridge]
   exact Wg.computes (h x)
 
+/-! ## `SeamData` / `comp` — Cmd-level chain composition (SETTLED DESIGN, 2026-07-02)
+
+**This is the migrated `red_NPhard`.** Since two opaque `polyTimeComputable'`
+witnesses cannot be honestly composed (no `⪯p'`-transitivity, see below), the
+reduction chain composes **at the witness level, before bridging**: a per-seam
+re-encoder `Cmd` `mfc` maps the left witness's exit state onto the right
+witness's input layout, *register-wise on the right witness's frame*
+(`AgreeBelow Wg.regBound`, the same law as the live verifier-side
+`FreePrecomposeData.bridge` / `kCnf3Check_bridge`). `comp` then produces a
+single free witness for the composite map, from which ONE application of
+`reducesPolyMO'_of_langFree` yields the composed `⪯p'`.
+
+The two per-seam obligations beyond the bridge itself:
+* `decode_frame` — the right witness's `decodeOut` reads only its register
+  frame (true of every honest decode: they extract named registers
+  `< regBound`; e.g. `extractKey` in `FlatTCC_to_FlatCC_free.lean`).
+* `mfc_cost` — the re-encoder runs in polynomial cost on the left witness's
+  actual exit states.
+
+**Seam discipline for chain-step witnesses**: a step's program should exit
+with the canonical layout of its *output type* on the next frame — scrub your
+scratch, or let the seam's `mfc` (a short copy/clear program) do it. -/
+
+/-- The per-seam re-encoder bundle for composing two free reduction witnesses
+`Wf : PolyTimeComputableLang f` and `Wg : PolyTimeComputableLang g` into a
+witness for `g ∘ f`. -/
+structure PolyTimeComputableLang.SeamData
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    {f : X → Y} {g : Y → Z}
+    (Wf : PolyTimeComputableLang f) (Wg : PolyTimeComputableLang g) where
+  /-- The re-encoder: maps `Wf`'s exit layout to `Wg`'s input layout. -/
+  mfc : Cmd
+  /-- The seam law: after `Wf.c ;; mfc`, the state agrees on `Wg`'s whole
+  register frame with `Wg`'s own encoding of the intermediate value. -/
+  bridge : ∀ x, AgreeBelow Wg.regBound
+    (mfc.eval (Wf.c.eval (Wf.encodeIn x))) (Wg.encodeIn (f x))
+  /-- `Wg.decodeOut` reads only `Wg`'s register frame. -/
+  decode_frame : ∀ s t, AgreeBelow Wg.regBound s t →
+    Wg.decodeOut s = Wg.decodeOut t
+  /-- Cost bound for the re-encoder on `Wf`'s actual exit states. -/
+  mfcBound : Nat → Nat
+  mfcBound_poly : inOPoly mfcBound
+  mfcBound_mono : monotonic mfcBound
+  mfc_cost : ∀ x, mfc.cost (Wf.c.eval (Wf.encodeIn x))
+    ≤ mfcBound (encodable.size x)
+  /-- The re-encoder stays inside the composite register frame. -/
+  mfc_usesBelow : Cmd.UsesBelow mfc (max Wf.regBound Wg.regBound)
+  mfc_noConsLen : Cmd.NoConsLen mfc
+  mfc_allOpsSupported : Cmd.AllOpsSupported mfc
+
+/-- Padding a state with empty registers changes no register read (`get` of a
+missing or padded register is `[]` either way). -/
+theorem State.get_append_replicate_nil (s : State) (m : Nat) (r : Var) :
+    State.get (s ++ List.replicate m []) r = State.get s r := by
+  unfold State.get
+  rcases Nat.lt_or_ge r s.length with h | h
+  · rw [List.getElem?_append_left h]
+  · rw [List.getElem?_eq_none h]
+    rcases Nat.lt_or_ge r (s ++ List.replicate m ([] : List Nat)).length with h2 | h2
+    · rw [List.getElem?_eq_getElem h2]
+      have hnil : (s ++ List.replicate m ([] : List Nat))[r]'h2 = [] := by
+        rw [List.getElem_append_right h]
+        exact List.getElem_replicate _
+      rw [hnil]
+      rfl
+    · rw [List.getElem?_eq_none h2]
+
+/-- **Cmd-level composition of free reduction witnesses** — the chain
+composition primitive of the S3 endgame (the honest replacement for
+`⪯p'`-transitivity). All fields are discharged from the seam bundle; no new
+per-composite proof obligations arise. -/
+def PolyTimeComputableLang.comp
+    {X Y Z : Type} [encodable X] [encodable Y] [encodable Z]
+    {f : X → Y} {g : Y → Z}
+    (Wf : PolyTimeComputableLang f) (Wg : PolyTimeComputableLang g)
+    (S : Wf.SeamData Wg) : PolyTimeComputableLang (g ∘ f) where
+  c := Wf.c ;; (S.mfc ;; Wg.c)
+  encodeIn := Wf.encodeIn
+  decodeOut := Wg.decodeOut
+  cost_bound := fun n =>
+    Wf.cost_bound n + S.mfcBound n + Wg.cost_bound (Wf.cost_bound n) + 2
+  cost_bound_poly :=
+    inOPoly_add (inOPoly_add (inOPoly_add Wf.cost_bound_poly S.mfcBound_poly)
+      (inOPoly_comp Wf.cost_bound_poly Wg.cost_bound_poly)) (inOPoly_const 2)
+  cost_bound_mono := fun a b h => by
+    have h1 := Wf.cost_bound_mono a b h
+    have h2 := S.mfcBound_mono a b h
+    have h3 := Wg.cost_bound_mono _ _ h1
+    show Wf.cost_bound a + S.mfcBound a + Wg.cost_bound (Wf.cost_bound a) + 2
+        ≤ Wf.cost_bound b + S.mfcBound b + Wg.cost_bound (Wf.cost_bound b) + 2
+    omega
+  encodeIn_size := Wf.encodeIn_size
+  computes := fun x => by
+    show Wg.decodeOut ((Wf.c ;; (S.mfc ;; Wg.c)).eval (Wf.encodeIn x)) = g (f x)
+    rw [Cmd.eval_seq, Cmd.eval_seq]
+    have hagree := Cmd.eval_agree Wg.c Wg.regBound Wg.usesBelow (S.bridge x)
+    rw [S.decode_frame _ _ hagree]
+    exact Wg.computes (f x)
+  cost_le := fun x => by
+    have h1 := Wf.cost_le x
+    have h2 := S.mfc_cost x
+    have hgc : Wg.c.cost (S.mfc.eval (Wf.c.eval (Wf.encodeIn x)))
+        = Wg.c.cost (Wg.encodeIn (f x)) :=
+      Cmd.cost_agree Wg.c Wg.regBound Wg.usesBelow (S.bridge x)
+    have h3 := Wg.cost_le (f x)
+    have h4 := Wg.cost_bound_mono _ _ (Wf.output_size_le x)
+    show (Wf.c ;; (S.mfc ;; Wg.c)).cost (Wf.encodeIn x) ≤ _
+    rw [Cmd.cost_seq, Cmd.cost_seq]
+    omega
+  output_size_le := fun x => by
+    show encodable.size (g (f x)) ≤ _
+    have h1 := Wg.output_size_le (f x)
+    have h2 := Wg.cost_bound_mono _ _ (Wf.output_size_le x)
+    omega
+  enc_bit := Wf.enc_bit
+  regBound := max Wf.regBound Wg.regBound
+  usesBelow :=
+    ⟨Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wf.usesBelow,
+     S.mfc_usesBelow,
+     Cmd.UsesBelow_mono (Nat.le_max_right _ _) Wg.usesBelow⟩
+  width_le := fun x =>
+    le_trans (Wf.width_le x) (Nat.le_max_left _ _)
+  noConsLen := ⟨Wf.noConsLen, S.mfc_noConsLen, Wg.noConsLen⟩
+  allOpsSupported := ⟨Wf.allOpsSupported, S.mfc_allOpsSupported, Wg.allOpsSupported⟩
+  decode_agree := fun x m => by
+    have hpad : AgreeBelow (max Wf.regBound Wg.regBound)
+        (Wf.encodeIn x ++ List.replicate m []) (Wf.encodeIn x) :=
+      fun r _ => State.get_append_replicate_nil (Wf.encodeIn x) m r
+    show Wg.decodeOut ((Wf.c ;; (S.mfc ;; Wg.c)).eval
+        (Wf.encodeIn x ++ List.replicate m []))
+      = Wg.decodeOut ((Wf.c ;; (S.mfc ;; Wg.c)).eval (Wf.encodeIn x))
+    rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+    have h1 := Cmd.eval_agree Wf.c _
+      (Cmd.UsesBelow_mono (Nat.le_max_left _ _) Wf.usesBelow) hpad
+    have h2 := Cmd.eval_agree S.mfc _ S.mfc_usesBelow h1
+    have h3 := Cmd.eval_agree Wg.c _
+      (Cmd.UsesBelow_mono (Nat.le_max_right _ _) Wg.usesBelow) h2
+    exact S.decode_frame _ _
+      (fun r hr => h3 r (Nat.lt_of_lt_of_le hr (Nat.le_max_right _ _)))
+
 /-! ## (D) The forcing-function test
 
 The S1 reduction `FlatSingleTMGenNP_to_FlatTCC_instance`
@@ -991,5 +1131,59 @@ theorem reducesPolyMO'_of_langFree {X Y : Type} [encodable X] [encodable Y]
     (Wf : PolyTimeComputableLang f) (hcorrect : ∀ x, P x ↔ Q (f x)) :
     P ⪯p' Q :=
   ⟨⟨f, Wf.toFrameworkWitness', fun {x} => hcorrect x⟩⟩
+
+/-! ## `NPhard'` / `NPcomplete'` — the migrated hardness (SETTLED DESIGN, 2026-07-02)
+
+`NPhard'` mirrors `NPhard` verbatim over `⪯p'`. The load-bearing design
+decision is what it does **not** come with:
+
+**There is NO `red_NPhard` analogue for `NPhard'`, and none is needed.**
+`red_NPhard` transports hardness along the chain via
+`reducesPolyMO_transitive`; `⪯p'` has no transitivity (opaque TM-backed
+witnesses cannot be honestly composed), so the migrated endgame *never states
+`NPhard'` of a chain intermediate*. Instead:
+
+1. **The chain composes at the witness level.** Each chain step is a free
+   `PolyTimeComputableLang` witness (live: `flatTCC_reductionLang`;
+   remaining: `FlatCC → BinaryCC`, `BinaryCC → FSAT` (Tseytin),
+   `FSAT → SAT`, and the S1 tableau step). Adjacent steps are joined by a
+   concrete `SeamData` (re-encoder `Cmd` + `AgreeBelow`-bridge), folded by
+   `PolyTimeComputableLang.comp` into ONE witness
+   `W_chain : PolyTimeComputableLang (front-instance → cnf)`.
+2. **The per-`Q` front is C8's job.** For an arbitrary NP problem `Q`, the
+   universal-source construction must produce a free witness `W_Q` for the
+   map from `Q`-instances into the front instance type, **together with a
+   `SeamData W_Q W_chain`** — its output layout pinned to the chain's fixed
+   input layout. (This replaces `hasDeciderClassical` + the size-0 bound.)
+3. **`NPhard' SAT` is then proven at the endpoint only**:
+   `fun Y _ Q hQ => reducesPolyMO'_of_langFree ((W_Q).comp W_chain seam) hcorrect`.
+   The single bridge to `⪯p'` happens after all composition.
+4. The old `⪯p` chain (`NPhard`/`red_NPhard`) keeps compiling untouched until
+   the endpoint proof exists, then `NPcomplete` swaps to `NPcomplete'` (that
+   is the moment S1/S2 must be honest — plan as one batch).
+
+Consequently `NPhard'` facts do not decompose; the decomposition lives in the
+`SeamData`/`comp` layer above. -/
+
+/-- The migrated `NPhard`: every NP problem `⪯p'`-reduces (TM-backed) to `P`.
+Proved at chain *endpoints only* — see the design note above. -/
+def NPhard' {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p' P
+
+/-- The migrated `NPcomplete` — the faithful final statement of the S3
+retirement (`CookLevin' : NPcomplete' SAT` is the endgame headline). -/
+def NPcomplete' {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  NPhard' P ∧ inNP P
+
+/-- `NPhard'` strengthens `NPhard`: the current conditional chain survives the
+migration through this bridge. -/
+theorem NPhard'_to_NPhard {X : Type} [encodable X] {P : X → Prop}
+    (h : NPhard' P) : NPhard P :=
+  fun Y eY Q hQ => reducesPolyMO'_to_reducesPolyMO (h Y eY Q hQ)
+
+/-- `NPcomplete'` strengthens `NPcomplete`. -/
+theorem NPcomplete'_to_NPcomplete {X : Type} [encodable X] {P : X → Prop}
+    (h : NPcomplete' P) : NPcomplete P :=
+  ⟨NPhard'_to_NPhard h.1, h.2⟩
 
 end Complexity.Lang
