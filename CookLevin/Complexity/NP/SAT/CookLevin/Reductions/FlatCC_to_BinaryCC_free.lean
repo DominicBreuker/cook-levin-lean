@@ -112,11 +112,16 @@ def cardNat (c : CCCard Bool) : CCCard Nat := ⟨bitsNat c.prem, bitsNat c.conc�
 /-- Boolean validity of a flat string (`list_ofFlatType`, reflected). -/
 def allLtB (k : Nat) (xs : List Nat) : Bool := xs.all (fun v => decide (v < k))
 
+/-- Boolean validity of the three symbol streams (what the program's flag
+computes). -/
+def okB (k : Nat) (xs : List Nat) (cs : List (CCCard Nat))
+    (fss : List (List Nat)) : Bool :=
+  allLtB k xs
+    && cs.all (fun c => allLtB k c.prem && allLtB k c.conc)
+    && fss.all (allLtB k)
+
 /-- Boolean validity of `isValidFlattening` (reflected). -/
-def validB (C : FlatCC) : Bool :=
-  allLtB C.Sigma C.init
-    && C.cards.all (fun c => allLtB C.Sigma c.prem && allLtB C.Sigma c.conc)
-    && C.final.all (allLtB C.Sigma)
+def validB (C : FlatCC) : Bool := okB C.Sigma C.init C.cards C.final
 
 /-! ## Encodings -/
 
@@ -555,7 +560,7 @@ theorem finalNat_encodeFinal {k : Nat} :
 theorem validB_iff (C : FlatCC) : validB C = true ↔ isValidFlattening C := by
   constructor
   · intro h
-    simp only [validB, Bool.and_eq_true, List.all_eq_true] at h
+    simp only [validB, okB, Bool.and_eq_true, List.all_eq_true] at h
     obtain ⟨⟨hinit, hcards⟩, hfinal⟩ := h
     refine ⟨?_, ?_, ?_⟩
     · intro x hx
@@ -571,7 +576,7 @@ theorem validB_iff (C : FlatCC) : validB C = true ↔ isValidFlattening C := by
       simp only [allLtB, List.all_eq_true, decide_eq_true_eq] at this
       exact ⟨fun x hx => this.1 x hx, fun x hx => this.2 x hx⟩
   · rintro ⟨hinit, hfinal, hcards⟩
-    simp only [validB, Bool.and_eq_true, List.all_eq_true]
+    simp only [validB, okB, Bool.and_eq_true, List.all_eq_true]
     refine ⟨⟨?_, ?_⟩, ?_⟩
     · simp only [allLtB, List.all_eq_true, decide_eq_true_eq]
       exact fun x hx => hinit x hx
@@ -582,6 +587,489 @@ theorem validB_iff (C : FlatCC) : validB C = true ↔ isValidFlattening C := by
     · intro s hs
       simp only [allLtB, List.all_eq_true, decide_eq_true_eq]
       exact fun x hx => hfinal s hs x hx
+
+/-! ## The inner gadgets: run + cost
+
+Each gadget lemma follows the template pattern: exact output register
+contents, a frame over the untouched registers, and a per-run cost bound. -/
+
+/-- Zero-pad loop: `forBnd IDX2 bnd (appendZero BINIT)` appends `0^m` to
+`BINIT`, where `m` is the unary value of the bound register. -/
+theorem zeroPad_run (bnd : Var) (s : State) (m : Nat)
+    (hbnd : State.get s bnd = List.replicate m 1) :
+    State.get ((Cmd.forBnd IDX2 bnd (Cmd.op (.appendZero BINIT))).eval s) BINIT
+      = State.get s BINIT ++ List.replicate m 0
+    ∧ (∀ r : Var, r ≠ BINIT → r ≠ IDX2 →
+        State.get ((Cmd.forBnd IDX2 bnd (Cmd.op (.appendZero BINIT))).eval s) r
+          = State.get s r)
+    ∧ (Cmd.forBnd IDX2 bnd (Cmd.op (.appendZero BINIT))).cost s
+        ≤ 1 + m + m * m := by
+  have hlen : (State.get s bnd).length = m := by
+    rw [hbnd, List.length_replicate]
+  have hstep : ∀ i st, i < m →
+      (State.get st BINIT = State.get s BINIT ++ List.replicate i 0
+        ∧ ∀ r : Var, r ≠ BINIT → r ≠ IDX2 → State.get st r = State.get s r) →
+      (State.get ((Cmd.op (.appendZero BINIT)).eval
+            (st.set IDX2 (List.replicate i 1))) BINIT
+          = State.get s BINIT ++ List.replicate (i + 1) 0
+        ∧ ∀ r : Var, r ≠ BINIT → r ≠ IDX2 →
+            State.get ((Cmd.op (.appendZero BINIT)).eval
+              (st.set IDX2 (List.replicate i 1))) r = State.get s r) := by
+    intro i st _ ⟨hB, hF⟩
+    have he : (Cmd.op (.appendZero BINIT)).eval (st.set IDX2 (List.replicate i 1))
+        = (st.set IDX2 (List.replicate i 1)).set BINIT
+            (State.get (st.set IDX2 (List.replicate i 1)) BINIT ++ [0]) := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    have hwB : State.get (st.set IDX2 (List.replicate i 1)) BINIT
+        = State.get s BINIT ++ List.replicate i 0 := by
+      rw [State.get_set_ne _ _ _ _ (by decide), hB]
+    constructor
+    · rw [he, State.get_set_eq, hwB, List.append_assoc,
+        ← List.replicate_succ']
+    · intro r h1 h2
+      rw [he, State.get_set_ne _ _ _ _ h1, State.get_set_ne _ _ _ _ h2]
+      exact hF r h1 h2
+  refine ⟨?_, ?_, ?_⟩
+  · rw [Cmd.eval_forBnd, hlen]
+    exact (Cmd.foldlState_range_induct _ IDX2 m s
+      (fun i st => State.get st BINIT = State.get s BINIT ++ List.replicate i 0
+        ∧ ∀ r : Var, r ≠ BINIT → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp, fun r _ _ => rfl⟩ hstep).1
+  · intro r h1 h2
+    rw [Cmd.eval_forBnd, hlen]
+    exact (Cmd.foldlState_range_induct _ IDX2 m s
+      (fun i st => State.get st BINIT = State.get s BINIT ++ List.replicate i 0
+        ∧ ∀ r : Var, r ≠ BINIT → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp, fun r _ _ => rfl⟩ hstep).2 r h1 h2
+  · have h := Cmd.cost_forBnd_le IDX2 bnd (Cmd.op (.appendZero BINIT)) s 1
+      (fun i st => State.get st BINIT = State.get s BINIT ++ List.replicate i 0
+        ∧ ∀ r : Var, r ≠ BINIT → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp, fun r _ _ => rfl⟩
+      (fun i st hi hM => hstep i st (by omega) hM)
+      (fun i st _ _ => by rw [Cmd.cost_op]; exact le_refl 1)
+    rw [hlen] at h
+    omega
+
+/-- Element-pad loop: `forBnd IDX2 bnd (appendOne BOUT ;; appendZero BOUT)`
+appends `m` zero-bit sentinel elements (`encSElems 0^m`) to `BOUT`. -/
+theorem elemPad_run (bnd : Var) (s : State) (m : Nat)
+    (hbnd : State.get s bnd = List.replicate m 1) :
+    State.get ((Cmd.forBnd IDX2 bnd
+        (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).eval s) BOUT
+      = State.get s BOUT ++ encSElems (List.replicate m 0)
+    ∧ (∀ r : Var, r ≠ BOUT → r ≠ IDX2 →
+        State.get ((Cmd.forBnd IDX2 bnd
+          (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).eval s) r
+          = State.get s r)
+    ∧ (Cmd.forBnd IDX2 bnd
+        (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).cost s
+        ≤ 1 + 3 * m + m * m := by
+  have hlen : (State.get s bnd).length = m := by
+    rw [hbnd, List.length_replicate]
+  have hsucc : ∀ i : Nat, encSElems (List.replicate (i + 1) 0)
+      = encSElems (List.replicate i 0) ++ [1, 0] := by
+    intro i
+    rw [List.replicate_succ', encSElems_append]
+    rfl
+  have hstep : ∀ i st, i < m →
+      (State.get st BOUT = State.get s BOUT ++ encSElems (List.replicate i 0)
+        ∧ ∀ r : Var, r ≠ BOUT → r ≠ IDX2 → State.get st r = State.get s r) →
+      (State.get ((Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT)).eval
+            (st.set IDX2 (List.replicate i 1))) BOUT
+          = State.get s BOUT ++ encSElems (List.replicate (i + 1) 0)
+        ∧ ∀ r : Var, r ≠ BOUT → r ≠ IDX2 →
+            State.get ((Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT)).eval
+              (st.set IDX2 (List.replicate i 1))) r = State.get s r) := by
+    intro i st _ ⟨hB, hF⟩
+    set w := st.set IDX2 (List.replicate i 1) with hw
+    have hwB : State.get w BOUT = State.get s BOUT ++ encSElems (List.replicate i 0) := by
+      rw [hw, State.get_set_ne _ _ _ _ (by decide), hB]
+    have he : (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT)).eval w
+        = (w.set BOUT (State.get w BOUT ++ [1])).set BOUT
+            ((State.get w BOUT ++ [1]) ++ [0]) := by
+      rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+      simp only [Op.eval, State.get_set_eq]
+    constructor
+    · rw [he, State.get_set_eq, hwB, hsucc i, List.append_assoc,
+        List.append_assoc]
+      rfl
+    · intro r h1 h2
+      rw [he, State.get_set_ne _ _ _ _ h1, State.get_set_ne _ _ _ _ h1,
+        hw, State.get_set_ne _ _ _ _ h2]
+      exact hF r h1 h2
+  refine ⟨?_, ?_, ?_⟩
+  · rw [Cmd.eval_forBnd, hlen]
+    exact (Cmd.foldlState_range_induct _ IDX2 m s
+      (fun i st => State.get st BOUT = State.get s BOUT ++ encSElems (List.replicate i 0)
+        ∧ ∀ r : Var, r ≠ BOUT → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp [encSElems], fun r _ _ => rfl⟩ hstep).1
+  · intro r h1 h2
+    rw [Cmd.eval_forBnd, hlen]
+    exact (Cmd.foldlState_range_induct _ IDX2 m s
+      (fun i st => State.get st BOUT = State.get s BOUT ++ encSElems (List.replicate i 0)
+        ∧ ∀ r : Var, r ≠ BOUT → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp [encSElems], fun r _ _ => rfl⟩ hstep).2 r h1 h2
+  · have h := Cmd.cost_forBnd_le IDX2 bnd
+      (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT)) s 3
+      (fun i st => State.get st BOUT = State.get s BOUT ++ encSElems (List.replicate i 0)
+        ∧ ∀ r : Var, r ≠ BOUT → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp [encSElems], fun r _ _ => rfl⟩
+      (fun i st hi hM => hstep i st (by omega) hM)
+      (fun i st _ _ => by
+        rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+        exact le_refl 3)
+    rw [hlen] at h
+    omega
+
+/-- Drain loop: `forBnd IDX2 VALX (tail REM REM)` on `VALX = 1^v`,
+`REM = 1^K` leaves `REM = 1^(K−v)` (truncated subtraction). -/
+theorem remDrain_run (s : State) (v K : Nat)
+    (hVAL : State.get s VALX = List.replicate v 1)
+    (hREM : State.get s REM = List.replicate K 1) :
+    State.get ((Cmd.forBnd IDX2 VALX (Cmd.op (.tail REM REM))).eval s) REM
+      = List.replicate (K - v) 1
+    ∧ (∀ r : Var, r ≠ REM → r ≠ IDX2 →
+        State.get ((Cmd.forBnd IDX2 VALX (Cmd.op (.tail REM REM))).eval s) r
+          = State.get s r)
+    ∧ (Cmd.forBnd IDX2 VALX (Cmd.op (.tail REM REM))).cost s
+        ≤ 1 + v * (K + 1) + v * v := by
+  have hlen : (State.get s VALX).length = v := by
+    rw [hVAL, List.length_replicate]
+  have hstep : ∀ i st, i < v →
+      (State.get st REM = List.replicate (K - i) 1
+        ∧ ∀ r : Var, r ≠ REM → r ≠ IDX2 → State.get st r = State.get s r) →
+      (State.get ((Cmd.op (.tail REM REM)).eval
+            (st.set IDX2 (List.replicate i 1))) REM
+          = List.replicate (K - (i + 1)) 1
+        ∧ ∀ r : Var, r ≠ REM → r ≠ IDX2 →
+            State.get ((Cmd.op (.tail REM REM)).eval
+              (st.set IDX2 (List.replicate i 1))) r = State.get s r) := by
+    intro i st _ ⟨hR, hF⟩
+    have hwR : State.get (st.set IDX2 (List.replicate i 1)) REM
+        = List.replicate (K - i) 1 := by
+      rw [State.get_set_ne _ _ _ _ (by decide), hR]
+    have he : (Cmd.op (.tail REM REM)).eval (st.set IDX2 (List.replicate i 1))
+        = (st.set IDX2 (List.replicate i 1)).set REM
+            (List.replicate (K - i) 1).tail := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hwR]
+    constructor
+    · rw [he, State.get_set_eq, List.tail_replicate]
+      congr 1
+    · intro r h1 h2
+      rw [he, State.get_set_ne _ _ _ _ h1, State.get_set_ne _ _ _ _ h2]
+      exact hF r h1 h2
+  refine ⟨?_, ?_, ?_⟩
+  · rw [Cmd.eval_forBnd, hlen]
+    have := (Cmd.foldlState_range_induct _ IDX2 v s
+      (fun i st => State.get st REM = List.replicate (K - i) 1
+        ∧ ∀ r : Var, r ≠ REM → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp [hREM], fun r _ _ => rfl⟩ hstep).1
+    exact this
+  · intro r h1 h2
+    rw [Cmd.eval_forBnd, hlen]
+    exact (Cmd.foldlState_range_induct _ IDX2 v s
+      (fun i st => State.get st REM = List.replicate (K - i) 1
+        ∧ ∀ r : Var, r ≠ REM → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp [hREM], fun r _ _ => rfl⟩ hstep).2 r h1 h2
+  · have h := Cmd.cost_forBnd_le IDX2 VALX (Cmd.op (.tail REM REM)) s (K + 1)
+      (fun i st => State.get st REM = List.replicate (K - i) 1
+        ∧ ∀ r : Var, r ≠ REM → r ≠ IDX2 → State.get st r = State.get s r)
+      ⟨by simp [hREM], fun r _ _ => rfl⟩
+      (fun i st hi hM => hstep i st (by omega) hM)
+      (fun i st _ hM => by
+        rw [Cmd.cost_op]
+        show (State.get (st.set IDX2 (List.replicate i 1)) REM).length + 1 ≤ K + 1
+        rw [State.get_set_ne _ _ _ _ (by decide), hM.1, List.length_replicate]
+        omega)
+    rw [hlen] at h
+    omega
+
+/-- **`remCheck` is correct**: on `VALX = 1^v`, `SIGMA = 1^k` it leaves
+`REM = 1^(k−v−1)` and ANDs the verdict `v < k` into `FLAG`. -/
+theorem remCheck_run (s : State) (v k : Nat) (b : Bool)
+    (hVAL : State.get s VALX = List.replicate v 1)
+    (hSIG : State.get s SIGMA = List.replicate k 1)
+    (hFLAG : State.get s FLAG = cond b [1] [0]) :
+    State.get (remCheck.eval s) REM = List.replicate (k - v - 1) 1
+    ∧ State.get (remCheck.eval s) FLAG = cond (b && decide (v < k)) [1] [0]
+    ∧ (∀ r : Var, r ≠ REM → r ≠ TFLG → r ≠ FLAG → r ≠ IDX2 →
+        r ≠ CliqueRelTM.SKIPR → State.get (remCheck.eval s) r = State.get s r)
+    ∧ remCheck.cost s ≤ v * k + v * v + v + 2 * k + 12 := by
+  -- stage 1: copy SIGMA into REM
+  have e1 : (Cmd.op (.copy REM SIGMA)).eval s
+      = s.set REM (List.replicate k 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hSIG]
+  set s1 := s.set REM (List.replicate k 1) with hs1
+  have hs1VAL : State.get s1 VALX = List.replicate v 1 := by
+    rw [hs1, State.get_set_ne _ _ _ _ (by decide), hVAL]
+  have hs1REM : State.get s1 REM = List.replicate k 1 := State.get_set_eq _ _ _
+  -- stage 2: drain v cells
+  obtain ⟨hR2, hF2, hC2⟩ := remDrain_run s1 v k hs1VAL hs1REM
+  set s2 := (Cmd.forBnd IDX2 VALX (Cmd.op (.tail REM REM))).eval s1 with hs2
+  have hs2FLAG : State.get s2 FLAG = cond b [1] [0] := by
+    rw [hF2 FLAG (by decide) (by decide), hs1,
+      State.get_set_ne _ _ _ _ (by decide), hFLAG]
+  -- stage 3: the verdict
+  have e3 : (Cmd.op (.nonEmpty TFLG REM)).eval s2
+      = s2.set TFLG (if (List.replicate (k - v) 1).isEmpty then [0] else [1]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hR2]
+  rcases Nat.lt_or_ge v k with hvk | hvk
+  · -- v < k : the check passes; the branch is `cSkip`
+    have hne : (List.replicate (k - v) 1).isEmpty = false := by
+      have : k - v ≠ 0 := by omega
+      simp [this]
+    set s3 := s2.set TFLG [1] with hs3
+    have e3' : (Cmd.op (.nonEmpty TFLG REM)).eval s2 = s3 := by
+      rw [e3, hne]
+      simp only [Bool.false_eq_true, if_false]
+      exact hs3.symm
+    have hs3TFLG : State.get s3 TFLG = [1] := State.get_set_eq _ _ _
+    have e4 : (Cmd.ifBit TFLG CliqueRelTM.cSkip setInvalid).eval s3
+        = s3.set CliqueRelTM.SKIPR [1] := by
+      rw [Cmd.eval_ifBit_true _ _ _ _ hs3TFLG, CliqueRelTM.cSkip_eval]
+    set s4 := s3.set CliqueRelTM.SKIPR [1] with hs4
+    have hs4REM : State.get s4 REM = List.replicate (k - v) 1 := by
+      rw [hs4, State.get_set_ne _ _ _ _ (by decide), hs3,
+        State.get_set_ne _ _ _ _ (by decide), hR2]
+    have e5 : (Cmd.op (.tail REM REM)).eval s4
+        = s4.set REM (List.replicate (k - v - 1) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, hs4REM, List.tail_replicate]
+    have heval : remCheck.eval s = s4.set REM (List.replicate (k - v - 1) 1) := by
+      show ((Cmd.op (.copy REM SIGMA)) ;; _).eval s = _
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hs2, Cmd.eval_seq, e3',
+        Cmd.eval_seq, e4, e5]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [heval, State.get_set_eq]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hs4,
+        State.get_set_ne _ _ _ _ (by decide), hs3,
+        State.get_set_ne _ _ _ _ (by decide), hs2FLAG]
+      have : decide (v < k) = true := decide_eq_true hvk
+      rw [this, Bool.and_true]
+    · intro r h1 h2 h3 h4 h5
+      rw [heval, State.get_set_ne _ _ _ _ h1, hs4,
+        State.get_set_ne _ _ _ _ h5, hs3, State.get_set_ne _ _ _ _ h2,
+        hF2 r h1 h4, hs1, State.get_set_ne _ _ _ _ h1]
+    · show ((Cmd.op (.copy REM SIGMA)) ;; _).cost s ≤ _
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hs2, Cmd.cost_seq,
+        Cmd.cost_op, e3', Cmd.cost_seq, Cmd.cost_ifBit_true _ _ _ _ hs3TFLG,
+        e4, Cmd.cost_op]
+      simp only [Op.cost, hSIG, List.length_replicate,
+        CliqueRelTM.cSkip_cost, hs4REM]
+      have hd : k - v ≤ k := Nat.sub_le _ _
+      have hvk1 : v * (k + 1) = v * k + v := by ring
+      omega
+  · -- v ≥ k : the check fails; the branch is `setInvalid`
+    have hne : (List.replicate (k - v) 1).isEmpty = true := by
+      have : k - v = 0 := by omega
+      simp [this]
+    set s3 := s2.set TFLG [0] with hs3
+    have e3' : (Cmd.op (.nonEmpty TFLG REM)).eval s2 = s3 := by
+      rw [e3, hne]
+      simp only [if_true]
+      exact hs3.symm
+    have hs3TFLG : State.get s3 TFLG ≠ [1] := by
+      rw [State.get_set_eq]; decide
+    have e4 : (Cmd.ifBit TFLG CliqueRelTM.cSkip setInvalid).eval s3
+        = (s3.set FLAG []).set FLAG [0] := by
+      rw [Cmd.eval_ifBit_false _ _ _ _ hs3TFLG]
+      show (Cmd.op (.clear FLAG) ;; Cmd.op (.appendZero FLAG)).eval s3 = _
+      rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_op]
+      simp only [Op.eval, State.get_set_eq, List.nil_append]
+    set s4 := (s3.set FLAG []).set FLAG [0] with hs4
+    have hs4REM : State.get s4 REM = List.replicate (k - v) 1 := by
+      rw [hs4, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hs3,
+        State.get_set_ne _ _ _ _ (by decide), hR2]
+    have e5 : (Cmd.op (.tail REM REM)).eval s4
+        = s4.set REM (List.replicate (k - v - 1) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, hs4REM, List.tail_replicate]
+    have heval : remCheck.eval s = s4.set REM (List.replicate (k - v - 1) 1) := by
+      show ((Cmd.op (.copy REM SIGMA)) ;; _).eval s = _
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hs2, Cmd.eval_seq, e3',
+        Cmd.eval_seq, e4, e5]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [heval, State.get_set_eq]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hs4, State.get_set_eq]
+      have : decide (v < k) = false := decide_eq_false (by omega)
+      rw [this, Bool.and_false]
+      rfl
+    · intro r h1 h2 h3 h4 h5
+      rw [heval, State.get_set_ne _ _ _ _ h1, hs4,
+        State.get_set_ne _ _ _ _ h3, State.get_set_ne _ _ _ _ h3, hs3,
+        State.get_set_ne _ _ _ _ h2, hF2 r h1 h4, hs1,
+        State.get_set_ne _ _ _ _ h1]
+    · have hcSetInv : setInvalid.cost s3 = 3 := by
+        show (Cmd.op (.clear FLAG) ;; Cmd.op (.appendZero FLAG)).cost s3 = 3
+        rw [Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+        rfl
+      show ((Cmd.op (.copy REM SIGMA)) ;; _).cost s ≤ _
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hs2, Cmd.cost_seq,
+        Cmd.cost_op, e3', Cmd.cost_seq, Cmd.cost_ifBit_false _ _ _ _ hs3TFLG,
+        e4, Cmd.cost_op]
+      simp only [Op.cost, hSIG, List.length_replicate, hcSetInv, hs4REM]
+      have hd : k - v ≤ k := Nat.sub_le _ _
+      have hvk1 : v * (k + 1) = v * k + v := by ring
+      omega
+
+/-- **`expandBare` is correct**: appends `expandSym k v` (raw bits) to `BINIT`
+and ANDs the validity verdict into `FLAG`. -/
+theorem expandBare_run (s : State) (v k : Nat) (b : Bool)
+    (hVAL : State.get s VALX = List.replicate v 1)
+    (hSIG : State.get s SIGMA = List.replicate k 1)
+    (hFLAG : State.get s FLAG = cond b [1] [0]) :
+    State.get (expandBare.eval s) BINIT = State.get s BINIT ++ expandSym k v
+    ∧ State.get (expandBare.eval s) FLAG = cond (b && decide (v < k)) [1] [0]
+    ∧ (∀ r : Var, r ≠ BINIT → r ≠ REM → r ≠ TFLG → r ≠ FLAG → r ≠ IDX2 →
+        r ≠ CliqueRelTM.SKIPR → State.get (expandBare.eval s) r = State.get s r)
+    ∧ expandBare.cost s ≤ 2 * (v * v) + v * k + k * k + 3 * v + 3 * k + 22 := by
+  -- stage 1: v zeros
+  obtain ⟨hB1, hF1, hC1⟩ := zeroPad_run VALX s v hVAL
+  set s1 := (Cmd.forBnd IDX2 VALX (Cmd.op (.appendZero BINIT))).eval s with hs1
+  -- stage 2: the one
+  have e2 : (Cmd.op (.appendOne BINIT)).eval s1
+      = s1.set BINIT ((State.get s BINIT ++ List.replicate v 0) ++ [1]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hB1]
+  set s2 := s1.set BINIT ((State.get s BINIT ++ List.replicate v 0) ++ [1]) with hs2
+  have hs2VAL : State.get s2 VALX = List.replicate v 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide),
+      hF1 VALX (by decide) (by decide), hVAL]
+  have hs2SIG : State.get s2 SIGMA = List.replicate k 1 := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide),
+      hF1 SIGMA (by decide) (by decide), hSIG]
+  have hs2FLAG : State.get s2 FLAG = cond b [1] [0] := by
+    rw [hs2, State.get_set_ne _ _ _ _ (by decide),
+      hF1 FLAG (by decide) (by decide), hFLAG]
+  -- stage 3: the check
+  obtain ⟨hR3, hFL3, hF3, hC3⟩ := remCheck_run s2 v k b hs2VAL hs2SIG hs2FLAG
+  set s3 := remCheck.eval s2 with hs3
+  have hs3BIN : State.get s3 BINIT
+      = (State.get s BINIT ++ List.replicate v 0) ++ [1] := by
+    rw [hF3 BINIT (by decide) (by decide) (by decide) (by decide) (by decide),
+      hs2, State.get_set_eq]
+  -- stage 4: the k−v−1 zeros
+  obtain ⟨hB4, hF4, hC4⟩ := zeroPad_run REM s3 (k - v - 1) hR3
+  have heval : expandBare.eval s
+      = (Cmd.forBnd IDX2 REM (Cmd.op (.appendZero BINIT))).eval s3 := by
+    show ((Cmd.forBnd IDX2 VALX (Cmd.op (.appendZero BINIT))) ;; _).eval s = _
+    rw [Cmd.eval_seq, ← hs1, Cmd.eval_seq, e2, Cmd.eval_seq, ← hs3]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [heval, hB4, hs3BIN]
+    simp [expandSym, List.append_assoc]
+  · rw [heval, hF4 FLAG (by decide) (by decide), hFL3]
+  · intro r h1 h2 h3 h4 h5 h6
+    rw [heval, hF4 r h1 h5, hF3 r h2 h3 h4 h5 h6, hs2,
+      State.get_set_ne _ _ _ _ h1, hF1 r h1 h5]
+  · have hcost : expandBare.cost s
+        = 1 + (Cmd.forBnd IDX2 VALX (Cmd.op (.appendZero BINIT))).cost s
+          + (1 + 1 + (1 + remCheck.cost s2
+            + (Cmd.forBnd IDX2 REM (Cmd.op (.appendZero BINIT))).cost s3)) := by
+      show ((Cmd.forBnd IDX2 VALX (Cmd.op (.appendZero BINIT))) ;; _).cost s = _
+      rw [Cmd.cost_seq, Cmd.cost_seq, ← hs1, Cmd.cost_op, e2, Cmd.cost_seq,
+        ← hs3]
+      simp only [Op.cost]
+    rw [hcost]
+    have hd : k - v - 1 ≤ k := by omega
+    have hC4' : (Cmd.forBnd IDX2 REM (Cmd.op (.appendZero BINIT))).cost s3
+        ≤ 1 + k + k * k := by
+      have hsq : (k - v - 1) * (k - v - 1) ≤ k * k := Nat.mul_le_mul hd hd
+      omega
+    omega
+
+/-- **`expandSent` is correct**: appends the sentinel-format expansion
+`encSElems (expandSym k v)` to `BOUT` and ANDs the verdict into `FLAG`. -/
+theorem expandSent_run (s : State) (v k : Nat) (b : Bool)
+    (hVAL : State.get s VALX = List.replicate v 1)
+    (hSIG : State.get s SIGMA = List.replicate k 1)
+    (hFLAG : State.get s FLAG = cond b [1] [0]) :
+    State.get (expandSent.eval s) BOUT
+      = State.get s BOUT ++ encSElems (expandSym k v)
+    ∧ State.get (expandSent.eval s) FLAG = cond (b && decide (v < k)) [1] [0]
+    ∧ (∀ r : Var, r ≠ BOUT → r ≠ REM → r ≠ TFLG → r ≠ FLAG → r ≠ IDX2 →
+        r ≠ CliqueRelTM.SKIPR → State.get (expandSent.eval s) r = State.get s r)
+    ∧ expandSent.cost s ≤ 2 * (v * v) + v * k + k * k + 5 * v + 5 * k + 30 := by
+  -- stage 1: v zero-bit elements
+  obtain ⟨hB1, hF1, hC1⟩ := elemPad_run VALX s v hVAL
+  set s1 := (Cmd.forBnd IDX2 VALX
+    (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).eval s with hs1
+  -- stage 2: the one-bit element [1,1,0]
+  have e2 : (Cmd.op (.appendOne BOUT)).eval s1
+      = s1.set BOUT ((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hB1]
+  set s2a := s1.set BOUT ((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) with hs2a
+  have hs2aBOUT : State.get s2a BOUT
+      = (State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1] := by
+    rw [hs2a]; exact State.get_set_eq _ _ _
+  have e2b : (Cmd.op (.appendOne BOUT)).eval s2a
+      = s2a.set BOUT (((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) ++ [1]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hs2aBOUT]
+  set s2b := s2a.set BOUT (((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) ++ [1]) with hs2b
+  have hs2bBOUT : State.get s2b BOUT
+      = ((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) ++ [1] := by
+    rw [hs2b]; exact State.get_set_eq _ _ _
+  have e2c : (Cmd.op (.appendZero BOUT)).eval s2b
+      = s2b.set BOUT ((((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) ++ [1]) ++ [0]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hs2bBOUT]
+  set s2 := s2b.set BOUT ((((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) ++ [1]) ++ [0]) with hs2
+  have hs2get : ∀ r : Var, r ≠ BOUT → r ≠ IDX2 →
+      State.get s2 r = State.get s r := by
+    intro r h1 h2
+    rw [hs2, State.get_set_ne _ _ _ _ h1, hs2b, State.get_set_ne _ _ _ _ h1,
+      hs2a, State.get_set_ne _ _ _ _ h1, hF1 r h1 h2]
+  have hs2VAL : State.get s2 VALX = List.replicate v 1 := by
+    rw [hs2get VALX (by decide) (by decide), hVAL]
+  have hs2SIG : State.get s2 SIGMA = List.replicate k 1 := by
+    rw [hs2get SIGMA (by decide) (by decide), hSIG]
+  have hs2FLAG : State.get s2 FLAG = cond b [1] [0] := by
+    rw [hs2get FLAG (by decide) (by decide), hFLAG]
+  -- stage 3: the check
+  obtain ⟨hR3, hFL3, hF3, hC3⟩ := remCheck_run s2 v k b hs2VAL hs2SIG hs2FLAG
+  set s3 := remCheck.eval s2 with hs3
+  have hs3BOUT : State.get s3 BOUT
+      = (((State.get s BOUT ++ encSElems (List.replicate v 0)) ++ [1]) ++ [1]) ++ [0] := by
+    rw [hF3 BOUT (by decide) (by decide) (by decide) (by decide) (by decide),
+      hs2, State.get_set_eq]
+  -- stage 4: the k−v−1 zero-bit elements
+  obtain ⟨hB4, hF4, hC4⟩ := elemPad_run REM s3 (k - v - 1) hR3
+  have heval : expandSent.eval s
+      = (Cmd.forBnd IDX2 REM
+          (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).eval s3 := by
+    show ((Cmd.forBnd IDX2 VALX _) ;; _).eval s = _
+    rw [Cmd.eval_seq, ← hs1, Cmd.eval_seq, e2, Cmd.eval_seq, e2b, Cmd.eval_seq,
+      e2c, Cmd.eval_seq, ← hs3]
+  have hdecomp : encSElems (expandSym k v)
+      = (encSElems (List.replicate v 0) ++ [1, 1, 0])
+        ++ encSElems (List.replicate (k - v - 1) 0) := by
+    show encSElems (List.replicate v 0 ++ 1 :: List.replicate (k - v - 1) 0) = _
+    rw [show (1 : Nat) :: List.replicate (k - v - 1) 0
+        = [1] ++ List.replicate (k - v - 1) 0 from rfl,
+      encSElems_append, encSElems_append]
+    simp [encSElems, encSElem]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [heval, hB4, hs3BOUT, hdecomp]
+    simp [List.append_assoc]
+  · rw [heval, hF4 FLAG (by decide) (by decide), hFL3]
+  · intro r h1 h2 h3 h4 h5 h6
+    rw [heval, hF4 r h1 h5, hF3 r h2 h3 h4 h5 h6, hs2get r h1 h5]
+  · have hcost : expandSent.cost s
+        = 1 + (Cmd.forBnd IDX2 VALX
+            (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).cost s
+          + (1 + 1 + (1 + 1 + (1 + 1 + (1 + remCheck.cost s2
+            + (Cmd.forBnd IDX2 REM
+                (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).cost s3)))) := by
+      show ((Cmd.forBnd IDX2 VALX _) ;; _).cost s = _
+      rw [Cmd.cost_seq, Cmd.cost_seq, ← hs1, Cmd.cost_op, e2, Cmd.cost_seq,
+        Cmd.cost_op, e2b, Cmd.cost_seq, Cmd.cost_op, e2c, Cmd.cost_seq, ← hs3]
+      simp only [Op.cost]
+    rw [hcost]
+    have hd : k - v - 1 ≤ k := by omega
+    have hC4' : (Cmd.forBnd IDX2 REM
+        (Cmd.op (.appendOne BOUT) ;; Cmd.op (.appendZero BOUT))).cost s3
+        ≤ 1 + 3 * k + k * k := by
+      have hsq : (k - v - 1) * (k - v - 1) ≤ k * k := Nat.mul_le_mul hd hd
+      omega
+    omega
 
 /-! ## Structural fields (frame, `consLen`-freedom, op-supportedness) -/
 
