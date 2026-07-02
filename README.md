@@ -11,20 +11,21 @@ both `sorry`-backed gaps and `sorry`-free *vacuous* definitions. Read
 [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the plan and the full risk
 register before working.
 
-## Honest status (verified 2026-05)
+## Honest status (verified 2026-07)
 
 | | |
 |---|---|
-| `lake build` | ✅ green (3371 jobs) |
+| `lake build` | ✅ green |
 | `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the headline theorem **does depend on `sorryAx`**, now **only via the hardness half** (`NPhard_GenNP`). |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
 | `#print axioms KSat3Free.inNP_kSAT3_free` | **`[propext, Classical.choice, Quot.sound]`** — the **first live `red_inNP` routed through the free layer engine** (`red_inNP_of_langFree` + a concrete re-encoder & reduction program, 2026-07-02). |
+| `#print axioms KSat3Free.kSAT3_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — the **first live honest TM-backed reduction on the real chain** (`kSAT 3 ⪯p' SAT`, 2026-07-02). |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
-| Genuine `sorry`s on the proof path | ~31 (Group C — completion) |
+| Genuine `sorry`s in built code | **7** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau (S1), 3× MultiToSingle (dead code) |
 | `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |
-| Proof-path size | ~18K LOC under `CookLevin/` (a further ~15K parked, not built) |
-| Estimated work remaining to a real, unconditional proof | **~15–25K LOC** (see ROADMAP) |
+| Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
+| Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
 
 > **The `sorry` count is not the soundness metric.** The deepest unsoundness
 > (S1/S2, and the size-only `⪯p`) is `sorry`-free and invisible to
@@ -98,24 +99,23 @@ The layer's structural unknowns are **probed**: per-primitive compilation (C1),
 composition (C2), and the counted loop (C3) all have proven *combinators*
 (`compileSeq_compose_physical`, `loopTM_run`, `bitTestTM`, and a ~1.6K-LOC
 sorry-free gadget library: `appendAt_run`, `scanLeft_run`, `insertCarryTM_run`,
-…). The S3 layer→framework bridge is built (`toFrameworkWitness'`,
-`inNPLang`/`red_inNPLang`, the decider bridge `inNPLang_to_inNP`, `LangEncodable`
-+ `map_fst`/`swap`/`map_snd`/`forBnd` toolkit), all sorry-free **modulo one
-compiler obligation** (`Compile_run_physical_residue`, Risk C2; the old
-`Compile_run_physical`/`Compile_sound` exact-tape forms were unsatisfiable and
-are deleted).
+…). The S3 layer→framework bridge is built **on the free-encoding line** and is
+LIVE & axiom-clean (`toFrameworkWitness'`, `inNPLangFree`/`inNPLangFree_to_inNP`,
+`FreePrecomposeData`/`red_inNP_of_langFree`, `reducesPolyMO'_of_langFree` — live
+instances `inNP_kSAT3_free` and `kSAT3_reducesPolyMO'`). A canonical
+shared-encoding alternative (`LangEncodable`/`PolyTimeComputableLang'` +
+`swap`/`map_fst`/`map_snd`) was built and then **retired & deleted
+(2026-07-02)** — its generic product encoding is size-unsound
+(`probes/UnaryProductSizeProbe.lean`) and the audit showed no remaining witness
+needs it.
 
-**Caveat surfaced (do not under-estimate C2):** 3 of 12 `compileOp`s still lack
-a discharged soundness case (`takeAt`/`dropAt`/`consLen`, the value-as-length trio,
-all gated on a unary-encoding migration; FULLY PROVEN & axiom-clean for
-`appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/`tail`/`eqBit`/`concat` —
-`concat` assembled as the aliasing-safe 4-stage scratch chain `opConcat` and
-discharged via `opConcat_run`, 2026-06-28).
-**None of the 3 remaining ops is on the live `sat_NP` decider path** (`evalCnfCmd`
-uses none of them); the *generic* `compileOp_sound_physical_residue` still carries
-their 3 stub `sorry`s, but an `Op.IsSupported`/`Cmd.AllOpsSupported` wall (2026-06-28,
-Route A — DONE) isolates the live path, so **`SAT_inNP.sat_NP` is now sorry-free &
-axiom-clean**. `Compile_sound` was false as stated for *three*
+**C2 status:** all 9 live `compileOp`s are FULLY PROVEN & axiom-clean
+(`appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/`tail`/`eqBit`/
+`concat`). The value-as-length trio (`takeAt`/`dropAt`/`consLen`) is **retired**
+(2026-07-02): no remaining witness uses it, and an `Op.IsSupported`/
+`Cmd.AllOpsSupported` wall (2026-06-28, Route A) isolates the live path, so
+**`SAT_inNP.sat_NP` is sorry-free & axiom-clean**; the trio ops await deletion
+from `Op` (cosmetic, HANDOFF). `Compile_sound` was false as stated for *three*
 reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
 **unit cost** but `concat`/`copy` grow the state **multiplicatively** (output
@@ -135,13 +135,11 @@ consumers re-proven green & axiom-clean. **⚠ 2026-05 BLOCKING FINDING (machine
 checked, `Complexity/Complexity/TapeMono.lean`):** the physical TM tape **never
 shrinks**, so the exact-tape physical contract (`exit tape = encodeTape output`)
 is **unsatisfiable for every length-decreasing op** (`clear`/`tail`/shrinking
-`copy`/…) — only the growth ops `appendOne`/`appendZero` fit. The fix is a
-**residue-tolerant** contract (`encodeTape output ++ terminator-free residue`;
-decode-correctness proved, `Compile.decodeTape_encodeTape_append`) plus a
-left-shift `deleteCarryTM` gadget and a two-phase rewind. **Remaining (next
-concrete step):** build those, restate the four `compile*_sound_physical` with
-the residue-tolerant `TapeOK` relation, then the 10 stub ops + assemble. See
-ROADMAP Risk C2 and `CookLevin/HANDOFF.md` "THE FINDING".
+`copy`/…) — only the growth ops `appendOne`/`appendZero` fit. The fix — the
+**residue-tolerant** contract (`encodeTape output ++ terminator-free residue`)
+— is **built and fully proven** for all 9 live ops and the whole decider chain.
+The compiler is effectively done; see ROADMAP Risk C2 and
+`CookLevin/HANDOFF.md` for what remains (cosmetic trio deletion).
 
 ## Development methodology: skeleton-first, risk-driven
 
