@@ -1342,4 +1342,13 @@ theorem inNP_kSAT3_free : inNP (kSAT 3) :=
   red_inNP_of_langFree EvalCnfTM.SAT_inNPWitnessLangFree kSAT3_reductionLang
     kSAT3_precomposeData (kSAT_to_SAT_correct 3)
 
+/-- **The first live honest `⪯p'` on the real chain: `kSAT 3 ⪯p' SAT`.** The
+TM-backed reduction witness comes from the same free layer witness
+`kSAT3_reductionLang` via `reducesPolyMO'_of_langFree` — demonstrating that the
+`⪯p` → `⪯p'` re-typing (ROADMAP step 2) needs nothing beyond a free
+`PolyTimeComputableLang` per chain step (no canonical encoding, no product
+trio). Axiom-clean: `[propext, Classical.choice, Quot.sound]`. -/
+theorem kSAT3_reducesPolyMO' : kSAT 3 ⪯p' SAT :=
+  reducesPolyMO'_of_langFree kSAT3_reductionLang (kSAT_to_SAT_correct 3)
+
 end KSat3Free
