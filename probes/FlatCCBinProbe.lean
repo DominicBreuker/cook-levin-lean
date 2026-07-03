@@ -58,6 +58,7 @@ def BCARDS : Var := 20
 def BFINAL : Var := 21
 def TFLG   : Var := 23
 def IDX2   : Var := 24
+def BOUT   : Var := 25
 
 /-! ## The program -/
 
@@ -98,15 +99,17 @@ def initStep : Cmd :=
     CliqueRelTM.cSkip
 
 /-- Consume one sentinel-stream item off `SCAN` (element `1 1^v 0` or list
-terminator `0`), appending its expansion to `dst`; idle when exhausted. -/
-def sentStep (dst : Var) : Cmd :=
+terminator `0`), appending its expansion to `BOUT`; idle when exhausted.
+(`BOUT` is the shared scratch output of both sentinel loops — copied out
+after each loop — so ONE loop lemma covers cards and final.) -/
+def sentStep : Cmd :=
   Cmd.op (.nonEmpty TFLG SCAN) ;;
   Cmd.ifBit TFLG
     (Cmd.op (.head TFLG SCAN) ;;
      Cmd.op (.tail SCAN SCAN) ;;
      Cmd.ifBit TFLG
-       (CliqueRelTM.readNum VALX SCAN IDXR ;; expandSent dst)
-       (Cmd.op (.appendZero dst)))
+       (CliqueRelTM.readNum VALX SCAN IDXR ;; expandSent BOUT)
+       (Cmd.op (.appendZero BOUT)))
     CliqueRelTM.cSkip
 
 /-- **The reduction program.** -/
@@ -119,12 +122,14 @@ def binConvert : Cmd :=
   Cmd.op (.clear BINIT) ;;
   Cmd.op (.copy SCAN INIT) ;;
   Cmd.forBnd IDXO INIT initStep ;;
-  Cmd.op (.clear BCARDS) ;;
+  Cmd.op (.clear BOUT) ;;
   Cmd.op (.copy SCAN CARDS) ;;
-  Cmd.forBnd IDXO CARDS (sentStep BCARDS) ;;
-  Cmd.op (.clear BFINAL) ;;
+  Cmd.forBnd IDXO CARDS sentStep ;;
+  Cmd.op (.copy BCARDS BOUT) ;;
+  Cmd.op (.clear BOUT) ;;
   Cmd.op (.copy SCAN FINAL) ;;
-  Cmd.forBnd IDXO FINAL (sentStep BFINAL) ;;
+  Cmd.forBnd IDXO FINAL sentStep ;;
+  Cmd.op (.copy BFINAL BOUT) ;;
   Cmd.ifBit FLAG CliqueRelTM.cSkip
     (Cmd.op (.clear BOFF) ;; Cmd.op (.clear BWID) ;; Cmd.op (.clear BINIT) ;;
      Cmd.op (.clear BCARDS) ;; Cmd.op (.clear BFINAL) ;; Cmd.op (.clear STEPS))
