@@ -2303,4 +2303,291 @@ theorem binConvert_allOpsSupported : Cmd.AllOpsSupported binConvert := by
     Op.IsSupported]
   trivial
 
+/-! ## Size accounting for the input layout -/
+
+theorem encCardsOut_length_le (cs : List (CCCard Nat)) :
+    (encCardsOut cs).length ≤ 2 * encodable.size cs := by
+  induction cs with
+  | nil =>
+      rw [show encCardsOut ([] : List (CCCard Nat)) = [] from rfl]
+      simp
+  | cons c cs ih =>
+      have hp := list_length_le_size c.prem
+      have hc := list_length_le_size c.conc
+      have hcard : encodable.size c
+          = encodable.size c.prem + encodable.size c.conc + 1 := rfl
+      rw [show encCardsOut (c :: cs) = encCardOut c ++ encCardsOut cs from rfl,
+        List.length_append, encodable_size_list_cons,
+        show (encCardOut c).length
+          = (encSList c.prem).length + (encSList c.conc).length from by
+            rw [FlatTCCFree.encCardOut, List.length_append],
+        encSList_length, encSList_length]
+      omega
+
+/-! ## Budget domination -/
+
+/-- `binBudget` on inputs bounded by the instance size is dominated by one
+cubic (clean-context arithmetic; `omega` hits a performance cliff here, so
+the products are bounded stepwise and `linarith` closes). -/
+private theorem binBudget_le_poly (n K O W LI LC LF : Nat)
+    (hK : K ≤ n) (hO : O ≤ n) (hW : W ≤ n) (hLI : LI ≤ n)
+    (hLC : LC ≤ 2 * n) (hLF : LF ≤ 2 * n) :
+    binBudget K O W LI LC LF ≤ 4000 * (n + 1) ^ 3 := by
+  have hOK : O * K ≤ n * n := Nat.mul_le_mul hO hK
+  have hWK : W * K ≤ n * n := Nat.mul_le_mul hW hK
+  have hOO : O * O ≤ n * n := Nat.mul_le_mul hO hO
+  have hWW : W * W ≤ n * n := Nat.mul_le_mul hW hW
+  have hO1 : O * (2 * (O * K + K) + 1) ≤ n * (2 * (n * n + n) + 1) :=
+    Nat.mul_le_mul hO (by omega)
+  have hW1 : W * (2 * (W * K + K) + 1) ≤ n * (2 * (n * n + n) + 1) :=
+    Nat.mul_le_mul hW (by omega)
+  have hOe : n * (2 * (n * n + n) + 1) = 2 * (n * n * n) + 2 * (n * n) + n := by
+    ring
+  have hLILI : LI * LI ≤ n * n := Nat.mul_le_mul hLI hLI
+  have hLIK : LI * K ≤ n * n := Nat.mul_le_mul hLI hK
+  have hKK : K * K ≤ n * n := Nat.mul_le_mul hK hK
+  have hIB : initStepBound LI K ≤ 6 * (n * n) + 13 * n + 40 := by
+    unfold initStepBound
+    omega
+  have hI1 : LI * initStepBound LI K ≤ n * (6 * (n * n) + 13 * n + 40) :=
+    Nat.mul_le_mul hLI hIB
+  have hIe : n * (6 * (n * n) + 13 * n + 40)
+      = 6 * (n * n * n) + 13 * (n * n) + 40 * n := by ring
+  have hLCLC : LC * LC ≤ 4 * (n * n) := by
+    have := Nat.mul_le_mul hLC hLC
+    have he : 2 * n * (2 * n) = 4 * (n * n) := by ring
+    omega
+  have hLCK : LC * K ≤ 2 * (n * n) := by
+    have := Nat.mul_le_mul hLC hK
+    have he : 2 * n * n = 2 * (n * n) := by ring
+    omega
+  have hSBC : sentStepBound LC K ≤ 19 * (n * n) + 33 * n + 50 := by
+    unfold sentStepBound
+    omega
+  have hC1 : LC * sentStepBound LC K ≤ 2 * n * (19 * (n * n) + 33 * n + 50) :=
+    Nat.mul_le_mul hLC hSBC
+  have hCe : 2 * n * (19 * (n * n) + 33 * n + 50)
+      = 38 * (n * n * n) + 66 * (n * n) + 100 * n := by ring
+  have hLFLF : LF * LF ≤ 4 * (n * n) := by
+    have := Nat.mul_le_mul hLF hLF
+    have he : 2 * n * (2 * n) = 4 * (n * n) := by ring
+    omega
+  have hLFK : LF * K ≤ 2 * (n * n) := by
+    have := Nat.mul_le_mul hLF hK
+    have he : 2 * n * n = 2 * (n * n) := by ring
+    omega
+  have hSBF : sentStepBound LF K ≤ 19 * (n * n) + 33 * n + 50 := by
+    unfold sentStepBound
+    omega
+  have hF1 : LF * sentStepBound LF K ≤ 2 * n * (19 * (n * n) + 33 * n + 50) :=
+    Nat.mul_le_mul hLF hSBF
+  have hKLC : K * LC ≤ 2 * (n * n) := by
+    have := Nat.mul_le_mul hK hLC
+    have he : n * (2 * n) = 2 * (n * n) := by ring
+    omega
+  have hKLF : K * LF ≤ 2 * (n * n) := by
+    have := Nat.mul_le_mul hK hLF
+    have he : n * (2 * n) = 2 * (n * n) := by ring
+    omega
+  have hpoly : 4000 * (n + 1) ^ 3
+      = 4000 * (n * n * n) + 12000 * (n * n) + 12000 * n + 4000 := by ring
+  have mid : binBudget K O W LI LC LF ≤
+      (1 + n * (2 * (n * n + n) + 1) + n * n)
+      + (1 + n * (2 * (n * n + n) + 1) + n * n)
+      + (1 + n * (6 * (n * n) + 13 * n + 40) + n * n)
+      + (1 + 2 * n * (19 * (n * n) + 33 * n + 50) + 4 * (n * n))
+      + (1 + 2 * n * (19 * (n * n) + 33 * n + 50) + 4 * (n * n))
+      + (n + 2 * n + 2 * n)
+      + 3 * (2 * (n * n) + 2 * n) + 3 * (2 * (n * n) + 2 * n)
+      + 60 := by
+    unfold binBudget
+    gcongr
+  refine le_trans mid ?_
+  have he : (1 + n * (2 * (n * n + n) + 1) + n * n)
+      + (1 + n * (2 * (n * n + n) + 1) + n * n)
+      + (1 + n * (6 * (n * n) + 13 * n + 40) + n * n)
+      + (1 + 2 * n * (19 * (n * n) + 33 * n + 50) + 4 * (n * n))
+      + (1 + 2 * n * (19 * (n * n) + 33 * n + 50) + 4 * (n * n))
+      + (n + 2 * n + 2 * n)
+      + 3 * (2 * (n * n) + 2 * n) + 3 * (2 * (n * n) + 2 * n)
+      + 60 = 86 * (n * n * n) + 172 * (n * n) + 259 * n + 65 := by ring
+  rw [he, hpoly]
+  omega
+
+/-! ## The free witness -/
+
+private instance : Nonempty BinaryCC := ⟨binaryCCNoInstance⟩
+
+/-- **The reduction `FlatCC_to_BinaryCC_instance` as a concrete layer
+program** — the free `PolyTimeComputableLang` witness (template:
+`flatTCC_reductionLang`). `decodeOut` inverts the injective 6-register output
+key. -/
+noncomputable def flatCCBin_reductionLang :
+    PolyTimeComputableLang FlatCC_to_BinaryCC_instance where
+  c := binConvert
+  encodeIn := encodeIn
+  decodeOut := fun s => Function.invFun encKeyB (extractKeyB s)
+  cost_bound := fun n => 4000 * (n + 1) ^ 3
+  cost_bound_poly := by
+    refine ⟨3, ⟨32000, 1, ?_⟩⟩
+    intro n hn
+    calc 4000 * (n + 1) ^ 3
+        ≤ 4000 * (2 * n) ^ 3 :=
+          Nat.mul_le_mul_left _ (Nat.pow_le_pow_left (by omega) 3)
+      _ = 32000 * n ^ 3 := by ring
+  cost_bound_mono := fun a b h =>
+    Nat.mul_le_mul_left _ (Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 3)
+  encodeIn_size := fun C => by
+    have h1 := encCardsOut_length_le C.cards
+    have h2 := encFinal_length_le C.final
+    have hC : encodable.size C
+        = C.Sigma + C.offset + C.width + encodable.size C.init
+          + encodable.size C.cards + encodable.size C.final + C.steps + 1 := rfl
+    show State.size [[], List.replicate C.Sigma 1, encNats C.init, [],
+      encFinal C.final, List.replicate C.steps 1, List.replicate C.offset 1,
+      List.replicate C.width 1, encCardsOut C.cards] ≤ _
+    simp only [State.size, List.map_cons, List.map_nil, List.foldr_cons,
+      List.foldr_nil, List.length_replicate, List.length_nil, encNats_length]
+    omega
+  computes := fun C => by
+    obtain ⟨hBOFF, hBWID, hBINIT, hBCARDS, hBFINAL, hSTEPS, -, -⟩ :=
+      binConvert_run C.Sigma C.offset C.width C.init C.cards C.final
+        (encodeIn C) rfl rfl rfl rfl rfl rfl
+    show Function.invFun encKeyB (extractKeyB (binConvert.eval (encodeIn C))) = _
+    have hkey : extractKeyB (binConvert.eval (encodeIn C))
+        = encKeyB (FlatCC_to_BinaryCC_instance C) := by
+      by_cases h : isValidFlattening C
+      · have hok : okB C.Sigma C.init C.cards C.final = true :=
+          (validB_iff C).mpr h
+        rw [hok] at hBOFF hBWID hBINIT hBCARDS hBFINAL hSTEPS
+        simp only [Bool.cond_true] at hBOFF hBWID hBINIT hBCARDS hBFINAL hSTEPS
+        simp only [extractKeyB]
+        rw [hBOFF, hBWID, hBINIT, hBCARDS, hBFINAL, hSTEPS]
+        rw [FlatCC_to_BinaryCC_instance, dif_pos h]
+        show _ = [List.replicate (C.Sigma * C.offset) 1,
+          List.replicate (C.Sigma * C.width) 1,
+          bitsNat (encodeString (unflattenList C.Sigma C.init h.1)),
+          encCardsOut (((unflattenCards C.Sigma C.cards h.2.2).map
+            encodeCard).map cardNat),
+          encFinal ((encodeFinal (unflattenFinal C.Sigma C.final h.2.1)).map
+            bitsNat),
+          List.replicate C.steps 1]
+        rw [bitsNat_encodeString, cardsNat_encodeCards,
+          finalNat_encodeFinal, Nat.mul_comm C.Sigma C.offset,
+          Nat.mul_comm C.Sigma C.width]
+        rfl
+      · have hok : okB C.Sigma C.init C.cards C.final = false := by
+          rcases Bool.eq_false_or_eq_true
+              (okB C.Sigma C.init C.cards C.final) with hb | hb
+          · exact absurd ((validB_iff C).mp hb) h
+          · exact hb
+        rw [hok] at hBOFF hBWID hBINIT hBCARDS hBFINAL hSTEPS
+        simp only [Bool.cond_false] at hBOFF hBWID hBINIT hBCARDS hBFINAL hSTEPS
+        simp only [extractKeyB]
+        rw [hBOFF, hBWID, hBINIT, hBCARDS, hBFINAL, hSTEPS,
+          FlatCC_to_BinaryCC_instance, dif_neg h]
+        rfl
+    rw [hkey]
+    exact Function.leftInverse_invFun encKeyB_injective _
+  cost_le := fun C => by
+    obtain ⟨-, -, -, -, -, -, -, hc⟩ :=
+      binConvert_run C.Sigma C.offset C.width C.init C.cards C.final
+        (encodeIn C) rfl rfl rfl rfl rfl rfl
+    have hC : encodable.size C
+        = C.Sigma + C.offset + C.width + encodable.size C.init
+          + encodable.size C.cards + encodable.size C.final + C.steps + 1 := rfl
+    have h1 := encCardsOut_length_le C.cards
+    have h2 := encFinal_length_le C.final
+    have hLIn : (encNats C.init).length ≤ encodable.size C := by
+      rw [encNats_length]
+      omega
+    refine le_trans hc (binBudget_le_poly (encodable.size C) _ _ _ _ _ _
+      (by omega) (by omega) (by omega) hLIn (by omega) (by omega))
+  output_size_le := fun C => by
+    have h1 := FlatCC_to_BinaryCC_instance_size_bound C
+    have hpoly : 4000 * (encodable.size C + 1) ^ 3
+        = 4000 * (encodable.size C * encodable.size C * encodable.size C)
+          + 12000 * (encodable.size C * encodable.size C)
+          + 12000 * encodable.size C + 4000 := by ring
+    have h2 : 50 * encodable.size C * encodable.size C
+        = 50 * (encodable.size C * encodable.size C) := by ring
+    omega
+  enc_bit := fun C => by
+    intro reg hreg x hx
+    simp only [encodeIn, List.mem_cons, List.not_mem_nil, or_false] at hreg
+    rcases hreg with h | h | h | h | h | h | h | h | h <;> subst h
+    · cases hx
+    · rw [List.eq_of_mem_replicate hx]
+    · exact encNats_bit _ x hx
+    · cases hx
+    · exact encFinal_bit _ x hx
+    · rw [List.eq_of_mem_replicate hx]
+    · rw [List.eq_of_mem_replicate hx]
+    · rw [List.eq_of_mem_replicate hx]
+    · exact encCardsOut_bit _ x hx
+  regBound := 27
+  usesBelow := binConvert_usesBelow
+  width_le := fun C => by
+    show (encodeIn C).length ≤ 27
+    simp [encodeIn]
+  noConsLen := binConvert_noConsLen
+  allOpsSupported := binConvert_allOpsSupported
+  decode_agree := fun C m => by
+    have hpad : ∀ r : Var,
+        State.get (encodeIn C ++ List.replicate m []) r
+          = State.get (encodeIn C) r :=
+      fun r => State.get_append_replicate_nil (encodeIn C) m r
+    obtain ⟨hBOFF1, hBWID1, hBINIT1, hBCARDS1, hBFINAL1, hSTEPS1, -, -⟩ :=
+      binConvert_run C.Sigma C.offset C.width C.init C.cards C.final
+        (encodeIn C ++ List.replicate m [])
+        (by rw [hpad]; rfl) (by rw [hpad]; rfl) (by rw [hpad]; rfl)
+        (by rw [hpad]; rfl) (by rw [hpad]; rfl) (by rw [hpad]; rfl)
+    obtain ⟨hBOFF2, hBWID2, hBINIT2, hBCARDS2, hBFINAL2, hSTEPS2, -, -⟩ :=
+      binConvert_run C.Sigma C.offset C.width C.init C.cards C.final
+        (encodeIn C) rfl rfl rfl rfl rfl rfl
+    show Function.invFun encKeyB _ = Function.invFun encKeyB _
+    have hext : extractKeyB (binConvert.eval (encodeIn C ++ List.replicate m []))
+        = extractKeyB (binConvert.eval (encodeIn C)) := by
+      simp only [extractKeyB]
+      rw [hBOFF1, hBOFF2, hBWID1, hBWID2, hBINIT1, hBINIT2, hBCARDS1,
+        hBCARDS2, hBFINAL1, hBFINAL2, hSTEPS1, hSTEPS2, hpad STEPS]
+    rw [hext]
+
+/-! ## Correctness of the guarded map (extracted from `FlatCC_to_BinaryCC_poly`) -/
+
+/-- **The guarded map is a correct reduction**: `FlatCCLang C ↔
+BinaryCCLang (FlatCC_to_BinaryCC_instance C)`. On valid flattenings this is
+the block-encoding equivalence (`CC_to_BinaryCC_lang`/`BinaryCC_to_CC_lang`);
+on invalid ones both sides are false (the guard emits the no-instance —
+required here, per the probe finding: the unguarded map is NOT correct). -/
+theorem flatCC_to_binaryCC_correct (C : FlatCC) :
+    FlatCCLang C ↔ BinaryCCLang (FlatCC_to_BinaryCC_instance C) := by
+  constructor
+  · intro hFlat
+    rcases hFlat with ⟨_, hflat, hlang⟩
+    simpa [FlatCC_to_BinaryCC_instance, hflat] using
+      CC_to_BinaryCC_lang (unflattenCC C hflat) hlang
+  · intro hBC
+    by_cases hflat : isValidFlattening C
+    · have hcc : CC.CCLang (unflattenCC C hflat) := by
+        have hbc' : BinaryCCLang (CC_to_BinaryCC (unflattenCC C hflat)) := by
+          simpa [FlatCC_to_BinaryCC_instance, hflat] using hBC
+        exact BinaryCC_to_CC_lang (unflattenCC C hflat) hbc'
+      refine ⟨?_, ⟨hflat, hcc⟩⟩
+      simpa [flatten_unflattenCC C hflat] using
+        flattenCC_wellformed (C := unflattenCC C hflat) hcc.1
+    · exfalso
+      have : BinaryCCLang binaryCCNoInstance := by
+        simpa [FlatCC_to_BinaryCC_instance, hflat] using hBC
+      exact binaryCCNoInstance_not_lang this
+
+/-! ## The headline: the third live honest `⪯p'` on the real chain -/
+
+/-- **`FlatCC ⪯p' BinaryCC`** — the third live honest TM-backed reduction on
+the real chain (after `kSAT3_reducesPolyMO'` and `flatTCC_reducesPolyMO'`),
+and the first with an on-machine input-validity guard.
+Axiom-clean: `[propext, Classical.choice, Quot.sound]`. -/
+theorem flatCC_reducesPolyMO' : FlatCCLang ⪯p' BinaryCCLang :=
+  reducesPolyMO'_of_langFree flatCCBin_reductionLang flatCC_to_binaryCC_correct
+
 end FlatCCBinFree
