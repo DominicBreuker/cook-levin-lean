@@ -1,4 +1,5 @@
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT
+import Complexity.NP.SAT.CookLevin.Reductions.FlatCC_to_BinaryCC_free
 import Complexity.Lang.PolyTime
 
 set_option autoImplicit false
@@ -201,109 +202,340 @@ theorem decodeOut_of_serF (s : State) (f : formula) (h : s.get FOUT = serF f) :
     decodeOut s = f := by
   simp only [decodeOut, h, decodeF_serF, Option.getD_some]
 
-/-! ## 3. Validated emitter building blocks (probe-backed, session-2 assembly)
+/-! ## 3. The reduction program `buildFSAT` (VALIDATED end-to-end, session 2)
 
-These are the concrete DSL fragments the program is assembled from, each
+The full `Cmd` computing `serF (BinaryCC_to_FSAT_instance C)` into `FOUT`,
 `#eval`-validated end-to-end in `probes/FSATSerProbe.lean` against the pure
-`serF`. They are pure `Cmd` DATA (no proof obligations yet); session 2 proves the
-run lemmas (`emitBits_run`, `emitAnd_run`, …) mirroring the sentinel-loop lemmas
-in `FlatCC_to_BinaryCC_free.lean`.
+`serF ∘ encodeTableau` (wellformed) and `serF falseFml` (non-wellformed) on real
+`BinaryCC` instances (`checkFull`). Still pure `Cmd`/`State` DATA — the run/cost
+lemmas and the `PolyTimeComputableLang` witness are the remaining work (see the
+NEXT-SESSION block at the bottom).
 
-Working scratch registers (all `≥ 22`, above the pinned input frame). -/
-def OUT  : Nat := 22   -- serialized-formula accumulator (moved to FOUT at the end)
-def SCAN : Nat := 23   -- consumable copy of a stream being iterated
-def CNT  : Nat := 24   -- forBnd loop counter (holds 1^i)
-def WREG : Nat := 25   -- unary variable index being emitted
-def TFLG : Nat := 26   -- bit/branch flag
-def BASE : Nat := 27   -- running unary base offset for a row/segment
+The Polish emission collapses `encodeTableau`'s tree into token-emission ORDER
+(HANDOFF design fact): `serF (listAnd fs) = (⋃ᵢ [0,1]++serF fᵢ) ++ [0,0]`, so
+each `listAnd`/`listOr` fold is one `forBnd`. Absolute variable indices
+`line*L + step*offset (+i)` are built UNARY from the loop counters via
+`concat`/mul-loops (`L = init.length`). The wellformedness guard is reproduced
+on-machine (`computeWF`) so non-wellformed inputs emit `serF falseFml`.
 
-/-- Append the 2-bit tag of a binary node to `OUT`. `fand = [0,1]`, `forr = [1,0]`. -/
-def emitTag (b0 b1 : Nat) : Cmd :=
-  (if b0 = 1 then Cmd.op (.appendOne OUT) else Cmd.op (.appendZero OUT)) ;;
-  (if b1 = 1 then Cmd.op (.appendOne OUT) else Cmd.op (.appendZero OUT))
+Working registers (all `≥ 22`, above the pinned input frame 5/17/18/19/20/21). -/
+def OUT    : Nat := 22   -- serialized-formula accumulator (copied to FOUT at the end)
+def SCAN   : Nat := 23   -- consumable copy of a stream being iterated
+def LREG   : Nat := 24   -- 1^L  (L = init.length)
+def LINEL  : Nat := 25   -- 1^(line*L)
+def STEPO  : Nat := 26   -- 1^(step*offset)
+def STARTA : Nat := 27   -- 1^(line*L + step*offset)
+def STARTB : Nat := 28   -- 1^((line+1)*L + step*offset)
+def WREG   : Nat := 29   -- 1^(absolute variable index)
+def TFLG   : Nat := 30   -- bit/branch flag
+def DONE   : Nat := 31   -- sentinel-stream terminator flag
+def SUMW   : Nat := 32   -- 1^(step*offset + width) for the step guard
+def GFLG   : Nat := 33   -- step/final bound guard flag
+def REM    : Nat := 34   -- truncated-subtraction remainder scratch
+def SCANF  : Nat := 35   -- final-stream consumable copy
+def FSTART : Nat := 36   -- 1^(steps*L + step*offset)
+def BLEN   : Nat := 37   -- 1^(bits.length) of a final string
+def STEPSL : Nat := 38   -- 1^(steps*L)
+def EMARK  : Nat := 39   -- sentinel element-vs-terminator marker
+def KLINE  : Nat := 40   -- forBnd counters (distinct per nesting level)
+def KSTEP  : Nat := 41
+def KCARD  : Nat := 42
+def KBIT   : Nat := 43
+def KFS    : Nat := 44
+def KFSTEP : Nat := 45
+def KTMP   : Nat := 46
+def KTMP2  : Nat := 47
+def LREG1  : Nat := 48   -- 1^(L+1)  (step-loop bound)
+def FBITS  : Nat := 49   -- one parsed final string as a bit-list
+def GWF    : Nat := 50   -- wellformedness flag
+def MREM   : Nat := 51   -- guard scratch
+def MCHK   : Nat := 52
+def MGE    : Nat := 53
+def SCANW  : Nat := 54   -- card-stream copy for the length check
+def CLEN   : Nat := 55   -- parsed prem/conc length
+def ZERO   : Nat := 56   -- always-empty base (var index 0) / no-op sink
+
+/-- The register frame width: the program touches only registers `< regFrame`. -/
+def regFrame : Nat := 57
+
+/-! ### Literal-tag emitters (append fixed bits to `OUT`). -/
+def emit0 : Cmd := Cmd.op (.appendZero OUT)
+def emit1 : Cmd := Cmd.op (.appendOne OUT)
+def emitFtrue    : Cmd := emit0 ;; emit0                        -- serF ftrue = [0,0]
+def emitFandTag  : Cmd := emit0 ;; emit1                        -- fand node = [0,1]
+def emitForrTag  : Cmd := emit1 ;; emit0                        -- forr node = [1,0]
+def emitFalse    : Cmd := emit1 ;; emit1 ;; emit0 ;; emit0 ;; emit0  -- serF falseFml = [1,1,0,0,0]
 
 /-- Emit `serF (fvar w)` where `WREG = 1^w`: `[1,1,1] ++ 1^w ++ [0]`. -/
-def emitVar : Cmd :=
-  Cmd.op (.appendOne OUT) ;; Cmd.op (.appendOne OUT) ;; Cmd.op (.appendOne OUT) ;;
-  Cmd.op (.concat OUT OUT WREG) ;; Cmd.op (.appendZero OUT)
+def emitVarW : Cmd :=
+  emit1 ;; emit1 ;; emit1 ;; Cmd.op (.concat OUT OUT WREG) ;; emit0
 
-/-- Emit the literal for one tableau bit: `head`/`tail` off `SCAN` selects
-`fvar w` (bit 1) vs `fneg (fvar w)` (bit 0); `WREG = 1^w` is the absolute index. -/
-def emitLit : Cmd :=
-  Cmd.op (.head TFLG SCAN) ;;
-  Cmd.op (.tail SCAN SCAN) ;;
+/-- Emit the literal for a bit `b` (in `TFLG`) at absolute index `WREG`:
+`b=1 → serF (fvar w)`, `b=0 → serF (fneg (fvar w)) = [1,1,0] ++ serF (fvar w)`. -/
+def emitLitAt : Cmd :=
+  Cmd.ifBit TFLG emitVarW (emit1 ;; emit1 ;; emit0 ;; emitVarW)
+
+/-- `serF (encodeBitsAt start bits)` reading `bound`-many bits off `SCAN` (a bit
+register); bit `i`'s index is `concat(BASE, 1^i)` = `1^(start+i)`. -/
+def emitBitsFromScan (BASE bound : Nat) : Cmd :=
+  Cmd.forBnd KBIT bound
+    ( Cmd.op (.head TFLG SCAN) ;;
+      Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.op (.concat WREG BASE KBIT) ;;
+      emitFandTag ;;
+      emitLitAt ) ;;
+  emitFtrue
+
+/-- `serF (encodeBitsAt start bits)` reading one `encSList` of bits off `SCAN`
+(elements `1 1^b 0`, terminator bare `0`), leaving `SCAN` after the terminator.
+`BASE = 1^start`; bit `i`'s index is `concat(BASE, 1^i)`. -/
+def emitBitsFromSent (BASE : Nat) : Cmd :=
+  Cmd.op (.clear DONE) ;;
+  Cmd.forBnd KBIT SCAN
+    ( Cmd.ifBit DONE
+        (Cmd.op (.clear ZERO))
+        ( Cmd.op (.head EMARK SCAN) ;;
+          Cmd.ifBit EMARK
+            ( Cmd.op (.tail SCAN SCAN) ;;
+              Cmd.op (.head TFLG SCAN) ;;
+              Cmd.op (.concat WREG BASE KBIT) ;;
+              emitFandTag ;;
+              emitLitAt ;;
+              Cmd.ifBit TFLG
+                (Cmd.op (.tail SCAN SCAN) ;; Cmd.op (.tail SCAN SCAN))
+                (Cmd.op (.tail SCAN SCAN)) )
+            ( Cmd.op (.tail SCAN SCAN) ;;
+              Cmd.op (.clear DONE) ;; Cmd.op (.appendOne DONE) ) ) ) ;;
+  emitFtrue
+
+/-- `serF (encodeCardsAt C startA startB)` = `listOr` over cards, consuming a
+copy of the card stream. `STARTA = 1^startA`, `STARTB = 1^startB` pre-set. -/
+def emitCardsAt : Cmd :=
+  Cmd.op (.copy SCAN CARDS) ;;
+  Cmd.forBnd KCARD CARDS
+    ( Cmd.op (.nonEmpty TFLG SCAN) ;;
+      Cmd.ifBit TFLG
+        ( emitForrTag ;; emitFandTag ;;
+          emitBitsFromSent STARTA ;;
+          emitBitsFromSent STARTB )
+        (Cmd.op (.clear KTMP)) ) ;;
+  emitFalse
+
+/-- Precompute `LREG = 1^L`, `LREG1 = 1^(L+1)` from the init bit-list. -/
+def precompLen : Cmd :=
+  Cmd.op (.clear LREG) ;;
+  Cmd.forBnd KTMP INIT (Cmd.op (.appendOne LREG)) ;;
+  Cmd.op (.copy LREG1 LREG) ;; Cmd.op (.appendOne LREG1)
+
+/-- One step constraint at `(line, step)`: guarded cards or `ftrue`. Assumes
+`LINEL = 1^(line*L)`, `KSTEP = 1^step`; uses `OFFSET`/`WIDTH`/`LREG`. -/
+def stepBody : Cmd :=
+  Cmd.op (.clear STEPO) ;;
+  Cmd.forBnd KTMP KSTEP (Cmd.op (.concat STEPO STEPO OFFSET)) ;;
+  Cmd.op (.concat STARTA LINEL STEPO) ;;
+  Cmd.op (.concat STARTB STARTA LREG) ;;
+  Cmd.op (.concat SUMW STEPO WIDTH) ;;
+  Cmd.op (.copy REM SUMW) ;;
+  Cmd.forBnd KTMP LREG (Cmd.op (.tail REM REM)) ;;
+  Cmd.op (.nonEmpty TFLG REM) ;;
   Cmd.ifBit TFLG
-    emitVar
-    (Cmd.op (.appendOne OUT) ;; Cmd.op (.appendOne OUT) ;; Cmd.op (.appendZero OUT) ;; emitVar)
+    (Cmd.op (.clear GFLG))
+    (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG)) ;;
+  Cmd.ifBit GFLG emitCardsAt emitFtrue
 
-/-- `serF (encodeBitsAt start bs)` into `OUT`, with `BASE = 1^start`, `SCAN = bs`.
-The `forBnd` counter `CNT = 1^i`, so `WREG := BASE ++ CNT = 1^(start+i)` is the
-absolute variable index (validated by `probes/FSATSerProbe.lean` `checkBits`). -/
-def emitBitsAt (bound : Nat) : Cmd :=
-  Cmd.forBnd CNT bound
-    ( Cmd.op (.concat WREG BASE CNT) ;;
-      emitTag 0 1 ;;                 -- fand tag
-      emitLit ) ;;
-  Cmd.op (.appendZero OUT) ;; Cmd.op (.appendZero OUT)   -- ftrue base tag [0,0]
+/-- `serF (encodeAllStepConstraints C)` = `listAnd` over lines of
+(`listAnd` over steps of `encodeStepConstraint`). -/
+def emitAllSteps : Cmd :=
+  Cmd.forBnd KLINE STEPS
+    ( emitFandTag ;;
+      Cmd.op (.clear LINEL) ;;
+      Cmd.forBnd KTMP2 KLINE (Cmd.op (.concat LINEL LINEL LREG)) ;;
+      Cmd.forBnd KSTEP LREG1 (emitFandTag ;; stepBody) ;;
+      emitFtrue ) ;;
+  emitFtrue
 
-/-! ## DESIGN RESOLUTIONS + NEXT-SESSION PLAN (top-down session 2)
+/-- Consume one `encSList` of bits off `SCANF` into `FBITS` (bit-list) and
+`BLEN` (`1^length`). -/
+def readOneFinal : Cmd :=
+  Cmd.op (.clear FBITS) ;; Cmd.op (.clear BLEN) ;; Cmd.op (.clear DONE) ;;
+  Cmd.forBnd KTMP SCANF
+    ( Cmd.ifBit DONE
+        (Cmd.op (.clear KTMP2))
+        ( Cmd.op (.head EMARK SCANF) ;;
+          Cmd.ifBit EMARK
+            ( Cmd.op (.tail SCANF SCANF) ;;
+              Cmd.op (.head TFLG SCANF) ;;
+              Cmd.ifBit TFLG
+                (Cmd.op (.appendOne FBITS) ;; Cmd.op (.tail SCANF SCANF) ;; Cmd.op (.tail SCANF SCANF))
+                (Cmd.op (.appendZero FBITS) ;; Cmd.op (.tail SCANF SCANF)) ;;
+              Cmd.op (.appendOne BLEN) )
+            ( Cmd.op (.tail SCANF SCANF) ;;
+              Cmd.op (.clear DONE) ;; Cmd.op (.appendOne DONE) ) ) )
 
-**(a) Guard-or-no-guard — GUARDED.** `BinaryCC_to_FSAT_instance C =
-if BinaryCC_wellformed C then encodeTableau C else falseFml`. So the program must
-reproduce the wellformedness guard (like `FlatCC_to_BinaryCC_free`'s validity
-guard). `BinaryCC_wellformed` is a conjunction of decidable checks on the input
-(`width>0`, `offset>0`, `∃k>0, width=k*offset`, `init.length ≥ width`, per-card
-prem/conc length `= width`, `∃k, init.length=k*offset`). Encode as an on-machine
-`FLAG`, and on `¬wellformed` write `serF falseFml = serF (fneg ftrue) =
-[1,1,0,0,0]` into `FOUT` (constant). The `∃k` divisibility checks are unary
-remainder loops (reuse `FlatCC_to_BinaryCC_free`'s `remCheck`/`mulLoop`).
-*Probe whether the guard is strictly NECESSARY (paper): pick a tiny non-wf
-instance, check if `encodeTableau` is accidentally SAT while `BinaryCCLang` is
-false — if not necessary, the correctness proof still needs it because
-`encodeTableau_correct` assumes `hWf`.*
+/-- `serF (encodeFinalConstraint C)` = `listOr` over final strings of
+(`listOr` over steps of `encodeFinalAtStep`). -/
+def emitFinal : Cmd :=
+  Cmd.op (.clear STEPSL) ;;
+  Cmd.forBnd KTMP STEPS (Cmd.op (.concat STEPSL STEPSL LREG)) ;;
+  Cmd.op (.copy SCANF FINAL) ;;
+  Cmd.forBnd KFS FINAL
+    ( Cmd.op (.nonEmpty TFLG SCANF) ;;
+      Cmd.ifBit TFLG
+        ( emitForrTag ;;
+          readOneFinal ;;
+          Cmd.forBnd KFSTEP LREG1
+            ( emitForrTag ;;
+              Cmd.op (.clear STEPO) ;;
+              Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET)) ;;
+              Cmd.op (.concat SUMW STEPO BLEN) ;;
+              Cmd.op (.copy REM SUMW) ;;
+              Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM)) ;;
+              Cmd.op (.nonEmpty TFLG REM) ;;
+              Cmd.ifBit TFLG
+                (Cmd.op (.clear GFLG))
+                (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG)) ;;
+              Cmd.op (.concat FSTART STEPSL STEPO) ;;
+              Cmd.ifBit GFLG
+                (Cmd.op (.copy SCAN FBITS) ;; emitBitsFromScan FSTART FBITS)
+                emitFalse ) ;;
+          emitFalse )
+        (Cmd.op (.clear KTMP)) ) ;;
+  emitFalse
 
-**(b) Output codec — DONE & PROVEN above** (`serF`/`decodeF`/`decodeF_serF`).
+/-! ### The wellformedness guard (reproduce `BinaryCC_wellformed` on-machine). -/
 
-**(c) Input layout — pinned above** to the BinaryCC exit frame (17/18/19/20/21/5).
-`encodeIn` (session 2) lays `offset/width/steps` unary, `init` as a bit-list, and
-`cards/final` as sentinel streams matching `FlatCCBinFree`'s output formats, so
-the seam is a scrub. `encodeIn_size ≤ 2·size+1` holds (all unary/bit, no doubling).
+/-- AND `(bit in FLG)` into `GWF`. -/
+def andFlag (FLG : Nat) : Cmd :=
+  Cmd.ifBit FLG (Cmd.op (.clear ZERO)) (Cmd.op (.clear GWF))
 
-**(d) `map`-over-lists — NOT needed for the core.** The builder is nested
-`forBnd` loops emitting tokens (validated); no generic list-map gadget is
-required. `parked/MapNatList_WIP.lean` stays parked.
+/-- `TFLG := [1]` iff `|X| ≤ |Y|` (truncated subtraction). -/
+def leCheck (X Y : Nat) : Cmd :=
+  Cmd.op (.copy MREM X) ;;
+  Cmd.forBnd MGE Y (Cmd.op (.tail MREM MREM)) ;;
+  Cmd.op (.nonEmpty TFLG MREM) ;;
+  Cmd.ifBit TFLG (Cmd.op (.clear TFLG)) (Cmd.op (.clear TFLG) ;; Cmd.op (.appendOne TFLG))
 
-**Program assembly `buildFSAT : Cmd` (session 2), mirroring `encodeTableau`:**
-`encodeTableau C = fand (encodeBitsAt 0 init) (fand (allStepConstraints) (finalConstraint))`.
-Polish emission order:
-  1. guard → `FLAG`;
-  2. `emitTag 0 1` (outer fand); `emitBitsAt` over `INIT` at `BASE=0`;
-  3. `emitTag 0 1` (inner fand);
-  4. `encodeAllStepConstraints` = `listAnd` over `range steps` of
-     `encodeLineConstraints` = `listAnd` over `range (init.len+1)` of
-     `encodeStepConstraint` (guarded `step*offset+width ≤ init.len`) =
-     `encodeCardsAt` = `listOr` over `cards` of `encodeCardAt = fand (bitsAt startA prem)(bitsAt startB conc)`.
-     ⇒ FOUR nested loops (line, step, card, bit) with `listAnd`/`listOr` folds.
-     Absolute indices `startA = line*L + step*offset`, `startB = (line+1)*L + step*offset`
-     (`L = init.length`) computed unary via nested `concat`/`mulLoop` from the
-     loop counters (the `BASE` register threads the running offset).
-  5. `encodeFinalConstraint` = `listOr` over `final` of `encodeFinalString` =
-     `listOr` over offsets of `encodeFinalAtStep` (guarded), at `steps*L + step*offset`.
-  6. `copy FOUT OUT`.
-Each `listAnd`/`listOr` fold = a `forBnd` that emits `operatorTag ++ child` per
-element then the base tag (`ftrue`/`falseFml`). The card/final streams are
-consumed off `SCAN` copies exactly like `FlatCC_to_BinaryCC_free`'s `sentStep`.
+/-- `TFLG := [1]` iff `|D|` divides `|X|` (`D>0`), via `X mod D` by truncated
+repeated subtraction. -/
+def dvdCheck (X D : Nat) : Cmd :=
+  Cmd.op (.copy MREM X) ;;
+  Cmd.forBnd KTMP X
+    ( Cmd.op (.copy MCHK D) ;;
+      Cmd.forBnd KTMP2 MREM (Cmd.op (.tail MCHK MCHK)) ;;
+      Cmd.op (.nonEmpty MGE MCHK) ;;
+      Cmd.ifBit MGE
+        (Cmd.op (.clear ZERO))
+        (Cmd.forBnd KTMP2 D (Cmd.op (.tail MREM MREM))) ) ;;
+  Cmd.op (.nonEmpty TFLG MREM) ;;
+  Cmd.ifBit TFLG (Cmd.op (.clear TFLG)) (Cmd.op (.clear TFLG) ;; Cmd.op (.appendOne TFLG))
 
-**Run/cost lemmas (session 2), templates in `FlatCC_to_BinaryCC_free.lean`:**
-prove `emitBitsAt_run` (fold invariant: after `i` iters `OUT = OUT₀ ++ serF-prefix`),
-then the `listAnd`/`listOr` loop lemmas, then compose bottom-up to
-`buildFSAT_run : (buildFSAT.eval (encodeIn C)).get FOUT = serF (BinaryCC_to_FSAT_instance C)`.
-`computes` then follows from `decodeOut_of_serF` + `buildFSAT_run`. Cost is a
-polynomial in the tableau size (nested-loop product; `physStepBudget` shape).
-Budget the var-index unary arithmetic carefully — `mulLoop` per index is `Θ(index)`,
-and there are `Θ(steps·L)` indices, so the honest cost is a low-degree polynomial;
-confirm the degree with a `cost_forBnd_le` accounting pass (cf. CliqueRel's
-quartic→quintic uniform-bound bump).
+/-- Per-item length parse (prem or conc): consume one `encSList` off `SCANW`,
+count its bits into `CLEN`, and AND `1^len = 1^width` into `GWF`. -/
+def cardLenItem : Cmd :=
+  Cmd.op (.clear CLEN) ;; Cmd.op (.clear DONE) ;;
+  Cmd.forBnd KBIT SCANW
+    ( Cmd.ifBit DONE (Cmd.op (.clear ZERO))
+        ( Cmd.op (.head EMARK SCANW) ;;
+          Cmd.ifBit EMARK
+            ( Cmd.op (.tail SCANW SCANW) ;; Cmd.op (.head TFLG SCANW) ;;
+              Cmd.ifBit TFLG (Cmd.op (.tail SCANW SCANW) ;; Cmd.op (.tail SCANW SCANW))
+                             (Cmd.op (.tail SCANW SCANW)) ;;
+              Cmd.op (.appendOne CLEN) )
+            ( Cmd.op (.tail SCANW SCANW) ;;
+              Cmd.op (.clear DONE) ;; Cmd.op (.appendOne DONE) ) ) ) ;;
+  Cmd.op (.eqBit TFLG CLEN WIDTH) ;; andFlag TFLG
+
+/-- Every card's prem and conc length `= width`, ANDed into `GWF`. -/
+def cardLenCheck : Cmd :=
+  Cmd.op (.copy SCANW CARDS) ;;
+  Cmd.forBnd KCARD CARDS
+    ( Cmd.op (.nonEmpty TFLG SCANW) ;;
+      Cmd.ifBit TFLG
+        (cardLenItem ;; cardLenItem)
+        (Cmd.op (.clear KTMP)) )
+
+/-- The full wellformedness flag into `GWF` (assumes `precompLen` ran). -/
+def computeWF : Cmd :=
+  Cmd.op (.clear GWF) ;; Cmd.op (.appendOne GWF) ;;
+  Cmd.op (.nonEmpty TFLG WIDTH) ;; andFlag TFLG ;;         -- width > 0
+  Cmd.op (.nonEmpty TFLG OFFSET) ;; andFlag TFLG ;;        -- offset > 0
+  leCheck WIDTH LREG ;; andFlag TFLG ;;                    -- width ≤ L
+  dvdCheck WIDTH OFFSET ;; andFlag TFLG ;;                 -- offset | width
+  dvdCheck LREG OFFSET ;; andFlag TFLG ;;                  -- offset | L
+  cardLenCheck                                             -- ∀ card, |prem|=|conc|=width
+
+/-! ### The input encoding (pinned to the BinaryCC exit frame) and the program. -/
+
+/-- `encodeIn C` on the pinned frame (regs 5/17/18/19/20/21), formats matching
+`FlatCCBinFree`'s outputs so the future seam is a scrub. -/
+def encodeIn (C : BinaryCC) : State :=
+  ((((((List.replicate regFrame ([] : List Nat)).set STEPS (List.replicate C.steps 1)).set
+    OFFSET (List.replicate C.offset 1)).set
+    WIDTH (List.replicate C.width 1)).set
+    INIT (FlatCCBinFree.bitsNat C.init)).set
+    CARDS (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))).set
+    FINAL (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat))
+
+/-- **The reduction program**: precompute lengths, compute the wellformedness
+flag, and either serialize the tableau (`fand init (fand steps final)`) or write
+`serF falseFml`, into `FOUT`. -/
+def buildFSAT : Cmd :=
+  precompLen ;;
+  computeWF ;;
+  Cmd.op (.clear OUT) ;;
+  Cmd.ifBit GWF
+    ( emitFandTag ;;
+      Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+      emitBitsFromScan ZERO INIT ;;
+      emitFandTag ;;
+      emitAllSteps ;;
+      emitFinal )
+    emitFalse ;;
+  Cmd.op (.copy FOUT OUT)
+
+/-! ## DESIGN COMPLETE — NEXT-SESSION PLAN (top-down session 3): the run/cost proofs
+
+Session 2 delivered the **fully `#eval`-validated program** `buildFSAT` +
+`encodeIn` (probe `checkFull`, wellformed & non-wellformed instances). Design is
+GO on every count: the tree serialization, the unary var-index arithmetic
+(`line*L + step*offset (+i)` via `concat`/mul-loops), and the on-machine guard
+(`computeWF`) all reproduce `BinaryCC_to_FSAT_instance` exactly. What remains is
+the `PolyTimeComputableLang BinaryCC_to_FSAT_instance` witness — pure proof work,
+no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
+
+1. **`encodeIn_size ≤ 2·size+1`** — all unary/bit, no doubling. `State.size` of
+   the pinned frame; mirror `flatCCBin_reductionLang.encodeIn_size`. Needs a
+   length lemma for `encCardsOut`/`encFinal` (reuse `encCardsOut_length_le`/
+   `encFinal_length_le`).
+2. **Run lemmas bottom-up** — the crux. Prove, mirroring `sentStep_run`/
+   `initStep_run` fold invariants:
+   - `emitBitsFromScan_run` / `emitBitsFromSent_run`: after the loop,
+     `OUT = OUT₀ ++ serF (encodeBitsAt start bits)` and (for `_Sent`) `SCAN`
+     advanced past the terminator. Fold invariant on the bit index `i`.
+   - `emitCardsAt_run`, `emitAllSteps_run`, `readOneFinal_run`, `emitFinal_run`:
+     compose the leaf lemmas over the `listAnd`/`listOr` folds, using the
+     algebraic `serF (listAnd/​listOr …)` identities.
+   - `computeWF_run`: `(computeWF.eval …).get GWF = if BinaryCC_wellformed C
+     then [1] else []`. Needs `dvdCheck`/`leCheck`/`cardLenCheck` correctness
+     (unary modulo ⇔ `∣`; `1^a = 1^b ↔ a = b`). Guard-necessity is real:
+     `encodeTableau_correct` assumes `hWf`, so `computes` needs the guard.
+   - `buildFSAT_run : (buildFSAT.eval (encodeIn C)).get FOUT =
+     serF (BinaryCC_to_FSAT_instance C)` — assemble the above + `computeWF_run`
+     branch. `computes` = `decodeOut_of_serF` + `buildFSAT_run`.
+3. **`cost_le`** — a low-degree polynomial (nested-loop product). Confirm the
+   degree with a `cost_forBnd_le` accounting pass (cf. CliqueRel quartic→quintic,
+   and `binBudget_le_poly`). The unary var-index mul-loops are `Θ(index)` with
+   `Θ(steps·L)` indices, so the honest bound is a fixed-degree polynomial.
+   `output_size_le` reuses `BinaryCC_to_FSAT_instance_size_bound`.
+4. **`enc_bit`/`usesBelow`/`width_le`/`decode_agree`** — mechanical
+   (`regBound := regFrame + 2·buildFSAT.loopDepth`; copy the discharge in
+   `flatCCBin_reductionLang`). Then `reducesPolyMO'_of_langFree …
+   BinaryCC_to_FSAT_instance_correct` gives `BinaryCC ⪯p' FSAT`.
+5. **The seam** `Reductions/BinaryCC_to_FSAT_comp.lean` (copy
+   `FlatTCC_to_BinaryCC_comp.lean`): a scrub joining `flatTCC_to_binaryCC`'s exit
+   frame to `encodeIn` here → the whole sound tail `FlatTCC → … → FSAT` as ONE
+   composed live `⪯p'`. `encodeIn` is already pinned to that exit frame, so the
+   seam is near-pure.
 -/
 
 end BinaryCCFSATFree
