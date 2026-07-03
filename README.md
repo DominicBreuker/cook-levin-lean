@@ -84,10 +84,9 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   `hasDeciderClassical`, a flat `sorry` asserting a `DecidesBy` for *any*
   predicate. **This is now the *only* `sorry` reaching the headline `CookLevin`**:
   the in-NP half (`SAT_inNP.sat_NP`, routed through the layer verifier
-  `evalCnfCmd`) is **sorry-free & axiom-clean** as of 2026-06-28 (Route A — an
-  `Op.IsSupported`/`Cmd.AllOpsSupported` wall isolates the live trio-free decider
-  path from the 3 remaining stub ops). So `sorryAx` on `CookLevin` is now wholly a
-  *hardness*-side fact.
+  `evalCnfCmd`) is **sorry-free & axiom-clean** (all 9 compiler ops are proven,
+  and the stub trio + its isolation walls were deleted 2026-07-04). So `sorryAx`
+  on `CookLevin` is now wholly a *hardness*-side fact.
 
 ## The strategy: a higher-level computable layer
 
@@ -117,13 +116,14 @@ shared-encoding alternative (`LangEncodable`/`PolyTimeComputableLang'` +
 (`probes/UnaryProductSizeProbe.lean`) and the audit showed no remaining witness
 needs it.
 
-**C2 status:** all 9 live `compileOp`s are FULLY PROVEN & axiom-clean
-(`appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/`tail`/`eqBit`/
-`concat`). The value-as-length trio (`takeAt`/`dropAt`/`consLen`) is **retired**
-(2026-07-02): no remaining witness uses it, and an `Op.IsSupported`/
-`Cmd.AllOpsSupported` wall (2026-06-28, Route A) isolates the live path, so
-**`SAT_inNP.sat_NP` is sorry-free & axiom-clean**; the trio ops await deletion
-from `Op` (cosmetic, HANDOFF). `Compile_sound` was false as stated for *three*
+**C2 status:** the compiler is DONE and CLEAN. All 9 `compileOp`s are FULLY
+PROVEN & axiom-clean (`appendOne`/`appendZero`/`clear`/`nonEmpty`/`head`/`copy`/
+`tail`/`eqBit`/`concat`), and `compileOp_sound_physical_residue` is fully proven
+with no side-conditions, so **`SAT_inNP.sat_NP` is sorry-free & axiom-clean**.
+The value-as-length trio (`takeAt`/`dropAt`/`consLen`) and both isolation walls
+(`NoConsLen`, `IsSupported`/`AllOpsSupported`) are **deleted** (2026-07-04): `Op`
+has exactly the 9 live constructors and the compiler chain carries no wall
+threading. `Compile_sound` was false as stated for *three*
 reasons. (1) its budget ignored the register count; fixed by a tape-length
 budget, **proven** for the real ops (`compileOp_appendOne_sound`). (2) ops were
 **unit cost** but `concat`/`copy` grow the state **multiplicatively** (output
@@ -146,8 +146,8 @@ is **unsatisfiable for every length-decreasing op** (`clear`/`tail`/shrinking
 `copy`/…) — only the growth ops `appendOne`/`appendZero` fit. The fix — the
 **residue-tolerant** contract (`encodeTape output ++ terminator-free residue`)
 — is **built and fully proven** for all 9 live ops and the whole decider chain.
-The compiler is effectively done; see ROADMAP Risk C2 and
-`CookLevin/HANDOFF.md` for what remains (cosmetic trio deletion).
+The compiler is done; see ROADMAP Risk C2 and
+`CookLevin/HANDOFF.md` for the remaining hardness-side work.
 
 ## Development methodology: skeleton-first, risk-driven
 

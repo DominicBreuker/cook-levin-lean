@@ -7,60 +7,46 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-03)
+## Where the proof stands (2026-07-04)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
   `[propext, Classical.choice, Quot.sound]`.
 - **The S3 migration is EXECUTING and the endgame design is VALIDATED LIVE.**
-  Three live honest `⪯p'` witnesses (`kSAT3_reducesPolyMO'`,
-  `flatTCC_reducesPolyMO'`, and **`FlatCCBinFree.flatCC_reducesPolyMO' :
-  FlatCCLang ⪯p' BinaryCCLang`**, this session) plus the **first COMPOSED
-  live `⪯p'`**: `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' :
-  FlatTCC ⪯p' BinaryCC`, produced by the **first live
-  `SeamData`/`comp`** instantiation — the settled `NPhard'` endgame engine now
-  works on real witnesses, not just in the abstract. All axiom-clean.
+  Live honest `⪯p'` witnesses `kSAT3_reducesPolyMO'`, `flatTCC_reducesPolyMO'`,
+  `FlatCCBinFree.flatCC_reducesPolyMO'`, and the **first COMPOSED live `⪯p'`**
+  `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' : FlatTCC ⪯p' BinaryCC`
+  (first live `SeamData`/`comp`). All axiom-clean.
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
   `MultiToSingle` (dead code). Plus the `sorry`-free **vacuous** defs (S1/S2 +
   size-0 hardness reduction) invisible to `#print axioms` — Group S.
-- **The compiler (Risk C2) is DONE for everything the proof needs.** 9 ops
-  proven; the value-as-length trio is retired behind the `Op.IsSupported`/
-  `Cmd.AllOpsSupported` wall, awaiting deletion (bottom-up task below).
+- **The compiler (Risk C2) is DONE and CLEAN.** All **9** ops proven &
+  axiom-clean; `compileOp_sound_physical_residue` is fully proven with no
+  side-conditions. The retired value-as-length trio and BOTH isolation walls
+  (`NoConsLen`, `IsSupported`/`AllOpsSupported`) are **deleted** (this session):
+  `Op` has exactly the 9 live constructors, the witness structures carry no wall
+  fields, and the compiler chain threads no `hnc`/`hsupp`. **No bottom-up
+  compiler debt remains.**
 
-## ★ NEW this session (2026-07-03, top-down): sound-tail chain through BinaryCC
+## ★ This session (2026-07-04, bottom-up): trio + walls deleted (Route B DONE)
 
-1. **`FlatCC_to_BinaryCC` as a free witness**
-   (`Reductions/FlatCC_to_BinaryCC_free.lean`, sorry-free): program
-   `binConvert` = two unary-product loops (`Sigma·offset`, `Sigma·width`) +
-   three stream-expansion loops (per-symbol block expansion
-   `v ↦ 0^v 1 0^(Σ−v−1)`) + an **on-machine validity check** + a guard branch
-   writing the all-empty no-instance.
-2. **⚠ DESIGN FINDING — the `isValidFlattening` guard can NOT be dropped
-   here** (unlike `flatTCC_to_flatCC`). The binary image ERASES the alphabet
-   bound: `⟨Σ=1, offset=1, width=1, init=[1], cards=[], final=[[1]], steps=0⟩`
-   is invalid yet its unguarded image is a wellformed BinaryCC YES-instance.
-   **Rule of thumb: invalid→invalid transfer works only when the map preserves
-   the validity-relevant structure** (flatTCC→flatCC preserved `Sigma` +
-   symbols); any encoding that erases the alphabet bound needs the on-machine
-   guard. Check this FIRST for every remaining tail witness. The guard is a
-   decidable input property — legitimate; realized with the
-   truncated-unary-subtraction trick (`copy Σ; tail^v; nonEmpty`), no `ltBit`
-   dependency.
-3. **The FIRST LIVE `SeamData`** (`Reductions/FlatTCC_to_BinaryCC_comp.lean`):
-   seam discipline paid off exactly as designed — the new witness's `encodeIn`
-   was **pinned to `flatTCC_reductionLang`'s exit frame** (shared regs
-   1/2/4/5, outputs 6/7/8), so the seam `mfc` is a pure 19-clear **scrub**
-   (reg 3 input residue + scratch 9–26), the bridge is a `cardConvert_run`
-   frame argument, and `mfcBound` is the constant 40. **Pin the next witness's
-   input layout to the previous witness's exit frame — it makes the seam
-   nearly free.**
-4. **Composite exit layout** (what the NEXT seam must re-encode/scrub):
-   BinaryCC outputs at regs 17 `offset`/18 `width`/19 `init` (raw bits)/20
-   `cards`/21 `final` (sentinel bit-lists)/5 `steps`; DIRTY at exit: the
-   intermediate FlatCC inputs still in 1/2/4/6/7/8 and scratch
-   9–16, 23, 24, 25 (`BOUT`), 26. Regs 0, 3, 22 are `[]`.
+Route-B cleanup complete (two commits): (1) `takeAt`/`dropAt`/`consLen` removed
+from `Op` and every pattern arm; (2) both walls removed — the
+`NoConsLen`/`IsSupported`+`AllOpsSupported` defs, the `noConsLen`/
+`allOpsSupported`/`mfc_*` fields on `DecidesLang`/`PolyTimeComputableLang`/
+`FreePrecomposeData`/`SeamData`, the `hnc`/`hsupp`/`hnc_body` threading through
+the compiler + `forBnd` chain, and all supplier theorems. `Op`/`Cmd`
+`.eval_preserves_BitState` are now unconditional. **No soundness change** (the
+walls were already vacuous); all headline axioms unchanged. The compiler is now
+a clean, minimal surface for the remaining hardness-side work.
+
+**Composite tail exit layout** (unchanged; what the NEXT tail seam
+re-encodes/scrubs): BinaryCC outputs at regs 17 `offset`/18 `width`/19 `init`
+(raw bits)/20 `cards`/21 `final` (sentinel bit-lists)/5 `steps`; DIRTY at exit:
+intermediate FlatCC inputs in 1/2/4/6/7/8 and scratch 9–16, 23, 24, 25 (`BOUT`),
+26. Regs 0, 3, 22 are `[]`.
 
 ## The free line — the working architecture (use this, and only this)
 
@@ -110,28 +96,32 @@ reasonably provable).
 
 ---
 
-## NEXT BOTTOM-UP session — delete the trio ops (Route B by deletion)
+## NEXT BOTTOM-UP session — Part 0.1: the Encodable sweep (real `encodable.size`)
 
-Unchanged plan; one atomic batch (editing `Syntax.lean` rebuilds everything —
-plan a full-rebuild session):
+The compiler cleanup is done; the **only** open bottom-up foundational item is
+**Part 0.1** — replace the size-0 `instEncodableDefault` (`Definitions.lean`)
+with a real `encodable.size` on every chain-intermediate type
+(TCC/CC/BinaryCC/formula/GenNPInput/…). **Why it matters (risk):** over a size-0
+type even the *honest* `toFrameworkWitness'` is vacuous (`bound 0`), and the
+hardness reduction's `fun _ => 0` output bound is only "valid" because of it —
+so this gates BOTH the C8 hardness reduction (top-down) and making any `⪯p'`
+non-vacuous. Pervasive but mechanical (~0.5–1K LOC). Approach:
 
-1. Remove `takeAt`/`dropAt`/`consLen` from the `Op` inductive (`Syntax.lean`)
-   and their case arms everywhere (`Semantics.lean`, `Frame.lean`,
-   `Compile/OpSound.lean` wall-discharged cases, `decide`/`simp` sets over `Op`).
-2. Delete **both walls**: `Cmd.NoConsLen` and `Op.IsSupported`/
-   `Cmd.AllOpsSupported` + the `noConsLen`/`allOpsSupported` fields on
-   `DecidesLang`/`PolyTimeComputableLang`/`FreePrecomposeData`/`SeamData`
-   + their supplies (`evalCnfCmd_*`, `cliqueRelCmd_*`, `kCnf3Check_*`,
-   `cardConvert_*`, **`binConvert_*`, `scrub_*`** — two new suppliers this
-   session) + the `hsupp`/`hnc` threading through
-   `compileOp_sound_physical_residue` → `run_physical_residue_gen` →
-   `Compile_run_physical_residue` → `bitDecider_run` → `paddedBitDecider_run`/
-   `paddedCompute_run`. (The deep `forBnd` `hnc_body` machinery is the
-   fiddliest spot.)
-3. Re-check axioms of the headline results + build green.
+1. Scope it: `grep` every `instEncodableDefault`/`instEncodable*` on the proof
+   path; list the types that need a real `size`. Pick the natural `size` per
+   type (sum of field sizes; keep it monotone).
+2. Do the leaf types first (BinaryCC/formula), then the composites, so each
+   `encodable.size` rewrite has its dependencies in place. Re-prove the
+   `encodeIn_size`/`output_size_le` obligations on the live free witnesses
+   (`kSAT3`, `flatTCC`, `flatCC`, comp) — they currently lean on the size-0
+   type; expect small bound bumps.
+3. **Probe first**: `#eval` the chosen `size` on a couple of instances and
+   confirm the witness `encodeIn_size : ≤ 2·size+1` still holds before proving.
 
-The wall is proven infrastructure and can stay forever — the deletion buys
-cleanliness, not soundness. Time-box it; if it overruns, revert and record.
+A lighter bottom-up alternative if Part 0.1 is deferred: build the
+`map`-over-lists gadget the Tseytin tail needs (near-complete draft at
+`parked/MapNatList_WIP.lean`) — a pure support lemma for the top-down
+`BinaryCC_to_FSAT`, decouplable from Part 0.1.
 
 ## NEXT TOP-DOWN session — target #2 continues: `BinaryCC_to_FSAT` (Tseytin)
 
@@ -270,7 +260,7 @@ Ordered:
 - **`simp` with `List.take_succ` can hit max-recursion in a fat context** — use
   the explicit `rw [List.take_add_one, List.getElem?_eq_getElem hi]` chain.
 - **`decide` fails when the goal type mentions free vars** — `show (0 : Nat) ≠ 2`
-  first. `Cmd.UsesBelow`/`NoConsLen` of a concrete program: full `simp [defs…]`.
+  first. `Cmd.UsesBelow` of a concrete program: full `simp [defs…]`.
 - **`set` (tactic) lives only in `PolyTime.lean`, not `Frame.lean`** (core-only).
 - Methodology: **skeleton-first; refine the highest-risk gap next; decompose
   `sorry`s, don't elaborate them; probe before committing engineering;
