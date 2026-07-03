@@ -14,7 +14,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 
 ---
 
-## Status snapshot (verified 2026-07-02)
+## Status snapshot (verified 2026-07-03)
 
 | | |
 |---|---|
@@ -25,7 +25,9 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms KSat3Free.inNP_kSAT3_free` | `[propext, Classical.choice, Quot.sound]` — **first live `red_inNP` through the free layer engine** (concrete re-encoder + reduction program, `NP/kSAT_to_SAT_free.lean`, 2026-07-02) |
 | `#print axioms KSat3Free.kSAT3_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first live honest `⪯p'` on the real chain** (`kSAT 3 ⪯p' SAT` via `reducesPolyMO'_of_langFree`, 2026-07-02) |
 | `#print axioms FlatTCCFree.flatTCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first sound-tail step as a live honest `⪯p'`** (`FlatTCC ⪯p' FlatCC`, unguarded map, `Reductions/FlatTCC_to_FlatCC_free.lean`, 2026-07-02) |
-| `NPhard'` endgame design | **SETTLED & machine-validated** (2026-07-02): `SeamData`/`PolyTimeComputableLang.comp` fully proven; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
+| `#print axioms FlatCCBinFree.flatCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatCC ⪯p' BinaryCC` live** (guarded map + on-machine validity check; the unguarded map is provably incorrect for this step — `Reductions/FlatCC_to_BinaryCC_free.lean`, 2026-07-03) |
+| `#print axioms FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first COMPOSED live `⪯p'`** (`FlatTCC ⪯p' BinaryCC` via the **first live `SeamData`/`comp`**, `Reductions/FlatTCC_to_BinaryCC_comp.lean`, 2026-07-03) |
+| `NPhard'` endgame design | **SETTLED, machine-validated & VALIDATED LIVE** (2026-07-02/03): `SeamData`/`PolyTimeComputableLang.comp` fully proven and instantiated on real witnesses; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
 | Genuine `sorry`s (Group C) | **7 in built code** (4 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau; 3 in dead code `MultiToSingle`) — down from ~13 after the 2026-07-02 canonical-layer retirement deleted 6 permanently-unprovable wall sorries |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
@@ -367,10 +369,12 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
      (templates: `NP/kSAT_to_SAT_free.lean` and — for the sound-tail
      unguarded-map pattern — `Reductions/FlatTCC_to_FlatCC_free.lean`).
      ✅ `flatTCC_to_flatCC` DONE (2026-07-02, unguarded map, probe-validated).
-     Remaining: `FlatCC_to_BinaryCC` medium, **`BinaryCC_to_FSAT` (Tseytin)
-     the expensive tail item** (~1K-LOC formula builder re-expressed as a
-     `Cmd`), `FSAT_to_SAT`. `map`-over-lists gates parts (near-complete draft
-     at `parked/MapNatList_WIP.lean`).
+     ✅ `FlatCC_to_BinaryCC` DONE (2026-07-03, GUARDED map — the guard is
+     provably necessary here — with on-machine validity check;
+     probe-validated). Remaining: **`BinaryCC_to_FSAT` (Tseytin) the
+     expensive tail item** (~1K-LOC formula builder re-expressed as a `Cmd`),
+     `FSAT_to_SAT`. `map`-over-lists gates parts (near-complete draft at
+     `parked/MapNatList_WIP.lean`).
    - **✅ SETTLED (2026-07-02): the migrated `NPhard'` transport.** There is
      deliberately **no generic `⪯p'`-transitivity**; the answer is
      `PolyTimeComputableLang.SeamData`/`comp` (fully proven, `PolyTime.lean`):
@@ -378,8 +382,12 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
      (bridge = `AgreeBelow` on the right frame), then bridge once.
      `NPhard'`/`NPcomplete'` are defined; **`NPhard'` is proven at chain
      endpoints only** — C8 must emit the per-`Q` front witness *with its
-     `SeamData` into the fixed chain head*. Next validation step: the first
-     LIVE seam (`flatTCC` ⨾ `FlatCC_to_BinaryCC`), HANDOFF top-down task 2.
+     `SeamData` into the fixed chain head*. ✅ VALIDATED LIVE (2026-07-03):
+     the first seam `FlatTCCBinComp.flatTCC_to_binaryCC_seam` joins
+     `flatTCC_reductionLang` to `flatCCBin_reductionLang` (a pure 19-clear
+     scrub — seam discipline pins each witness's input layout to its
+     predecessor's exit frame), giving the first composed live `⪯p'`
+     `FlatTCC ⪯p' BinaryCC`.
    - At this point **S1 and S2 stop typechecking**; the conditional theorem
      breaks until they are honest — plan the swap as one coordinated batch.
    *Estimate ~2–4K LOC.*
