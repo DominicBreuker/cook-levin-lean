@@ -1071,6 +1071,750 @@ theorem expandSent_run (s : State) (v k : Nat) (b : Bool)
       omega
     omega
 
+/-! ## Stream-suffix helpers for the loop invariants -/
+
+theorem expandStr_append (k : Nat) (a b : List Nat) :
+    expandStr k (a ++ b) = expandStr k a ++ expandStr k b := by
+  induction a with
+  | nil => rfl
+  | cons v a ih => rw [List.cons_append, expandStr, expandStr, ih,
+      List.append_assoc]
+
+theorem expandStr_snoc (k : Nat) (a : List Nat) (v : Nat) :
+    expandStr k (a ++ [v]) = expandStr k a ++ expandSym k v := by
+  rw [expandStr_append]
+  simp [expandStr]
+
+theorem allLtB_snoc (k : Nat) (a : List Nat) (v : Nat) :
+    allLtB k (a ++ [v]) = (allLtB k a && decide (v < k)) := by
+  simp [allLtB, List.all_append]
+
+theorem expandItems_snoc (k : Nat) (a : List (Option Nat)) (it : Option Nat) :
+    expandItems k (a ++ [it]) = expandItems k a ++ expandItem k it := by
+  rw [expandItems_append]
+  simp [expandItems]
+
+theorem itemsOkB_snoc (k : Nat) (a : List (Option Nat)) (it : Option Nat) :
+    itemsOkB k (a ++ [it]) = (itemsOkB k a && itemOkB k it) := by
+  simp [itemsOkB, List.all_append]
+
+theorem encNats_drop_le (xs : List Nat) (i : Nat) :
+    (encNats (xs.drop i)).length ≤ (encNats xs).length := by
+  conv_rhs => rw [← List.take_append_drop i xs]
+  rw [encNats_append, List.length_append]
+  omega
+
+theorem encItems_drop_le (its : List (Option Nat)) (i : Nat) :
+    (encItems (its.drop i)).length ≤ (encItems its).length := by
+  conv_rhs => rw [← List.take_append_drop i its]
+  rw [encItems_append, List.length_append]
+  omega
+
+theorem encItem_some_append (v : Nat) (X : List Nat) :
+    encItem (some v) ++ X = 1 :: (List.replicate v 1 ++ 0 :: X) := by
+  simp [encItem]
+
+theorem encItem_none_append (X : List Nat) :
+    encItem none ++ X = 0 :: X := rfl
+
+/-- Total length of the expanded sentinel stream (for the copy-out cost). -/
+theorem expandItems_length_le (k : Nat) (its : List (Option Nat)) :
+    (expandItems k its).length
+      ≤ 3 * (k * its.length + (encItems its).length) := by
+  induction its with
+  | nil => simp [expandItems]
+  | cons it its ih =>
+      rw [expandItems, List.length_append, encItems, List.length_append,
+        List.length_cons]
+      have h1 := expandItem_length_le k it
+      have hmul : k * (its.length + 1) = k * its.length + k := by ring
+      omega
+
+/-! ## The per-block gadget for `init`: run + cost -/
+
+/-- Uniform per-iteration budget for the `init` loop. -/
+def initStepBound (S K : Nat) : Nat :=
+  4 * (S * S) + S * K + K * K + 10 * S + 3 * K + 40
+
+/-- `initStep`, block case: `SCAN` starts with a bare block `1^v 0`. Consumes
+it, appends `expandSym k v` to `BINIT`, and ANDs the verdict into `FLAG`. -/
+theorem initStep_block (s : State) (v : Nat) (X : List Nat) (k : Nat)
+    (b : Bool) (S : Nat)
+    (hSC : State.get s SCAN = encNat v ++ X)
+    (hSIG : State.get s SIGMA = List.replicate k 1)
+    (hFLAG : State.get s FLAG = cond b [1] [0])
+    (hS : (State.get s SCAN).length ≤ S) :
+    State.get (initStep.eval s) SCAN = X
+    ∧ State.get (initStep.eval s) BINIT = State.get s BINIT ++ expandSym k v
+    ∧ State.get (initStep.eval s) FLAG = cond (b && decide (v < k)) [1] [0]
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ BINIT → r ≠ VALX → r ≠ REM → r ≠ TFLG →
+        r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ CliqueRelTM.HEAD →
+        r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+        State.get (initStep.eval s) r = State.get s r)
+    ∧ initStep.cost s ≤ initStepBound S k := by
+  have hv : v + 1 ≤ S := by
+    have : (State.get s SCAN).length = v + 1 + X.length := by
+      rw [hSC, List.length_append, encNat_length]
+    omega
+  have hne : (State.get s SCAN).isEmpty = false := by
+    rw [hSC, encNat_append]
+    cases v <;> simp [List.replicate_succ]
+  have e0 : (Cmd.op (.nonEmpty TFLG SCAN)).eval s = s.set TFLG [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hne]
+    rfl
+  set w := s.set TFLG [1] with hw
+  have hwTFLG : State.get w TFLG = [1] := State.get_set_eq _ _ _
+  have hwSC : State.get w SCAN = List.replicate v 1 ++ 0 :: X := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide), hSC, encNat_append]
+  -- drain the block
+  obtain ⟨hVAL, hSC2, hF2⟩ := CliqueRelTM.readNum_run w v X VALX SCAN IDXR
+    hwSC (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide)
+  set u1 := (CliqueRelTM.readNum VALX SCAN IDXR).eval w with hu1
+  have hu1SIG : State.get u1 SIGMA = List.replicate k 1 := by
+    rw [hF2 SIGMA (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hw, State.get_set_ne _ _ _ _ (by decide), hSIG]
+  have hu1FLAG : State.get u1 FLAG = cond b [1] [0] := by
+    rw [hF2 FLAG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hw, State.get_set_ne _ _ _ _ (by decide), hFLAG]
+  -- expand
+  obtain ⟨hB3, hFL3, hF3, hC3⟩ := expandBare_run u1 v k b hVAL hu1SIG hu1FLAG
+  set u2 := expandBare.eval u1 with hu2
+  have heval : initStep.eval s = u2 := by
+    show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).eval s = _
+    rw [Cmd.eval_seq, e0, Cmd.eval_ifBit_true _ _ _ _ hwTFLG, Cmd.eval_seq,
+      ← hu1, ← hu2]
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · rw [heval, hF3 SCAN (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)]
+    exact hSC2
+  · rw [heval, hB3, hF2 BINIT (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide), hw, State.get_set_ne _ _ _ _ (by decide)]
+  · rw [heval, hFL3]
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11
+    rw [heval, hF3 r h2 h4 h5 h6 h7 h11, hF2 r h1 h3 h10 h9 h11 h8, hw,
+      State.get_set_ne _ _ _ _ h5]
+  · have hrn := CliqueRelTM.readNum_cost w VALX SCAN IDXR (by decide)
+      (by decide) (by decide) (by decide) (by decide)
+    have hwSlen : (State.get w SCAN).length ≤ S := by
+      rw [hw, State.get_set_ne _ _ _ _ (by decide)]
+      exact hS
+    have hrn' : (CliqueRelTM.readNum VALX SCAN IDXR).cost w
+        ≤ 2 * (S * S) + 7 * S + 7 := by
+      set L := (State.get w SCAN).length with hL
+      have h2LL : 2 * L * L ≤ 2 * (S * S) := by
+        calc 2 * L * L = 2 * (L * L) := by ring
+          _ ≤ 2 * (S * S) := Nat.mul_le_mul_left 2 (Nat.mul_le_mul hwSlen hwSlen)
+      omega
+    have hcost : initStep.cost s
+        = 1 + 1 + (1 + (1 + (CliqueRelTM.readNum VALX SCAN IDXR).cost w
+            + expandBare.cost u1)) := by
+      show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).cost s = _
+      rw [Cmd.cost_seq, Cmd.cost_op, e0, Cmd.cost_ifBit_true _ _ _ _ hwTFLG,
+        Cmd.cost_seq, ← hu1]
+      rfl
+    rw [hcost]
+    have hvS : v ≤ S := by omega
+    have hC3' : expandBare.cost u1
+        ≤ 2 * (S * S) + S * k + k * k + 3 * S + 3 * k + 22 := by
+      have hvv : v * v ≤ S * S := Nat.mul_le_mul hvS hvS
+      have hvk : v * k ≤ S * k := Nat.mul_le_mul_right k hvS
+      omega
+    show _ ≤ initStepBound S k
+    unfold initStepBound
+    omega
+
+/-- `initStep`, idle case: `SCAN` is exhausted. -/
+theorem initStep_idle (s : State) (hSC : State.get s SCAN = []) :
+    initStep.eval s = (s.set TFLG [0]).set CliqueRelTM.SKIPR [1]
+    ∧ initStep.cost s = 6 := by
+  have hne : (State.get s SCAN).isEmpty = true := by rw [hSC]; rfl
+  have e0 : (Cmd.op (.nonEmpty TFLG SCAN)).eval s = s.set TFLG [0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hne]
+    rfl
+  have hwTFLG : State.get (s.set TFLG [0]) TFLG ≠ [1] := by
+    rw [State.get_set_eq]; decide
+  constructor
+  · show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).eval s = _
+    rw [Cmd.eval_seq, e0, Cmd.eval_ifBit_false _ _ _ _ hwTFLG,
+      CliqueRelTM.cSkip_eval]
+  · show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).cost s = _
+    rw [Cmd.cost_seq, Cmd.cost_op, e0, Cmd.cost_ifBit_false _ _ _ _ hwTFLG,
+      CliqueRelTM.cSkip_cost]
+    rfl
+
+/-! ## The `init` loop: invariant + step + run -/
+
+/-- The init-loop fold invariant: after `i` iterations the stream holds the
+remaining blocks, `BINIT` the expanded prefix, and `FLAG` the ANDed validity
+of the processed prefix. Beyond `|xs|` the loop idles (`drop`/`take` clamp). -/
+def IInv (xs : List Nat) (k : Nat) (b0 : Bool) (u : State) (i : Nat)
+    (st : State) : Prop :=
+  State.get st SCAN = encNats (xs.drop i)
+  ∧ State.get st BINIT = expandStr k (xs.take i)
+  ∧ State.get st FLAG = cond (b0 && allLtB k (xs.take i)) [1] [0]
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ BINIT → r ≠ VALX → r ≠ REM → r ≠ TFLG →
+      r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ IDXO → r ≠ CliqueRelTM.HEAD →
+      r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+      State.get st r = State.get u r)
+
+/-- One `initStep` iteration preserves `IInv`, within the uniform budget. -/
+theorem initStep_step (xs : List Nat) (k : Nat) (b0 : Bool) (u : State)
+    (S : Nat) (hS : (encNats xs).length ≤ S)
+    (hSIG : State.get u SIGMA = List.replicate k 1)
+    (i : Nat) (st : State) (h : IInv xs k b0 u i st) :
+    IInv xs k b0 u (i + 1) (initStep.eval (st.set IDXO (List.replicate i 1)))
+    ∧ initStep.cost (st.set IDXO (List.replicate i 1)) ≤ initStepBound S k := by
+  obtain ⟨hSCAN, hBIN, hFLG, hframe⟩ := h
+  set w := st.set IDXO (List.replicate i 1) with hw
+  have hwframe : ∀ r : Var, r ≠ IDXO → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwSIG : State.get w SIGMA = List.replicate k 1 := by
+    rw [hwframe SIGMA (by decide), hframe SIGMA (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide), hSIG]
+  by_cases hi : i < xs.length
+  · -- block iteration
+    have hdrop : xs.drop i = xs[i] :: xs.drop (i + 1) := List.drop_eq_getElem_cons hi
+    have htake : xs.take (i + 1) = xs.take i ++ [xs[i]] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hi, Option.toList_some]
+    have hSCw : State.get w SCAN = encNat xs[i] ++ encNats (xs.drop (i + 1)) := by
+      rw [hwframe SCAN (by decide), hSCAN, hdrop]
+      rfl
+    have hSw : (State.get w SCAN).length ≤ S := by
+      rw [hwframe SCAN (by decide), hSCAN]
+      exact le_trans (encNats_drop_le xs i) hS
+    have hFLGw : State.get w FLAG = cond (b0 && allLtB k (xs.take i)) [1] [0] := by
+      rw [hwframe FLAG (by decide), hFLG]
+    obtain ⟨hA, hB, hC, hF, hCost⟩ := initStep_block w xs[i] _ k
+      (b0 && allLtB k (xs.take i)) S hSCw hwSIG hFLGw hSw
+    refine ⟨⟨?_, ?_, ?_, ?_⟩, hCost⟩
+    · rw [hA]
+    · rw [hB, hwframe BINIT (by decide), hBIN, htake, expandStr_snoc]
+    · rw [hC, htake, allLtB_snoc, Bool.and_assoc]
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+      rw [hF r h1 h2 h3 h4 h5 h6 h7 h8 h10 h11 h12, hwframe r h9,
+        hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12]
+  · -- idle iteration
+    have hlen : xs.length ≤ i := Nat.le_of_not_lt hi
+    have hSCw : State.get w SCAN = [] := by
+      rw [hwframe SCAN (by decide), hSCAN, List.drop_eq_nil_of_le hlen]
+      rfl
+    obtain ⟨heval, hcost⟩ := initStep_idle w hSCw
+    have hbudget : (6 : Nat) ≤ initStepBound S k := by
+      unfold initStepBound; omega
+    refine ⟨⟨?_, ?_, ?_, ?_⟩, by omega⟩
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hwframe SCAN (by decide), hSCAN,
+        List.drop_eq_nil_of_le hlen, List.drop_eq_nil_of_le (by omega)]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hwframe BINIT (by decide), hBIN,
+        List.take_of_length_le hlen, List.take_of_length_le (by omega)]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hwframe FLAG (by decide), hFLG,
+        List.take_of_length_le hlen, List.take_of_length_le (by omega)]
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+      rw [heval, State.get_set_ne _ _ _ _ h12, State.get_set_ne _ _ _ _ h5,
+        hwframe r h9, hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12]
+
+/-- **The `init` loop is correct**: on `SCAN = encNats xs` (with the loop
+bound register `bnd` at least as long as the stream) it writes
+`expandStr k xs` to `BINIT` and ANDs the whole stream's validity into `FLAG`. -/
+theorem initLoop_run (xs : List Nat) (k : Nat) (b0 : Bool) (u : State)
+    (bnd : Var) (S : Nat)
+    (hSlen : (State.get u bnd).length = S)
+    (hS : (encNats xs).length ≤ S)
+    (hSC : State.get u SCAN = encNats xs)
+    (hSIG : State.get u SIGMA = List.replicate k 1)
+    (hFLAG : State.get u FLAG = cond b0 [1] [0])
+    (hBIN : State.get u BINIT = []) :
+    State.get ((Cmd.forBnd IDXO bnd initStep).eval u) BINIT = expandStr k xs
+    ∧ State.get ((Cmd.forBnd IDXO bnd initStep).eval u) FLAG
+        = cond (b0 && allLtB k xs) [1] [0]
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ BINIT → r ≠ VALX → r ≠ REM → r ≠ TFLG →
+        r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ IDXO → r ≠ CliqueRelTM.HEAD →
+        r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+        State.get ((Cmd.forBnd IDXO bnd initStep).eval u) r = State.get u r)
+    ∧ (Cmd.forBnd IDXO bnd initStep).cost u
+        ≤ 1 + S * initStepBound S k + S * S := by
+  have hxslen : xs.length ≤ S := by
+    have h1 : xs.length ≤ (encNats xs).length := by
+      rw [encNats_length]
+      exact list_length_le_size xs
+    omega
+  have hbase : IInv xs k b0 u 0 u := by
+    refine ⟨by rw [List.drop_zero]; exact hSC, by rw [List.take_zero]; exact hBIN,
+      ?_, fun r _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    rw [List.take_zero]
+    show State.get u FLAG = cond (b0 && allLtB k []) [1] [0]
+    rw [show allLtB k [] = true from rfl, Bool.and_true]
+    exact hFLAG
+  have hInv : IInv xs k b0 u S
+      (Cmd.foldlState initStep IDXO (List.range S) u) :=
+    Cmd.foldlState_range_induct initStep IDXO S u (IInv xs k b0 u) hbase
+      (fun i st _ hM => (initStep_step xs k b0 u S hS hSIG i st hM).1)
+  obtain ⟨-, hBOUT, hFLG, hframe⟩ := hInv
+  have heval : (Cmd.forBnd IDXO bnd initStep).eval u
+      = Cmd.foldlState initStep IDXO (List.range S) u := by
+    rw [Cmd.eval_forBnd, hSlen]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [heval, hBOUT, List.take_of_length_le hxslen]
+  · rw [heval, hFLG, List.take_of_length_le hxslen]
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+    rw [heval]
+    exact hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+  · have h := Cmd.cost_forBnd_le IDXO bnd initStep u (initStepBound S k)
+      (IInv xs k b0 u) hbase
+      (fun i st hi hM => (initStep_step xs k b0 u S hS hSIG i st hM).1)
+      (fun i st hi hM => (initStep_step xs k b0 u S hS hSIG i st hM).2)
+    rw [hSlen] at h
+    exact h
+
+/-! ## The per-item gadget for sentinel streams: run + cost -/
+
+/-- Uniform per-iteration budget for the sentinel-stream loops. -/
+def sentStepBound (S K : Nat) : Nat :=
+  4 * (S * S) + S * K + K * K + 14 * S + 5 * K + 50
+
+/-- `sentStep`, element case: `SCAN` starts with a sentinel element `1 1^v 0`.
+Consumes it, appends the expansion to `BOUT`, ANDs the verdict into `FLAG`. -/
+theorem sentStep_elem (s : State) (v : Nat) (X : List Nat) (k : Nat)
+    (b : Bool) (S : Nat)
+    (hSC : State.get s SCAN = encItem (some v) ++ X)
+    (hSIG : State.get s SIGMA = List.replicate k 1)
+    (hFLAG : State.get s FLAG = cond b [1] [0])
+    (hS : (State.get s SCAN).length ≤ S) :
+    State.get (sentStep.eval s) SCAN = X
+    ∧ State.get (sentStep.eval s) BOUT
+        = State.get s BOUT ++ expandItem k (some v)
+    ∧ State.get (sentStep.eval s) FLAG = cond (b && decide (v < k)) [1] [0]
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ BOUT → r ≠ VALX → r ≠ REM → r ≠ TFLG →
+        r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ CliqueRelTM.HEAD →
+        r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+        State.get (sentStep.eval s) r = State.get s r)
+    ∧ sentStep.cost s ≤ sentStepBound S k := by
+  have hlenSC : (State.get s SCAN).length = v + 2 + X.length := by
+    rw [hSC, List.length_append]
+    simp [encItem]
+  have hv : v + 2 ≤ S := by omega
+  have hSCcons : State.get s SCAN = 1 :: (List.replicate v 1 ++ 0 :: X) := by
+    rw [hSC, encItem_some_append]
+  have hne : (State.get s SCAN).isEmpty = false := by
+    rw [hSCcons]; rfl
+  have e0 : (Cmd.op (.nonEmpty TFLG SCAN)).eval s = s.set TFLG [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hne]
+    rfl
+  set w := s.set TFLG [1] with hw
+  have hwTFLG : State.get w TFLG = [1] := State.get_set_eq _ _ _
+  have hwSC : State.get w SCAN = 1 :: (List.replicate v 1 ++ 0 :: X) := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide), hSCcons]
+  -- read the sentinel
+  have e1 : (Cmd.op (.head TFLG SCAN)).eval w = w.set TFLG [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hwSC]
+  set w1 := w.set TFLG [1] with hw1
+  have hw1TFLG : State.get w1 TFLG = [1] := State.get_set_eq _ _ _
+  have hw1SC : State.get w1 SCAN = 1 :: (List.replicate v 1 ++ 0 :: X) := by
+    rw [hw1, State.get_set_ne _ _ _ _ (by decide), hwSC]
+  -- drop the sentinel
+  have e2 : (Cmd.op (.tail SCAN SCAN)).eval w1
+      = w1.set SCAN (List.replicate v 1 ++ 0 :: X) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw1SC, List.tail_cons]
+  set w2 := w1.set SCAN (List.replicate v 1 ++ 0 :: X) with hw2
+  have hw2TFLG : State.get w2 TFLG = [1] := by
+    rw [hw2, State.get_set_ne _ _ _ _ (by decide), hw1TFLG]
+  have hw2SC : State.get w2 SCAN = List.replicate v 1 ++ 0 :: X :=
+    State.get_set_eq _ _ _
+  -- drain the block
+  obtain ⟨hVAL, hSC3, hF3⟩ := CliqueRelTM.readNum_run w2 v X VALX SCAN IDXR
+    hw2SC (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide)
+  set u1 := (CliqueRelTM.readNum VALX SCAN IDXR).eval w2 with hu1
+  have hu1get : ∀ r : Var, r ≠ SCAN → r ≠ VALX → r ≠ TFLG →
+      r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.HEAD → r ≠ CliqueRelTM.SKIPR →
+      r ≠ IDXR → State.get u1 r = State.get s r := by
+    intro r h1 h2 h3 h4 h5 h6 h7
+    rw [hF3 r h1 h2 h4 h5 h6 h7, hw2, State.get_set_ne _ _ _ _ h1, hw1,
+      State.get_set_ne _ _ _ _ h3, hw, State.get_set_ne _ _ _ _ h3]
+  have hu1SIG : State.get u1 SIGMA = List.replicate k 1 := by
+    rw [hu1get SIGMA (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide), hSIG]
+  have hu1FLAG : State.get u1 FLAG = cond b [1] [0] := by
+    rw [hu1get FLAG (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide), hFLAG]
+  -- expand
+  obtain ⟨hB4, hFL4, hF4, hC4⟩ := expandSent_run u1 v k b hVAL hu1SIG hu1FLAG
+  set u2 := expandSent.eval u1 with hu2
+  have heval : sentStep.eval s = u2 := by
+    show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).eval s = _
+    rw [Cmd.eval_seq, e0, Cmd.eval_ifBit_true _ _ _ _ hwTFLG, Cmd.eval_seq,
+      e1, Cmd.eval_seq, e2, Cmd.eval_ifBit_true _ _ _ _ hw2TFLG, Cmd.eval_seq,
+      ← hu1, ← hu2]
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · rw [heval, hF4 SCAN (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)]
+    exact hSC3
+  · rw [heval, hB4, hu1get BOUT (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide)]
+    rfl
+  · rw [heval, hFL4]
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11
+    rw [heval, hF4 r h2 h4 h5 h6 h7 h11, hu1get r h1 h3 h5 h10 h9 h11 h8]
+  · -- cost
+    have hrn := CliqueRelTM.readNum_cost w2 VALX SCAN IDXR (by decide)
+      (by decide) (by decide) (by decide) (by decide)
+    have hw2Slen : (State.get w2 SCAN).length ≤ S := by
+      rw [hw2SC]
+      simp only [List.length_append, List.length_replicate, List.length_cons]
+      omega
+    have hrn' : (CliqueRelTM.readNum VALX SCAN IDXR).cost w2
+        ≤ 2 * (S * S) + 7 * S + 7 := by
+      set L := (State.get w2 SCAN).length with hL
+      have h2LL : 2 * L * L ≤ 2 * (S * S) := by
+        calc 2 * L * L = 2 * (L * L) := by ring
+          _ ≤ 2 * (S * S) := Nat.mul_le_mul_left 2 (Nat.mul_le_mul hw2Slen hw2Slen)
+      omega
+    have hw1Slen : (State.get w1 SCAN).length ≤ S := by
+      rw [hw1SC]
+      simp only [List.length_cons, List.length_append, List.length_replicate,
+        List.length_cons]
+      omega
+    have hcost : sentStep.cost s
+        = 1 + 1 + (1 + (1 + 1 + (1 + ((State.get w1 SCAN).length + 1)
+            + (1 + (1 + (CliqueRelTM.readNum VALX SCAN IDXR).cost w2
+              + expandSent.cost u1))))) := by
+      show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).cost s = _
+      rw [Cmd.cost_seq, Cmd.cost_op, e0, Cmd.cost_ifBit_true _ _ _ _ hwTFLG,
+        Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, Cmd.cost_op, e2,
+        Cmd.cost_ifBit_true _ _ _ _ hw2TFLG, Cmd.cost_seq, ← hu1]
+      simp only [Op.cost, hw1SC]
+    rw [hcost]
+    have hvS : v ≤ S := by omega
+    have hC4' : expandSent.cost u1
+        ≤ 2 * (S * S) + S * k + k * k + 5 * S + 5 * k + 30 := by
+      have hvv : v * v ≤ S * S := Nat.mul_le_mul hvS hvS
+      have hvk : v * k ≤ S * k := Nat.mul_le_mul_right k hvS
+      omega
+    show _ ≤ sentStepBound S k
+    unfold sentStepBound
+    omega
+
+/-- `sentStep`, terminator case: `SCAN` starts with a list terminator `0`.
+Consumes it and copies it to `BOUT`. -/
+theorem sentStep_term (s : State) (X : List Nat) (S : Nat)
+    (hSC : State.get s SCAN = encItem none ++ X)
+    (hS : (State.get s SCAN).length ≤ S) :
+    State.get (sentStep.eval s) SCAN = X
+    ∧ State.get (sentStep.eval s) BOUT = State.get s BOUT ++ [0]
+    ∧ State.get (sentStep.eval s) FLAG = State.get s FLAG
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ BOUT → r ≠ TFLG →
+        State.get (sentStep.eval s) r = State.get s r)
+    ∧ sentStep.cost s ≤ S + 12 := by
+  have hSCcons : State.get s SCAN = 0 :: X := by
+    rw [hSC, encItem_none_append]
+  have hne : (State.get s SCAN).isEmpty = false := by
+    rw [hSCcons]; rfl
+  have e0 : (Cmd.op (.nonEmpty TFLG SCAN)).eval s = s.set TFLG [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hne]
+    rfl
+  set w := s.set TFLG [1] with hw
+  have hwTFLG : State.get w TFLG = [1] := State.get_set_eq _ _ _
+  have hwSC : State.get w SCAN = 0 :: X := by
+    rw [hw, State.get_set_ne _ _ _ _ (by decide), hSCcons]
+  have e1 : (Cmd.op (.head TFLG SCAN)).eval w = w.set TFLG [0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hwSC]
+  set w1 := w.set TFLG [0] with hw1
+  have hw1TFLG : State.get w1 TFLG = [0] := State.get_set_eq _ _ _
+  have hw1SC : State.get w1 SCAN = 0 :: X := by
+    rw [hw1, State.get_set_ne _ _ _ _ (by decide), hwSC]
+  have e2 : (Cmd.op (.tail SCAN SCAN)).eval w1 = w1.set SCAN X := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw1SC, List.tail_cons]
+  set w2 := w1.set SCAN X with hw2
+  have hw2TFLG : State.get w2 TFLG ≠ [1] := by
+    rw [hw2, State.get_set_ne _ _ _ _ (by decide), hw1TFLG]
+    decide
+  have hw2BOUT : State.get w2 BOUT = State.get s BOUT := by
+    rw [hw2, State.get_set_ne _ _ _ _ (by decide), hw1,
+      State.get_set_ne _ _ _ _ (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide)]
+  have e3 : (Cmd.op (.appendZero BOUT)).eval w2
+      = w2.set BOUT (State.get s BOUT ++ [0]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw2BOUT]
+  have heval : sentStep.eval s = w2.set BOUT (State.get s BOUT ++ [0]) := by
+    show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).eval s = _
+    rw [Cmd.eval_seq, e0, Cmd.eval_ifBit_true _ _ _ _ hwTFLG, Cmd.eval_seq,
+      e1, Cmd.eval_seq, e2, Cmd.eval_ifBit_false _ _ _ _ hw2TFLG, e3]
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · rw [heval, State.get_set_ne _ _ _ _ (by decide), hw2, State.get_set_eq]
+  · rw [heval, State.get_set_eq]
+  · rw [heval, State.get_set_ne _ _ _ _ (by decide), hw2,
+      State.get_set_ne _ _ _ _ (by decide), hw1,
+      State.get_set_ne _ _ _ _ (by decide), hw,
+      State.get_set_ne _ _ _ _ (by decide)]
+  · intro r h1 h2 h3
+    rw [heval, State.get_set_ne _ _ _ _ h2, hw2,
+      State.get_set_ne _ _ _ _ h1, hw1, State.get_set_ne _ _ _ _ h3, hw,
+      State.get_set_ne _ _ _ _ h3]
+  · have hcost : sentStep.cost s
+        = 1 + 1 + (1 + (1 + 1 + (1 + ((State.get w1 SCAN).length + 1)
+            + (1 + 1)))) := by
+      show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).cost s = _
+      rw [Cmd.cost_seq, Cmd.cost_op, e0, Cmd.cost_ifBit_true _ _ _ _ hwTFLG,
+        Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, Cmd.cost_op, e2,
+        Cmd.cost_ifBit_false _ _ _ _ hw2TFLG, Cmd.cost_op]
+      rfl
+    rw [hcost]
+    have hlen : (State.get w1 SCAN).length ≤ S := by
+      have hX : (State.get s SCAN).length = X.length + 1 := by
+        rw [hSCcons]
+        rfl
+      rw [hw1SC]
+      simp only [List.length_cons]
+      omega
+    omega
+
+/-- `sentStep`, idle case: `SCAN` is exhausted. -/
+theorem sentStep_idle (s : State) (hSC : State.get s SCAN = []) :
+    sentStep.eval s = (s.set TFLG [0]).set CliqueRelTM.SKIPR [1]
+    ∧ sentStep.cost s = 6 := by
+  have hne : (State.get s SCAN).isEmpty = true := by rw [hSC]; rfl
+  have e0 : (Cmd.op (.nonEmpty TFLG SCAN)).eval s = s.set TFLG [0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hne]
+    rfl
+  have hwTFLG : State.get (s.set TFLG [0]) TFLG ≠ [1] := by
+    rw [State.get_set_eq]; decide
+  constructor
+  · show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).eval s = _
+    rw [Cmd.eval_seq, e0, Cmd.eval_ifBit_false _ _ _ _ hwTFLG,
+      CliqueRelTM.cSkip_eval]
+  · show ((Cmd.op (.nonEmpty TFLG SCAN)) ;; _).cost s = _
+    rw [Cmd.cost_seq, Cmd.cost_op, e0, Cmd.cost_ifBit_false _ _ _ _ hwTFLG,
+      CliqueRelTM.cSkip_cost]
+    rfl
+
+/-! ## The sentinel-stream loop: invariant + step + run -/
+
+/-- The sentinel-loop fold invariant (shared by the cards and final loops via
+the item view). -/
+def SInv (its : List (Option Nat)) (k : Nat) (b0 : Bool) (u : State) (i : Nat)
+    (st : State) : Prop :=
+  State.get st SCAN = encItems (its.drop i)
+  ∧ State.get st BOUT = expandItems k (its.take i)
+  ∧ State.get st FLAG = cond (b0 && itemsOkB k (its.take i)) [1] [0]
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ BOUT → r ≠ VALX → r ≠ REM → r ≠ TFLG →
+      r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ IDXO → r ≠ CliqueRelTM.HEAD →
+      r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+      State.get st r = State.get u r)
+
+/-- One `sentStep` iteration preserves `SInv`, within the uniform budget. -/
+theorem sentStep_step (its : List (Option Nat)) (k : Nat) (b0 : Bool)
+    (u : State) (S : Nat) (hS : (encItems its).length ≤ S)
+    (hSIG : State.get u SIGMA = List.replicate k 1)
+    (i : Nat) (st : State) (h : SInv its k b0 u i st) :
+    SInv its k b0 u (i + 1) (sentStep.eval (st.set IDXO (List.replicate i 1)))
+    ∧ sentStep.cost (st.set IDXO (List.replicate i 1)) ≤ sentStepBound S k := by
+  obtain ⟨hSCAN, hBOUT, hFLG, hframe⟩ := h
+  set w := st.set IDXO (List.replicate i 1) with hw
+  have hwframe : ∀ r : Var, r ≠ IDXO → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwSIG : State.get w SIGMA = List.replicate k 1 := by
+    rw [hwframe SIGMA (by decide), hframe SIGMA (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide), hSIG]
+  have hSw : (State.get w SCAN).length ≤ S := by
+    rw [hwframe SCAN (by decide), hSCAN]
+    exact le_trans (encItems_drop_le its i) hS
+  by_cases hi : i < its.length
+  · have hdrop : its.drop i = its[i] :: its.drop (i + 1) :=
+      List.drop_eq_getElem_cons hi
+    have htake : its.take (i + 1) = its.take i ++ [its[i]] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hi, Option.toList_some]
+    have hSCw : State.get w SCAN
+        = encItem its[i] ++ encItems (its.drop (i + 1)) := by
+      rw [hwframe SCAN (by decide), hSCAN, hdrop]
+      rfl
+    have hFLGw : State.get w FLAG
+        = cond (b0 && itemsOkB k (its.take i)) [1] [0] := by
+      rw [hwframe FLAG (by decide), hFLG]
+    cases hit : its[i] with
+    | some v =>
+        rw [hit] at hSCw
+        obtain ⟨hA, hB, hC, hF, hCost⟩ := sentStep_elem w v _ k
+          (b0 && itemsOkB k (its.take i)) S hSCw hwSIG hFLGw hSw
+        refine ⟨⟨?_, ?_, ?_, ?_⟩, hCost⟩
+        · rw [hA]
+        · rw [hB, hwframe BOUT (by decide), hBOUT, htake, expandItems_snoc,
+            hit]
+        · rw [hC, htake, itemsOkB_snoc, hit, Bool.and_assoc]
+          rfl
+        · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+          rw [hF r h1 h2 h3 h4 h5 h6 h7 h8 h10 h11 h12, hwframe r h9,
+            hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12]
+    | none =>
+        rw [hit] at hSCw
+        obtain ⟨hA, hB, hC, hF, hCost⟩ := sentStep_term w _ S hSCw hSw
+        have hbudget : S + 12 ≤ sentStepBound S k := by
+          unfold sentStepBound
+          omega
+        refine ⟨⟨?_, ?_, ?_, ?_⟩, by omega⟩
+        · rw [hA]
+        · rw [hB, hwframe BOUT (by decide), hBOUT, htake, expandItems_snoc,
+            hit]
+          rfl
+        · rw [hC, hwframe FLAG (by decide), hFLG, htake, itemsOkB_snoc, hit,
+            show itemOkB k none = true from rfl, Bool.and_true]
+        · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+          rw [hF r h1 h2 h5, hwframe r h9,
+            hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12]
+  · have hlen : its.length ≤ i := Nat.le_of_not_lt hi
+    have hSCw : State.get w SCAN = [] := by
+      rw [hwframe SCAN (by decide), hSCAN, List.drop_eq_nil_of_le hlen]
+      rfl
+    obtain ⟨heval, hcost⟩ := sentStep_idle w hSCw
+    have hbudget : (6 : Nat) ≤ sentStepBound S k := by
+      unfold sentStepBound; omega
+    refine ⟨⟨?_, ?_, ?_, ?_⟩, by omega⟩
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hwframe SCAN (by decide), hSCAN,
+        List.drop_eq_nil_of_le hlen, List.drop_eq_nil_of_le (by omega)]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hwframe BOUT (by decide), hBOUT,
+        List.take_of_length_le hlen, List.take_of_length_le (by omega)]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), hwframe FLAG (by decide), hFLG,
+        List.take_of_length_le hlen, List.take_of_length_le (by omega)]
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+      rw [heval, State.get_set_ne _ _ _ _ h12, State.get_set_ne _ _ _ _ h5,
+        hwframe r h9, hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12]
+
+/-- **The sentinel-stream loop is correct** (instantiated twice: cards and
+final). -/
+theorem sentLoop_run (its : List (Option Nat)) (k : Nat) (b0 : Bool)
+    (u : State) (bnd : Var) (S : Nat)
+    (hSlen : (State.get u bnd).length = S)
+    (hS : (encItems its).length ≤ S)
+    (hSC : State.get u SCAN = encItems its)
+    (hSIG : State.get u SIGMA = List.replicate k 1)
+    (hFLAG : State.get u FLAG = cond b0 [1] [0])
+    (hBOUT : State.get u BOUT = []) :
+    State.get ((Cmd.forBnd IDXO bnd sentStep).eval u) BOUT
+        = expandItems k its
+    ∧ State.get ((Cmd.forBnd IDXO bnd sentStep).eval u) FLAG
+        = cond (b0 && itemsOkB k its) [1] [0]
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ BOUT → r ≠ VALX → r ≠ REM → r ≠ TFLG →
+        r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ IDXO → r ≠ CliqueRelTM.HEAD →
+        r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+        State.get ((Cmd.forBnd IDXO bnd sentStep).eval u) r = State.get u r)
+    ∧ (Cmd.forBnd IDXO bnd sentStep).cost u
+        ≤ 1 + S * sentStepBound S k + S * S := by
+  have hitslen : its.length ≤ S := le_trans (encItems_length its) hS
+  have hbase : SInv its k b0 u 0 u := by
+    refine ⟨by rw [List.drop_zero]; exact hSC,
+      by rw [List.take_zero]; exact hBOUT, ?_,
+      fun r _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    rw [List.take_zero]
+    show State.get u FLAG = cond (b0 && itemsOkB k []) [1] [0]
+    rw [show itemsOkB k [] = true from rfl, Bool.and_true]
+    exact hFLAG
+  have hInv : SInv its k b0 u S
+      (Cmd.foldlState sentStep IDXO (List.range S) u) :=
+    Cmd.foldlState_range_induct sentStep IDXO S u (SInv its k b0 u) hbase
+      (fun i st _ hM => (sentStep_step its k b0 u S hS hSIG i st hM).1)
+  obtain ⟨-, hBOUT', hFLG, hframe⟩ := hInv
+  have heval : (Cmd.forBnd IDXO bnd sentStep).eval u
+      = Cmd.foldlState sentStep IDXO (List.range S) u := by
+    rw [Cmd.eval_forBnd, hSlen]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [heval, hBOUT', List.take_of_length_le hitslen]
+  · rw [heval, hFLG, List.take_of_length_le hitslen]
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+    rw [heval]
+    exact hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12
+  · have h := Cmd.cost_forBnd_le IDXO bnd sentStep u (sentStepBound S k)
+      (SInv its k b0 u) hbase
+      (fun i st hi hM => (sentStep_step its k b0 u S hS hSIG i st hM).1)
+      (fun i st hi hM => (sentStep_step its k b0 u S hS hSIG i st hM).2)
+    rw [hSlen] at h
+    exact h
+
+/-! ## The unary-multiplication loop: run + cost -/
+
+/-- **The unary product loop is correct**: `forBnd IDXO bnd (concat dst dst
+SIGMA)` on `dst = []`, `SIGMA = 1^k`, `|bnd| = m` leaves `dst = 1^(m·k)`. -/
+theorem mulLoop_run (dst bnd : Var) (s : State) (k m : Nat)
+    (hSIG : State.get s SIGMA = List.replicate k 1)
+    (hbnd : State.get s bnd = List.replicate m 1)
+    (hdst : State.get s dst = [])
+    (hd1 : dst ≠ SIGMA) (hd2 : dst ≠ IDXO) :
+    State.get ((Cmd.forBnd IDXO bnd (Cmd.op (.concat dst dst SIGMA))).eval s)
+        dst = List.replicate (m * k) 1
+    ∧ (∀ r : Var, r ≠ dst → r ≠ IDXO →
+        State.get ((Cmd.forBnd IDXO bnd (Cmd.op (.concat dst dst SIGMA))).eval s)
+          r = State.get s r)
+    ∧ (Cmd.forBnd IDXO bnd (Cmd.op (.concat dst dst SIGMA))).cost s
+        ≤ 1 + m * (2 * (m * k + k) + 1) + m * m := by
+  have hlen : (State.get s bnd).length = m := by
+    rw [hbnd, List.length_replicate]
+  have hstep : ∀ i st, i < m →
+      (State.get st dst = List.replicate (i * k) 1
+        ∧ ∀ r : Var, r ≠ dst → r ≠ IDXO → State.get st r = State.get s r) →
+      (State.get ((Cmd.op (.concat dst dst SIGMA)).eval
+            (st.set IDXO (List.replicate i 1))) dst
+          = List.replicate ((i + 1) * k) 1
+        ∧ ∀ r : Var, r ≠ dst → r ≠ IDXO →
+            State.get ((Cmd.op (.concat dst dst SIGMA)).eval
+              (st.set IDXO (List.replicate i 1))) r = State.get s r) := by
+    intro i st _ ⟨hD, hF⟩
+    set w := st.set IDXO (List.replicate i 1) with hw
+    have hwD : State.get w dst = List.replicate (i * k) 1 := by
+      rw [hw, State.get_set_ne _ _ _ _ hd2, hD]
+    have hwSIG : State.get w SIGMA = List.replicate k 1 := by
+      rw [hw, State.get_set_ne _ _ _ _ (by decide), hF SIGMA (Ne.symm hd1)
+        (by decide), hSIG]
+    have he : (Cmd.op (.concat dst dst SIGMA)).eval w
+        = w.set dst (List.replicate (i * k) 1 ++ List.replicate k 1) := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hwD, hwSIG]
+    constructor
+    · rw [he, State.get_set_eq, ← List.replicate_add]
+      congr 1
+      ring
+    · intro r h1 h2
+      rw [he, State.get_set_ne _ _ _ _ h1, hw, State.get_set_ne _ _ _ _ h2]
+      exact hF r h1 h2
+  refine ⟨?_, ?_, ?_⟩
+  · rw [Cmd.eval_forBnd, hlen]
+    have := (Cmd.foldlState_range_induct _ IDXO m s
+      (fun i st => State.get st dst = List.replicate (i * k) 1
+        ∧ ∀ r : Var, r ≠ dst → r ≠ IDXO → State.get st r = State.get s r)
+      ⟨by simpa using hdst, fun r _ _ => rfl⟩ hstep).1
+    exact this
+  · intro r h1 h2
+    rw [Cmd.eval_forBnd, hlen]
+    exact (Cmd.foldlState_range_induct _ IDXO m s
+      (fun i st => State.get st dst = List.replicate (i * k) 1
+        ∧ ∀ r : Var, r ≠ dst → r ≠ IDXO → State.get st r = State.get s r)
+      ⟨by simpa using hdst, fun r _ _ => rfl⟩ hstep).2 r h1 h2
+  · have h := Cmd.cost_forBnd_le IDXO bnd (Cmd.op (.concat dst dst SIGMA)) s
+      (2 * (m * k + k) + 1)
+      (fun i st => State.get st dst = List.replicate (i * k) 1
+        ∧ ∀ r : Var, r ≠ dst → r ≠ IDXO → State.get st r = State.get s r)
+      ⟨by simpa using hdst, fun r _ _ => rfl⟩
+      (fun i st hi hM => hstep i st (by omega) hM)
+      (fun i st hi hM => by
+        rw [Cmd.cost_op]
+        show 2 * ((State.get (st.set IDXO (List.replicate i 1)) dst).length
+            + (State.get (st.set IDXO (List.replicate i 1)) SIGMA).length) + 1 ≤ _
+        rw [State.get_set_ne _ _ _ _ hd2, hM.1,
+          State.get_set_ne _ _ _ _ (by decide), hM.2 SIGMA (Ne.symm hd1)
+            (by decide), hSIG, List.length_replicate, List.length_replicate]
+        have hik : i * k ≤ m * k := by
+          have : i ≤ m := by omega
+          exact Nat.mul_le_mul_right k this
+        omega)
+    rw [hlen] at h
+    exact h
+
 /-! ## Structural fields (frame, `consLen`-freedom, op-supportedness) -/
 
 theorem binConvert_usesBelow : Cmd.UsesBelow binConvert 27 := by
