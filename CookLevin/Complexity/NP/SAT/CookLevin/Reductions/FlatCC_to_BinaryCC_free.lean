@@ -2291,17 +2291,6 @@ theorem binConvert_usesBelow : Cmd.UsesBelow binConvert 27 := by
     VALX, FLAG, IDXO, IDXR, REM, BOFF, BWID, BINIT, BCARDS, BFINAL, TFLG,
     IDX2, BOUT, CliqueRelTM.HEAD, CliqueRelTM.INBLK, CliqueRelTM.SKIPR]
 
-theorem binConvert_noConsLen : Cmd.NoConsLen binConvert := by
-  simp only [binConvert, initStep, sentStep, expandBare, expandSent, remCheck,
-    setInvalid, CliqueRelTM.readNum, CliqueRelTM.cSkip, Cmd.NoConsLen,
-    Op.NotConsLen]
-  trivial
-
-theorem binConvert_allOpsSupported : Cmd.AllOpsSupported binConvert := by
-  simp only [binConvert, initStep, sentStep, expandBare, expandSent, remCheck,
-    setInvalid, CliqueRelTM.readNum, CliqueRelTM.cSkip, Cmd.AllOpsSupported,
-    Op.IsSupported]
-  trivial
 
 /-! ## Size accounting for the input layout -/
 
@@ -2530,8 +2519,6 @@ noncomputable def flatCCBin_reductionLang :
   width_le := fun C => by
     show (encodeIn C).length ≤ 27
     simp [encodeIn]
-  noConsLen := binConvert_noConsLen
-  allOpsSupported := binConvert_allOpsSupported
   decode_agree := fun C m => by
     have hpad : ∀ r : Var,
         State.get (encodeIn C ++ List.replicate m []) r

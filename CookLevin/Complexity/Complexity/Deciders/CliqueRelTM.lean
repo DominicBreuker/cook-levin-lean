@@ -520,22 +520,6 @@ theorem cliqueRelCmd_usesBelow : Cmd.UsesBelow cliqueRelCmd 32 := by
   show OUTPUT < 32
   decide
 
-/-- The verifier is `consLen`-free (it uses no `consLen` op). -/
-theorem cliqueRelCmd_noConsLen : Cmd.NoConsLen cliqueRelCmd := by
-  simp only [cliqueRelCmd, checkWf, checkOfType, checkLen, checkNodup,
-    checkClique, memberEdge, readNum, ltBit, cSkip, cReject,
-    Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-/-- Op-supportedness (Route A): the verifier uses only proven ops (it is
-`takeAt`/`dropAt`/`consLen`-free), so its `compileOp_sound_physical_residue`
-discharge is axiom-clean. -/
-theorem cliqueRelCmd_allOpsSupported : Cmd.AllOpsSupported cliqueRelCmd := by
-  simp only [cliqueRelCmd, checkWf, checkOfType, checkLen, checkNodup,
-    checkClique, memberEdge, readNum, ltBit, cSkip, cReject,
-    Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
-
 /-! ### Leaf run-lemmas for the verifier checks (top-down Task 1)
 
 The reusable per-gadget correctness contracts the per-check loop invariants
@@ -3974,8 +3958,6 @@ noncomputable def cliqueRelDecidesLang :
     show (cliqueRelEncode ((G, k), l)).length ≤ regBound
     simp only [cliqueRelEncode, regBound, List.length_cons, List.length_nil]
     omega
-  noConsLen := cliqueRelCmd_noConsLen
-  allOpsSupported := cliqueRelCmd_allOpsSupported
 
 /-- The Lang-level `inTimePolyLang` witness. -/
 theorem inTimePolyLang_cliqueRel :

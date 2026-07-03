@@ -948,16 +948,6 @@ theorem kCnf3Check_usesBelow : Cmd.UsesBelow kCnf3Check 29 := by
     IDXO, IDXI, IDXV, EvalCnfCmd.CLAUSE_TALLY, EvalCnfCmd.CNF_STREAM,
     CliqueRelTM.HEAD, CliqueRelTM.INBLK, CliqueRelTM.SKIPR]
 
-theorem kCnf3Check_noConsLen : Cmd.NoConsLen kCnf3Check := by
-  simp only [kCnf3Check, clauseScan, litScan, CliqueRelTM.readNum,
-    CliqueRelTM.cSkip, Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-theorem kCnf3Check_allOpsSupported : Cmd.AllOpsSupported kCnf3Check := by
-  simp only [kCnf3Check, clauseScan, litScan, CliqueRelTM.readNum,
-    CliqueRelTM.cSkip, Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
-
 /-! ## The bridge: register agreement with the verifier's canonical input -/
 
 /-- **The re-encoding law** (`FreePrecomposeData.bridge`): running `kCnf3Check`
@@ -1203,8 +1193,6 @@ noncomputable def kSAT3_reductionLang :
   width_le := fun N => by
     show ([[], List.replicate N.length 1, encodeCnf N] : State).length ≤ 29
     simp
-  noConsLen := kCnf3Check_noConsLen
-  allOpsSupported := kCnf3Check_allOpsSupported
   decode_agree := fun N m => by
     have hlen3 : (1 : Nat) < ([[], List.replicate N.length 1, encodeCnf N] : State).length := by
       simp
@@ -1325,9 +1313,6 @@ noncomputable def kSAT3_precomposeData :
     show (EvalCnfCmd.encodeState (N, a)).length ≤ 29
     simp only [EvalCnfCmd.encodeState, List.length_cons, List.length_nil]
     omega
-  noConsLen := ⟨kCnf3Check_noConsLen, EvalCnfCmd.evalCnfCmd_noConsLen⟩
-  allOpsSupported :=
-    ⟨kCnf3Check_allOpsSupported, EvalCnfCmd.evalCnfCmd_allOpsSupported⟩
 
 /-! ## The headline: a live `red_inNP` through the free engine -/
 

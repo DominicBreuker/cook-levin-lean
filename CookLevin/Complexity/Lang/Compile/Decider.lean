@@ -794,7 +794,7 @@ which must be `[]` at machine start — true on the padded tape exactly when the
 *input* does not itself extend past `k` (the bridges supply it from `width_le`). -/
 theorem Compile.paddedBitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
     (hbitst : Compile.BitState s) (hwle : s.length ≤ k)
-    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c) (hsupp : Cmd.AllOpsSupported c)
+    (huses : Cmd.UsesBelow c k)
     (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
     ∃ cfg,
       runFlatTM (Compile.padBudget (k + 2 * c.loopDepth + 2) s + 1 +
@@ -826,7 +826,7 @@ theorem Compile.paddedBitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
   have hsize : State.size wide = State.size s := Compile.size_append_replicate_nil s K
   -- The inner decider run on the WIDE tape.
   obtain ⟨cfg2, hrun2, hhalt2, hstate2⟩ :=
-    Compile.bitDecider_run c wide b k hbit_w hk_w huses hscratch_w hnc hsupp hbit h0_w
+    Compile.bitDecider_run c wide b k hbit_w hk_w huses hscratch_w hbit h0_w
   -- Rewrite its budget in terms of the narrow state's size/cost.
   have hlenw : wide.length = s.length + K := by
     rw [hwide, List.length_append, List.length_replicate]
@@ -910,7 +910,7 @@ with `Cmd.eval_agree`. Budget: `padBudget (k + 2*c.loopDepth) s + 1 +
 physStepBudget G (c.cost s)`, both `inOPoly` (`padBudget_le` / `physStepBudget_poly`). -/
 theorem Compile.paddedCompute_run (c : Cmd) (s : State) (k : Nat)
     (hbitst : Compile.BitState s) (hwle : s.length ≤ k)
-    (huses : Cmd.UsesBelow c k) (hnc : Cmd.NoConsLen c) (hsupp : Cmd.AllOpsSupported c) :
+    (huses : Cmd.UsesBelow c k) :
     ∃ (res : List Nat),
       Compile.ValidResidue res ∧
       runFlatTM (Compile.padBudget (k + 2 * c.loopDepth + 2) s + 1 +
@@ -946,7 +946,7 @@ theorem Compile.paddedCompute_run (c : Cmd) (s : State) (k : Nat)
     rw [hwide, List.length_append, List.length_replicate]
   -- inner residue run on the WIDE tape
   obtain ⟨t1, res, hres, hrun2, _htraj2, ht1⟩ :=
-    Compile_run_physical_residue c k wide hbit_w hk_w huses hscratch_w hnc hsupp
+    Compile_run_physical_residue c k wide hbit_w hk_w huses hscratch_w
   rw [hcost, hsize, hlenw] at ht1
   -- the inner exit is a halt state of `Compile k c`
   have hhalt2 : haltingStateReached (Compile k c)

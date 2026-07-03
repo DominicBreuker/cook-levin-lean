@@ -136,38 +136,11 @@ theorem Op.inBounds_of_UsesBelow (o : Op) (k : Nat) (s : State)
       exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
              Nat.lt_of_lt_of_le h.2.2 hk⟩
   | nonEmpty dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
-  | takeAt dst src l =>
-      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
-             Nat.lt_of_lt_of_le h.2.2 hk⟩
-  | dropAt dst src l =>
-      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
-             Nat.lt_of_lt_of_le h.2.2 hk⟩
   | concat dst a b =>
       exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
              Nat.lt_of_lt_of_le h.2.2 hk⟩
-  | consLen dst l src =>
-      -- `Op.inBounds` orders consLen's last two as `src, lenSrc`; `UsesBelow` as
-      -- `lenSrc, src` — so the second/third components swap.
-      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.2 hk,
-             Nat.lt_of_lt_of_le h.2.1 hk⟩
 
-/-- An op other than `consLen`. `consLen` is the unique op that can break
-`BitState` (`Op.consLen_breaks_BitState`); this is the (temporary) syntactic
-condition under which `BitState` preservation is unconditional. HANDOFF bottom-up Task 4 restates
-`consLen` to write a unary block, after which the side-condition is discharged
-for free and this predicate can be dropped. -/
-def Op.NotConsLen : Op → Prop
-  | .consLen _ _ _ => False
-  | _ => True
-
-/-- A `Cmd` with no `consLen` op anywhere. -/
-def Cmd.NoConsLen : Cmd → Prop
-  | .op o            => Op.NotConsLen o
-  | .seq c1 c2       => Cmd.NoConsLen c1 ∧ Cmd.NoConsLen c2
-  | .ifBit _ cT cE   => Cmd.NoConsLen cT ∧ Cmd.NoConsLen cE
-  | .forBnd _ _ body => Cmd.NoConsLen body
-
-/-- **`BitState` is preserved by a `consLen`-free `Cmd` (the residue induction's
+/-- **`BitState` is preserved by every `Cmd` (the residue induction's
 invariant, validated end-to-end).** Threads the two per-op atoms
 (`Op.eval_preserves_BitState` for `BitState`, `Op.inBounds_of_UsesBelow` for
 `inBounds`) and register-count monotonicity (`Cmd.eval_length_ge`,
@@ -178,30 +151,26 @@ standalone de-risks that induction: the `forBnd` counter-write (`BitState_set_pa
 + width growth) and the `seq` width-carry both go through.
 
 The `Cmd.UsesBelow c k`/`k ≤ s.length` pair is the wellformedness hypothesis the
-obligation will carry; `NoConsLen` is the one piece HANDOFF bottom-up Task 4 removes (by restating
-`consLen` unary). -/
+obligation carries. -/
 theorem Cmd.eval_preserves_BitState (c : Cmd) (k : Nat) (s : State)
     (huses : Cmd.UsesBelow c k) (hk : k ≤ s.length)
-    (hnc : Cmd.NoConsLen c) (hbit : Compile.BitState s) :
+    (hbit : Compile.BitState s) :
     Compile.BitState (c.eval s) := by
   induction c generalizing s with
   | op o =>
-      refine Op.eval_preserves_BitState o s hbit
-        (Op.inBounds_of_UsesBelow o k s huses hk) ?_
-      intro dst lenSrc src heq
-      subst heq
-      simp only [Cmd.NoConsLen, Op.NotConsLen] at hnc
+      exact Op.eval_preserves_BitState o s hbit
+        (Op.inBounds_of_UsesBelow o k s huses hk)
   | seq c1 c2 ih1 ih2 =>
       rw [Cmd.eval_seq]
-      have hbit1 : Compile.BitState (c1.eval s) := ih1 s huses.1 hk hnc.1 hbit
+      have hbit1 : Compile.BitState (c1.eval s) := ih1 s huses.1 hk hbit
       have hk1 : k ≤ (c1.eval s).length := Nat.le_trans hk (Cmd.eval_length_ge c1 s)
-      exact ih2 (c1.eval s) huses.2 hk1 hnc.2 hbit1
+      exact ih2 (c1.eval s) huses.2 hk1 hbit1
   | ifBit t cT cE ihT ihE =>
       by_cases hb : s.get t = [1]
       · rw [Cmd.eval_ifBit_true t cT cE s hb]
-        exact ihT s huses.2.1 hk hnc.1 hbit
+        exact ihT s huses.2.1 hk hbit
       · rw [Cmd.eval_ifBit_false t cT cE s hb]
-        exact ihE s huses.2.2 hk hnc.2 hbit
+        exact ihE s huses.2.2 hk hbit
   | forBnd cnt bnd body ihbody =>
       obtain ⟨_, _, hbody⟩ := huses
       rw [Cmd.eval_forBnd]
@@ -215,7 +184,7 @@ theorem Cmd.eval_preserves_BitState (c : Cmd) (k : Nat) (s : State)
       have hset_k : k ≤ (st.set cnt (List.replicate i 1)).length :=
         Nat.le_trans hkst (State.set_length_ge st cnt _)
       exact ⟨Nat.le_trans hset_k (Cmd.eval_length_ge body _),
-        ihbody (st.set cnt (List.replicate i 1)) hbody hset_k hnc hset_bit⟩
+        ihbody (st.set cnt (List.replicate i 1)) hbody hset_k hset_bit⟩
 
 /-! ## ★ TOP-DOWN ASSEMBLY DESIGN (2026-06-06) — the residue induction skeleton
 
@@ -519,7 +488,6 @@ theorem Compile.forBndIterate_run
     (hsbne : State.get s sb ≠ [])
     (hres : Compile.ValidResidue res)
     (huses_body : Cmd.UsesBelow body sb)
-    (hnc_body : Cmd.NoConsLen body)
     (hscr : ∀ r, sb + 2 ≤ r → State.get s r = [])
     (hG : State.size s + s.length + res.length
             + ((State.get s (sb + 1)).length
@@ -601,7 +569,7 @@ theorem Compile.forBndIterate_run
   set s2 : State := body.eval s1 with hs2def
   have hbit2 : Compile.BitState s2 :=
     Cmd.eval_preserves_BitState body sb s1 huses_body
-      (by rw [hlen1]; exact Nat.le_of_lt hsb_lt) hnc_body hbit1
+      (by rw [hlen1]; exact Nat.le_of_lt hsb_lt) hbit1
   have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
   have hget2_sb : State.get s2 sb = State.get s sb := by
     rw [hs2def, Cmd.eval_get_frame body sb huses_body s1 sb (Nat.le_refl _), hget1_sb]
@@ -877,7 +845,7 @@ the body preserves it by `Cmd.eval_preserves_BitState`). -/
 theorem Compile.forBndIterateState_bitState (counter sb : Var) (body : Cmd) (s : State)
     (hbit : Compile.BitState s) (hcnt : counter < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ s.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body) :
+    (huses_body : Cmd.UsesBelow body sb) :
     Compile.BitState (Compile.forBndIterateState counter sb body s) := by
   have hsb1_lt : sb + 1 < s.length :=
     Nat.le_trans (Nat.le_add_right (sb + 2) (2 * body.loopDepth + 2)) hlen
@@ -894,7 +862,7 @@ theorem Compile.forBndIterateState_bitState (counter sb : Var) (body : Cmd) (s :
   set s2 : State := body.eval s1 with hs2def
   have hbit2 : Compile.BitState s2 :=
     Cmd.eval_preserves_BitState body sb s1 huses_body
-      (by rw [hlen1]; exact Nat.le_of_lt hsb_lt) hnc_body hbit1
+      (by rw [hlen1]; exact Nat.le_of_lt hsb_lt) hbit1
   have hs2len_ge : s1.length ≤ s2.length := Cmd.eval_length_ge body s1
   have hsb1_lt2 : sb + 1 < s2.length := Nat.lt_of_lt_of_le hsb1_lt (hlen1 ▸ hs2len_ge)
   set s3 : State := s2.set (sb + 1) (State.get s2 (sb + 1) ++ [1]) with hs3def
@@ -930,7 +898,7 @@ makes `|K2_i| = i`. -/
 theorem Compile.forBndLoop_invariant (counter sb : Var) (body : Cmd) (s : State)
     (hbit : Compile.BitState s) (hcnt : counter < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ s.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (huses_body : Cmd.UsesBelow body sb) 
     (hscr : ∀ r, sb + 2 ≤ r → State.get s r = [])
     (hk2 : State.get s (sb + 1) = []) :
     ∀ i, i ≤ (State.get s sb).length →
@@ -957,7 +925,7 @@ theorem Compile.forBndLoop_invariant (counter sb : Var) (body : Cmd) (s : State)
         rw [Function.iterate_succ_apply', ← hadef]
       rw [hstep]
       refine ⟨?_, ?_, ?_, ?_, ?_⟩
-      · exact Compile.forBndIterateState_bitState counter sb body a hb hcnt hl huses_body hnc_body
+      · exact Compile.forBndIterateState_bitState counter sb body a hb hcnt hl huses_body
       · exact Compile.forBndIterateState_scratch counter sb body a hcnt hl huses_body hsc
       · exact Nat.le_trans hl (Compile.forBndIterateState_length_ge counter sb body a hcnt hl)
       · rw [Compile.forBndIterateState_get_sb counter sb body a hcnt hl huses_body,
@@ -1185,7 +1153,6 @@ theorem Compile.forBndBody_iterate_run
     (hsbne : State.get s sb ≠ [])
     (hres : Compile.ValidResidue res)
     (huses_body : Cmd.UsesBelow body sb)
-    (hnc_body : Cmd.NoConsLen body)
     (hscr : ∀ r, sb + 2 ≤ r → State.get s r = [])
     (hG : State.size s + s.length + res.length
             + ((State.get s (sb + 1)).length
@@ -1288,7 +1255,7 @@ theorem Compile.forBndBody_iterate_run
   -- ### the per-iteration bookkeeping run (forBndIterate), from head 0
   obtain ⟨ti, resi, hresi, hWi, hruni, htraji, hbudi⟩ :=
     Compile.forBndIterate_run counter sb rbody body s res G hbit hcnt hlen hsbne hres
-      huses_body hnc_body hscr hG hbody
+      huses_body hscr hG hbody
   -- ### the content machine `forBndContentTM` = rewind ⨾ forBndIterate, via composeFlatTM
   -- (i) the rewind (`justRewindTM = scanLeftUntilTM 4 3`) from the interior head to 0
   have h_rewind := ScanLeft.rewindToStart_run 4 3 []
@@ -1536,7 +1503,7 @@ agrees register-by-register with the pure state fold `foldlState`. -/
 theorem Compile.forBndLoop_eval (counter bound : Var) (sb : Nat) (body : Cmd) (s : State)
     (hbit : Compile.BitState s) (hcnt : counter < sb) (hbnd : bound < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ s.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (huses_body : Cmd.UsesBelow body sb) 
     (hscratch : ∀ r, sb ≤ r → State.get s r = []) :
     ((Compile.forBndIterateState counter sb body)^[(State.get s bound).length]
         (s.set sb (State.get s bound))).set (sb + 1) []
@@ -1618,7 +1585,7 @@ theorem Compile.forBndLoop_eval (counter bound : Var) (sb : Nat) (body : Cmd) (s
     rw [hedef, Compile.get_set_ne s sb _ (sb + 1) hsb_lt (Nat.succ_ne_self sb)]
     exact hscratch (sb + 1) (Nat.le_succ sb)
   have hinv := Compile.forBndLoop_invariant counter sb body e hbit_e hcnt
-    (by rw [helen]; exact hlen) huses_body hnc_body hscr_e hk2_e
+    (by rw [helen]; exact hlen) huses_body hscr_e hk2_e
     (State.get s bound).length (Nat.le_of_eq (by rw [hge_sb]))
   obtain ⟨_, hscr_n, _, hK1_n, _⟩ := hinv
   have hAsb_nil : State.get ((Compile.forBndIterateState counter sb body)^[(State.get s bound).length] e)
@@ -1676,7 +1643,7 @@ state agrees with the pure `foldlState` below `sb`, and `K2` holds `replicate i 
 theorem Compile.forBndLoop_agree (counter bound : Var) (sb : Var) (body : Cmd) (s : State)
     (hbit : Compile.BitState s) (hcnt : counter < sb) (hbnd : bound < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ s.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (huses_body : Cmd.UsesBelow body sb) 
     (hscratch : ∀ r, sb ≤ r → State.get s r = []) :
     ∀ i, i ≤ (State.get s bound).length →
       AgreeBelow sb ((Compile.forBndIterateState counter sb body)^[i] (s.set sb (State.get s bound)))
@@ -1807,7 +1774,7 @@ theorem Compile.forBndLoop_fold (counter sb : Var) (rbody : CompiledCmd) (body :
     (e : State) (res_in : List Nat) (G : Nat)
     (hbit : Compile.BitState e) (hcnt : counter < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ e.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (huses_body : Cmd.UsesBelow body sb) 
     (hscr : ∀ r, sb + 2 ≤ r → State.get e r = [])
     (hk2 : State.get e (sb + 1) = [])
     (hres_in : Compile.ValidResidue res_in)
@@ -1860,7 +1827,7 @@ theorem Compile.forBndLoop_fold (counter sb : Var) (rbody : CompiledCmd) (body :
   set iters := (State.get e sb).length with hiters
   set Wterm : Nat → Nat := fun j =>
     j + body.cost ((((Compile.forBndIterateState counter sb body)^[j] e)).set counter (State.get ((Compile.forBndIterateState counter sb body)^[j] e) (sb + 1))) + 1 with hWtermdef
-  have hinv := Compile.forBndLoop_invariant counter sb body e hbit hcnt hlen huses_body hnc_body hscr hk2
+  have hinv := Compile.forBndLoop_invariant counter sb body e hbit hcnt hlen huses_body hscr hk2
   have hAlen : ∀ i, i ≤ iters → ((Compile.forBndIterateState counter sb body)^[i] e).length = e.length := by
     intro i
     induction i with
@@ -1918,7 +1885,7 @@ theorem Compile.forBndLoop_fold (counter sb : Var) (rbody : CompiledCmd) (body :
         omega
       obtain ⟨tN, resN, hresN, hWstep, hrunN, htrajN, hbudN⟩ :=
         Compile.forBndBody_iterate_run counter sb rbody body ((Compile.forBndIterateState counter sb body)^[N] e) (Rf N) G
-          hbitN hcnt hlenAN hsbneN (hvalidAll N (le_refl N)) huses_body hnc_body hscrN hGN hbody
+          hbitN hcnt hlenAN hsbneN (hvalidAll N (le_refl N)) huses_body hscrN hGN hbody
       refine ⟨fun i => if i = N + 1 then resN else Rf i,
               fun i => if i = N then tN else Tf i, ?_, ?_, ?_, ?_⟩
       · simp only [if_neg (by omega : (0 : Nat) ≠ N + 1)]; exact hRf0
@@ -1962,7 +1929,7 @@ theorem Compile.forBndLoop_run (counter sb : Var) (rbody : CompiledCmd) (body : 
     (e : State) (res_in : List Nat) (G : Nat)
     (hbit : Compile.BitState e) (hcnt : counter < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ e.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (huses_body : Cmd.UsesBelow body sb) 
     (hscr : ∀ r, sb + 2 ≤ r → State.get e r = [])
     (hk2 : State.get e (sb + 1) = [])
     (hres_in : Compile.ValidResidue res_in)
@@ -2010,7 +1977,7 @@ theorem Compile.forBndLoop_run (counter sb : Var) (rbody : CompiledCmd) (body : 
           + (State.get e sb).length * (12 * G + 33) + (6 * G + 13) := by
   set iters := (State.get e sb).length with hiters
   -- invariant + exact length
-  have hinv := Compile.forBndLoop_invariant counter sb body e hbit hcnt hlen huses_body hnc_body hscr hk2
+  have hinv := Compile.forBndLoop_invariant counter sb body e hbit hcnt hlen huses_body hscr hk2
   have hAlen : ∀ i, i ≤ iters → ((Compile.forBndIterateState counter sb body)^[i] e).length = e.length := by
     intro i
     induction i with
@@ -2023,7 +1990,7 @@ theorem Compile.forBndLoop_run (counter sb : Var) (rbody : CompiledCmd) (body : 
           Compile.forBndIterateState_length_eq counter sb body ((Compile.forBndIterateState counter sb body)^[i] e) hcnt hlenAi huses_body, ih hi']
   -- the residue/step fold at N = iters
   obtain ⟨Rf, Tf, hRf0, hvalidAll, hWN, hsteps⟩ :=
-    Compile.forBndLoop_fold counter sb rbody body e res_in G hbit hcnt hlen huses_body hnc_body hscr hk2
+    Compile.forBndLoop_fold counter sb rbody body e res_in G hbit hcnt hlen huses_body hscr hk2
       hres_in hG hbody iters (Nat.le_refl _)
   -- the loop tape sequence: remaining `m` ↔ fold index `iters - m`
   set T : Nat → (List Nat × Nat × List Nat) := fun m =>
@@ -2241,7 +2208,7 @@ theorem compileForBnd_sound_physical_residue
     (hbit : Compile.BitState s)
     (hcnt : counter < sb) (hbnd : bound < sb)
     (hlen : sb + 2 + 2 * body.loopDepth + 2 ≤ s.length)
-    (huses_body : Cmd.UsesBelow body sb) (hnc_body : Cmd.NoConsLen body)
+    (huses_body : Cmd.UsesBelow body sb) 
     (hscratch : ∀ r, sb ≤ r → State.get s r = [])
     (hres0 : Compile.ValidResidue res0)
     (hG : State.size s + s.length + res0.length
@@ -2301,7 +2268,7 @@ theorem compileForBnd_sound_physical_residue
     exact hscratch (sb + 1) (Nat.le_succ sb)
   have heitersb : (State.get e sb).length = iters := by rw [hge_sb]
   -- cost-sum bridge: machine body-costs = pure fold body-costs
-  have hagree := Compile.forBndLoop_agree counter bound sb body s hbit hcnt hbnd hlen huses_body hnc_body hscratch
+  have hagree := Compile.forBndLoop_agree counter bound sb body s hbit hcnt hbnd hlen huses_body hscratch
   rw [← hedef, ← hiters] at hagree
   have hcc_eq : ∀ i, i < iters →
       body.cost (((Compile.forBndIterateState counter sb body)^[i] e).set counter (State.get ((Compile.forBndIterateState counter sb body)^[i] e) (sb + 1)))
@@ -2358,18 +2325,18 @@ theorem compileForBnd_sound_physical_residue
   rw [← hedef] at hcopy_run
   -- d2: the loop run
   obtain ⟨tl, res_out, hres_out, hWloop, hloop_run, hloop_traj, hloop_bud⟩ :=
-    Compile.forBndLoop_run counter sb rbody body e res0 G hbit_e hcnt hlen_e huses_body hnc_body
+    Compile.forBndLoop_run counter sb rbody body e res0 G hbit_e hcnt hlen_e huses_body
       hscr_e hk2_e hres0 (by rw [heitersb]; exact hGe) hbody
   rw [heitersb] at hloop_run hloop_bud hWloop
   -- d3: invariant + agree facts at iters
-  have hinv := Compile.forBndLoop_invariant counter sb body e hbit_e hcnt hlen_e huses_body hnc_body hscr_e hk2_e
+  have hinv := Compile.forBndLoop_invariant counter sb body e hbit_e hcnt hlen_e huses_body hscr_e hk2_e
   obtain ⟨hbit_iter, _, _, _, hK2iter⟩ := hinv iters (Nat.le_of_eq heitersb.symm)
   obtain ⟨_, hK2val, hlen_iter⟩ := hagree iters (Nat.le_refl iters)
   have hsb1_iter : sb + 1 < ((Compile.forBndIterateState counter sb body)^[iters] e).length := by rw [hlen_iter]; exact hsb1_lt
   obtain ⟨tcl, hclear_run, hclear_traj, hclear_bud⟩ :=
     Compile.clearRegionTM_run ((Compile.forBndIterateState counter sb body)^[iters] e) (sb + 1) res_out hsb1_iter hbit_iter hres_out
   -- forBndLoop_eval: cleared state = (forBnd).eval s
-  have heval := Compile.forBndLoop_eval counter bound sb body s hbit hcnt hbnd hlen huses_body hnc_body hscratch
+  have heval := Compile.forBndLoop_eval counter bound sb body s hbit hcnt hbnd hlen huses_body hscratch
   rw [← hiters, ← hedef] at heval
   -- the residue length after clear = res_out ++ replicate iters 0
   have hK2len : (State.get ((Compile.forBndIterateState counter sb body)^[iters] e) (sb + 1)).length = iters := by rw [hK2val, List.length_replicate]
@@ -2468,8 +2435,6 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
     (hbit : Compile.BitState s) (hk : k + 2 * c.loopDepth + 2 ≤ s.length)
     (huses : Cmd.UsesBelow c k)
     (hscratch : ∀ r, k ≤ r → State.get s r = [])
-    (hnc : Cmd.NoConsLen c)
-    (hsupp : Cmd.AllOpsSupported c)
     (hres0 : Compile.ValidResidue res0)
     (hG : State.size s + s.length + res0.length + c.cost s + 2 ≤ G) :
     ∃ (t : Nat) (res : List Nat),
@@ -2496,7 +2461,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hsbe : State.get s k = [] := hscratch k (Nat.le_refl k)
       have hsb1e : State.get s (k + 1) = [] := hscratch (k + 1) (Nat.le_succ k)
       obtain ⟨t, res_out, hres, hW, hrun, htraj, hbud⟩ :=
-        compileOp_sound_physical_residue k o s res0 hbit hbnd hres0 hsb1 hsbe hsb1e huses hsupp
+        compileOp_sound_physical_residue k o s res0 hbit hbnd hres0 hsb1 hsbe hsb1e huses
       refine ⟨t, res_out, hres, hW, hrun, htraj, ?_⟩
       · -- ② budget: `(9·L²+9·L+30)·(cost+1) ≤ physStepBudget G (Op.cost o s)`, since
         -- `L ≤ G` and `(9G²+9G+30)·(cost+1)` sits termwise under `(9G²+9G+33)·(8·cost+8)`.
@@ -2533,9 +2498,9 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hG1 : State.size s + s.length + res0.length + c1.cost s + 2 ≤ G := by
         rw [Cmd.cost_seq] at hG; omega
       obtain ⟨t1, res1, hres1, hW1, hrun1, htraj1, hbud1⟩ :=
-        ih1 k s res0 G hbit hk1' huses.1 hscratch hnc.1 hsupp.1 hres0 hG1
+        ih1 k s res0 G hbit hk1' huses.1 hscratch hres0 hG1
       have hbit_mid : Compile.BitState (c1.eval s) :=
-        Cmd.eval_preserves_BitState c1 k s huses.1 hks hnc.1 hbit
+        Cmd.eval_preserves_BitState c1 k s huses.1 hks hbit
       have hmidge : s.length ≤ (c1.eval s).length := Cmd.eval_length_ge c1 s
       have hk2' : k + 2 * c2.loopDepth + 2 ≤ (c1.eval s).length := by omega
       have hmidlen : (c1.eval s).length ≤ s.length := by
@@ -2546,7 +2511,7 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
                     + c2.cost (c1.eval s) + 2 ≤ G := by
         rw [Cmd.cost_seq] at hG; omega
       obtain ⟨t2, res2, hres2, hW2, hrun2, htraj2, hbud2⟩ :=
-        ih2 k (c1.eval s) res1 G hbit_mid hk2' huses.2 hscratch_mid hnc.2 hsupp.2 hres1 hG2
+        ih2 k (c1.eval s) res1 G hbit_mid hk2' huses.2 hscratch_mid hres1 hG2
       have hhalt2 : haltingStateReached (compileCmd k c2).M
           { state_idx := (compileCmd k c2).exit,
             tapes := [([], 0, Compile.encodeTape (c2.eval (c1.eval s)) ++ res2)] } = true := by
@@ -2574,10 +2539,10 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       have hdE : cE.loopDepth ≤ max cT.loopDepth cE.loopDepth := Nat.le_max_right _ _
       have hks : k ≤ s.length := by omega
       have hT : s.get tt = [1] → _ := fun htrue =>
-        ihT k s res0 G hbit (by omega) huses.2.1 hscratch hnc.1 hsupp.1 hres0 (by
+        ihT k s res0 G hbit (by omega) huses.2.1 hscratch hres0 (by
           have hc := Cmd.cost_ifBit_true tt cT cE s htrue; rw [hc] at hG; omega)
       have hE : s.get tt ≠ [1] → _ := fun hfalse =>
-        ihE k s res0 G hbit (by omega) huses.2.2 hscratch hnc.2 hsupp.2 hres0 (by
+        ihE k s res0 G hbit (by omega) huses.2.2 hscratch hres0 (by
           have hc := Cmd.cost_ifBit_false tt cT cE s hfalse; rw [hc] at hG; omega)
       have htlt : tt < s.length := Nat.lt_of_lt_of_le huses.1 hks
       have hG' : State.size s + s.length + res0.length + 2 ≤ G := by omega
@@ -2603,10 +2568,10 @@ theorem Compile.run_physical_residue_gen (c : Cmd) (k : Nat) (s : State)
       -- loop's fold-states grow). `K1 = k`/`K2 = k + 1` emptiness is `hscratch`.
       simp only [Cmd.loopDepth] at hk
       exact compileForBnd_sound_physical_residue cnt bnd k (compileCmd (k + 2) body) body
-        G s res0 hbit huses.1 huses.2.1 (by omega) huses.2.2 hnc hscratch hres0 hG
+        G s res0 hbit huses.1 huses.2.1 (by omega) huses.2.2 hscratch hres0 hG
         (fun s' res' G' hb hlen' hscr' hr hg =>
           ihbody (k + 2) s' res' G' hb hlen'
-            (Cmd.UsesBelow_mono (by omega) huses.2.2) hscr' hnc hsupp hr hg)
+            (Cmd.UsesBelow_mono (by omega) huses.2.2) hscr' hr hg)
 /-- **★ The C2 obligation, residue-tolerant physical compiler contract (Risk C2),
 PROVEN from the assembly** — the `res0 = []` instance of
 `Compile.run_physical_residue_gen`. Accounts for the tape never shrinking: the
@@ -2631,9 +2596,7 @@ residue is invisible to the decider. -/
 theorem Compile_run_physical_residue (c : Cmd) (k : Nat) (s : State)
     (hbit : Compile.BitState s) (hk : k + 2 * c.loopDepth + 2 ≤ s.length)
     (huses : Cmd.UsesBelow c k)
-    (hscratch : ∀ r, k ≤ r → State.get s r = [])
-    (hnc : Cmd.NoConsLen c)
-    (hsupp : Cmd.AllOpsSupported c) :
+    (hscratch : ∀ r, k ≤ r → State.get s r = []) :
     ∃ (t : Nat) (res : List Nat),
       Compile.ValidResidue res ∧
       runFlatTM t (Compile k c) (initFlatConfig (Compile k c) [Compile.encodeTape s])
@@ -2647,7 +2610,7 @@ theorem Compile_run_physical_residue (c : Cmd) (k : Nat) (s : State)
       t ≤ Compile.physStepBudget (State.size s + s.length + c.cost s + 2) (c.cost s) := by
   obtain ⟨t, res, hres, _hW, hrun, htraj, hbud⟩ :=
     Compile.run_physical_residue_gen c k s [] (State.size s + s.length + c.cost s + 2)
-      hbit hk huses hscratch hnc hsupp Compile.ValidResidue_nil (by rw [List.length_nil]; omega)
+      hbit hk huses hscratch Compile.ValidResidue_nil (by rw [List.length_nil]; omega)
   refine ⟨t, res, hres, ?_, ?_, hbud⟩
   · rw [List.append_nil] at hrun; exact hrun
   · intro k' hk' ck hck
@@ -2690,8 +2653,6 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
     (hbitst : Compile.BitState s) (hk : k + 2 * c.loopDepth + 2 ≤ s.length)
     (huses : Cmd.UsesBelow c k)
     (hscratch : ∀ r, k ≤ r → State.get s r = [])
-    (hnc : Cmd.NoConsLen c)
-    (hsupp : Cmd.AllOpsSupported c)
     (hbit : b = 0 ∨ b = 1) (h0 : (c.eval s).get 0 = [b]) :
     ∃ cfg,
       runFlatTM (Compile.physStepBudget (State.size s + s.length + c.cost s + 2)
@@ -2701,7 +2662,7 @@ theorem Compile.bitDecider_run (c : Cmd) (s : State) (b : Nat) (k : Nat)
       cfg.state_idx = (if b = 1 then 1 else 2) + (Compile k c).states := by
   obtain ⟨tl0, htl0⟩ := Compile.encodeTape_eq_cons_of_get_zero (c.eval s) b h0
   obtain ⟨t1, res, _hres, hrun1, htraj1, ht1⟩ :=
-    Compile_run_physical_residue c k s hbitst hk huses hscratch hnc hsupp
+    Compile_run_physical_residue c k s hbitst hk huses hscratch
   -- Rewrite the physical exit tape via the encoding lemma (leading sentinel).
   -- The residue trails the encoded output; the gadget reads only positions 0–1,
   -- so fold the residue into the tail `tl := tl0 ++ res`.

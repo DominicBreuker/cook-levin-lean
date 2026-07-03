@@ -1362,8 +1362,6 @@ def Op.inBounds (o : Op) (s : State) : Prop :=
   | .copy dst src | .tail dst src | .head dst src | .nonEmpty dst src =>
       dst < s.length ∧ src < s.length
   | .eqBit dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
-  | .takeAt dst src lenReg | .dropAt dst src lenReg | .consLen dst lenReg src =>
-      dst < s.length ∧ src < s.length ∧ lenReg < s.length
   | .concat dst src1 src2 => dst < s.length ∧ src1 < s.length ∧ src2 < s.length
 
 /-- Reading an in-range register of a `BitState` yields a bit-shaped list (every
@@ -1375,29 +1373,17 @@ theorem Compile.BitState_get (s : State) (r : Var)
   refine hbit (s.get r) ?_ x hx
   rw [State.get, List.getElem?_eq_getElem hr]; exact List.getElem_mem hr
 
-/-- **`BitState` is preserved by every op except `consLen` (HANDOFF bottom-up Task 4 — the
-induction step the residue-tolerant compiler contract needs).**
+/-- **`BitState` is preserved by every op (the induction step the
+residue-tolerant compiler contract needs).**
 
 `Compile_run_physical_residue` is proved by induction on `Cmd`, and every
 per-fragment lemma it composes carries an `(hbit : BitState s)` premise (the
 compiler's `sig = 4` alphabet has no room for a register cell `≥ 2`). So the
 induction must re-establish `BitState` after each `Op`. This lemma is that step.
-
-**Machine-checked risk finding (refines HANDOFF's "value-as-length ops are
-non-`BitState`"):** of the three value-as-length ops, only **`consLen`** actually
-*breaks* `BitState` — it writes `(s.get lenSrc).length` as a single cell, which is
-`≥ 2` whenever `lenSrc` holds `≥ 2` symbols (witness `Op.consLen_breaks_BitState`).
-`takeAt`/`dropAt` *preserve* `BitState` (their output is a sub-list of a bit-shaped
-register); they are merely *useless* under `BitState` (the length read from a
-`≤ 1` cell is `0` or `1`), not invariant-breaking. So Task 4's unary restatement is
-required for **correctness** only for `consLen`; for `takeAt`/`dropAt` it is
-required only for **expressiveness**. The `hcons` hypothesis isolates exactly the
-`consLen` obligation: once HANDOFF bottom-up Task 4 restates `consLen` to write a unary block, the
-written head cell is `≤ 1` and `hcons` is discharged unconditionally. -/
+Every live op writes only bit-shaped data (sub-lists of bit-shaped registers, or
+a single `0`/`1`), so preservation is unconditional. -/
 theorem Op.eval_preserves_BitState (o : Op) (s : State)
-    (hbit : Compile.BitState s) (hbnd : o.inBounds s)
-    (hcons : ∀ dst lenSrc src, o = Op.consLen dst lenSrc src →
-        (s.get lenSrc).length ≤ 1) :
+    (hbit : Compile.BitState s) (hbnd : o.inBounds s) :
     Compile.BitState (Op.eval o s) := by
   cases o with
   | clear dst =>
@@ -1446,16 +1432,6 @@ theorem Op.eval_preserves_BitState (o : Op) (s : State)
       intro x hx
       split at hx <;>
         (simp only [List.mem_cons, List.not_mem_nil, or_false] at hx; omega)
-  | takeAt dst src lenReg =>
-      obtain ⟨hd, hs, _⟩ := hbnd
-      refine Compile.BitState_set s dst _ hbit hd ?_
-      intro x hx
-      exact Compile.BitState_get s src hbit hs x (List.mem_of_mem_take hx)
-  | dropAt dst src lenReg =>
-      obtain ⟨hd, hs, _⟩ := hbnd
-      refine Compile.BitState_set s dst _ hbit hd ?_
-      intro x hx
-      exact Compile.BitState_get s src hbit hs x (List.mem_of_mem_drop hx)
   | concat dst src1 src2 =>
       obtain ⟨hd, hs1, hs2⟩ := hbnd
       refine Compile.BitState_set s dst _ hbit hd ?_
@@ -1463,30 +1439,6 @@ theorem Op.eval_preserves_BitState (o : Op) (s : State)
       rcases hx with hx | hx
       · exact Compile.BitState_get s src1 hbit hs1 x hx
       · exact Compile.BitState_get s src2 hbit hs2 x hx
-  | consLen dst lenSrc src =>
-      obtain ⟨hd, hs, _⟩ := hbnd
-      have hlen := hcons dst lenSrc src rfl
-      refine Compile.BitState_set s dst _ hbit hd ?_
-      intro x hx
-      simp only [List.mem_cons] at hx
-      rcases hx with hx | hx
-      · subst hx; exact hlen
-      · exact Compile.BitState_get s src hbit hs x hx
-
-/-- **Machine-checked counterexample: `consLen` is the one op that breaks
-`BitState`.** With `s = [[1, 1]]` (a valid `BitState`) and `o = consLen 0 0 0`,
-the op writes `(s.get 0).length = 2` as a register cell, so the result `[[2,1,1]]`
-is *not* a `BitState`. This is why HANDOFF bottom-up Task 4 must restate `consLen` to a unary block;
-the corresponding `hcons` hypothesis of `Op.eval_preserves_BitState` fails here
-(`(s.get 0).length = 2 > 1`). -/
-theorem Op.consLen_breaks_BitState :
-    ¬ Compile.BitState (Op.eval (Op.consLen 0 0 0) [[1, 1]]) := by
-  intro h
-  have : (2 : Nat) ≤ 1 := by
-    refine h [2, 1, 1] ?_ 2 (by simp)
-    show ([2, 1, 1] : List Nat) ∈ ([[2, 1, 1]] : State)
-    simp
-  omega
 
 /-- **Risk C2 finding (machine-checked): the exact-tape physical contract is
 unsatisfiable for length-decreasing ops.** No `FlatTM`, in any number of steps,

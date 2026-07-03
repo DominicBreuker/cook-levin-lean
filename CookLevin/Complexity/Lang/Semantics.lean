@@ -50,20 +50,14 @@ def Op.eval : Op → State → State
       s.set dst (if s.get src1 = s.get src2 then [1] else [0])
   | .nonEmpty   dst src, s      =>
       s.set dst (if (s.get src).isEmpty then [0] else [1])
-  | .takeAt     dst src lenReg, s =>
-      s.set dst ((s.get src).take ((s.get lenReg).headD 0))
-  | .dropAt     dst src lenReg, s =>
-      s.set dst ((s.get src).drop ((s.get lenReg).headD 0))
   | .concat     dst src1 src2, s =>
       s.set dst (s.get src1 ++ s.get src2)
-  | .consLen    dst lenSrc src, s =>
-      s.set dst ((s.get lenSrc).length :: s.get src)
 
 /-- Cost of an operation — a **realistic** (size-aware) cost model.
 
 Each op costs `1` for the control step plus the length of any **source data it
 must read and re-materialise**. The size-increasing ops (`copy`, `tail`,
-`takeAt`, `dropAt`, `concat`, `consLen`) therefore charge for their output, so
+`concat`) therefore charge for their output, so
 that cost dominates the per-step size growth (`Op.size_eval_le`). `eqBit` also
 charges `|src1|+|src2|`: even though it only *writes* one cell, the compiled
 register-equality tester copies and consumes both source registers, leaving a
@@ -86,10 +80,7 @@ def Op.cost : Op → State → Nat
   | .head       _ _,          _ => 1
   | .eqBit      _ src1 src2,  s => (s.get src1).length + (s.get src2).length + 1
   | .nonEmpty   _ _,          _ => 1
-  | .takeAt     _ src _,      s => (s.get src).length + 1
-  | .dropAt     _ src _,      s => (s.get src).length + 1
   | .concat     _ src1 src2,  s => 2 * ((s.get src1).length + (s.get src2).length) + 1
-  | .consLen    _ _ src,      s => (s.get src).length + 1
 
 /-! ## Size accounting (the cost-model soundness invariant)
 
@@ -205,22 +196,9 @@ theorem Op.size_eval_le (o : Op) (s : State) :
   | nonEmpty dst src =>
       refine State.size_set_le_cost s dst _ 1 ?_
       by_cases hh : (s.get src).isEmpty <;> simp [hh]
-  | takeAt dst src len =>
-      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
-      have : ((s.get src).take ((s.get len).headD 0)).length ≤ (s.get src).length :=
-        by rw [List.length_take]; omega
-      omega
-  | dropAt dst src len =>
-      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
-      have : ((s.get src).drop ((s.get len).headD 0)).length ≤ (s.get src).length :=
-        by rw [List.length_drop]; omega
-      omega
   | concat dst s1 s2 =>
       refine State.size_set_le_cost s dst _ (2 * ((s.get s1).length + (s.get s2).length) + 1) ?_
       rw [List.length_append]; omega
-  | consLen dst lenSrc src =>
-      refine State.size_set_le_cost s dst _ ((s.get src).length + 1) ?_
-      rw [List.length_cons]; omega
 
 /-! ## Command semantics (concrete, via `Cmd.run`)
 

@@ -99,18 +99,6 @@ structure DecidesLang {X : Type} [encodable X]
   polynomial). Satisfiable by every layer encoding (data is packed into register
   *contents*, not spread across registers). -/
   width_le : ∀ x, (encodeIn x).length ≤ regBound
-  /-- **(WALL, Risk C2 — bottom-up) `consLen`-free.** `Op.consLen` breaks
-  `BitState`; this field is the `NoConsLen` side-condition
-  `Compile.paddedBitDecider_run` needs. The trio is **retired** (2026-07-02) —
-  this field is permanent until the trio ops are deleted from `Op` (HANDOFF
-  bottom-up), after which it goes away with them. -/
-  noConsLen : Cmd.NoConsLen c
-  /-- **(Route A) Op-supportedness wall.** Every op in `c` has a discharged
-  soundness case (`Op.IsSupported`), so `Compile.paddedBitDecider_run`'s op cases
-  never reach the trio stub `sorry`s — making a *concrete* trio-free decider's
-  `toDecidesBy` (hence `SAT_inNP.sat_NP`) axiom-clean. The trio is **retired**
-  (2026-07-02): permanent until the trio ops are deleted from `Op`. -/
-  allOpsSupported : Cmd.AllOpsSupported c
 
 /-- `P` is in polynomial time *at the layer level*: there is a
 `DecidesLang` witness with polynomially bounded cost. -/
@@ -150,13 +138,6 @@ structure PolyTimeComputableLang {X Y : Type} [encodable X] [encodable Y]
   polynomial in `encodable.size x`). Satisfiable by every layer encoding (data is
   packed into register *contents*, not spread across registers). -/
   width_le : ∀ x, (encodeIn x).length ≤ regBound
-  /-- **(WALL, Risk C2 — bottom-up) `consLen`-free** — mirrors `DecidesLang.noConsLen`;
-  permanent until the retired trio ops are deleted from `Op`. -/
-  noConsLen : Cmd.NoConsLen c
-  /-- **(Route A) Op-supportedness wall** — mirrors `DecidesLang.allOpsSupported`;
-  every op in `c` has a discharged soundness case. Permanent until the retired
-  trio ops are deleted from `Op`. -/
-  allOpsSupported : Cmd.AllOpsSupported c
   /-- **(WALL, Risk C2) Decode is padding-insensitive.** Widening the input by
   empty registers (any count `m` — the padded machine uses
   `regBound + 2 * c.loopDepth`, program frame plus compiler scratch) does not
@@ -398,14 +379,14 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
       have hbit_in : Compile.BitState (W.encodeIn x) := W.enc_bit x
       obtain ⟨res, _hres, hrun, hhalt⟩ :=
         Compile.paddedCompute_run W.c (W.encodeIn x) W.regBound hbit_in (W.width_le x)
-          W.usesBelow W.noConsLen W.allOpsSupported
+          W.usesBelow
       set wide : State := W.encodeIn x ++ List.replicate RB [] with hwide
       have hbit_w : Compile.BitState wide := by
         rw [hwide]; exact Compile.BitState_append_replicate_nil (W.encodeIn x) RB hbit_in
       have hk_w : W.regBound ≤ wide.length := by
         rw [hwide, List.length_append, List.length_replicate]; omega
       have hbit_out : Compile.BitState (W.c.eval wide) :=
-        Cmd.eval_preserves_BitState W.c W.regBound wide W.usesBelow hk_w W.noConsLen hbit_w
+        Cmd.eval_preserves_BitState W.c W.regBound wide W.usesBelow hk_w hbit_w
       refine ⟨{ state_idx := Compile.exit W.regBound W.c + (Compile.padRegsTM RB).states,
                 tapes := [([], 0, Compile.encodeTape (W.c.eval wide) ++ res)] }, ?_, hhalt, ?_⟩
       · -- The single-tape `initialTapes` collapses to `[encodeTape …]`,
@@ -525,8 +506,6 @@ structure PolyTimeComputableLang.SeamData
     ≤ mfcBound (encodable.size x)
   /-- The re-encoder stays inside the composite register frame. -/
   mfc_usesBelow : Cmd.UsesBelow mfc (max Wf.regBound Wg.regBound)
-  mfc_noConsLen : Cmd.NoConsLen mfc
-  mfc_allOpsSupported : Cmd.AllOpsSupported mfc
 
 /-- Padding a state with empty registers changes no register read (`get` of a
 missing or padded register is `[]` either way). -/
@@ -600,8 +579,6 @@ def PolyTimeComputableLang.comp
      Cmd.UsesBelow_mono (Nat.le_max_right _ _) Wg.usesBelow⟩
   width_le := fun x =>
     le_trans (Wf.width_le x) (Nat.le_max_left _ _)
-  noConsLen := ⟨Wf.noConsLen, S.mfc_noConsLen, Wg.noConsLen⟩
-  allOpsSupported := ⟨Wf.allOpsSupported, S.mfc_allOpsSupported, Wg.allOpsSupported⟩
   decode_agree := fun x m => by
     have hpad : AgreeBelow (max Wf.regBound Wg.regBound)
         (Wf.encodeIn x ++ List.replicate m []) (Wf.encodeIn x) :=
@@ -733,7 +710,7 @@ registers at runtime, then bit-decide). The encoding is the witness's own multi-
 `encodeIn`, admitted by the now-polynomial `DecidesBy.encode_size`
 (`encodeBound = costBound + regBound + 2`). The encoding/correctness/halting/budget
 parts are sorry-free; residual gaps are the pinned bottom-up obligations (`padRegsTM`
-run/traj, and — until `consLen` is unary — the witness's `noConsLen`). -/
+run/traj). -/
 def DecidesLang.toDecidesBy {X : Type} [encodable X]
     {P : X → Prop} {costBound : Nat → Nat} (D : DecidesLang P costBound)
     (hpoly : inOPoly costBound) (hmono : monotonic costBound) :
@@ -772,7 +749,7 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
       eq_of_beq ((D.decides x).1.mp hPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
       Compile.paddedBitDecider_run D.c (D.encodeIn x) 1 D.regBound
-        (D.enc_bit x) (D.width_le x) D.usesBelow D.noConsLen D.allOpsSupported (Or.inr rfl) hb
+        (D.enc_bit x) (D.width_le x) D.usesBelow (Or.inr rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (D.encodeIn x))
@@ -798,7 +775,7 @@ def DecidesLang.toDecidesBy {X : Type} [encodable X]
       eq_of_beq ((D.decides x).2.mp hnPx)
     obtain ⟨cfg, hrun, hhalt, hstate⟩ :=
       Compile.paddedBitDecider_run D.c (D.encodeIn x) 0 D.regBound
-        (D.enc_bit x) (D.width_le x) D.usesBelow D.noConsLen D.allOpsSupported (Or.inl rfl) hb
+        (D.enc_bit x) (D.width_le x) D.usesBelow (Or.inl rfl) hb
     refine ⟨cfg, ?_, hhalt, ?_⟩
     · have hinit : initialTapes (Compile.paddedBitDeciderTM D.c D.regBound)
             (Compile.encodeTape (D.encodeIn x))
@@ -982,8 +959,6 @@ structure DecidesLang.FreePrecomposeData {V W : Type} [encodable V] [encodable W
   regBound : Nat
   usesBelow : Cmd.UsesBelow (mfc ;; D.c) regBound
   width_le : ∀ v, (eIn v).length ≤ regBound
-  noConsLen : Cmd.NoConsLen (mfc ;; D.c)
-  allOpsSupported : Cmd.AllOpsSupported (mfc ;; D.c)
 
 /-- **Free precompose.** Given a free decider `D : DecidesLang Q` and a re-encoder
 bundle for `gmap`, produce a free decider for `fun v => Q (gmap v)`. Only the
@@ -1023,8 +998,6 @@ def DecidesLang.precomposeFree {V W : Type} [encodable V] [encodable W]
   regBound := data.regBound
   usesBelow := data.usesBelow
   width_le := data.width_le
-  noConsLen := data.noConsLen
-  allOpsSupported := data.allOpsSupported
 
 /-- **Free-encoding reduction closure at the witness level.** From a concrete
 free-encoding NP witness `W : InNPWitnessLangFree Q`, a reduction `f` (with a

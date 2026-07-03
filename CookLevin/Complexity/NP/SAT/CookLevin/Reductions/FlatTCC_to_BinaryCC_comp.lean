@@ -67,14 +67,6 @@ theorem scrub_cost (t : State) : scrub.cost t ≤ 40 := by
 theorem scrub_usesBelow : Cmd.UsesBelow scrub 27 := by
   simp [scrub, Cmd.UsesBelow, Op.UsesBelow]
 
-theorem scrub_noConsLen : Cmd.NoConsLen scrub := by
-  simp only [scrub, Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-theorem scrub_allOpsSupported : Cmd.AllOpsSupported scrub := by
-  simp only [scrub, Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
-
 /-- **The first live seam.** The bridge is a `cardConvert_run` frame argument:
 after `cardConvert ;; scrub`, every register below 27 agrees with the
 FlatCC→BinaryCC witness's own encoding of the intermediate instance. -/
@@ -149,8 +141,6 @@ noncomputable def flatTCC_to_binaryCC_seam :
   mfcBound_mono := fun _ _ _ => le_refl 40
   mfc_cost := fun C => scrub_cost _
   mfc_usesBelow := scrub_usesBelow
-  mfc_noConsLen := scrub_noConsLen
-  mfc_allOpsSupported := scrub_allOpsSupported
 
 /-- **The first composed live witness**: the whole
 `FlatTCC → FlatCC → BinaryCC` prefix of the sound tail as ONE free layer
