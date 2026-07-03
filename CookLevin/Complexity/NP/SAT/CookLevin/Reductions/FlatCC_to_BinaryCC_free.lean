@@ -1815,6 +1815,473 @@ theorem mulLoop_run (dst bnd : Var) (s : State) (k m : Nat)
     rw [hlen] at h
     exact h
 
+/-! ## The whole program: run + cost -/
+
+/-- Budget for one `binConvert` run, in `Sigma`/`offset`/`width` and the three
+input-stream lengths. -/
+def binBudget (K O W LI LC LF : Nat) : Nat :=
+  (1 + O * (2 * (O * K + K) + 1) + O * O)
+  + (1 + W * (2 * (W * K + K) + 1) + W * W)
+  + (1 + LI * initStepBound LI K + LI * LI)
+  + (1 + LC * sentStepBound LC K + LC * LC)
+  + (1 + LF * sentStepBound LF K + LF * LF)
+  + (LI + LC + LF)
+  + 3 * (K * LC + LC) + 3 * (K * LF + LF)
+  + 60
+
+/-- The budget arithmetic, in a clean context (`omega` whnf-times-out when run
+inside `binConvert_run`'s large state-tracking context). -/
+private theorem binBudget_arith
+    (L1 L2 L3 P1 P2 P3 P4 P5 Q1 Q2 Q3 Q4 Q5 R1 R2 A1 A2 A3 A4 A5 A6 BC BF : Nat)
+    (h1 : A1 ≤ 1 + P1 + Q1) (h2 : A2 ≤ 1 + P2 + Q2)
+    (h3 : A3 ≤ 1 + P3 + Q3) (h4 : A4 ≤ 1 + P4 + Q4) (h5 : A5 ≤ 1 + P5 + Q5)
+    (h6 : A6 ≤ 12) (h7 : BC ≤ R1) (h8 : BF ≤ R2) :
+    1 + 1 + (1 + 1 + (1 + 1 + (1 + A1 + (1 + 1 + (1 + A2 + (1 + 1 + (1 + (L1 + 1) + (1 + A3 + (1 + 1 + (1 + (L2 + 1) + (1 + A4 + (1 + (BC + 1) + (1 + 1 + (1 + (L3 + 1) + (1 + A5 + (1 + (BF + 1) + A6))))))))))))))))
+      ≤ (1 + P1 + Q1) + (1 + P2 + Q2) + (1 + P3 + Q3) + (1 + P4 + Q4)
+        + (1 + P5 + Q5) + (L1 + L2 + L3) + R1 + R2 + 60 := by
+  linarith
+
+/-- **`binConvert` computes the guarded conversion.** On any state carrying the
+FlatCC input layout it writes the BinaryCC layout of the mapped instance to
+the output registers when every symbol is `< Sigma`, and the all-empty
+no-instance layout otherwise; the shared input registers `0–8` (except
+`STEPS` in the invalid case) are untouched. -/
+theorem binConvert_run (k o w : Nat) (xs : List Nat) (cs : List (CCCard Nat))
+    (fss : List (List Nat)) (s0 : State)
+    (hSIG : State.get s0 SIGMA = List.replicate k 1)
+    (hINIT : State.get s0 INIT = encNats xs)
+    (hFINAL : State.get s0 FINAL = encFinal fss)
+    (hOFF : State.get s0 OFFSET = List.replicate o 1)
+    (hWID : State.get s0 WIDTH = List.replicate w 1)
+    (hCARDS : State.get s0 CARDS = encCardsOut cs) :
+    State.get (binConvert.eval s0) BOFF
+        = cond (okB k xs cs fss) (List.replicate (o * k) 1) []
+    ∧ State.get (binConvert.eval s0) BWID
+        = cond (okB k xs cs fss) (List.replicate (w * k) 1) []
+    ∧ State.get (binConvert.eval s0) BINIT
+        = cond (okB k xs cs fss) (expandStr k xs) []
+    ∧ State.get (binConvert.eval s0) BCARDS
+        = cond (okB k xs cs fss) (encCardsOut (cs.map (expandCard k))) []
+    ∧ State.get (binConvert.eval s0) BFINAL
+        = cond (okB k xs cs fss) (encFinal (fss.map (expandStr k))) []
+    ∧ State.get (binConvert.eval s0) STEPS
+        = cond (okB k xs cs fss) (State.get s0 STEPS) []
+    ∧ (∀ r : Var, r < 9 → r ≠ STEPS →
+        State.get (binConvert.eval s0) r = State.get s0 r)
+    ∧ binConvert.cost s0
+        ≤ binBudget k o w (encNats xs).length (encCardsOut cs).length
+            (encFinal fss).length := by
+  set LI := (encNats xs).length with hLI
+  set LC := (encCardsOut cs).length with hLC
+  set LF := (encFinal fss).length with hLF
+  -- stage 1–2: FLAG := [1]
+  have e1 : (Cmd.op (.clear FLAG)).eval s0 = s0.set FLAG [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u1 := s0.set FLAG [] with hu1
+  have hu1FLAG : State.get u1 FLAG = [] := State.get_set_eq _ _ _
+  have e2 : (Cmd.op (.appendOne FLAG)).eval u1 = u1.set FLAG [1] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hu1FLAG, List.nil_append]
+  set u2 := u1.set FLAG [1] with hu2
+  have hu2get : ∀ r : Var, r ≠ FLAG → State.get u2 r = State.get s0 r := by
+    intro r hr
+    rw [hu2, State.get_set_ne _ _ _ _ hr, hu1, State.get_set_ne _ _ _ _ hr]
+  -- stage 3–4: BOFF := offset · Sigma
+  have e3 : (Cmd.op (.clear BOFF)).eval u2 = u2.set BOFF [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u3 := u2.set BOFF [] with hu3
+  have hu3get : ∀ r : Var, r ≠ FLAG → r ≠ BOFF →
+      State.get u3 r = State.get s0 r := by
+    intro r h1 h2
+    rw [hu3, State.get_set_ne _ _ _ _ h2, hu2get r h1]
+  obtain ⟨hB4, hF4, hC4⟩ := mulLoop_run BOFF OFFSET u3 k o
+    (by rw [hu3get SIGMA (by decide) (by decide)]; exact hSIG)
+    (by rw [hu3get OFFSET (by decide) (by decide)]; exact hOFF)
+    (by rw [hu3]; exact State.get_set_eq _ _ _) (by decide) (by decide)
+  set u4 := (Cmd.forBnd IDXO OFFSET (Cmd.op (.concat BOFF BOFF SIGMA))).eval u3
+    with hu4
+  have hu4get : ∀ r : Var, r ≠ FLAG → r ≠ BOFF → r ≠ IDXO →
+      State.get u4 r = State.get s0 r := by
+    intro r h1 h2 h3
+    rw [hF4 r h2 h3, hu3get r h1 h2]
+  -- stage 5–6: BWID := width · Sigma
+  have e5 : (Cmd.op (.clear BWID)).eval u4 = u4.set BWID [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u5 := u4.set BWID [] with hu5
+  have hu5get : ∀ r : Var, r ≠ FLAG → r ≠ BOFF → r ≠ IDXO → r ≠ BWID →
+      State.get u5 r = State.get s0 r := by
+    intro r h1 h2 h3 h4
+    rw [hu5, State.get_set_ne _ _ _ _ h4, hu4get r h1 h2 h3]
+  obtain ⟨hB6, hF6, hC6⟩ := mulLoop_run BWID WIDTH u5 k w
+    (by rw [hu5get SIGMA (by decide) (by decide) (by decide) (by decide)]
+        exact hSIG)
+    (by rw [hu5get WIDTH (by decide) (by decide) (by decide) (by decide)]
+        exact hWID)
+    (by rw [hu5]; exact State.get_set_eq _ _ _) (by decide) (by decide)
+  set u6 := (Cmd.forBnd IDXO WIDTH (Cmd.op (.concat BWID BWID SIGMA))).eval u5
+    with hu6
+  have hu6get : ∀ r : Var, r ≠ FLAG → r ≠ BOFF → r ≠ IDXO → r ≠ BWID →
+      State.get u6 r = State.get s0 r := by
+    intro r h1 h2 h3 h4
+    rw [hF6 r h4 h3, hu5get r h1 h2 h3 h4]
+  have hu6BOFF : State.get u6 BOFF = List.replicate (o * k) 1 := by
+    rw [hF6 BOFF (by decide) (by decide), hu5,
+      State.get_set_ne _ _ _ _ (by decide), hB4]
+  -- stage 7–9: BINIT := expandStr, FLAG &&= allLtB
+  have e7 : (Cmd.op (.clear BINIT)).eval u6 = u6.set BINIT [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u7 := u6.set BINIT [] with hu7
+  have hu7INIT : State.get u7 INIT = encNats xs := by
+    rw [hu7, State.get_set_ne _ _ _ _ (by decide),
+      hu6get INIT (by decide) (by decide) (by decide) (by decide), hINIT]
+  have e8 : (Cmd.op (.copy SCAN INIT)).eval u7 = u7.set SCAN (encNats xs) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hu7INIT]
+  set u8 := u7.set SCAN (encNats xs) with hu8
+  have hu8get : ∀ r : Var, r ≠ FLAG → r ≠ BOFF → r ≠ IDXO → r ≠ BWID →
+      r ≠ BINIT → r ≠ SCAN → State.get u8 r = State.get s0 r := by
+    intro r h1 h2 h3 h4 h5 h6
+    rw [hu8, State.get_set_ne _ _ _ _ h6, hu7, State.get_set_ne _ _ _ _ h5,
+      hu6get r h1 h2 h3 h4]
+  have hu8INIT : State.get u8 INIT = encNats xs := by
+    rw [hu8get INIT (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hINIT]
+  have hu8SIG : State.get u8 SIGMA = List.replicate k 1 := by
+    rw [hu8get SIGMA (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hSIG]
+  have hu8FLAG : State.get u8 FLAG = cond true [1] [0] := by
+    rw [hu8, State.get_set_ne _ _ _ _ (by decide), hu7,
+      State.get_set_ne _ _ _ _ (by decide), hF6 FLAG (by decide) (by decide),
+      hu5, State.get_set_ne _ _ _ _ (by decide), hF4 FLAG (by decide)
+      (by decide), hu3, State.get_set_ne _ _ _ _ (by decide), hu2]
+    exact State.get_set_eq _ _ _
+  have hu8SCAN : State.get u8 SCAN = encNats xs := by
+    rw [hu8]; exact State.get_set_eq _ _ _
+  have hu8BINIT : State.get u8 BINIT = [] := by
+    rw [hu8, State.get_set_ne _ _ _ _ (by decide), hu7]
+    exact State.get_set_eq _ _ _
+  obtain ⟨hB9, hFL9, hF9, hC9⟩ := initLoop_run xs k true u8 INIT LI
+    (by rw [hu8INIT]) (le_of_eq rfl) hu8SCAN hu8SIG hu8FLAG hu8BINIT
+  rw [Bool.true_and] at hFL9
+  set u9 := (Cmd.forBnd IDXO INIT initStep).eval u8 with hu9
+  have hu9low : ∀ r : Var, r < 9 → State.get u9 r = State.get s0 r := by
+    intro r hr
+    have hge : ∀ m : Nat, 9 ≤ m → r ≠ m :=
+      fun m hm => Nat.ne_of_lt (Nat.lt_of_lt_of_le hr hm)
+    rw [hF9 r (hge 9 (by omega)) (hge 19 (by omega)) (hge 10 (by omega))
+      (hge 14 (by omega)) (hge 23 (by omega)) (hge 11 (by omega))
+      (hge 24 (by omega)) (hge 13 (by omega)) (hge 12 (by omega))
+      (hge 15 (by omega)) (hge 16 (by omega)) (hge 26 (by omega)),
+      hu8get r (hge 11 (by omega)) (hge 17 (by omega)) (hge 12 (by omega))
+      (hge 18 (by omega)) (hge 19 (by omega)) (hge 9 (by omega))]
+  have hu9BOFF : State.get u9 BOFF = List.replicate (o * k) 1 := by
+    rw [hF9 BOFF (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hu8, State.get_set_ne _ _ _ _ (by decide), hu7,
+      State.get_set_ne _ _ _ _ (by decide), hu6BOFF]
+  have hu9BWID : State.get u9 BWID = List.replicate (w * k) 1 := by
+    rw [hF9 BWID (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide), hu8, State.get_set_ne _ _ _ _ (by decide), hu7,
+      State.get_set_ne _ _ _ _ (by decide), hB6]
+  -- stage 10–13: BCARDS := expanded card stream, FLAG &&= cards ok
+  have e10 : (Cmd.op (.clear BOUT)).eval u9 = u9.set BOUT [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u10 := u9.set BOUT [] with hu10
+  have hu10CARDS : State.get u10 CARDS = encCardsOut cs := by
+    rw [hu10, State.get_set_ne _ _ _ _ (by decide), hu9low CARDS (by decide),
+      hCARDS]
+  have e11 : (Cmd.op (.copy SCAN CARDS)).eval u10
+      = u10.set SCAN (encCardsOut cs) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hu10CARDS]
+  set u11 := u10.set SCAN (encCardsOut cs) with hu11
+  have hu11get : ∀ r : Var, r ≠ BOUT → r ≠ SCAN →
+      State.get u11 r = State.get u9 r := by
+    intro r h1 h2
+    rw [hu11, State.get_set_ne _ _ _ _ h2, hu10, State.get_set_ne _ _ _ _ h1]
+  have hu11CARDS : State.get u11 CARDS = encCardsOut cs := by
+    rw [hu11get CARDS (by decide) (by decide), hu9low CARDS (by decide), hCARDS]
+  have hu11SIG : State.get u11 SIGMA = List.replicate k 1 := by
+    rw [hu11get SIGMA (by decide) (by decide), hu9low SIGMA (by decide), hSIG]
+  have hu11FLAG : State.get u11 FLAG = cond (allLtB k xs) [1] [0] := by
+    rw [hu11get FLAG (by decide) (by decide), hFL9]
+  have hu11SCAN : State.get u11 SCAN = encItems (citemsOf cs) := by
+    rw [hu11, State.get_set_eq, encItems_citemsOf]
+  have hu11BOUT : State.get u11 BOUT = [] := by
+    rw [hu11, State.get_set_ne _ _ _ _ (by decide), hu10]
+    exact State.get_set_eq _ _ _
+  obtain ⟨hB12, hFL12, hF12, hC12⟩ := sentLoop_run (citemsOf cs) k
+    (allLtB k xs) u11 CARDS LC (by rw [hu11CARDS])
+    (le_of_eq (by rw [encItems_citemsOf])) hu11SCAN hu11SIG hu11FLAG hu11BOUT
+  set u12 := (Cmd.forBnd IDXO CARDS sentStep).eval u11 with hu12
+  have hu12BOUT : State.get u12 BOUT = expandItems k (citemsOf cs) := hB12
+  have e13 : (Cmd.op (.copy BCARDS BOUT)).eval u12
+      = u12.set BCARDS (expandItems k (citemsOf cs)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hu12BOUT]
+  set u13 := u12.set BCARDS (expandItems k (citemsOf cs)) with hu13
+  have hu13get : ∀ r : Var, r ≠ SCAN → r ≠ BOUT → r ≠ BCARDS → r ≠ VALX →
+      r ≠ REM → r ≠ TFLG → r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR → r ≠ IDXO →
+      r ≠ CliqueRelTM.HEAD → r ≠ CliqueRelTM.INBLK → r ≠ CliqueRelTM.SKIPR →
+      State.get u13 r = State.get u9 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13
+    rw [hu13, State.get_set_ne _ _ _ _ h3,
+      hF12 r h1 h2 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13, hu11get r h2 h1]
+  -- stage 14–17: BFINAL := expanded final stream, FLAG &&= final ok
+  have e14 : (Cmd.op (.clear BOUT)).eval u13 = u13.set BOUT [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u14 := u13.set BOUT [] with hu14
+  have hu14FINAL : State.get u14 FINAL = encFinal fss := by
+    rw [hu14, State.get_set_ne _ _ _ _ (by decide), hu13get FINAL (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+      hu9low FINAL (by decide), hFINAL]
+  have e15 : (Cmd.op (.copy SCAN FINAL)).eval u14
+      = u14.set SCAN (encFinal fss) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hu14FINAL]
+  set u15 := u14.set SCAN (encFinal fss) with hu15
+  have hu15get : ∀ r : Var, r ≠ BOUT → r ≠ SCAN →
+      State.get u15 r = State.get u13 r := by
+    intro r h1 h2
+    rw [hu15, State.get_set_ne _ _ _ _ h2, hu14, State.get_set_ne _ _ _ _ h1]
+  have hu15FINAL : State.get u15 FINAL = encFinal fss := by
+    rw [hu15get FINAL (by decide) (by decide), hu13get FINAL (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+      hu9low FINAL (by decide), hFINAL]
+  have hu15SIG : State.get u15 SIGMA = List.replicate k 1 := by
+    rw [hu15get SIGMA (by decide) (by decide), hu13get SIGMA (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+      hu9low SIGMA (by decide), hSIG]
+  have hu15FLAG : State.get u15 FLAG
+      = cond (allLtB k xs && itemsOkB k (citemsOf cs)) [1] [0] := by
+    rw [hu15get FLAG (by decide) (by decide), hu13,
+      State.get_set_ne _ _ _ _ (by decide), hFL12]
+  have hu15SCAN : State.get u15 SCAN = encItems (fitemsOf fss) := by
+    rw [hu15, State.get_set_eq, encItems_fitemsOf]
+  have hu15BOUT : State.get u15 BOUT = [] := by
+    rw [hu15, State.get_set_ne _ _ _ _ (by decide), hu14]
+    exact State.get_set_eq _ _ _
+  obtain ⟨hB16, hFL16, hF16, hC16⟩ := sentLoop_run (fitemsOf fss) k
+    (allLtB k xs && itemsOkB k (citemsOf cs)) u15 FINAL LF
+    (by rw [hu15FINAL])
+    (le_of_eq (by rw [encItems_fitemsOf])) hu15SCAN hu15SIG hu15FLAG hu15BOUT
+  set u16 := (Cmd.forBnd IDXO FINAL sentStep).eval u15 with hu16
+  have hu16BOUT : State.get u16 BOUT = expandItems k (fitemsOf fss) := hB16
+  have e17 : (Cmd.op (.copy BFINAL BOUT)).eval u16
+      = u16.set BFINAL (expandItems k (fitemsOf fss)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hu16BOUT]
+  set u17 := u16.set BFINAL (expandItems k (fitemsOf fss)) with hu17
+  -- the state before the guard: all registers accounted for
+  have hu17get : ∀ r : Var, r ≠ SCAN → r ≠ BOUT → r ≠ BCARDS → r ≠ BFINAL →
+      r ≠ VALX → r ≠ REM → r ≠ TFLG → r ≠ FLAG → r ≠ IDX2 → r ≠ IDXR →
+      r ≠ IDXO → r ≠ CliqueRelTM.HEAD → r ≠ CliqueRelTM.INBLK →
+      r ≠ CliqueRelTM.SKIPR → State.get u17 r = State.get u9 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+    rw [hu17, State.get_set_ne _ _ _ _ h4,
+      hF16 r h1 h2 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14, hu15get r h2 h1,
+      hu13get r h1 h2 h3 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14]
+  have hu17low : ∀ r : Var, r < 9 → State.get u17 r = State.get s0 r := by
+    intro r hr
+    have hge : ∀ m : Nat, 9 ≤ m → r ≠ m :=
+      fun m hm => Nat.ne_of_lt (Nat.lt_of_lt_of_le hr hm)
+    rw [hu17get r (hge 9 (by omega)) (hge 25 (by omega)) (hge 20 (by omega))
+      (hge 21 (by omega)) (hge 10 (by omega)) (hge 14 (by omega))
+      (hge 23 (by omega)) (hge 11 (by omega)) (hge 24 (by omega))
+      (hge 13 (by omega)) (hge 12 (by omega)) (hge 15 (by omega))
+      (hge 16 (by omega)) (hge 26 (by omega)), hu9low r hr]
+  have hu17BOFF : State.get u17 BOFF = List.replicate (o * k) 1 := by
+    rw [hu17get BOFF (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide), hu9BOFF]
+  have hu17BWID : State.get u17 BWID = List.replicate (w * k) 1 := by
+    rw [hu17get BWID (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide), hu9BWID]
+  have hu17BINIT : State.get u17 BINIT = expandStr k xs := by
+    rw [hu17get BINIT (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide), hB9]
+  have hu17BCARDS : State.get u17 BCARDS = expandItems k (citemsOf cs) := by
+    rw [hu17, State.get_set_ne _ _ _ _ (by decide), hF16 BCARDS (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide),
+      hu15get BCARDS (by decide) (by decide), hu13]
+    exact State.get_set_eq _ _ _
+  have hu17BFINAL : State.get u17 BFINAL = expandItems k (fitemsOf fss) := by
+    rw [hu17]; exact State.get_set_eq _ _ _
+  have hu17FLAG : State.get u17 FLAG = cond (okB k xs cs fss) [1] [0] := by
+    rw [hu17, State.get_set_ne _ _ _ _ (by decide), hFL16, Bool.and_assoc,
+      ← Bool.and_assoc, itemsOkB_citemsOf, itemsOkB_fitemsOf]
+    rfl
+  have hu17STEPS : State.get u17 STEPS = State.get s0 STEPS :=
+    hu17low STEPS (by decide)
+  -- assemble the eval chain up to the guard
+  have hevalPre : ∀ tail : Cmd,
+      ((Cmd.op (.clear FLAG)) ;; (Cmd.op (.appendOne FLAG)) ;;
+        (Cmd.op (.clear BOFF)) ;;
+        (Cmd.forBnd IDXO OFFSET (Cmd.op (.concat BOFF BOFF SIGMA))) ;;
+        (Cmd.op (.clear BWID)) ;;
+        (Cmd.forBnd IDXO WIDTH (Cmd.op (.concat BWID BWID SIGMA))) ;;
+        (Cmd.op (.clear BINIT)) ;; (Cmd.op (.copy SCAN INIT)) ;;
+        (Cmd.forBnd IDXO INIT initStep) ;;
+        (Cmd.op (.clear BOUT)) ;; (Cmd.op (.copy SCAN CARDS)) ;;
+        (Cmd.forBnd IDXO CARDS sentStep) ;;
+        (Cmd.op (.copy BCARDS BOUT)) ;;
+        (Cmd.op (.clear BOUT)) ;; (Cmd.op (.copy SCAN FINAL)) ;;
+        (Cmd.forBnd IDXO FINAL sentStep) ;;
+        (Cmd.op (.copy BFINAL BOUT)) ;; tail).eval s0 = tail.eval u17 := by
+    intro tail
+    rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq,
+      ← hu4, Cmd.eval_seq, e5, Cmd.eval_seq, ← hu6, Cmd.eval_seq, e7,
+      Cmd.eval_seq, e8, Cmd.eval_seq, ← hu9, Cmd.eval_seq, e10, Cmd.eval_seq,
+      e11, Cmd.eval_seq, ← hu12, Cmd.eval_seq, e13, Cmd.eval_seq, e14,
+      Cmd.eval_seq, e15, Cmd.eval_seq, ← hu16, Cmd.eval_seq, e17]
+  -- the cost bound (independent of the guard's verdict)
+  have hlenBC : (expandItems k (citemsOf cs)).length ≤ 3 * (k * LC + LC) := by
+    have h := expandItems_length_le k (citemsOf cs)
+    have h2 : (citemsOf cs).length ≤ LC := by
+      rw [hLC, ← encItems_citemsOf]
+      exact encItems_length _
+    have h3 : k * (citemsOf cs).length ≤ k * LC := Nat.mul_le_mul_left k h2
+    have h4 : (encItems (citemsOf cs)).length = LC := by
+      rw [encItems_citemsOf]
+    omega
+  have hlenBF : (expandItems k (fitemsOf fss)).length ≤ 3 * (k * LF + LF) := by
+    have h := expandItems_length_le k (fitemsOf fss)
+    have h2 : (fitemsOf fss).length ≤ LF := by
+      rw [hLF, ← encItems_fitemsOf]
+      exact encItems_length _
+    have h3 : k * (fitemsOf fss).length ≤ k * LF := Nat.mul_le_mul_left k h2
+    have h4 : (encItems (fitemsOf fss)).length = LF := by
+      rw [encItems_fitemsOf]
+    omega
+  set A6 := (Cmd.ifBit FLAG CliqueRelTM.cSkip
+      (Cmd.op (.clear BOFF) ;; Cmd.op (.clear BWID) ;; Cmd.op (.clear BINIT) ;;
+       Cmd.op (.clear BCARDS) ;; Cmd.op (.clear BFINAL) ;;
+       Cmd.op (.clear STEPS))).cost u17 with hA6
+  have hGuard : A6 ≤ 12 := by
+    rw [hA6]
+    by_cases hf : State.get u17 FLAG = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hf, CliqueRelTM.cSkip_cost]
+      omega
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hf]
+      have : (Cmd.op (.clear BOFF) ;; Cmd.op (.clear BWID) ;;
+          Cmd.op (.clear BINIT) ;; Cmd.op (.clear BCARDS) ;;
+          Cmd.op (.clear BFINAL) ;; Cmd.op (.clear STEPS)).cost u17 = 11 := by
+        simp only [Cmd.cost_seq, Cmd.cost_op, Op.cost]
+      omega
+  have hcost : binConvert.cost s0
+      ≤ binBudget k o w LI LC LF := by
+    -- fold the five loop costs and the two copy lengths into opaque atoms
+    -- (`omega` whnf-times-out on the underlying state terms otherwise)
+    set A1 := (Cmd.forBnd IDXO OFFSET
+      (Cmd.op (.concat BOFF BOFF SIGMA))).cost u3 with hA1
+    set A2 := (Cmd.forBnd IDXO WIDTH
+      (Cmd.op (.concat BWID BWID SIGMA))).cost u5 with hA2
+    set A3 := (Cmd.forBnd IDXO INIT initStep).cost u8 with hA3
+    set A4 := (Cmd.forBnd IDXO CARDS sentStep).cost u11 with hA4
+    set A5 := (Cmd.forBnd IDXO FINAL sentStep).cost u15 with hA5
+    set BC := (expandItems k (citemsOf cs)).length with hBC
+    set BF := (expandItems k (fitemsOf fss)).length with hBF
+    show ((Cmd.op (.clear FLAG)) ;; _).cost s0 ≤ _
+    rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, Cmd.cost_op, e2,
+      Cmd.cost_seq, Cmd.cost_op, e3, Cmd.cost_seq, ← hu4, Cmd.cost_seq,
+      Cmd.cost_op, e5, Cmd.cost_seq, ← hu6, Cmd.cost_seq, Cmd.cost_op, e7,
+      Cmd.cost_seq, Cmd.cost_op, e8, Cmd.cost_seq, ← hu9, Cmd.cost_seq,
+      Cmd.cost_op, e10, Cmd.cost_seq, Cmd.cost_op, e11, Cmd.cost_seq, ← hu12,
+      Cmd.cost_seq, Cmd.cost_op, e13, Cmd.cost_seq, Cmd.cost_op, e14,
+      Cmd.cost_seq, Cmd.cost_op, e15, Cmd.cost_seq, ← hu16, Cmd.cost_seq,
+      Cmd.cost_op, e17, ← hA1, ← hA2, ← hA3, ← hA4, ← hA5, ← hA6]
+    simp only [Op.cost, hu7INIT, hu10CARDS, hu12BOUT, hu14FINAL, hu16BOUT,
+      ← hBC, ← hBF]
+    unfold binBudget
+    clear_value A1 A2 A3 A4 A5 A6 BC BF
+    clear hA1 hA2 hA3 hA4 hA5 hA6 hBC hBF
+    exact binBudget_arith LI LC LF
+      (o * (2 * (o * k + k) + 1)) (w * (2 * (w * k + k) + 1))
+      (LI * initStepBound LI k) (LC * sentStepBound LC k)
+      (LF * sentStepBound LF k) (o * o) (w * w) (LI * LI) (LC * LC) (LF * LF)
+      (3 * (k * LC + LC)) (3 * (k * LF + LF)) A1 A2 A3 A4 A5 A6 BC BF
+      hC4 hC6 hC9 hC12 hC16 hGuard hlenBC hlenBF
+  -- the guard, by validity
+  cases hOK : okB k xs cs fss
+  · -- invalid: the else branch clears the six output registers
+    simp only [Bool.cond_false]
+    have hFL : State.get u17 FLAG ≠ [1] := by
+      rw [hu17FLAG, hOK]
+      decide
+    set z := (((((u17.set BOFF []).set BWID []).set BINIT []).set
+        BCARDS []).set BFINAL []).set STEPS [] with hz
+    have eG : (Cmd.ifBit FLAG CliqueRelTM.cSkip
+        (Cmd.op (.clear BOFF) ;; Cmd.op (.clear BWID) ;; Cmd.op (.clear BINIT) ;;
+         Cmd.op (.clear BCARDS) ;; Cmd.op (.clear BFINAL) ;;
+         Cmd.op (.clear STEPS))).eval u17 = z := by
+      rw [Cmd.eval_ifBit_false _ _ _ _ hFL]
+      rw [Cmd.eval_seq, Cmd.eval_op, Cmd.eval_seq, Cmd.eval_op, Cmd.eval_seq,
+        Cmd.eval_op, Cmd.eval_seq, Cmd.eval_op, Cmd.eval_seq, Cmd.eval_op,
+        Cmd.eval_op]
+      simp only [Op.eval]
+      exact hz.symm
+    have heval : binConvert.eval s0 = z := by
+      show ((Cmd.op (.clear FLAG)) ;; _).eval s0 = z
+      rw [hevalPre, eG]
+    have hzlow : ∀ r : Var, r ≠ STEPS → r ≠ BOFF → r ≠ BWID → r ≠ BINIT →
+        r ≠ BCARDS → r ≠ BFINAL → State.get z r = State.get u17 r := by
+      intro r h1 h2 h3 h4 h5 h6
+      rw [hz, State.get_set_ne _ _ _ _ h1, State.get_set_ne _ _ _ _ h6,
+        State.get_set_ne _ _ _ _ h5, State.get_set_ne _ _ _ _ h4,
+        State.get_set_ne _ _ _ _ h3, State.get_set_ne _ _ _ _ h2]
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, hcost⟩
+    · rw [heval, hz, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · rw [heval, hz, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · rw [heval, hz, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · rw [heval, hz, State.get_set_ne _ _ _ _ (by decide),
+        State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · rw [heval, hz, State.get_set_ne _ _ _ _ (by decide), State.get_set_eq]
+    · rw [heval, hz, State.get_set_eq]
+    · intro r hr h5
+      have hge : ∀ m : Nat, 9 ≤ m → r ≠ m :=
+        fun m hm => Nat.ne_of_lt (Nat.lt_of_lt_of_le hr hm)
+      rw [heval, hzlow r h5 (hge 17 (by omega)) (hge 18 (by omega))
+        (hge 19 (by omega)) (hge 20 (by omega)) (hge 21 (by omega)),
+        hu17low r hr]
+  · -- valid: the guard is a `cSkip`
+    simp only [Bool.cond_true]
+    have hFL : State.get u17 FLAG = [1] := by
+      rw [hu17FLAG, hOK]
+      rfl
+    have eG : (Cmd.ifBit FLAG CliqueRelTM.cSkip
+        (Cmd.op (.clear BOFF) ;; Cmd.op (.clear BWID) ;; Cmd.op (.clear BINIT) ;;
+         Cmd.op (.clear BCARDS) ;; Cmd.op (.clear BFINAL) ;;
+         Cmd.op (.clear STEPS))).eval u17 = u17.set CliqueRelTM.SKIPR [1] := by
+      rw [Cmd.eval_ifBit_true _ _ _ _ hFL, CliqueRelTM.cSkip_eval]
+    have heval : binConvert.eval s0 = u17.set CliqueRelTM.SKIPR [1] := by
+      show ((Cmd.op (.clear FLAG)) ;; _).eval s0 = _
+      rw [hevalPre, eG]
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, hcost⟩
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hu17BOFF]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hu17BWID]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hu17BINIT]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hu17BCARDS,
+        expandItems_citemsOf]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hu17BFINAL,
+        expandItems_fitemsOf]
+    · rw [heval, State.get_set_ne _ _ _ _ (by decide), hu17STEPS]
+    · intro r hr _
+      have hge : ∀ m : Nat, 9 ≤ m → r ≠ m :=
+        fun m hm => Nat.ne_of_lt (Nat.lt_of_lt_of_le hr hm)
+      rw [heval,
+        State.get_set_ne _ CliqueRelTM.SKIPR _ _ (hge 26 (by omega)),
+        hu17low r hr]
+
 /-! ## Structural fields (frame, `consLen`-freedom, op-supportedness) -/
 
 theorem binConvert_usesBelow : Cmd.UsesBelow binConvert 27 := by
