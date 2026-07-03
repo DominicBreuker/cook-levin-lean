@@ -867,14 +867,6 @@ theorem memberCheck_usesBelow : Cmd.UsesBelow memberCheck 16 := by
   simp only [memberCheck, mcBody, mcSkip, Cmd.UsesBelow, Op.UsesBelow]
   decide
 
-theorem memberCheck_noConsLen : Cmd.NoConsLen memberCheck := by
-  simp only [memberCheck, mcBody, mcSkip, Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-theorem memberCheck_allOpsSupported : Cmd.AllOpsSupported memberCheck := by
-  simp only [memberCheck, mcBody, mcSkip, Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
-
 /-! ### `processOneLiteral`: the unary-variable extraction loop -/
 
 /-- The var-extraction loop invariant: through iteration `v` the loop is
@@ -1395,16 +1387,6 @@ theorem processOneLiteral_usesBelow : Cmd.UsesBelow processOneLiteral 16 := by
     Cmd.UsesBelow, Op.UsesBelow, CNF_STREAM, ASSGN, CLAUSE_SAT, LIT_POL,
     LIT_VAR, ASSGN_COPY, MEMBER_FOUND, INNER_IDX, HEAD_CELL, CMP_FLAG,
     IN_BLOCK, BLOCK_ACC]
-
-theorem processOneLiteral_noConsLen : Cmd.NoConsLen processOneLiteral := by
-  simp only [processOneLiteral, varExtractBody, memberCheck, mcBody, mcSkip,
-    Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-theorem processOneLiteral_allOpsSupported : Cmd.AllOpsSupported processOneLiteral := by
-  simp only [processOneLiteral, varExtractBody, memberCheck, mcBody, mcSkip,
-    Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
 
 /-! ### `processOneClause`: the clause scan loop -/
 
@@ -1939,18 +1921,6 @@ theorem processOneClause_usesBelow : Cmd.UsesBelow processOneClause 16 := by
     CNF_STREAM, ASSGN, CLAUSE_SAT, LIT_POL, LIT_VAR, ASSGN_COPY, MEMBER_FOUND,
     CLAUSE_DONE, INNER_IDX, HEAD_CELL, CMP_FLAG, IN_BLOCK, BLOCK_ACC]
 
-/-- **(pinned, bottom-up)** `processOneClause` uses no `Op.consLen` (none is
-needed — the live path is `consLen`-free). -/
-theorem processOneClause_noConsLen : Cmd.NoConsLen processOneClause := by
-  simp only [processOneClause, clauseBody, processOneLiteral, varExtractBody,
-    memberCheck, mcBody, mcSkip, Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-theorem processOneClause_allOpsSupported : Cmd.AllOpsSupported processOneClause := by
-  simp only [processOneClause, clauseBody, processOneLiteral, varExtractBody,
-    memberCheck, mcBody, mcSkip, Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
-
 /-- The full SAT verifier. -/
 def evalCnfCmd : Cmd :=
   -- 1. Initialize OUTPUT := [1] (accept by default; reject on first
@@ -2362,18 +2332,6 @@ theorem evalCnfCmd_usesBelow : Cmd.UsesBelow evalCnfCmd 16 := by
     ∧ (OUTER_IDX < 16 ∧ CLAUSE_TALLY < 16 ∧ Cmd.UsesBelow processOneClause 16)
   exact ⟨(by decide : OUTPUT < 16), by decide, by decide,
     processOneClause_usesBelow⟩
-
-/-- **`consLen`-freedom (PROVEN from the pinned `processOneClause_noConsLen`).** -/
-theorem evalCnfCmd_noConsLen : Cmd.NoConsLen evalCnfCmd := by
-  show Op.NotConsLen (.appendOne OUTPUT) ∧ Cmd.NoConsLen processOneClause
-  exact ⟨trivial, processOneClause_noConsLen⟩
-
-/-- **Op-supportedness (Route A): `evalCnfCmd` uses only proven ops** (it is
-`takeAt`/`dropAt`/`consLen`-free), so its `compileOp_sound_physical_residue`
-discharge — and hence `SAT_inNP.sat_NP` — is axiom-clean. -/
-theorem evalCnfCmd_allOpsSupported : Cmd.AllOpsSupported evalCnfCmd := by
-  show Op.IsSupported (.appendOne OUTPUT) ∧ Cmd.AllOpsSupported processOneClause
-  exact ⟨trivial, processOneClause_allOpsSupported⟩
 
 /-! ## Construction notes (parsing the unary stream) — as built & proven
 

@@ -1066,15 +1066,6 @@ theorem cardConvert_usesBelow : Cmd.UsesBelow cardConvert 27 := by
     SCAN, VALX, FLAG, IDXO, IDXR, CliqueRelTM.HEAD, CliqueRelTM.INBLK,
     CliqueRelTM.SKIPR]
 
-theorem cardConvert_noConsLen : Cmd.NoConsLen cardConvert := by
-  simp only [cardConvert, cardStep, halfMove, blockMove, CliqueRelTM.readNum,
-    CliqueRelTM.cSkip, Cmd.NoConsLen, Op.NotConsLen]
-  trivial
-
-theorem cardConvert_allOpsSupported : Cmd.AllOpsSupported cardConvert := by
-  simp only [cardConvert, cardStep, halfMove, blockMove, CliqueRelTM.readNum,
-    CliqueRelTM.cSkip, Cmd.AllOpsSupported, Op.IsSupported]
-  trivial
 
 /-! ## Budget arithmetic -/
 
@@ -1171,8 +1162,6 @@ noncomputable def flatTCC_reductionLang :
   width_le := fun C => by
     show (encodeIn C).length ≤ 27
     simp [encodeIn]
-  noConsLen := cardConvert_noConsLen
-  allOpsSupported := cardConvert_allOpsSupported
   decode_agree := fun C m => by
     have hlen : (3 : Nat) < (encodeIn C).length := by simp [encodeIn]
     have hpad : State.get (encodeIn C ++ List.replicate m []) CARDS

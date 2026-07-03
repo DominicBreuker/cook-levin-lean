@@ -490,12 +490,7 @@ theorem compileOp_sound_physical_residue (sb : Nat) (o : Op) (s : State) (res_in
     -- **Operands live below the scratch base** (eqBit/concat only; from the gen lemma's
     -- `huses : Op.UsesBelow o k` with the scratch base `sb = k`). The eqBit gadget copies
     -- the operands into scratch `sb`/`sb+1`, so it needs them disjoint from scratch.
-    (hbsb : Op.UsesBelow o sb)
-    -- **Op-supportedness wall (Route A).** The trio `takeAt`/`dropAt`/`consLen`
-    -- is still stubbed (gated on the unary migration); this hypothesis discharges
-    -- their cases by `absurd` so the body is `sorry`-free. A concrete trio-free
-    -- decider (`evalCnfCmd`) supplies it through `Cmd.AllOpsSupported`.
-    (hsupp : Op.IsSupported o) :
+    (hbsb : Op.UsesBelow o sb) :
     ∃ (t : Nat) (res_out : List Nat),
       Compile.ValidResidue res_out ∧
       -- ① the **W-invariant** (joint size+residue grows by ≤ cost). Non-compounding;
