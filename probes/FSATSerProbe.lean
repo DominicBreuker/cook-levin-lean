@@ -1,4 +1,5 @@
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT
+import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_free
 import Complexity.Lang.Semantics
 
 open Complexity.Lang
@@ -177,3 +178,40 @@ def foldAnd (children : List formula) : List Nat :=
 #eval decide (foldAnd [] = serF (listAnd ([] : List formula))) -- true
 
 end FSATSerProbe
+
+/-! ## 4. The full `buildFSAT` program, END-TO-END (session 2, 2026-07-05)
+
+`buildFSAT.eval (encodeIn C)` at `FOUT` must equal `serF (BinaryCC_to_FSAT_instance
+C)`: on a wellformed `C` this is `serF (encodeTableau C)`; on a non-wellformed `C`
+it is `serF falseFml = [1,1,0,0,0]` (the on-machine guard `computeWF`). This is the
+go/no-go for the whole reduction program: it validates the tree serialization, the
+unary variable-index arithmetic (`line*L + step*offset (+i)` via mul-loops), AND
+the wellformedness guard, on real `BinaryCC` instances. All `true`. -/
+
+section FullProgram
+open BinaryCCFSATFree BinaryCCToFSAT
+
+/-- Program output register content on `encodeIn C`. -/
+def runOut (C : BinaryCC) : List Nat := (buildFSAT.eval (encodeIn C)).get FOUT
+
+def wfBig : BinaryCC where
+  offset := 2
+  width := 4
+  init := [true, false, true, false]
+  cards := [⟨[true, false, true, false], [false, true, false, true]⟩]
+  final := [[true, false]]
+  steps := 1
+
+-- wellformed → serF (encodeTableau C)  (= serF (BinaryCC_to_FSAT_instance C))
+#eval decide (runOut FSATSerProbe.tinyCC = serF (encodeTableau FSATSerProbe.tinyCC))  -- true
+#eval decide (runOut wfBig = serF (encodeTableau wfBig))                              -- true
+-- and the decode round-trip (the actual `decodeOut` path)
+#eval decide (decodeF (runOut FSATSerProbe.tinyCC) = some (encodeTableau FSATSerProbe.tinyCC))  -- true
+#eval decide (decodeF (runOut wfBig) = some (encodeTableau wfBig))                    -- true
+-- non-wellformed → serF falseFml = [1,1,0,0,0]
+#eval decide (runOut ({ FSATSerProbe.tinyCC with width := 0 } : BinaryCC) = [1,1,0,0,0])   -- true
+#eval decide (runOut ({ FSATSerProbe.tinyCC with offset := 0 } : BinaryCC) = [1,1,0,0,0])  -- true
+#eval decide (runOut ({ FSATSerProbe.tinyCC with cards := [⟨[true,true],[false]⟩] } : BinaryCC) = [1,1,0,0,0])  -- true
+#eval decide (runOut ({ FSATSerProbe.tinyCC with offset := 2, width := 1 } : BinaryCC) = [1,1,0,0,0])  -- true
+
+end FullProgram
