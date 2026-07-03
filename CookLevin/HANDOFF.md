@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-04)
+## Where the proof stands (2026-07-05)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -30,17 +30,31 @@ reasonably provable).
   fields, and the compiler chain threads no `hnc`/`hsupp`. **No bottom-up
   compiler debt remains.**
 
-## ★ This session (2026-07-04, bottom-up): trio + walls deleted (Route B DONE)
+## ★ This session (2026-07-05, top-down): `BinaryCC_to_FSAT` free witness — session 1 of 2 (design + probe + codec)
 
-Route-B cleanup complete (two commits): (1) `takeAt`/`dropAt`/`consLen` removed
-from `Op` and every pattern arm; (2) both walls removed — the
-`NoConsLen`/`IsSupported`+`AllOpsSupported` defs, the `noConsLen`/
-`allOpsSupported`/`mfc_*` fields on `DecidesLang`/`PolyTimeComputableLang`/
-`FreePrecomposeData`/`SeamData`, the `hnc`/`hsupp`/`hnc_body` threading through
-the compiler + `forBnd` chain, and all supplier theorems. `Op`/`Cmd`
-`.eval_preserves_BitState` are now unconditional. **No soundness change** (the
-walls were already vacuous); all headline axioms unchanged. The compiler is now
-a clean, minimal surface for the remaining hardness-side work.
+Target #2's **crux risk resolved and de-risked** (the FSAT output `formula` is a
+nested inductive TREE, unlike every prior flat-list output). Deliverables, all
+green & axiom-clean:
+
+- **Design GO** via prefix (Polish) bit-serialization of the tree into ONE output
+  register, built by forward `forBnd` token-emit loops. Key algebraic fact:
+  `serF (listAnd fs) = (⋃ᵢ fandTag ++ serF fᵢ) ++ ftrueTag` — the tree's nesting
+  collapses into emission ORDER, exactly what counted loops do. All four design
+  questions RESOLVED (see below).
+- **`probes/FSATSerProbe.lean`** (go/no-go, exit 0): serialization round-trips on
+  a REAL 194-token `encodeTableau`; a real `Cmd` (`emitBits`) reproduces
+  `serF (encodeBitsAt start bs)` incl. the variable-index arithmetic
+  (`start+i` unary = `concat` of a start register with the `forBnd` counter);
+  the `listAnd` fold shape matches.
+- **`Reductions/BinaryCC_to_FSAT_free.lean`** (built, imported by `Complexity.lean`):
+  the output codec `serF`/`deserF`/`decodeF` with the **PROVEN round-trip**
+  `decodeF_serF` (the injectivity backbone of `decodeOut`) + `decodeOut_of_serF`;
+  the pinned input/output register layout; and the probe-validated emitter
+  building blocks (`emitTag`/`emitVar`/`emitLit`/`emitBitsAt`) as `Cmd` data. The
+  in-file DESIGN+NEXT-SESSION block is the session-2 spec.
+
+**No headline-axiom change** (pure addition; `CookLevin` unchanged). This is
+foundation only — the full program + run/cost lemmas are session 2.
 
 **Composite tail exit layout** (unchanged; what the NEXT tail seam
 re-encodes/scrubs): BinaryCC outputs at regs 17 `offset`/18 `width`/19 `init`
@@ -118,36 +132,51 @@ non-vacuous. Pervasive but mechanical (~0.5–1K LOC). Approach:
 3. **Probe first**: `#eval` the chosen `size` on a couple of instances and
    confirm the witness `encodeIn_size : ≤ 2·size+1` still holds before proving.
 
-A lighter bottom-up alternative if Part 0.1 is deferred: build the
-`map`-over-lists gadget the Tseytin tail needs (near-complete draft at
-`parked/MapNatList_WIP.lean`) — a pure support lemma for the top-down
-`BinaryCC_to_FSAT`, decouplable from Part 0.1.
+Part 0.1 is now the **sole** open bottom-up item: the previously-suggested
+`map`-over-lists gadget (`parked/MapNatList_WIP.lean`) is **no longer needed** —
+the top-down `BinaryCC_to_FSAT` builder uses nested `forBnd` token-emit loops,
+not a list-map (resolved 2026-07-05). If Part 0.1 feels too big to start cold,
+scope it first (the grep + per-type `size` list in step 1) and land the leaf
+types as a standalone commit.
 
-## NEXT TOP-DOWN session — target #2 continues: `BinaryCC_to_FSAT` (Tseytin)
+## NEXT TOP-DOWN session — target #2 **session 2 of 2**: finish `BinaryCC_to_FSAT`
 
 All remaining `sorryAx` on `CookLevin`/`Clique_complete` is hardness-side.
-Ordered:
+The design is settled and the codec is proven (this session). **Session 2 =
+build the program + run/cost lemmas**, in `Reductions/BinaryCC_to_FSAT_free.lean`.
+Read its in-file DESIGN+NEXT-SESSION block first; it is the spec. Ordered:
 
-1. **`BinaryCC_to_FSAT` (Tseytin) as a free witness — the expensive tail item**
-   (~1K-LOC formula builder re-expressed as a `Cmd`). Work the design
-   questions FIRST, in this order:
-   (a) guard-or-no-guard: BinaryCC has no flattening validity, but check
-       whether the existing reduction guards on anything else — probe on
-       paper;
-   (b) the output `formula` type needs an injective register layout — design
-       `encKey` for FSAT formulas (nested structure: likely the `encSList`
-       sentinel-nesting pattern one level deeper) and `#eval`-probe the
-       program (`probes/` pattern) BEFORE proving;
-   (c) pin the witness's input layout to the composite exit frame recorded
-       above (BinaryCC in regs 17/18/19/20/21/5) so its seam is again a
-       near-pure scrub — the seam's `mfc` may also need short copies if fresh
-       input regs are preferred; budget either way;
-   (d) `map`-over-lists may be needed — near-complete draft at
-       `parked/MapNatList_WIP.lean`.
-   Budget: likely 2 sessions (the formula builder iterates over window
-   positions — nested loops like `checkNodup`'s, plus formula-list append
-   gadgets). Decompose: probe + encodings + program skeleton first, run
-   lemmas second.
+1. **`encodeIn : BinaryCC → State`** pinned to the exit frame (regs
+   17/18/19/20/21/5), formats matching `FlatCCBinFree`'s outputs; prove
+   `encodeIn_size ≤ 2·size+1` (all unary/bit — no doubling). ⚠ Watch:
+   `decode_agree`/`usesBelow`/`width_le`/`enc_bit` are the same shape as
+   `flatCCBin_reductionLang` — copy that witness's discharge.
+2. **`buildFSAT : Cmd`** mirroring `encodeTableau` node-for-node (FOUR nested
+   loops line/step/card/bit + the wellformedness GUARD). Absolute var indices
+   `line*L + step*offset (+ i)` computed unary via `concat`/`mulLoop` from the
+   loop counters (thread a running `BASE` register). Reuse the probe-validated
+   `emitBitsAt` + `FlatCC_to_BinaryCC_free`'s `sentStep`/`mulLoop`/`remCheck`.
+   **`#eval`-probe `buildFSAT` end-to-end against `serF (BinaryCC_to_FSAT_instance C)`
+   on `tinyCC` BEFORE proving** (extend `FSATSerProbe`).
+3. **Run/cost lemmas** bottom-up (templates in `FlatCC_to_BinaryCC_free.lean`):
+   `emitBitsAt_run` (fold invariant) → the `listAnd`/`listOr` loop lemmas →
+   `buildFSAT_run : (buildFSAT.eval (encodeIn C)).get FOUT =
+   serF (BinaryCC_to_FSAT_instance C)`. Then `computes` = `decodeOut_of_serF` +
+   `buildFSAT_run`; correctness reuses the sound `encodeTableau_correct`.
+   Cost is a low-degree polynomial (nested-loop product; confirm the degree
+   with a `cost_forBnd_le` accounting pass, cf. CliqueRel's quartic→quintic).
+4. **The seam** `Reductions/BinaryCC_to_FSAT_comp.lean` (copy
+   `FlatTCC_to_BinaryCC_comp.lean`): a near-pure scrub joining
+   `flatTCC_to_binaryCC_witness`'s exit to this witness → the whole sound tail
+   `FlatTCC → … → FSAT` as ONE composed live `⪯p'`.
+
+**Design questions — all RESOLVED this session** (details in the built file's
+DESIGN block): (a) **GUARDED** on `BinaryCC_wellformed` (the sound reduction
+guards; reproduce it on-machine, write `serF falseFml = [1,1,0,0,0]` on reject);
+(b) **codec DONE & PROVEN** (`serF`/`decodeF`/`decodeF_serF`); (c) **input pinned**
+to 17/18/19/20/21/5; (d) **`map`-over-lists NOT needed** — nested `forBnd`
+token-emit suffices, so `parked/MapNatList_WIP.lean` stays parked.
+
 2. **`FSAT_to_SAT` as a free witness + its seam** (smaller; CNF conversion).
    After it, the whole sound tail `FlatTCC → … → SAT` is ONE composable
    witness chain.
@@ -196,6 +225,11 @@ Ordered:
 - **The live seam** (`Reductions/FlatTCC_to_BinaryCC_comp.lean`): `scrub` +
   `scrub_eval`/`scrub_cost`, `flatTCC_to_binaryCC_seam`, the composed witness
   + `flatTCC_to_binaryCC_reducesPolyMO'`.
+- **The FSAT output codec** (`Reductions/BinaryCC_to_FSAT_free.lean`, 2026-07-05):
+  `serF`/`deserF`/`decodeF` (prefix/Polish bit-serialization of the `formula`
+  tree) + the PROVEN round-trip `decodeF_serF` + `decodeOut_of_serF` — the
+  injectivity backbone of the target-#2 witness's `decodeOut`. This is the
+  reusable pattern for any TREE-typed reduction output.
 - **The flatTCC free-reduction stack** (`Reductions/FlatTCC_to_FlatCC_free.lean`):
   `blockMove_run`/`halfMove_run`, `cardStep_step`, `encSList` +
   `encSList_append_inj`, `encKey_injective`/`extractKey`,
