@@ -136,28 +136,15 @@ theorem Op.inBounds_of_UsesBelow (o : Op) (k : Nat) (s : State)
       exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
              Nat.lt_of_lt_of_le h.2.2 hk⟩
   | nonEmpty dst src => exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2 hk⟩
-  | takeAt dst src l =>
-      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
-             Nat.lt_of_lt_of_le h.2.2 hk⟩
-  | dropAt dst src l =>
-      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
-             Nat.lt_of_lt_of_le h.2.2 hk⟩
   | concat dst a b =>
       exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.1 hk,
              Nat.lt_of_lt_of_le h.2.2 hk⟩
-  | consLen dst l src =>
-      -- `Op.inBounds` orders consLen's last two as `src, lenSrc`; `UsesBelow` as
-      -- `lenSrc, src` — so the second/third components swap.
-      exact ⟨Nat.lt_of_lt_of_le h.1 hk, Nat.lt_of_lt_of_le h.2.2 hk,
-             Nat.lt_of_lt_of_le h.2.1 hk⟩
 
-/-- An op other than `consLen`. `consLen` is the unique op that can break
-`BitState` (`Op.consLen_breaks_BitState`); this is the (temporary) syntactic
-condition under which `BitState` preservation is unconditional. HANDOFF bottom-up Task 4 restates
-`consLen` to write a unary block, after which the side-condition is discharged
-for free and this predicate can be dropped. -/
+/-- **Vestigial wall (all ops now bit-safe).** Formerly excluded the `consLen`
+op, which was the unique op that could break `BitState`. The trio
+(`takeAt`/`dropAt`/`consLen`) is deleted, so this is now trivially `True` for
+every op and its threading is scheduled for removal (HANDOFF Phase 2). -/
 def Op.NotConsLen : Op → Prop
-  | .consLen _ _ _ => False
   | _ => True
 
 /-- A `Cmd` with no `consLen` op anywhere. -/
@@ -186,11 +173,8 @@ theorem Cmd.eval_preserves_BitState (c : Cmd) (k : Nat) (s : State)
     Compile.BitState (c.eval s) := by
   induction c generalizing s with
   | op o =>
-      refine Op.eval_preserves_BitState o s hbit
-        (Op.inBounds_of_UsesBelow o k s huses hk) ?_
-      intro dst lenSrc src heq
-      subst heq
-      simp only [Cmd.NoConsLen, Op.NotConsLen] at hnc
+      exact Op.eval_preserves_BitState o s hbit
+        (Op.inBounds_of_UsesBelow o k s huses hk)
   | seq c1 c2 ih1 ih2 =>
       rw [Cmd.eval_seq]
       have hbit1 : Compile.BitState (c1.eval s) := ih1 s huses.1 hk hnc.1 hbit

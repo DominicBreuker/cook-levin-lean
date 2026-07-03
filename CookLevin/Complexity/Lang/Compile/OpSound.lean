@@ -699,13 +699,10 @@ theorem compileOp_sound_physical_residue (sb : Nat) (o : Op) (s : State) (res_in
         rw [hv] at h
         simp only [Op.eval, Op.cost, List.length_append, List.length_replicate]
         omega
-  | takeAt dst src lenReg => simp only [Op.IsSupported] at hsupp
-  | dropAt dst src lenReg => simp only [Op.IsSupported] at hsupp
   | concat dst src1 src2 =>
       obtain ⟨hdst_sb, hsrc1_sb, hsrc2_sb⟩ := hbsb
       exact Compile.opConcat_run s sb dst src1 src2 hbit hbnd.1 hbnd.2.1 hbnd.2.2
         hsb1 hsbe hdst_sb hsrc1_sb hsrc2_sb res_in hres_in
-  | consLen dst lenSrc src => simp only [Op.IsSupported] at hsupp
 
 /-- **Physical-contract `compileSeq` composition (PROVEN).** Given two
 sub-machines each satisfying the physical contract (head-`0` exit, exact tape,

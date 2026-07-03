@@ -918,10 +918,6 @@ def compileOp (sb : Nat) : Op → CompiledCmd
   | .eqBit dst src1 src2       => Compile.opEqBit sb dst src1 src2
   | .nonEmpty dst src          => Compile.opNonEmpty dst src
   | .concat dst src1 src2      => Compile.opConcat sb dst src1 src2
-  -- Length-as-value ops (C5a). Stubs, gated on the unary migration (HANDOFF).
-  | .takeAt _dst _src _lenReg  => compiledCmd_default
-  | .dropAt _dst _src _lenReg  => compiledCmd_default
-  | .consLen _dst _lenSrc _src => compiledCmd_default
 
 /-! ## The compiler -/
 
