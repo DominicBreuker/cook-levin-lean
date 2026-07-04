@@ -13,17 +13,25 @@ def SingleTMGenNP
   match i with
   | ⟨sig, (_, _s, maxSize, _steps)⟩ => ∃ cert : List sig, isValidCert maxSize cert
 
+/-- The single-tape universal front problem, in the Coq original's form
+(C8 finding F2, fixed 2026-07-04): the instance's strings are over the
+*machine's* alphabet (`list_ofFlatType M.sig`, NOT the earlier port bug
+`list_ofFlatType 1`, which admitted only all-zero strings), and the machine
+is single-tape (`M.tapes = 1`). Acceptance is accept-by-HALTING
+(`acceptsFlatTM` = a halt state is reached within `steps`). -/
 def FlatSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop
   | (M, s, maxSize, steps) =>
-      validFlatTM M ∧
-      list_ofFlatType 1 s ∧
-      ∃ cert, list_ofFlatType 1 cert ∧ isValidCert maxSize cert ∧ acceptsFlatTM M [s ++ cert] steps = true
+      validFlatTM M ∧ M.tapes = 1 ∧
+      list_ofFlatType M.sig s ∧
+      ∃ cert, list_ofFlatType M.sig cert ∧ isValidCert maxSize cert ∧
+        acceptsFlatTM M [s ++ cert] steps = true
 
 def FlatFunSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop
   | (M, s, maxSize, steps) =>
-      validFlatTM M ∧
-      list_ofFlatType 1 s ∧
-      ∃ cert, list_ofFlatType 1 cert ∧ isValidCert maxSize cert ∧ acceptsFlatTM M [s ++ cert] steps = true
+      validFlatTM M ∧ M.tapes = 1 ∧
+      list_ofFlatType M.sig s ∧
+      ∃ cert, list_ofFlatType M.sig cert ∧ isValidCert maxSize cert ∧
+        acceptsFlatTM M [s ++ cert] steps = true
 
 theorem vec_case1 (X : Type) (v : List X) :
     v.length = 1 → ∃ x, v = [x] := by
@@ -55,8 +63,8 @@ theorem validFlatTM_default_valid : validFlatTM validFlatTM_default := by
 
 theorem flatSingleTMGenNP_yes :
     FlatSingleTMGenNP (validFlatTM_default, [], 0, 0) := by
-  refine ⟨validFlatTM_default_valid, list_ofFlatType_nil 1, ?_⟩
-  refine ⟨[], list_ofFlatType_nil 1, by simp [isValidCert], ?_⟩
+  refine ⟨validFlatTM_default_valid, rfl, list_ofFlatType_nil _, ?_⟩
+  refine ⟨[], list_ofFlatType_nil _, by simp [isValidCert], ?_⟩
   simp [acceptsFlatTM, execFlatTM, runFlatTM, haltingStateReached, validFlatTM_default,
     initFlatConfig, isValidFlatTapes, isValidFlatTape]
 

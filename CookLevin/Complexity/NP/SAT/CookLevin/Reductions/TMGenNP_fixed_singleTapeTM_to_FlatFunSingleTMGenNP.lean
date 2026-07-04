@@ -19,7 +19,7 @@ theorem flatFunSingleTMGenNP_yesInstance_mem :
 theorem flatFunSingleTMGenNP_noInstance_not_mem :
     ¬ FlatFunSingleTMGenNP flatFunSingleTMGenNP_noInstance := by
   intro h
-  rcases h with ⟨_, hs, _⟩
+  rcases h with ⟨_, _, hs, _⟩
   have : ofFlatType 1 1 := hs 1 (by simp [flatFunSingleTMGenNP_noInstance])
   simpa [ofFlatType] using this
 
