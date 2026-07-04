@@ -8,12 +8,12 @@ class encodable (α : Sort u) where
   size : α → Nat
   size_ge_logical : ∀ x : α, ∃ n : Nat, size x ≥ n
 
--- Default instance for types without explicit encoding
--- This provides size 0 for all values, which should be overridden
--- by specific instances that provide meaningful sizes
-instance (priority := low) instEncodableDefault (α : Sort u) : encodable α where
-  size := fun _ => 0
-  size_ge_logical := fun _ => ⟨0, by simp⟩
+-- Part 0.1 (2026-07): the size-0 low-priority default instance
+-- (`instEncodableDefault`) was REMOVED. Over a size-0 type every output-size
+-- bound is vacuously satisfiable (`fun _ => 0`), which silently voided the
+-- hardness-side reductions. Every type on the proof path now carries a real
+-- `encodable.size`; a type without an instance is a compile error by design —
+-- add a real instance next to the type, never a size-0 fallback.
 
 instance : encodable Nat where
   size := id

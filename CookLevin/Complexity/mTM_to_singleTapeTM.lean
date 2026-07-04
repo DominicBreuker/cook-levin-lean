@@ -85,7 +85,7 @@ abbrev ExplicitTMTarget {σ : finType} [encodable σ] (_M : TM σ 1) : TMGenNPFi
       @certificateMeasure (List σ) (@instEncodableList σ ‹encodable σ›) cert ≤ inst.maxSize ∧
         inst.accepts cert
 
-theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} (M : TM σ 2) :
+theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} [encodable σ] (M : TM σ 2) :
     mTMGenNP_fixed M ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono M)) := by
   refine ⟨⟨multiTapeToSingleTapeInput M, ?_, fun {inst} => ?_⟩⟩
   · refine ⟨⟨fun n => n, inOPoly_id, fun a b hab => hab, ?_⟩⟩
