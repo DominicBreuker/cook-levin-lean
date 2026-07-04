@@ -589,27 +589,382 @@ theorem emitBitsFromScan_run (BASE bound start : Nat) (bits : List Bool) (u : St
   · rw [emitFtrue_run, State.get_set_eq, hOUTl, List.take_of_length_le (le_refl bits.length),
       List.append_assoc, ← serF_encodeBitsAt]
 
+/-- One iteration of the sentinel-stream bit emitter (the body of
+`emitBitsFromSent`'s loop, factored out so its run lemma can name it): idle
+when `DONE` is set; otherwise read the item marker off `SCAN` — an element
+`1 1^b 0` emits its literal (and consumes `b+2` cells), the bare terminator
+`0` sets `DONE`. -/
+def sentBitBody (BASE : Nat) : Cmd :=
+  Cmd.ifBit DONE
+    (Cmd.op (.clear ZERO))
+    ( Cmd.op (.head EMARK SCAN) ;;
+      Cmd.ifBit EMARK
+        ( Cmd.op (.tail SCAN SCAN) ;;
+          Cmd.op (.head TFLG SCAN) ;;
+          Cmd.op (.concat WREG BASE KBIT) ;;
+          emitFandTag ;;
+          emitLitAt ;;
+          Cmd.ifBit TFLG
+            (Cmd.op (.tail SCAN SCAN) ;; Cmd.op (.tail SCAN SCAN))
+            (Cmd.op (.tail SCAN SCAN)) )
+        ( Cmd.op (.tail SCAN SCAN) ;;
+          Cmd.op (.clear DONE) ;; Cmd.op (.appendOne DONE) ) )
+
 /-- `serF (encodeBitsAt start bits)` reading one `encSList` of bits off `SCAN`
 (elements `1 1^b 0`, terminator bare `0`), leaving `SCAN` after the terminator.
 `BASE = 1^start`; bit `i`'s index is `concat(BASE, 1^i)`. -/
 def emitBitsFromSent (BASE : Nat) : Cmd :=
   Cmd.op (.clear DONE) ;;
-  Cmd.forBnd KBIT SCAN
-    ( Cmd.ifBit DONE
-        (Cmd.op (.clear ZERO))
-        ( Cmd.op (.head EMARK SCAN) ;;
-          Cmd.ifBit EMARK
-            ( Cmd.op (.tail SCAN SCAN) ;;
-              Cmd.op (.head TFLG SCAN) ;;
-              Cmd.op (.concat WREG BASE KBIT) ;;
-              emitFandTag ;;
-              emitLitAt ;;
-              Cmd.ifBit TFLG
-                (Cmd.op (.tail SCAN SCAN) ;; Cmd.op (.tail SCAN SCAN))
-                (Cmd.op (.tail SCAN SCAN)) )
-            ( Cmd.op (.tail SCAN SCAN) ;;
-              Cmd.op (.clear DONE) ;; Cmd.op (.appendOne DONE) ) ) ) ;;
+  Cmd.forBnd KBIT SCAN (sentBitBody BASE) ;;
   emitFtrue
+
+/-! ### `emitBitsFromSent_run` — the sentinel-stream bit-list leaf lemma
+
+Same conclusion as `emitBitsFromScan_run` plus the extra clause the HANDOFF
+plan calls for: `SCAN` ends up **past the terminator** (at the trailing
+`rest`), so the caller (`emitCardsAt`) can chain two invocations (prem, conc)
+off one card stream. The invariant is two-phase, split at `bits.length`:
+before the terminator, iteration `i` consumes bit `i`'s sentinel element
+(`DONE` clear, `SCAN` mid-stream); at `i = bits.length` the bare `0` flips
+`DONE`; after it, iterations idle (re-clearing the always-empty `ZERO`, hence
+the `ZERO` entry hypothesis and exit clause). -/
+
+/-- The two-phase fold invariant for `sentBitBody`. -/
+private def SBInv (BASE start : Nat) (bits : List Bool) (rest : List Nat)
+    (u : State) (i : Nat) (st : State) : Prop :=
+  (i ≤ bits.length →
+      State.get st DONE = []
+      ∧ State.get st SCAN
+          = FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop i)) ++ rest
+      ∧ State.get st OUT = State.get u OUT ++ bitsPrefix start (bits.take i))
+  ∧ (bits.length < i →
+      State.get st DONE = [1]
+      ∧ State.get st SCAN = rest
+      ∧ State.get st OUT = State.get u OUT ++ bitsPrefix start bits)
+  ∧ State.get st ZERO = []
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+      r ≠ DONE → r ≠ EMARK → r ≠ ZERO → State.get st r = State.get u r)
+
+private theorem SBInv_step (BASE start : Nat) (bits : List Bool) (rest : List Nat)
+    (u : State)
+    (hBS : BASE ≠ SCAN) (hBO : BASE ≠ OUT) (hBW : BASE ≠ WREG) (hBT : BASE ≠ TFLG)
+    (hBK : BASE ≠ KBIT) (hBD : BASE ≠ DONE) (hBE : BASE ≠ EMARK) (hBZ : BASE ≠ ZERO)
+    (hB : State.get u BASE = List.replicate start 1)
+    (i : Nat) (st : State) (h : SBInv BASE start bits rest u i st) :
+    SBInv BASE start bits rest u (i + 1)
+      ((sentBitBody BASE).eval (st.set KBIT (List.replicate i 1))) := by
+  obtain ⟨hph1, hph2, hZERO, hframe⟩ := h
+  rcases Nat.lt_trichotomy i bits.length with hi | hi | hi
+  · -- live bit iteration: consume one sentinel element, emit one tagged literal
+    obtain ⟨hDONE, hSCAN, hOUT⟩ := hph1 (le_of_lt hi)
+    set w := st.set KBIT (List.replicate i 1) with hw
+    have hwframe : ∀ r : Var, r ≠ KBIT → State.get w r = State.get st r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hwK : State.get w KBIT = List.replicate i 1 := State.get_set_eq _ _ _
+    have hwD : State.get w DONE = [] := by
+      rw [hwframe DONE (by decide)]; exact hDONE
+    have hwZ : State.get w ZERO = [] := by
+      rw [hwframe ZERO (by decide)]; exact hZERO
+    have hwOUT : State.get w OUT = State.get u OUT ++ bitsPrefix start (bits.take i) := by
+      rw [hwframe OUT (by decide)]; exact hOUT
+    have hwBASE : State.get w BASE = List.replicate start 1 := by
+      rw [hwframe BASE hBK, hframe BASE hBS hBO hBW hBT hBK hBD hBE hBZ]; exact hB
+    have hdrop : bits.drop i = bits[i] :: bits.drop (i + 1) := List.drop_eq_getElem_cons hi
+    have htake : bits.take (i + 1) = bits.take i ++ [bits[i]] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hi]; rfl
+    set b := bits[i] with hb
+    clear_value b
+    set T := FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop (i + 1))) ++ rest
+      with hT
+    have hSCANw : State.get w SCAN = 1 :: (List.replicate (cond b 1 0) 1 ++ 0 :: T) := by
+      rw [hwframe SCAN (by decide), hSCAN, hdrop, hT]
+      show (FlatTCCFree.encSElem (cond b 1 0)
+          ++ FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop (i + 1)))) ++ rest = _
+      rw [List.append_assoc, FlatTCCFree.encSElem_append]
+    clear_value w
+    have hDONEne : State.get w DONE ≠ [1] := by rw [hwD]; decide
+    -- step 1: head EMARK SCAN  (the element marker `1`)
+    have e1 : (Cmd.op (.head EMARK SCAN)).eval w = w.set EMARK [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hSCANw]
+    set w1 := w.set EMARK [1] with hw1
+    have hw1frame : ∀ r : Var, r ≠ EMARK → State.get w1 r = State.get w r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw1E : State.get w1 EMARK = [1] := State.get_set_eq _ _ _
+    have hw1SCAN : State.get w1 SCAN = 1 :: (List.replicate (cond b 1 0) 1 ++ 0 :: T) := by
+      rw [hw1frame SCAN (by decide)]; exact hSCANw
+    clear_value w1
+    -- step 2: tail SCAN SCAN  (drop the marker)
+    have e2 : (Cmd.op (.tail SCAN SCAN)).eval w1
+        = w1.set SCAN (List.replicate (cond b 1 0) 1 ++ 0 :: T) := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hw1SCAN, List.tail_cons]
+    set w2 := w1.set SCAN (List.replicate (cond b 1 0) 1 ++ 0 :: T) with hw2
+    have hw2frame : ∀ r : Var, r ≠ SCAN → State.get w2 r = State.get w1 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw2SCAN : State.get w2 SCAN = List.replicate (cond b 1 0) 1 ++ 0 :: T :=
+      State.get_set_eq _ _ _
+    clear_value w2
+    -- step 3: head TFLG SCAN  (the bit)
+    have e3 : (Cmd.op (.head TFLG SCAN)).eval w2 = w2.set TFLG [cond b 1 0] := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, hw2SCAN]
+      cases b <;> rfl
+    set w3 := w2.set TFLG [cond b 1 0] with hw3
+    have hw3frame : ∀ r : Var, r ≠ TFLG → State.get w3 r = State.get w2 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw3T : State.get w3 TFLG = [cond b 1 0] := State.get_set_eq _ _ _
+    have hw3SCAN : State.get w3 SCAN = List.replicate (cond b 1 0) 1 ++ 0 :: T := by
+      rw [hw3frame SCAN (by decide)]; exact hw2SCAN
+    have hw3BASE : State.get w3 BASE = List.replicate start 1 := by
+      rw [hw3frame BASE hBT, hw2frame BASE hBS, hw1frame BASE hBE]; exact hwBASE
+    have hw3K : State.get w3 KBIT = List.replicate i 1 := by
+      rw [hw3frame KBIT (by decide), hw2frame KBIT (by decide),
+        hw1frame KBIT (by decide)]; exact hwK
+    have hw3OUT : State.get w3 OUT = State.get w OUT := by
+      rw [hw3frame OUT (by decide), hw2frame OUT (by decide), hw1frame OUT (by decide)]
+    clear_value w3
+    -- step 4: concat WREG BASE KBIT  (the absolute var index `1^(start+i)`)
+    have e4 : (Cmd.op (.concat WREG BASE KBIT)).eval w3
+        = w3.set WREG (List.replicate (start + i) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, hw3BASE, hw3K]
+      congr 1
+      rw [List.replicate_add]
+    set w4 := w3.set WREG (List.replicate (start + i) 1) with hw4
+    have hw4frame : ∀ r : Var, r ≠ WREG → State.get w4 r = State.get w3 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw4W : State.get w4 WREG = List.replicate (start + i) 1 := State.get_set_eq _ _ _
+    clear_value w4
+    -- step 5: emitFandTag
+    set w5 := emitFandTag.eval w4 with hw5
+    have hw5frame : ∀ r : Var, r ≠ OUT → State.get w5 r = State.get w4 r := by
+      intro r hr; rw [hw5]; exact emitFandTag_frame w4 r hr
+    have e5OUT : State.get w5 OUT = State.get w4 OUT ++ [0, 1] := by
+      rw [hw5, emitFandTag_run]; exact State.get_set_eq _ _ _
+    clear_value w5
+    -- step 6: emitLitAt
+    have hw5T : State.get w5 TFLG = [cond b 1 0] := by
+      rw [hw5frame TFLG (by decide), hw4frame TFLG (by decide)]; exact hw3T
+    have hTb : State.get w5 TFLG = if b then [1] else [0] := by
+      rw [hw5T]; cases b <;> rfl
+    have hw5W : State.get w5 WREG = List.replicate (start + i) 1 := by
+      rw [hw5frame WREG (by decide)]; exact hw4W
+    set w6 := emitLitAt.eval w5 with hw6
+    have hw6frame : ∀ r : Var, r ≠ OUT → State.get w6 r = State.get w5 r := by
+      intro r hr; rw [hw6]; exact emitLitAt_frame w5 r hr
+    have e6OUT : State.get w6 OUT = State.get w5 OUT ++ serF (litFor b (start + i)) := by
+      rw [hw6, emitLitAt_run w5 b (start + i) hTb hw5W]; exact State.get_set_eq _ _ _
+    clear_value w6
+    have hw6SCAN : State.get w6 SCAN = List.replicate (cond b 1 0) 1 ++ 0 :: T := by
+      rw [hw6frame SCAN (by decide), hw5frame SCAN (by decide),
+        hw4frame SCAN (by decide)]; exact hw3SCAN
+    have hw6T : State.get w6 TFLG = [cond b 1 0] := by
+      rw [hw6frame TFLG (by decide)]; exact hw5T
+    -- step 7: consume the element's `1^b ++ [0]` cells (two tails or one)
+    have eF : (Cmd.ifBit TFLG (Cmd.op (.tail SCAN SCAN) ;; Cmd.op (.tail SCAN SCAN))
+        (Cmd.op (.tail SCAN SCAN))).eval w6 = w6.set SCAN T := by
+      cases b with
+      | true =>
+          have hT1 : State.get w6 TFLG = [1] := hw6T
+          have hS1 : State.get w6 SCAN = 1 :: 0 :: T := hw6SCAN
+          rw [Cmd.eval_ifBit_true _ _ _ _ hT1]
+          have et1 : (Cmd.op (.tail SCAN SCAN)).eval w6 = w6.set SCAN (0 :: T) := by
+            rw [Cmd.eval_op]; simp only [Op.eval, hS1, List.tail_cons]
+          rw [Cmd.eval_seq, et1, Cmd.eval_op]
+          simp only [Op.eval, State.get_set_eq, List.tail_cons, State.set_set]
+      | false =>
+          have hT0 : State.get w6 TFLG ≠ [1] := by rw [hw6T]; decide
+          have hS0 : State.get w6 SCAN = 0 :: T := hw6SCAN
+          rw [Cmd.eval_ifBit_false _ _ _ _ hT0, Cmd.eval_op]
+          simp only [Op.eval, hS0, List.tail_cons]
+    set wF := w6.set SCAN T with hwF
+    have hwFframe : ∀ r : Var, r ≠ SCAN → State.get wF r = State.get w6 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hwFSCAN : State.get wF SCAN = T := State.get_set_eq _ _ _
+    have heval : (sentBitBody BASE).eval w = wF := by
+      unfold sentBitBody
+      rw [Cmd.eval_ifBit_false _ _ _ _ hDONEne, Cmd.eval_seq, e1,
+        Cmd.eval_ifBit_true _ _ _ _ hw1E, Cmd.eval_seq, e2, Cmd.eval_seq, e3,
+        Cmd.eval_seq, e4, Cmd.eval_seq, ← hw5, Cmd.eval_seq, ← hw6, eF]
+    rw [heval]
+    refine ⟨fun _ => ⟨?_, ?_, ?_⟩, fun hlt => absurd hlt (by omega), ?_, ?_⟩
+    · rw [hwFframe DONE (by decide), hw6frame DONE (by decide),
+        hw5frame DONE (by decide), hw4frame DONE (by decide),
+        hw3frame DONE (by decide), hw2frame DONE (by decide),
+        hw1frame DONE (by decide)]
+      exact hwD
+    · rw [hwFSCAN]
+    · rw [hwFframe OUT (by decide), e6OUT, e5OUT, hw4frame OUT (by decide),
+        hw3OUT, hwOUT, htake, bitsPrefix_append, List.length_take,
+        Nat.min_eq_left (le_of_lt hi)]
+      simp [bitsPrefix, List.append_assoc]
+    · rw [hwFframe ZERO (by decide), hw6frame ZERO (by decide),
+        hw5frame ZERO (by decide), hw4frame ZERO (by decide),
+        hw3frame ZERO (by decide), hw2frame ZERO (by decide),
+        hw1frame ZERO (by decide)]
+      exact hwZ
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8
+      rw [hwFframe r h1, hw6frame r h2, hw5frame r h2, hw4frame r h3,
+        hw3frame r h4, hw2frame r h1, hw1frame r h7, hwframe r h5,
+        hframe r h1 h2 h3 h4 h5 h6 h7 h8]
+  · -- terminator iteration: consume the bare `0`, set DONE
+    subst hi
+    obtain ⟨hDONE, hSCAN, hOUT⟩ := hph1 (le_refl _)
+    rw [List.take_of_length_le (le_refl bits.length)] at hOUT
+    set w := st.set KBIT (List.replicate bits.length 1) with hw
+    have hwframe : ∀ r : Var, r ≠ KBIT → State.get w r = State.get st r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hwD : State.get w DONE = [] := by
+      rw [hwframe DONE (by decide)]; exact hDONE
+    have hwZ : State.get w ZERO = [] := by
+      rw [hwframe ZERO (by decide)]; exact hZERO
+    have hwOUT : State.get w OUT = State.get u OUT ++ bitsPrefix start bits := by
+      rw [hwframe OUT (by decide)]; exact hOUT
+    have hSCANw : State.get w SCAN = 0 :: rest := by
+      rw [hwframe SCAN (by decide), hSCAN, List.drop_eq_nil_of_le (le_refl bits.length)]
+      rfl
+    clear_value w
+    have hDONEne : State.get w DONE ≠ [1] := by rw [hwD]; decide
+    have e1 : (Cmd.op (.head EMARK SCAN)).eval w = w.set EMARK [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hSCANw]
+    set w1 := w.set EMARK [0] with hw1
+    have hw1frame : ∀ r : Var, r ≠ EMARK → State.get w1 r = State.get w r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw1E : State.get w1 EMARK = [0] := State.get_set_eq _ _ _
+    have hw1SCAN : State.get w1 SCAN = 0 :: rest := by
+      rw [hw1frame SCAN (by decide)]; exact hSCANw
+    clear_value w1
+    have hw1Ene : State.get w1 EMARK ≠ [1] := by rw [hw1E]; decide
+    have e2 : (Cmd.op (.tail SCAN SCAN)).eval w1 = w1.set SCAN rest := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hw1SCAN, List.tail_cons]
+    set w2 := w1.set SCAN rest with hw2
+    have hw2frame : ∀ r : Var, r ≠ SCAN → State.get w2 r = State.get w1 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw2SCAN : State.get w2 SCAN = rest := State.get_set_eq _ _ _
+    clear_value w2
+    have e3 : (Cmd.op (.clear DONE)).eval w2 = w2.set DONE [] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    set w3 := w2.set DONE [] with hw3
+    have hw3frame : ∀ r : Var, r ≠ DONE → State.get w3 r = State.get w2 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw3D : State.get w3 DONE = [] := State.get_set_eq _ _ _
+    clear_value w3
+    have e4 : (Cmd.op (.appendOne DONE)).eval w3 = w3.set DONE [1] := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, hw3D]
+      rfl
+    set wF := w3.set DONE [1] with hwF
+    have hwFframe : ∀ r : Var, r ≠ DONE → State.get wF r = State.get w3 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have heval : (sentBitBody BASE).eval w = wF := by
+      unfold sentBitBody
+      rw [Cmd.eval_ifBit_false _ _ _ _ hDONEne, Cmd.eval_seq, e1,
+        Cmd.eval_ifBit_false _ _ _ _ hw1Ene, Cmd.eval_seq, e2, Cmd.eval_seq, e3, e4]
+    rw [heval]
+    refine ⟨fun hle => absurd hle (by omega), fun _ => ⟨?_, ?_, ?_⟩, ?_, ?_⟩
+    · rw [hwF]; exact State.get_set_eq _ _ _
+    · rw [hwFframe SCAN (by decide), hw3frame SCAN (by decide)]; exact hw2SCAN
+    · rw [hwFframe OUT (by decide), hw3frame OUT (by decide),
+        hw2frame OUT (by decide), hw1frame OUT (by decide)]
+      exact hwOUT
+    · rw [hwFframe ZERO (by decide), hw3frame ZERO (by decide),
+        hw2frame ZERO (by decide), hw1frame ZERO (by decide)]
+      exact hwZ
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8
+      rw [hwFframe r h6, hw3frame r h6, hw2frame r h1, hw1frame r h7,
+        hwframe r h5, hframe r h1 h2 h3 h4 h5 h6 h7 h8]
+  · -- idle iteration: DONE set, only ZERO is (re-)cleared
+    obtain ⟨hDONE, hSCAN, hOUT⟩ := hph2 hi
+    set w := st.set KBIT (List.replicate i 1) with hw
+    have hwframe : ∀ r : Var, r ≠ KBIT → State.get w r = State.get st r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hwD : State.get w DONE = [1] := by
+      rw [hwframe DONE (by decide)]; exact hDONE
+    clear_value w
+    have heval : (sentBitBody BASE).eval w = w.set ZERO [] := by
+      unfold sentBitBody
+      rw [Cmd.eval_ifBit_true _ _ _ _ hwD, Cmd.eval_op]
+      simp only [Op.eval]
+    rw [heval]
+    refine ⟨fun hle => absurd hle (by omega), fun _ => ⟨?_, ?_, ?_⟩, ?_, ?_⟩
+    · rw [State.get_set_ne _ _ _ _ (show DONE ≠ ZERO by decide)]; exact hwD
+    · rw [State.get_set_ne _ _ _ _ (show SCAN ≠ ZERO by decide),
+        hwframe SCAN (by decide)]
+      exact hSCAN
+    · rw [State.get_set_ne _ _ _ _ (show OUT ≠ ZERO by decide),
+        hwframe OUT (by decide)]
+      exact hOUT
+    · exact State.get_set_eq _ _ _
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8
+      rw [State.get_set_ne _ _ _ _ h8, hwframe r h5,
+        hframe r h1 h2 h3 h4 h5 h6 h7 h8]
+
+/-- **`emitBitsFromSent` is correct**: it consumes ONE sentinel-encoded
+bit-list off the front of `SCAN` and appends `serF (encodeBitsAt start bits)`
+to `OUT`, leaving `SCAN` **past the terminator** (at `rest`) — the extra
+clause `emitBitsFromScan_run` does not need, and what lets `emitCardsAt`
+chain the prem and conc emitters off one card stream. Surplus loop iterations
+idle on `DONE` (re-clearing the always-empty `ZERO`, hence that entry
+hypothesis and exit clause). `BASE` (e.g. `STARTA`/`STARTB`) must sit outside
+the loop's scratch set `{SCAN,OUT,WREG,TFLG,KBIT,DONE,EMARK,ZERO}`. -/
+theorem emitBitsFromSent_run (BASE start : Nat) (bits : List Bool) (rest : List Nat)
+    (u : State)
+    (hBS : BASE ≠ SCAN) (hBO : BASE ≠ OUT) (hBW : BASE ≠ WREG) (hBT : BASE ≠ TFLG)
+    (hBK : BASE ≠ KBIT) (hBD : BASE ≠ DONE) (hBE : BASE ≠ EMARK) (hBZ : BASE ≠ ZERO)
+    (hB : State.get u BASE = List.replicate start 1)
+    (hZ : State.get u ZERO = [])
+    (hSC : State.get u SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits) ++ rest) :
+    State.get ((emitBitsFromSent BASE).eval u) SCAN = rest
+    ∧ State.get ((emitBitsFromSent BASE).eval u) OUT
+        = State.get u OUT ++ serF (BinaryCCToFSAT.encodeBitsAt start bits)
+    ∧ State.get ((emitBitsFromSent BASE).eval u) ZERO = []
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+        r ≠ DONE → r ≠ EMARK → r ≠ ZERO →
+        State.get ((emitBitsFromSent BASE).eval u) r = State.get u r) := by
+  have e0 : (Cmd.op (.clear DONE)).eval u = u.set DONE [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u1 := u.set DONE [] with hu1
+  have hu1frame : ∀ r : Var, r ≠ DONE → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1D : State.get u1 DONE = [] := State.get_set_eq _ _ _
+  have hu1SC : State.get u1 SCAN
+      = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits) ++ rest := by
+    rw [hu1frame SCAN (by decide)]; exact hSC
+  have hu1Z : State.get u1 ZERO = [] := by
+    rw [hu1frame ZERO (by decide)]; exact hZ
+  have hu1OUT : State.get u1 OUT = State.get u OUT := hu1frame OUT (by decide)
+  clear_value u1
+  have hN : bits.length + 1 ≤ (State.get u1 SCAN).length := by
+    rw [hu1SC, List.length_append, FlatTCCFree.encSList_length,
+      show (FlatCCBinFree.bitsNat bits).length = bits.length from List.length_map _]
+    omega
+  have hbase : SBInv BASE start bits rest u 0 u1 := by
+    refine ⟨fun _ => ⟨hu1D, by rw [List.drop_zero]; exact hu1SC, ?_⟩,
+      fun hlt => absurd hlt (Nat.not_lt_zero _), hu1Z,
+      fun r _ _ _ _ _ hrD _ _ => hu1frame r hrD⟩
+    rw [List.take_zero, show bitsPrefix start [] = [] from rfl, List.append_nil]
+    exact hu1OUT
+  have hInv : SBInv BASE start bits rest u (State.get u1 SCAN).length
+      (Cmd.foldlState (sentBitBody BASE) KBIT
+        (List.range (State.get u1 SCAN).length) u1) :=
+    Cmd.foldlState_range_induct _ KBIT _ u1 (SBInv BASE start bits rest u) hbase
+      (fun i st _ hM =>
+        SBInv_step BASE start bits rest u hBS hBO hBW hBT hBK hBD hBE hBZ hB i st hM)
+  obtain ⟨-, hph2, hZf, hframef⟩ := hInv
+  obtain ⟨-, hSCf, hOUTf⟩ := hph2 (by omega)
+  have heval : (emitBitsFromSent BASE).eval u
+      = emitFtrue.eval (Cmd.foldlState (sentBitBody BASE) KBIT
+          (List.range (State.get u1 SCAN).length) u1) := by
+    show emitFtrue.eval ((Cmd.forBnd KBIT SCAN (sentBitBody BASE)).eval
+      ((Cmd.op (.clear DONE)).eval u)) = _
+    rw [e0, Cmd.eval_forBnd]
+  refine ⟨?_, ?_, ?_, ?_⟩
+  · rw [heval, emitFtrue_frame _ SCAN (by decide)]; exact hSCf
+  · rw [heval, emitFtrue_run, State.get_set_eq, hOUTf, List.append_assoc,
+      ← serF_encodeBitsAt]
+  · rw [heval, emitFtrue_frame _ ZERO (by decide)]; exact hZf
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8
+    rw [heval, emitFtrue_frame _ r h2, hframef r h1 h2 h3 h4 h5 h6 h7 h8]
 
 /-- `serF (encodeCardsAt C startA startB)` = `listOr` over cards, consuming a
 copy of the card stream. `STARTA = 1^startA`, `STARTB = 1^startB` pre-set. -/
