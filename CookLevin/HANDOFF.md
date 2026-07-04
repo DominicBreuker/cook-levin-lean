@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-05; session 3 part 1 in progress)
+## Where the proof stands (2026-07-04; session 3 part 2 done)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -17,8 +17,9 @@ reasonably provable).
   `FlatCCBinFree.flatCC_reducesPolyMO'`, and the **first COMPOSED live `⪯p'`**
   `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' : FlatTCC ⪯p' BinaryCC`
   (first live `SeamData`/`comp`). All axiom-clean. **Next chain step
-  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated (session 2); its
-  witness proofs are the next top-down session.**
+  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated (session 2);
+  the witness-proof run-lemma stack (session 3) is ~60% done — size bound +
+  five run lemmas landed through `stepBody_run`; `emitAllSteps_run` is next.**
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
@@ -44,32 +45,35 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-05 (top-down), `BinaryCC_to_FSAT` session 3 part 1:** the run-lemma
-  stack is STARTED and the fold-invariant methodology is now PROVEN to work on
-  this program (previously only design/`#eval`-validated). Landed, sorry-free
-  & axiom-clean (`[propext, Quot.sound]`, no `Classical.choice` even):
-  `encodeIn_size_le` (`≤ 2·size+1`, plan step 1 — DONE) and
-  `emitBitsFromScan_run` (plan step 2's first leaf: the direct/unencoded
-  bit-list emitter, including its own serialization sub-lemmas `litFor`/
-  `bitsPrefix`/`serF_encodeBitsAt`/`bitsPrefix_append`/`bitsPrefix_take_succ`
-  and the OUT-only literal-tag gadget lemmas `emit{0,1,Ftrue,FandTag,VarW,
-  LitAt}_run`/`_frame`). **This is the template for every remaining run
-  lemma** — see NEXT TOP-DOWN. Two proof-engineering gotchas surfaced and are
-  recorded below ("Conventions"): the `whnf` timeout from un-cleared nested
-  `State.set` chains, and the `show`-vs-`rw` trap when a composed `Cmd.eval`
-  must be threaded down to a named end state.
-- **2026-07-05 (top-down), `BinaryCC_to_FSAT` session 2:** the whole reduction
-  program `buildFSAT : Cmd` + `encodeIn` is BUILT & `#eval`-validated
-  end-to-end (`Reductions/BinaryCC_to_FSAT_free.lean`, `probes/FSATSerProbe.lean`
-  §4 — wellformed, all four guard-failure shapes, and the `decodeF` round-trip
-  all check). The crux engineering risk (nested-loop var-index arithmetic on a
-  TREE output) is resolved; **what remains is pure proof work** — see NEXT
-  TOP-DOWN.
+- **2026-07-04 (top-down), `BinaryCC_to_FSAT` session 3 part 2:** three more
+  run lemmas landed, sorry-free & axiom-clean (`[propext, Quot.sound]`),
+  probe re-run green: **`emitBitsFromSent_run`** (two-phase `SBInv` split at
+  `bits.length`; the extra past-the-terminator `SCAN` clause is what lets
+  callers chain), **`emitCardsAt_run`** (`cardsPrefix`/`serF_encodeCardsAt` —
+  the `listOr` unrolling one level up from `bitsPrefix`; single-phase guarded
+  `CAInv`, inner emitters enter as black-boxed `_run` facts), and
+  **`stepBody_run`** (+ register-generic `unaryMulLoop_run`/
+  `unarySubLoop_run`; the on-machine bound guard `REM = 1^(step·off+width−L)`
+  matches `encodeStepConstraint`'s dite exactly). Loop bodies are now factored
+  as named defs (`sentBitBody`/`cardEmitBody`, rfl-equal refactor) so run
+  lemmas can name them. New gotcha recorded below: composed-eval `heval`s
+  must be assembled by `unfold` + `rw [Cmd.eval_seq, …]`, never `show`-as-defeq,
+  once the body contains a nested `forBnd`.
+- **2026-07-05 (top-down), session 3 part 1:** `encodeIn_size_le` (step 1
+  DONE) + `emitBitsFromScan_run` with the serialization algebra
+  (`litFor`/`bitsPrefix`/`serF_encodeBitsAt`/`bitsPrefix_append`/
+  `bitsPrefix_take_succ`) and the OUT-only gadget lemmas
+  (`emit{0,1,Ftrue,FandTag,VarW,LitAt}_run`/`_frame`) — the fold-invariant
+  template (`BSInv`) every later lemma copies. Gotchas recorded below:
+  `whnf` timeout from un-cleared `State.set` chains; `show`-vs-`rw` on
+  composed `Cmd.eval`.
+- **2026-07-05 (top-down), session 2:** `buildFSAT : Cmd` + `encodeIn` BUILT &
+  `#eval`-validated end-to-end (`probes/FSATSerProbe.lean` §4). The crux
+  engineering risk (nested-loop var-index arithmetic on a TREE output) is
+  resolved; what remains is pure proof work.
 - **2026-07-04-b (bottom-up), Part 0.1 DONE:** real `encodable.size`
   everywhere; the size-0 default fallback deleted (see "Where the proof
-  stands"). Scoping finding: the chain intermediates (FlatTCC/FlatCC/BinaryCC/
-  formula/CC/TCC/FlatTM/cnf) already had real sizes — the actual hole was the
-  four *front* instance types and the `fun _ => 0` bounds they licensed.
+  stands").
 
 **Composite tail exit layout** (unchanged; what the NEXT tail seam
 re-encodes/scrubs): BinaryCC outputs at regs 17 `offset`/18 `width`/19 `init`
@@ -169,51 +173,45 @@ pinning that exit frame — coordinate).
 ## NEXT TOP-DOWN session — continue **session 3**: the `BinaryCC_to_FSAT` witness PROOFS
 
 The program `buildFSAT` + `encodeIn` are **built and `#eval`-validated
-end-to-end** (session 2). All remaining `sorryAx` on `CookLevin`/`Clique_complete`
-is hardness-side. **Session 3 is pure proof work — no design risk** — filling the
-`PolyTimeComputableLang BinaryCC_to_FSAT_instance` witness. Step 1
-(`encodeIn_size_le`) and the first leaf of step 2 (`emitBitsFromScan_run`) are
-**DONE** (session 3 part 1, this session) — see the in-file section
-`## 2b.`/`### Run lemmas for the literal-tag emitters` in
-`Reductions/BinaryCC_to_FSAT_free.lean` for the landed proofs, and the
-**DESIGN COMPLETE — NEXT-SESSION PLAN** block at the bottom of that file for
-the still-current full ordered spec. Remaining, in order:
+end-to-end** (session 2), and the run-lemma stack is **~60% done**: step 1
+(`encodeIn_size_le`) plus `emitBitsFromScan_run`, `emitBitsFromSent_run`,
+`emitCardsAt_run`, `stepBody_run` (and the register-generic
+`unaryMulLoop_run`/`unarySubLoop_run`) are all landed, sorry-free &
+axiom-clean. See the **DESIGN COMPLETE — NEXT-SESSION PLAN** block at the
+bottom of `Reductions/BinaryCC_to_FSAT_free.lean` (kept current). **Session 3
+is pure proof work — no design risk.** Remaining, in order (budget ~one lemma
+per session; commit each green):
 
-2. **Run lemmas bottom-up (the crux, IN PROGRESS)** — the reusable stack from
-   this session: `litFor`/`bitsPrefix`/`serF_encodeBitsAt`/
-   `bitsPrefix_append`/`bitsPrefix_take_succ` (the serialization algebra) +
-   `emit{Ftrue,FandTag,VarW,LitAt}_run`/`_frame` (OUT-only gadget lemmas) +
-   `BSInv`/`BSInv_step` (the fold-invariant pattern) + `emitBitsFromScan_run`
-   (done). **Copy this pattern** for the rest, in order:
-   - **`emitBitsFromSent_run`** (next) — same shape as `emitBitsFromScan_run`
-     but decodes the `encSList`-style sentinel stream (`ifBit DONE`/
-     `ifBit EMARK` branches, `DONE`-flag idle case) instead of reading `SCAN`
-     bare; template the branching/idle structure on `sentStep_step`/
-     `sentLoop_run` (`FlatCC_to_BinaryCC_free.lean`) the same way this
-     session's `BSInv_step` templated the non-branching arithmetic on
-     `cardStep_step`. Conclusion needs an extra clause: `SCAN` ends up
-     *past* the terminator (not merely equal to `bits.drop bound`).
-   - **`emitCardsAt_run`** — an outer `nonEmpty`-guarded loop over a *copy* of
-     `CARDS` (template: `cardStep`/`cardConvert_run`,
-     `FlatTCC_to_FlatCC_free.lean`), each live iteration calling
-     `emitBitsFromSent_run` twice (prem, conc). Algebraic target:
-     `serF (encodeCardsAt C startA startB) = serF (listOr …)` — unroll via
-     the same `forr`-tag-per-element + `falseFml`-close pattern as
-     `bitsPrefix`/`serF_encodeBitsAt`, now over `List (CCCard Bool)` instead
-     of `List Bool`.
-   - **`emitAllSteps_run`** — nested loop (line × step), same `listAnd`
-     unrolling one level higher; reuses `emitCardsAt_run` and the unary
-     `LINEL`/`STEPO`/`STARTA`/`STARTB` index arithmetic (`concat`-chains —
-     mechanical, `List.replicate_add`).
+2. **Run lemmas bottom-up (the crux, IN PROGRESS).** Copy the landed
+   patterns — `BSInv` (plain fold), `SBInv` (two-phase sentinel), `CAInv`
+   (single-phase `nonEmpty`-guarded loop over a stream copy, inner emitters
+   as black-boxed `_run` facts), `stepBody_run` (straight-line chain +
+   guard branch):
+   - **`emitAllSteps_run`** (NEXT) — now just a two-level `listAnd` fold:
+     outer `KLINE` loop over `STEPS` (per line: `emitFandTag`, clear+rebuild
+     `LINEL` via `unaryMulLoop_run` bound `KLINE` src `LREG`, inner loop,
+     `emitFtrue`), inner `KSTEP` loop over `LREG1 = 1^(L+1)` of
+     `emitFandTag ;; stepBody` — `List.range (L+1)` matches
+     `encodeLineConstraints`' `List.range (C.init.length + 1)`, and each
+     iteration is one `stepBody_run` application. Define `stepsPrefix`/
+     `linesPrefix` + `serF_encodeLineConstraints`/`serF_encodeAllSteps`
+     mirroring `cardsPrefix`/`serF_encodeCardsAt` (ftrue-close instead of
+     falseFml-close). Watch: the inner loop's invariant must carry
+     `LINEL`/`OFFSET`/`WIDTH`/`LREG`/`CARDS`/`ZERO` (all in `stepBody_run`'s
+     hypothesis set) through `stepBody`'s 16-register scratch frame.
    - **`readOneFinal_run`**/**`emitFinal_run`** — `readOneFinal` is a
-     sentinel-stream *parse* (mirror `emitBitsFromSent`'s decode half without
-     re-emitting); `emitFinal` is another `listOr`-over-`listOr` unroll
-     calling it + `emitBitsFromScan_run` (on the parsed `FBITS`).
+     sentinel-stream *parse* (mirror `SBInv`'s decode half without
+     re-emitting; outputs `FBITS` + `BLEN`); `emitFinal` is a
+     `listOr`-over-`listOr` unroll reusing `unaryMulLoop_run`/
+     `unarySubLoop_run` (the `STEPSL`/`STEPO`/`SUMW`/`REM` arithmetic is
+     `stepBody_run`'s shape with `BLEN` for `WIDTH`) +
+     `emitBitsFromScan_run` on the parsed `FBITS`, matching
+     `encodeFinalAtStep`'s dite (guard-fail emits `falseFml`, not `ftrue`).
    - **`computeWF_run`** — `GWF = if BinaryCC_wellformed C then [1] else []`;
-     needs unary `leCheck`/`dvdCheck` ⇔ `≤`/`∣` lemmas (new: unary mod via
-     truncated-subtraction loop) and `cardLenCheck` ⇔ `∀ card, |prem|=|conc|=
-     width`. Independent of the emitter stack above — could be split into a
-     parallel sub-session if the emitter chain is taking a while.
+     needs unary `leCheck`/`dvdCheck` ⇔ `≤`/`∣` lemmas (unary mod via
+     `unarySubLoop_run`-style repeated subtraction) and `cardLenCheck` ⇔
+     `∀ card, |prem|=|conc|=width`. Independent of the emitter stack —
+     can run as a parallel sub-session.
    - **`buildFSAT_run`** — assembles all of the above + `precompLen_run`
      (trivial); `computes = decodeOut_of_serF + buildFSAT_run`. The `hWf`
      guard is NECESSARY (`encodeTableau_correct` assumes it) — do not try to
@@ -302,17 +300,23 @@ each lemma once it compiles green.
   the on-machine guard (`computeWF`/`leCheck`/unary-modulo `dvdCheck`/
   `cardLenCheck`) — pure `Cmd` DATA, `#eval`-validated end-to-end (`FSATSerProbe`
   §4). Do not re-derive; session 3 proves the run/cost lemmas over these.
-- **The `BinaryCC_to_FSAT` size + first run lemma** (same file, session 3 part
-  1, sorry-free & axiom-clean `[propext, Quot.sound]`): `encodeIn_size_le`
-  (+ its helpers `encodable_size_bitsNat`/`_cardNat`/`_map_cardNat`/
-  `_map_bitsNat`, `fresh_set_size`, `get_unset_of_ne`); the serialization
-  algebra `litFor`/`encodeBitsAt_cons`/`bitsPrefix`/`serF_encodeBitsAt`/
-  `bitsPrefix_append`/`bitsPrefix_take_succ` (reusable for EVERY remaining
-  emitter — cards/steps/final all reduce to the same tag-then-child unrolling
-  one level up); the OUT-only gadget lemmas `emit{Ftrue,FandTag,VarW,
-  LitAt}_run`/`_frame`; and `emitBitsFromScan_run` (the fold-invariant
-  template `BSInv`/`BSInv_step` — copy this shape, do not re-derive the
-  `clear_value`/`heval` bookkeeping from scratch each time).
+- **The `BinaryCC_to_FSAT` run-lemma stack** (same file, session 3 parts 1–2,
+  all sorry-free & axiom-clean `[propext, Quot.sound]`): `encodeIn_size_le`
+  (+ helpers `encodable_size_bitsNat`/`_cardNat`/`_map_*`, `fresh_set_size`,
+  `get_unset_of_ne`); the serialization algebra `litFor`/`bitsPrefix`/
+  `serF_encodeBitsAt`/`bitsPrefix_append`/`bitsPrefix_take_succ` and its
+  card-level lift `cardsPrefix`/`cardsPrefix_append`/`serF_encodeCardsAt`
+  (steps/lines/final reduce to the same tag-then-child unrolling one level
+  up); the OUT-only gadget lemmas `emit{Ftrue,FandTag,ForrTag,False,VarW,
+  LitAt}_run`/`_frame`; the fold-invariant templates **`BSInv`** (plain,
+  `emitBitsFromScan_run`), **`SBInv`** (two-phase sentinel with
+  past-the-terminator exit, `emitBitsFromSent_run`), **`CAInv`**
+  (`nonEmpty`-guarded stream loop with black-boxed inner `_run` facts,
+  `emitCardsAt_run`); **`stepBody_run`** (var-index arithmetic + on-machine
+  bound guard ⇔ `encodeStepConstraint`'s dite); and the register-generic
+  unary loops **`unaryMulLoop_run`/`unarySubLoop_run`** (use these at every
+  remaining mul/truncated-subtraction site — do not re-derive). Copy these
+  shapes; do not re-derive the `clear_value`/`heval` bookkeeping.
 - **The flatTCC free-reduction stack** (`Reductions/FlatTCC_to_FlatCC_free.lean`):
   `blockMove_run`/`halfMove_run`, `cardStep_step`, `encSList` +
   `encSList_append_inj`, `encKey_injective`/`extractKey`,
@@ -390,7 +394,19 @@ each lemma once it compiles green.
   finishing with `← hwN` for every gadget-level sub-`Cmd` you black-boxed via
   its own `_run` lemma), `rw [heval]` once, *then* state the per-register
   goals — exactly the `cardStep_card`/`halfMove_run` `show (c1;;_).eval s =
-  _; rw […]` pattern, which generalizes to any chain length.
+  _; rw […]` pattern, which generalizes to any chain length. **Part-2
+  addendum: even the initial `show`-unfolding of the program into its seq
+  spine whnf-TIMES-OUT once the body contains a nested `forBnd`**
+  (`emitCardsAt`'s body holds two `emitBitsFromSent` loops) — open `heval`
+  with `unfold <programDef>` and peel with `rw [Cmd.eval_seq, …]` instead of
+  a `show`. Factor every loop body as a named `def` (`sentBitBody`/
+  `cardEmitBody`) so `_run` lemmas and `Cmd.foldlState` can name it.
+- **NEW (session 3 part 2): `rw [List.replicate_add]` picks the wrong
+  occurrence when the LHS replicate's length is itself a sum** (e.g.
+  `replicate (a+b) 1 ++ replicate c 1 = replicate (a+b+c) 1`) — use
+  `rw [← List.replicate_add]` to fold the append instead. And after
+  `rw [<eq ending in serF f>]`, a residual `serF falseFml`/`serF .ftrue`
+  literal does NOT auto-close — finish with an explicit `rfl`.
 - **Multi-case register frames**: `interval_cases r` + per-case
   `repeat first | rw [State.get_set_eq] | rw [State.get_set_ne _ _ _ _ (by
   decide)]` walks any concrete nested-set state (the seam-bridge pattern).

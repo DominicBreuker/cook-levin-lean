@@ -2012,18 +2012,26 @@ GO on every count: the tree serialization, the unary var-index arithmetic
 the `PolyTimeComputableLang BinaryCC_to_FSAT_instance` witness — pure proof work,
 no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
 
-1. **`encodeIn_size ≤ 2·size+1`** — all unary/bit, no doubling. `State.size` of
-   the pinned frame; mirror `flatCCBin_reductionLang.encodeIn_size`. Needs a
-   length lemma for `encCardsOut`/`encFinal` (reuse `encCardsOut_length_le`/
-   `encFinal_length_le`).
+1. **`encodeIn_size ≤ 2·size+1` — ✅ DONE (session 3 part 1).**
 2. **Run lemmas bottom-up** — the crux. Prove, mirroring `sentStep_run`/
    `initStep_run` fold invariants:
-   - `emitBitsFromScan_run` / `emitBitsFromSent_run`: after the loop,
-     `OUT = OUT₀ ++ serF (encodeBitsAt start bits)` and (for `_Sent`) `SCAN`
-     advanced past the terminator. Fold invariant on the bit index `i`.
-   - `emitCardsAt_run`, `emitAllSteps_run`, `readOneFinal_run`, `emitFinal_run`:
-     compose the leaf lemmas over the `listAnd`/`listOr` folds, using the
-     algebraic `serF (listAnd/​listOr …)` identities.
+   - ✅ `emitBitsFromScan_run` / `emitBitsFromSent_run` — DONE (parts 1–2):
+     `OUT = OUT₀ ++ serF (encodeBitsAt start bits)`; `_Sent` additionally
+     leaves `SCAN` past the terminator (two-phase `SBInv`).
+   - ✅ `emitCardsAt_run` — DONE (part 2b): `cardsPrefix`/`serF_encodeCardsAt`
+     algebra + single-phase guarded `CAInv`.
+   - ✅ `stepBody_run` — DONE (part 2c), with the register-generic
+     `unaryMulLoop_run`/`unarySubLoop_run`; matches `encodeStepConstraint`'s
+     dite exactly.
+   - `emitAllSteps_run` (NEXT): two-level `listAnd` fold over lines × steps;
+     per line a `LINEL` mul-loop (`unaryMulLoop_run`) + inner loop of
+     `emitFandTag ;; stepBody` over `LREG1 = 1^(L+1)` (`List.range (L+1)`
+     matches `encodeLineConstraints`' `List.range (C.init.length + 1)`),
+     each level closed by `emitFtrue` — the `serF (listAnd …)` unrolling one
+     level up from `serF_encodeCardsAt` (define `stepsPrefix`/`linesPrefix`).
+   - `readOneFinal_run` / `emitFinal_run`: sentinel-stream *parse* (mirror
+     `SBInv` without re-emitting) + the `listOr`-over-`listOr` unroll reusing
+     `unaryMulLoop_run`/`unarySubLoop_run`/`emitBitsFromScan_run`.
    - `computeWF_run`: `(computeWF.eval …).get GWF = if BinaryCC_wellformed C
      then [1] else []`. Needs `dvdCheck`/`leCheck`/`cardLenCheck` correctness
      (unary modulo ⇔ `∣`; `1^a = 1^b ↔ a = b`). Guard-necessity is real:
