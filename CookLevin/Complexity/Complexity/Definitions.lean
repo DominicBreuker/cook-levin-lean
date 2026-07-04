@@ -348,6 +348,24 @@ theorem encodable_size_list_append {α : Type u} [encodable α] (xs ys : List α
   | cons x xs ih =>
       simp [encodable_size_list_cons, ih, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm]
 
+/-- Flattening a list of lists never increases `encodable.size`: the flat list
+keeps every element (and its per-element `+1`) but drops the per-sublist `+1`.
+Stated over `foldr List.append []` because that is the spelling the front-chain
+bridges use for tape concatenation. -/
+theorem encodable_size_foldr_append_le {α : Type u} [encodable α] :
+    ∀ L : List (List α), encodable.size (L.foldr List.append []) ≤ encodable.size L
+  | [] => Nat.le_refl _
+  | xs :: L => by
+      have hfold : (xs :: L).foldr List.append [] = xs ++ L.foldr List.append [] := rfl
+      rw [hfold, encodable_size_list_append, encodable_size_list_cons]
+      have ih := encodable_size_foldr_append_le L
+      calc
+        encodable.size xs + encodable.size (L.foldr List.append [])
+            ≤ encodable.size xs + encodable.size L := Nat.add_le_add_left ih _
+        _ ≤ encodable.size xs + 1 + encodable.size L := by
+            rw [Nat.add_assoc, Nat.add_comm 1 (encodable.size L), ← Nat.add_assoc]
+            exact Nat.le_succ _
+
 def isPrefix {α : Type u} (xs ys : List α) : Prop :=
   ∃ rest, ys = xs ++ rest
 

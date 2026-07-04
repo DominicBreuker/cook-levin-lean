@@ -50,6 +50,26 @@ noncomputable def genNPCertBound {X Y : Type} [encodable X] [encodable Y]
     Nat → Nat :=
   (Classical.choice hCorrect).bound
 
+theorem genNPTimeBound_poly {X Y : Type} [encodable X] [encodable Y]
+    (R : X → Y → Prop) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2)) :
+    inOPoly (genNPTimeBound R hPoly) :=
+  (Classical.choose_spec hPoly).2.1
+
+theorem genNPTimeBound_mono {X Y : Type} [encodable X] [encodable Y]
+    (R : X → Y → Prop) (hPoly : inTimePoly (fun xy : X × Y => R xy.1 xy.2)) :
+    monotonic (genNPTimeBound R hPoly) :=
+  (Classical.choose_spec hPoly).2.2
+
+theorem genNPCertBound_poly {X Y : Type} [encodable X] [encodable Y]
+    {Q : X → Prop} (R : X → Y → Prop) (hCorrect : polyCertRel Q R) :
+    inOPoly (genNPCertBound R hCorrect) :=
+  (Classical.choice hCorrect).bound_poly
+
+theorem genNPCertBound_mono {X Y : Type} [encodable X] [encodable Y]
+    {Q : X → Prop} (R : X → Y → Prop) (hCorrect : polyCertRel Q R) :
+    monotonic (genNPCertBound R hCorrect) :=
+  (Classical.choice hCorrect).bound_mono
+
 noncomputable def genNPInstance {X__cert : Type} [encodable X__cert]
     (enumTerm : CanEnumTerm X__cert) {X Y : Type} [encodable X] [encodable Y]
     {Q : X → Prop} (R : X → Y → Prop)
@@ -100,10 +120,27 @@ theorem NPhard_GenNP (X__cert : Type) [encodable X__cert]
   intro X hEncX Q hQ
   rcases hQ with ⟨Y, hEncY, ⟨⟨R, hPoly, hCorrect⟩⟩⟩
   refine ⟨⟨genNPInstance enumTerm R hCorrect hPoly, ?_, ?_⟩⟩
-  · refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
+  -- Honest output-size bound (Part 0.1): the produced instance's size is
+  -- exactly its two parameters, `certBound n + 2` and
+  -- `timeBound (n + certBound n)` — a polynomial in `n` because the
+  -- certificate bound and the decider time bound are.
+  · refine ⟨⟨fun n => genNPCertBound R hCorrect n +
+        genNPTimeBound R hPoly (n + genNPCertBound R hCorrect n) + 3, ?_, ?_, ?_⟩⟩
+    · have hinner : inOPoly (fun n => n + genNPCertBound R hCorrect n) :=
+        inOPoly_add inOPoly_id (genNPCertBound_poly R hCorrect)
+      have hcomp : inOPoly
+          (fun n => genNPTimeBound R hPoly (n + genNPCertBound R hCorrect n)) :=
+        inOPoly_comp hinner (genNPTimeBound_poly R hPoly)
+      exact inOPoly_add (inOPoly_add (genNPCertBound_poly R hCorrect) hcomp)
+        (inOPoly_const 3)
     · intro a b hab
-      simp
+      have hcert := genNPCertBound_mono R hCorrect a b hab
+      have htime := genNPTimeBound_mono R hPoly (a + genNPCertBound R hCorrect a)
+        (b + genNPCertBound R hCorrect b) (Nat.add_le_add hab hcert)
+      exact Nat.add_le_add (Nat.add_le_add hcert htime) (Nat.le_refl 3)
     · intro x
-      simp [encodable.size]
+      show encodable.size (genNPInstance enumTerm R hCorrect hPoly x) ≤ _
+      simp [genNPInstance]
+      omega
   · intro x
     simpa using (genNPInstance_spec enumTerm R hCorrect hPoly x).symm
