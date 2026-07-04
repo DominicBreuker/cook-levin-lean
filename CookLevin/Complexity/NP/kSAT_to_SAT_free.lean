@@ -1155,6 +1155,10 @@ noncomputable def kSAT3_reductionLang :
       _ = 56000 * n ^ 4 := by ring
   cost_bound_mono := fun a b h =>
     Nat.mul_le_mul_left _ (Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 4)
+  encBound := fun n => 2 * n + 1
+  encBound_poly :=
+    inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) (inOPoly_const 1)
+  encBound_mono := fun a b h => Nat.add_le_add_right (Nat.mul_le_mul_left 2 h) 1
   encodeIn_size := fun N => by
     have h := encodeCnf_tally_tight N
     show State.size [[], List.replicate N.length 1, encodeCnf N] ≤ _

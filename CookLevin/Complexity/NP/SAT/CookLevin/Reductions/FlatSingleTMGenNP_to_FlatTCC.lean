@@ -90,8 +90,8 @@ theorem zeroWord_relpower (steps n : Nat) :
 
 theorem flatSingleTMGenNP_input_valid {M : flatTM} {s : List Nat} {maxSize steps : Nat}
     (h : FlatSingleTMGenNP (M, s, maxSize, steps)) :
-    list_ofFlatType 1 s := by
-  simpa [FlatSingleTMGenNP] using h.2.1
+    list_ofFlatType M.sig s := by
+  simpa [FlatSingleTMGenNP] using h.2.2.1
 
 def mkTCCWitness (s : List Nat) (steps : Nat) (hs : list_ofFlatType 1 s) : TCC :=
   let hinit : list_ofFlatType 1 (s ++ padSymbols) := (list_ofFlatType_app).2 ⟨hs, padSymbols_valid⟩
@@ -124,11 +124,16 @@ def flatTCCNoInstance : FlatTCC where
   final := []
   steps := 0
 
+/-- ⚠ STILL VACUOUS (S1): if-on-the-answer, never simulates `M`. The
+2026-07-04 F2 type fix (strings over `M.sig`, not the all-zeros
+`list_ofFlatType 1`) removed the yes-branch's use of `s` — it only ever used
+`s.length`, so the fixed all-zero tableau is now built over `[]`. The real
+replacement is the Cook 2D tableau (`Simulators/CookTableau.lean`). -/
 noncomputable def FlatSingleTMGenNP_to_FlatTCC_instance :
     flatTM × List Nat × Nat × Nat → FlatTCC
-  | (M, s, maxSize, steps) =>
-      if h : FlatSingleTMGenNP (M, s, maxSize, steps) then
-        FlatTCC.flattenTCC (mkTCCWitness s steps (flatSingleTMGenNP_input_valid h))
+  | (_M, _s, _maxSize, steps) =>
+      if FlatSingleTMGenNP (_M, _s, _maxSize, steps) then
+        FlatTCC.flattenTCC (mkTCCWitness [] steps (list_ofFlatType_nil 1))
       else
         flatTCCNoInstance
 
@@ -175,13 +180,12 @@ theorem FlatSingleTMGenNP_to_FlatTCCLang_poly : FlatSingleTMGenNP ⪯p FlatTCC.F
     · intro x
       by_cases h : FlatSingleTMGenNP x
       · rcases x with ⟨M, s, maxSize, steps⟩
-        have hs : list_ofFlatType 1 s := flatSingleTMGenNP_input_valid h
         have hsize :
             encodable.size (FlatSingleTMGenNP_to_FlatTCC_instance (M, s, maxSize, steps)) =
-              encodable.size (FlatTCC.flattenTCC (mkTCCWitness s steps hs)) := by
+              encodable.size (FlatTCC.flattenTCC (mkTCCWitness [] steps (list_ofFlatType_nil 1))) := by
           simp [FlatSingleTMGenNP_to_FlatTCC_instance, h]
         rw [hsize, mkTCCWitness_flatten_size]
-        change 2 * encodable.size s + steps + 13 ≤
+        change 2 * encodable.size ([] : List Nat) + steps + 13 ≤
           3 * encodable.size (M, s, maxSize, steps) + 13
         simp [encodable.size]
         omega
@@ -189,12 +193,12 @@ theorem FlatSingleTMGenNP_to_FlatTCCLang_poly : FlatSingleTMGenNP ⪯p FlatTCC.F
   constructor
   · intro h
     rcases inst with ⟨M, s, maxSize, steps⟩
-    have hs : list_ofFlatType 1 s := flatSingleTMGenNP_input_valid h
-    simpa [FlatSingleTMGenNP_to_FlatTCC_instance, h, hs, FlatTCC.unflatten_flattenTCC] using
-      (show FlatTCC.FlatTCCLang (FlatTCC.flattenTCC (mkTCCWitness s steps hs)) by
-        refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness s steps hs) (mkTCCWitness_valid s steps hs).1,
+    simpa [FlatSingleTMGenNP_to_FlatTCC_instance, h, FlatTCC.unflatten_flattenTCC] using
+      (show FlatTCC.FlatTCCLang (FlatTCC.flattenTCC (mkTCCWitness [] steps (list_ofFlatType_nil 1))) by
+        refine ⟨FlatTCC.flattenTCC_wellformed (C := mkTCCWitness [] steps (list_ofFlatType_nil 1))
+            (mkTCCWitness_valid [] steps (list_ofFlatType_nil 1)).1,
           ⟨FlatTCC.isValidFlattening_flattenTCC _, ?_⟩⟩
-        simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid s steps hs)
+        simpa [FlatTCC.unflatten_flattenTCC] using mkTCCWitness_valid [] steps (list_ofFlatType_nil 1))
   · intro h
     by_cases hSrc : FlatSingleTMGenNP inst
     · exact hSrc
