@@ -45,6 +45,24 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-04 (bottom-up, part 2), C8-0 SIGNED OFF + C8-1 DONE (the
+  framework batch), build green, axiom profiles unchanged.**
+  (a) **F2 fixed**: `FlatSingleTMGenNP` now Coq-faithful
+  (`list_ofFlatType M.sig` + `M.tapes = 1`); the vacuous S1 yes-branch
+  builds its all-zeros tableau over `[]` (it only ever used `s.length`).
+  (b) **F3 fixed**: `PolyTimeComputableLang` carries per-witness
+  `encBound`/`_poly`/`_mono`; `padTimeBound`/`budget_ge`/
+  `toFrameworkWitness'`/`comp` re-derived; the three live chain witnesses
+  supply `fun n => 2n+1`. (c) **F1 landed**: `certState`,
+  `InNPWitnessLangFreeSplit`, `inNPLangFreeSplit`, `NPhard''`/`NPcomplete''`
+  + bridges (`PolyTime.lean` end); `NPhard'` marked superseded.
+  (d) **C8-1d layout check**: the live SAT verifier does NOT factor
+  verbatim — `assgn` certs are `List Nat` (true-var indices,
+  sentinel-unary), not `List Bool`, and `encodeState` has 8 explicit
+  scratch `[]`s AFTER the cert register. Adaptation is known-pattern work
+  (trim trailing `[]`s — behavior-preserving, `State.get` of missing regs
+  is `[]` — plus a bits→sentinel decode-prefix `Cmd`), needed only for the
+  endgame `NPcomplete''` membership half, NOT on the C8 critical path.
 - **2026-07-04 (bottom-up), C8 SCOPING PROBE DONE — verdict
   FEASIBLE-BUT-EXPENSIVE, gated on ONE owner decision.** Probe
   `probes/C8SeamProbe.lean` (green): a `Cmd` per-`Q` front program hits a
@@ -237,14 +255,13 @@ subsuming S2). **The answers to the three scoping questions:**
 
 **Build decomposition (one per session; commit each green):**
 
-- **C8-0 (owner, short):** sign off F1 (`NPhard''` + hypothesis
-  strengthening), F2 (type fix), F3 (field generalization).
-- **C8-1 (framework batch, mechanical):** `InNPWitnessLangFreeSplit` +
-  `NPhard''`/`NPcomplete''` (additive; old defs keep compiling); fix
-  `FlatSingleTMGenNP` to the Coq form; generalize `encodeIn_size` + re-prove
-  the `padTimeBound`/`toFrameworkWitness'`/`comp` arithmetic. Verify the live
-  verifiers' pair layouts factor (`evalCnfDecidesLang`,
-  `cliqueRelDecidesLang`) — expected yes, confirm.
+- **C8-0 — ✅ SIGNED OFF (owner, 2026-07-04).**
+- **C8-1 — ✅ DONE (2026-07-04, part 2):** `InNPWitnessLangFreeSplit` +
+  `NPhard''`/`NPcomplete''` live at the end of `PolyTime.lean`;
+  `FlatSingleTMGenNP` Coq-faithful; `encBound` generalization threaded.
+  Layout-check finding: the live SAT verifier needs a trailing-`[]` trim +
+  a bits→sentinel decode-prefix `Cmd` before it can be a Split witness
+  (endgame membership-half work — see the latest-sessions entry).
 - **C8-2 (TM gadgets):** the accept-by-halting wrapper (halt-list demotion +
   run transport) and the tape-format-check gadget (scan-family; both run
   directions).
@@ -260,12 +277,18 @@ subsuming S2). **The answers to the three scoping questions:**
   blocked on the S1 free witness existing; until then `C8SeamProbe.headEncodeIn`
   is the layout spec.
 
-## NEXT BOTTOM-UP session — C8-1 (after C8-0 sign-off), else the alternative
+## NEXT BOTTOM-UP session — C8-2 (the TM gadgets)
 
-If the owner has signed off C8-0 (or signs off at session start), do **C8-1**
-above. Otherwise do the alternative below (and C8 waits).
+C8-0 is signed off and C8-1 is done, so the next bottom-up session is
+**C8-2** above: the accept-by-halting wrapper (demote `rejectState` from the
+halt list; run-transport lemma pair — accept-run preserved via a
+`joinTwoHalts_run_eq`-style argument, reject-run stuck-and-never-halting)
+and the tape-format-check gadget (scan the cert region for the
+`{1,2}`-cells/`0`-separator/endMark grammar; reuse the scan-family shapes in
+`ScanLeft`/`AppendGadget`). Probe each gadget with `#eval` before its run
+lemma, per the standard method.
 
-**Alternative (also the right choice for a shorter session):** the
+**Alternative (the right choice for a shorter session):** the
 `FSAT_to_SAT` free witness (Tseytin as a `Cmd`; the last small sound-tail
 item). Paper-probe the guard question first (formula inputs have no invalid
 instances — expect the unguarded pattern of
