@@ -349,6 +349,18 @@ private theorem emitFandTag_run (s : State) :
     List.append_assoc]
   rfl
 
+private theorem emitForrTag_run (s : State) :
+    emitForrTag.eval s = s.set OUT (s.get OUT ++ [1, 0]) := by
+  simp only [emitForrTag, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_eq, State.set_set,
+    List.append_assoc]
+  rfl
+
+private theorem emitFalse_run (s : State) :
+    emitFalse.eval s = s.set OUT (s.get OUT ++ [1, 1, 0, 0, 0]) := by
+  simp only [emitFalse, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_eq, State.set_set,
+    List.append_assoc]
+  rfl
+
 private theorem emitVarW_run (s : State) (v : Nat)
     (hW : State.get s WREG = List.replicate v 1) :
     emitVarW.eval s = s.set OUT (s.get OUT ++ serF (.fvar v)) := by
@@ -392,6 +404,14 @@ private theorem emitFtrue_frame (s : State) (r : Var) (hr : r ≠ OUT) :
 private theorem emitFandTag_frame (s : State) (r : Var) (hr : r ≠ OUT) :
     State.get (emitFandTag.eval s) r = State.get s r := by
   simp only [emitFandTag, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_ne _ _ _ _ hr]
+
+private theorem emitForrTag_frame (s : State) (r : Var) (hr : r ≠ OUT) :
+    State.get (emitForrTag.eval s) r = State.get s r := by
+  simp only [emitForrTag, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_ne _ _ _ _ hr]
+
+private theorem emitFalse_frame (s : State) (r : Var) (hr : r ≠ OUT) :
+    State.get (emitFalse.eval s) r = State.get s r := by
+  simp only [emitFalse, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_ne _ _ _ _ hr]
 
 private theorem emitVarW_frame (s : State) (r : Var) (hr : r ≠ OUT) :
     State.get (emitVarW.eval s) r = State.get s r := by
@@ -966,18 +986,315 @@ theorem emitBitsFromSent_run (BASE start : Nat) (bits : List Bool) (rest : List 
   · intro r h1 h2 h3 h4 h5 h6 h7 h8
     rw [heval, emitFtrue_frame _ r h2, hframef r h1 h2 h3 h4 h5 h6 h7 h8]
 
+/-- One iteration of the card loop (the body of `emitCardsAt`'s loop, factored
+out so its run lemma can name it): if the card stream copy `SCAN` is nonempty,
+emit one card's `forr`-tag + `encodeCardAt` (its two bit-lists via the two
+sentinel emitters); idle otherwise. -/
+def cardEmitBody : Cmd :=
+  Cmd.op (.nonEmpty TFLG SCAN) ;;
+  Cmd.ifBit TFLG
+    ( emitForrTag ;; emitFandTag ;;
+      emitBitsFromSent STARTA ;;
+      emitBitsFromSent STARTB )
+    (Cmd.op (.clear KTMP))
+
 /-- `serF (encodeCardsAt C startA startB)` = `listOr` over cards, consuming a
 copy of the card stream. `STARTA = 1^startA`, `STARTB = 1^startB` pre-set. -/
 def emitCardsAt : Cmd :=
   Cmd.op (.copy SCAN CARDS) ;;
-  Cmd.forBnd KCARD CARDS
-    ( Cmd.op (.nonEmpty TFLG SCAN) ;;
-      Cmd.ifBit TFLG
-        ( emitForrTag ;; emitFandTag ;;
-          emitBitsFromSent STARTA ;;
-          emitBitsFromSent STARTB )
-        (Cmd.op (.clear KTMP)) ) ;;
+  Cmd.forBnd KCARD CARDS cardEmitBody ;;
   emitFalse
+
+/-! ### `emitCardsAt_run` — the per-position card disjunction
+
+The `listOr`-over-cards analogue of the `bitsPrefix` stack, one level up:
+`cardsPrefix` is the tag-then-card unrolling of `serF (listOr (cards.map
+(encodeCardAt sA sB)))` **without** the closing `falseFml`, accumulated one
+card per live loop iteration off the sentinel card stream; `emitFalse` closes
+it (`serF_encodeCardsAt`). The inner emitters are the black-boxed
+`emitBitsFromSent_run` — its past-the-terminator `SCAN` clause is exactly what
+lets the two calls (prem, conc) chain. -/
+
+/-- The tag+card serialization prefix at fixed positions (no closing
+`falseFml`) — `OUT`'s accumulation after a processed card-list prefix. -/
+def cardsPrefix (sA sB : Nat) : List (CCCard Bool) → List Nat
+  | [] => []
+  | c :: cs => [1, 0] ++ serF (encodeCardAt sA sB c) ++ cardsPrefix sA sB cs
+
+theorem cardsPrefix_append (sA sB : Nat) (xs ys : List (CCCard Bool)) :
+    cardsPrefix sA sB (xs ++ ys) = cardsPrefix sA sB xs ++ cardsPrefix sA sB ys := by
+  induction xs with
+  | nil => simp [cardsPrefix]
+  | cons c cs ih =>
+      simp only [List.cons_append, cardsPrefix, ih, List.append_assoc]
+
+/-- Closing the accumulated card prefix with `falseFml` gives exactly the
+serialized card disjunction — `emitCardsAt`'s algebraic target
+(`encodeCardsAt C sA sB` is `listOr (C.cards.map (encodeCardAt sA sB))`). -/
+theorem serF_encodeCardsAt (sA sB : Nat) (cs : List (CCCard Bool)) :
+    serF (listOr (cs.map (encodeCardAt sA sB)))
+      = cardsPrefix sA sB cs ++ serF falseFml := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih =>
+      show serF (.forr (encodeCardAt sA sB c) (listOr (cs.map (encodeCardAt sA sB)))) = _
+      simp [serF, cardsPrefix, ih, List.append_assoc]
+
+/-- The card stream's cons view: one card contributes its two sentinel
+bit-lists (prem then conc), pre-associated for the two chained emitters. -/
+private theorem encCardsOut_cons (c : CCCard Bool) (cs : List (CCCard Bool)) :
+    FlatTCCFree.encCardsOut ((c :: cs).map FlatCCBinFree.cardNat)
+      = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+        ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc)
+          ++ FlatTCCFree.encCardsOut (cs.map FlatCCBinFree.cardNat)) := by
+  show (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+      ++ FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc))
+      ++ FlatTCCFree.encCardsOut (cs.map FlatCCBinFree.cardNat) = _
+  rw [List.append_assoc]
+
+/-- A sentinel list is never empty (element marker `1` or bare terminator
+`0`) — what fires the card loop's `nonEmpty` guard. -/
+private theorem encSList_append_isEmpty (xs A : List Nat) :
+    (FlatTCCFree.encSList xs ++ A).isEmpty = false := by
+  cases xs with
+  | nil => rfl
+  | cons v vs => rfl
+
+/-- The card stream is at least as long as the card count (each card occupies
+≥ 2 cells) — the loop bound `CARDS` covers every card. -/
+private theorem length_le_encCardsOut (cs : List (CCCard Bool)) :
+    cs.length ≤ (FlatTCCFree.encCardsOut (cs.map FlatCCBinFree.cardNat)).length := by
+  induction cs with
+  | nil => simp
+  | cons c cs ih =>
+      rw [encCardsOut_cons, List.length_cons, List.length_append, List.length_append]
+      have h1 := FlatTCCFree.encSList_length_pos (FlatCCBinFree.bitsNat c.prem)
+      omega
+
+/-- The card-loop fold invariant: `SCAN` holds the unprocessed card stream,
+`OUT` the serialized card prefix; `ZERO` stays empty for the inner emitters. -/
+private def CAInv (sA sB : Nat) (cards : List (CCCard Bool)) (u : State) (j : Nat)
+    (st : State) : Prop :=
+  State.get st SCAN
+      = FlatTCCFree.encCardsOut ((cards.drop j).map FlatCCBinFree.cardNat)
+  ∧ State.get st OUT = State.get u OUT ++ cardsPrefix sA sB (cards.take j)
+  ∧ State.get st ZERO = []
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+      r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+      State.get st r = State.get u r)
+
+private theorem CAInv_step (sA sB : Nat) (cards : List (CCCard Bool)) (u : State)
+    (hSA : State.get u STARTA = List.replicate sA 1)
+    (hSB : State.get u STARTB = List.replicate sB 1)
+    (j : Nat) (st : State) (h : CAInv sA sB cards u j st) :
+    CAInv sA sB cards u (j + 1)
+      (cardEmitBody.eval (st.set KCARD (List.replicate j 1))) := by
+  obtain ⟨hSCAN, hOUT, hZERO, hframe⟩ := h
+  set w := st.set KCARD (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KCARD → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwSCAN : State.get w SCAN
+      = FlatTCCFree.encCardsOut ((cards.drop j).map FlatCCBinFree.cardNat) := by
+    rw [hwframe SCAN (by decide)]; exact hSCAN
+  have hwOUT : State.get w OUT = State.get u OUT ++ cardsPrefix sA sB (cards.take j) := by
+    rw [hwframe OUT (by decide)]; exact hOUT
+  have hwZ : State.get w ZERO = [] := by
+    rw [hwframe ZERO (by decide)]; exact hZERO
+  have hwSA : State.get w STARTA = List.replicate sA 1 := by
+    rw [hwframe STARTA (by decide), hframe STARTA (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hSA
+  have hwSB : State.get w STARTB = List.replicate sB 1 := by
+    rw [hwframe STARTB (by decide), hframe STARTB (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hSB
+  clear_value w
+  by_cases hj : j < cards.length
+  · -- live iteration: one card off the stream
+    have hdrop : cards.drop j = cards[j] :: cards.drop (j + 1) :=
+      List.drop_eq_getElem_cons hj
+    have htake : cards.take (j + 1) = cards.take j ++ [cards[j]] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hj]; rfl
+    set c := cards[j] with hc
+    clear_value c
+    set REST := FlatTCCFree.encCardsOut ((cards.drop (j + 1)).map FlatCCBinFree.cardNat)
+      with hREST
+    have hSCANw : State.get w SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hwSCAN, hdrop, encCardsOut_cons, hREST]
+    have hne : (State.get w SCAN).isEmpty = false := by
+      rw [hSCANw]; exact encSList_append_isEmpty _ _
+    have e1 : (Cmd.op (.nonEmpty TFLG SCAN)).eval w = w.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w1 := w.set TFLG [1] with hw1
+    have hw1frame : ∀ r : Var, r ≠ TFLG → State.get w1 r = State.get w r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw1T : State.get w1 TFLG = [1] := State.get_set_eq _ _ _
+    have hw1OUT : State.get w1 OUT
+        = State.get u OUT ++ cardsPrefix sA sB (cards.take j) := by
+      rw [hw1frame OUT (by decide)]; exact hwOUT
+    clear_value w1
+    set w2 := emitForrTag.eval w1 with hw2
+    have hw2frame : ∀ r : Var, r ≠ OUT → State.get w2 r = State.get w1 r := by
+      intro r hr; rw [hw2]; exact emitForrTag_frame w1 r hr
+    have hw2OUT : State.get w2 OUT = State.get w1 OUT ++ [1, 0] := by
+      rw [hw2, emitForrTag_run]; exact State.get_set_eq _ _ _
+    clear_value w2
+    set w3 := emitFandTag.eval w2 with hw3
+    have hw3frame : ∀ r : Var, r ≠ OUT → State.get w3 r = State.get w2 r := by
+      intro r hr; rw [hw3]; exact emitFandTag_frame w2 r hr
+    have hw3OUT : State.get w3 OUT = State.get w2 OUT ++ [0, 1] := by
+      rw [hw3, emitFandTag_run]; exact State.get_set_eq _ _ _
+    clear_value w3
+    have hw3SCAN : State.get w3 SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hw3frame SCAN (by decide), hw2frame SCAN (by decide),
+        hw1frame SCAN (by decide)]
+      exact hSCANw
+    have hw3Z : State.get w3 ZERO = [] := by
+      rw [hw3frame ZERO (by decide), hw2frame ZERO (by decide),
+        hw1frame ZERO (by decide)]
+      exact hwZ
+    have hw3SA : State.get w3 STARTA = List.replicate sA 1 := by
+      rw [hw3frame STARTA (by decide), hw2frame STARTA (by decide),
+        hw1frame STARTA (by decide)]
+      exact hwSA
+    have hw3SB : State.get w3 STARTB = List.replicate sB 1 := by
+      rw [hw3frame STARTB (by decide), hw2frame STARTB (by decide),
+        hw1frame STARTB (by decide)]
+      exact hwSB
+    -- the prem emitter
+    obtain ⟨h4SCAN, h4OUT, h4Z, h4frame⟩ :=
+      emitBitsFromSent_run STARTA sA c.prem
+        (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) w3
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) hw3SA hw3Z hw3SCAN
+    set w4 := (emitBitsFromSent STARTA).eval w3 with hw4
+    have hw4SB : State.get w4 STARTB = List.replicate sB 1 := by
+      rw [h4frame STARTB (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide)]
+      exact hw3SB
+    clear_value w4
+    -- the conc emitter
+    obtain ⟨h5SCAN, h5OUT, h5Z, h5frame⟩ :=
+      emitBitsFromSent_run STARTB sB c.conc REST w4
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) hw4SB h4Z h4SCAN
+    set w5 := (emitBitsFromSent STARTB).eval w4 with hw5
+    clear_value w5
+    have heval : cardEmitBody.eval w = w5 := by
+      unfold cardEmitBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_true _ _ _ _ hw1T, Cmd.eval_seq, ← hw2,
+        Cmd.eval_seq, ← hw3, Cmd.eval_seq, ← hw4, ← hw5]
+    rw [heval]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [h5SCAN]
+    · rw [h5OUT, h4OUT, hw3OUT, hw2OUT, hw1OUT, htake, cardsPrefix_append]
+      simp [cardsPrefix, encodeCardAt, serF, List.append_assoc]
+    · exact h5Z
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
+      rw [h5frame r h1 h2 h3 h4 h5 h6 h7 h8, h4frame r h1 h2 h3 h4 h5 h6 h7 h8,
+        hw3frame r h2, hw2frame r h2, hw1frame r h4, hwframe r h10,
+        hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10]
+  · -- idle iteration: stream exhausted, `nonEmpty` guard falls through
+    have hlen : cards.length ≤ j := Nat.le_of_not_lt hj
+    have hSCANw : State.get w SCAN = [] := by
+      rw [hwSCAN, List.drop_eq_nil_of_le hlen]
+      rfl
+    have hne : (State.get w SCAN).isEmpty = true := by rw [hSCANw]; rfl
+    have e1 : (Cmd.op (.nonEmpty TFLG SCAN)).eval w = w.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w1 := w.set TFLG [0] with hw1
+    have hw1T : State.get w1 TFLG ≠ [1] := by
+      rw [hw1, State.get_set_eq]; decide
+    have e2 : (Cmd.op (.clear KTMP)).eval w1 = w1.set KTMP [] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    set wF := w1.set KTMP [] with hwF
+    have heval : cardEmitBody.eval w = wF := by
+      unfold cardEmitBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_false _ _ _ _ hw1T, e2]
+    have hgetF : ∀ r : Var, r ≠ TFLG → r ≠ KTMP → State.get wF r = State.get w r := by
+      intro r h1 h2
+      rw [hwF, State.get_set_ne _ _ _ _ h2, hw1, State.get_set_ne _ _ _ _ h1]
+    rw [heval]
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [hgetF SCAN (by decide) (by decide), hwSCAN, List.drop_eq_nil_of_le hlen,
+        List.drop_eq_nil_of_le (by omega)]
+    · rw [hgetF OUT (by decide) (by decide), hwOUT, List.take_of_length_le hlen,
+        List.take_of_length_le (by omega)]
+    · rw [hgetF ZERO (by decide) (by decide)]; exact hwZ
+    · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
+      rw [hgetF r h4 h9, hwframe r h10, hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10]
+
+/-- **`emitCardsAt` is correct**: with `STARTA = 1^sA`, `STARTB = 1^sB` and
+the pinned card stream in `CARDS`, it appends `serF (encodeCardsAt C sA sB)`
+to `OUT` (consuming a scratch copy of the stream, so `CARDS` itself is
+untouched — it is outside the scratch set). -/
+theorem emitCardsAt_run (sA sB : Nat) (C : BinaryCC) (u : State)
+    (hSA : State.get u STARTA = List.replicate sA 1)
+    (hSB : State.get u STARTB = List.replicate sB 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = []) :
+    State.get (emitCardsAt.eval u) OUT
+        = State.get u OUT ++ serF (encodeCardsAt C sA sB)
+    ∧ State.get (emitCardsAt.eval u) ZERO = []
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+        r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+        State.get (emitCardsAt.eval u) r = State.get u r) := by
+  have e0 : (Cmd.op (.copy SCAN CARDS)).eval u
+      = u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hCARDS]
+  set u1 := u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    with hu1
+  have hu1frame : ∀ r : Var, r ≠ SCAN → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1SC : State.get u1 SCAN
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    State.get_set_eq _ _ _
+  have hu1SA : State.get u1 STARTA = List.replicate sA 1 := by
+    rw [hu1frame STARTA (by decide)]; exact hSA
+  have hu1SB : State.get u1 STARTB = List.replicate sB 1 := by
+    rw [hu1frame STARTB (by decide)]; exact hSB
+  have hu1Z : State.get u1 ZERO = [] := by
+    rw [hu1frame ZERO (by decide)]; exact hZ
+  have hu1OUT : State.get u1 OUT = State.get u OUT := hu1frame OUT (by decide)
+  have hu1CARDS : State.get u1 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [hu1frame CARDS (by decide)]; exact hCARDS
+  clear_value u1
+  have hN : C.cards.length ≤ (State.get u1 CARDS).length := by
+    rw [hu1CARDS]; exact length_le_encCardsOut C.cards
+  have hbase : CAInv sA sB C.cards u 0 u1 := by
+    refine ⟨by rw [List.drop_zero]; exact hu1SC, ?_, hu1Z,
+      fun r h1 _ _ _ _ _ _ _ _ _ => hu1frame r h1⟩
+    rw [List.take_zero, show cardsPrefix sA sB [] = [] from rfl, List.append_nil]
+    exact hu1OUT
+  have hInv : CAInv sA sB C.cards u (State.get u1 CARDS).length
+      (Cmd.foldlState cardEmitBody KCARD
+        (List.range (State.get u1 CARDS).length) u1) :=
+    Cmd.foldlState_range_induct _ KCARD _ u1 (CAInv sA sB C.cards u) hbase
+      (fun j st _ hM => CAInv_step sA sB C.cards u hSA hSB j st hM)
+  obtain ⟨hSCf, hOUTf, hZf, hframef⟩ := hInv
+  have heval : emitCardsAt.eval u
+      = emitFalse.eval (Cmd.foldlState cardEmitBody KCARD
+          (List.range (State.get u1 CARDS).length) u1) := by
+    unfold emitCardsAt
+    rw [Cmd.eval_seq, Cmd.eval_seq, e0, Cmd.eval_forBnd]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [heval, emitFalse_run, State.get_set_eq, hOUTf, List.take_of_length_le hN,
+      List.append_assoc,
+      show serF (encodeCardsAt C sA sB)
+          = cardsPrefix sA sB C.cards ++ serF falseFml
+        from serF_encodeCardsAt sA sB C.cards]
+    rfl
+  · rw [heval, emitFalse_frame _ ZERO (by decide)]; exact hZf
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10
+    rw [heval, emitFalse_frame _ r h2, hframef r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10]
 
 /-- Precompute `LREG = 1^L`, `LREG1 = 1^(L+1)` from the init bit-list. -/
 def precompLen : Cmd :=
