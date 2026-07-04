@@ -45,6 +45,18 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-04 (bottom-up), C8 SCOPING PROBE DONE — verdict
+  FEASIBLE-BUT-EXPENSIVE, gated on ONE owner decision.** Probe
+  `probes/C8SeamProbe.lean` (green): a `Cmd` per-`Q` front program hits a
+  pinned chain-head layout register-exactly (constant-machine emission,
+  per-symbol re-encode, unary monomials via mul-loop, scrub; `enc_bit`
+  clean) — **risk #2 seam-targeting: GO**. Paper findings F1–F6 + the build
+  decomposition C8-0…C8-5 are recorded in the C8 section below. Headline
+  finding **F1**: `NPhard'` over the current `inNP` can NEVER be honest —
+  `inNP Q` is classically TRUE for every predicate (the cheating encoder),
+  so the hypothesis must be strengthened to a free-line verifier witness
+  (owner decision). Also found: `FlatSingleTMGenNP` has a port bug
+  (`list_ofFlatType 1` vs Coq's `sig M`; machine-checked in the probe).
 - **2026-07-04 (top-down), `BinaryCC_to_FSAT` session 3 part 2:** three more
   run lemmas landed, sorry-free & axiom-clean (`[propext, Quot.sound]`),
   probe re-run green: **`emitBitsFromSent_run`** (two-phase `SBInv` split at
@@ -117,11 +129,12 @@ intermediate FlatCC inputs in 1/2/4/6/7/8 and scratch 9–16, 23, 24, 25 (`BOUT`
    inverse of the natural *output* layout, all reduction work in the `Cmd`.
    The trivial dishonest instantiation satisfies every field — review each
    witness. (Shared-layout registers for identity fields are fine.)
-2. **Seam discipline** (VALIDATED this session): pin each new witness's input
-   layout to its predecessor's exit frame and document the exit layout
-   (dirty registers included) for the successor. Watch that C8's per-`Q`
-   witness can actually target the chain's fixed input layout — probe this
-   when C8 is scoped.
+2. **Seam discipline**: pin each new witness's input layout to its
+   predecessor's exit frame and document the exit layout (dirty registers
+   included) for the successor. C8's per-`Q`-witness seam-targeting is
+   **probed GO** (2026-07-04, `probes/C8SeamProbe.lean`) against the pinned
+   candidate chain-head layout `headEncodeIn` — freeze it with the S1
+   witness design.
 3. **Guard-or-no-guard is a per-step decision**: probe invalid→invalid ON
    PAPER before coding (counterexample method: pick a tiny invalid instance,
    check whether its image is accidentally wellformed+satisfiable).
@@ -130,39 +143,129 @@ intermediate FlatCC inputs in 1/2/4/6/7/8 and scratch 9–16, 23, 24, 25 (`BOUT`
    `TMGenNPFixedInput.accepts` are abstract predicates, so their
    `encodable.size` counts only the data fields (tapes + the two numeric
    parameters). That is honest for `⪯p` size bounds, but **no TM can consume
-   these types as inputs** — C8 must replace the abstract front with
-   concrete-machine types (the settled S2-collapse design). Never add a
-   size-0 instance to "fix" a missing-instance error; the fallback was
-   deleted deliberately.
+   these types as inputs** — C8 retires the abstract front entirely (scoped
+   2026-07-04: per-`Q` witnesses target corrected `FlatSingleTMGenNP`
+   directly). Never add a size-0 instance to "fix" a missing-instance error;
+   the fallback was deleted deliberately.
+5. **The hypothesis side of hardness is dishonest-capable too (C8 finding
+   F1).** `inTimePoly`/`inNP` are classically TRUE for every predicate (the
+   cheating `DecidesBy.encode`), so any `∀ Q, inNP Q → …` hardness statement
+   is unprovable-honestly by construction. Quantify hardness over free-line
+   verifier witnesses (`NPhard''` over `InNPWitnessLangFreeSplit`, C8-0/C8-1)
+   and never "fix" a hardness obligation by strengthening only the
+   conclusion side.
 
 ---
 
-## NEXT BOTTOM-UP session — C8 scoping probe (now UNGATED by Part 0.1)
+## C8 — SCOPED (2026-07-04). Verdict: FEASIBLE-BUT-EXPENSIVE (~5–7 sessions,
+## ~2–4K LOC), gated on owner decision C8-0
 
-Part 0.1 is done, so the last foundational gate on **C8** (the real
-universal-source decider replacing `hasDeciderClassical`, subsuming S2) is
-gone. C8 is the biggest remaining hardness-side unknown after S1, and it has a
-**standing un-probed design risk** (architecture risk #2: can the per-`Q`
-front witness actually target the chain's fixed input layout?). A time-boxed
-scoping session, not a build session:
+The scoping probe (`probes/C8SeamProbe.lean`, green) + paper analysis settled
+the shape of the real universal-source front (replacing `hasDeciderClassical`,
+subsuming S2). **The answers to the three scoping questions:**
 
-1. **Scope the shape.** Read `GenNP_is_hard.lean` (the docstring on
-   `hasDeciderClassical` sketches the Part-7 plan) + `GenNP.lean` +
-   `Lang/PolyTime.lean` (`SeamData`). Answer on paper: what concrete type
-   replaces the abstract-`rel` `GenNPInput` front (standing risk #4 — the
-   predicate fields must become concrete machines/programs), what does the
-   per-`Q` `DecidesLang` for `genNPRel` look like on the free line, and where
-   exactly does its `SeamData` plug into the chain head
-   (`FlatSingleTMGenNP`'s input layout)?
-2. **Probe the seam-targeting risk** (`#eval`, additive): build a toy per-`Q`
-   witness for one tiny `Q` and check register-by-register (`AgreeBelow`, the
-   `FlatCCBinProbe.checkBridge` pattern) that its exit frame can feed the
-   chain-head input layout.
-3. **Verdict + decomposition**: feasible / feasible-but-expensive /
-   trigger-fallback, plus a `sorry`-decomposed skeleton list for the build
-   sessions. Do NOT start building the decider inside the scoping session.
+- **No concrete type "replaces" `GenNPInput` — the abstract front dies.** In
+  the honest endgame the per-`Q` witness maps `Q`-instances DIRECTLY to
+  (corrected) `FlatSingleTMGenNP` instances (`flatTM × List Nat × Nat × Nat`);
+  `GenNP`/`LMGenNP`/the mTM bridges/`GenNP_is_hard.lean` stay only in the
+  legacy `⪯p` chain until the S3 swap, then get deleted (that IS the S2
+  collapse).
+- **The per-`Q` front witness** `W_Q : PolyTimeComputableLang (fQ)` with
+  `fQ x = (M_Q, s_x, maxSize x, steps x)`: `M_Q` = the compiled+padded
+  verifier of the *hypothesis's* free NP witness, wrapped accept-by-halting
+  (a CONSTANT per `Q`, emitted verbatim by the `Cmd`); `s_x` = per-symbol
+  re-encoding of `encX x`; `maxSize`/`steps` = unary values of concrete
+  monomials `c·(n+1)^k` overshooting the hypothesis's abstract `inOPoly`
+  bounds (constants extracted classically once per `Q`).
+- **The seam** plugs into the FUTURE S1 free witness's input layout, which
+  does not exist yet — the probe **pins a candidate** (`headEncodeIn`: reg 1
+  machine as sentinel bit-stream, reg 2 `s`, regs 3/4 unary params) and
+  validates a toy `W_Q` hits it register-exactly (`checkBridge` + `enc_bit`).
+  **Risk #2 for C8: GO.** The S1 designer co-owns freezing this layout.
 
-**Alternative (if C8 scoping stalls or a shorter session is wanted):** the
+**Findings (F1–F6) — read before building:**
+
+1. **F1 (BLOCKING, owner decision C8-0): `NPhard'` over the current `inNP`
+   can never be honest.** `DecidesBy.encode` is a free function, so
+   `inTimePoly P` holds *classically for every predicate* (encode
+   `x ↦ [if P x then 1 else 0]` + a 2-state bit-test machine — why
+   `hasDeciderClassical`'s docstring says "vacuously true"), hence `inNP Q`
+   is TRUE for every `Q` (Cert `Unit`, `rel x _ := Q x`). So
+   `NPhard' SAT = ∀ Q, inNP Q → Q ⪯p' SAT` quantifies over undecidable
+   predicates; an honest witness would decide them — impossible — so any
+   proof must route through the `ComputesBy.encode` cheat and the migrated
+   headline stays vacuous. **Fix: strengthen the hypothesis** to a free-line
+   verifier witness — `NPhard'' P := ∀ Y _ Q, inNPLangFreeSplit Q → Q ⪯p' P`
+   where `InNPWitnessLangFreeSplit` = today's `InNPWitnessLangFree` with
+   (a) **Cert := List Bool** (certificates are strings — textbook), (b) a
+   **split pair layout** `verifier.encodeIn (x,c) = encX x ++ encC c` with
+   pinned `encC` (the tape must factor as `s_x ++ cert`), (c) a size bound
+   on `encX`. This is the standard verifier-based NP definition and changes
+   the headline's meaning (hardness quantified over free-line-verified NP
+   problems) — hence owner sign-off. Do NOT close `hasDeciderClassical` with
+   the cheating encoder meanwhile: the sorry is the honest marker of the open
+   hardness half (and as literally stated, with arbitrary `timeBound`, it is
+   anyway false for `timeBound ≡ 0` on mixed predicates).
+2. **F2: `FlatSingleTMGenNP` is port-buggy** (`SingleTMGenNP.lean`): it
+   demands `list_ofFlatType 1 s` (= all-zero strings; machine-checked in the
+   probe — no data-carrying instance exists) where Coq has
+   `list_ofFlatType (sig M) s`, and it omits Coq's `tapes M = 1`. Fix to the
+   Coq form; the vacuous S1 + bridges re-typecheck mechanically.
+3. **F3: `PolyTimeComputableLang.encodeIn_size` hard-codes `≤ 2n+1`**, but
+   `W_Q.encodeIn` must be the hypothesis's `encX` (the only honest access to
+   an abstract `x`), whose bound is the hypothesis's polynomial. Generalize
+   to a per-witness `encBound` field (precedent: `DecidesBy.encodeBound`,
+   owner-decision 2026-06-07). Contained ripple: `padTimeBound` +
+   `toFrameworkWitness'` arithmetic + `comp`.
+4. **F4: acceptance is accept-by-HALTING** (`acceptsFlatTM` = reached a halt
+   state within `steps`), but compiled deciders halt on accept AND reject.
+   Wrapper: demote `rejectState` from the halt list — the machine sticks at
+   reject (`validFlatTM` does not demand totality; stuck ⇒ not halting ⇒
+   reject). Needs a run-transport lemma pair (accept-run preserved,
+   reject-run never halts).
+5. **F5: garbage certificates need an on-machine tape-FORMAT guard.** The
+   instance's `∃ cert` ranges over raw strings; compiled-`Cmd` run lemmas
+   only cover tapes `= encodeTape (encodeIn …)`. A TM-level format-check
+   gadget (scan the cert region for the `{1,2}`-block/`0`-separator/endMark
+   grammar, reject ⇒ stick) must prefix the wrapped verifier. With
+   Cert = List Bool + pinned `encC`, format-valid ⇒ decodes — closing the
+   backward correctness direction.
+6. **F6: abstract `inOPoly` bounds → concrete monomials** for the
+   `maxSize`/`steps` registers: extract `c`,`k`,`n0` classically once per
+   `Q`, overshoot with `c·(n+1)^k + maxPrefix`, compute unary via the proven
+   mul-loop shape (the probe exercises the quadratic case).
+
+**Build decomposition (one per session; commit each green):**
+
+- **C8-0 (owner, short):** sign off F1 (`NPhard''` + hypothesis
+  strengthening), F2 (type fix), F3 (field generalization).
+- **C8-1 (framework batch, mechanical):** `InNPWitnessLangFreeSplit` +
+  `NPhard''`/`NPcomplete''` (additive; old defs keep compiling); fix
+  `FlatSingleTMGenNP` to the Coq form; generalize `encodeIn_size` + re-prove
+  the `padTimeBound`/`toFrameworkWitness'`/`comp` arithmetic. Verify the live
+  verifiers' pair layouts factor (`evalCnfDecidesLang`,
+  `cliqueRelDecidesLang`) — expected yes, confirm.
+- **C8-2 (TM gadgets):** the accept-by-halting wrapper (halt-list demotion +
+  run transport) and the tape-format-check gadget (scan-family; both run
+  directions).
+- **C8-3 (Cmd pieces + run lemmas):** `emitConst` (fold of appends; run lemma
+  by induction on the constant), the unary monomial evaluator (`c·(n+1)^k`
+  via k-fold `unaryMulLoop_run`), the per-symbol re-encoder (`expandSent`
+  shape).
+- **C8-4 (W_Q assembly):** `fQ` + the correctness iff (forward:
+  `paddedBitDecider_run` + wrapper transport within the `steps` budget;
+  backward: accepted ⇒ format-valid ⇒ decodes ⇒ `rel` ⇒ `Q x` via
+  `rel_correct.sound`) + the `PolyTimeComputableLang` fields.
+- **C8-5 (the seam):** `SeamData W_Q W_head` against the frozen head layout —
+  blocked on the S1 free witness existing; until then `C8SeamProbe.headEncodeIn`
+  is the layout spec.
+
+## NEXT BOTTOM-UP session — C8-1 (after C8-0 sign-off), else the alternative
+
+If the owner has signed off C8-0 (or signs off at session start), do **C8-1**
+above. Otherwise do the alternative below (and C8 waits).
+
+**Alternative (also the right choice for a shorter session):** the
 `FSAT_to_SAT` free witness (Tseytin as a `Cmd`; the last small sound-tail
 item). Paper-probe the guard question first (formula inputs have no invalid
 instances — expect the unguarded pattern of
@@ -242,11 +345,11 @@ each lemma once it compiles green.
    witness chain.
 3. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K
    LOC) — the deepest unsoundness, the real front reduction.
-4. **C8** — the universal-source decider (`hasDeciderClassical`), single-tape
-   via free `DecidesLang`; subsumes S2 (collapse the phantom bridges there).
-   Must ALSO produce the per-`Q` `SeamData` into the chain head (the settled,
-   now-validated design). **UNGATED as of 2026-07-04-b** (Part 0.1 done);
-   scoping probe queued as the next bottom-up session.
+4. **C8** — the per-`Q` universal-source front; subsumes S2. **SCOPED
+   2026-07-04: FEASIBLE-BUT-EXPENSIVE**, decomposition C8-0…C8-5 above
+   (bottom-up stream). Coordinate here: the S1 witness design must freeze
+   the chain-head input layout the C8 seam targets
+   (`probes/C8SeamProbe.lean` `headEncodeIn` is the candidate spec).
 
 ---
 
