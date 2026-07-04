@@ -1154,7 +1154,13 @@ Consequently `NPhard'` facts do not decompose; the decomposition lives in the
 `SeamData`/`comp` layer above. -/
 
 /-- The migrated `NPhard`: every NP problem `⪯p'`-reduces (TM-backed) to `P`.
-Proved at chain *endpoints only* — see the design note above. -/
+Proved at chain *endpoints only* — see the design note above.
+
+⚠ **SUPERSEDED as the endgame target (C8-0, 2026-07-04): `NPhard'` can never
+be proven honestly** — `inNP Q` is classically true for EVERY predicate
+(finding F1 below), so this quantifies over undecidable problems and any
+proof must route through the `ComputesBy.encode` cheat. Kept for the bridge
+lemmas; the honest hardness statement is `NPhard''` below. -/
 def NPhard' {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p' P
 
@@ -1173,5 +1179,111 @@ theorem NPhard'_to_NPhard {X : Type} [encodable X] {P : X → Prop}
 theorem NPcomplete'_to_NPcomplete {X : Type} [encodable X] {P : X → Prop}
     (h : NPcomplete' P) : NPcomplete P :=
   ⟨NPhard'_to_NPhard h.1, h.2⟩
+
+/-! ## `InNPWitnessLangFreeSplit` / `NPhard''` — the honest hardness
+hypothesis (C8-0, owner-approved 2026-07-04)
+
+**Finding F1 (C8 scoping).** `inTimePoly` — and hence `inNP` — is classically
+TRUE for *every* predicate: `DecidesBy.encode` is an unconstrained function,
+so `encode x := [if P x then 1 else 0]` plus a two-state bit-test machine
+inhabits `DecidesBy P _` for any `P` (the "cheating encoder"; this is also
+why `hasDeciderClassical` calls itself vacuously true). Consequently
+`NPhard'` quantifies over predicates with no computational content —
+including undecidable ones — and **no honest proof of it can exist**: an
+honest per-`Q` reduction witness composed with a SAT decider would decide an
+arbitrary `Q`. Any proof of `NPhard'` must itself route through the
+`ComputesBy.encode` cheat, making the migrated headline exactly as vacuous
+as the S3 weakness it retires.
+
+The honest hardness hypothesis is the **verifier-based** definition of NP
+(textbook; the Coq original's L-computable verifiers play the same role):
+the NP problem arrives with a REAL layer verifier — a `Cmd` — over a
+bit-level layout, with two extra layout guarantees the C8 front construction
+needs:
+
+* **certificates are strings** (`Cert := List Bool`) in the canonical
+  one-register layout `certState`, so the front instance's raw-string
+  `∃ cert` matches the certificate image exactly (every format-valid string
+  decodes — no un-decodable "garbage certificate" gap);
+* **the pair layout splits** — `encodeIn (x, c) = encX x ++ certState c`
+  with `encX` of fixed register width — so the instance tape factors as
+  `s_x ++ cert` with the certificate at a machine-addressable register.
+
+The residual freedom is `encX` (an arbitrary function — unavoidable for an
+abstract `Y`; whether a *user's* instantiation is honest is the usual
+per-witness discipline, standing risk #1). The verification content is a
+real machine, which is exactly what the C8 per-`Q` front embeds in the
+produced `FlatSingleTMGenNP` instance. -/
+
+/-- The canonical certificate layout: ONE register holding the bits
+(`true ↦ 1`, `false ↦ 0`). Every bit-register content is in its image. -/
+def certState (c : List Bool) : State := [c.map (fun b => if b then 1 else 0)]
+
+/-- Free-encoding NP witness with string certificates in the canonical layout
+and a split, fixed-width pair layout — the strengthened hardness hypothesis
+(C8-0). Mirrors `InNPWitnessLangFree` plus the three layout fields. -/
+structure InNPWitnessLangFreeSplit {X : Type} [encodable X] (P : X → Prop) where
+  /-- The certificate relation (certificates are strings). -/
+  rel : X → List Bool → Prop
+  /-- Verifier cost bound. -/
+  dBound : Nat → Nat
+  dBound_poly : inOPoly dBound
+  dBound_mono : monotonic dBound
+  /-- The verifier: a free-encoding layer decider on the pair. -/
+  verifier : DecidesLang (fun xc : X × List Bool => rel xc.1 xc.2) dBound
+  /-- Sound, complete, polynomially-bounded certificate relation for `P`. -/
+  rel_correct : polyCertRel P rel
+  /-- The input part of the split pair layout. -/
+  encX : X → State
+  /-- The split law: input registers, then the canonical certificate register.
+  This is what lets the C8 front instance's tape factor as `s_x ++ cert`. -/
+  encodeIn_eq : ∀ x c, verifier.encodeIn (x, c) = encX x ++ certState c
+  /-- `encX`'s register width is a per-witness constant, so the certificate
+  register sits at the statically-addressable index `xWidth`. -/
+  xWidth : Nat
+  encX_width : ∀ x, (encX x).length = xWidth
+  /-- Size bound for the input part alone (this becomes the per-`Q` front
+  witness's `encBound`). -/
+  encX_size : ∀ x, State.size (encX x) ≤ dBound (encodable.size x)
+
+/-- `P` is in NP with a split free-line verifier witness. -/
+def inNPLangFreeSplit {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  Nonempty (InNPWitnessLangFreeSplit P)
+
+/-- Forgetting the layout fields: split → plain free NP witness. -/
+theorem inNPLangFreeSplit_to_inNPLangFree {X : Type} [encodable X]
+    {P : X → Prop} (h : inNPLangFreeSplit P) : inNPLangFree P := by
+  obtain ⟨W⟩ := h
+  exact ⟨List Bool, inferInstance,
+    ⟨⟨W.rel, W.dBound, W.dBound_poly, W.dBound_mono, W.verifier, W.rel_correct⟩⟩⟩
+
+/-- Split free witness → framework `inNP` (via the live free bridge). -/
+theorem inNPLangFreeSplit_to_inNP {X : Type} [encodable X]
+    {P : X → Prop} (h : inNPLangFreeSplit P) : inNP P :=
+  inNPLangFree_to_inNP (inNPLangFreeSplit_to_inNPLangFree h)
+
+/-- **The honest migrated hardness (C8-0)**: every NP problem *presented with
+a split free-line verifier witness* `⪯p'`-reduces (TM-backed) to `P`. Proven
+at chain endpoints only — the `SeamData`/`comp` design note above applies
+verbatim; the C8 per-`Q` front consumes the witness's verifier `Cmd` and
+layout fields to build the `FlatSingleTMGenNP` instance. -/
+def NPhard'' {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNPLangFreeSplit Q → Q ⪯p' P
+
+/-- The honest endgame headline shape (`CookLevin'' : NPcomplete'' SAT`):
+hardness over verifier-presented NP problems, membership BY a split verifier
+witness. Note there is deliberately NO `NPcomplete'' → NPcomplete` bridge:
+the honest statement does not imply the vacuous one (`NPhard` needs the
+cheat-inhabited `inNP Q` for every `Q`), and the legacy conditional headline
+stays untouched until the endgame swap. -/
+def NPcomplete'' {X : Type} [encodable X] (P : X → Prop) : Prop :=
+  NPhard'' P ∧ inNPLangFreeSplit P
+
+/-- `NPhard'` (over the vacuous `inNP`) implies `NPhard''`: the strengthened
+hypothesis only shrinks the quantifier. The converse is the point — `NPhard''`
+is the strongest hardness an honest witness can prove. -/
+theorem NPhard'_to_NPhard'' {X : Type} [encodable X] {P : X → Prop}
+    (h : NPhard' P) : NPhard'' P :=
+  fun Y eY Q hQ => h Y eY Q (inNPLangFreeSplit_to_inNP hQ)
 
 end Complexity.Lang
