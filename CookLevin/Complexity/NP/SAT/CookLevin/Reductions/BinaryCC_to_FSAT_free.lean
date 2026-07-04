@@ -275,6 +275,138 @@ def emitVarW : Cmd :=
 def emitLitAt : Cmd :=
   Cmd.ifBit TFLG emitVarW (emit1 ;; emit1 ;; emit0 ;; emitVarW)
 
+/-! ### Run lemmas for the literal-tag emitters (session 3, step 2 — the crux)
+
+`litFor`/`bitsPrefix` mirror `BinaryCCToFSAT.encodeBitsAt`'s unfolding one bit
+at a time, matching the loop order `emitBitsFromScan`/`emitBitsFromSent`
+actually emit in. -/
+
+/-- The literal for bit `b` at variable index `v` — matches
+`encodeBitsAt`'s `if b then .fvar start else .fneg (.fvar start)` exactly
+(`encodeBitsAt_cons` below is `rfl`). -/
+def litFor (b : Bool) (v : Nat) : formula := if b then .fvar v else .fneg (.fvar v)
+
+theorem encodeBitsAt_cons (start : Nat) (b : Bool) (bs : List Bool) :
+    BinaryCCToFSAT.encodeBitsAt start (b :: bs)
+      = .fand (litFor b start) (BinaryCCToFSAT.encodeBitsAt (start + 1) bs) := rfl
+
+/-- The tag+literal serialization of a bit-list starting at variable `start`,
+**without** the closing `ftrue` tag — the loop's accumulated `OUT` after `i`
+iterations is `OUT₀ ++ bitsPrefix start (bits.take i)`. -/
+def bitsPrefix (start : Nat) : List Bool → List Nat
+  | [] => []
+  | b :: bs => [0, 1] ++ serF (litFor b start) ++ bitsPrefix (start + 1) bs
+
+/-- Closing the accumulated prefix with `ftrue`'s tag gives exactly
+`serF (encodeBitsAt start bits)` — the algebraic fact powering `buildFSAT_run`'s
+final `emitFtrue`. -/
+theorem serF_encodeBitsAt (start : Nat) (bits : List Bool) :
+    serF (BinaryCCToFSAT.encodeBitsAt start bits) = bitsPrefix start bits ++ [0, 0] := by
+  induction bits generalizing start with
+  | nil => rfl
+  | cons b bs ih =>
+      rw [encodeBitsAt_cons]
+      show serF (.fand (litFor b start) (BinaryCCToFSAT.encodeBitsAt (start + 1) bs)) = _
+      simp only [serF, bitsPrefix, ih (start + 1), List.append_assoc]
+
+/-- `bitsPrefix` splits over list append, shifting the start index by the
+prefix's length — the accumulation law behind the loop invariant (the
+"`_snoc`" step, specialized to a singleton `ys` in `bitsPrefix_take_succ`). -/
+theorem bitsPrefix_append (start : Nat) (xs ys : List Bool) :
+    bitsPrefix start (xs ++ ys) = bitsPrefix start xs ++ bitsPrefix (start + xs.length) ys := by
+  induction xs generalizing start with
+  | nil => simp [bitsPrefix]
+  | cons b xs ih =>
+      have hstart : start + 1 + xs.length = start + (b :: xs).length := by
+        simp; omega
+      simp only [List.cons_append, bitsPrefix, List.length_cons]
+      rw [ih (start + 1), hstart]
+      simp [List.append_assoc]
+
+/-- The loop-invariant snoc step: extending the processed prefix by one more
+bit appends exactly one `[0,1] ++ serF (litFor · ·)` block. -/
+theorem bitsPrefix_take_succ (start : Nat) (bits : List Bool) (i : Nat) (hi : i < bits.length) :
+    bitsPrefix start (bits.take (i + 1))
+      = bitsPrefix start (bits.take i) ++ [0, 1] ++ serF (litFor bits[i] (start + i)) := by
+  have htake : bits.take (i + 1) = bits.take i ++ [bits[i]] := by
+    rw [List.take_add_one, List.getElem?_eq_getElem hi]
+    rfl
+  rw [htake, bitsPrefix_append, List.length_take, Nat.min_eq_left (le_of_lt hi)]
+  simp [bitsPrefix, List.append_assoc]
+
+private theorem emit0_run (s : State) : emit0.eval s = s.set OUT (s.get OUT ++ [0]) := rfl
+private theorem emit1_run (s : State) : emit1.eval s = s.set OUT (s.get OUT ++ [1]) := rfl
+
+private theorem emitFtrue_run (s : State) :
+    emitFtrue.eval s = s.set OUT (s.get OUT ++ [0, 0]) := by
+  simp only [emitFtrue, Cmd.eval_seq, emit0_run, State.get_set_eq, State.set_set,
+    List.append_assoc]
+  rfl
+
+private theorem emitFandTag_run (s : State) :
+    emitFandTag.eval s = s.set OUT (s.get OUT ++ [0, 1]) := by
+  simp only [emitFandTag, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_eq, State.set_set,
+    List.append_assoc]
+  rfl
+
+private theorem emitVarW_run (s : State) (v : Nat)
+    (hW : State.get s WREG = List.replicate v 1) :
+    emitVarW.eval s = s.set OUT (s.get OUT ++ serF (.fvar v)) := by
+  simp only [emitVarW, Cmd.eval_seq, emit0_run, emit1_run, Cmd.eval_op, Op.eval,
+    State.get_set_eq, State.get_set_ne _ _ _ _ (show WREG ≠ OUT by decide), hW, State.set_set,
+    List.append_assoc, serF]
+  rfl
+
+private theorem emitLitAt_run (s : State) (b : Bool) (v : Nat)
+    (hT : State.get s TFLG = if b then [1] else [0])
+    (hW : State.get s WREG = List.replicate v 1) :
+    emitLitAt.eval s = s.set OUT (s.get OUT ++ serF (litFor b v)) := by
+  unfold emitLitAt
+  cases b with
+  | true =>
+      have hTFLG : State.get s TFLG = [1] := by rw [hT]; decide
+      rw [Cmd.eval_ifBit_true _ _ _ _ hTFLG, emitVarW_run s v hW]
+      rfl
+  | false =>
+      have hTFLG : State.get s TFLG ≠ [1] := by rw [hT]; decide
+      rw [Cmd.eval_ifBit_false _ _ _ _ hTFLG]
+      have e1 : (emit1 ;; emit1 ;; emit0 ;; emitVarW).eval s
+          = emitVarW.eval (s.set OUT (s.get OUT ++ [1, 1, 0])) := by
+        simp only [Cmd.eval_seq, emit0_run, emit1_run, State.get_set_eq, State.set_set,
+          List.append_assoc]
+        rfl
+      rw [e1]
+      have hW' : State.get (s.set OUT (s.get OUT ++ [1, 1, 0])) WREG = List.replicate v 1 := by
+        rw [State.get_set_ne _ _ _ _ (show WREG ≠ OUT by decide)]; exact hW
+      rw [emitVarW_run _ v hW']
+      simp only [State.get_set_eq, State.set_set, List.append_assoc]
+      rfl
+
+/-- Every literal-tag emitter above touches only `OUT` — the frame half of
+each `_run` lemma, needed so the fold invariants below can track `SCAN`/
+`TFLG`/`WREG`/`KBIT` through `emitFandTag`/`emitLitAt` untouched. -/
+private theorem emitFtrue_frame (s : State) (r : Var) (hr : r ≠ OUT) :
+    State.get (emitFtrue.eval s) r = State.get s r := by
+  simp only [emitFtrue, Cmd.eval_seq, emit0_run, State.get_set_ne _ _ _ _ hr]
+
+private theorem emitFandTag_frame (s : State) (r : Var) (hr : r ≠ OUT) :
+    State.get (emitFandTag.eval s) r = State.get s r := by
+  simp only [emitFandTag, Cmd.eval_seq, emit0_run, emit1_run, State.get_set_ne _ _ _ _ hr]
+
+private theorem emitVarW_frame (s : State) (r : Var) (hr : r ≠ OUT) :
+    State.get (emitVarW.eval s) r = State.get s r := by
+  simp only [emitVarW, Cmd.eval_seq, emit0_run, emit1_run, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ hr]
+
+private theorem emitLitAt_frame (s : State) (r : Var) (hr : r ≠ OUT) :
+    State.get (emitLitAt.eval s) r = State.get s r := by
+  unfold emitLitAt
+  by_cases hb : State.get s TFLG = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hb, emitVarW_frame s r hr]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hb]
+    simp only [Cmd.eval_seq, emit0_run, emit1_run, State.get_set_ne _ _ _ _ hr,
+      emitVarW_frame _ r hr]
+
 /-- `serF (encodeBitsAt start bits)` reading `bound`-many bits off `SCAN` (a bit
 register); bit `i`'s index is `concat(BASE, 1^i)` = `1^(start+i)`. -/
 def emitBitsFromScan (BASE bound : Nat) : Cmd :=
@@ -285,6 +417,177 @@ def emitBitsFromScan (BASE bound : Nat) : Cmd :=
       emitFandTag ;;
       emitLitAt ) ;;
   emitFtrue
+
+/-! ### `emitBitsFromScan_run` — the direct (unencoded) bit-list leaf lemma
+
+The first "session 3, step 2" crux lemma: the loop unrolls exactly the
+`bitsPrefix` accumulation (`bitsPrefix_take_succ`), so `OUT` after the loop is
+`OUT₀ ++ bitsPrefix start bits`, and closing with `emitFtrue` gives
+`serF (encodeBitsAt start bits)` via `serF_encodeBitsAt`. -/
+
+/-- Fold invariant: after `i` iterations, `SCAN` holds the remaining bits and
+`OUT` the tag+literal prefix processed so far; every other register (in
+particular `BASE`, assumed disjoint from the loop's scratch set) is frozen. -/
+private def BSInv (BASE start : Nat) (bits : List Bool) (u : State) (i : Nat)
+    (st : State) : Prop :=
+  State.get st SCAN = FlatCCBinFree.bitsNat (bits.drop i)
+  ∧ State.get st OUT = State.get u OUT ++ bitsPrefix start (bits.take i)
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+      State.get st r = State.get u r)
+
+private theorem BSInv_step (BASE start : Nat) (bits : List Bool) (u : State)
+    (hBS : BASE ≠ SCAN) (hBO : BASE ≠ OUT) (hBW : BASE ≠ WREG) (hBT : BASE ≠ TFLG)
+    (hBK : BASE ≠ KBIT) (hB : State.get u BASE = List.replicate start 1)
+    (i : Nat) (hi : i < bits.length) (st : State) (h : BSInv BASE start bits u i st) :
+    BSInv BASE start bits u (i + 1)
+      (( Cmd.op (.head TFLG SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+         Cmd.op (.concat WREG BASE KBIT) ;; emitFandTag ;; emitLitAt
+       ).eval (st.set KBIT (List.replicate i 1))) := by
+  obtain ⟨hSCAN, hOUT, hframe⟩ := h
+  set w := st.set KBIT (List.replicate i 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KBIT → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwK : State.get w KBIT = List.replicate i 1 := State.get_set_eq _ _ _
+  have hwSCAN : State.get w SCAN = FlatCCBinFree.bitsNat (bits.drop i) := by
+    rw [hwframe SCAN (by decide)]; exact hSCAN
+  have hwOUT : State.get w OUT = State.get u OUT ++ bitsPrefix start (bits.take i) := by
+    rw [hwframe OUT (by decide)]; exact hOUT
+  have hwBASE : State.get w BASE = List.replicate start 1 := by
+    rw [hwframe BASE hBK, hframe BASE hBS hBO hBW hBT hBK]; exact hB
+  clear_value w
+  have hdrop : bits.drop i = bits[i] :: bits.drop (i + 1) := List.drop_eq_getElem_cons hi
+  have htake : bits.take (i + 1) = bits.take i ++ [bits[i]] := by
+    rw [List.take_add_one, List.getElem?_eq_getElem hi]; rfl
+  set b := bits[i] with hb
+  clear_value b
+  have hSCANw : State.get w SCAN
+      = (cond b 1 0) :: FlatCCBinFree.bitsNat (bits.drop (i + 1)) := by
+    rw [hwSCAN, hdrop]; rfl
+  -- step 1: head TFLG SCAN
+  have e1 : (Cmd.op (.head TFLG SCAN)).eval w = w.set TFLG [cond b 1 0] := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hSCANw]
+  set w1 := w.set TFLG [cond b 1 0] with hw1
+  have hw1frame : ∀ r : Var, r ≠ TFLG → State.get w1 r = State.get w r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw1T : State.get w1 TFLG = [cond b 1 0] := State.get_set_eq _ _ _
+  have hw1SCAN : State.get w1 SCAN = State.get w SCAN := hw1frame SCAN (by decide)
+  have hw1OUT : State.get w1 OUT = State.get w OUT := hw1frame OUT (by decide)
+  have hw1BASE : State.get w1 BASE = State.get w BASE := hw1frame BASE hBT
+  have hw1K : State.get w1 KBIT = State.get w KBIT := hw1frame KBIT (by decide)
+  clear_value w1
+  -- step 2: tail SCAN SCAN
+  have e2 : (Cmd.op (.tail SCAN SCAN)).eval w1
+      = w1.set SCAN (FlatCCBinFree.bitsNat (bits.drop (i + 1))) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw1SCAN, hSCANw, List.tail_cons]
+  set w2 := w1.set SCAN (FlatCCBinFree.bitsNat (bits.drop (i + 1))) with hw2
+  have hw2frame : ∀ r : Var, r ≠ SCAN → State.get w2 r = State.get w1 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw2SCAN : State.get w2 SCAN = FlatCCBinFree.bitsNat (bits.drop (i + 1)) :=
+    State.get_set_eq _ _ _
+  have hw2T : State.get w2 TFLG = [cond b 1 0] := by
+    rw [hw2frame TFLG (by decide)]; exact hw1T
+  have hw2OUT : State.get w2 OUT = State.get w OUT := by
+    rw [hw2frame OUT (by decide)]; exact hw1OUT
+  have hw2BASE : State.get w2 BASE = List.replicate start 1 := by
+    rw [hw2frame BASE hBS, hw1BASE]; exact hwBASE
+  have hw2K : State.get w2 KBIT = List.replicate i 1 := by
+    rw [hw2frame KBIT (by decide), hw1K]; exact hwK
+  clear_value w2
+  -- step 3: concat WREG BASE KBIT
+  have e3 : (Cmd.op (.concat WREG BASE KBIT)).eval w2
+      = w2.set WREG (List.replicate (start + i) 1) := by
+    rw [Cmd.eval_op]
+    simp only [Op.eval, hw2BASE, hw2K]
+    congr 1
+    rw [List.replicate_add]
+  set w3 := w2.set WREG (List.replicate (start + i) 1) with hw3
+  have hw3frame : ∀ r : Var, r ≠ WREG → State.get w3 r = State.get w2 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw3W : State.get w3 WREG = List.replicate (start + i) 1 := State.get_set_eq _ _ _
+  have hw3SCAN : State.get w3 SCAN = FlatCCBinFree.bitsNat (bits.drop (i + 1)) := by
+    rw [hw3frame SCAN (by decide)]; exact hw2SCAN
+  have hw3T : State.get w3 TFLG = [cond b 1 0] := by
+    rw [hw3frame TFLG (by decide)]; exact hw2T
+  have hw3OUT : State.get w3 OUT = State.get w OUT := by
+    rw [hw3frame OUT (by decide)]; exact hw2OUT
+  clear_value w3
+  -- step 4: emitFandTag
+  set w4 := emitFandTag.eval w3 with hw4
+  have e4OUT : State.get w4 OUT = State.get w3 OUT ++ [0, 1] := by
+    rw [hw4, emitFandTag_run]; exact State.get_set_eq _ _ _
+  have e4SCAN : State.get w4 SCAN = State.get w3 SCAN :=
+    emitFandTag_frame w3 SCAN (by decide)
+  have e4T : State.get w4 TFLG = State.get w3 TFLG :=
+    emitFandTag_frame w3 TFLG (by decide)
+  have e4W : State.get w4 WREG = State.get w3 WREG :=
+    emitFandTag_frame w3 WREG (by decide)
+  clear_value w4
+  -- step 5: emitLitAt
+  have hTb : State.get w4 TFLG = if b then [1] else [0] := by
+    rw [e4T, hw3T]; cases b <;> rfl
+  have hWb : State.get w4 WREG = List.replicate (start + i) 1 := by
+    rw [e4W, hw3W]
+  set w5 := emitLitAt.eval w4 with hw5
+  have e5OUT : State.get w5 OUT = State.get w4 OUT ++ serF (litFor b (start + i)) := by
+    rw [hw5, emitLitAt_run w4 b (start + i) hTb hWb]; exact State.get_set_eq _ _ _
+  have e5SCAN : State.get w5 SCAN = State.get w4 SCAN := emitLitAt_frame _ SCAN (by decide)
+  have e5frame : ∀ r : Var, r ≠ OUT → State.get w5 r = State.get w4 r :=
+    fun r hr => emitLitAt_frame _ r hr
+  clear_value w5
+  have heval : (( Cmd.op (.head TFLG SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.op (.concat WREG BASE KBIT) ;; emitFandTag ;; emitLitAt
+    ).eval w) = w5 := by
+    rw [Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, ← hw4, ← hw5]
+  rw [heval]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [e5SCAN, e4SCAN, hw3SCAN]
+  · rw [e5OUT, e4OUT, hw3OUT, hwOUT, htake, bitsPrefix_append, List.length_take,
+      Nat.min_eq_left (le_of_lt hi)]
+    simp [bitsPrefix, List.append_assoc]
+  · intro r hrS hrO hrW hrT hrK
+    rw [e5frame r hrO, hw4, emitFandTag_frame _ r hrO, hw3frame r hrW, hw2frame r hrS,
+      hw1frame r hrT, hwframe r hrK, hframe r hrS hrO hrW hrT hrK]
+
+/-- **`emitBitsFromScan` is correct**: it consumes `bits.length`-many bits off
+`SCAN` (`bound`'s length) and appends `serF (encodeBitsAt start bits)` to
+`OUT`, leaving `SCAN` empty. `BASE` (a fixed constant elsewhere, e.g. `ZERO`
+or `FSTART`) must sit outside the loop's scratch set `{SCAN,OUT,WREG,TFLG,
+KBIT}`. -/
+theorem emitBitsFromScan_run (BASE bound start : Nat) (bits : List Bool) (u : State)
+    (hBS : BASE ≠ SCAN) (hBO : BASE ≠ OUT) (hBW : BASE ≠ WREG) (hBT : BASE ≠ TFLG)
+    (hBK : BASE ≠ KBIT) (hB : State.get u BASE = List.replicate start 1)
+    (hbnd : (State.get u bound).length = bits.length)
+    (hSC : State.get u SCAN = FlatCCBinFree.bitsNat bits) :
+    State.get ((emitBitsFromScan BASE bound).eval u) SCAN = []
+    ∧ State.get ((emitBitsFromScan BASE bound).eval u) OUT
+        = State.get u OUT ++ serF (BinaryCCToFSAT.encodeBitsAt start bits) := by
+  have hbase : BSInv BASE start bits u 0 u := by
+    refine ⟨by rw [List.drop_zero]; exact hSC,
+      by rw [List.take_zero]; simp [bitsPrefix], fun r _ _ _ _ _ => rfl⟩
+  have hInv : BSInv BASE start bits u bits.length
+      (Cmd.foldlState
+        ( Cmd.op (.head TFLG SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+          Cmd.op (.concat WREG BASE KBIT) ;; emitFandTag ;; emitLitAt )
+        KBIT (List.range bits.length) u) :=
+    Cmd.foldlState_range_induct _ KBIT bits.length u (BSInv BASE start bits u) hbase
+      (fun i st hi hM => BSInv_step BASE start bits u hBS hBO hBW hBT hBK hB i hi st hM)
+  obtain ⟨hSCANl, hOUTl, -⟩ := hInv
+  have heval : (Cmd.forBnd KBIT bound
+        ( Cmd.op (.head TFLG SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+          Cmd.op (.concat WREG BASE KBIT) ;; emitFandTag ;; emitLitAt )).eval u
+      = Cmd.foldlState
+          ( Cmd.op (.head TFLG SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+            Cmd.op (.concat WREG BASE KBIT) ;; emitFandTag ;; emitLitAt )
+          KBIT (List.range bits.length) u := by
+    rw [Cmd.eval_forBnd, hbnd]
+  show State.get (emitFtrue.eval ((Cmd.forBnd KBIT bound _).eval u)) SCAN = []
+    ∧ State.get (emitFtrue.eval ((Cmd.forBnd KBIT bound _).eval u)) OUT = _
+  rw [heval]
+  refine ⟨?_, ?_⟩
+  · rw [emitFtrue_frame _ SCAN (by decide), hSCANl, List.drop_eq_nil_of_le (le_refl bits.length)]
+    rfl
+  · rw [emitFtrue_run, State.get_set_eq, hOUTl, List.take_of_length_le (le_refl bits.length),
+      List.append_assoc, ← serF_encodeBitsAt]
 
 /-- `serF (encodeBitsAt start bits)` reading one `encSList` of bits off `SCAN`
 (elements `1 1^b 0`, terminator bare `0`), leaving `SCAN` after the terminator.
@@ -475,6 +778,182 @@ def encodeIn (C : BinaryCC) : State :=
     INIT (FlatCCBinFree.bitsNat C.init)).set
     CARDS (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))).set
     FINAL (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat))
+
+/-! ## 2b. `encodeIn_size` — the input encoding is linear (session 3, step 1)
+
+`encodeIn` writes six fields into an otherwise-empty `regFrame`-register frame;
+`State.size` is additive over `State.set` on a fresh (all-`[]`) register
+(`State.size_set_add`), so the total is exactly the sum of the six field
+lengths. Each of `offset`/`width`/`steps` contributes its own value (unary),
+`init` contributes its bit length, and `cards`/`final` contribute their
+sentinel-encoded lengths, bounded via the *generic* `encCardsOut_length_le`/
+`encFinal_length_le` (`FlatCC_to_BinaryCC_free.lean`/`FlatTCC_to_FlatCC_free.lean`)
+composed with the fact that `bitsNat`/`cardNat` (`Bool → Nat`, `CCCard Bool →
+CCCard Nat`) preserve `encodable.size` exactly (0/1 values have the same size
+as `Bool`). -/
+
+private theorem list_length_le_size {α : Type} [encodable α] :
+    ∀ xs : List α, xs.length ≤ encodable.size xs
+  | [] => by simp [encodable.size]
+  | x :: xs => by
+      have ih := list_length_le_size xs
+      rw [encodable_size_list_cons]
+      simp only [List.length_cons]
+      omega
+
+theorem encodable_size_bitsNat (bs : List Bool) :
+    encodable.size (FlatCCBinFree.bitsNat bs) = encodable.size bs := by
+  induction bs with
+  | nil => rfl
+  | cons b bs ih =>
+      show encodable.size (cond b 1 0 :: FlatCCBinFree.bitsNat bs)
+          = encodable.size (b :: bs)
+      rw [encodable_size_list_cons, encodable_size_list_cons, ih]
+      cases b <;> rfl
+
+theorem encodable_size_cardNat (c : CCCard Bool) :
+    encodable.size (FlatCCBinFree.cardNat c) = encodable.size c := by
+  show encodable.size (FlatCCBinFree.bitsNat c.prem)
+      + encodable.size (FlatCCBinFree.bitsNat c.conc) + 1
+      = encodable.size c.prem + encodable.size c.conc + 1
+  rw [encodable_size_bitsNat, encodable_size_bitsNat]
+
+theorem encodable_size_map_cardNat (cs : List (CCCard Bool)) :
+    encodable.size (cs.map FlatCCBinFree.cardNat) = encodable.size cs := by
+  induction cs with
+  | nil => rfl
+  | cons c cs ih =>
+      show encodable.size (FlatCCBinFree.cardNat c :: cs.map FlatCCBinFree.cardNat)
+          = encodable.size (c :: cs)
+      rw [encodable_size_list_cons, encodable_size_list_cons, ih, encodable_size_cardNat]
+
+theorem encodable_size_map_bitsNat (fss : List (List Bool)) :
+    encodable.size (fss.map FlatCCBinFree.bitsNat) = encodable.size fss := by
+  induction fss with
+  | nil => rfl
+  | cons s fss ih =>
+      show encodable.size (FlatCCBinFree.bitsNat s :: fss.map FlatCCBinFree.bitsNat)
+          = encodable.size (s :: fss)
+      rw [encodable_size_list_cons, encodable_size_list_cons, ih, encodable_size_bitsNat]
+
+private theorem replicate_nil_size_gen :
+    ∀ n : Nat, State.size (List.replicate n ([] : List Nat)) = 0
+  | 0 => rfl
+  | n + 1 => by
+      show List.length ([] : List Nat) + State.size (List.replicate n ([] : List Nat)) = 0
+      simp [replicate_nil_size_gen n]
+
+private theorem regFrame_replicate_size :
+    State.size (List.replicate regFrame ([] : List Nat)) = 0 :=
+  replicate_nil_size_gen regFrame
+
+private theorem regFrame_replicate_get (v : Nat) (h : v < regFrame) :
+    State.get (List.replicate regFrame ([] : List Nat)) v = [] := by
+  unfold State.get
+  rw [List.getElem?_eq_getElem (by simpa using h), List.getElem_replicate]
+  rfl
+
+/-- A `.set` on a not-yet-touched (`[]`) register adds exactly the new
+register's length to `State.size` — the additive bookkeeping step reused six
+times below (once per `encodeIn` field). -/
+private theorem fresh_set_size (s : State) (dst : Var) (v : List Nat)
+    (h : State.get s dst = []) :
+    State.size (s.set dst v) = State.size s + v.length := by
+  have hh := State.size_set_add s dst v
+  rw [h, List.length_nil] at hh
+  omega
+
+/-- If `r` is untouched in `s` and `r ≠ dst`, it stays untouched after `s.set
+dst val` — the one-step frame fact chained (2/3/4/5 times) below to reach back
+to the all-`[]` base for each of the six `encodeIn` fields. -/
+private theorem get_unset_of_ne (s : State) (dst : Var) (val : List Nat) (r : Var)
+    (hr : r ≠ dst) (h : State.get s r = []) : State.get (s.set dst val) r = [] :=
+  (State.get_set_ne s dst val r hr).trans h
+
+/-! The six-stage `.set` chain making up `encodeIn`, named so the size/frame
+bookkeeping below can refer to each intermediate frame (`abbrev`, so `rfl`/
+`show` sees through them to match `encodeIn`'s own definition). -/
+private abbrev s0C : State := List.replicate regFrame ([] : List Nat)
+private abbrev s1C (C : BinaryCC) : State := s0C.set STEPS (List.replicate C.steps 1)
+private abbrev s2C (C : BinaryCC) : State := (s1C C).set OFFSET (List.replicate C.offset 1)
+private abbrev s3C (C : BinaryCC) : State := (s2C C).set WIDTH (List.replicate C.width 1)
+private abbrev s4C (C : BinaryCC) : State := (s3C C).set INIT (FlatCCBinFree.bitsNat C.init)
+private abbrev s5C (C : BinaryCC) : State :=
+  (s4C C).set CARDS (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+
+/-- **`encodeIn`'s size is linear** in the instance size (no doubling). -/
+theorem encodeIn_size_le (C : BinaryCC) :
+    State.size (encodeIn C) ≤ 2 * encodable.size C + 1 := by
+  have hC : encodable.size C
+      = C.offset + C.width + encodable.size C.init + encodable.size C.cards
+        + encodable.size C.final + C.steps + 1 := rfl
+  have hget0 : ∀ v : Nat, v < regFrame → State.get s0C v = [] := regFrame_replicate_get
+  have e1 : State.size (s1C C) = C.steps := by
+    rw [fresh_set_size s0C STEPS (List.replicate C.steps 1) (hget0 STEPS (by decide)),
+      regFrame_replicate_size, List.length_replicate]
+    omega
+  have hget1 : State.get (s1C C) OFFSET = [] :=
+    get_unset_of_ne s0C STEPS (List.replicate C.steps 1) OFFSET (by decide)
+      (hget0 OFFSET (by decide))
+  have e2 : State.size (s2C C) = C.steps + C.offset := by
+    rw [fresh_set_size (s1C C) OFFSET (List.replicate C.offset 1) hget1, e1,
+      List.length_replicate]
+  have hget2 : State.get (s2C C) WIDTH = [] :=
+    get_unset_of_ne (s1C C) OFFSET (List.replicate C.offset 1) WIDTH (by decide)
+      (get_unset_of_ne s0C STEPS (List.replicate C.steps 1) WIDTH (by decide)
+        (hget0 WIDTH (by decide)))
+  have e3 : State.size (s3C C) = C.steps + C.offset + C.width := by
+    rw [fresh_set_size (s2C C) WIDTH (List.replicate C.width 1) hget2, e2,
+      List.length_replicate]
+  have hget3 : State.get (s3C C) INIT = [] :=
+    get_unset_of_ne (s2C C) WIDTH (List.replicate C.width 1) INIT (by decide)
+      (get_unset_of_ne (s1C C) OFFSET (List.replicate C.offset 1) INIT (by decide)
+        (get_unset_of_ne s0C STEPS (List.replicate C.steps 1) INIT (by decide)
+          (hget0 INIT (by decide))))
+  have e4 : State.size (s4C C) = C.steps + C.offset + C.width
+      + (FlatCCBinFree.bitsNat C.init).length := by
+    rw [fresh_set_size (s3C C) INIT (FlatCCBinFree.bitsNat C.init) hget3, e3]
+  have hget4 : State.get (s4C C) CARDS = [] :=
+    get_unset_of_ne (s3C C) INIT (FlatCCBinFree.bitsNat C.init) CARDS (by decide)
+      (get_unset_of_ne (s2C C) WIDTH (List.replicate C.width 1) CARDS (by decide)
+        (get_unset_of_ne (s1C C) OFFSET (List.replicate C.offset 1) CARDS (by decide)
+          (get_unset_of_ne s0C STEPS (List.replicate C.steps 1) CARDS (by decide)
+            (hget0 CARDS (by decide)))))
+  have e5 : State.size (s5C C) = C.steps + C.offset + C.width
+      + (FlatCCBinFree.bitsNat C.init).length
+      + (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+    rw [fresh_set_size (s4C C) CARDS
+      (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) hget4, e4]
+  have hget5 : State.get (s5C C) FINAL = [] :=
+    get_unset_of_ne (s4C C) CARDS
+      (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) FINAL (by decide)
+      (get_unset_of_ne (s3C C) INIT (FlatCCBinFree.bitsNat C.init) FINAL (by decide)
+        (get_unset_of_ne (s2C C) WIDTH (List.replicate C.width 1) FINAL (by decide)
+          (get_unset_of_ne (s1C C) OFFSET (List.replicate C.offset 1) FINAL (by decide)
+            (get_unset_of_ne s0C STEPS (List.replicate C.steps 1) FINAL (by decide)
+              (hget0 FINAL (by decide))))))
+  have e6 : State.size (encodeIn C) = C.steps + C.offset + C.width
+      + (FlatCCBinFree.bitsNat C.init).length
+      + (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      + (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat)).length := by
+    show State.size ((s5C C).set FINAL
+        (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat))) = _
+    rw [fresh_set_size (s5C C) FINAL
+      (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat)) hget5, e5]
+  have hinit_len : (FlatCCBinFree.bitsNat C.init).length ≤ encodable.size C.init := by
+    rw [show (FlatCCBinFree.bitsNat C.init).length = C.init.length from
+      List.length_map _]
+    exact list_length_le_size C.init
+  have hcards_len : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      ≤ 2 * encodable.size C.cards := by
+    rw [← encodable_size_map_cardNat C.cards]
+    exact FlatCCBinFree.encCardsOut_length_le _
+  have hfinal_len : (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat)).length
+      ≤ 2 * encodable.size C.final := by
+    rw [← encodable_size_map_bitsNat C.final]
+    exact FlatTCCFree.encFinal_length_le _
+  omega
+
 
 /-- **The reduction program**: precompute lengths, compute the wellformedness
 flag, and either serialize the tableau (`fand init (fand steps final)`) or write
