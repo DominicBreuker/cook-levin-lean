@@ -27,7 +27,7 @@ register before working.
 | `NPhard'` endgame design | **SETTLED, machine-validated & now LIVE** (2026-07-02/03): `PolyTimeComputableLang.SeamData`/`comp` (Cmd-level chain composition, fully proven, first live seam `FlatTCCBinComp.flatTCC_to_binaryCC_seam`) + `NPhard'`/`NPcomplete'`; hardness is proven at chain endpoints only — see `CookLevin/HANDOFF.md`. |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
 | Genuine `sorry`s in built code | **7** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau (S1), 3× MultiToSingle (dead code) |
-| `sorry`-**free** but **vacuous** defs on the proof path | several (Group S — soundness: S1, S2, the size-0 hardness reduction) — invisible to `#print axioms` |
+| `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
 
@@ -79,10 +79,13 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   `bridgeMachine` with empty transitions that **accepts everything**; the
   TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
 - **Hardness foundation also reaches a `sorry`.** `NPhard_GenNP`
-  (`GenNP_is_hard.lean`) builds its reduction with output-size bound `fun _ =>
-  0` (vacuous over the size-0 `instEncodableDefault`) **and** relies on
-  `hasDeciderClassical`, a flat `sorry` asserting a `DecidesBy` for *any*
-  predicate. **This is now the *only* `sorry` reaching the headline `CookLevin`**:
+  (`GenNP_is_hard.lean`) relies on `hasDeciderClassical`, a flat `sorry`
+  asserting a `DecidesBy` for *any* predicate. (Its former second defect — the
+  vacuous `fun _ => 0` output-size bound over the size-0
+  `instEncodableDefault` — is **fixed**: Part 0.1 done 2026-07-04, real
+  `encodable.size` everywhere, the size-0 fallback deleted, and the bound is
+  now an honest polynomial.) **This is now the *only* `sorry` reaching the
+  headline `CookLevin`**:
   the in-NP half (`SAT_inNP.sat_NP`, routed through the layer verifier
   `evalCnfCmd`) is **sorry-free & axiom-clean** (all 9 compiler ops are proven,
   and the stub trio + its isolation walls were deleted 2026-07-04). So `sorryAx`
@@ -174,7 +177,7 @@ CookLevin/
 ├── ROADMAP.md                       -- strategy + ordered plan + Risk register (read first)
 ├── Complexity/
 │   ├── Complexity/
-│   │   ├── Definitions.lean         -- encodable, inOPoly, monotonic, instEncodableDefault (Part 0.1)
+│   │   ├── Definitions.lean         -- encodable (real sizes, no size-0 fallback), inOPoly, monotonic
 │   │   ├── MachineSemantics.lean    -- FlatTM, stepFlatTM, runFlatTM
 │   │   ├── NP.lean                  -- DecidesBy, inTimePoly, ⪯p, NPhard, red_inNP (S3 lives here)
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)

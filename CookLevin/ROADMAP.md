@@ -20,6 +20,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 |---|---|
 | `lake build` | ✅ green |
 | compiler (Risk C2) | ✅ **DONE & CLEAN** (2026-07-04): all 9 ops proven, no side-conditions; the retired trio + both isolation walls **deleted** |
+| encodable sweep (Part 0.1) | ✅ **DONE (2026-07-04-b)**: real `encodable.size` on every proof-path type; the size-0 `instEncodableDefault` fallback **deleted**; `NPhard_GenNP` + all front bridges carry honest polynomial output-size bounds (axiom-clean) |
 | `#print axioms CookLevin` | `[propext, sorryAx, Classical.choice, Quot.sound]` — **depends on `sorryAx`, now only via the hardness half** |
 | `#print axioms SAT_inNP.sat_NP` | `[propext, Classical.choice, Quot.sound]` — **in-NP half sorry-free** (Route A, 2026-06-28) |
 | `#print axioms FlatClique_in_NP` | `[propext, Classical.choice, Quot.sound]` — **FlatClique in-NP half sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete) |
@@ -403,12 +404,17 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
    give `inNP SAT` / `FlatClique`. Gated on C2 making the layer→`DecidesBy`
    bridge real. *Estimate ~1–2K LOC.*
 
-5. **Encodable sweep (Part 0.1).** Replace the size-0 `instEncodableDefault` on
-   every chain intermediate (TCC/CC/BinaryCC/formula/GenNPInput/…) with a real
-   `encodable.size`. Required because over a size-0 type even the honest
-   `toFrameworkWitness'` is vacuous (`bound 0`), and the hardness reduction's
-   `fun _ => 0` bound is only "valid" because of it. Pervasive but mechanical,
-   *~0.5–1K LOC.*
+5. **Encodable sweep (Part 0.1). — ✅ DONE (2026-07-04-b).** Every type on the
+   proof path carries a real `encodable.size`; the size-0
+   `instEncodableDefault` fallback is **deleted** (a missing instance is now a
+   compile error by design). The actual holes were the four *front* instance
+   types (`GenNPInput`/`LMGenNP.Instance`/`mTMGenNPFixedInput`/
+   `TMGenNPFixedInput` — data-field-sum sizes; abstract `rel`/`accepts`
+   predicate fields carry 0, see HANDOFF standing risk #4) and the
+   `fun _ => 0` output-size bounds they licensed — all replaced by honest
+   polynomial bounds, incl. `NPhard_GenNP`'s
+   (`certBound n + timeBound (n + certBound n) + 3`). Axiom-clean; headline
+   profile unchanged. This ungates C8.
 
 **Total rough estimate: ~15–25K LOC**, dominated by the S1 tableau (3) and the
 compiler step-bound machinery (1).
@@ -435,8 +441,8 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 | **S3** | `⪯p` bounds **output size only** — the enabling weakness that lets S1/S2 typecheck and makes `NPcomplete` too weak to be faithful. | `NP.lean`, `Lang/PolyTime.lean` | **Engine live & endgame design SETTLED.** Honest target `polyTimeComputable'`/`⪯p'` built on the free line; live chain instances `kSAT3_reducesPolyMO'` and `flatTCC_reducesPolyMO'` (first sound-tail step, 2026-07-02). The `NPhard'` transport is settled & machine-validated: `SeamData`/`comp` (Cmd-level chain composition, fully proven) + `NPhard'`/`NPcomplete'`, hardness at endpoints only. Execute via plan step 2. |
 | **S1** | **if-on-the-answer** `FlatSingleTMGenNP ⪯p FlatTCC` (all-zeros tableau, never simulates `M`). Deepest unsoundness. | `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean` | **Probed feasible but expensive (~6–11K LOC).** Real fix = Cook 2D tableau (`Simulators/CookTableau.lean`). Gated on S3 (plan step 3). |
 | **S2** | **dummy TM bridges** — `bridgeMachine` discards `M`; predicates ignore `M`. | `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean` | **No simulator needed** (probed). Collapse phantom bridges; **folds into C8**. |
-| **S0** | **hardness reduction is vacuous** — `NPhard_GenNP` uses output-size bound `fun _ => 0` (only "valid" via size-0 `instEncodableDefault`) and `hasDeciderClassical` (`sorry`). | `GenNP_is_hard.lean` | Closes with C8 (real universal decider) + Part 0.1 (real `encodable.size`). |
-| **Part 0.1** | `instEncodableDefault` gives `size = 0`; over a size-0 type even honest bounds are vacuous. | `Definitions.lean` | Hard requirement; plan step 5. Pervasive but mechanical. |
+| **S0** | **hardness reduction reaches a `sorry`** — `NPhard_GenNP` relies on `hasDeciderClassical` (`sorry`). Its second defect (the vacuous `fun _ => 0` size bound) is **fixed** — Part 0.1, 2026-07-04-b: the bound is now the honest `certBound n + timeBound (n + certBound n) + 3`. | `GenNP_is_hard.lean` | Remaining half closes with C8 (real universal decider). |
+| **Part 0.1** | ~~size-0 `instEncodableDefault`~~ | `Definitions.lean` | ✅ **CLOSED (2026-07-04-b)** — real sizes everywhere, the fallback **deleted** (missing instance = compile error). See plan step 5. |
 
 ### Group C — completion risks (the compiling skeleton)
 
@@ -448,7 +454,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 | **C4** | **layer → framework bridge.** | ✅ **DONE on the free line, LIVE & axiom-clean**: `toFrameworkWitness`/`toFrameworkWitness'`, `inNPLangFree`/`inNPLangFree_to_inNP`, `FreePrecomposeData`/`precomposeFree`, `red_inNP_of_langFree` (live: `inNP_kSAT3_free`), `reducesPolyMO'_of_langFree` (live: `kSAT3_reducesPolyMO'`). The canonical engine was RETIRED & deleted 2026-07-02 (size-unsound product encoding — see C2). ⚠ `FreePrecomposeData`/`PolyTimeComputableLang` do not *enforce* encoding honesty (`eIn`/`decodeOut` unconstrained) — see HANDOFF standing risks. Remaining: honest layer reductions (S1 + sound tail). |
 | **C6** | **bit-test tester.** | ✅ DONE (2026-06-11): `bitTestTM` (tape→state, register 0) AND the general `compileTestBit t` tester are real & sorry-free; `compileIfBit_sound_physical_residue` PROVEN (the `ifBit` combinator is closed). |
 | **C7** | **verifier bodies** — `evalCnfCmd` (SAT, gates `inNP SAT`), `cliqueRelCmd`. | **EvalCnf: ✅ DONE (2026-06-10)** — `EvalCnfCmd.lean` sorry-free; `evalCnfDecidesLang` axiom-clean (budget quartic `200000·(n+1)^4`, `regBound 16`). **CliqueRel: ENCODING + PROGRAM + STRUCTURAL FIELDS ✅ DONE (2026-06-29)** — `cliqueRelEncode` concrete + bit-level + probe-validated; `cliqueRelCmd` is the concrete probe-validated 5-check verifier (`checkWf`/`checkOfType`/`checkLen`/`checkNodup`/`checkClique`, trio-free), and the structural `DecidesLang` fields `usesBelow`/`noConsLen`/`allOpsSupported` join the 4 encoding fields PROVEN & axiom-clean (quartic `timeBound`, `regBound 32`). Probes: `CliqueRelProbe` + `CliqueLtProbe`. **2026-06-30: ⚠ found+fixed a BUG in `ltBit`** (it guarded its consume-loop with `Cmd.ifBit`, which tests `= [1]` *exactly*, not nonemptiness, so it mis-decided operands `> 1`); **fixed to the unconditional-drain form and PROVED `ltBit_run` (axiom-clean).** **2026-06-30b: ✅ proved the keystone leaf `readNum_run` + 3/5 per-check run-lemmas (all axiom-clean).** **2026-06-30c: ✅ proved the remaining checks `memberEdge_run`/`checkNodup_run` (double `forBnd`)/`checkClique_run` (depth-4, calls `memberEdge`), AND the `decides` field (`cliqueRelCmd_decides` + bridge `cliqueRel_iff_checks`) — all axiom-clean.** The nested-loop pattern (inner-run lemma proven by `foldlState_range_induct`, called inside the outer step; outer counter survives as a frame fact) is established. **2026-07-01: ✅ `cost_bound` PROVEN — `cliqueRelDecidesLang` sorry-free & `FlatClique_in_NP` AXIOM-CLEAN** (`[propext, Classical.choice, Quot.sound]`). The full cost-lemma stack (`readNum_cost` → per-check `_cost` lemmas → `cliqueRelCmd_cost_bound`) uses **length-only loop invariants** for the `hC` uniform body-cost bound (reusing the behavioural `*_step` for `hM`). ★ FINDING: `timeBound` bumped quartic→**quintic** `(n+1)^5` — uniform-bound accounting makes the depth-4 `checkClique` nest degree 5 (innermost `readNum` is `Θ(S²)` under three `forBnd`s); the true TM cost is quartic but amortisation is invisible to `cost_forBnd_le`. **CliqueRel C7 is now COMPLETE.** Both in-NP verifiers (SAT + FlatClique) axiom-clean; all remaining `sorryAx` on `CookLevin`/`Clique_complete` is hardness-side. |
-| **C8** | **real `NPhard_GenNP`** (`hasDeciderClassical`). | The universal-source decider, single-tape via `Lang.DecidesLang` (subsumes S2). Needs C4+C2. Plan step 3. |
+| **C8** | **real `NPhard_GenNP`** (`hasDeciderClassical`). | The universal-source decider, single-tape via `Lang.DecidesLang` (subsumes S2). C4+C2 done and Part 0.1 done (2026-07-04-b) — **fully ungated**; scoping probe is the queued bottom-up session (HANDOFF). Plan step 3. |
 | **C5/C5a/C9** | DSL expressiveness; pair plumbing; canonical encoding. | **CLOSED — canonical encoding RETIRED (2026-07-02).** Pair plumbing is done bespokely inside each free witness (live ×3); the `forBnd` toolkit stands. Add new `Op`s only when one materially shortens a verifier (each new `Op` = another soundness proof). |
 
 ---

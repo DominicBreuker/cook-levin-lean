@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-05)
+## Where the proof stands (2026-07-05; Part 0.1 closed 2026-07-04-b)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -27,35 +27,35 @@ reasonably provable).
 - **The compiler (Risk C2) is DONE and CLEAN.** All **9** ops proven &
   axiom-clean; `compileOp_sound_physical_residue` is fully proven with no
   side-conditions. The retired value-as-length trio and BOTH isolation walls
-  (`NoConsLen`, `IsSupported`/`AllOpsSupported`) are **deleted** (this session):
-  `Op` has exactly the 9 live constructors, the witness structures carry no wall
-  fields, and the compiler chain threads no `hnc`/`hsupp`. **No bottom-up
-  compiler debt remains.**
+  (`NoConsLen`, `IsSupported`/`AllOpsSupported`) are **deleted**: `Op` has
+  exactly the 9 live constructors, the witness structures carry no wall fields,
+  and the compiler chain threads no `hnc`/`hsupp`. **No bottom-up compiler debt
+  remains.**
+- **Part 0.1 (the encodable sweep) is DONE (bottom-up, 2026-07-04-b).** The
+  size-0 `instEncodableDefault` fallback is **DELETED** — a type without a real
+  `encodable.size` is now a compile error. The front-chain instance types
+  (`GenNPInput`/`LMGenNP.Instance`/`mTMGenNPFixedInput`/`TMGenNPFixedInput`)
+  carry real data-field-sum sizes, and every `fun _ => 0` output-size bound
+  they licensed is replaced by an honest polynomial bound —
+  including `NPhard_GenNP`'s (now `certBound n + timeBound (n + certBound n)
+  + 3`, poly+mono from the witness fields). All re-proven bridges axiom-clean;
+  headline axiom profile unchanged (`sorryAx` = hardness half only). **C8 is
+  no longer gated on Part 0.1.**
 
-## ★ This session (2026-07-05, top-down): `BinaryCC_to_FSAT` — session 2 (the FULL program, `#eval`-validated end-to-end)
+## ★ Latest sessions
 
-Target #2's **whole reduction program is built and validated** — design GO on
-every count. Deliverables, green & sorry-free (pure `Cmd`/`State` data + the
-proven codec; `CookLevin` unchanged):
-
-- **`Reductions/BinaryCC_to_FSAT_free.lean`** now carries the complete
-  `buildFSAT : Cmd` + `encodeIn : BinaryCC → State` (pinned to the seam frame
-  17/18/19/20/21/5). `buildFSAT` = `precompLen ;; computeWF ;; if GWF then
-  (serialize `fand init (fand allSteps final)`) else `serF falseFml`. The Polish
-  emission collapses the tree into token-emission ORDER; absolute variable
-  indices `line*L + step*offset (+i)` are built UNARY from the loop counters via
-  `concat`/mul-loops; the wellformedness guard `computeWF` is reproduced
-  on-machine (nonEmpty + `leCheck` + unary-modulo `dvdCheck` + `cardLenCheck`).
-- **`probes/FSATSerProbe.lean` §4 `runOut`** (`#eval`, all `true`): on real
-  instances, `buildFSAT.eval (encodeIn C)` at `FOUT` equals
-  `serF (encodeTableau C)` for wellformed `C` and `serF falseFml = [1,1,0,0,0]`
-  for non-wellformed `C` (guard tested with width=0, offset=0, bad card length,
-  offset∤width) — i.e. exactly `serF (BinaryCC_to_FSAT_instance C)`. The
-  `decodeF` round-trip (the real `decodeOut` path) also validated.
-
-This resolves the crux engineering risk (nested-loop var-index arithmetic on a
-TREE output). **What remains is pure proof work** (no design risk): the run/cost
-lemmas + the `PolyTimeComputableLang` witness + the seam — see NEXT TOP-DOWN.
+- **2026-07-05 (top-down), `BinaryCC_to_FSAT` session 2:** the whole reduction
+  program `buildFSAT : Cmd` + `encodeIn` is BUILT & `#eval`-validated
+  end-to-end (`Reductions/BinaryCC_to_FSAT_free.lean`, `probes/FSATSerProbe.lean`
+  §4 — wellformed, all four guard-failure shapes, and the `decodeF` round-trip
+  all check). The crux engineering risk (nested-loop var-index arithmetic on a
+  TREE output) is resolved; **what remains is pure proof work** — see NEXT
+  TOP-DOWN.
+- **2026-07-04-b (bottom-up), Part 0.1 DONE:** real `encodable.size`
+  everywhere; the size-0 default fallback deleted (see "Where the proof
+  stands"). Scoping finding: the chain intermediates (FlatTCC/FlatCC/BinaryCC/
+  formula/CC/TCC/FlatTM/cnf) already had real sizes — the actual hole was the
+  four *front* instance types and the `fun _ => 0` bounds they licensed.
 
 **Composite tail exit layout** (unchanged; what the NEXT tail seam
 re-encodes/scrubs): BinaryCC outputs at regs 17 `offset`/18 `width`/19 `init`
@@ -105,40 +105,52 @@ intermediate FlatCC inputs in 1/2/4/6/7/8 and scratch 9–16, 23, 24, 25 (`BOUT`
    witness can actually target the chain's fixed input layout — probe this
    when C8 is scoped.
 3. **Guard-or-no-guard is a per-step decision**: probe invalid→invalid ON
-   PAPER before coding (this session's counterexample method: pick a tiny
-   invalid instance, check whether its image is accidentally wellformed+
-   satisfiable).
+   PAPER before coding (counterexample method: pick a tiny invalid instance,
+   check whether its image is accidentally wellformed+satisfiable).
+4. **The front instance types are size-MEASURED, not string-encodable**
+   (Part 0.1 finding): `GenNPInput.rel` / `mTMGenNPFixedInput.accepts` /
+   `TMGenNPFixedInput.accepts` are abstract predicates, so their
+   `encodable.size` counts only the data fields (tapes + the two numeric
+   parameters). That is honest for `⪯p` size bounds, but **no TM can consume
+   these types as inputs** — C8 must replace the abstract front with
+   concrete-machine types (the settled S2-collapse design). Never add a
+   size-0 instance to "fix" a missing-instance error; the fallback was
+   deleted deliberately.
 
 ---
 
-## NEXT BOTTOM-UP session — Part 0.1: the Encodable sweep (real `encodable.size`)
+## NEXT BOTTOM-UP session — C8 scoping probe (now UNGATED by Part 0.1)
 
-The compiler cleanup is done; the **only** open bottom-up foundational item is
-**Part 0.1** — replace the size-0 `instEncodableDefault` (`Definitions.lean`)
-with a real `encodable.size` on every chain-intermediate type
-(TCC/CC/BinaryCC/formula/GenNPInput/…). **Why it matters (risk):** over a size-0
-type even the *honest* `toFrameworkWitness'` is vacuous (`bound 0`), and the
-hardness reduction's `fun _ => 0` output bound is only "valid" because of it —
-so this gates BOTH the C8 hardness reduction (top-down) and making any `⪯p'`
-non-vacuous. Pervasive but mechanical (~0.5–1K LOC). Approach:
+Part 0.1 is done, so the last foundational gate on **C8** (the real
+universal-source decider replacing `hasDeciderClassical`, subsuming S2) is
+gone. C8 is the biggest remaining hardness-side unknown after S1, and it has a
+**standing un-probed design risk** (architecture risk #2: can the per-`Q`
+front witness actually target the chain's fixed input layout?). A time-boxed
+scoping session, not a build session:
 
-1. Scope it: `grep` every `instEncodableDefault`/`instEncodable*` on the proof
-   path; list the types that need a real `size`. Pick the natural `size` per
-   type (sum of field sizes; keep it monotone).
-2. Do the leaf types first (BinaryCC/formula), then the composites, so each
-   `encodable.size` rewrite has its dependencies in place. Re-prove the
-   `encodeIn_size`/`output_size_le` obligations on the live free witnesses
-   (`kSAT3`, `flatTCC`, `flatCC`, comp) — they currently lean on the size-0
-   type; expect small bound bumps.
-3. **Probe first**: `#eval` the chosen `size` on a couple of instances and
-   confirm the witness `encodeIn_size : ≤ 2·size+1` still holds before proving.
+1. **Scope the shape.** Read `GenNP_is_hard.lean` (the docstring on
+   `hasDeciderClassical` sketches the Part-7 plan) + `GenNP.lean` +
+   `Lang/PolyTime.lean` (`SeamData`). Answer on paper: what concrete type
+   replaces the abstract-`rel` `GenNPInput` front (standing risk #4 — the
+   predicate fields must become concrete machines/programs), what does the
+   per-`Q` `DecidesLang` for `genNPRel` look like on the free line, and where
+   exactly does its `SeamData` plug into the chain head
+   (`FlatSingleTMGenNP`'s input layout)?
+2. **Probe the seam-targeting risk** (`#eval`, additive): build a toy per-`Q`
+   witness for one tiny `Q` and check register-by-register (`AgreeBelow`, the
+   `FlatCCBinProbe.checkBridge` pattern) that its exit frame can feed the
+   chain-head input layout.
+3. **Verdict + decomposition**: feasible / feasible-but-expensive /
+   trigger-fallback, plus a `sorry`-decomposed skeleton list for the build
+   sessions. Do NOT start building the decider inside the scoping session.
 
-Part 0.1 is now the **sole** open bottom-up item: the previously-suggested
-`map`-over-lists gadget (`parked/MapNatList_WIP.lean`) is **no longer needed** —
-the top-down `BinaryCC_to_FSAT` builder uses nested `forBnd` token-emit loops,
-not a list-map (resolved 2026-07-05). If Part 0.1 feels too big to start cold,
-scope it first (the grep + per-type `size` list in step 1) and land the leaf
-types as a standalone commit.
+**Alternative (if C8 scoping stalls or a shorter session is wanted):** the
+`FSAT_to_SAT` free witness (Tseytin as a `Cmd`; the last small sound-tail
+item). Paper-probe the guard question first (formula inputs have no invalid
+instances — expect the unguarded pattern of
+`Reductions/FlatTCC_to_FlatCC_free.lean`), then program + probe + proofs, and
+its seam from `BinaryCC_to_FSAT`'s exit frame (blocked on top-down session 3
+pinning that exit frame — coordinate).
 
 ## NEXT TOP-DOWN session — target #2 **session 3**: the `BinaryCC_to_FSAT` witness PROOFS
 
@@ -186,8 +198,8 @@ is the in-file **DESIGN COMPLETE — NEXT-SESSION PLAN** block at the bottom of
 4. **C8** — the universal-source decider (`hasDeciderClassical`), single-tape
    via free `DecidesLang`; subsumes S2 (collapse the phantom bridges there).
    Must ALSO produce the per-`Q` `SeamData` into the chain head (the settled,
-   now-validated design). Requires Part 0.1 (real `encodable.size` on chain
-   intermediates).
+   now-validated design). **UNGATED as of 2026-07-04-b** (Part 0.1 done);
+   scoping probe queued as the next bottom-up session.
 
 ---
 
@@ -210,6 +222,10 @@ is the in-file **DESIGN COMPLETE — NEXT-SESSION PLAN** block at the bottom of
 - **`NPhard'` endpoint-only; chains compose via `SeamData`/`comp`** (settled
   2026-07-02, VALIDATED LIVE 2026-07-03). No generic `⪯p'`-transitivity — do
   not attempt one.
+- **No size-0 `encodable` fallback** (Part 0.1, 2026-07-04-b): the default
+  instance is deleted; a missing `encodable.size` is a compile error by
+  design. Give every new type a real data-field-sum size next to its
+  definition.
 
 ## Proven, reusable — do not re-derive
 
