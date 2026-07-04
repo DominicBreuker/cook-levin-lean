@@ -26,8 +26,13 @@ theorem genNPToLMGenNPInstance_spec {X : Type} [encodable X] (inst : GenNPInput 
 theorem GenNP_to_LMGenNP (X : Type) [encodable X] :
     GenNP X ⪯p LMGenNP.LMGenNP X := by
   refine ⟨⟨genNPToLMGenNPInstance, ?_, fun {inst} => (genNPToLMGenNPInstance_spec inst).symm⟩⟩
-  refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
+  -- The wrapper repeats the source's parameters, so its size is exactly
+  -- twice the input size.
+  refine ⟨⟨fun n => 2 * n, ?_, ?_, ?_⟩⟩
+  · exact ⟨1, 2, 0, fun n _ => Nat.le_of_eq (by simp)⟩
   · intro a b hab
-    simp
+    exact Nat.mul_le_mul (Nat.le_refl 2) hab
   · intro inst
-    exact Nat.le_refl _
+    show encodable.size (genNPToLMGenNPInstance inst) ≤ 2 * encodable.size inst
+    simp [genNPToLMGenNPInstance]
+    omega

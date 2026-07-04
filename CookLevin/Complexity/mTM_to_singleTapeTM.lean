@@ -85,14 +85,15 @@ abbrev ExplicitTMTarget {σ : finType} [encodable σ] (_M : TM σ 1) : TMGenNPFi
       @certificateMeasure (List σ) (@instEncodableList σ ‹encodable σ›) cert ≤ inst.maxSize ∧
         inst.accepts cert
 
-theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} (M : TM σ 2) :
+theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} [encodable σ] (M : TM σ 2) :
     mTMGenNP_fixed M ⪯p TMGenNP_fixed (projT1 (M_multi2mono.M__mono M)) := by
   refine ⟨⟨multiTapeToSingleTapeInput M, ?_, fun {inst} => ?_⟩⟩
-  · refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
-    · intro a b hab
-      simp
-    · intro inst
-      exact Nat.le_refl _
+  · refine ⟨⟨fun n => n, inOPoly_id, fun a b hab => hab, ?_⟩⟩
+    intro inst
+    show encodable.size (multiTapeToSingleTapeInput M inst) ≤ encodable.size inst
+    have hflat := encodable_size_foldr_append_le inst.workTapes
+    simp [multiTapeToSingleTapeInput, initTape_singleTapeTM]
+    omega
   · constructor
     · rintro ⟨cert, hsize, hacc⟩
       exact ⟨cert, hsize, ⟨hacc, MultiToMonoBridge.bridgeMachine_accepts
@@ -103,11 +104,12 @@ theorem TMGenNP_mTM_to_TMGenNP_singleTM {σ : finType} (M : TM σ 2) :
 theorem ExplicitMTMTarget_to_TMGenNP_singleTM {σ : finType} [encodable σ] (M : TM σ 2) :
     ExplicitMTMTarget M ⪯p ExplicitTMTarget (projT1 (M_multi2mono.M__mono M)) := by
   refine ⟨⟨multiTapeToSingleTapeInput M, ?_, fun {inst} => ?_⟩⟩
-  · refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
-    · intro a b hab
-      simp
-    · intro inst
-      exact Nat.le_refl _
+  · refine ⟨⟨fun n => n, inOPoly_id, fun a b hab => hab, ?_⟩⟩
+    intro inst
+    show encodable.size (multiTapeToSingleTapeInput M inst) ≤ encodable.size inst
+    have hflat := encodable_size_foldr_append_le inst.workTapes
+    simp [multiTapeToSingleTapeInput, initTape_singleTapeTM]
+    omega
   · constructor
     · rintro ⟨cert, hsize, hacc⟩
       exact ⟨cert, hsize, ⟨hacc, MultiToMonoBridge.bridgeMachine_accepts
@@ -168,11 +170,13 @@ theorem LMGenNP_to_TMGenNP_singleTM_direct :
     LMGenNP.LMGenNP (List Bool) ⪯p
       TMGenNP_fixed (σ := Bool) (MultiToMonoBridge.bridgeMachine (σ := Bool)) := by
   refine ⟨⟨directLMtoSingleTapeInput, ?_, fun {inst} => ?_⟩⟩
-  · refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
-    · intro a b hab
-      simp
-    · intro inst
-      exact Nat.le_refl _
+  -- The image drops the wrapped source instance (size ≥ 1) and carries an
+  -- empty tape, so the identity bounds it.
+  · refine ⟨⟨fun n => n, inOPoly_id, fun a b hab => hab, ?_⟩⟩
+    intro inst
+    show encodable.size (directLMtoSingleTapeInput inst) ≤ encodable.size inst
+    have hnil : encodable.size ([] : List Bool) = 0 := rfl
+    simp [directLMtoSingleTapeInput, hnil]
   · constructor
     · rintro ⟨cert, hsize, hsource, hrel⟩
       exact ⟨cert, by simpa [directLMtoSingleTapeInput] using hsize,

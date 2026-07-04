@@ -82,11 +82,13 @@ abbrev LMtoMTMTarget : mTMGenNPFixedInput Bool → Prop :=
 theorem LMGenNP_to_TMGenNP_mTM :
     LMGenNP.LMGenNP (List Bool) ⪯p LMtoMTMTarget := by
   refine ⟨⟨lmToMTMInput, ?_, fun {inst} => ?_⟩⟩
-  · refine ⟨⟨fun _ => 0, inOPoly_const 0, ?_, ?_⟩⟩
-    · intro a b hab
-      simp
-    · intro inst
-      exact Nat.le_refl _
+  -- The image drops the wrapped source instance (size ≥ 1) and adds the
+  -- constant-size tape scaffold `[[]]` (size 1), so the identity bounds it.
+  · refine ⟨⟨fun n => n, inOPoly_id, fun a b hab => hab, ?_⟩⟩
+    intro inst
+    show encodable.size (lmToMTMInput inst) ≤ encodable.size inst
+    have hwt : encodable.size ([[]] : List (List Bool)) = 1 := rfl
+    simp [lmToMTMInput, hwt]
   · constructor
     · rintro ⟨cert, hsize, hsource, hrel⟩
       have hsize' : certificateMeasure cert ≤ (lmToMTMInput inst).maxSize := by

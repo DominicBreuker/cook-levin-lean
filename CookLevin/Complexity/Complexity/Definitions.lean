@@ -8,12 +8,12 @@ class encodable (α : Sort u) where
   size : α → Nat
   size_ge_logical : ∀ x : α, ∃ n : Nat, size x ≥ n
 
--- Default instance for types without explicit encoding
--- This provides size 0 for all values, which should be overridden
--- by specific instances that provide meaningful sizes
-instance (priority := low) instEncodableDefault (α : Sort u) : encodable α where
-  size := fun _ => 0
-  size_ge_logical := fun _ => ⟨0, by simp⟩
+-- Part 0.1 (2026-07): the size-0 low-priority default instance
+-- (`instEncodableDefault`) was REMOVED. Over a size-0 type every output-size
+-- bound is vacuously satisfiable (`fun _ => 0`), which silently voided the
+-- hardness-side reductions. Every type on the proof path now carries a real
+-- `encodable.size`; a type without an instance is a compile error by design —
+-- add a real instance next to the type, never a size-0 fallback.
 
 instance : encodable Nat where
   size := id
@@ -347,6 +347,24 @@ theorem encodable_size_list_append {α : Type u} [encodable α] (xs ys : List α
       simp [encodable.size]
   | cons x xs ih =>
       simp [encodable_size_list_cons, ih, Nat.add_assoc, Nat.add_left_comm, Nat.add_comm]
+
+/-- Flattening a list of lists never increases `encodable.size`: the flat list
+keeps every element (and its per-element `+1`) but drops the per-sublist `+1`.
+Stated over `foldr List.append []` because that is the spelling the front-chain
+bridges use for tape concatenation. -/
+theorem encodable_size_foldr_append_le {α : Type u} [encodable α] :
+    ∀ L : List (List α), encodable.size (L.foldr List.append []) ≤ encodable.size L
+  | [] => Nat.le_refl _
+  | xs :: L => by
+      have hfold : (xs :: L).foldr List.append [] = xs ++ L.foldr List.append [] := rfl
+      rw [hfold, encodable_size_list_append, encodable_size_list_cons]
+      have ih := encodable_size_foldr_append_le L
+      calc
+        encodable.size xs + encodable.size (L.foldr List.append [])
+            ≤ encodable.size xs + encodable.size L := Nat.add_le_add_left ih _
+        _ ≤ encodable.size xs + 1 + encodable.size L := by
+            rw [Nat.add_assoc, Nat.add_comm 1 (encodable.size L), ← Nat.add_assoc]
+            exact Nat.le_succ _
 
 def isPrefix {α : Type u} (xs ys : List α) : Prop :=
   ∃ rest, ys = xs ++ rest
