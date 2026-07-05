@@ -1676,16 +1676,380 @@ theorem stepBody_run (C : BinaryCC) (line step : Nat) (u : State)
         h7frame r h15 h9, hw6frame r h15, hw5frame r h14, hw4frame r h13,
         hw3frame r h12, h2frame r h11 h9, hw1frame r h11]
 
+/-- One inner iteration of `emitAllSteps`: the `fand` spine node, then one
+step constraint (named so `emitAllSteps_run`'s fold invariant can refer to
+it). -/
+def stepIterBody : Cmd := emitFandTag ;; stepBody
+
+/-- One line of `emitAllSteps`: spine node, `LINEL := 1^(line·L)` (clear +
+mul-loop off the `KLINE` counter), the inner step loop over `LREG1 =
+1^(L+1)`, and the closing `ftrue`. -/
+def lineBody : Cmd :=
+  emitFandTag ;;
+  Cmd.op (.clear LINEL) ;;
+  Cmd.forBnd KTMP2 KLINE (Cmd.op (.concat LINEL LINEL LREG)) ;;
+  Cmd.forBnd KSTEP LREG1 stepIterBody ;;
+  emitFtrue
+
 /-- `serF (encodeAllStepConstraints C)` = `listAnd` over lines of
 (`listAnd` over steps of `encodeStepConstraint`). -/
 def emitAllSteps : Cmd :=
-  Cmd.forBnd KLINE STEPS
-    ( emitFandTag ;;
-      Cmd.op (.clear LINEL) ;;
-      Cmd.forBnd KTMP2 KLINE (Cmd.op (.concat LINEL LINEL LREG)) ;;
-      Cmd.forBnd KSTEP LREG1 (emitFandTag ;; stepBody) ;;
-      emitFtrue ) ;;
+  Cmd.forBnd KLINE STEPS lineBody ;;
   emitFtrue
+
+/-! ### `emitAllSteps_run` — every step constraint (the two-level `listAnd` fold)
+
+`andPrefix` is the `fand`-tag serialization prefix of a formula list (no
+closing `ftrue`) — the `listAnd` analogue of `cardsPrefix`, stated ONCE
+generically so it serves both levels (steps within a line, lines within the
+tableau); `serF_listAnd` closes it. The inner level accumulates
+`encodeStepConstraint C line` over `List.range (L+1)` (each iteration one
+black-boxed `stepBody_run` — the loop bound is exact, no idle iterations);
+the outer level re-derives `LINEL = 1^(line·L)` per line via
+`unaryMulLoop_run` and accumulates `encodeLineConstraints C` over
+`List.range C.steps`. -/
+
+/-- The `fand`-tag serialization prefix of a formula list (no closing
+`ftrue`) — `OUT`'s accumulation state mid-`listAnd`, at either level. -/
+def andPrefix : List formula → List Nat
+  | [] => []
+  | f :: fs => [0, 1] ++ serF f ++ andPrefix fs
+
+theorem andPrefix_append (xs ys : List formula) :
+    andPrefix (xs ++ ys) = andPrefix xs ++ andPrefix ys := by
+  induction xs with
+  | nil => simp [andPrefix]
+  | cons f fs ih =>
+      simp only [List.cons_append, andPrefix, ih, List.append_assoc]
+
+/-- Closing the accumulated `fand` prefix with `ftrue` gives exactly the
+serialized conjunction — the `listAnd` analogue of `serF_encodeCardsAt`. -/
+theorem serF_listAnd (fs : List formula) :
+    serF (listAnd fs) = andPrefix fs ++ serF .ftrue := by
+  induction fs with
+  | nil => rfl
+  | cons f fs ih =>
+      show serF (.fand f (listAnd fs)) = _
+      simp [serF, andPrefix, ih, List.append_assoc]
+
+/-- The inner (per-line) fold invariant: `OUT` accumulates the tag-then-step
+prefix, `ZERO` stays empty, and everything outside `stepIterBody`'s scratch
+set (= `stepBody`'s ∪ {`KSTEP`}) is untouched — the per-line registers
+(`LINEL`/`OFFSET`/`WIDTH`/`LREG`/`CARDS`) are recovered through the frame
+clause. -/
+private def ASInv (C : BinaryCC) (line : Nat) (u : State) (i : Nat)
+    (st : State) : Prop :=
+  State.get st OUT = State.get u OUT
+      ++ andPrefix ((List.range i).map (encodeStepConstraint C line))
+  ∧ State.get st ZERO = []
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+      r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+      r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW → r ≠ REM → r ≠ GFLG →
+      r ≠ KSTEP → State.get st r = State.get u r)
+
+private theorem ASInv_step (C : BinaryCC) (line : Nat) (u : State)
+    (hLINEL : State.get u LINEL = List.replicate (line * C.init.length) 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (i : Nat) (st : State) (h : ASInv C line u i st) :
+    ASInv C line u (i + 1) (stepIterBody.eval (st.set KSTEP (List.replicate i 1))) := by
+  obtain ⟨hOUT, hZ, hframe⟩ := h
+  set w := st.set KSTEP (List.replicate i 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KSTEP → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwK : State.get w KSTEP = List.replicate i 1 := State.get_set_eq _ _ _
+  clear_value w
+  -- w1: the step's spine node
+  set w1 := emitFandTag.eval w with hw1
+  have hw1frame : ∀ r : Var, r ≠ OUT → State.get w1 r = State.get w r := by
+    intro r hr; rw [hw1]; exact emitFandTag_frame w r hr
+  have hw1OUT : State.get w1 OUT = State.get w OUT ++ [0, 1] := by
+    rw [hw1, emitFandTag_run]; exact State.get_set_eq _ _ _
+  clear_value w1
+  -- registers threaded to w1 for `stepBody_run`
+  have h1K : State.get w1 KSTEP = List.replicate i 1 := by
+    rw [hw1frame KSTEP (by decide)]; exact hwK
+  have h1LINEL : State.get w1 LINEL = List.replicate (line * C.init.length) 1 := by
+    rw [hw1frame LINEL (by decide), hwframe LINEL (by decide),
+      hframe LINEL (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hLINEL
+  have h1OFF : State.get w1 OFFSET = List.replicate C.offset 1 := by
+    rw [hw1frame OFFSET (by decide), hwframe OFFSET (by decide),
+      hframe OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hOFF
+  have h1WID : State.get w1 WIDTH = List.replicate C.width 1 := by
+    rw [hw1frame WIDTH (by decide), hwframe WIDTH (by decide),
+      hframe WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hWID
+  have h1LREG : State.get w1 LREG = List.replicate C.init.length 1 := by
+    rw [hw1frame LREG (by decide), hwframe LREG (by decide),
+      hframe LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hLREG
+  have h1CARDS : State.get w1 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [hw1frame CARDS (by decide), hwframe CARDS (by decide),
+      hframe CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hCARDS
+  have h1Z : State.get w1 ZERO = [] := by
+    rw [hw1frame ZERO (by decide), hwframe ZERO (by decide)]; exact hZ
+  -- w2: the step constraint (black-boxed)
+  obtain ⟨h2OUT, h2Z, h2frame⟩ :=
+    stepBody_run C line i w1 h1LINEL h1K h1OFF h1WID h1LREG h1CARDS h1Z
+  set w2 := stepBody.eval w1 with hw2
+  clear_value w2
+  have heval : stepIterBody.eval w = w2 := by
+    unfold stepIterBody
+    rw [Cmd.eval_seq, ← hw1, ← hw2]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [heval, h2OUT, hw1OUT, hwframe OUT (by decide), hOUT, List.range_succ,
+      List.map_append, andPrefix_append]
+    simp [andPrefix, List.append_assoc]
+  · rw [heval]; exact h2Z
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+    rw [heval, h2frame r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16,
+      hw1frame r h2, hwframe r h17,
+      hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17]
+
+/-- The inner step loop: appends the full per-line tag-then-step prefix
+(`List.range (L+1)` matches `encodeLineConstraints`'
+`List.range (C.init.length + 1)`). -/
+private theorem innerSteps_run (C : BinaryCC) (line : Nat) (u : State)
+    (hLINEL : State.get u LINEL = List.replicate (line * C.init.length) 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hLREG1 : State.get u LREG1 = List.replicate (C.init.length + 1) 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = []) :
+    State.get ((Cmd.forBnd KSTEP LREG1 stepIterBody).eval u) OUT
+        = State.get u OUT ++ andPrefix
+            ((List.range (C.init.length + 1)).map (encodeStepConstraint C line))
+    ∧ State.get ((Cmd.forBnd KSTEP LREG1 stepIterBody).eval u) ZERO = []
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+        r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+        r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW → r ≠ REM → r ≠ GFLG →
+        r ≠ KSTEP →
+        State.get ((Cmd.forBnd KSTEP LREG1 stepIterBody).eval u) r
+          = State.get u r) := by
+  have hlen : (State.get u LREG1).length = C.init.length + 1 := by
+    rw [hLREG1, List.length_replicate]
+  have hbase : ASInv C line u 0 u := by
+    refine ⟨?_, hZ, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    simp [andPrefix]
+  have hInv : ASInv C line u (C.init.length + 1)
+      (Cmd.foldlState stepIterBody KSTEP (List.range (C.init.length + 1)) u) :=
+    Cmd.foldlState_range_induct stepIterBody KSTEP (C.init.length + 1) u
+      (ASInv C line u) hbase
+      (fun i st _ hM => ASInv_step C line u hLINEL hOFF hWID hLREG hCARDS i st hM)
+  have heval : (Cmd.forBnd KSTEP LREG1 stepIterBody).eval u
+      = Cmd.foldlState stepIterBody KSTEP (List.range (C.init.length + 1)) u := by
+    rw [Cmd.eval_forBnd, hlen]
+  obtain ⟨h1, h2, h3⟩ := hInv
+  exact ⟨by rw [heval]; exact h1, by rw [heval]; exact h2,
+    fun r a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17 => by
+      rw [heval]
+      exact h3 r a1 a2 a3 a4 a5 a6 a7 a8 a9 a10 a11 a12 a13 a14 a15 a16 a17⟩
+
+/-- The outer (per-tableau) fold invariant: `lineBody`'s scratch set =
+`stepIterBody`'s ∪ {`LINEL`, `KLINE`, `KTMP2`}. -/
+private def ALInv (C : BinaryCC) (u : State) (j : Nat) (st : State) : Prop :=
+  State.get st OUT = State.get u OUT
+      ++ andPrefix ((List.range j).map (encodeLineConstraints C))
+  ∧ State.get st ZERO = []
+  ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+      r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+      r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW → r ≠ REM → r ≠ GFLG →
+      r ≠ KSTEP → r ≠ LINEL → r ≠ KLINE → r ≠ KTMP2 →
+      State.get st r = State.get u r)
+
+private theorem ALInv_step (C : BinaryCC) (u : State)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hLREG1 : State.get u LREG1 = List.replicate (C.init.length + 1) 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (j : Nat) (st : State) (h : ALInv C u j st) :
+    ALInv C u (j + 1) (lineBody.eval (st.set KLINE (List.replicate j 1))) := by
+  obtain ⟨hOUT, hZ, hframe⟩ := h
+  set w := st.set KLINE (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KLINE → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwK : State.get w KLINE = List.replicate j 1 := State.get_set_eq _ _ _
+  clear_value w
+  -- w1: the line's spine node
+  set w1 := emitFandTag.eval w with hw1
+  have hw1frame : ∀ r : Var, r ≠ OUT → State.get w1 r = State.get w r := by
+    intro r hr; rw [hw1]; exact emitFandTag_frame w r hr
+  have hw1OUT : State.get w1 OUT = State.get w OUT ++ [0, 1] := by
+    rw [hw1, emitFandTag_run]; exact State.get_set_eq _ _ _
+  clear_value w1
+  -- w2: clear LINEL
+  have e2 : (Cmd.op (.clear LINEL)).eval w1 = w1.set LINEL [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set w2 := w1.set LINEL [] with hw2
+  have hw2frame : ∀ r : Var, r ≠ LINEL → State.get w2 r = State.get w1 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw2LINEL : State.get w2 LINEL = [] := State.get_set_eq _ _ _
+  have h2chain : ∀ r : Var, r ≠ LINEL → r ≠ OUT → r ≠ KLINE →
+      State.get w2 r = State.get st r := by
+    intro r hr1 hr2 hr3
+    rw [hw2frame r hr1, hw1frame r hr2, hwframe r hr3]
+  have h2LREG : State.get w2 LREG = List.replicate C.init.length 1 := by
+    rw [h2chain LREG (by decide) (by decide) (by decide),
+      hframe LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide)]
+    exact hLREG
+  have h2KLINE : (State.get w2 KLINE).length = j := by
+    rw [hw2frame KLINE (by decide), hw1frame KLINE (by decide), hwK,
+      List.length_replicate]
+  clear_value w2
+  -- w3: LINEL := 1^(j·L)
+  obtain ⟨h3LINEL, h3frame⟩ :=
+    unaryMulLoop_run KTMP2 KLINE LREG LINEL w2 C.init.length j
+      (by decide) (by decide) (by decide) h2LREG h2KLINE hw2LINEL
+  set w3 := (Cmd.forBnd KTMP2 KLINE (Cmd.op (.concat LINEL LINEL LREG))).eval w2
+    with hw3
+  clear_value w3
+  have h3chain : ∀ r : Var, r ≠ LINEL → r ≠ KTMP2 → r ≠ OUT → r ≠ KLINE →
+      State.get w3 r = State.get st r := by
+    intro hr r1 r2 r3 r4
+    rw [h3frame hr r1 r2, h2chain hr r1 r3 r4]
+  have h3chainU : ∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG →
+      r ≠ KBIT → r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+      r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW → r ≠ REM → r ≠ GFLG →
+      r ≠ KSTEP → r ≠ LINEL → r ≠ KLINE → r ≠ KTMP2 →
+      State.get w3 r = State.get u r := by
+    intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20
+    rw [h3chain r h18 h20 h2 h19,
+      hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20]
+  have h3OFF : State.get w3 OFFSET = List.replicate C.offset 1 := by
+    rw [h3chainU OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hOFF
+  have h3WID : State.get w3 WIDTH = List.replicate C.width 1 := by
+    rw [h3chainU WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hWID
+  have h3LREG : State.get w3 LREG = List.replicate C.init.length 1 := by
+    rw [h3chainU LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hLREG
+  have h3LREG1 : State.get w3 LREG1 = List.replicate (C.init.length + 1) 1 := by
+    rw [h3chainU LREG1 (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hLREG1
+  have h3CARDS : State.get w3 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [h3chainU CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hCARDS
+  have h3Z : State.get w3 ZERO = [] := by
+    rw [h3chain ZERO (by decide) (by decide) (by decide) (by decide)]; exact hZ
+  have h3OUT : State.get w3 OUT
+      = State.get u OUT ++ andPrefix ((List.range j).map (encodeLineConstraints C))
+        ++ [0, 1] := by
+    rw [h3frame OUT (by decide) (by decide), hw2frame OUT (by decide), hw1OUT,
+      hwframe OUT (by decide), hOUT]
+  -- w4: the inner step loop
+  obtain ⟨h4OUT, h4Z, h4frame⟩ :=
+    innerSteps_run C j w3 h3LINEL h3OFF h3WID h3LREG h3LREG1 h3CARDS h3Z
+  set w4 := (Cmd.forBnd KSTEP LREG1 stepIterBody).eval w3 with hw4
+  clear_value w4
+  have heval : lineBody.eval w = emitFtrue.eval w4 := by
+    unfold lineBody
+    rw [Cmd.eval_seq, ← hw1, Cmd.eval_seq, e2, Cmd.eval_seq, ← hw3, Cmd.eval_seq,
+      ← hw4]
+  refine ⟨?_, ?_, ?_⟩
+  · -- unroll the RHS in isolation: the goal's LHS also contains a
+    -- `List.range (·+1)` (the inner step range), so a bare `rw
+    -- [List.range_succ]` would pick the wrong occurrence
+    have hsnoc : andPrefix ((List.range (j + 1)).map (encodeLineConstraints C))
+        = andPrefix ((List.range j).map (encodeLineConstraints C))
+          ++ ([0, 1] ++ serF (encodeLineConstraints C j)) := by
+      rw [List.range_succ, List.map_append, andPrefix_append]
+      simp [andPrefix]
+    rw [heval, emitFtrue_run, State.get_set_eq, h4OUT, h3OUT, hsnoc,
+      show serF (encodeLineConstraints C j)
+          = andPrefix
+              ((List.range (C.init.length + 1)).map (encodeStepConstraint C j))
+            ++ serF .ftrue from serF_listAnd _]
+    simp [serF, List.append_assoc]
+  · rw [heval, emitFtrue_frame _ ZERO (by decide)]; exact h4Z
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20
+    rw [heval, emitFtrue_frame _ r h2,
+      h4frame r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17,
+      h3chain r h18 h20 h2 h19,
+      hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20]
+
+/-- **`emitAllSteps` is correct**: with the loop/length registers pre-set
+(`STEPS`/`LREG`/`LREG1` from `encodeIn`+`precompLen`, `OFFSET`/`WIDTH`/`CARDS`
+pinned by `encodeIn`), it appends `serF (encodeAllStepConstraints C)` to
+`OUT`. `CARDS` itself is untouched (consumed via scratch copies only). -/
+theorem emitAllSteps_run (C : BinaryCC) (u : State)
+    (hSTEPS : State.get u STEPS = List.replicate C.steps 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hLREG1 : State.get u LREG1 = List.replicate (C.init.length + 1) 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = []) :
+    State.get (emitAllSteps.eval u) OUT
+        = State.get u OUT ++ serF (encodeAllStepConstraints C)
+    ∧ State.get (emitAllSteps.eval u) ZERO = []
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ OUT → r ≠ WREG → r ≠ TFLG → r ≠ KBIT →
+        r ≠ DONE → r ≠ EMARK → r ≠ ZERO → r ≠ KTMP → r ≠ KCARD →
+        r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW → r ≠ REM → r ≠ GFLG →
+        r ≠ KSTEP → r ≠ LINEL → r ≠ KLINE → r ≠ KTMP2 →
+        State.get (emitAllSteps.eval u) r = State.get u r) := by
+  have hlen : (State.get u STEPS).length = C.steps := by
+    rw [hSTEPS, List.length_replicate]
+  have hbase : ALInv C u 0 u := by
+    refine ⟨?_, hZ, fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    simp [andPrefix]
+  have hInv : ALInv C u C.steps
+      (Cmd.foldlState lineBody KLINE (List.range C.steps) u) :=
+    Cmd.foldlState_range_induct lineBody KLINE C.steps u (ALInv C u) hbase
+      (fun j st _ hM => ALInv_step C u hOFF hWID hLREG hLREG1 hCARDS j st hM)
+  obtain ⟨hOUTf, hZf, hframef⟩ := hInv
+  have heval : emitAllSteps.eval u
+      = emitFtrue.eval (Cmd.foldlState lineBody KLINE (List.range C.steps) u) := by
+    unfold emitAllSteps
+    rw [Cmd.eval_seq, Cmd.eval_forBnd, hlen]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [heval, emitFtrue_run, State.get_set_eq, hOUTf]
+    simp [encodeAllStepConstraints, serF_listAnd, serF, List.append_assoc]
+  · rw [heval, emitFtrue_frame _ ZERO (by decide)]; exact hZf
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20
+    rw [heval, emitFtrue_frame _ r h2,
+      hframef r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20]
 
 /-- Consume one `encSList` of bits off `SCANF` into `FBITS` (bit-list) and
 `BLEN` (`1^length`). -/
@@ -2023,15 +2387,21 @@ no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
    - ✅ `stepBody_run` — DONE (part 2c), with the register-generic
      `unaryMulLoop_run`/`unarySubLoop_run`; matches `encodeStepConstraint`'s
      dite exactly.
-   - `emitAllSteps_run` (NEXT): two-level `listAnd` fold over lines × steps;
-     per line a `LINEL` mul-loop (`unaryMulLoop_run`) + inner loop of
-     `emitFandTag ;; stepBody` over `LREG1 = 1^(L+1)` (`List.range (L+1)`
-     matches `encodeLineConstraints`' `List.range (C.init.length + 1)`),
-     each level closed by `emitFtrue` — the `serF (listAnd …)` unrolling one
-     level up from `serF_encodeCardsAt` (define `stepsPrefix`/`linesPrefix`).
-   - `readOneFinal_run` / `emitFinal_run`: sentinel-stream *parse* (mirror
-     `SBInv` without re-emitting) + the `listOr`-over-`listOr` unroll reusing
-     `unaryMulLoop_run`/`unarySubLoop_run`/`emitBitsFromScan_run`.
+   - ✅ `emitAllSteps_run` — DONE (part 3): the two-level `listAnd` fold.
+     ONE generic `andPrefix`/`serF_listAnd` serves both levels (instead of
+     the sketched `stepsPrefix`/`linesPrefix` pair); invariants `ASInv`
+     (inner, black-boxed `stepBody_run` per iteration, exact loop bound so
+     no idle case) and `ALInv` (outer, per-line `LINEL` re-derivation via
+     `unaryMulLoop_run`); loop bodies named `stepIterBody`/`lineBody`.
+     Gotcha hit: `rw [List.range_succ]` picks the INNER `range (L+1)` when
+     both ranges are in the goal — unroll the outer one in an isolated
+     `have hsnoc` first.
+   - `readOneFinal_run` / `emitFinal_run` (NEXT): sentinel-stream *parse*
+     (mirror `SBInv` without re-emitting) + the `listOr`-over-`listOr` unroll
+     reusing `unaryMulLoop_run`/`unarySubLoop_run`/`emitBitsFromScan_run`.
+     For the `listOr` levels, mirror `andPrefix` with an `orPrefix`
+     (`[1,0]`-tag) + `serF_listOr` closing with `falseFml` — same shape as
+     `serF_encodeCardsAt` but stated generically like `serF_listAnd`.
    - `computeWF_run`: `(computeWF.eval …).get GWF = if BinaryCC_wellformed C
      then [1] else []`. Needs `dvdCheck`/`leCheck`/`cardLenCheck` correctness
      (unary modulo ⇔ `∣`; `1^a = 1^b ↔ a = b`). Guard-necessity is real:
