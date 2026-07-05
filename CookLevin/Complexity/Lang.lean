@@ -6,6 +6,7 @@ import Complexity.Lang.Navigate
 import Complexity.Lang.ScanPast
 import Complexity.Lang.ScanLeft
 import Complexity.Lang.AppendGadget
+import Complexity.Lang.AcceptHalt
 import Complexity.Lang.Compile
 import Complexity.Lang.PolyTime
 
