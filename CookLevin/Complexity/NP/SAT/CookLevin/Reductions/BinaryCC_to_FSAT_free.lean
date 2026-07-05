@@ -2744,12 +2744,26 @@ no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
      Gotcha hit: `rw [List.range_succ]` picks the INNER `range (L+1)` when
      both ranges are in the goal — unroll the outer one in an isolated
      `have hsnoc` first.
-   - `readOneFinal_run` / `emitFinal_run` (NEXT): sentinel-stream *parse*
-     (mirror `SBInv` without re-emitting) + the `listOr`-over-`listOr` unroll
-     reusing `unaryMulLoop_run`/`unarySubLoop_run`/`emitBitsFromScan_run`.
-     For the `listOr` levels, mirror `andPrefix` with an `orPrefix`
-     (`[1,0]`-tag) + `serF_listOr` closing with `falseFml` — same shape as
-     `serF_encodeCardsAt` but stated generically like `serF_listAnd`.
+   - ✅ `readOneFinal_run` — DONE (part 4): the sentinel-stream *parse*
+     (`RFInv` = `SBInv`'s decode half; outputs `FBITS` raw bits + `BLEN`
+     unary length, `SCANF` past the terminator; loop body named
+     `readFinBody`). Both `_run` lemma halves of the pattern now exist:
+     re-emit (`SBInv`) and parse (`RFInv`).
+   - `emitFinal_run` (NEXT): the `listOr`-over-`listOr` unroll. Mirror
+     `andPrefix`/`serF_listAnd` with an `orPrefix` (`[1,0]`-tag) +
+     `serF_listOr` closing with `falseFml` (the generic restatement of
+     `serF_encodeCardsAt`'s algebra). Outer level: a `CAInv`-style
+     `nonEmpty`-guarded loop over the `SCANF` stream copy, one black-boxed
+     `readOneFinal_run` per live iteration (its past-the-terminator `SCANF`
+     clause chains the calls; mind `encodeFinalString`'s per-string order).
+     Inner level: exact-bound loop over `LREG1`, per step the
+     `stepBody_run` arithmetic shape (`STEPO` mul via `unaryMulLoop_run`
+     bound `KFSTEP`, `SUMW = STEPO ++ BLEN`, `REM` via `unarySubLoop_run`,
+     guard ⇔ `encodeFinalAtStep`'s dite with `bits.length` from `BLEN`) +
+     `emitBitsFromScan_run` on a fresh `SCAN := FBITS` copy at
+     `FSTART = STEPSL ++ STEPO` (guard-fail emits `falseFml`, NOT `ftrue`).
+     Prelude: `STEPSL = 1^(steps·L)` is one `unaryMulLoop_run` (bound
+     `STEPS`, src `LREG`).
    - `computeWF_run`: `(computeWF.eval …).get GWF = if BinaryCC_wellformed C
      then [1] else []`. Needs `dvdCheck`/`leCheck`/`cardLenCheck` correctness
      (unary modulo ⇔ `∣`; `1^a = 1^b ↔ a = b`). Guard-necessity is real:
