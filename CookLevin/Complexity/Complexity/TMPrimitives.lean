@@ -1309,6 +1309,34 @@ theorem composeFlatTM_no_early_halt
         exact hcj_nothalt
 
 
+/-- **Stuck-`M₁` transfer (C8-2, 2026-07-05).** If `M₁`'s run from `cfg0`
+never reaches its `exit` and never halts — e.g. a guard machine stuck on
+malformed input (`FormatCheck.formatCheck_stuck`) — the composite never
+reaches a halting state either, at ANY budget. This is the backward-direction
+glue for guard-prefixed compositions under accept-by-halting: guard stuck ⇒
+composite non-halting ⇒ `acceptsFlatTM = false`. (The symmetric `M₂`-stuck
+case needs no new lemma: `composeFlatTM_no_early_halt` already covers it with
+an arbitrary `t₂`.) -/
+theorem composeFlatTM_stuck_M1
+    {M₁ M₂ : FlatTM} {exit : Nat}
+    (h_validM1 : validFlatTM M₁)
+    (cfg0 : FlatTMConfig) (h_cfg0_state_lt : cfg0.state_idx < M₁.states)
+    (h_traj1 : ∀ k, ∀ ck, runFlatTM k M₁ cfg0 = some ck →
+       ck.state_idx ≠ exit ∧ haltingStateReached M₁ ck = false) :
+    ∀ k, ∀ ck, runFlatTM k (composeFlatTM M₁ M₂ exit) cfg0 = some ck →
+      haltingStateReached (composeFlatTM M₁ M₂ exit) ck = false := by
+  intro k ck hck
+  have h_traj1' : ∀ j, j < k → ∀ cj, runFlatTM j M₁ cfg0 = some cj →
+      cj.state_idx ≠ exit ∧ haltingStateReached M₁ cj = false :=
+    fun j _ cj hcj => h_traj1 j cj hcj
+  have h_eq := runFlatTM_composeFlatTM_M1_phase M₁ M₂ exit h_validM1 k cfg0
+    h_cfg0_state_lt h_traj1'
+  rw [h_eq] at hck
+  have hck_lt : ck.state_idx < M₁.states :=
+    composeFlatTM_state_lt_of_M1_phase M₁ M₂ exit h_validM1 cfg0 h_cfg0_state_lt
+      h_traj1' k (Nat.le_refl k) ck hck
+  exact composeFlatTM_haltingStateReached_M1 M₁ M₂ exit ck hck_lt
+
 /-! ## Step 11.5b — branching composition `branchComposeFlatTM`
 
 A two-exit generalisation of `composeFlatTM`. Given three single-tape
