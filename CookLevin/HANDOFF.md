@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-04; session 3 part 2 done)
+## Where the proof stands (2026-07-05; C8-2 done)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -45,6 +45,34 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-05 (bottom-up), C8-2 DONE — both TM gadgets, sorry-free &
+  axiom-clean, probe green (`probes/C8GadgetsProbe.lean`).**
+  (a) **F4 closed** (`Lang/AcceptHalt.lean`): `AcceptHalt.demoteHalt M r`
+  demotes the reject state WITHOUT bridging (contrast `joinTwoHalts`) and
+  filters its outgoing transitions, so the machine parks at `r` by
+  construction; transport pair `demoteHalt_run_accept`/`_run_reject` +
+  `acceptsFlatTM`-level `demoteHalt_accepts`/`_not_accepts`.
+  **`runFlatTM_first_halt`** recovers the no-early-halt trajectory from a
+  bare `run ∧ halting` pair (`runFlatTM` freezes at the first halt), so the
+  transports consume `paddedBitDecider_run`'s exact output shape — C8-4
+  needs no new decider lemmas. (b) **F5 closed** (`Lang/FormatCheck.lean`):
+  `formatCheckTM w` (states `w+7`, writes nothing, unique halt `w+6`)
+  verifies the whole-tape grammar `3 ({1,2}* 0)^(w+1) 3⟨end⟩` and rewinds;
+  forward `formatCheck_run`/`_traj` (exactly `2·|tape|+1` steps, tape
+  unchanged, head 0, `composeFlatTM_run` input shape), backward
+  `formatCheck_stuck` (bad cert region ⇒ never halts, any budget); grammar
+  `certOKB`/`certOKB_iff` + `encodeTape_certSplit` (format-valid ⇔ cert
+  `= shiftReg creg ++ [0,3]`, reassembling `encodeTape (sx ++ [creg])`).
+  The separator COUNT is load-bearing: a cert containing `0`s would parse as
+  extra registers exactly where the padded scratch must be empty.
+  (c) **The C8-4 composition glue is pre-proven**: new public
+  `composeFlatTM_stuck_M1` (`TMPrimitives.lean`) — guard stuck ⇒ composite
+  never halts (the M₂-stuck case was already covered by
+  `composeFlatTM_no_early_halt` with arbitrary `t₂`). Proof method worth
+  copying for bespoke scan machines: the **`Seg` framework** (run +
+  done-state-free trajectory in one predicate, composing additively) — for
+  a single-halt-state machine it is simultaneously run lemma and
+  no-early-halt trajectory.
 - **2026-07-04 (bottom-up, part 2), C8-0 SIGNED OFF + C8-1 DONE (the
   framework batch), build green, axiom profiles unchanged.**
   (a) **F2 fixed**: `FlatSingleTMGenNP` now Coq-faithful
@@ -262,9 +290,12 @@ subsuming S2). **The answers to the three scoping questions:**
   Layout-check finding: the live SAT verifier needs a trailing-`[]` trim +
   a bits→sentinel decode-prefix `Cmd` before it can be a Split witness
   (endgame membership-half work — see the latest-sessions entry).
-- **C8-2 (TM gadgets):** the accept-by-halting wrapper (halt-list demotion +
-  run transport) and the tape-format-check gadget (scan-family; both run
-  directions).
+- **C8-2 — ✅ DONE (2026-07-05):** the accept-by-halting wrapper
+  (`Lang/AcceptHalt.lean`) and the tape-format-check gadget
+  (`Lang/FormatCheck.lean`), both run directions each, + the composition
+  glue `composeFlatTM_stuck_M1`; all sorry-free & axiom-clean, probe
+  `probes/C8GadgetsProbe.lean` green. See the latest-sessions entry and the
+  **C8-4 assembly notes** below.
 - **C8-3 (Cmd pieces + run lemmas):** `emitConst` (fold of appends; run lemma
   by induction on the constant), the unary monomial evaluator (`c·(n+1)^k`
   via k-fold `unaryMulLoop_run`), the per-symbol re-encoder (`expandSent`
@@ -277,16 +308,61 @@ subsuming S2). **The answers to the three scoping questions:**
   blocked on the S1 free witness existing; until then `C8SeamProbe.headEncodeIn`
   is the layout spec.
 
-## NEXT BOTTOM-UP session — C8-2 (the TM gadgets)
+## NEXT BOTTOM-UP session — C8-3 (the `Cmd` pieces + run lemmas)
 
-C8-0 is signed off and C8-1 is done, so the next bottom-up session is
-**C8-2** above: the accept-by-halting wrapper (demote `rejectState` from the
-halt list; run-transport lemma pair — accept-run preserved via a
-`joinTwoHalts_run_eq`-style argument, reject-run stuck-and-never-halting)
-and the tape-format-check gadget (scan the cert region for the
-`{1,2}`-cells/`0`-separator/endMark grammar; reuse the scan-family shapes in
-`ScanLeft`/`AppendGadget`). Probe each gadget with `#eval` before its run
-lemma, per the standard method.
+C8-0/C8-1/C8-2 are done, so next is **C8-3**: the `Cmd` building blocks of
+the per-`Q` front program `W_Q` (shape validated by
+`probes/C8SeamProbe.lean` — `buildFront` there is the toy blueprint):
+
+1. **`emitConst dst bits`** (the constant-machine emitter): fold of
+   `appendOne`/`appendZero` over a literal list (the probe's `emitBits`).
+   Run lemma by induction on the constant; the frame is OUT-only (mirror the
+   `emit*_run`/`_frame` OUT-only gadget lemmas in
+   `Reductions/BinaryCC_to_FSAT_free.lean`).
+2. **The unary monomial evaluator** for `c·(n+1)^k + d`: `k`-fold
+   `unaryMulLoop_run` (register-generic, already proven in
+   `BinaryCC_to_FSAT_free.lean` — do NOT re-derive) + constant append tail.
+   This funds the `maxSize x`/`steps x` registers (F6).
+3. **The per-symbol re-encoder** (`encX x`'s bit register → the instance's
+   sentinel-expanded `s_x` register): the `expandSent`/`sentLoop_run` shape
+   from `Reductions/FlatCC_to_BinaryCC_free.lean`; per-bit body = the
+   probe's 3-append `forBnd` body.
+
+Probe each piece with `#eval` before its run lemma (extend
+`C8SeamProbe`/`C8GadgetsProbe`). These are ordinary `Cmd` fold-invariant
+lemmas — copy `BSInv` (plain fold) from `BinaryCC_to_FSAT_free.lean`.
+
+**C8-4 assembly notes (recorded 2026-07-05, C8-2 session — read before
+building C8-4):**
+
+- **The machine**: `M_Q := composeFlatTM (formatCheckTM xWidth)
+  (AcceptHalt.demoteHalt (paddedBitDeciderTM c regBound) rejectState)
+  (xWidth + 6)` where `rejectState = 2 + (Compile regBound c).states +
+  (padRegsTM …).states` (accept is `1 + …`, from `paddedBitDecider_run`);
+  `rejectState`'s halt bit is discharged by `paddedBitDeciderTM_halt_shift`
+  at `i = 2`. Validity/tapes/sig lemmas for all three layers exist.
+- **Forward (yes ⇒ accepted)**: `formatCheck_run`/`formatCheck_traj` on
+  `encodeTape (encX x ++ certState c)` (via `encodeIn_eq`; the exit config
+  `([], 0, tape)` IS the `initFlatConfig` shape M₂ needs) →
+  `composeFlatTM_run` → `runFlatTM_first_halt` + `demoteHalt_run_accept`
+  on `paddedBitDecider_run`'s bare output. Budget: `2·|tape|+1 + 1 +
+  (padBudget + 1 + physStepBudget… + 3)` — the `steps x` monomial must
+  overshoot it (F6).
+- **Backward (accepted ⇒ yes)**: split the raw tape as `s_x ++ cert`
+  (`s_x = 3 :: encodeRegs (encX x)`), then case on `certOKB cert`:
+  - **bad**: `formatCheck_stuck` + `composeFlatTM_stuck_M1` ⇒ the composite
+    never halts ⇒ `acceptsFlatTM = false`, contradiction. (Note
+    `formatCheck_stuck`'s trajectory also gives `≠ exit` via
+    `formatCheck_halting_iff` — the only halt state IS the exit.)
+  - **good**: `certOKB_iff` + `encodeTape_certSplit` ⇒ tape
+    `= encodeTape (encX x ++ [creg])`; convert the bit-register `creg` to
+    `c : List Bool` (`certState c` is register-equal); if the verifier
+    rejects, `demoteHalt_run_reject` makes M₂ never halt and
+    `composeFlatTM_no_early_halt` (arbitrary `t₂`) kills the accept —
+    so the verifier accepted ⇒ `rel x c` ⇒ `Q x` via `rel_correct.sound`.
+- **Yes-instance cert**: `cert := shiftReg (c.map bit) ++ [0, 3]` — length
+  `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
+  `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
 **Alternative (the right choice for a shorter session):** the
 `FSAT_to_SAT` free witness (Tseytin as a `Cmd`; the last small sound-tail
@@ -402,6 +478,17 @@ each lemma once it compiles green.
 
 ## Proven, reusable — do not re-derive
 
+- **The C8-2 gadget layer (2026-07-05)**: `AcceptHalt.demoteHalt` +
+  structure/step/halting lemmas, `demoteHalt_run_eq`/`_weak`, the transport
+  pair `demoteHalt_run_accept`/`_run_reject`, `acceptsFlatTM`-level
+  `demoteHalt_accepts`/`_not_accepts`, and `runFlatTM_first_halt`
+  (trajectory recovery from bare `run ∧ halting` — reusable wherever a
+  consumer lacks a no-early-halt conjunct). `FormatCheck.formatCheckTM` +
+  `formatCheck_run`/`_traj`/`_stuck`, `certOKB`/`certOKB_iff`/
+  `encodeTape_certSplit`, and the **`Seg` framework** (exact run +
+  done-state-free trajectory, additive composition — the template for any
+  bespoke single-halt-state scan machine). `composeFlatTM_stuck_M1`
+  (TMPrimitives): guard-stuck ⇒ composite-never-halts.
 - **The FlatCC→BinaryCC free-reduction stack**
   (`Reductions/FlatCC_to_BinaryCC_free.lean`): `binConvert_run` (6-output run
   lemma with guard), the item view (`encItems`/`expandItems`/`itemsOkB` +
