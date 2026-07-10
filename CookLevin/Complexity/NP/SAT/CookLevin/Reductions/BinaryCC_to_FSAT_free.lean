@@ -6705,4 +6705,415 @@ theorem emitAllSteps_cost (C : BinaryCC) (u : State) (Ω : Nat)
   · rw [Cmd.eval_seq, emitFtrue_frame _ WREG (by decide), Cmd.eval_forBnd]
     exact hwLoop.2
 
+/-! ### `emitFinal`: cost -/
+
+private theorem orPrefix_range_succ (g : Nat → formula) (n : Nat) :
+    orPrefix ((List.range (n + 1)).map g)
+      = orPrefix ((List.range n).map g) ++ ([1, 0] ++ serF (g n)) := by
+  rw [List.range_succ, List.map_append, orPrefix_append]
+  simp [orPrefix]
+
+private theorem orPrefix_range_le (g : Nat → formula) (k m : Nat) (h : k ≤ m) :
+    (orPrefix ((List.range k).map g)).length
+      ≤ (serF (listOr ((List.range m).map g))).length := by
+  have he : (List.range k).map g = ((List.range m).map g).take k := by
+    rw [← List.map_take, List.take_range, Nat.min_eq_left h]
+  rw [he]
+  exact orPrefix_take_length_le _ k
+
+private theorem encSList_length_ge (l : List Nat) :
+    l.length ≤ (FlatTCCFree.encSList l).length := by
+  induction l with
+  | nil => simp [FlatTCCFree.encSList]
+  | cons v xs ih =>
+      show _ ≤ (FlatTCCFree.encSElem v ++ FlatTCCFree.encSList xs).length
+      simp only [List.length_append, List.length_cons, FlatTCCFree.encSElem,
+        List.length_replicate]
+      omega
+
+/-- `emitBitsFromScan` never grows `WREG` beyond `max(entry, start + |bits|)`. -/
+private theorem emitBitsFromScan_WREG (BASE bound : Nat) (u : State) (W : Nat)
+    (hBT : BASE ≠ TFLG) (hBS : BASE ≠ SCAN) (hBK : BASE ≠ KBIT)
+    (hBmem : BASE ∉ Cmd.writes (bsBody BASE))
+    (hW : (State.get u WREG).length ≤ W)
+    (hBb : (State.get u BASE).length + (State.get u bound).length ≤ W) :
+    (State.get ((emitBitsFromScan BASE bound).eval u) WREG).length ≤ W := by
+  rw [emitBitsFromScan_eq, Cmd.eval_seq, emitFtrue_frame _ WREG (by decide),
+    Cmd.eval_forBnd]
+  have hInv := Cmd.foldlState_range_induct (bsBody BASE) KBIT
+    (State.get u bound).length u
+    (fun i st => (State.get st WREG).length ≤ W
+      ∧ State.get st BASE = State.get u BASE)
+    ⟨hW, rfl⟩
+    (fun i st hi hM => by
+      obtain ⟨hWl, hBf⟩ := hM
+      constructor
+      · rw [bsBody_WREG BASE _ hBT hBS,
+          State.get_set_ne _ _ _ _ hBK, State.get_set_eq, hBf,
+          List.length_append, List.length_replicate]
+        omega
+      · rw [Cmd.eval_get_of_not_writes _ _ BASE hBmem,
+          State.get_set_ne _ _ _ _ hBK]
+        exact hBf)
+  exact hInv.1
+
+/-- **`finalStepBody` cost**: quadratic in `Ω`, plus the `WREG ≤ Ω` exit fact. -/
+theorem finalStepBody_cost (C : BinaryCC) (step : Nat) (bits : List Bool) (u : State)
+    (Ω : Nat)
+    (hSTEPSL : State.get u STEPSL = List.replicate (C.steps * C.init.length) 1)
+    (hKFSTEP : State.get u KFSTEP = List.replicate step 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hBLEN : State.get u BLEN = List.replicate bits.length 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hFBITS : State.get u FBITS = FlatCCBinFree.bitsNat bits)
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length
+        + (serF (encodeFinalAtStep C step bits)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩidx : C.steps * C.init.length + step * C.offset + step + C.offset
+        + bits.length + C.init.length ≤ Ω) :
+    finalStepBody.cost u
+        ≤ (Cmd.flatK (bsBody 0) + 60) * ((Ω + 1) * (Ω + 1))
+    ∧ (State.get (finalStepBody.eval u) WREG).length ≤ Ω := by
+  -- w1: clear STEPO
+  have e1 : (Cmd.op (.clear STEPO)).eval u = u.set STEPO [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set w1 := u.set STEPO [] with hw1
+  have hw1frame : ∀ r : Var, r ≠ STEPO → State.get w1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw1STEPO : State.get w1 STEPO = [] := State.get_set_eq _ _ _
+  have hw1OFF : State.get w1 OFFSET = List.replicate C.offset 1 := by
+    rw [hw1frame OFFSET (by decide)]; exact hOFF
+  have hw1KFSTEPlen : (State.get w1 KFSTEP).length = step := by
+    rw [hw1frame KFSTEP (by decide), hKFSTEP, List.length_replicate]
+  clear_value w1
+  -- w2: STEPO mul loop
+  have hcMul := cost_mulLoop_le KTMP2 KFSTEP STEPO OFFSET w1 0 C.offset step
+    (by decide) (by decide) (by decide)
+    (by rw [hw1STEPO]; exact Nat.le_refl 0)
+    (by rw [hw1OFF, List.length_replicate])
+    hw1KFSTEPlen
+  obtain ⟨h2STEPO, h2frame⟩ :=
+    unaryMulLoop_run KTMP2 KFSTEP OFFSET STEPO w1 C.offset step
+      (by decide) (by decide) (by decide) hw1OFF hw1KFSTEPlen hw1STEPO
+  set w2 := (Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).eval w1
+    with hw2
+  clear_value w2
+  have hw2BLEN : State.get w2 BLEN = List.replicate bits.length 1 := by
+    rw [h2frame BLEN (by decide) (by decide), hw1frame BLEN (by decide)]
+    exact hBLEN
+  -- w3: SUMW := STEPO ++ BLEN
+  have e3 : (Cmd.op (.concat SUMW STEPO BLEN)).eval w2
+      = w2.set SUMW (List.replicate (step * C.offset + bits.length) 1) := by
+    rw [Cmd.eval_op]
+    simp only [Op.eval, h2STEPO, hw2BLEN]
+    congr 1
+    rw [List.replicate_add]
+  have hc3 : Op.cost (.concat SUMW STEPO BLEN) w2
+      = 2 * (step * C.offset + bits.length) + 1 := by
+    show 2 * ((State.get w2 STEPO).length + (State.get w2 BLEN).length) + 1 = _
+    rw [h2STEPO, hw2BLEN, List.length_replicate, List.length_replicate]
+  set w3 := w2.set SUMW (List.replicate (step * C.offset + bits.length) 1) with hw3
+  have hw3frame : ∀ r : Var, r ≠ SUMW → State.get w3 r = State.get w2 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw3SUMW : State.get w3 SUMW
+      = List.replicate (step * C.offset + bits.length) 1 := State.get_set_eq _ _ _
+  clear_value w3
+  -- w4: REM := copy SUMW
+  have e4 : (Cmd.op (.copy REM SUMW)).eval w3
+      = w3.set REM (List.replicate (step * C.offset + bits.length) 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw3SUMW]
+  have hc4 : Op.cost (.copy REM SUMW) w3 = step * C.offset + bits.length + 1 := by
+    show (State.get w3 SUMW).length + 1 = _
+    rw [hw3SUMW, List.length_replicate]
+  set w4 := w3.set REM (List.replicate (step * C.offset + bits.length) 1) with hw4
+  have hw4frame : ∀ r : Var, r ≠ REM → State.get w4 r = State.get w3 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw4REM : State.get w4 REM
+      = List.replicate (step * C.offset + bits.length) 1 := State.get_set_eq _ _ _
+  have hw4LREGlen : (State.get w4 LREG).length = C.init.length := by
+    rw [hw4frame LREG (by decide), hw3frame LREG (by decide),
+      h2frame LREG (by decide) (by decide), hw1frame LREG (by decide),
+      hLREG, List.length_replicate]
+  clear_value w4
+  -- w5: the truncated-subtraction loop
+  have hcSub := cost_tailLoop_le KTMP2 LREG REM w4 (step * C.offset + bits.length)
+    C.init.length (by decide)
+    (by rw [hw4REM, List.length_replicate]) hw4LREGlen
+  obtain ⟨h5REM, h5frame⟩ :=
+    unarySubLoop_run KTMP2 LREG REM w4 (step * C.offset + bits.length) C.init.length
+      (by decide) hw4LREGlen hw4REM
+  set w5 := (Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM))).eval w4 with hw5
+  clear_value w5
+  have h5chain : ∀ r : Var, r ≠ STEPO → r ≠ KTMP2 → r ≠ SUMW → r ≠ REM →
+      State.get w5 r = State.get u r := by
+    intro r h1 h2 h3 h4
+    rw [h5frame r h4 h2, hw4frame r h4, hw3frame r h3, h2frame r h1 h2,
+      hw1frame r h1]
+  have h5OUT : State.get w5 OUT = State.get u OUT :=
+    h5chain OUT (by decide) (by decide) (by decide) (by decide)
+  have h5WREG : State.get w5 WREG = State.get u WREG :=
+    h5chain WREG (by decide) (by decide) (by decide) (by decide)
+  have h5STEPSL : State.get w5 STEPSL
+      = List.replicate (C.steps * C.init.length) 1 := by
+    rw [h5chain STEPSL (by decide) (by decide) (by decide) (by decide)]
+    exact hSTEPSL
+  have h5STEPO : State.get w5 STEPO = List.replicate (step * C.offset) 1 := by
+    rw [h5frame STEPO (by decide) (by decide), hw4frame STEPO (by decide),
+      hw3frame STEPO (by decide)]
+    exact h2STEPO
+  have h5FBITS : State.get w5 FBITS = FlatCCBinFree.bitsNat bits := by
+    rw [h5chain FBITS (by decide) (by decide) (by decide) (by decide)]
+    exact hFBITS
+  -- w6: nonEmpty TFLG REM, w7: the GFLG bit
+  by_cases hguard : step * C.offset + bits.length ≤ C.init.length
+  · have hREM0 : State.get w5 REM = [] := by
+      rw [h5REM, Nat.sub_eq_zero_of_le hguard]
+      rfl
+    have hne : (State.get w5 REM).isEmpty = true := by rw [hREM0]; rfl
+    have e6 : (Cmd.op (.nonEmpty TFLG REM)).eval w5 = w5.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w6 := w5.set TFLG [0] with hw6
+    have hw6frame : ∀ r : Var, r ≠ TFLG → State.get w6 r = State.get w5 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw6Tne : State.get w6 TFLG ≠ [1] := by
+      rw [hw6, State.get_set_eq]; decide
+    clear_value w6
+    have ec : (Cmd.op (.clear GFLG)).eval w6 = w6.set GFLG [] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    have ea : (Cmd.op (.appendOne GFLG)).eval (w6.set GFLG []) = w6.set GFLG [1] := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, State.get_set_eq, State.set_set, List.nil_append]
+    have e7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).eval w6
+        = w6.set GFLG [1] := by
+      rw [Cmd.eval_ifBit_false _ _ _ _ hw6Tne, Cmd.eval_seq, ec, ea]
+    have hc7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).cost w6 = 4 := by
+      rw [Cmd.cost_ifBit_false _ _ _ _ hw6Tne, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op,
+        ec]
+      simp only [Op.cost]
+    set w7 := w6.set GFLG [1] with hw7
+    have hw7frame : ∀ r : Var, r ≠ GFLG → State.get w7 r = State.get w6 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw7G : State.get w7 GFLG = [1] := State.get_set_eq _ _ _
+    clear_value w7
+    have h7STEPSL : State.get w7 STEPSL
+        = List.replicate (C.steps * C.init.length) 1 := by
+      rw [hw7frame STEPSL (by decide), hw6frame STEPSL (by decide)]; exact h5STEPSL
+    have h7STEPO : State.get w7 STEPO = List.replicate (step * C.offset) 1 := by
+      rw [hw7frame STEPO (by decide), hw6frame STEPO (by decide)]; exact h5STEPO
+    -- w8: FSTART := STEPSL ++ STEPO
+    have e8 : (Cmd.op (.concat FSTART STEPSL STEPO)).eval w7
+        = w7.set FSTART (List.replicate
+            (C.steps * C.init.length + step * C.offset) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, h7STEPSL, h7STEPO]
+      congr 1
+      rw [List.replicate_add]
+    have hc8 : Op.cost (.concat FSTART STEPSL STEPO) w7
+        = 2 * (C.steps * C.init.length + step * C.offset) + 1 := by
+      show 2 * ((State.get w7 STEPSL).length + (State.get w7 STEPO).length) + 1 = _
+      rw [h7STEPSL, h7STEPO, List.length_replicate, List.length_replicate]
+    set w8 := w7.set FSTART (List.replicate
+        (C.steps * C.init.length + step * C.offset) 1) with hw8
+    have hw8frame : ∀ r : Var, r ≠ FSTART → State.get w8 r = State.get w7 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw8F : State.get w8 FSTART
+        = List.replicate (C.steps * C.init.length + step * C.offset) 1 :=
+      State.get_set_eq _ _ _
+    have hw8FBITS : State.get w8 FBITS = FlatCCBinFree.bitsNat bits := by
+      rw [hw8frame FBITS (by decide), hw7frame FBITS (by decide),
+        hw6frame FBITS (by decide)]
+      exact h5FBITS
+    have hw8OUT : State.get w8 OUT = State.get u OUT := by
+      rw [hw8frame OUT (by decide), hw7frame OUT (by decide),
+        hw6frame OUT (by decide)]
+      exact h5OUT
+    have hw8WREG : State.get w8 WREG = State.get u WREG := by
+      rw [hw8frame WREG (by decide), hw7frame WREG (by decide),
+        hw6frame WREG (by decide)]
+      exact h5WREG
+    have hw8G : State.get w8 GFLG = [1] := by
+      rw [hw8frame GFLG (by decide)]; exact hw7G
+    clear_value w8
+    -- w9: copy SCAN FBITS
+    have e9 : (Cmd.op (.copy SCAN FBITS)).eval w8
+        = w8.set SCAN (FlatCCBinFree.bitsNat bits) := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hw8FBITS]
+    have hc9 : Op.cost (.copy SCAN FBITS) w8 = bits.length + 1 := by
+      show (State.get w8 FBITS).length + 1 = _
+      rw [hw8FBITS]
+      exact congrArg (· + 1) (List.length_map _)
+    set w9 := w8.set SCAN (FlatCCBinFree.bitsNat bits) with hw9
+    have hw9frame : ∀ r : Var, r ≠ SCAN → State.get w9 r = State.get w8 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw9SCAN : State.get w9 SCAN = FlatCCBinFree.bitsNat bits :=
+      State.get_set_eq _ _ _
+    have hw9F : State.get w9 FSTART
+        = List.replicate (C.steps * C.init.length + step * C.offset) 1 := by
+      rw [hw9frame FSTART (by decide)]; exact hw8F
+    have hw9FBITSlen : (State.get w9 FBITS).length = bits.length := by
+      rw [hw9frame FBITS (by decide), hw8FBITS]
+      exact List.length_map _
+    have hw9OUT : State.get w9 OUT = State.get u OUT := by
+      rw [hw9frame OUT (by decide)]; exact hw8OUT
+    have hw9WREG : State.get w9 WREG = State.get u WREG := by
+      rw [hw9frame WREG (by decide)]; exact hw8WREG
+    clear_value w9
+    have hstep : encodeFinalAtStep C step bits
+        = encodeBitsAt (C.steps * C.init.length + step * C.offset) bits := by
+      unfold encodeFinalAtStep
+      rw [dif_pos hguard]
+    have hcScan := emitBitsFromScan_cost FSTART FBITS
+      (C.steps * C.init.length + step * C.offset) bits w9 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide)
+      hw9F hw9FBITSlen hw9SCAN
+      (by rw [hw9OUT, ← hstep]; exact hΩO)
+      (by rw [hw9WREG]; exact hΩW)
+      (by omega)
+    have hWScan := emitBitsFromScan_WREG FSTART FBITS w9 Ω
+      (by decide) (by decide) (by decide) (by decide)
+      (by rw [hw9WREG]; exact hΩW)
+      (by rw [hw9F, List.length_replicate, hw9FBITSlen]; omega)
+    have hcost : finalStepBody.cost u
+        = 1 + 1 + (1 + (Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).cost w1
+          + (1 + Op.cost (.concat SUMW STEPO BLEN) w2
+          + (1 + Op.cost (.copy REM SUMW) w3
+          + (1 + (Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM))).cost w4
+          + (1 + 1
+          + (1 + 4
+          + (1 + Op.cost (.concat FSTART STEPSL STEPO) w7
+          + (1 + (1 + Op.cost (.copy SCAN FBITS) w8
+              + (emitBitsFromScan FSTART FBITS).cost w9))))))))) := by
+      unfold finalStepBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+        Cmd.cost_op, e3, Cmd.cost_seq, Cmd.cost_op, e4, Cmd.cost_seq, ← hw5,
+        Cmd.cost_seq, Cmd.cost_op, e6, Cmd.cost_seq, hc7, e7, Cmd.cost_seq,
+        Cmd.cost_op, e8, Cmd.cost_ifBit_true _ _ _ _ hw8G, Cmd.cost_seq,
+        Cmd.cost_op, e9]
+      simp only [Op.cost]
+    have heval : finalStepBody.eval u = (emitBitsFromScan FSTART FBITS).eval w9 := by
+      unfold finalStepBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hw2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+        Cmd.eval_seq, ← hw5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq, e8,
+        Cmd.eval_ifBit_true _ _ _ _ hw8G, Cmd.eval_seq, e9]
+    constructor
+    · rw [hcost, hc3, hc4, hc8, hc9]
+      have hoff : C.offset ≤ Ω := by omega
+      have hsteple : step ≤ Ω := by omega
+      have hso : step * C.offset ≤ Ω := by omega
+      have hbl : bits.length ≤ Ω := by omega
+      have hL : C.init.length ≤ Ω := by omega
+      have hsl : C.steps * C.init.length + step * C.offset ≤ Ω := by omega
+      have hMulle := le_trans hcMul (mulLoopClose C.offset step Ω hoff hsteple hso)
+      have hSuble := le_trans hcSub
+        (subLoopClose (step * C.offset + bits.length) C.init.length Ω (by omega) hL)
+      have hScanle := hcScan
+      set K := Cmd.flatK (bsBody 0) with hK
+      clear_value K
+      set P2 := (Ω + 1) * (Ω + 1) with hP2
+      have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+      have hfin : (K + 60) * P2 = (K + 6) * P2 + 54 * P2 := by ring
+      omega
+    · rw [heval]
+      exact hWScan
+  · -- guard fails → emitFalse
+    obtain ⟨k, hk⟩ : ∃ k, step * C.offset + bits.length - C.init.length = k + 1 :=
+      ⟨step * C.offset + bits.length - C.init.length - 1, by omega⟩
+    have hne : (State.get w5 REM).isEmpty = false := by
+      rw [h5REM, hk]
+      rfl
+    have e6 : (Cmd.op (.nonEmpty TFLG REM)).eval w5 = w5.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w6 := w5.set TFLG [1] with hw6
+    have hw6frame : ∀ r : Var, r ≠ TFLG → State.get w6 r = State.get w5 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw6T : State.get w6 TFLG = [1] := State.get_set_eq _ _ _
+    clear_value w6
+    have e7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).eval w6
+        = w6.set GFLG [] := by
+      rw [Cmd.eval_ifBit_true _ _ _ _ hw6T, Cmd.eval_op]
+      simp only [Op.eval]
+    have hc7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).cost w6 = 2 := by
+      rw [Cmd.cost_ifBit_true _ _ _ _ hw6T, Cmd.cost_op]
+      simp only [Op.cost]
+    set w7 := w6.set GFLG [] with hw7
+    have hw7frame : ∀ r : Var, r ≠ GFLG → State.get w7 r = State.get w6 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw7Gne : State.get w7 GFLG ≠ [1] := by
+      rw [hw7, State.get_set_eq]; decide
+    clear_value w7
+    have h7STEPSL : State.get w7 STEPSL
+        = List.replicate (C.steps * C.init.length) 1 := by
+      rw [hw7frame STEPSL (by decide), hw6frame STEPSL (by decide)]; exact h5STEPSL
+    have h7STEPO : State.get w7 STEPO = List.replicate (step * C.offset) 1 := by
+      rw [hw7frame STEPO (by decide), hw6frame STEPO (by decide)]; exact h5STEPO
+    have e8 : (Cmd.op (.concat FSTART STEPSL STEPO)).eval w7
+        = w7.set FSTART (List.replicate
+            (C.steps * C.init.length + step * C.offset) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, h7STEPSL, h7STEPO]
+      congr 1
+      rw [List.replicate_add]
+    have hc8 : Op.cost (.concat FSTART STEPSL STEPO) w7
+        = 2 * (C.steps * C.init.length + step * C.offset) + 1 := by
+      show 2 * ((State.get w7 STEPSL).length + (State.get w7 STEPO).length) + 1 = _
+      rw [h7STEPSL, h7STEPO, List.length_replicate, List.length_replicate]
+    set w8 := w7.set FSTART (List.replicate
+        (C.steps * C.init.length + step * C.offset) 1) with hw8
+    have hw8frame : ∀ r : Var, r ≠ FSTART → State.get w8 r = State.get w7 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw8Gne : State.get w8 GFLG ≠ [1] := by
+      rw [hw8frame GFLG (by decide)]; exact hw7Gne
+    have hw8WREG : State.get w8 WREG = State.get u WREG := by
+      rw [hw8frame WREG (by decide), hw7frame WREG (by decide),
+        hw6frame WREG (by decide)]
+      exact h5WREG
+    clear_value w8
+    have hcost : finalStepBody.cost u
+        = 1 + 1 + (1 + (Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).cost w1
+          + (1 + Op.cost (.concat SUMW STEPO BLEN) w2
+          + (1 + Op.cost (.copy REM SUMW) w3
+          + (1 + (Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM))).cost w4
+          + (1 + 1
+          + (1 + 2
+          + (1 + Op.cost (.concat FSTART STEPSL STEPO) w7
+          + (1 + 9)))))))) := by
+      unfold finalStepBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+        Cmd.cost_op, e3, Cmd.cost_seq, Cmd.cost_op, e4, Cmd.cost_seq, ← hw5,
+        Cmd.cost_seq, Cmd.cost_op, e6, Cmd.cost_seq, hc7, e7, Cmd.cost_seq,
+        Cmd.cost_op, e8, Cmd.cost_ifBit_false _ _ _ _ hw8Gne, emitFalse_cost]
+      simp only [Op.cost]
+    have heval : finalStepBody.eval u = emitFalse.eval w8 := by
+      unfold finalStepBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hw2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+        Cmd.eval_seq, ← hw5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq, e8,
+        Cmd.eval_ifBit_false _ _ _ _ hw8Gne]
+    constructor
+    · rw [hcost, hc3, hc4, hc8]
+      have hoff : C.offset ≤ Ω := by omega
+      have hsteple : step ≤ Ω := by omega
+      have hso : step * C.offset ≤ Ω := by omega
+      have hbl : bits.length ≤ Ω := by omega
+      have hL : C.init.length ≤ Ω := by omega
+      have hsl : C.steps * C.init.length + step * C.offset ≤ Ω := by omega
+      have hMulle := le_trans hcMul (mulLoopClose C.offset step Ω hoff hsteple hso)
+      have hSuble := le_trans hcSub
+        (subLoopClose (step * C.offset + bits.length) C.init.length Ω (by omega) hL)
+      set K := Cmd.flatK (bsBody 0) with hK
+      clear_value K
+      set P2 := (Ω + 1) * (Ω + 1) with hP2
+      have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+      have hKP2 : 0 ≤ K * P2 := Nat.zero_le _
+      have hfin : (K + 60) * P2 = K * P2 + 60 * P2 := by ring
+      omega
+    · rw [heval, emitFalse_frame _ WREG (by decide), hw8WREG]
+      exact hΩW
+
 end BinaryCCFSATFree
