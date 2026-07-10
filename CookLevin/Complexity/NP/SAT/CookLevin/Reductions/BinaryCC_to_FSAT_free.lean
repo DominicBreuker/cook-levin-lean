@@ -5443,4 +5443,367 @@ theorem readOneFinal_cost (bits : List Bool) (rest : List Nat) (u : State) (Ω :
   omega
 
 
+/-! ### `emitCardsAt`: cost -/
+
+/-- `emitBitsFromSent` never grows `WREG` beyond `max(entry, start + |SCAN|)`
+(each loop write is `BASE ++ counter`). Membership hypothesis dischargeable by
+`decide` at concrete `BASE`. -/
+private theorem emitBitsFromSent_WREG (BASE : Nat) (u : State) (W : Nat)
+    (hBT : BASE ≠ TFLG) (hBS : BASE ≠ SCAN) (hBE : BASE ≠ EMARK) (hBK : BASE ≠ KBIT)
+    (hBD : BASE ≠ DONE)
+    (hBmem : BASE ∉ Cmd.writes (sentBitBody BASE))
+    (hW : (State.get u WREG).length ≤ W)
+    (hBSc : (State.get u BASE).length + (State.get u SCAN).length ≤ W) :
+    (State.get ((emitBitsFromSent BASE).eval u) WREG).length ≤ W := by
+  have heq : emitBitsFromSent BASE
+      = (Cmd.op (.clear DONE) ;;
+          (Cmd.forBnd KBIT SCAN (sentBitBody BASE) ;; emitFtrue)) := rfl
+  rw [heq, Cmd.eval_seq, Cmd.eval_seq, emitFtrue_frame _ WREG (by decide)]
+  have e0 : (Cmd.op (.clear DONE)).eval u = u.set DONE [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  rw [e0]
+  set u1 := u.set DONE [] with hu1
+  have hu1W : (State.get u1 WREG).length ≤ W := by
+    rw [hu1, State.get_set_ne _ _ _ _ (show WREG ≠ DONE by decide)]; exact hW
+  have hu1B : State.get u1 BASE = State.get u BASE := by
+    rw [hu1, State.get_set_ne _ _ _ _ hBD]
+  have hu1SC : State.get u1 SCAN = State.get u SCAN := by
+    rw [hu1, State.get_set_ne _ _ _ _ (show SCAN ≠ DONE by decide)]
+  clear_value u1
+  rw [Cmd.eval_forBnd]
+  have hInv := Cmd.foldlState_range_induct (sentBitBody BASE) KBIT
+    (State.get u1 SCAN).length u1
+    (fun _ st => (State.get st WREG).length ≤ W
+      ∧ State.get st BASE = State.get u1 BASE)
+    ⟨hu1W, rfl⟩
+    (fun i st hi hM => by
+      obtain ⟨hWl, hBf⟩ := hM
+      constructor
+      · refine le_trans (sentBitBody_WREG BASE _ hBT hBS hBE) ?_
+        rw [State.get_set_ne _ _ _ _ (show WREG ≠ KBIT by decide),
+          State.get_set_ne _ _ _ _ hBK, State.get_set_eq, hBf, hu1B,
+          List.length_replicate]
+        have hilt : i < (State.get u1 SCAN).length := hi
+        rw [hu1SC] at hilt
+        exact Nat.max_le.mpr ⟨hWl, by omega⟩
+      · rw [Cmd.eval_get_of_not_writes _ _ BASE hBmem,
+          State.get_set_ne _ _ _ _ hBK]
+        exact hBf)
+  exact hInv.1
+
+/-- Per-iteration effect of the card loop: cost bound + `WREG` stays `≤ Ω`. -/
+private theorem cardEmitBody_effect (sA sB : Nat) (C : BinaryCC) (u1 : State) (Ω : Nat)
+    (hSA1 : State.get u1 STARTA = List.replicate sA 1)
+    (hSB1 : State.get u1 STARTB = List.replicate sB 1)
+    (hΩO : (State.get u1 OUT).length + (serF (encodeCardsAt C sA sB)).length ≤ Ω)
+    (hΩA : sA + (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length ≤ Ω)
+    (hΩB : sB + (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length ≤ Ω)
+    (j : Nat) (st : State)
+    (hInv : CAInv sA sB C.cards u1 j st)
+    (hW : (State.get st WREG).length ≤ Ω) :
+    cardEmitBody.cost (st.set KCARD (List.replicate j 1))
+        ≤ 12 + 2 * ((Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1)))
+    ∧ (State.get (cardEmitBody.eval (st.set KCARD (List.replicate j 1))) WREG).length
+        ≤ Ω := by
+  obtain ⟨hSCAN, hOUT, hZERO, hframe⟩ := hInv
+  set w := st.set KCARD (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KCARD → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwSCAN : State.get w SCAN
+      = FlatTCCFree.encCardsOut ((C.cards.drop j).map FlatCCBinFree.cardNat) := by
+    rw [hwframe SCAN (by decide)]; exact hSCAN
+  have hwOUT : State.get w OUT
+      = State.get u1 OUT ++ cardsPrefix sA sB (C.cards.take j) := by
+    rw [hwframe OUT (by decide)]; exact hOUT
+  have hwZ : State.get w ZERO = [] := by
+    rw [hwframe ZERO (by decide)]; exact hZERO
+  have hwSA : State.get w STARTA = List.replicate sA 1 := by
+    rw [hwframe STARTA (by decide), hframe STARTA (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hSA1
+  have hwSB : State.get w STARTB = List.replicate sB 1 := by
+    rw [hwframe STARTB (by decide), hframe STARTB (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hSB1
+  have hwW : (State.get w WREG).length ≤ Ω := by
+    rw [hwframe WREG (by decide)]; exact hW
+  -- the drop-stream ceiling
+  have hstream : (FlatTCCFree.encCardsOut ((C.cards.drop j).map FlatCCBinFree.cardNat)).length
+      ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+    rw [show (C.cards.drop j).map FlatCCBinFree.cardNat
+        = (C.cards.map FlatCCBinFree.cardNat).drop j from List.map_drop ..]
+    exact encCardsOut_drop_length_le _ j
+  clear_value w
+  by_cases hj : j < C.cards.length
+  · -- live iteration
+    have hdrop : C.cards.drop j = C.cards[j] :: C.cards.drop (j + 1) :=
+      List.drop_eq_getElem_cons hj
+    have htake : C.cards.take (j + 1) = C.cards.take j ++ [C.cards[j]] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hj]; rfl
+    set c := C.cards[j] with hc
+    clear_value c
+    set REST := FlatTCCFree.encCardsOut ((C.cards.drop (j + 1)).map FlatCCBinFree.cardNat)
+      with hREST
+    have hSCANw : State.get w SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hwSCAN, hdrop, encCardsOut_cons, hREST]
+    have hne : (State.get w SCAN).isEmpty = false := by
+      rw [hSCANw]; exact encSList_append_isEmpty _ _
+    have e1 : (Cmd.op (.nonEmpty TFLG SCAN)).eval w = w.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w1 := w.set TFLG [1] with hw1
+    have hw1frame : ∀ r : Var, r ≠ TFLG → State.get w1 r = State.get w r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw1T : State.get w1 TFLG = [1] := State.get_set_eq _ _ _
+    clear_value w1
+    set w2 := emitForrTag.eval w1 with hw2
+    have hw2frame : ∀ r : Var, r ≠ OUT → State.get w2 r = State.get w1 r := by
+      intro r hr; rw [hw2]; exact emitForrTag_frame w1 r hr
+    have hw2OUT : State.get w2 OUT = State.get w1 OUT ++ [1, 0] := by
+      rw [hw2, emitForrTag_run]; exact State.get_set_eq _ _ _
+    clear_value w2
+    set w3 := emitFandTag.eval w2 with hw3
+    have hw3frame : ∀ r : Var, r ≠ OUT → State.get w3 r = State.get w2 r := by
+      intro r hr; rw [hw3]; exact emitFandTag_frame w2 r hr
+    have hw3OUT : State.get w3 OUT = State.get w2 OUT ++ [0, 1] := by
+      rw [hw3, emitFandTag_run]; exact State.get_set_eq _ _ _
+    clear_value w3
+    have hchain : ∀ r : Var, r ≠ OUT → r ≠ TFLG → State.get w3 r = State.get w r := by
+      intro r h1 h2
+      rw [hw3frame r h1, hw2frame r h1, hw1frame r h2]
+    have hw3SCAN : State.get w3 SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hchain SCAN (by decide) (by decide)]; exact hSCANw
+    have hw3Z : State.get w3 ZERO = [] := by
+      rw [hchain ZERO (by decide) (by decide)]; exact hwZ
+    have hw3SA : State.get w3 STARTA = List.replicate sA 1 := by
+      rw [hchain STARTA (by decide) (by decide)]; exact hwSA
+    have hw3SB : State.get w3 STARTB = List.replicate sB 1 := by
+      rw [hchain STARTB (by decide) (by decide)]; exact hwSB
+    have hw3W : (State.get w3 WREG).length ≤ Ω := by
+      rw [hchain WREG (by decide) (by decide)]; exact hwW
+    have hw3OUTfull : State.get w3 OUT
+        = State.get u1 OUT ++ cardsPrefix sA sB (C.cards.take j) ++ [1, 0] ++ [0, 1] := by
+      rw [hw3OUT, hw2OUT, hw1frame OUT (by decide), hwOUT]
+    -- OUT/prefix bookkeeping
+    have hexp : cardsPrefix sA sB (C.cards.take (j + 1))
+        = cardsPrefix sA sB (C.cards.take j)
+          ++ ([1, 0] ++ ([0, 1] ++ (serF (encodeBitsAt sA c.prem)
+              ++ serF (encodeBitsAt sB c.conc)))) := by
+      rw [htake, cardsPrefix_append]
+      simp [cardsPrefix, encodeCardAt, serF, List.append_assoc]
+    have hcpj1 : (cardsPrefix sA sB (C.cards.take (j + 1))).length
+        ≤ (serF (encodeCardsAt C sA sB)).length :=
+      cardsPrefix_take_length_le sA sB C.cards (j + 1)
+    have hlenexp : (cardsPrefix sA sB (C.cards.take (j + 1))).length
+        = (cardsPrefix sA sB (C.cards.take j)).length + 4
+          + (serF (encodeBitsAt sA c.prem)).length
+          + (serF (encodeBitsAt sB c.conc)).length := by
+      rw [hexp]
+      simp [List.length_append]
+      omega
+    -- the SCAN ceilings
+    have hw3SCANlen : (State.get w3 SCAN).length
+        ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+      rw [hw3SCAN, hREST, ← encCardsOut_cons, ← hdrop]
+      exact hstream
+    -- the prem emitter: cost + run facts
+    have hcostA := emitBitsFromSent_cost STARTA sA c.prem
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) w3 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) hw3SA hw3Z hw3SCAN
+      (by rw [hw3OUTfull]
+          simp only [List.length_append, List.length_cons, List.length_nil]
+          omega)
+      hw3W
+      (by rw [hw3SCAN] at hw3SCANlen ⊢
+          omega)
+    obtain ⟨h4SCAN, h4OUT, h4Z, h4frame⟩ :=
+      emitBitsFromSent_run STARTA sA c.prem
+        (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) w3
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) hw3SA hw3Z hw3SCAN
+    have hWREG4 : (State.get ((emitBitsFromSent STARTA).eval w3) WREG).length ≤ Ω :=
+      emitBitsFromSent_WREG STARTA w3 Ω (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) hw3W
+        (by rw [hw3SA, List.length_replicate, hw3SCAN] at *
+            rw [hw3SCAN] at hw3SCANlen
+            omega)
+    set w4 := (emitBitsFromSent STARTA).eval w3 with hw4
+    have hw4SB : State.get w4 STARTB = List.replicate sB 1 := by
+      rw [hw4, h4frame STARTB (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide)]
+      exact hw3SB
+    have hw4SCAN : State.get w4 SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST := by
+      rw [hw4]; exact h4SCAN
+    have hw4Z : State.get w4 ZERO = [] := by rw [hw4]; exact h4Z
+    have hw4OUT : State.get w4 OUT
+        = State.get w3 OUT ++ serF (encodeBitsAt sA c.prem) := by
+      rw [hw4]; exact h4OUT
+    have hw4W : (State.get w4 WREG).length ≤ Ω := by rw [hw4]; exact hWREG4
+    have hw4SCANlen : (State.get w4 SCAN).length
+        ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+      rw [hw4SCAN]
+      have : (State.get w3 SCAN).length
+          = (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)).length
+            + (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST).length := by
+        rw [hw3SCAN, List.length_append]
+      omega
+    clear_value w4
+    -- the conc emitter: cost
+    have hcostB := emitBitsFromSent_cost STARTB sB c.conc REST w4 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) hw4SB hw4Z hw4SCAN
+      (by rw [hw4OUT, hw3OUTfull]
+          simp only [List.length_append, List.length_cons, List.length_nil]
+          omega)
+      hw4W
+      (by rw [hw4SCAN] at hw4SCANlen ⊢
+          omega)
+    -- WREG at exit
+    have hWREG5 : (State.get ((emitBitsFromSent STARTB).eval w4) WREG).length ≤ Ω :=
+      emitBitsFromSent_WREG STARTB w4 Ω (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) hw4W
+        (by rw [hw4SB, List.length_replicate]
+            rw [hw4SCAN] at hw4SCANlen
+            rw [hw4SCAN]
+            omega)
+    -- assemble cost and eval
+    have hcost : cardEmitBody.cost w
+        = 1 + 1 + (1 + (1 + 3 + (1 + 3 + (1 + (emitBitsFromSent STARTA).cost w3
+            + (emitBitsFromSent STARTB).cost w4)))) := by
+      show (Cmd.op (.nonEmpty TFLG SCAN) ;; _).cost w = _
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_ifBit_true _ _ _ _ hw1T,
+        Cmd.cost_seq, emitForrTag_cost, ← hw2, Cmd.cost_seq, emitFandTag_cost,
+        ← hw3, Cmd.cost_seq, ← hw4]
+      simp only [Op.cost]
+    have heval : cardEmitBody.eval w = (emitBitsFromSent STARTB).eval w4 := by
+      unfold cardEmitBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_true _ _ _ _ hw1T, Cmd.eval_seq, ← hw2,
+        Cmd.eval_seq, ← hw3, Cmd.eval_seq, ← hw4]
+    constructor
+    · rw [hcost]
+      set KK := (Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1)) with hKK
+      clear_value KK
+      omega
+    · rw [heval]
+      exact hWREG5
+  · -- idle iteration
+    have hlen : C.cards.length ≤ j := Nat.le_of_not_lt hj
+    have hSCANw : State.get w SCAN = [] := by
+      rw [hwSCAN, List.drop_eq_nil_of_le hlen]
+      rfl
+    have hne : (State.get w SCAN).isEmpty = true := by rw [hSCANw]; rfl
+    have e1 : (Cmd.op (.nonEmpty TFLG SCAN)).eval w = w.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    have hw1T : State.get (w.set TFLG [0]) TFLG ≠ [1] := by
+      rw [State.get_set_eq]; decide
+    constructor
+    · have hcost : cardEmitBody.cost w = 1 + 1 + (1 + 1) := by
+        show (Cmd.op (.nonEmpty TFLG SCAN) ;; _).cost w = _
+        rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_ifBit_false _ _ _ _ hw1T,
+          Cmd.cost_op]
+        simp only [Op.cost]
+      rw [hcost]
+      omega
+    · have heval : cardEmitBody.eval w = (w.set TFLG [0]).set KTMP [] := by
+        unfold cardEmitBody
+        rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_false _ _ _ _ hw1T, Cmd.eval_op]
+        simp only [Op.eval]
+      rw [heval, State.get_set_ne _ _ _ _ (show WREG ≠ KTMP by decide),
+        State.get_set_ne _ _ _ _ (show WREG ≠ TFLG by decide)]
+      exact hwW
+
+/-- **`emitCardsAt` cost**: cubic in the ceiling `Ω`. -/
+theorem emitCardsAt_cost (sA sB : Nat) (C : BinaryCC) (u : State) (Ω : Nat)
+    (hSA : State.get u STARTA = List.replicate sA 1)
+    (hSB : State.get u STARTB = List.replicate sB 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length + (serF (encodeCardsAt C sA sB)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩA : sA + (State.get u CARDS).length ≤ Ω)
+    (hΩB : sB + (State.get u CARDS).length ≤ Ω) :
+    emitCardsAt.cost u
+      ≤ (2 * Cmd.flatK (sentBitBody 0) + 44)
+          * ((Ω + 1) * ((Ω + 1) * (Ω + 1))) := by
+  have heq : emitCardsAt = (Cmd.op (.copy SCAN CARDS) ;;
+      (Cmd.forBnd KCARD CARDS cardEmitBody ;; emitFalse)) := rfl
+  rw [heq, Cmd.cost_seq, Cmd.cost_seq, emitFalse_cost, Cmd.cost_op]
+  simp only [Op.cost]
+  have e0 : (Cmd.op (.copy SCAN CARDS)).eval u
+      = u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hCARDS]
+  rw [e0]
+  set u1 := u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    with hu1
+  have hu1f : ∀ r : Var, r ≠ SCAN → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1SC : State.get u1 SCAN
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    State.get_set_eq _ _ _
+  have hu1CARDSlen : (State.get u1 CARDS).length = (State.get u CARDS).length := by
+    rw [hu1f CARDS (by decide)]
+  clear_value u1
+  have hcards_le : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      = (State.get u CARDS).length := by rw [hCARDS]
+  have hloop := Cmd.cost_forBnd_le KCARD CARDS cardEmitBody u1
+    (12 + 2 * ((Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1))))
+    (fun j st => CAInv sA sB C.cards u1 j st ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨by rw [List.drop_zero]; exact hu1SC,
+      by rw [List.take_zero]; simp [cardsPrefix],
+      by rw [hu1f ZERO (by decide)]; exact hZ,
+      fun r _ _ _ _ _ _ _ _ _ _ => rfl⟩,
+      by rw [hu1f WREG (by decide)]; exact hΩW⟩
+    (fun j st hj hM => by
+      refine ⟨CAInv_step sA sB C.cards u1
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB) j st hM.1, ?_⟩
+      exact (cardEmitBody_effect sA sB C u1 Ω
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB)
+        (by rw [hu1f OUT (by decide)]; exact hΩO)
+        (by rw [← hcards_le] at hΩA; exact hΩA)
+        (by rw [← hcards_le] at hΩB; exact hΩB)
+        j st hM.1 hM.2).2)
+    (fun j st hj hM =>
+      (cardEmitBody_effect sA sB C u1 Ω
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB)
+        (by rw [hu1f OUT (by decide)]; exact hΩO)
+        (by rw [← hcards_le] at hΩA; exact hΩA)
+        (by rw [← hcards_le] at hΩB; exact hΩB)
+        j st hM.1 hM.2).1)
+  -- close the arithmetic
+  have hΩcards : (State.get u CARDS).length ≤ Ω := by omega
+  set K := Cmd.flatK (sentBitBody 0) with hK
+  set len := (State.get u1 CARDS).length with hlenDef
+  have hlenΩ : len ≤ Ω := by omega
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  set B := 12 + 2 * ((K + 8) * P2) with hB
+  have hBle : B ≤ (2 * K + 28) * P2 := by
+    rw [hB]
+    have h12 : 12 ≤ 12 * P2 := by
+      have : 1 ≤ P2 := by rw [hP2]; nlinarith
+      omega
+    have hexp2 : 2 * ((K + 8) * P2) + 12 * P2 = (2 * K + 28) * P2 := by ring
+    omega
+  have hlB : len * B ≤ (Ω + 1) * ((2 * K + 28) * P2) :=
+    Nat.mul_le_mul (by omega) hBle
+  have h3 : (Ω + 1) * ((2 * K + 28) * P2) = (2 * K + 28) * ((Ω + 1) * P2) := by ring
+  have h2 : len * len ≤ Ω * Ω := Nat.mul_le_mul hlenΩ hlenΩ
+  have h4 : (2 * K + 44) * ((Ω + 1) * P2)
+      = (2 * K + 28) * ((Ω + 1) * P2) + 16 * ((Ω + 1) * P2) := by ring
+  have h5 : (Ω + 1) * P2 = Ω * Ω * Ω + 3 * (Ω * Ω) + 3 * Ω + 1 := by
+    rw [hP2]; ring
+  have h6 : Ω * Ω * Ω + 3 * (Ω * Ω) + 3 * Ω + 1 ≥ Ω * Ω + Ω + 1 := by nlinarith
+  have hcopy : (State.get u CARDS).length + 1 ≤ Ω + 1 := by omega
+  omega
+
 end BinaryCCFSATFree
