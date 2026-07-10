@@ -1,6 +1,7 @@
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT
 import Complexity.NP.SAT.CookLevin.Reductions.FlatCC_to_BinaryCC_free
 import Complexity.Lang.PolyTime
+import Complexity.Lang.CostFlat
 
 set_option autoImplicit false
 
@@ -4899,5 +4900,161 @@ no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
    composed live `⪯p'`. `encodeIn` is already pinned to that exit frame, so the
    seam is near-pure.
 -/
+
+/-! ## 4. `cost_le` — the cost accounting (session 4)
+
+Per-loop cost bounds via `Cmd.cost_forBnd_le`, reusing the run invariants
+(`BSInv`/`SBInv`/`CAInv`/…) and their `_step` lemmas as the loop motive
+(extended by a `WREG`-length clause where the body reads scratch), and bounding
+each loop-free body by the generic `Cmd.cost_le_flat` (`Lang/CostFlat.lean`).
+Every lemma takes ONE ceiling parameter `Ω` with hypotheses stating what it
+dominates; `OUT` ceilings chain through `serF`-length bounds
+(`serF_length_le_size` + `listAnd`/`listOr` membership monotonicity) against
+the final output, whose size `BinaryCC_to_FSAT_instance_size_bound` bounds.
+Constants stay SYMBOLIC (`def`s over `Cmd.flatK`) — only `inOPoly` matters. -/
+
+/-! ### Serialization length bounds -/
+
+theorem serF_length_le_size (f : formula) : (serF f).length ≤ 4 * encodable.size f := by
+  induction f with
+  | ftrue => simp [serF]
+  | fvar v =>
+      simp only [serF, encodable_size_formula_fvar, List.length_append,
+        List.length_cons, List.length_replicate, List.length_nil]
+      omega
+  | fand a b iha ihb =>
+      simp only [serF, encodable_size_formula_fand, List.length_append,
+        List.length_cons, List.length_nil]
+      omega
+  | forr a b iha ihb =>
+      simp only [serF, encodable_size_formula_forr, List.length_append,
+        List.length_cons, List.length_nil]
+      omega
+  | fneg a iha =>
+      simp only [serF, encodable_size_formula_fneg, List.length_append,
+        List.length_cons, List.length_nil]
+      omega
+
+/-- A conjunct's serialization is no longer than the whole `listAnd`'s. -/
+theorem serF_length_le_of_mem_listAnd {f : formula} {fs : List formula}
+    (h : f ∈ fs) : (serF f).length ≤ (serF (listAnd fs)).length := by
+  induction fs with
+  | nil => cases h
+  | cons g gs ih =>
+      rcases List.mem_cons.mp h with rfl | h'
+      · show _ ≤ (serF (.fand f (listAnd gs))).length
+        simp [serF]; omega
+      · refine le_trans (ih h') ?_
+        show _ ≤ (serF (.fand g (listAnd gs))).length
+        simp [serF]; omega
+
+/-- A disjunct's serialization is no longer than the whole `listOr`'s. -/
+theorem serF_length_le_of_mem_listOr {f : formula} {fs : List formula}
+    (h : f ∈ fs) : (serF f).length ≤ (serF (listOr fs)).length := by
+  induction fs with
+  | nil => cases h
+  | cons g gs ih =>
+      rcases List.mem_cons.mp h with rfl | h'
+      · show _ ≤ (serF (.forr f (listOr gs))).length
+        simp [serF]; omega
+      · refine le_trans (ih h') ?_
+        show _ ≤ (serF (.forr g (listOr gs))).length
+        simp [serF]; omega
+
+/-- Mid-loop `OUT` ceiling, `listAnd` level: any processed-prefix `andPrefix`
+is bounded by the closed serialization. -/
+theorem andPrefix_take_length_le (fs : List formula) (i : Nat) :
+    (andPrefix (fs.take i)).length ≤ (serF (listAnd fs)).length := by
+  rw [serF_listAnd]
+  calc (andPrefix (fs.take i)).length
+      ≤ (andPrefix (fs.take i)).length + (andPrefix (fs.drop i)).length :=
+        Nat.le_add_right _ _
+    _ = (andPrefix (fs.take i ++ fs.drop i)).length := by
+        rw [andPrefix_append, List.length_append]
+    _ = (andPrefix fs).length := by rw [List.take_append_drop]
+    _ ≤ (andPrefix fs ++ serF .ftrue).length := by simp
+
+/-- Mid-loop `OUT` ceiling, `listOr` level. -/
+theorem orPrefix_take_length_le (fs : List formula) (i : Nat) :
+    (orPrefix (fs.take i)).length ≤ (serF (listOr fs)).length := by
+  rw [serF_listOr]
+  calc (orPrefix (fs.take i)).length
+      ≤ (orPrefix (fs.take i)).length + (orPrefix (fs.drop i)).length :=
+        Nat.le_add_right _ _
+    _ = (orPrefix (fs.take i ++ fs.drop i)).length := by
+        rw [orPrefix_append, List.length_append]
+    _ = (orPrefix fs).length := by rw [List.take_append_drop]
+    _ ≤ _ := by simp
+
+/-- Mid-loop `OUT` ceiling, bit level. -/
+theorem bitsPrefix_take_length_le (start : Nat) (bits : List Bool) (i : Nat) :
+    (bitsPrefix start (bits.take i)).length
+      ≤ (serF (BinaryCCToFSAT.encodeBitsAt start bits)).length := by
+  rw [serF_encodeBitsAt]
+  calc (bitsPrefix start (bits.take i)).length
+      ≤ (bitsPrefix start (bits.take i)).length
+        + (bitsPrefix (start + (bits.take i).length) (bits.drop i)).length :=
+        Nat.le_add_right _ _
+    _ = (bitsPrefix start (bits.take i ++ bits.drop i)).length := by
+        rw [bitsPrefix_append, List.length_append]
+    _ = (bitsPrefix start bits).length := by rw [List.take_append_drop]
+    _ ≤ _ := by simp
+
+/-- Mid-loop `OUT` ceiling, card level. -/
+theorem cardsPrefix_take_length_le (sA sB : Nat) (cs : List (CCCard Bool)) (j : Nat) :
+    (cardsPrefix sA sB (cs.take j)).length
+      ≤ (serF (listOr (cs.map (encodeCardAt sA sB)))).length := by
+  rw [serF_encodeCardsAt]
+  calc (cardsPrefix sA sB (cs.take j)).length
+      ≤ (cardsPrefix sA sB (cs.take j)).length
+        + (cardsPrefix sA sB (cs.drop j)).length := Nat.le_add_right _ _
+    _ = (cardsPrefix sA sB (cs.take j ++ cs.drop j)).length := by
+        rw [cardsPrefix_append, List.length_append]
+    _ = (cardsPrefix sA sB cs).length := by rw [List.take_append_drop]
+    _ ≤ _ := by simp
+
+/-- Dropping bits only shortens the sentinel stream. -/
+private theorem encSList_drop_length_le (l : List Nat) (i : Nat) :
+    (FlatTCCFree.encSList (l.drop i)).length ≤ (FlatTCCFree.encSList l).length := by
+  induction i generalizing l with
+  | zero => simp
+  | succ i ih =>
+      cases l with
+      | nil => simp
+      | cons v xs =>
+          rw [List.drop_succ_cons]
+          refine (ih xs).trans ?_
+          show _ ≤ (FlatTCCFree.encSElem v ++ FlatTCCFree.encSList xs).length
+          simp
+
+/-- Dropping cards only shortens the card stream. -/
+private theorem encCardsOut_drop_length_le (cs : List (CCCard Nat)) (j : Nat) :
+    (FlatTCCFree.encCardsOut (cs.drop j)).length
+      ≤ (FlatTCCFree.encCardsOut cs).length := by
+  induction j generalizing cs with
+  | zero => simp
+  | succ j ih =>
+      cases cs with
+      | nil => simp
+      | cons c cs =>
+          rw [List.drop_succ_cons]
+          refine (ih cs).trans ?_
+          show _ ≤ (FlatTCCFree.encCardOut c ++ FlatTCCFree.encCardsOut cs).length
+          simp
+
+/-- Dropping final strings only shortens the final stream. -/
+private theorem encFinal_drop_length_le (fss : List (List Nat)) (j : Nat) :
+    (FlatTCCFree.encFinal (fss.drop j)).length
+      ≤ (FlatTCCFree.encFinal fss).length := by
+  induction j generalizing fss with
+  | zero => simp
+  | succ j ih =>
+      cases fss with
+      | nil => simp
+      | cons s fss =>
+          rw [List.drop_succ_cons]
+          refine (ih fss).trans ?_
+          show _ ≤ (FlatTCCFree.encSList s ++ FlatTCCFree.encFinal fss).length
+          simp
 
 end BinaryCCFSATFree
