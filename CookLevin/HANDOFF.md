@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-09; C8-2 done, BinaryCC→FSAT emitters + `computeWF_run` ALL done)
+## Where the proof stands (2026-07-10; `buildFSAT_run` DONE — the whole BinaryCC→FSAT RUN-lemma stack is COMPLETE)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -17,13 +17,14 @@ reasonably provable).
   `FlatCCBinFree.flatCC_reducesPolyMO'`, and the **first COMPOSED live `⪯p'`**
   `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' : FlatTCC ⪯p' BinaryCC`
   (first live `SeamData`/`comp`). All axiom-clean. **Next chain step
-  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated (session 2);
-  the witness-proof run-lemma stack (session 3) is ~95% done — size bound +
-  ALL emitters (`emitBitsFromScan`/`_Sent`/`emitCardsAt`/`emitAllSteps`/
-  `readOneFinal`/`emitFinal`) **AND the wellformedness guard `computeWF_run`**
-  now landed, sorry-free & axiom-clean.
-  Remaining: **`buildFSAT_run`** (assemble the emitters + `computeWF_run`
-  branch), then `cost_le`, the mechanical field discharge, and the seam.**
+  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated, and the
+  ENTIRE run-lemma stack (session 3, parts 1–7) is DONE, sorry-free &
+  axiom-clean — size bound, ALL emitters, the wellformedness guard
+  `computeWF_run` (now with frame clause), `precompLen_run`, and the assembly
+  `buildFSAT_run : (buildFSAT.eval (encodeIn C)).get FOUT =
+  serF (BinaryCC_to_FSAT_instance C)`. The correctness crux is closed;
+  remaining is `cost_le` (accounting — cost-probed, degree ~5–6, NO
+  structural risk), the mechanical field discharge, and the seam.**
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
@@ -49,59 +50,35 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-09 (top-down), session 3 part 6 — `computeWF_run` DONE (the
-  on-machine wellformedness guard), sorry-free & axiom-clean
-  (`[propext, Classical.choice, Quot.sound]`), probe green, one commit.**
-  `(computeWF.eval …).get GWF = if BinaryCC_wellformed C then [1] else []`.
-  Built bottom-up: **`leCheck_run`** (`TFLG=[1] ↔ a≤b` via `unarySubLoop_run`
-  + `nonEmpty` + flip); **`dvdCheck_run`** (`TFLG=[1] ↔ d∣a` — unary `X mod D`
-  by repeated subtraction; the pure recursion `DvdArith.subMod` proven to reach
-  `a % d` — split cleanly into arithmetic + the machine fold `dvdBody_step`,
-  handles `d=0` via `0∣a↔a=0`); **`cardLenCheck_run`** (guarded card stream
-  `CLInv` — copy of `CAInv`; per-item sentinel parse `cardLenItem_run`/`CEInv`
-  — copy of `readOneFinal`/`RFInv`, but counts elements into `CLEN` and needs
-  the bit-values ∈{0,1} of `bitsNat`); assembly via **`andFlag_run`**
-  (`GWF := if P then g else []`) + **`nonEmptyTFLG_run`**, threading the input
-  regs + `ZERO=[]` through all 13 `;;` components. The 6 checks ⇔
-  `BinaryCC_wellformed` via **`wf_iff`** (key: `(∃k,k>0∧width=k·offset) ↔
-  offset∣width` given `width,offset>0`) + **`cardsOKB_iff`**. New gotchas:
-  factor each `forBnd` body to a named `def` BEFORE its fold lemma (`dvdBody`/
-  `cardLenElemBody`/`cardLenCardBody` — probe stays green, defeq); a Prop
-  condition inside `if … then …` needs a `Decidable` instance — carry a
-  **`Bool`** flag (`cardsOKB`) not a `∀…` Prop, or add
-  `[Decidable (BinaryCC_wellformed C)]`; `set x := e` retro-folds `e`'s
-  earlier `have … = e`, so **drop the redundant `← hx`** from a following
-  `heval` chain; `set` does NOT fold `e` *under a `∀`-binder*, so restate a
-  frame lemma `have hF : ∀ r, … → st.get r = … := hFraw` (defeq coercion)
-  before `clear_value`.
-- **2026-07-09 (top-down), session 3 part 5 — `emitFinal_run` DONE (the last
-  big emitter), sorry-free & axiom-clean (`[propext, Quot.sound]`), probe
-  green, one commit.** `serF (encodeFinalConstraint C)` = the two-level
-  `listOr` fold, reproduced register-exact. ONE generic `orPrefix`/
-  `orPrefix_append`/`serF_listOr` serves both `listOr` levels (mirror of
-  `andPrefix`/`serF_listAnd`). **`emitFinal` was REFACTORED into named defeq
-  sub-bodies** `finalStepBody`/`finalStepIterBody`/`finalStringBody` (mirror
-  `emitAllSteps`'s `stepBody`/`stepIterBody`/`lineBody`) — always do this to a
-  monolithic emitter BEFORE its run lemma (it is defeq; the `#eval` probe
-  stays green). Leaf `finalStepBody_run` copies `stepBody_run`'s dite; middle
-  `FSInv`/`innerFinalSteps_run` copies `ASInv`/`innerSteps_run`; outer
-  `FFInv`/`FFInv_step` copies `CAInv`'s guarded stream loop but each live
-  iteration = `readOneFinal_run` + `innerFinalSteps_run` + `emitFalse`.
-  **`emitBitsFromScan_run` was strengthened with a frame clause** (was
-  `SCAN`/`OUT`-only) — `buildFSAT_run` needs it. New gotchas below.
-- **2026-07-05-b (top-down), session 3 parts 3–4:** two more run lemmas,
-  sorry-free & axiom-clean (`[propext, Quot.sound]`), probe green, one commit
-  each. **`emitAllSteps_run`** (the two-level `listAnd` fold): ONE generic
-  `andPrefix`/`serF_listAnd` serves both levels (steps-in-line,
-  lines-in-tableau) — prefer this generic-algebra shape for `emitFinal`'s
-  `orPrefix`/`serF_listOr` too; invariants `ASInv` (inner, black-boxed
-  `stepBody_run`, exact bound so NO idle case) and `ALInv` (outer, per-line
-  `LINEL` via `unaryMulLoop_run`); bodies named `stepIterBody`/`lineBody`.
-  **`readOneFinal_run`** (the sentinel-stream *parse*): `RFInv` = `SBInv`'s
-  decode half — outputs `FBITS` (raw bits) + `BLEN` (unary length), `SCANF`
-  past the terminator (chains per-string calls in `emitFinal`); body named
-  `readFinBody`. New gotchas below: ambiguous `rw [List.range_succ]` with two
-  ranges in the goal; `show`-spine unfolding times out even on flat bodies.
+- **2026-07-10 (top-down), session 3 part 7 — `buildFSAT_run` DONE (the
+  assembly, the last big top-down lemma), sorry-free & axiom-clean
+  (`[propext, Classical.choice, Quot.sound]`), build green (3377), probe
+  green, one commit.** `computeWF_run` was strengthened with a **frame
+  clause** (its 14-register write set); new small `precompLen_run`; the
+  assembly threads the emitters' `_run`+frame facts through the `ifBit GWF`
+  branch exactly as planned — no design surprises. New gotchas: `encodeIn`'s
+  `.set` chain elaborates to **`List.set`** (the receiver's type is the
+  unfolded `State` abbrev), so `State.get_set_ne` does NOT rewrite over it —
+  but every `State.get (encodeIn C) r` is **definitional: close with `rfl`**
+  (same trick as `FlatCC_to_BinaryCC_free`'s `… rfl rfl rfl` witness fields);
+  ZERO is dirty after `computeWF` (its conclusion has no ZERO clause) — the
+  program re-clears it in the branch, thread that, not a pre-guard fact.
+  **Cost-magnitude probe for `cost_le`** (scratch `#eval`): cost at
+  `steps=k, L=2k`, `k=2,4,8,16` → `38978/606470/18752958/882117294` — fixed
+  low degree (~5–6), no structural risk. **The BinaryCC→FSAT exit layout is
+  now pinned & documented** (plan block): `FOUT` = the output; regs 5/17–21
+  keep `encodeIn` values; everything else ≤ 56 potentially dirty.
+- **2026-07-09 (top-down), session 3 parts 5–6:** `emitFinal_run` (two-level
+  `listOr` fold; `orPrefix`/`serF_listOr` generic algebra; `emitFinal`
+  refactored into named defeq sub-bodies first) and `computeWF_run` (the
+  guard: `leCheck_run`/`dvdCheck_run` with pure `DvdArith.subMod` unary-mod/
+  `cardLenCheck_run`, assembled by `andFlag_run`/`nonEmptyTFLG_run`; spec
+  bridge `wf_iff`/`cardsOKB_iff`), both sorry-free & axiom-clean. Gotcha
+  details preserved in "Conventions" below and in the file's plan block.
+- **2026-07-05-b (top-down), session 3 parts 3–4:** `emitAllSteps_run` (the
+  two-level `listAnd` fold, generic `andPrefix`/`serF_listAnd`, invariants
+  `ASInv`/`ALInv`) and `readOneFinal_run` (the sentinel-stream parse,
+  `RFInv`), sorry-free & axiom-clean. Gotchas in "Conventions".
 - **2026-07-05 (bottom-up), C8-2 DONE — both TM gadgets, sorry-free &
   axiom-clean, probe green (`probes/C8GadgetsProbe.lean`).**
   (a) **F4 closed** (`Lang/AcceptHalt.lean`): `AcceptHalt.demoteHalt M r`
@@ -405,61 +382,46 @@ building C8-4):**
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
 **Alternative (the right choice for a shorter session):** the
-`FSAT_to_SAT` free witness (Tseytin as a `Cmd`; the last small sound-tail
-item). Paper-probe the guard question first (formula inputs have no invalid
-instances — expect the unguarded pattern of
-`Reductions/FlatTCC_to_FlatCC_free.lean`), then program + probe + proofs, and
-its seam from `BinaryCC_to_FSAT`'s exit frame (blocked on top-down session 3
-pinning that exit frame — coordinate).
+`FSAT_to_SAT` free witness (the CNF conversion as a `Cmd`; the last small
+sound-tail item). Paper-probe the guard question first (formula inputs have
+no invalid instances — expect the unguarded pattern of
+`Reductions/FlatTCC_to_FlatCC_free.lean`), then program + probe + proofs.
+**Unblocked 2026-07-10**: `BinaryCC_to_FSAT`'s exit frame is now pinned &
+documented (plan block of `BinaryCC_to_FSAT_free.lean`: `FOUT` = the
+serialized formula, regs 5/17–21 clean inputs, the rest ≤ 56 dirty) — pin
+this witness's `encodeIn` to it (input = the `serF` bit-stream, numbers
+unary) so its seam is copy-`FOUT`-and-scrub.
 
-## NEXT TOP-DOWN session — continue **session 3**: the `BinaryCC_to_FSAT` witness PROOFS
+## NEXT TOP-DOWN session — finish the `BinaryCC_to_FSAT` witness: **`cost_le`**
 
-The program `buildFSAT` + `encodeIn` are **built and `#eval`-validated
-end-to-end** (session 2), and the run-lemma stack is **~95% done**: step 1
-(`encodeIn_size_le`), **every emitter** — `emitBitsFromScan_run`,
-`emitBitsFromSent_run`, `emitCardsAt_run`, `stepBody_run`, `emitAllSteps_run`,
-`readOneFinal_run`, `emitFinal_run` (and the register-generic
-`unaryMulLoop_run`/`unarySubLoop_run`), **AND the wellformedness guard
-`computeWF_run`** — are all landed, sorry-free & axiom-clean. See the
-**DESIGN COMPLETE — NEXT-SESSION PLAN** block at the bottom of
-`Reductions/BinaryCC_to_FSAT_free.lean` (kept current). **Session 3
-is pure proof work — no design risk.** Remaining, in order (budget ~one lemma
-per session; commit each green):
+The correctness crux is CLOSED: `encodeIn_size_le`, every emitter `_run`,
+`computeWF_run` (+frame), `precompLen_run`, and the assembly **`buildFSAT_run`
+are all landed, sorry-free & axiom-clean** (see the plan block at the bottom
+of `Reductions/BinaryCC_to_FSAT_free.lean`, kept current). Remaining, in
+order (budget ~one item per session; commit each green):
 
-2. **`buildFSAT_run` — the assembly (the last of the crux).** Assemble the
-   emitters + `computeWF_run` + `precompLen_run` (trivial). The guard is DONE:
-   `computeWF_run : (computeWF.eval …).get GWF = if BinaryCC_wellformed C then
-   [1] else []` (needs `hZ : u.get ZERO = []`, holds by encodeIn/precompLen);
-   `buildFSAT` branches on `GWF` via `ifBit`, so split `by_cases hWf :
-   BinaryCC_wellformed C` and feed `computeWF_run` + `encodeIn`'s reg values.
-   Copy the landed frame-threading patterns (`BSInv`/`SBInv`/`RFInv`/`CAInv`/
-   `FFInv`/`ASInv`/`ALInv`/`FSInv`/`stepBody_run`/`finalStepBody_run`).
-   ⚠ The scratch/frame register sets are large (`emitFinal_run` alone excludes
-   ~21 registers); the assembly works because the emitters' scratch sets are
-   register-DISJOINT from each other's *outputs* — thread each emitter's frame
-   clause through the next one's read set (mirror how `stepBody_run`'s frame
-   fed `emitCardsAt_run`, and how `computeWF_run` threads WIDTH/OFFSET/LREG/
-   CARDS/ZERO through all 13 components). `computes = decodeOut_of_serF +
-   buildFSAT_run`. The `hWf` guard is NECESSARY (`encodeTableau_correct`
-   assumes it) — do not try to drop it. **This is the last big top-down
-   lemma; steps 3–5 below are mechanical after it.**
-3. **`cost_le`** — low-degree polynomial (nested-loop product; `cost_forBnd_le`
-   accounting pass, cf. CliqueRel quartic→quintic, `binBudget_le_poly`); the
-   var-index mul-loops are `Θ(index)` over `Θ(steps·L)` indices.
-   `output_size_le` reuses `BinaryCC_to_FSAT_instance_size_bound`.
-4. **`enc_bit`/`usesBelow`/`width_le`/`decode_agree`** — mechanical
-   (`regBound := regFrame + 2·buildFSAT.loopDepth`; copy `flatCCBin_reductionLang`).
-   Then `reducesPolyMO'_of_langFree … BinaryCC_to_FSAT_instance_correct` gives
-   `BinaryCC ⪯p' FSAT`.
+3. **`cost_le` (NEXT)** — bound `Cmd.cost buildFSAT (encodeIn C)` by a
+   polynomial in `encodable.size C`. **Cost-probed 2026-07-10: fixed degree
+   ~5–6, no structural risk** (see the plan block for the numbers). None of
+   the emitters carries a cost lemma yet — build the accounting bottom-up
+   mirroring the run-lemma structure (leaf gadgets → `stepBody`/
+   `finalStepBody` → the fold loops → `computeWF` → assembly), with
+   `cost_forBnd_le` per loop (cf. CliqueRel quartic→quintic and
+   `binBudget_le_poly` for the monomial-domination endgame). The var-index
+   mul-loops are `Θ(index²)` (concat re-reads the accumulator) over
+   `Θ(steps·L)` indices. Watch the `omega` cliffs (Conventions): fold
+   `Cmd.cost` atoms with `set`+`clear_value`, extract a clean-context
+   arithmetic lemma for the 20+-variable closer. `output_size_le` reuses
+   `BinaryCC_to_FSAT_instance_size_bound`.
+4. **`enc_bit`/`usesBelow`/`width_le`/`decode_agree` + the witness record** —
+   mechanical (`regBound := regFrame + 2·buildFSAT.loopDepth`; copy
+   `flatCCBin_reductionLang`; `computes` = `decodeOut_of_serF` +
+   `buildFSAT_run`). Then `reducesPolyMO'_of_langFree …
+   BinaryCC_to_FSAT_instance_correct` gives `BinaryCC ⪯p' FSAT`.
 5. **The seam** `Reductions/BinaryCC_to_FSAT_comp.lean` (copy
    `FlatTCC_to_BinaryCC_comp.lean`): a near-pure scrub joining
    `flatTCC_to_binaryCC_witness`'s exit frame to `encodeIn` here (already pinned
    to it) → the whole sound tail `FlatTCC → … → FSAT` as ONE composed live `⪯p'`.
-
-**Session-sizing note:** `buildFSAT_run` is a frame-threading assembly of the
-already-proven emitters + the `computeWF_run` guard (both done). Budget it as
-one session; commit green. Steps 3–5 (`cost_le`, the field discharge, the
-seam) are mechanical once `buildFSAT_run` lands.
 
 **After the witness lands**, the remaining top-down chain (unchanged):
 
@@ -568,7 +530,12 @@ seam) are mechanical once `buildFSAT_run` lands.
   `subMod_eq_mod` unary-`mod` + machine fold `dvdBody_step`)/`cardLenCheck_run`
   (`CLInv` guarded card stream + `cardLenItem_run`/`CEInv` per-item parse), the
   assembly helpers `andFlag_run`/`nonEmptyTFLG_run`, and the spec bridges
-  `wf_iff`/`cardsOKB_iff` (`cardsOKB` = the decidable `Bool` card-length flag).
+  `wf_iff`/`cardsOKB_iff` (`cardsOKB` = the decidable `Bool` card-length flag);
+  `computeWF_run` now carries a **frame clause** (its 14-register write set).
+  **The assembly layer (2026-07-10):** `precompLen_run` (LREG/LREG1 off INIT)
+  and **`buildFSAT_run`** — `(buildFSAT.eval (encodeIn C)).get FOUT =
+  serF (BinaryCC_to_FSAT_instance C)` — the correctness crux of the
+  `BinaryCC ⪯p' FSAT` witness (`computes` = this + `decodeOut_of_serF`).
   **Factor any monolithic
   emitter into named defeq sub-`def`s (per loop level) BEFORE its run lemma**
   (as `emitFinal` → `finalStepBody`/`finalStepIterBody`/`finalStringBody`);
@@ -677,6 +644,14 @@ seam) are mechanical once `buildFSAT_run` lands.
   with `rfl`. (d) When a `set wN`-named state IS the `rw`-target equation's
   RHS, the fold already happened — do not add `← hwN` (it fails with
   "pattern not found").
+- **NEW (session 3 part 7): a literal `.set`-chain state (e.g. `encodeIn`)
+  elaborates its `.set`s to `List.set`, NOT `State.set`** (the receiver's
+  type is the unfolded `State` abbrev at definition time), so
+  `State.get_set_eq`/`_ne` do NOT rewrite over it. Don't fight it: every
+  `State.get (encodeIn C) r` on such a concrete frame is **definitional —
+  close with `rfl`** (the `FlatCC_to_BinaryCC_free` witness fields already
+  used this). Inside proofs, states built with explicit `State.set` (`s.set`
+  where `s : State` is a variable) still match the `State.get_set_*` lemmas.
 - **Multi-case register frames**: `interval_cases r` + per-case
   `repeat first | rw [State.get_set_eq] | rw [State.get_set_ne _ _ _ _ (by
   decide)]` walks any concrete nested-set state (the seam-bridge pattern).

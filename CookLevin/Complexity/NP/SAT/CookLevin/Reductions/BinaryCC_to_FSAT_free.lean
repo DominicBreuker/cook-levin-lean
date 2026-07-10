@@ -4862,14 +4862,32 @@ no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
      `hZ : u.get ZERO = []` (holds — encodeIn/precompLen leave reg 56 empty).
      ⚠ Loop bodies were factored to named defs first (`dvdBody`,
      `cardLenElemBody`, `cardLenCardBody`) — probe stays green (defeq).
-   - `buildFSAT_run (NEXT) : (buildFSAT.eval (encodeIn C)).get FOUT =
-     serF (BinaryCC_to_FSAT_instance C)` — assemble the emitters +
-     `computeWF_run` branch. `computes` = `decodeOut_of_serF` + `buildFSAT_run`.
-     Guard-necessity is real: `encodeTableau_correct` assumes `hWf`.
-3. **`cost_le`** — a low-degree polynomial (nested-loop product). Confirm the
-   degree with a `cost_forBnd_le` accounting pass (cf. CliqueRel quartic→quintic,
-   and `binBudget_le_poly`). The unary var-index mul-loops are `Θ(index)` with
-   `Θ(steps·L)` indices, so the honest bound is a fixed-degree polynomial.
+   - ✅ `buildFSAT_run` — DONE (part 7): `(buildFSAT.eval (encodeIn C)).get
+     FOUT = serF (BinaryCC_to_FSAT_instance C)`, sorry-free & axiom-clean.
+     `computeWF_run` was strengthened with a frame clause (its 14-register
+     write set: GWF/TFLG/ZERO/MREM/MCHK/MGE/KTMP/KTMP2/SCANW/CLEN/DONE/EMARK/
+     KBIT/KCARD); new `precompLen_run` (LREG/LREG1 off INIT). Gotchas:
+     `encodeIn`'s `.set` chain elaborates to `List.set` (receiver type is the
+     unfolded abbrev), so `State.get_set_ne` does NOT rewrite it — but every
+     `State.get (encodeIn C) R` is definitional, close with `rfl`. ZERO is
+     dirty after `computeWF` (no ZERO clause in its conclusion); the branch
+     re-clears it before the emitters, so thread `hv2ZERO`, not a u2-fact.
+     `computes` = `decodeOut_of_serF` + `buildFSAT_run`. **Exit layout for the
+     seam**: `FOUT` (reg 0) = the serialized formula; regs 5/17–21 (STEPS +
+     the five inputs) still hold `encodeIn` values; everything else in
+     1..regFrame−1 is potentially dirty (OUT 22 holds a copy of the output;
+     emitter/guard scratch 23–56) — the FSAT_to_SAT seam should copy `FOUT`
+     and scrub the rest.
+3. **`cost_le` (NEXT)** — a low-degree polynomial (nested-loop product).
+   Cost-magnitude probe (2026-07-10, scratch): `Cmd.cost buildFSAT (encodeIn
+   C)` at `steps=k, L=2k` for `k=2,4,8,16` gives `38978 / 606470 / 18752958 /
+   882117294` — fixed-degree growth (ratio ≈ 32–47 per doubling ⇒ degree ~5–6
+   in `k`), NO structural risk. Do a `cost_forBnd_le` accounting pass
+   (cf. CliqueRel quartic→quintic, and `binBudget_le_poly`); none of the
+   emitters carries a cost lemma yet — bound each bottom-up mirroring the run
+   lemmas' structure (leaf gadgets → `stepBody`/`finalStepBody` → the loops →
+   `computeWF` → assembly). The unary var-index mul-loops are `Θ(index²)`
+   (concat re-reads the accumulator) with `Θ(steps·L)` indices.
    `output_size_le` reuses `BinaryCC_to_FSAT_instance_size_bound`.
 4. **`enc_bit`/`usesBelow`/`width_le`/`decode_agree`** — mechanical
    (`regBound := regFrame + 2·buildFSAT.loopDepth`; copy the discharge in
