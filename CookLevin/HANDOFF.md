@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-10-b; BinaryCC→FSAT `cost_le` accounting ~70% DONE — generic cost toolkit landed, all emitters except `emitFinal`'s two folds costed)
+## Where the proof stands (2026-07-11; **`BinaryCC ⪯p' FSAT` is LIVE** — the whole sound tail down to FSAT is now free-line witnesses; only the composing seam remains)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -16,17 +16,15 @@ reasonably provable).
   Live honest `⪯p'` witnesses `kSAT3_reducesPolyMO'`, `flatTCC_reducesPolyMO'`,
   `FlatCCBinFree.flatCC_reducesPolyMO'`, and the **first COMPOSED live `⪯p'`**
   `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' : FlatTCC ⪯p' BinaryCC`
-  (first live `SeamData`/`comp`). All axiom-clean. **Next chain step
-  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated, the ENTIRE
-  run-lemma stack is DONE (assembly `buildFSAT_run` included), and the
-  `cost_le` accounting is ~70% DONE (session 4, 2026-07-10-b): the generic
-  loop-free cost toolkit (`Lang/CostFlat.lean`) + per-loop cost lemmas for
-  `emitBitsFromScan/Sent`, `readOneFinal`, `emitCardsAt`, `stepBody`,
-  `emitAllSteps` (both fold levels), and `finalStepBody` — all sorry-free &
-  axiom-clean. Remaining: `emitFinal`'s two `listOr` folds (direct mirror of
-  the landed `emitAllSteps` pattern), the guard checks' costs, the
-  `buildFSAT` cost assembly + `cost_le`/`output_size_le`, the mechanical
-  fields, and the seam.**
+  (first live `SeamData`/`comp`). **`BinaryCCFSATFree.binaryCC_reducesPolyMO' :
+  BinaryCC ⪯p' FSAT` is now LIVE & axiom-clean** (2026-07-11): the expensive
+  Tseytin/tableau step as a full free-line `PolyTimeComputableLang` witness
+  (`binaryCCFSAT_reductionLang`) — program `buildFSAT`, run stack
+  (`buildFSAT_run`), the entire `cost_le` accounting (`buildFSAT_cost_le` at
+  the master ceiling `Ω := 2000·(n+1)⁶`), and all mechanical fields
+  (`buildFSAT_usesBelow`/`encodeIn_bitState`/`width_le`/`decode_agree`). So
+  **every honest reduction on the sound tail `FlatTCC → FlatCC → BinaryCC →
+  FSAT` now exists as a live `⪯p'`** — only the composing SEAMS remain.
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
@@ -52,35 +50,35 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-10-b (top-down), session 4 — the `cost_le` accounting, ~70%:
-  generic cost toolkit + cost lemmas for every emitter except `emitFinal`'s
-  two folds, all sorry-free & axiom-clean, build green (3378), 6 commits.**
-  (a) **NEW `Lang/CostFlat.lean`** (generic, reusable for every future
-  witness's cost pass): `Cmd.cost_le_flat` — for a loop-free fragment with
-  all `costReads`-register lengths `≤ M` at entry, `cost ≤ flatK·(M+1)` and
-  no register grows by more (kills ALL op-by-op `cost_seq` walking of
-  straight-line bodies); syntactic write-set frame
-  `Op.writesTo`/`Cmd.writes`/`Cmd.eval_get_of_not_writes` (frame facts by
-  `decide`, no register-bound arithmetic); `State.get_length_le_size`;
-  `cost_mulLoop_le`/`cost_tailLoop_le` (the two ubiquitous unary loops).
-  (b) **The method that worked** (copy it for the rest): per loop, call
-  `Cmd.cost_forBnd_le` with motive := (the EXISTING run invariant) ∧
-  `|WREG| ≤ Ω`, reusing the `_step` lemmas for preservation; per-iteration
-  body cost via `cost_le_flat` with ceilings read off the invariant; per
-  composite body, ONE `_effect` lemma concluding `cost ≤ … ∧ WREG-exit ≤ Ω`
-  (WREG is the one scratch register the emitters both read and write, so
-  every cost lemma threads its ceiling). All `OUT` ceilings chain through
-  `serF`-length algebra: `serF_length_le_size` (`≤ 4·encodable.size`),
-  `serF_length_le_of_mem_listAnd/Or`, `and/orPrefix_take_length_le`,
-  `and/orPrefix_range_succ/_le`, `bitsPrefix/cardsPrefix_take_length_le` —
-  every mid-loop `OUT` is `entry ++ prefix-of-a-closed-serialization`.
-  (c) Landed cost lemmas (each `X_cost`, conclusions `≤ K·(Ω+1)^d` with ONE
-  ceiling parameter Ω and explicit hypotheses saying what Ω dominates):
-  `emitBitsFromScan` (d=2), `emitBitsFromSent` (2), `readOneFinal` (2),
-  `emitCardsAt` (3, + `emitCardsAt_WREG`), `stepBody` (3, + WREG exit),
-  `emitAllSteps` (5, via `stepIterBody_effect`/`lineBody_effect`),
-  `finalStepBody` (2, + `emitBitsFromScan_WREG`). Constants stay SYMBOLIC
-  over `Cmd.flatK (sentBitBody 0)`/`(bsBody 0)` — never evaluate them.
+- **2026-07-11 (top-down), session 5 — `BinaryCC ⪯p' FSAT` CLOSED: `cost_le`
+  finished + mechanical fields + the witness, sorry-free & axiom-clean, build
+  green (3378), 4 commits.** (a) **`emitFinal_cost`** — the last two `listOr`
+  folds, direct mirror of `emitAllSteps`'s trio
+  (`finalStepIterBody_effect`/`finalStringBody_effect`, quartic). (b) **Guard
+  costs** — `leCheck_cost`/`dvdCheck_cost` (`dvdBody_effect`),
+  `cardLenItem_cost`/`cardLenCheck_cost` (reuse `CEInv`/`CLInv`), and
+  `computeWF_cost` (straight-line walk crib of `computeWF_run`, using the
+  hypothesis-free write-set frame `Cmd.eval_get_of_not_writes` for the
+  guard/dvd fragments). (c) **`buildFSAT_cost_le`** — the whole accounting at
+  ONE master ceiling `Ω := 2000·(n+1)⁶` (`masterOmega`); `cost_bound :=
+  buildFSATBound` (symbolic over the `flatK` constants, `inOPoly`+`monotonic`
+  proven); `output_size_le` via `BinaryCC_to_FSAT_instance_size_bound`.
+  (d) **Mechanical fields**: `buildFSAT_usesBelow` (`simp only [all subdefs +
+  all register defs, UsesBelow]` then `simp` to collapse the `<`-conjunction —
+  NOT `decide`/`omega`, both choke on the ~100-way nested `∧`),
+  `encodeIn_bitState` (`List.mem_or_eq_of_mem_set` chained over the 6-`set`
+  frame — `encodeIn`'s `.set` is `List.set`, so `unfold encodeIn` + nested
+  `hset`, no `show`), `width_le` (`List.length_set`), `decode_agree`
+  (`Cmd.eval_agree buildFSAT regFrame … FOUT` on the padded frame — generic,
+  no re-run of `buildFSAT_run`). Then `reducesPolyMO'_of_langFree
+  binaryCCFSAT_reductionLang BinaryCC_to_FSAT_instance_correct`.
+  **Arithmetic gotchas that cost time** (record for the seam/SAT cost passes):
+  omega treats `n*n` and `n` as unrelated atoms — supply `hn_nn : n ≤ n*n`
+  and a generous single-atom dominator (`20·(n*n) ≤ Ω`) so every index sum
+  closes; a slack term with a NON-constant coefficient (`(2K+840)*P5`) is an
+  opaque atom to omega — feed it an explicit lower bound
+  (`840*P5 ≤ (2K+840)*P5` via `Nat.mul_le_mul_right`); the final `hgoal`
+  `rw`-chain needs `set_option maxRecDepth 4000`.
 - **2026-07-10 (top-down), session 3 part 7 — `buildFSAT_run` DONE (the
   assembly, the last big top-down lemma), sorry-free & axiom-clean
   (`[propext, Classical.choice, Quot.sound]`), build green (3377), probe
@@ -414,74 +412,52 @@ building C8-4):**
 
 **Alternative (the right choice for a shorter session):** the
 `FSAT_to_SAT` free witness (the CNF conversion as a `Cmd`; the last small
-sound-tail item). Paper-probe the guard question first (formula inputs have
-no invalid instances — expect the unguarded pattern of
-`Reductions/FlatTCC_to_FlatCC_free.lean`), then program + probe + proofs.
-**Unblocked 2026-07-10**: `BinaryCC_to_FSAT`'s exit frame is now pinned &
-documented (plan block of `BinaryCC_to_FSAT_free.lean`: `FOUT` = the
-serialized formula, regs 5/17–21 clean inputs, the rest ≤ 56 dirty) — pin
-this witness's `encodeIn` to it (input = the `serF` bit-stream, numbers
-unary) so its seam is copy-`FOUT`-and-scrub.
+sound-tail item) — now the FIRST item of the top-down stream too. Fully
+unblocked (2026-07-11): `binaryCCFSAT_reductionLang`'s exit frame is
+`FOUT`=0 holding `serF (formula)`, regs 5/17–21 clean, the rest ≤ 56 dirty —
+pin this witness's `encodeIn` to it (input = the `serF` bit-stream, numbers
+unary) so its seam is copy-`FOUT`-and-scrub. Paper-probe the guard question
+first (formula inputs have no invalid instances — expect the unguarded pattern
+of `Reductions/FlatTCC_to_FlatCC_free.lean`), then program + probe + proofs.
+Either stream may take it; coordinate so it is not done twice.
 
-## NEXT TOP-DOWN session — finish `cost_le` (the pattern is landed; mirror it)
+## NEXT TOP-DOWN session — the `BinaryCC→FSAT` seam, then `FSAT_to_SAT`
 
-Session 4 landed the method and ~70% of the accounting (see the latest-sessions
-entry; everything is at the bottom of `Reductions/BinaryCC_to_FSAT_free.lean`,
-section "## 4. `cost_le`"). Remaining, in order (commit each green):
+The `BinaryCC ⪯p' FSAT` witness is DONE (`binaryCC_reducesPolyMO'`,
+axiom-clean). Two items remain to fold the whole sound tail into ONE live `⪯p'`
+chain down to SAT; do the seam first (short), then the `FSAT_to_SAT` witness.
 
-3a. **`emitFinal_cost` — a DIRECT MIRROR of the landed `emitAllSteps` trio.**
-   Write `finalStepIterBody_effect` (mirror `stepIterBody_effect`: motive
-   `FSInv C bits u3 i st ∧ |WREG| ≤ Ω`, reuse `FSInv_step`; body = `emitForrTag
-   ;; finalStepBody`, cost via the landed `finalStepBody_cost`; OUT ceiling via
-   `orPrefix_range_succ/_le` against `serF (encodeFinalString C bits)`), then
-   `finalStringBody_effect` (mirror `lineBody_effect` + `cardEmitBody_effect`'s
-   live/idle split over `FFInv`: live iteration = `nonEmpty` + `emitForrTag` +
-   `readOneFinal_run`/`readOneFinal_cost` + the inner `forBnd KFSTEP LREG1`
-   loop + `emitFalse`; per-string `|bits| ≤ |FINAL stream|` via
-   `encSList_length_ge` + `encFinal_cons`/`length_le_encFinal`), then
-   `emitFinal_cost` (mirror `emitAllSteps_cost`: prelude `cost_mulLoop_le` on
-   STEPSL + copy SCANF + the FFInv loop + `emitFalse`; conclusion `≤ K·(Ω+1)^5`).
-3b. **Guard costs — simpler, mostly length-only motives** (streams only
-   shrink): `leCheck` (copy + `cost_tailLoop_le` + flat); `dvdBody`
-   (handwritten walk: copy MCHK + two tail-loops), `dvdCheck` (loop over X,
-   motive `|MREM| ≤ a ∧ MCHK/D-frames` — length-only works, D is untouched);
-   `cardLenElemBody` is loop-free (`costReads = [SCANW]^5`, reuse `CEInv` +
-   `CEInv_step` like `readOneFinal_cost` did `RFInv`); `cardLenItem` (walk +
-   `eqBit` cost = `|CLEN|+|WIDTH|+1`); `cardLenCardBody`/`cardLenCheck`
-   (mirror `cardEmitBody_effect`/`emitCardsAt_cost` over `CLInv`);
-   `computeWF_cost` (straight-line walk of the six checks — crib
-   `computeWF_run`'s spine).
-3c. **`buildFSAT` cost assembly + the witness fields.** `precompLen` cost is
-   trivial (3 flat ops + a constant-body loop, `cost_forBnd_le` with motive
-   `True`, B=1). Assembly: crib `buildFSAT_run`'s spine; instantiate every
-   emitter's Ω with the MASTER ceiling `Ω := 2000·(n+1)^6` (`n :=
-   encodable.size C`): it dominates `4·(500n⁶+500) ≥ |serF (encodeTableau C)|`
-   (via `serF_length_le_size` + `BinaryCC_to_FSAT_instance_size_bound`
-   unfolded at `dif_pos hWf`), all var indices (`≤ 2n²+n`), all stream lengths
-   (`≤ 2n`), and every `hΩidx` sum. The three top-level `hΩO`s split off
-   `serF (encodeTableau C) = [0,1] ++ serF(bitsAt) ++ ([0,1] ++ serF(allSteps)
-   ++ serF(final))` (`serF` unfold + length_append). The final `copy FOUT OUT`
-   cost needs `|OUT| ≤ State.size` (`State.get_length_le_size`) +
-   `Cmd.size_eval_le` on the prefix program — NO extra serialization lemma.
-   `cost_bound := fun n => KTOT * (2000*(n+1)^6 + 1)^5`-ish with KTOT symbolic
-   over the flatK constants — only `inOPoly`/`monotonic` matter, NEVER
-   evaluate flatK numerals. `output_size_le` reuses
-   `BinaryCC_to_FSAT_instance_size_bound`.
-4. **`enc_bit`/`usesBelow`/`width_le`/`decode_agree` + the witness record** —
-   mechanical (`regBound := regFrame + 2·buildFSAT.loopDepth`; copy
-   `flatCCBin_reductionLang`; `computes` = `decodeOut_of_serF` +
-   `buildFSAT_run`). Then `reducesPolyMO'_of_langFree …
-   BinaryCC_to_FSAT_instance_correct` gives `BinaryCC ⪯p' FSAT`.
-5. **The seam** `Reductions/BinaryCC_to_FSAT_comp.lean` (copy
-   `FlatTCC_to_BinaryCC_comp.lean`): a near-pure scrub joining
-   `flatTCC_to_binaryCC_witness`'s exit frame to `encodeIn` here (already pinned
-   to it) → the whole sound tail `FlatTCC → … → FSAT` as ONE composed live `⪯p'`.
+1. **The seam `Reductions/BinaryCC_to_FSAT_comp.lean`** (copy
+   `FlatTCC_to_BinaryCC_comp.lean` — the settled seam pattern). Build
+   `SeamData flatTCC_to_binaryCC_witness binaryCCFSAT_reductionLang`: a near-pure
+   scrub `mfc` joining `flatTCCBin`'s exit frame (regs 17 `offset`/18 `width`/19
+   `init`/20 `cards`/21 `final`/5 `steps`, everything else dirty — see the
+   "Composite tail exit layout" block above) to `binaryCCFSAT_reductionLang`'s
+   `encodeIn` (already PINNED to exactly that frame, so `mfc` only clears the
+   dirty scratch < `regFrame`=57 and leaves 5/17–21 in place — likely
+   `interval_cases`-bridge over the frame + `AgreeBelow`). `decode_frame` =
+   `decodeOut` reads only `FOUT`=0; `mfc_cost` = a constant scrub. Result:
+   `FlatTCC ⪯p' FSAT` as the next COMPOSED live `⪯p'`.
+2. **`FSAT_to_SAT` as a free witness + its seam** (the last sound-tail item;
+   smaller — CNF/Tseytin already exists as `NP/FSAT_to_SAT.lean`, re-express as
+   a `Cmd`). **Pin its `encodeIn` to `binaryCCFSAT_reductionLang`'s exit
+   frame**: `FOUT`=0 holds `serF (formula)`, regs 5/17–21 clean, the rest ≤ 56
+   dirty — so its input = the `serF` bit-stream and its seam is
+   copy-`FOUT`-and-scrub. Paper-probe the guard question first (formula inputs
+   have no invalid instances → expect the UNGUARDED sound-tail pattern of
+   `FlatTCC_to_FlatCC_free.lean`). After it, the whole sound tail
+   `FlatTCC → … → SAT` is ONE composable live `⪯p'` chain.
 
-**After the witness lands**, the remaining top-down chain (unchanged):
+**Reusable machinery this session leaves** (do not re-derive — all in
+`Reductions/BinaryCC_to_FSAT_free.lean` §4/§5, and `Lang/CostFlat.lean`): the
+generic loop-free cost toolkit; the `serF`-length + `and/orPrefix` algebra; the
+per-emitter `_cost`/`_effect` lemmas; the `masterOmega`/`buildFSATBound`
+pattern (one master ceiling `2000·(n+1)⁶`, `cost_bound` symbolic over `flatK`);
+the mechanical-field recipes (`Cmd.eval_agree` for `decode_agree`,
+`List.mem_or_eq_of_mem_set` chain for `BitState`, `simp`-closed `UsesBelow`).
 
-1. **`FSAT_to_SAT` as a free witness + its seam** (smaller; CNF conversion).
-   After it, the whole sound tail `FlatTCC → … → SAT` is ONE composable
-   witness chain.
+**After the sound tail is one chain**, the remaining top-down work:
+
 3. **S1 Cook 2D tableau** (`Simulators/CookTableau.lean`, 2 sorries, ~6–11K
    LOC) — the deepest unsoundness, the real front reduction.
 4. **C8** — the per-`Q` universal-source front; subsumes S2. **SCOPED
@@ -606,8 +582,15 @@ section "## 4. `cost_le`"). Remaining, in order (commit each green):
   `encSList/encCardsOut/encFinal_drop_length_le`, `encSList_length_ge`), the
   WREG transports (`bsBody_WREG`/`sentBitBody_WREG`/`emitBitsFromScan_WREG`/
   `emitBitsFromSent_WREG`/`emitCardsAt_WREG`), the arithmetic closers
-  (`mulLoopClose`/`subLoopClose`/`one_le_P`/`le_scale`), and the landed
-  `_cost`/`_effect` lemmas (latest-sessions entry). Do not re-derive.
+  (`mulLoopClose`/`subLoopClose`/`one_le_P`/`le_scale`), and the FULL
+  `_cost`/`_effect` stack for every emitter + guard (`emit*_cost`,
+  `computeWF_cost`, `leCheck/dvdCheck/cardLen*_cost`, `precompLen_cost`) up to
+  the assembly `buildFSAT_cost_le` at the master ceiling `masterOmega`/
+  `buildFSATBound`. **The whole `BinaryCC→FSAT` witness `binaryCCFSAT_reductionLang`
+  + `binaryCC_reducesPolyMO' : BinaryCC ⪯p' FSAT` is landed & axiom-clean** —
+  the mechanical fields (`buildFSAT_usesBelow`/`encodeIn_bitState`/`decode_agree`
+  via `Cmd.eval_agree`) are the copy-templates for the next witnesses. Do not
+  re-derive.
 - **The flatTCC free-reduction stack** (`Reductions/FlatTCC_to_FlatCC_free.lean`):
   `blockMove_run`/`halfMove_run`, `cardStep_step`, `encSList` +
   `encSList_append_inj`, `encKey_injective`/`extractKey`,
