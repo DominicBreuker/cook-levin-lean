@@ -9095,4 +9095,91 @@ theorem buildFSAT_cost_le (C : BinaryCC) :
     rw [hgoal]
     omega
 
+/-! ### The mechanical witness fields -/
+
+/-- `buildFSAT` touches only registers `< regFrame` (= 57): every register
+constant is `≤ 56` (`ZERO`). -/
+theorem buildFSAT_usesBelow : Cmd.UsesBelow buildFSAT regFrame := by
+  simp only [buildFSAT, precompLen, computeWF, andFlag, leCheck, dvdBody, dvdCheck,
+    cardLenElemBody, cardLenItem, cardLenCardBody, cardLenCheck,
+    emit0, emit1, emitFtrue, emitFandTag, emitForrTag, emitFalse, emitVarW, emitLitAt,
+    emitBitsFromScan, bsBody, emitBitsFromSent, sentBitBody,
+    emitCardsAt, cardEmitBody, emitAllSteps, stepBody, stepIterBody, lineBody,
+    readOneFinal, readFinBody, emitFinal, finalStepBody, finalStepIterBody,
+    finalStringBody,
+    Cmd.UsesBelow, Op.UsesBelow,
+    FOUT, OUT, SCAN, LREG, LINEL, STEPO, STARTA, STARTB, WREG, TFLG, DONE, SUMW,
+    GFLG, REM, SCANF, FSTART, BLEN, STEPSL, EMARK, KLINE, KSTEP, KCARD, KBIT, KFS,
+    KFSTEP, KTMP, KTMP2, LREG1, FBITS, GWF, MREM, MCHK, MGE, SCANW, CLEN, ZERO,
+    OFFSET, WIDTH, INIT, CARDS, FINAL, STEPS, regFrame]
+  simp
+
+/-- Every value written into `encodeIn C`'s registers is bit-valued. -/
+theorem encodeIn_bitState (C : BinaryCC) : Compile.BitState (encodeIn C) := by
+  have hbitsNat : ∀ (bs : List Bool) x, x ∈ FlatCCBinFree.bitsNat bs → x ≤ 1 := by
+    intro bs x hx
+    simp only [FlatCCBinFree.bitsNat, List.mem_map] at hx
+    obtain ⟨b, -, rfl⟩ := hx
+    cases b <;> simp
+  have hset : ∀ (s : State) (i : Nat) (v : List Nat),
+      Compile.BitState s → (∀ x ∈ v, x ≤ 1) → Compile.BitState (List.set s i v) := by
+    intro s i v hs hv reg hreg x hx
+    rcases List.mem_or_eq_of_mem_set hreg with hmem | rfl
+    · exact hs reg hmem x hx
+    · exact hv x hx
+  have hbase : Compile.BitState (List.replicate regFrame ([] : List Nat)) := by
+    intro reg hreg x hx
+    rw [List.eq_of_mem_replicate hreg] at hx
+    cases hx
+  unfold encodeIn
+  exact hset _ _ _ (hset _ _ _ (hset _ _ _ (hset _ _ _ (hset _ _ _
+    (hset _ _ _ hbase
+      (fun x hx => le_of_eq (List.eq_of_mem_replicate hx)))
+      (fun x hx => le_of_eq (List.eq_of_mem_replicate hx)))
+      (fun x hx => le_of_eq (List.eq_of_mem_replicate hx)))
+      (hbitsNat C.init))
+      (FlatCCBinFree.encCardsOut_bit _))
+      (FlatTCCFree.encFinal_bit _)
+
+/-! ## 5. The free witness and the headline `⪯p'` -/
+
+/-- **`BinaryCC_to_FSAT_instance` as a concrete layer program** — the free
+`PolyTimeComputableLang` witness (template: `flatCCBin_reductionLang`).
+`decodeOut` inverts the injective prefix serialization (`decodeF_serF`). -/
+noncomputable def binaryCCFSAT_reductionLang :
+    PolyTimeComputableLang BinaryCC_to_FSAT_instance where
+  c := buildFSAT
+  encodeIn := encodeIn
+  decodeOut := decodeOut
+  cost_bound := buildFSATBound
+  cost_bound_poly := buildFSATBound_poly
+  cost_bound_mono := buildFSATBound_mono
+  encBound := fun n => 2 * n + 1
+  encBound_poly :=
+    inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) (inOPoly_const 1)
+  encBound_mono := fun a b h => Nat.add_le_add_right (Nat.mul_le_mul_left 2 h) 1
+  encodeIn_size := encodeIn_size_le
+  computes := fun C => decodeOut_of_serF _ _ (buildFSAT_run C)
+  cost_le := buildFSAT_cost_le
+  output_size_le := buildFSATBound_output
+  enc_bit := encodeIn_bitState
+  regBound := regFrame
+  usesBelow := buildFSAT_usesBelow
+  width_le := fun C => by
+    show (encodeIn C).length ≤ regFrame
+    simp [encodeIn, List.length_set, List.length_replicate]
+  decode_agree := fun C m => by
+    have hagree : AgreeBelow regFrame (encodeIn C ++ List.replicate m []) (encodeIn C) :=
+      fun r _ => State.get_append_replicate_nil (encodeIn C) m r
+    have h := Cmd.eval_agree buildFSAT regFrame buildFSAT_usesBelow hagree FOUT
+      (by decide)
+    simp only [decodeOut]
+    rw [h]
+
+/-- **`BinaryCC ⪯p' FSAT`** — the next live honest TM-backed reduction on the
+sound tail (after `flatCC_reducesPolyMO'`), the expensive Tseytin/tableau step
+as a free-line witness. Axiom-clean: `[propext, Classical.choice, Quot.sound]`. -/
+theorem binaryCC_reducesPolyMO' : BinaryCCLang ⪯p' FSAT :=
+  reducesPolyMO'_of_langFree binaryCCFSAT_reductionLang BinaryCC_to_FSAT_instance_correct
+
 end BinaryCCFSATFree
