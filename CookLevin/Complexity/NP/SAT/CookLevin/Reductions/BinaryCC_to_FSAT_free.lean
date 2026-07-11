@@ -8468,4 +8468,631 @@ theorem computeWF_cost (C : BinaryCC) (u : State) (Ω : Nat)
   have hfin : (2 * K + 160) * P3 = (2 * K + 60) * P3 + 100 * P3 := by ring
   omega
 
+/-! ### The `buildFSAT` cost assembly — the witness's `cost_le` obligation -/
+
+/-- **`precompLen` cost**: quadratic in `Ω ≥ L`. -/
+theorem precompLen_cost (bs : List Bool) (u : State) (Ω : Nat)
+    (hINIT : State.get u INIT = FlatCCBinFree.bitsNat bs)
+    (hΩ : bs.length ≤ Ω) :
+    precompLen.cost u ≤ 8 * ((Ω + 1) * (Ω + 1)) := by
+  have e1 : (Cmd.op (.clear LREG)).eval u = u.set LREG [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set w1 := u.set LREG [] with hw1
+  have hw1L : State.get w1 LREG = [] := State.get_set_eq _ _ _
+  have hw1I : (State.get w1 INIT).length = bs.length := by
+    rw [State.get_set_ne _ _ _ _ (show INIT ≠ LREG by decide), hINIT]
+    exact List.length_map _
+  clear_value w1
+  have hcLoop := cost_constLoop_le KTMP INIT (Cmd.op (.appendOne LREG)) rfl rfl w1
+    bs.length hw1I
+  have hKop : Cmd.flatK (Cmd.op (.appendOne LREG)) = 5 := rfl
+  rw [hKop] at hcLoop
+  -- LREG length at loop exit (for the copy's cost)
+  have hInv := Cmd.foldlState_range_induct (Cmd.op (.appendOne LREG)) KTMP bs.length w1
+    (fun i st => (State.get st LREG).length ≤ i)
+    (by show (State.get w1 LREG).length ≤ 0; simp [hw1L])
+    (fun i st _ hM => by
+      show (State.get ((Cmd.op (.appendOne LREG)).eval
+        (st.set KTMP (List.replicate i 1))) LREG).length ≤ i + 1
+      rw [Cmd.eval_op]
+      simp only [Op.eval]
+      rw [State.get_set_eq,
+        State.get_set_ne _ _ _ _ (show LREG ≠ KTMP by decide),
+        List.length_append]
+      simpa using hM)
+  have heval0 : (Cmd.forBnd KTMP INIT (Cmd.op (.appendOne LREG))).eval w1
+      = Cmd.foldlState (Cmd.op (.appendOne LREG)) KTMP (List.range bs.length) w1 := by
+    rw [Cmd.eval_forBnd, hw1I]
+  set w2 := (Cmd.forBnd KTMP INIT (Cmd.op (.appendOne LREG))).eval w1 with hw2
+  have hw2Llen : (State.get w2 LREG).length ≤ bs.length := by
+    rw [heval0]; exact hInv
+  clear_value w2
+  have hc3 : Op.cost (.copy LREG1 LREG) w2 ≤ bs.length + 1 := by
+    show (State.get w2 LREG).length + 1 ≤ _
+    omega
+  set w3 := (Cmd.op (.copy LREG1 LREG)).eval w2 with hw3
+  clear_value w3
+  have hcost : precompLen.cost u
+      = 1 + 1 + (1 + (Cmd.forBnd KTMP INIT (Cmd.op (.appendOne LREG))).cost w1
+        + (1 + Op.cost (.copy LREG1 LREG) w2 + 1)) := by
+    unfold precompLen
+    rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+      Cmd.cost_op, ← hw3, Cmd.cost_op]
+    simp only [Op.cost]
+  rw [hcost]
+  have hP2exp : (Ω + 1) * (Ω + 1) = Ω * Ω + 2 * Ω + 1 := by ring
+  have hbb : bs.length * bs.length ≤ Ω * Ω := Nat.mul_le_mul hΩ hΩ
+  omega
+
+/-- The master cost ceiling (`n := encodable.size C`): dominates the serialized
+output length (`≤ 4·(500·n⁶+500)` via `serF_length_le_size` +
+`BinaryCC_to_FSAT_instance_size_bound`), every variable index, every stream
+length, and every per-emitter index sum on `encodeIn C`. -/
+def masterOmega (n : Nat) : Nat := 2000 * (n + 1) ^ 6
+
+/-- The total symbolic cost coefficient of `buildFSAT` (never evaluate the
+`flatK` numerals — only `inOPoly` matters). -/
+def buildFSATK : Nat :=
+  2 * Cmd.flatK (sentBitBody 0) + 2 * Cmd.flatK (bsBody 0)
+    + Cmd.flatK readFinBody + 2 * Cmd.flatK cardLenElemBody + 1000
+
+/-- The witness's `cost_bound`: `buildFSATK · (masterOmega n + 1)^5`. -/
+def buildFSATBound (n : Nat) : Nat :=
+  buildFSATK * ((masterOmega n + 1) * ((masterOmega n + 1) * ((masterOmega n + 1)
+    * ((masterOmega n + 1) * (masterOmega n + 1)))))
+
+theorem buildFSATBound_poly : inOPoly buildFSATBound := by
+  refine ⟨30, ⟨buildFSATK * 128064 ^ 5, 1, ?_⟩⟩
+  intro n hn
+  have h1 : masterOmega n + 1 ≤ 128064 * n ^ 6 := by
+    unfold masterOmega
+    have h2 : (n + 1) ^ 6 ≤ (2 * n) ^ 6 := Nat.pow_le_pow_left (by omega) 6
+    have h3 : (2 * n) ^ 6 = 64 * n ^ 6 := by ring
+    have h4 : 1 ≤ n ^ 6 := Nat.one_le_pow _ _ (by omega)
+    omega
+  calc buildFSATBound n
+      ≤ buildFSATK * ((128064 * n ^ 6) * ((128064 * n ^ 6) * ((128064 * n ^ 6)
+          * ((128064 * n ^ 6) * (128064 * n ^ 6))))) := by
+        unfold buildFSATBound
+        exact Nat.mul_le_mul_left _ (Nat.mul_le_mul h1 (Nat.mul_le_mul h1
+          (Nat.mul_le_mul h1 (Nat.mul_le_mul h1 h1))))
+    _ = buildFSATK * 128064 ^ 5 * n ^ 30 := by ring
+
+theorem buildFSATBound_mono : monotonic buildFSATBound := by
+  intro a b h
+  unfold buildFSATBound
+  have hm : masterOmega a + 1 ≤ masterOmega b + 1 := by
+    unfold masterOmega
+    have := Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 6
+    omega
+  exact Nat.mul_le_mul_left _ (Nat.mul_le_mul hm (Nat.mul_le_mul hm
+    (Nat.mul_le_mul hm (Nat.mul_le_mul hm hm))))
+
+/-- The output size is dominated by the cost bound (the witness's
+`output_size_le`). -/
+theorem buildFSATBound_output (C : BinaryCC) :
+    encodable.size (BinaryCC_to_FSAT_instance C)
+      ≤ buildFSATBound (encodable.size C) := by
+  set n := encodable.size C with hn
+  have h1 := BinaryCC_to_FSAT_instance_size_bound C
+  rw [← hn] at h1
+  have hle : n ^ 6 ≤ (n + 1) ^ 6 := Nat.pow_le_pow_left (by omega) 6
+  have h1p : 1 ≤ (n + 1) ^ 6 := Nat.one_le_pow _ _ (by omega)
+  have h3 : 500 * n ^ 6 + 500 ≤ masterOmega n := by
+    unfold masterOmega
+    omega
+  have h4 : masterOmega n ≤ buildFSATBound n := by
+    unfold buildFSATBound
+    have hK : 1000 ≤ buildFSATK := by unfold buildFSATK; omega
+    have hrest : masterOmega n + 1
+        ≤ (masterOmega n + 1) * ((masterOmega n + 1) * ((masterOmega n + 1)
+          * ((masterOmega n + 1) * (masterOmega n + 1)))) := by
+      have h1p : 1 ≤ (masterOmega n + 1) * ((masterOmega n + 1)
+          * ((masterOmega n + 1) * (masterOmega n + 1))) :=
+        Nat.mul_pos (Nat.succ_pos _) (Nat.mul_pos (Nat.succ_pos _)
+          (Nat.mul_pos (Nat.succ_pos _) (Nat.succ_pos _)))
+      calc masterOmega n + 1 = (masterOmega n + 1) * 1 := by ring
+        _ ≤ _ := Nat.mul_le_mul_left _ h1p
+    calc masterOmega n ≤ 1 * (masterOmega n + 1) := by omega
+      _ ≤ buildFSATK * ((masterOmega n + 1) * ((masterOmega n + 1)
+          * ((masterOmega n + 1) * ((masterOmega n + 1) * (masterOmega n + 1))))) :=
+        Nat.mul_le_mul (by omega) hrest
+  omega
+
+set_option maxRecDepth 4000 in
+/-- **`buildFSAT` cost is polynomial** — the `cost_le` crux of the
+`BinaryCC ⪯p' FSAT` witness. The whole accounting is instantiated at the ONE
+master ceiling `Ω := masterOmega (encodable.size C)`. -/
+theorem buildFSAT_cost_le (C : BinaryCC) :
+    buildFSAT.cost (encodeIn C) ≤ buildFSATBound (encodable.size C) := by
+  classical
+  set n := encodable.size C with hn
+  set Ω := masterOmega n with hΩdef
+  -- component bounds off the instance size
+  have hCsz : n = C.offset + C.width + encodable.size C.init
+      + encodable.size C.cards + encodable.size C.final + C.steps + 1 := rfl
+  have hLn : C.init.length ≤ n :=
+    le_trans (list_length_le_size C.init) (by omega)
+  have hoffn : C.offset ≤ n := by omega
+  have hwidn : C.width ≤ n := by omega
+  have hstepsn : C.steps ≤ n := by omega
+  have hcardsn : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      ≤ 2 * n := by
+    have h := FlatCCBinFree.encCardsOut_length_le (C.cards.map FlatCCBinFree.cardNat)
+    rw [encodable_size_map_cardNat] at h
+    omega
+  have hfinaln : (FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat)).length
+      ≤ 2 * n := by
+    have h := FlatTCCFree.encFinal_length_le (C.final.map FlatCCBinFree.bitsNat)
+    rw [encodable_size_map_bitsNat] at h
+    omega
+  have hsLn : C.steps * C.init.length ≤ n * n := Nat.mul_le_mul hstepsn hLn
+  have hLon : C.init.length * C.offset ≤ n * n := Nat.mul_le_mul hLn hoffn
+  -- `n ≤ n*n` lets omega bridge the linear and quadratic index terms
+  have hn_nn : n ≤ n * n := by
+    rcases Nat.eq_zero_or_pos n with h | h
+    · simp [h]
+    · exact Nat.le_mul_of_pos_left n h
+  -- the quadratic dominator (generous: every index sum is `≤ 20·n²`)
+  have hΩquad : 20 * (n * n) ≤ Ω := by
+    rw [hΩdef]
+    unfold masterOmega
+    have h26 : (n + 1) ^ 2 ≤ (n + 1) ^ 6 := Nat.pow_le_pow_right (by omega) (by omega)
+    have h2 : (n + 1) ^ 2 = n * n + 2 * n + 1 := by ring
+    omega
+  -- the serF split of the tableau
+  have hserFsplit : serF (encodeTableau C)
+      = [0, 1] ++ (serF (encodeBitsAt 0 C.init)
+        ++ ([0, 1] ++ (serF (encodeAllStepConstraints C)
+          ++ serF (encodeFinalConstraint C)))) := by
+    show serF (.fand (encodeBitsAt 0 C.init)
+        (.fand (encodeAllStepConstraints C) (encodeFinalConstraint C))) = _
+    simp [serF, List.append_assoc]
+  have hserFlen : (serF (encodeTableau C)).length
+      = 4 + (serF (encodeBitsAt 0 C.init)).length
+        + (serF (encodeAllStepConstraints C)).length
+        + (serF (encodeFinalConstraint C)).length := by
+    rw [hserFsplit]
+    simp [List.length_append]
+    omega
+  -- the pinned input frame (definitional)
+  have h0STEPS : State.get (encodeIn C) STEPS = List.replicate C.steps 1 := rfl
+  have h0OFF : State.get (encodeIn C) OFFSET = List.replicate C.offset 1 := rfl
+  have h0WID : State.get (encodeIn C) WIDTH = List.replicate C.width 1 := rfl
+  have h0INIT : State.get (encodeIn C) INIT = FlatCCBinFree.bitsNat C.init := rfl
+  have h0CARDS : State.get (encodeIn C) CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := rfl
+  have h0FINAL : State.get (encodeIn C) FINAL
+      = FlatTCCFree.encFinal (C.final.map FlatCCBinFree.bitsNat) := rfl
+  have h0ZERO : State.get (encodeIn C) ZERO = [] := rfl
+  have h0WREG : State.get (encodeIn C) WREG = [] := rfl
+  -- u1 : precompLen (run + cost)
+  have hcPre := precompLen_cost C.init (encodeIn C) Ω h0INIT (by omega)
+  obtain ⟨hpL, hpL1, hpF⟩ := precompLen_run C.init (encodeIn C) h0INIT
+  set u1 := precompLen.eval (encodeIn C) with hu1
+  have h1STEPS := (hpF STEPS (by decide) (by decide) (by decide)).trans h0STEPS
+  have h1OFF := (hpF OFFSET (by decide) (by decide) (by decide)).trans h0OFF
+  have h1WID := (hpF WIDTH (by decide) (by decide) (by decide)).trans h0WID
+  have h1INIT := (hpF INIT (by decide) (by decide) (by decide)).trans h0INIT
+  have h1CARDS := (hpF CARDS (by decide) (by decide) (by decide)).trans h0CARDS
+  have h1FINAL := (hpF FINAL (by decide) (by decide) (by decide)).trans h0FINAL
+  have h1ZERO := (hpF ZERO (by decide) (by decide) (by decide)).trans h0ZERO
+  have h1WREG := (hpF WREG (by decide) (by decide) (by decide)).trans h0WREG
+  clear_value u1
+  -- u2 : computeWF (run + cost)
+  have hcWF := computeWF_cost C u1 Ω h1WID h1OFF hpL h1CARDS h1ZERO
+    (by rw [h1CARDS]; omega)
+  obtain ⟨hwG, hwF⟩ := computeWF_run C u1 h1WID h1OFF hpL h1CARDS h1ZERO
+  set u2 := computeWF.eval u1 with hu2
+  have h2STEPS := (hwF STEPS (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1STEPS
+  have h2OFF := (hwF OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1OFF
+  have h2WID := (hwF WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1WID
+  have h2INIT := (hwF INIT (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1INIT
+  have h2CARDS := (hwF CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1CARDS
+  have h2FINAL := (hwF FINAL (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1FINAL
+  have h2LREG := (hwF LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans hpL
+  have h2LREG1 := (hwF LREG1 (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans hpL1
+  have h2WREG := (hwF WREG (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide)).trans h1WREG
+  clear_value u2
+  -- u3 : clear OUT
+  have e3 : (Cmd.op (.clear OUT)).eval u2 = u2.set OUT [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u3 := u2.set OUT [] with hu3
+  have h3f : ∀ r : Var, r ≠ OUT → State.get u3 r = State.get u2 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have h3OUT : State.get u3 OUT = [] := State.get_set_eq _ _ _
+  have h3GWF : State.get u3 GWF = (if BinaryCC_wellformed C then [1] else []) :=
+    (h3f GWF (by decide)).trans hwG
+  have h3STEPS := (h3f STEPS (by decide)).trans h2STEPS
+  have h3OFF := (h3f OFFSET (by decide)).trans h2OFF
+  have h3WID := (h3f WIDTH (by decide)).trans h2WID
+  have h3INIT := (h3f INIT (by decide)).trans h2INIT
+  have h3CARDS := (h3f CARDS (by decide)).trans h2CARDS
+  have h3FINAL := (h3f FINAL (by decide)).trans h2FINAL
+  have h3LREG := (h3f LREG (by decide)).trans h2LREG
+  have h3LREG1 := (h3f LREG1 (by decide)).trans h2LREG1
+  have h3WREG := (h3f WREG (by decide)).trans h2WREG
+  clear_value u3
+  -- peel the top-level cost down to the branch
+  set vIf := (Cmd.ifBit GWF
+      ( emitFandTag ;;
+        Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+        emitBitsFromScan ZERO INIT ;;
+        emitFandTag ;;
+        emitAllSteps ;;
+        emitFinal )
+      emitFalse).eval u3 with hvIf
+  have hcost : buildFSAT.cost (encodeIn C)
+      = 1 + precompLen.cost (encodeIn C)
+      + (1 + computeWF.cost u1
+      + (1 + 1
+      + (1 + (Cmd.ifBit GWF
+          ( emitFandTag ;;
+            Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+            emitBitsFromScan ZERO INIT ;;
+            emitFandTag ;;
+            emitAllSteps ;;
+            emitFinal )
+          emitFalse).cost u3
+      + ((State.get vIf OUT).length + 1)))) := by
+    unfold buildFSAT
+    rw [Cmd.cost_seq, ← hu1, Cmd.cost_seq, ← hu2, Cmd.cost_seq, Cmd.cost_op, e3,
+      Cmd.cost_seq, ← hvIf, Cmd.cost_op]
+    simp only [Op.cost]
+  rw [hcost]
+  by_cases hWf : BinaryCC_wellformed C
+  · -- wellformed: the emitter branch
+    have hGeq : State.get u3 GWF = [1] := by rw [h3GWF, if_pos hWf]
+    -- the serialization-length dominator (needed by every emitter's OUT ceiling)
+    have hTabΩ : (serF (encodeTableau C)).length ≤ Ω := by
+      have hEq : BinaryCC_to_FSAT_instance C = encodeTableau C := by
+        unfold BinaryCC_to_FSAT_instance; rw [dif_pos hWf]
+      have hlen := serF_length_le_size (BinaryCC_to_FSAT_instance C)
+      rw [hEq] at hlen
+      have hsz := BinaryCC_to_FSAT_instance_size_bound C
+      rw [hEq, ← hn] at hsz
+      have hle6 : n ^ 6 < (n + 1) ^ 6 :=
+        Nat.pow_lt_pow_left (show n < n + 1 by omega) (by norm_num)
+      rw [hΩdef]; unfold masterOmega
+      omega
+    -- the three top-level serF parts each fit under Ω (via the split + hTabΩ)
+    have hTabΩsplit : 4 + (serF (encodeBitsAt 0 C.init)).length
+        + (serF (encodeAllStepConstraints C)).length
+        + (serF (encodeFinalConstraint C)).length ≤ Ω := by
+      rw [← hserFlen]; exact hTabΩ
+    have hbitsΩ : (serF (encodeBitsAt 0 C.init)).length ≤ Ω := by omega
+    have hstepsΩ : (serF (encodeAllStepConstraints C)).length ≤ Ω := by omega
+    have hfinalΩ : (serF (encodeFinalConstraint C)).length ≤ Ω := by omega
+    -- v1 : emitFandTag
+    have e_v1 : emitFandTag.eval u3 = u3.set OUT [0, 1] := by
+      rw [emitFandTag_run, h3OUT, List.nil_append]
+    set v1 := u3.set OUT [0, 1] with hv1
+    have hv1f : ∀ r : Var, r ≠ OUT → State.get v1 r = State.get u3 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hv1OUT : State.get v1 OUT = [0, 1] := State.get_set_eq _ _ _
+    clear_value v1
+    -- v2 : clear ZERO
+    have e_v2 : (Cmd.op (.clear ZERO)).eval v1 = v1.set ZERO [] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    set v2 := v1.set ZERO [] with hv2
+    have hv2f : ∀ r : Var, r ≠ ZERO → State.get v2 r = State.get v1 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hv2ZERO : State.get v2 ZERO = [] := State.get_set_eq _ _ _
+    clear_value v2
+    -- v3 : copy SCAN INIT
+    have h2INITv : State.get v2 INIT = FlatCCBinFree.bitsNat C.init := by
+      rw [hv2f INIT (by decide), hv1f INIT (by decide)]; exact h3INIT
+    have e_v3 : (Cmd.op (.copy SCAN INIT)).eval v2
+        = v2.set SCAN (FlatCCBinFree.bitsNat C.init) := by
+      rw [Cmd.eval_op]; simp only [Op.eval, h2INITv]
+    have hc_v3 : Op.cost (.copy SCAN INIT) v2 = C.init.length + 1 := by
+      show (State.get v2 INIT).length + 1 = _
+      rw [h2INITv]
+      exact congrArg (· + 1) (List.length_map _)
+    set v3 := v2.set SCAN (FlatCCBinFree.bitsNat C.init) with hv3
+    have hv3f : ∀ r : Var, r ≠ SCAN → State.get v3 r = State.get v2 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hv3SCAN : State.get v3 SCAN = FlatCCBinFree.bitsNat C.init :=
+      State.get_set_eq _ _ _
+    clear_value v3
+    -- v4 : emitBitsFromScan (run + cost + WREG)
+    have h3ZEROv : State.get v3 ZERO = List.replicate 0 1 := by
+      rw [hv3f ZERO (by decide)]; exact hv2ZERO
+    have h3INITlen : (State.get v3 INIT).length = C.init.length := by
+      rw [hv3f INIT (by decide), h2INITv]
+      exact List.length_map _
+    have h3OUTv : State.get v3 OUT = [0, 1] := by
+      rw [hv3f OUT (by decide), hv2f OUT (by decide)]; exact hv1OUT
+    have h3WREGv : State.get v3 WREG = [] := by
+      rw [hv3f WREG (by decide), hv2f WREG (by decide), hv1f WREG (by decide)]
+      exact h3WREG
+    have hcScan := emitBitsFromScan_cost ZERO INIT 0 C.init v3 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide)
+      h3ZEROv h3INITlen hv3SCAN
+      (by rw [h3OUTv]
+          simp only [List.length_cons, List.length_nil]
+          omega)
+      (by rw [h3WREGv]; exact Nat.zero_le Ω)
+      (by omega)
+    have hWScan := emitBitsFromScan_WREG ZERO INIT v3 Ω
+      (by decide) (by decide) (by decide) (by decide)
+      (by rw [h3WREGv]; exact Nat.zero_le Ω)
+      (by rw [h3ZEROv, h3INITlen]
+          simp only [List.length_replicate]
+          omega)
+    obtain ⟨h4SCAN, h4OUT, h4F⟩ := emitBitsFromScan_run ZERO INIT 0 C.init v3
+      (by decide) (by decide) (by decide) (by decide) (by decide)
+      h3ZEROv h3INITlen hv3SCAN
+    set v4 := (emitBitsFromScan ZERO INIT).eval v3 with hv4
+    have h4OUTval : State.get v4 OUT = [0, 1] ++ serF (encodeBitsAt 0 C.init) := by
+      rw [h4OUT, h3OUTv]
+    have h4WREG : (State.get v4 WREG).length ≤ Ω := hWScan
+    clear_value v4
+    -- v5 : emitFandTag
+    have e_v5 : emitFandTag.eval v4
+        = v4.set OUT (([0, 1] ++ serF (encodeBitsAt 0 C.init)) ++ [0, 1]) := by
+      rw [emitFandTag_run, h4OUTval]
+    set v5 := v4.set OUT (([0, 1] ++ serF (encodeBitsAt 0 C.init)) ++ [0, 1]) with hv5
+    have hv5f : ∀ r : Var, r ≠ OUT → State.get v5 r = State.get v4 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hv5OUT : State.get v5 OUT
+        = ([0, 1] ++ serF (encodeBitsAt 0 C.init)) ++ [0, 1] := State.get_set_eq _ _ _
+    clear_value v5
+    -- register threading u3 → v5
+    have hv5chain : ∀ r : Var, r ≠ OUT → r ≠ ZERO → r ≠ SCAN → r ≠ WREG → r ≠ TFLG →
+        r ≠ KBIT → State.get v5 r = State.get u3 r := by
+      intro r h1 h2 h3 h4 h5 h6
+      rw [hv5f r h1, h4F r h3 h1 h4 h5 h6, hv3f r h3, hv2f r h2, hv1f r h1]
+    have h5STEPS := (hv5chain STEPS (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3STEPS
+    have h5OFF := (hv5chain OFFSET (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3OFF
+    have h5WID := (hv5chain WIDTH (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3WID
+    have h5CARDS := (hv5chain CARDS (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3CARDS
+    have h5FINAL := (hv5chain FINAL (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3FINAL
+    have h5LREG := (hv5chain LREG (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3LREG
+    have h5LREG1 := (hv5chain LREG1 (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans h3LREG1
+    have h5ZERO : State.get v5 ZERO = [] := by
+      rw [hv5f ZERO (by decide), h4F ZERO (by decide) (by decide) (by decide)
+        (by decide) (by decide), hv3f ZERO (by decide)]
+      exact hv2ZERO
+    have h5WREG : (State.get v5 WREG).length ≤ Ω := by
+      rw [hv5f WREG (by decide)]; exact h4WREG
+    -- v6 : emitAllSteps (run + cost + WREG exit)
+    have hΩO5 : (State.get v5 OUT).length
+        + (serF (encodeAllStepConstraints C)).length ≤ Ω := by
+      rw [hv5OUT]
+      simp only [List.length_append, List.length_cons, List.length_nil]
+      omega
+    have hΩidx5 : C.steps * C.init.length + C.init.length * C.offset + C.init.length
+        + C.offset + C.offset + C.width + C.init.length + C.steps
+        + (State.get v5 CARDS).length ≤ Ω := by
+      rw [h5CARDS]
+      omega
+    have hcAS := emitAllSteps_cost C v5 Ω h5STEPS h5OFF h5WID h5LREG h5LREG1
+      h5CARDS h5ZERO hΩO5 h5WREG hΩidx5
+    obtain ⟨h6OUT, h6ZERO, h6F⟩ := emitAllSteps_run C v5
+      h5STEPS h5OFF h5WID h5LREG h5LREG1 h5CARDS h5ZERO
+    set v6 := emitAllSteps.eval v5 with hv6
+    have h6WREG : (State.get v6 WREG).length ≤ Ω := hcAS.2
+    have h6OUTval : State.get v6 OUT
+        = (([0, 1] ++ serF (encodeBitsAt 0 C.init)) ++ [0, 1])
+          ++ serF (encodeAllStepConstraints C) := by
+      rw [h6OUT, hv5OUT]
+    have h6STEPS := (h6F STEPS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)).trans h5STEPS
+    have h6OFF := (h6F OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)).trans h5OFF
+    have h6LREG := (h6F LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)).trans h5LREG
+    have h6LREG1 := (h6F LREG1 (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)).trans h5LREG1
+    have h6FINAL := (h6F FINAL (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)).trans h5FINAL
+    clear_value v6
+    -- v7 : emitFinal (run + cost)
+    have hΩO6 : (State.get v6 OUT).length
+        + (serF (encodeFinalConstraint C)).length ≤ Ω := by
+      rw [h6OUTval]
+      simp only [List.length_append, List.length_cons, List.length_nil]
+      omega
+    have hΩidx6 : C.steps * C.init.length + C.init.length * C.offset + C.init.length
+        + C.offset + C.init.length + C.steps + (State.get v6 FINAL).length ≤ Ω := by
+      rw [h6FINAL]
+      omega
+    have hcFin := emitFinal_cost C v6 Ω h6STEPS h6OFF h6LREG h6LREG1 h6FINAL h6ZERO
+      hΩO6 h6WREG hΩidx6
+    obtain ⟨h7OUT, h7ZERO, h7F⟩ := emitFinal_run C v6
+      h6STEPS h6OFF h6LREG h6LREG1 h6FINAL h6ZERO
+    set v7 := emitFinal.eval v6 with hv7
+    have h7OUTval : State.get v7 OUT
+        = ((([0, 1] ++ serF (encodeBitsAt 0 C.init)) ++ [0, 1])
+            ++ serF (encodeAllStepConstraints C))
+          ++ serF (encodeFinalConstraint C) := by
+      rw [h7OUT, h6OUTval]
+    clear_value v7
+    -- the branch's eval and cost
+    have hbranchEval : (emitFandTag ;;
+        Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+        emitBitsFromScan ZERO INIT ;;
+        emitFandTag ;;
+        emitAllSteps ;;
+        emitFinal).eval u3 = v7 := by
+      rw [Cmd.eval_seq, e_v1, Cmd.eval_seq, e_v2, Cmd.eval_seq, e_v3, Cmd.eval_seq,
+        ← hv4, Cmd.eval_seq, e_v5, Cmd.eval_seq, ← hv6, ← hv7]
+    have hvIfval : vIf = v7 := by
+      rw [hvIf, Cmd.eval_ifBit_true _ _ _ _ hGeq, hbranchEval]
+    have hbranchCost : (emitFandTag ;;
+        Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+        emitBitsFromScan ZERO INIT ;;
+        emitFandTag ;;
+        emitAllSteps ;;
+        emitFinal).cost u3
+        = 1 + 3 + (1 + 1 + (1 + Op.cost (.copy SCAN INIT) v2
+          + (1 + (emitBitsFromScan ZERO INIT).cost v3
+          + (1 + 3 + (1 + emitAllSteps.cost v5 + emitFinal.cost v6))))) := by
+      rw [Cmd.cost_seq, emitFandTag_cost, e_v1, Cmd.cost_seq, Cmd.cost_op, e_v2,
+        Cmd.cost_seq, Cmd.cost_op, e_v3, Cmd.cost_seq, ← hv4, Cmd.cost_seq,
+        emitFandTag_cost, e_v5, Cmd.cost_seq, ← hv6]
+      simp only [Op.cost]
+    have hcIf : (Cmd.ifBit GWF
+        ( emitFandTag ;;
+          Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+          emitBitsFromScan ZERO INIT ;;
+          emitFandTag ;;
+          emitAllSteps ;;
+          emitFinal )
+        emitFalse).cost u3
+        = 1 + (1 + 3 + (1 + 1 + (1 + Op.cost (.copy SCAN INIT) v2
+          + (1 + (emitBitsFromScan ZERO INIT).cost v3
+          + (1 + 3 + (1 + emitAllSteps.cost v5 + emitFinal.cost v6)))))) := by
+      rw [Cmd.cost_ifBit_true _ _ _ _ hGeq, hbranchCost]
+    -- the final copy's length
+    have hvIfOUT : (State.get vIf OUT).length = (serF (encodeTableau C)).length := by
+      rw [hvIfval, h7OUTval, hserFlen]
+      simp only [List.length_append, List.length_cons, List.length_nil]
+      omega
+    rw [hcIf, hc_v3, hvIfOUT]
+    -- gather the bounds and close
+    have hAS := hcAS.1
+    have hFin := hcFin.1
+    set Ks := Cmd.flatK (sentBitBody 0) with hKs
+    clear_value Ks
+    set Kb := Cmd.flatK (bsBody 0) with hKb
+    clear_value Kb
+    set Kr := Cmd.flatK readFinBody with hKr
+    clear_value Kr
+    set Ke := Cmd.flatK cardLenElemBody with hKe
+    clear_value Ke
+    set P2 := (Ω + 1) * (Ω + 1) with hP2
+    set P3 := (Ω + 1) * P2 with hP3
+    set P4 := (Ω + 1) * P3 with hP4
+    set P5 := (Ω + 1) * P4 with hP5
+    set cPre := precompLen.cost (encodeIn C) with hcPreDef
+    clear_value cPre
+    set cWF := computeWF.cost u1 with hcWFDef
+    clear_value cWF
+    set cScan := (emitBitsFromScan ZERO INIT).cost v3 with hcScanDef
+    clear_value cScan
+    set cAS := emitAllSteps.cost v5 with hcASDef
+    clear_value cAS
+    set cFin := emitFinal.cost v6 with hcFinDef
+    clear_value cFin
+    have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+    have hP23 : P2 ≤ P3 := by rw [hP3]; exact le_scale Ω P2
+    have hP34 : P3 ≤ P4 := by rw [hP4]; exact le_scale Ω P3
+    have hP45 : P4 ≤ P5 := by rw [hP5]; exact le_scale Ω P4
+    have h1P5 : 1 ≤ P5 := le_trans h1P2 (le_trans hP23 (le_trans hP34 hP45))
+    have hΩP5 : Ω + 1 ≤ P5 := by
+      calc Ω + 1 = (Ω + 1) * 1 := by ring
+        _ ≤ (Ω + 1) * P4 := Nat.mul_le_mul_left _ (le_trans h1P2 (le_trans hP23 hP34))
+        _ = P5 := by rw [hP5]
+    have hPre5 : 8 * P2 ≤ 8 * P5 :=
+      Nat.mul_le_mul_left _ (le_trans hP23 (le_trans hP34 hP45))
+    have hWF5 : (2 * Ke + 160) * P3 ≤ (2 * Ke + 160) * P5 :=
+      Nat.mul_le_mul_left _ (le_trans hP34 hP45)
+    have hScan5 : (Kb + 6) * P2 ≤ (Kb + 6) * P5 :=
+      Nat.mul_le_mul_left _ (le_trans hP23 (le_trans hP34 hP45))
+    have hFin5 : (Kb + Kr + 140) * P4 ≤ (Kb + Kr + 140) * P5 :=
+      Nat.mul_le_mul_left _ hP45
+    have hLΩ : C.init.length ≤ Ω := by omega
+    have hfin : (2 * Ks + 2 * Kb + Kr + 2 * Ke + 1000) * P5
+        = (2 * Ks + 160) * P5 + (Kb + Kr + 140) * P5 + (2 * Ke + 160) * P5
+          + (Kb + 6) * P5 + 8 * P5 + 526 * P5 := by ring
+    have hgoal : buildFSATBound n
+        = (2 * Ks + 2 * Kb + Kr + 2 * Ke + 1000) * P5 := by
+      rw [buildFSATBound, buildFSATK, ← hKs, ← hKb, ← hKr, ← hKe, ← hΩdef,
+        ← hP2, ← hP3, ← hP4, ← hP5]
+    rw [hgoal]
+    omega
+  · -- not wellformed: the `emitFalse` branch
+    have hGne : State.get u3 GWF ≠ [1] := by
+      rw [h3GWF, if_neg hWf]; decide
+    have hvIfval : vIf = emitFalse.eval u3 := by
+      rw [hvIf, Cmd.eval_ifBit_false _ _ _ _ hGne]
+    have hvIfOUT : (State.get vIf OUT).length = 5 := by
+      rw [hvIfval, emitFalse_run, State.get_set_eq, h3OUT]
+      rfl
+    have hcIf : (Cmd.ifBit GWF
+        ( emitFandTag ;;
+          Cmd.op (.clear ZERO) ;; Cmd.op (.copy SCAN INIT) ;;
+          emitBitsFromScan ZERO INIT ;;
+          emitFandTag ;;
+          emitAllSteps ;;
+          emitFinal )
+        emitFalse).cost u3 = 1 + 9 := by
+      rw [Cmd.cost_ifBit_false _ _ _ _ hGne, emitFalse_cost]
+    rw [hcIf, hvIfOUT]
+    set Ks := Cmd.flatK (sentBitBody 0) with hKs
+    clear_value Ks
+    set Kb := Cmd.flatK (bsBody 0) with hKb
+    clear_value Kb
+    set Kr := Cmd.flatK readFinBody with hKr
+    clear_value Kr
+    set Ke := Cmd.flatK cardLenElemBody with hKe
+    clear_value Ke
+    set P2 := (Ω + 1) * (Ω + 1) with hP2
+    set P3 := (Ω + 1) * P2 with hP3
+    set P4 := (Ω + 1) * P3 with hP4
+    set P5 := (Ω + 1) * P4 with hP5
+    set cPre := precompLen.cost (encodeIn C) with hcPreDef
+    clear_value cPre
+    set cWF := computeWF.cost u1 with hcWFDef
+    clear_value cWF
+    have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+    have hP23 : P2 ≤ P3 := by rw [hP3]; exact le_scale Ω P2
+    have hP34 : P3 ≤ P4 := by rw [hP4]; exact le_scale Ω P3
+    have hP45 : P4 ≤ P5 := by rw [hP5]; exact le_scale Ω P4
+    have h1P5 : 1 ≤ P5 := le_trans h1P2 (le_trans hP23 (le_trans hP34 hP45))
+    have hPre5 : 8 * P2 ≤ 8 * P5 :=
+      Nat.mul_le_mul_left _ (le_trans hP23 (le_trans hP34 hP45))
+    have hWF5 : (2 * Ke + 160) * P3 ≤ (2 * Ke + 160) * P5 :=
+      Nat.mul_le_mul_left _ (le_trans hP34 hP45)
+    have hfin : (2 * Ks + 2 * Kb + Kr + 2 * Ke + 1000) * P5
+        = (2 * Ke + 160) * P5 + (2 * Ks + 2 * Kb + Kr + 840) * P5 := by ring
+    have hslack : 8 * P5 + 21 ≤ (2 * Ks + 2 * Kb + Kr + 840) * P5 := by
+      have h1 : 840 * P5 ≤ (2 * Ks + 2 * Kb + Kr + 840) * P5 :=
+        Nat.mul_le_mul_right _ (by omega)
+      have h2 : 8 * P5 + 21 ≤ 840 * P5 := by omega
+      omega
+    have hgoal : buildFSATBound n
+        = (2 * Ks + 2 * Kb + Kr + 2 * Ke + 1000) * P5 := by
+      rw [buildFSATBound, buildFSATK, ← hKs, ← hKb, ← hKr, ← hKe, ← hΩdef,
+        ← hP2, ← hP3, ← hP4, ← hP5]
+    rw [hgoal]
+    omega
+
 end BinaryCCFSATFree
