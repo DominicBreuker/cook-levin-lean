@@ -7718,4 +7718,754 @@ theorem emitFinal_cost (C : BinaryCC) (u : State) (Ω : Nat)
   · rw [heval, emitFalse_frame _ WREG (by decide)]
     exact hwLoop.2
 
+/-! ### The wellformedness guard: cost -/
+
+private theorem andFlag_cost (FLG : Nat) (s : State) : (andFlag FLG).cost s = 2 := by
+  unfold andFlag
+  by_cases hT : State.get s FLG = [1]
+  · rw [Cmd.cost_ifBit_true _ _ _ _ hT, Cmd.cost_op]
+    simp only [Op.cost]
+  · rw [Cmd.cost_ifBit_false _ _ _ _ hT, Cmd.cost_op]
+    simp only [Op.cost]
+
+/-- `andFlag` writes only `ZERO`/`GWF` — the hypothesis-free frame fact. -/
+private theorem andFlag_frame' (FLG : Nat) (s : State) (r : Var)
+    (h1 : r ≠ ZERO) (h2 : r ≠ GWF) :
+    State.get ((andFlag FLG).eval s) r = State.get s r := by
+  unfold andFlag
+  by_cases hT : State.get s FLG = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hT, Cmd.eval_op]
+    simp only [Op.eval]
+    exact State.get_set_ne _ _ _ _ h1
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hT, Cmd.eval_op]
+    simp only [Op.eval]
+    exact State.get_set_ne _ _ _ _ h2
+
+/-- `andFlag` keeps `ZERO` empty (either branch). -/
+private theorem andFlag_ZERO (FLG : Nat) (s : State) (h : State.get s ZERO = []) :
+    State.get ((andFlag FLG).eval s) ZERO = [] := by
+  unfold andFlag
+  by_cases hT : State.get s FLG = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hT, Cmd.eval_op]
+    simp only [Op.eval]
+    exact State.get_set_eq _ _ _
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hT, Cmd.eval_op]
+    simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ (show ZERO ≠ GWF by decide)]
+    exact h
+
+/-- The final `TFLG`-flip of `leCheck`/`dvdCheck` costs at most 4. -/
+private theorem tflgFlip_cost_le (s : State) :
+    (Cmd.ifBit TFLG (Cmd.op (.clear TFLG))
+      (Cmd.op (.clear TFLG) ;; Cmd.op (.appendOne TFLG))).cost s ≤ 4 := by
+  by_cases hT : State.get s TFLG = [1]
+  · rw [Cmd.cost_ifBit_true _ _ _ _ hT, Cmd.cost_op]
+    simp only [Op.cost]
+    omega
+  · rw [Cmd.cost_ifBit_false _ _ _ _ hT, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op]
+    simp only [Op.cost]
+    omega
+
+/-- **`leCheck` cost**: quadratic in the ceiling `Ω ≥ a, b`. -/
+theorem leCheck_cost (X Y : Var) (a b : Nat) (s : State) (Ω : Nat)
+    (hYM : Y ≠ MREM)
+    (hX : State.get s X = List.replicate a 1)
+    (hY : (State.get s Y).length = b)
+    (hΩa : a ≤ Ω) (hΩb : b ≤ Ω) :
+    (leCheck X Y).cost s ≤ 12 * ((Ω + 1) * (Ω + 1)) := by
+  have e1 : (Cmd.op (.copy MREM X)).eval s = s.set MREM (List.replicate a 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hX]
+  have hc1 : Op.cost (.copy MREM X) s = a + 1 := by
+    show (State.get s X).length + 1 = _
+    rw [hX, List.length_replicate]
+  set w1 := s.set MREM (List.replicate a 1) with hw1
+  have hw1M : State.get w1 MREM = List.replicate a 1 := State.get_set_eq _ _ _
+  have hw1Y : (State.get w1 Y).length = b := by
+    rw [State.get_set_ne _ _ _ _ hYM]; exact hY
+  clear_value w1
+  have hcSub := cost_tailLoop_le MGE Y MREM w1 a b (by decide)
+    (by rw [hw1M, List.length_replicate]) hw1Y
+  set w2 := (Cmd.forBnd MGE Y (Cmd.op (.tail MREM MREM))).eval w1 with hw2
+  clear_value w2
+  set w3 := (Cmd.op (.nonEmpty TFLG MREM)).eval w2 with hw3
+  clear_value w3
+  have hc4 := tflgFlip_cost_le w3
+  have hcost : (leCheck X Y).cost s
+      = 1 + Op.cost (.copy MREM X) s
+        + (1 + (Cmd.forBnd MGE Y (Cmd.op (.tail MREM MREM))).cost w1
+        + (1 + (Cmd.op (.nonEmpty TFLG MREM)).cost w2
+        + (Cmd.ifBit TFLG (Cmd.op (.clear TFLG))
+            (Cmd.op (.clear TFLG) ;; Cmd.op (.appendOne TFLG))).cost w3)) := by
+    unfold leCheck
+    rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq, ← hw3]
+  have hc3 : (Cmd.op (.nonEmpty TFLG MREM)).cost w2 = 1 := by
+    rw [Cmd.cost_op]
+    simp only [Op.cost]
+  have hSuble := le_trans hcSub (subLoopClose a b Ω hΩa hΩb)
+  rw [hcost, hc1, hc3]
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+  have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+  omega
+
+/-- Per-iteration cost of `dvdCheck`'s outer loop: quadratic in `Ω ≥ a, d`. -/
+private theorem dvdBody_effect (a d : Nat) (D : Var) (u : State) (Ω : Nat)
+    (hDM : D ≠ MREM) (hDC : D ≠ MCHK) (hDG : D ≠ MGE) (hDK : D ≠ KTMP)
+    (hDK2 : D ≠ KTMP2) (hDZ : D ≠ ZERO)
+    (hUD : State.get u D = List.replicate d 1)
+    (hΩa : a ≤ Ω) (hΩd : d ≤ Ω)
+    (j : Nat) (st : State) (h : DInv a d u j st) :
+    (dvdBody D).cost (st.set KTMP (List.replicate j 1))
+      ≤ 12 * ((Ω + 1) * (Ω + 1)) := by
+  obtain ⟨hMREM, hZ, hframe⟩ := h
+  set w := st.set KTMP (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KTMP → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwM : State.get w MREM = List.replicate (DvdArith.subMod a d j) 1 := by
+    rw [hwframe MREM (by decide)]; exact hMREM
+  have hwD : State.get w D = List.replicate d 1 := by
+    rw [hwframe D hDK, hframe D hDM hDC hDG hDK hDK2 hDZ]; exact hUD
+  clear_value w
+  have hsub_le : DvdArith.subMod a d j ≤ a := DvdArith.subMod_le a d j
+  -- step 1: copy MCHK D
+  have e1 : (Cmd.op (.copy MCHK D)).eval w = w.set MCHK (List.replicate d 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hwD]
+  have hc1 : Op.cost (.copy MCHK D) w = d + 1 := by
+    show (State.get w D).length + 1 = _
+    rw [hwD, List.length_replicate]
+  set w1 := w.set MCHK (List.replicate d 1) with hw1
+  have hw1frame : ∀ r : Var, r ≠ MCHK → State.get w1 r = State.get w r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw1C : State.get w1 MCHK = List.replicate d 1 := State.get_set_eq _ _ _
+  have hw1M : State.get w1 MREM = List.replicate (DvdArith.subMod a d j) 1 := by
+    rw [hw1frame MREM (by decide)]; exact hwM
+  clear_value w1
+  -- step 2: inner sub loop  MCHK -= |MREM|
+  have hcSub1 := cost_tailLoop_le KTMP2 MREM MCHK w1 d (DvdArith.subMod a d j)
+    (by decide)
+    (by rw [hw1C, List.length_replicate])
+    (by rw [hw1M, List.length_replicate])
+  obtain ⟨hsubC, hsubF⟩ := unarySubLoop_run KTMP2 MREM MCHK w1 d
+    (DvdArith.subMod a d j) (by decide)
+    (by rw [hw1M, List.length_replicate]) hw1C
+  set w2 := (Cmd.forBnd KTMP2 MREM (Cmd.op (.tail MCHK MCHK))).eval w1 with hw2
+  have hw2M : State.get w2 MREM = List.replicate (DvdArith.subMod a d j) 1 := by
+    rw [hsubF MREM (by decide) (by decide)]; exact hw1M
+  have hw2D : State.get w2 D = List.replicate d 1 := by
+    rw [hsubF D hDC hDK2, hw1frame D hDC]; exact hwD
+  clear_value w2
+  -- step 3: nonEmpty MGE MCHK
+  have e3 : (Cmd.op (.nonEmpty MGE MCHK)).eval w2
+      = w2.set MGE (if (List.replicate (d - DvdArith.subMod a d j) 1 : List Nat).isEmpty
+          then [0] else [1]) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hsubC]
+  set w3 := w2.set MGE (if (List.replicate (d - DvdArith.subMod a d j) 1 : List Nat).isEmpty
+      then [0] else [1]) with hw3
+  have hw3frame : ∀ r : Var, r ≠ MGE → State.get w3 r = State.get w2 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw3M : State.get w3 MREM = List.replicate (DvdArith.subMod a d j) 1 := by
+    rw [hw3frame MREM (by decide)]; exact hw2M
+  have hw3D : State.get w3 D = List.replicate d 1 := by
+    rw [hw3frame D hDG]; exact hw2D
+  clear_value w3
+  -- step 4: the branch
+  have hcBranch : (Cmd.ifBit MGE (Cmd.op (.clear ZERO))
+      (Cmd.forBnd KTMP2 D (Cmd.op (.tail MREM MREM)))).cost w3
+      ≤ 1 + 3 * ((Ω + 1) * (Ω + 1)) := by
+    by_cases hG : State.get w3 MGE = [1]
+    · rw [Cmd.cost_ifBit_true _ _ _ _ hG, Cmd.cost_op]
+      simp only [Op.cost]
+      have h1P2 : 1 ≤ (Ω + 1) * (Ω + 1) := one_le_P Ω
+      omega
+    · rw [Cmd.cost_ifBit_false _ _ _ _ hG]
+      have hcSub2 := cost_tailLoop_le KTMP2 D MREM w3 (DvdArith.subMod a d j) d
+        (by decide)
+        (by rw [hw3M, List.length_replicate])
+        (by rw [hw3D, List.length_replicate])
+      exact Nat.add_le_add_left
+        (le_trans hcSub2 (subLoopClose (DvdArith.subMod a d j) d Ω (by omega) hΩd)) 1
+  have hcost : (dvdBody D).cost w
+      = 1 + Op.cost (.copy MCHK D) w
+        + (1 + (Cmd.forBnd KTMP2 MREM (Cmd.op (.tail MCHK MCHK))).cost w1
+        + (1 + (Cmd.op (.nonEmpty MGE MCHK)).cost w2
+        + (Cmd.ifBit MGE (Cmd.op (.clear ZERO))
+            (Cmd.forBnd KTMP2 D (Cmd.op (.tail MREM MREM)))).cost w3)) := by
+    unfold dvdBody
+    rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq, e3]
+  have hc3 : (Cmd.op (.nonEmpty MGE MCHK)).cost w2 = 1 := by
+    rw [Cmd.cost_op]
+    simp only [Op.cost]
+  have hSuble1 := le_trans hcSub1 (subLoopClose d (DvdArith.subMod a d j) Ω hΩd (by omega))
+  rw [hcost, hc1, hc3]
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+  have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+  omega
+
+/-- **`dvdCheck` cost**: cubic in the ceiling `Ω ≥ a, d`. -/
+theorem dvdCheck_cost (X D : Var) (a d : Nat) (s : State) (Ω : Nat)
+    (hXM : X ≠ MREM)
+    (hDM : D ≠ MREM) (hDC : D ≠ MCHK) (hDG : D ≠ MGE) (hDK : D ≠ KTMP)
+    (hDK2 : D ≠ KTMP2) (hDZ : D ≠ ZERO)
+    (hX : State.get s X = List.replicate a 1)
+    (hD : State.get s D = List.replicate d 1)
+    (hZ : State.get s ZERO = [])
+    (hΩa : a ≤ Ω) (hΩd : d ≤ Ω) :
+    (dvdCheck X D).cost s ≤ 30 * ((Ω + 1) * ((Ω + 1) * (Ω + 1))) := by
+  have e1 : (Cmd.op (.copy MREM X)).eval s = s.set MREM (List.replicate a 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hX]
+  have hc1 : Op.cost (.copy MREM X) s = a + 1 := by
+    show (State.get s X).length + 1 = _
+    rw [hX, List.length_replicate]
+  set u := s.set MREM (List.replicate a 1) with hu
+  have huframe : ∀ r : Var, r ≠ MREM → State.get u r = State.get s r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have huM : State.get u MREM = List.replicate a 1 := State.get_set_eq _ _ _
+  have huD : State.get u D = List.replicate d 1 := by rw [huframe D hDM]; exact hD
+  have huZ : State.get u ZERO = [] := by rw [huframe ZERO (by decide)]; exact hZ
+  have huX : State.get u X = List.replicate a 1 := by rw [huframe X hXM]; exact hX
+  have huXlen : (State.get u X).length = a := by rw [huX, List.length_replicate]
+  clear_value u
+  have hbase : DInv a d u 0 u := by
+    refine ⟨by rw [huM]; rfl, huZ, fun r _ _ _ _ _ _ => rfl⟩
+  have hloop := Cmd.cost_forBnd_le KTMP X (dvdBody D) u
+    (12 * ((Ω + 1) * (Ω + 1)))
+    (DInv a d u) hbase
+    (fun j st _ hM => dvdBody_step a d D u hDM hDC hDG hDK hDK2 hDZ huD j st hM)
+    (fun j st _ hM => dvdBody_effect a d D u Ω hDM hDC hDG hDK hDK2 hDZ huD
+      hΩa hΩd j st hM)
+  set w2 := (Cmd.forBnd KTMP X (dvdBody D)).eval u with hw2
+  clear_value w2
+  set w3 := (Cmd.op (.nonEmpty TFLG MREM)).eval w2 with hw3
+  clear_value w3
+  have hc4 := tflgFlip_cost_le w3
+  have hcost : (dvdCheck X D).cost s
+      = 1 + Op.cost (.copy MREM X) s
+        + (1 + (Cmd.forBnd KTMP X (dvdBody D)).cost u
+        + (1 + (Cmd.op (.nonEmpty TFLG MREM)).cost w2
+        + (Cmd.ifBit TFLG (Cmd.op (.clear TFLG))
+            (Cmd.op (.clear TFLG) ;; Cmd.op (.appendOne TFLG))).cost w3)) := by
+    unfold dvdCheck
+    rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq, ← hw3]
+  have hc3 : (Cmd.op (.nonEmpty TFLG MREM)).cost w2 = 1 := by
+    rw [Cmd.cost_op]
+    simp only [Op.cost]
+  rw [hcost, hc1, hc3]
+  rw [huXlen] at hloop
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  set P3 := (Ω + 1) * P2 with hP3
+  have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+  have hP23 : P2 ≤ P3 := by rw [hP3]; exact le_scale Ω P2
+  have haB : a * (12 * P2) ≤ (Ω + 1) * (12 * P2) :=
+    Nat.mul_le_mul_right _ (by omega)
+  have he3 : (Ω + 1) * (12 * P2) = 12 * P3 := by rw [hP3]; ring
+  have haa : a * a ≤ Ω * Ω := Nat.mul_le_mul hΩa hΩa
+  have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+  have h1P3 : 1 ≤ P3 := le_trans h1P2 hP23
+  omega
+
+/-! ### `cardLenCheck`: cost -/
+
+/-- **`cardLenItem` cost**: quadratic in `Ω ≥ |SCANW|, width`. -/
+theorem cardLenItem_cost (bs : List Bool) (rest : List Nat) (width : Nat)
+    (u : State) (Ω : Nat)
+    (hSC : State.get u SCANW = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bs) ++ rest)
+    (hW : State.get u WIDTH = List.replicate width 1)
+    (hΩS : (State.get u SCANW).length ≤ Ω)
+    (hΩw : width ≤ Ω) :
+    cardLenItem.cost u
+      ≤ (Cmd.flatK cardLenElemBody + 20) * ((Ω + 1) * (Ω + 1)) := by
+  have e01 : (Cmd.op (.clear CLEN)).eval u = u.set CLEN [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u1 := u.set CLEN [] with hu1
+  have hu1frame : ∀ r : Var, r ≠ CLEN → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  clear_value u1
+  have e02 : (Cmd.op (.clear DONE)).eval u1 = u1.set DONE [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set u2 := u1.set DONE [] with hu2
+  have hu2frame : ∀ r : Var, r ≠ DONE → State.get u2 r = State.get u1 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu2SC : State.get u2 SCANW
+      = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bs) ++ rest := by
+    rw [hu2frame SCANW (by decide), hu1frame SCANW (by decide)]; exact hSC
+  have hu2CL : State.get u2 CLEN = [] := by
+    rw [hu2frame CLEN (by decide), hu1]; exact State.get_set_eq _ _ _
+  have hu2D : State.get u2 DONE = [] := State.get_set_eq _ _ _
+  have hu2W : State.get u2 WIDTH = List.replicate width 1 := by
+    rw [hu2frame WIDTH (by decide), hu1frame WIDTH (by decide)]; exact hW
+  have hu2SClen : (State.get u2 SCANW).length = (State.get u SCANW).length := by
+    rw [hu2SC, hSC]
+  clear_value u2
+  have hN : bs.length < (State.get u2 SCANW).length := by
+    rw [hu2SC, List.length_append, FlatTCCFree.encSList_length,
+      show (FlatCCBinFree.bitsNat bs).length = bs.length from List.length_map _]
+    omega
+  -- the SCANW ceiling in both parse phases
+  have hsuffix : ∀ i : Nat,
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bs.drop i))).length + rest.length
+        ≤ Ω := by
+    intro i
+    have h1 : (FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bs.drop i))).length
+        ≤ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat bs)).length := by
+      rw [show FlatCCBinFree.bitsNat (bs.drop i)
+          = (FlatCCBinFree.bitsNat bs).drop i from List.map_drop ..]
+      exact encSList_drop_length_le _ i
+    have h2 : (State.get u SCANW).length
+        = (FlatTCCFree.encSList (FlatCCBinFree.bitsNat bs)).length + rest.length := by
+      rw [hSC, List.length_append]
+    omega
+  have hbase : CEInv bs rest u2 0 u2 := by
+    refine ⟨fun _ => ⟨hu2D, by rw [List.drop_zero]; exact hu2SC, hu2CL⟩,
+      fun hlt => absurd hlt (Nat.not_lt_zero _), fun r _ _ _ _ _ _ _ => rfl⟩
+  -- the loop: cost + exit facts
+  have hloop := Cmd.cost_forBnd_le KBIT SCANW cardLenElemBody u2
+    (Cmd.flatK cardLenElemBody * (Ω + 1))
+    (CEInv bs rest u2) hbase
+    (fun i st _ hM => CEInv_step bs rest u2 i st hM)
+    (fun i st hi hM => by
+      obtain ⟨hph1, hph2, hframei⟩ := hM
+      have hread : ∀ r ∈ Cmd.costReads cardLenElemBody,
+          (State.get (st.set KBIT (List.replicate i 1)) r).length ≤ Ω := by
+        intro r hr
+        have hlist : Cmd.costReads cardLenElemBody
+            = [SCANW, SCANW, SCANW, SCANW, SCANW] := rfl
+        rw [hlist] at hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        have hSCANce : (State.get st SCANW).length ≤ Ω := by
+          by_cases hile : i ≤ bs.length
+          · obtain ⟨-, hS, -⟩ := hph1 hile
+            rw [hS, List.length_append]
+            exact hsuffix i
+          · obtain ⟨-, hS, -⟩ := hph2 (by omega)
+            rw [hS]
+            have := hsuffix 0
+            omega
+        rcases hr with rfl | rfl | rfl | rfl | rfl <;>
+          (rw [State.get_set_ne _ _ _ _ (show SCANW ≠ KBIT by decide)]; exact hSCANce)
+      exact (Cmd.cost_le_flat cardLenElemBody rfl
+        (st.set KBIT (List.replicate i 1)) Ω hread).1)
+  have hInv : CEInv bs rest u2 (State.get u2 SCANW).length
+      (Cmd.foldlState cardLenElemBody KBIT
+        (List.range (State.get u2 SCANW).length) u2) :=
+    Cmd.foldlState_range_induct _ KBIT _ u2 (CEInv bs rest u2) hbase
+      (fun i st _ hM => CEInv_step bs rest u2 i st hM)
+  obtain ⟨-, hph2, hLframe⟩ := hInv
+  obtain ⟨-, -, hLCL⟩ := hph2 hN
+  set w2 := Cmd.foldlState cardLenElemBody KBIT
+      (List.range (State.get u2 SCANW).length) u2 with hw2
+  clear_value w2
+  have hw2W : State.get w2 WIDTH = List.replicate width 1 := by
+    rw [hLframe WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)]
+    exact hu2W
+  -- eqBit cost off the exit lengths
+  have hc3 : Op.cost (.eqBit TFLG CLEN WIDTH) w2 = bs.length + width + 1 := by
+    show (State.get w2 CLEN).length + (State.get w2 WIDTH).length + 1 = _
+    rw [hLCL, hw2W, List.length_replicate, List.length_replicate]
+  set w3 := (Cmd.op (.eqBit TFLG CLEN WIDTH)).eval w2 with hw3
+  clear_value w3
+  have hc4 := andFlag_cost TFLG w3
+  have hloopeval : (Cmd.forBnd KBIT SCANW cardLenElemBody).eval u2 = w2 := by
+    rw [Cmd.eval_forBnd, hw2]
+  have hcost : cardLenItem.cost u
+      = 1 + 1 + (1 + 1 + (1 + (Cmd.forBnd KBIT SCANW cardLenElemBody).cost u2
+        + (1 + Op.cost (.eqBit TFLG CLEN WIDTH) w2 + (andFlag TFLG).cost w3))) := by
+    unfold cardLenItem
+    rw [Cmd.cost_seq, Cmd.cost_op, e01, Cmd.cost_seq, Cmd.cost_op, e02, Cmd.cost_seq,
+      Cmd.cost_seq, Cmd.cost_op, hloopeval, ← hw3]
+    simp only [Op.cost]
+  rw [hcost, hc3, hc4]
+  -- close the arithmetic
+  have hblen : bs.length ≤ Ω := by
+    have := hN
+    rw [hu2SClen] at this
+    omega
+  have hlen : (State.get u2 SCANW).length ≤ Ω := by rw [hu2SClen]; omega
+  set K := Cmd.flatK cardLenElemBody with hK
+  clear_value K
+  set A := K * (Ω + 1) with hA
+  set len := (State.get u2 SCANW).length with hlenDef
+  have h1 : len * A ≤ (Ω + 1) * A := Nat.mul_le_mul_right A (by omega)
+  have h2 : len * len ≤ Ω * Ω := Nat.mul_le_mul hlen hlen
+  have h3 : (Ω + 1) * A = K * ((Ω + 1) * (Ω + 1)) := by rw [hA]; ring
+  have h4 : (K + 20) * ((Ω + 1) * (Ω + 1))
+      = K * ((Ω + 1) * (Ω + 1)) + 20 * ((Ω + 1) * (Ω + 1)) := by ring
+  have h5 : (Ω + 1) * (Ω + 1) = Ω * Ω + 2 * Ω + 1 := by ring
+  omega
+
+/-- Per-iteration cost of `cardLenCheck`'s card loop. -/
+private theorem cardLenCardBody_effect (C : BinaryCC) (width : Nat) (g0 : List Nat)
+    (u1 : State) (Ω : Nat)
+    (hΩS : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length ≤ Ω)
+    (hΩw : width ≤ Ω)
+    (j : Nat) (st : State) (hInv : CLInv C width g0 u1 j st) :
+    cardLenCardBody.cost (st.set KCARD (List.replicate j 1))
+      ≤ 6 + 2 * ((Cmd.flatK cardLenElemBody + 20) * ((Ω + 1) * (Ω + 1))) := by
+  obtain ⟨hSCAN, hGWF, hWID, hframe⟩ := hInv
+  set w := st.set KCARD (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KCARD → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwSCAN : State.get w SCANW
+      = FlatTCCFree.encCardsOut ((C.cards.drop j).map FlatCCBinFree.cardNat) := by
+    rw [hwframe SCANW (by decide)]; exact hSCAN
+  have hwWID : State.get w WIDTH = List.replicate width 1 := by
+    rw [hwframe WIDTH (by decide)]; exact hWID
+  -- the drop-stream ceiling
+  have hstream : (FlatTCCFree.encCardsOut ((C.cards.drop j).map FlatCCBinFree.cardNat)).length
+      ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+    rw [show (C.cards.drop j).map FlatCCBinFree.cardNat
+        = (C.cards.map FlatCCBinFree.cardNat).drop j from List.map_drop ..]
+    exact encCardsOut_drop_length_le _ j
+  clear_value w
+  by_cases hj : j < C.cards.length
+  · -- live: parse prem then conc
+    have hdrop : C.cards.drop j = C.cards[j] :: C.cards.drop (j + 1) :=
+      List.drop_eq_getElem_cons hj
+    set c := C.cards[j] with hc
+    clear_value c
+    set REST := FlatTCCFree.encCardsOut ((C.cards.drop (j + 1)).map FlatCCBinFree.cardNat)
+      with hREST
+    have hwSCANc : State.get w SCANW
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hwSCAN, hdrop, encCardsOut_cons, hREST]
+    have hne : (State.get w SCANW).isEmpty = false := by
+      rw [hwSCANc]; exact encSList_append_isEmpty _ _
+    have hwSCANlen : (State.get w SCANW).length ≤ Ω := by
+      rw [hwSCAN]
+      omega
+    have e1 : (Cmd.op (.nonEmpty TFLG SCANW)).eval w = w.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]; rfl
+    set w1 := w.set TFLG [1] with hw1
+    have hw1frame : ∀ r : Var, r ≠ TFLG → State.get w1 r = State.get w r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw1T : State.get w1 TFLG = [1] := State.get_set_eq _ _ _
+    have hw1SCAN : State.get w1 SCANW
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hw1frame SCANW (by decide)]; exact hwSCANc
+    have hw1WID : State.get w1 WIDTH = List.replicate width 1 := by
+      rw [hw1frame WIDTH (by decide)]; exact hwWID
+    have hw1SCANlen : (State.get w1 SCANW).length ≤ Ω := by
+      rw [hw1SCAN, ← hwSCANc]
+      exact hwSCANlen
+    clear_value w1
+    -- the prem item: cost + run
+    have hcost1 := cardLenItem_cost c.prem
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) width w1 Ω
+      hw1SCAN hw1WID hw1SCANlen hΩw
+    obtain ⟨hp1SC, -, hp1F⟩ := cardLenItem_run c.prem
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST)
+      width (State.get w1 GWF) w1 hw1SCAN hw1WID rfl
+    set w2 := cardLenItem.eval w1 with hw2
+    have hw2SC : State.get w2 SCANW
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST := hp1SC
+    have hw2WID : State.get w2 WIDTH = List.replicate width 1 := by
+      rw [hp1F WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide)]
+      exact hw1WID
+    have hw2SClen : (State.get w2 SCANW).length ≤ Ω := by
+      rw [hw2SC]
+      have : (State.get w1 SCANW).length
+          = (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)).length
+            + (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST).length := by
+        rw [hw1SCAN, List.length_append]
+      omega
+    clear_value w2
+    -- the conc item: cost
+    have hcost2 := cardLenItem_cost c.conc REST width w2 Ω hw2SC hw2WID hw2SClen hΩw
+    have hcost : cardLenCardBody.cost w
+        = 1 + 1 + (1 + (1 + cardLenItem.cost w1 + cardLenItem.cost w2)) := by
+      unfold cardLenCardBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_ifBit_true _ _ _ _ hw1T,
+        Cmd.cost_seq, ← hw2]
+      simp only [Op.cost]
+    rw [hcost]
+    set KK := (Cmd.flatK cardLenElemBody + 20) * ((Ω + 1) * (Ω + 1)) with hKK
+    clear_value KK
+    omega
+  · -- idle: stream exhausted
+    have hlen : C.cards.length ≤ j := Nat.le_of_not_lt hj
+    have hwSCANe : State.get w SCANW = [] := by
+      rw [hwSCAN, List.drop_eq_nil_of_le hlen]; rfl
+    have hne : (State.get w SCANW).isEmpty = true := by rw [hwSCANe]; rfl
+    have e1 : (Cmd.op (.nonEmpty TFLG SCANW)).eval w = w.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]; rfl
+    have hw1Tne : State.get (w.set TFLG [0]) TFLG ≠ [1] := by
+      rw [State.get_set_eq]; decide
+    have hcost : cardLenCardBody.cost w = 1 + 1 + (1 + 1) := by
+      unfold cardLenCardBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_ifBit_false _ _ _ _ hw1Tne,
+        Cmd.cost_op]
+      simp only [Op.cost]
+    rw [hcost]
+    omega
+
+/-- **`cardLenCheck` cost**: cubic in `Ω ≥ |CARDS|, width`. -/
+theorem cardLenCheck_cost (C : BinaryCC) (u : State) (Ω : Nat)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hW : State.get u WIDTH = List.replicate C.width 1)
+    (hΩS : (State.get u CARDS).length ≤ Ω)
+    (hΩw : C.width ≤ Ω) :
+    cardLenCheck.cost u
+      ≤ (2 * Cmd.flatK cardLenElemBody + 60)
+          * ((Ω + 1) * ((Ω + 1) * (Ω + 1))) := by
+  have e0 : (Cmd.op (.copy SCANW CARDS)).eval u
+      = u.set SCANW (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hCARDS]
+  have hc0 : Op.cost (.copy SCANW CARDS) u = (State.get u CARDS).length + 1 := by
+    show (State.get u CARDS).length + 1 = _
+    rfl
+  set u1 := u.set SCANW (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    with hu1
+  have hu1frame : ∀ r : Var, r ≠ SCANW → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1SC : State.get u1 SCANW
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    State.get_set_eq _ _ _
+  have hu1W : State.get u1 WIDTH = List.replicate C.width 1 := by
+    rw [hu1frame WIDTH (by decide)]; exact hW
+  have hu1CARDSlen : (State.get u1 CARDS).length = (State.get u CARDS).length := by
+    rw [hu1frame CARDS (by decide)]
+  clear_value u1
+  have hcards_le : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      = (State.get u CARDS).length := by rw [hCARDS]
+  have hbase : CLInv C C.width (State.get u1 GWF) u1 0 u1 := by
+    refine ⟨by rw [List.drop_zero]; exact hu1SC, ?_, hu1W,
+      fun r _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    rw [List.take_zero]; rfl
+  have hloop := Cmd.cost_forBnd_le KCARD CARDS cardLenCardBody u1
+    (6 + 2 * ((Cmd.flatK cardLenElemBody + 20) * ((Ω + 1) * (Ω + 1))))
+    (CLInv C C.width (State.get u1 GWF) u1) hbase
+    (fun j st _ hM => CLInv_step C C.width (State.get u1 GWF) u1 j st hM)
+    (fun j st _ hM => cardLenCardBody_effect C C.width (State.get u1 GWF) u1 Ω
+      (by omega) hΩw j st hM)
+  have hcost : cardLenCheck.cost u
+      = 1 + Op.cost (.copy SCANW CARDS) u
+        + (Cmd.forBnd KCARD CARDS cardLenCardBody).cost u1 := by
+    unfold cardLenCheck
+    rw [Cmd.cost_seq, Cmd.cost_op, e0]
+  rw [hcost, hc0]
+  rw [hu1CARDSlen] at hloop
+  -- close the arithmetic
+  set K := Cmd.flatK cardLenElemBody with hK
+  clear_value K
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  set P3 := (Ω + 1) * P2 with hP3
+  set len := (State.get u CARDS).length with hlenDef
+  have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+  have hP23 : P2 ≤ P3 := by rw [hP3]; exact le_scale Ω P2
+  have h1P3 : 1 ≤ P3 := le_trans h1P2 hP23
+  set B := 6 + 2 * ((K + 20) * P2) with hB
+  have hBle : B ≤ (2 * K + 46) * P2 := by
+    rw [hB]
+    have h6 : 6 ≤ 6 * P2 := by omega
+    have he : 2 * ((K + 20) * P2) + 6 * P2 = (2 * K + 46) * P2 := by ring
+    omega
+  have hlB : len * B ≤ (Ω + 1) * ((2 * K + 46) * P2) :=
+    Nat.mul_le_mul (by omega) hBle
+  have he3 : (Ω + 1) * ((2 * K + 46) * P2) = (2 * K + 46) * P3 := by
+    rw [hP3]; ring
+  have hll : len * len ≤ Ω * Ω := Nat.mul_le_mul hΩS hΩS
+  have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+  have hfin : (2 * K + 60) * P3 = (2 * K + 46) * P3 + 14 * P3 := by ring
+  omega
+
+/-- **`computeWF` cost**: cubic in the ceiling `Ω`, which must dominate the
+four scalar inputs (`width`/`offset`/`L`/`|CARDS|`). Straight-line walk of
+`computeWF_run`'s spine. -/
+theorem computeWF_cost (C : BinaryCC) (u : State) (Ω : Nat)
+    (hW : State.get u WIDTH = List.replicate C.width 1)
+    (hO : State.get u OFFSET = List.replicate C.offset 1)
+    (hL : State.get u LREG = List.replicate C.init.length 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = [])
+    (hΩ : C.width + C.offset + C.init.length + (State.get u CARDS).length ≤ Ω) :
+    computeWF.cost u
+      ≤ (2 * Cmd.flatK cardLenElemBody + 160)
+          * ((Ω + 1) * ((Ω + 1) * (Ω + 1))) := by
+  -- the spine states
+  set t0 := (Cmd.op (.clear GWF)).eval u with ht0
+  set t1 := (Cmd.op (.appendOne GWF)).eval t0 with ht1
+  set t2 := (Cmd.op (.nonEmpty TFLG WIDTH)).eval t1 with ht2
+  set t3 := (andFlag TFLG).eval t2 with ht3
+  set t4 := (Cmd.op (.nonEmpty TFLG OFFSET)).eval t3 with ht4
+  set t5 := (andFlag TFLG).eval t4 with ht5
+  set t6 := (leCheck WIDTH LREG).eval t5 with ht6
+  set t7 := (andFlag TFLG).eval t6 with ht7
+  set t8 := (dvdCheck WIDTH OFFSET).eval t7 with ht8
+  set t9 := (andFlag TFLG).eval t8 with ht9
+  set t10 := (dvdCheck LREG OFFSET).eval t9 with ht10
+  set t11 := (andFlag TFLG).eval t10 with ht11
+  -- per-fragment frames
+  have ht0f : ∀ r : Var, r ≠ GWF → State.get t0 r = State.get u r := by
+    intro r hr; rw [ht0, Cmd.eval_op]; exact Op.eval_get_ne_writesTo _ _ _ hr
+  have ht1f : ∀ r : Var, r ≠ GWF → State.get t1 r = State.get t0 r := by
+    intro r hr; rw [ht1, Cmd.eval_op]; exact Op.eval_get_ne_writesTo _ _ _ hr
+  have ht2f : ∀ r : Var, r ≠ TFLG → State.get t2 r = State.get t1 r := by
+    intro r hr; rw [ht2, Cmd.eval_op]; exact Op.eval_get_ne_writesTo _ _ _ hr
+  have ht4f : ∀ r : Var, r ≠ TFLG → State.get t4 r = State.get t3 r := by
+    intro r hr; rw [ht4, Cmd.eval_op]; exact Op.eval_get_ne_writesTo _ _ _ hr
+  -- registers threaded to t5
+  have hchain5 : ∀ r : Var, r ≠ GWF → r ≠ TFLG → r ≠ ZERO →
+      State.get t5 r = State.get u r := by
+    intro r h1 h2 h3
+    rw [ht5, andFlag_frame' TFLG t4 r h3 h1, ht4f r h2, ht3,
+      andFlag_frame' TFLG t2 r h3 h1, ht2f r h2, ht1f r h1, ht0f r h1]
+  have ht5W : State.get t5 WIDTH = List.replicate C.width 1 :=
+    (hchain5 WIDTH (by decide) (by decide) (by decide)).trans hW
+  have ht5O : State.get t5 OFFSET = List.replicate C.offset 1 :=
+    (hchain5 OFFSET (by decide) (by decide) (by decide)).trans hO
+  have ht5L : State.get t5 LREG = List.replicate C.init.length 1 :=
+    (hchain5 LREG (by decide) (by decide) (by decide)).trans hL
+  have ht5C : State.get t5 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    (hchain5 CARDS (by decide) (by decide) (by decide)).trans hCARDS
+  have ht5Llen : (State.get t5 LREG).length = C.init.length := by
+    rw [ht5L, List.length_replicate]
+  have ht5Z : State.get t5 ZERO = [] := by
+    rw [ht5]
+    refine andFlag_ZERO TFLG t4 ?_
+    rw [ht4f ZERO (by decide), ht3]
+    refine andFlag_ZERO TFLG t2 ?_
+    rw [ht2f ZERO (by decide), ht1f ZERO (by decide), ht0f ZERO (by decide)]
+    exact hZ
+  -- through leCheck (write set is register-concrete)
+  have ht6f : ∀ r : Var, r ∉ Cmd.writes (leCheck WIDTH LREG) →
+      State.get t6 r = State.get t5 r := by
+    intro r hr; rw [ht6]; exact Cmd.eval_get_of_not_writes _ _ _ hr
+  have ht6W : State.get t6 WIDTH = List.replicate C.width 1 :=
+    (ht6f WIDTH (by decide)).trans ht5W
+  have ht6O : State.get t6 OFFSET = List.replicate C.offset 1 :=
+    (ht6f OFFSET (by decide)).trans ht5O
+  have ht6L : State.get t6 LREG = List.replicate C.init.length 1 :=
+    (ht6f LREG (by decide)).trans ht5L
+  have ht6C : State.get t6 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    (ht6f CARDS (by decide)).trans ht5C
+  have ht6Z : State.get t6 ZERO = [] := (ht6f ZERO (by decide)).trans ht5Z
+  -- t7 = andFlag
+  have ht7W : State.get t7 WIDTH = List.replicate C.width 1 := by
+    rw [ht7, andFlag_frame' TFLG t6 WIDTH (by decide) (by decide)]; exact ht6W
+  have ht7O : State.get t7 OFFSET = List.replicate C.offset 1 := by
+    rw [ht7, andFlag_frame' TFLG t6 OFFSET (by decide) (by decide)]; exact ht6O
+  have ht7L : State.get t7 LREG = List.replicate C.init.length 1 := by
+    rw [ht7, andFlag_frame' TFLG t6 LREG (by decide) (by decide)]; exact ht6L
+  have ht7C : State.get t7 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [ht7, andFlag_frame' TFLG t6 CARDS (by decide) (by decide)]; exact ht6C
+  have ht7Z : State.get t7 ZERO = [] := by
+    rw [ht7]; exact andFlag_ZERO TFLG t6 ht6Z
+  -- t8 = dvdCheck WIDTH OFFSET
+  obtain ⟨-, hdv1Z, hdv1F⟩ := dvdCheck_run WIDTH OFFSET C.width C.offset t7
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    ht7W ht7O ht7Z
+  have ht8f : ∀ r : Var, r ≠ MREM → r ≠ MCHK → r ≠ MGE → r ≠ KTMP → r ≠ KTMP2 →
+      r ≠ ZERO → r ≠ TFLG → State.get t8 r = State.get t7 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7; rw [ht8]; exact hdv1F r h1 h2 h3 h4 h5 h6 h7
+  have ht8Z : State.get t8 ZERO = [] := by rw [ht8]; exact hdv1Z
+  have ht8W : State.get t8 WIDTH = List.replicate C.width 1 :=
+    (ht8f WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ht7W
+  have ht8O : State.get t8 OFFSET = List.replicate C.offset 1 :=
+    (ht8f OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ht7O
+  have ht8L : State.get t8 LREG = List.replicate C.init.length 1 :=
+    (ht8f LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ht7L
+  have ht8C : State.get t8 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    (ht8f CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ht7C
+  -- t9 = andFlag
+  have ht9O : State.get t9 OFFSET = List.replicate C.offset 1 := by
+    rw [ht9, andFlag_frame' TFLG t8 OFFSET (by decide) (by decide)]; exact ht8O
+  have ht9L : State.get t9 LREG = List.replicate C.init.length 1 := by
+    rw [ht9, andFlag_frame' TFLG t8 LREG (by decide) (by decide)]; exact ht8L
+  have ht9W : State.get t9 WIDTH = List.replicate C.width 1 := by
+    rw [ht9, andFlag_frame' TFLG t8 WIDTH (by decide) (by decide)]; exact ht8W
+  have ht9C : State.get t9 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [ht9, andFlag_frame' TFLG t8 CARDS (by decide) (by decide)]; exact ht8C
+  have ht9Z : State.get t9 ZERO = [] := by
+    rw [ht9]; exact andFlag_ZERO TFLG t8 ht8Z
+  -- t10 = dvdCheck LREG OFFSET
+  obtain ⟨-, -, hdv2F⟩ := dvdCheck_run LREG OFFSET C.init.length C.offset t9
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    ht9L ht9O ht9Z
+  have ht10f : ∀ r : Var, r ≠ MREM → r ≠ MCHK → r ≠ MGE → r ≠ KTMP → r ≠ KTMP2 →
+      r ≠ ZERO → r ≠ TFLG → State.get t10 r = State.get t9 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7; rw [ht10]; exact hdv2F r h1 h2 h3 h4 h5 h6 h7
+  have ht10W : State.get t10 WIDTH = List.replicate C.width 1 :=
+    (ht10f WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ht9W
+  have ht10C : State.get t10 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    (ht10f CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide)).trans ht9C
+  -- t11 = andFlag
+  have ht11W : State.get t11 WIDTH = List.replicate C.width 1 := by
+    rw [ht11, andFlag_frame' TFLG t10 WIDTH (by decide) (by decide)]; exact ht10W
+  have ht11C : State.get t11 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [ht11, andFlag_frame' TFLG t10 CARDS (by decide) (by decide)]; exact ht10C
+  have ht11Clen : (State.get t11 CARDS).length ≤ Ω := by
+    rw [ht11C, ← hCARDS]; omega
+  -- the four check costs
+  have hle := leCheck_cost WIDTH LREG C.width C.init.length t5 Ω (by decide)
+    ht5W ht5Llen (by omega) (by omega)
+  have hdv1 := dvdCheck_cost WIDTH OFFSET C.width C.offset t7 Ω (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    ht7W ht7O ht7Z (by omega) (by omega)
+  have hdv2 := dvdCheck_cost LREG OFFSET C.init.length C.offset t9 Ω (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    ht9L ht9O ht9Z (by omega) (by omega)
+  have hcl := cardLenCheck_cost C t11 Ω ht11C ht11W ht11Clen (by omega)
+  -- assemble the cost
+  have hcost : computeWF.cost u
+      = 1 + 1 + (1 + 1 + (1 + 1 + (1 + (andFlag TFLG).cost t2
+        + (1 + 1 + (1 + (andFlag TFLG).cost t4
+        + (1 + (leCheck WIDTH LREG).cost t5
+        + (1 + (andFlag TFLG).cost t6
+        + (1 + (dvdCheck WIDTH OFFSET).cost t7
+        + (1 + (andFlag TFLG).cost t8
+        + (1 + (dvdCheck LREG OFFSET).cost t9
+        + (1 + (andFlag TFLG).cost t10
+        + cardLenCheck.cost t11))))))))))) := by
+    unfold computeWF
+    rw [Cmd.cost_seq, Cmd.cost_op, ← ht0, Cmd.cost_seq, Cmd.cost_op, ← ht1,
+      Cmd.cost_seq, Cmd.cost_op, ← ht2, Cmd.cost_seq, ← ht3,
+      Cmd.cost_seq, Cmd.cost_op, ← ht4, Cmd.cost_seq, ← ht5,
+      Cmd.cost_seq, ← ht6, Cmd.cost_seq, ← ht7, Cmd.cost_seq, ← ht8,
+      Cmd.cost_seq, ← ht9, Cmd.cost_seq, ← ht10, Cmd.cost_seq, ← ht11]
+    simp only [Op.cost]
+  rw [hcost, andFlag_cost TFLG t2, andFlag_cost TFLG t4, andFlag_cost TFLG t6,
+    andFlag_cost TFLG t8, andFlag_cost TFLG t10]
+  -- close the arithmetic
+  have hleB := hle
+  have hdv1B := hdv1
+  have hdv2B := hdv2
+  have hclB := hcl
+  set K := Cmd.flatK cardLenElemBody with hK
+  clear_value K
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  set P3 := (Ω + 1) * P2 with hP3
+  set c5 := (leCheck WIDTH LREG).cost t5 with hc5
+  clear_value c5
+  set c7 := (dvdCheck WIDTH OFFSET).cost t7 with hc7
+  clear_value c7
+  set c9 := (dvdCheck LREG OFFSET).cost t9 with hc9
+  clear_value c9
+  set c11 := cardLenCheck.cost t11 with hc11
+  clear_value c11
+  have h1P2 : 1 ≤ P2 := by rw [hP2]; exact one_le_P Ω
+  have hP23 : P2 ≤ P3 := by rw [hP3]; exact le_scale Ω P2
+  have h1P3 : 1 ≤ P3 := le_trans h1P2 hP23
+  have h12 : 12 * P2 ≤ 12 * P3 := Nat.mul_le_mul_left _ hP23
+  have hfin : (2 * K + 160) * P3 = (2 * K + 60) * P3 + 100 * P3 := by ring
+  omega
+
 end BinaryCCFSATFree
