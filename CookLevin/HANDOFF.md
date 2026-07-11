@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-10; `buildFSAT_run` DONE — the whole BinaryCC→FSAT RUN-lemma stack is COMPLETE)
+## Where the proof stands (2026-07-10-b; BinaryCC→FSAT `cost_le` accounting ~70% DONE — generic cost toolkit landed, all emitters except `emitFinal`'s two folds costed)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -17,14 +17,16 @@ reasonably provable).
   `FlatCCBinFree.flatCC_reducesPolyMO'`, and the **first COMPOSED live `⪯p'`**
   `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' : FlatTCC ⪯p' BinaryCC`
   (first live `SeamData`/`comp`). All axiom-clean. **Next chain step
-  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated, and the
-  ENTIRE run-lemma stack (session 3, parts 1–7) is DONE, sorry-free &
-  axiom-clean — size bound, ALL emitters, the wellformedness guard
-  `computeWF_run` (now with frame clause), `precompLen_run`, and the assembly
-  `buildFSAT_run : (buildFSAT.eval (encodeIn C)).get FOUT =
-  serF (BinaryCC_to_FSAT_instance C)`. The correctness crux is closed;
-  remaining is `cost_le` (accounting — cost-probed, degree ~5–6, NO
-  structural risk), the mechanical field discharge, and the seam.**
+  `BinaryCC ⪯p' FSAT`: the program is BUILT & `#eval`-validated, the ENTIRE
+  run-lemma stack is DONE (assembly `buildFSAT_run` included), and the
+  `cost_le` accounting is ~70% DONE (session 4, 2026-07-10-b): the generic
+  loop-free cost toolkit (`Lang/CostFlat.lean`) + per-loop cost lemmas for
+  `emitBitsFromScan/Sent`, `readOneFinal`, `emitCardsAt`, `stepBody`,
+  `emitAllSteps` (both fold levels), and `finalStepBody` — all sorry-free &
+  axiom-clean. Remaining: `emitFinal`'s two `listOr` folds (direct mirror of
+  the landed `emitAllSteps` pattern), the guard checks' costs, the
+  `buildFSAT` cost assembly + `cost_le`/`output_size_le`, the mechanical
+  fields, and the seam.**
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
@@ -50,6 +52,35 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-10-b (top-down), session 4 — the `cost_le` accounting, ~70%:
+  generic cost toolkit + cost lemmas for every emitter except `emitFinal`'s
+  two folds, all sorry-free & axiom-clean, build green (3378), 6 commits.**
+  (a) **NEW `Lang/CostFlat.lean`** (generic, reusable for every future
+  witness's cost pass): `Cmd.cost_le_flat` — for a loop-free fragment with
+  all `costReads`-register lengths `≤ M` at entry, `cost ≤ flatK·(M+1)` and
+  no register grows by more (kills ALL op-by-op `cost_seq` walking of
+  straight-line bodies); syntactic write-set frame
+  `Op.writesTo`/`Cmd.writes`/`Cmd.eval_get_of_not_writes` (frame facts by
+  `decide`, no register-bound arithmetic); `State.get_length_le_size`;
+  `cost_mulLoop_le`/`cost_tailLoop_le` (the two ubiquitous unary loops).
+  (b) **The method that worked** (copy it for the rest): per loop, call
+  `Cmd.cost_forBnd_le` with motive := (the EXISTING run invariant) ∧
+  `|WREG| ≤ Ω`, reusing the `_step` lemmas for preservation; per-iteration
+  body cost via `cost_le_flat` with ceilings read off the invariant; per
+  composite body, ONE `_effect` lemma concluding `cost ≤ … ∧ WREG-exit ≤ Ω`
+  (WREG is the one scratch register the emitters both read and write, so
+  every cost lemma threads its ceiling). All `OUT` ceilings chain through
+  `serF`-length algebra: `serF_length_le_size` (`≤ 4·encodable.size`),
+  `serF_length_le_of_mem_listAnd/Or`, `and/orPrefix_take_length_le`,
+  `and/orPrefix_range_succ/_le`, `bitsPrefix/cardsPrefix_take_length_le` —
+  every mid-loop `OUT` is `entry ++ prefix-of-a-closed-serialization`.
+  (c) Landed cost lemmas (each `X_cost`, conclusions `≤ K·(Ω+1)^d` with ONE
+  ceiling parameter Ω and explicit hypotheses saying what Ω dominates):
+  `emitBitsFromScan` (d=2), `emitBitsFromSent` (2), `readOneFinal` (2),
+  `emitCardsAt` (3, + `emitCardsAt_WREG`), `stepBody` (3, + WREG exit),
+  `emitAllSteps` (5, via `stepIterBody_effect`/`lineBody_effect`),
+  `finalStepBody` (2, + `emitBitsFromScan_WREG`). Constants stay SYMBOLIC
+  over `Cmd.flatK (sentBitBody 0)`/`(bsBody 0)` — never evaluate them.
 - **2026-07-10 (top-down), session 3 part 7 — `buildFSAT_run` DONE (the
   assembly, the last big top-down lemma), sorry-free & axiom-clean
   (`[propext, Classical.choice, Quot.sound]`), build green (3377), probe
@@ -392,26 +423,49 @@ serialized formula, regs 5/17–21 clean inputs, the rest ≤ 56 dirty) — pin
 this witness's `encodeIn` to it (input = the `serF` bit-stream, numbers
 unary) so its seam is copy-`FOUT`-and-scrub.
 
-## NEXT TOP-DOWN session — finish the `BinaryCC_to_FSAT` witness: **`cost_le`**
+## NEXT TOP-DOWN session — finish `cost_le` (the pattern is landed; mirror it)
 
-The correctness crux is CLOSED: `encodeIn_size_le`, every emitter `_run`,
-`computeWF_run` (+frame), `precompLen_run`, and the assembly **`buildFSAT_run`
-are all landed, sorry-free & axiom-clean** (see the plan block at the bottom
-of `Reductions/BinaryCC_to_FSAT_free.lean`, kept current). Remaining, in
-order (budget ~one item per session; commit each green):
+Session 4 landed the method and ~70% of the accounting (see the latest-sessions
+entry; everything is at the bottom of `Reductions/BinaryCC_to_FSAT_free.lean`,
+section "## 4. `cost_le`"). Remaining, in order (commit each green):
 
-3. **`cost_le` (NEXT)** — bound `Cmd.cost buildFSAT (encodeIn C)` by a
-   polynomial in `encodable.size C`. **Cost-probed 2026-07-10: fixed degree
-   ~5–6, no structural risk** (see the plan block for the numbers). None of
-   the emitters carries a cost lemma yet — build the accounting bottom-up
-   mirroring the run-lemma structure (leaf gadgets → `stepBody`/
-   `finalStepBody` → the fold loops → `computeWF` → assembly), with
-   `cost_forBnd_le` per loop (cf. CliqueRel quartic→quintic and
-   `binBudget_le_poly` for the monomial-domination endgame). The var-index
-   mul-loops are `Θ(index²)` (concat re-reads the accumulator) over
-   `Θ(steps·L)` indices. Watch the `omega` cliffs (Conventions): fold
-   `Cmd.cost` atoms with `set`+`clear_value`, extract a clean-context
-   arithmetic lemma for the 20+-variable closer. `output_size_le` reuses
+3a. **`emitFinal_cost` — a DIRECT MIRROR of the landed `emitAllSteps` trio.**
+   Write `finalStepIterBody_effect` (mirror `stepIterBody_effect`: motive
+   `FSInv C bits u3 i st ∧ |WREG| ≤ Ω`, reuse `FSInv_step`; body = `emitForrTag
+   ;; finalStepBody`, cost via the landed `finalStepBody_cost`; OUT ceiling via
+   `orPrefix_range_succ/_le` against `serF (encodeFinalString C bits)`), then
+   `finalStringBody_effect` (mirror `lineBody_effect` + `cardEmitBody_effect`'s
+   live/idle split over `FFInv`: live iteration = `nonEmpty` + `emitForrTag` +
+   `readOneFinal_run`/`readOneFinal_cost` + the inner `forBnd KFSTEP LREG1`
+   loop + `emitFalse`; per-string `|bits| ≤ |FINAL stream|` via
+   `encSList_length_ge` + `encFinal_cons`/`length_le_encFinal`), then
+   `emitFinal_cost` (mirror `emitAllSteps_cost`: prelude `cost_mulLoop_le` on
+   STEPSL + copy SCANF + the FFInv loop + `emitFalse`; conclusion `≤ K·(Ω+1)^5`).
+3b. **Guard costs — simpler, mostly length-only motives** (streams only
+   shrink): `leCheck` (copy + `cost_tailLoop_le` + flat); `dvdBody`
+   (handwritten walk: copy MCHK + two tail-loops), `dvdCheck` (loop over X,
+   motive `|MREM| ≤ a ∧ MCHK/D-frames` — length-only works, D is untouched);
+   `cardLenElemBody` is loop-free (`costReads = [SCANW]^5`, reuse `CEInv` +
+   `CEInv_step` like `readOneFinal_cost` did `RFInv`); `cardLenItem` (walk +
+   `eqBit` cost = `|CLEN|+|WIDTH|+1`); `cardLenCardBody`/`cardLenCheck`
+   (mirror `cardEmitBody_effect`/`emitCardsAt_cost` over `CLInv`);
+   `computeWF_cost` (straight-line walk of the six checks — crib
+   `computeWF_run`'s spine).
+3c. **`buildFSAT` cost assembly + the witness fields.** `precompLen` cost is
+   trivial (3 flat ops + a constant-body loop, `cost_forBnd_le` with motive
+   `True`, B=1). Assembly: crib `buildFSAT_run`'s spine; instantiate every
+   emitter's Ω with the MASTER ceiling `Ω := 2000·(n+1)^6` (`n :=
+   encodable.size C`): it dominates `4·(500n⁶+500) ≥ |serF (encodeTableau C)|`
+   (via `serF_length_le_size` + `BinaryCC_to_FSAT_instance_size_bound`
+   unfolded at `dif_pos hWf`), all var indices (`≤ 2n²+n`), all stream lengths
+   (`≤ 2n`), and every `hΩidx` sum. The three top-level `hΩO`s split off
+   `serF (encodeTableau C) = [0,1] ++ serF(bitsAt) ++ ([0,1] ++ serF(allSteps)
+   ++ serF(final))` (`serF` unfold + length_append). The final `copy FOUT OUT`
+   cost needs `|OUT| ≤ State.size` (`State.get_length_le_size`) +
+   `Cmd.size_eval_le` on the prefix program — NO extra serialization lemma.
+   `cost_bound := fun n => KTOT * (2000*(n+1)^6 + 1)^5`-ish with KTOT symbolic
+   over the flatK constants — only `inOPoly`/`monotonic` matter, NEVER
+   evaluate flatK numerals. `output_size_le` reuses
    `BinaryCC_to_FSAT_instance_size_bound`.
 4. **`enc_bit`/`usesBelow`/`width_le`/`decode_agree` + the witness record** —
    mechanical (`regBound := regFrame + 2·buildFSAT.loopDepth`; copy
@@ -541,6 +595,19 @@ order (budget ~one item per session; commit each green):
   (as `emitFinal` → `finalStepBody`/`finalStepIterBody`/`finalStringBody`);
   the probe stays green (defeq). Copy these shapes; do not re-derive the
   `clear_value`/`heval` bookkeeping.
+- **The cost toolkit (2026-07-10-b).** Generic (`Lang/CostFlat.lean`):
+  `Cmd.cost_le_flat` (loop-free flat bound over `Cmd.costReads` ceilings +
+  growth clause), `Cmd.writes`/`Cmd.eval_get_of_not_writes` (decide-able
+  frame), `cost_mulLoop_le`/`cost_tailLoop_le`/`cost_constLoop_le`,
+  `Cmd.cost_forBnd_flat_le`, `State.get_length_le_size`. In the witness file:
+  the `serF`-length algebra (`serF_length_le_size`,
+  `serF_length_le_of_mem_listAnd/Or`, `and/orPrefix_take_length_le`,
+  `and/orPrefix_range_succ/_le`, `bitsPrefix/cardsPrefix_take_length_le`,
+  `encSList/encCardsOut/encFinal_drop_length_le`, `encSList_length_ge`), the
+  WREG transports (`bsBody_WREG`/`sentBitBody_WREG`/`emitBitsFromScan_WREG`/
+  `emitBitsFromSent_WREG`/`emitCardsAt_WREG`), the arithmetic closers
+  (`mulLoopClose`/`subLoopClose`/`one_le_P`/`le_scale`), and the landed
+  `_cost`/`_effect` lemmas (latest-sessions entry). Do not re-derive.
 - **The flatTCC free-reduction stack** (`Reductions/FlatTCC_to_FlatCC_free.lean`):
   `blockMove_run`/`halfMove_run`, `cardStep_step`, `encSList` +
   `encSList_append_inj`, `encKey_injective`/`extractKey`,
@@ -660,6 +727,24 @@ order (budget ~one item per session; commit each green):
 - **`decide` fails when the goal type mentions free vars** — `show (0 : Nat) ≠ 2`
   first. `Cmd.UsesBelow` of a concrete program: full `simp [defs…]`.
 - **`set` (tactic) lives only in `PolyTime.lean`, not `Frame.lean`** (core-only).
+- **NEW (session 4, the cost pass):** (a) `Cmd.flatK`/`Cmd.cost` atoms in a
+  goal make `omega`/`ring`/`nlinarith` whnf- or isDefEq-TIMEOUT — always
+  `set K := Cmd.flatK (…) with hK; clear_value K` (and the same for
+  `(Ω+1)^d` power atoms `P2/P3/…`) before the arithmetic closer; keep the
+  power-tower equations (`hP3 : P3 = (Ω+1) * P2`) and close with `ring` on
+  those + `omega` on the atoms. (b) `nlinarith` in a fat context (a loop
+  lemma's 60+ hypotheses) TIMES OUT — extract clean-context `private`
+  helpers (`one_le_P`, `le_scale`, `mulLoopClose`, `subLoopClose`). (c) Give
+  every `K·(Ω+1)^d` bound Ω=0 HEADROOM (constants like `+16·P4` must cover
+  the additive junk at `P4 = 1` — a too-tight constant fails only at Ω=0 and
+  omega's counterexample is unreadable). (d) After `rw [Cmd.cost_op]` add
+  `simp only [Op.cost]` or the un-evaluated `Op.cost` term poisons `omega`.
+  (e) `;;` binds LOOSER than `=`: parenthesize the RHS of every
+  `c = (a ;; b) := rfl` restructuring equation. (f) The membership hypothesis
+  of `Cmd.eval_get_of_not_writes` is `decide`-able only at CONCRETE registers
+  — for symbolic `BASE`, take it as a lemma hypothesis and discharge at call
+  sites. (g) `emitFtrue_cost`/`emitFandTag_cost`/`emitForrTag_cost` (= 3) and
+  `emitFalse_cost` (= 9) are `rfl`.
 - Methodology: **skeleton-first; refine the highest-risk gap next; decompose
   `sorry`s, don't elaborate them; probe before committing engineering;
   `def`+`sorry` over `axiom` (count = 0); build green between commits.**
