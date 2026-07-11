@@ -1,6 +1,7 @@
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT
 import Complexity.NP.SAT.CookLevin.Reductions.FlatCC_to_BinaryCC_free
 import Complexity.Lang.PolyTime
+import Complexity.Lang.CostFlat
 
 set_option autoImplicit false
 
@@ -4899,5 +4900,2220 @@ no design risk. Ordered (templates in `FlatCC_to_BinaryCC_free.lean`):
    composed live `⪯p'`. `encodeIn` is already pinned to that exit frame, so the
    seam is near-pure.
 -/
+
+/-! ## 4. `cost_le` — the cost accounting (session 4)
+
+Per-loop cost bounds via `Cmd.cost_forBnd_le`, reusing the run invariants
+(`BSInv`/`SBInv`/`CAInv`/…) and their `_step` lemmas as the loop motive
+(extended by a `WREG`-length clause where the body reads scratch), and bounding
+each loop-free body by the generic `Cmd.cost_le_flat` (`Lang/CostFlat.lean`).
+Every lemma takes ONE ceiling parameter `Ω` with hypotheses stating what it
+dominates; `OUT` ceilings chain through `serF`-length bounds
+(`serF_length_le_size` + `listAnd`/`listOr` membership monotonicity) against
+the final output, whose size `BinaryCC_to_FSAT_instance_size_bound` bounds.
+Constants stay SYMBOLIC (`def`s over `Cmd.flatK`) — only `inOPoly` matters. -/
+
+/-! ### Serialization length bounds -/
+
+theorem serF_length_le_size (f : formula) : (serF f).length ≤ 4 * encodable.size f := by
+  induction f with
+  | ftrue => simp [serF]
+  | fvar v =>
+      simp only [serF, encodable_size_formula_fvar, List.length_append,
+        List.length_cons, List.length_replicate, List.length_nil]
+      omega
+  | fand a b iha ihb =>
+      simp only [serF, encodable_size_formula_fand, List.length_append,
+        List.length_cons, List.length_nil]
+      omega
+  | forr a b iha ihb =>
+      simp only [serF, encodable_size_formula_forr, List.length_append,
+        List.length_cons, List.length_nil]
+      omega
+  | fneg a iha =>
+      simp only [serF, encodable_size_formula_fneg, List.length_append,
+        List.length_cons, List.length_nil]
+      omega
+
+/-- A conjunct's serialization is no longer than the whole `listAnd`'s. -/
+theorem serF_length_le_of_mem_listAnd {f : formula} {fs : List formula}
+    (h : f ∈ fs) : (serF f).length ≤ (serF (listAnd fs)).length := by
+  induction fs with
+  | nil => cases h
+  | cons g gs ih =>
+      rcases List.mem_cons.mp h with rfl | h'
+      · show _ ≤ (serF (.fand f (listAnd gs))).length
+        simp [serF]; omega
+      · refine le_trans (ih h') ?_
+        show _ ≤ (serF (.fand g (listAnd gs))).length
+        simp [serF]; omega
+
+/-- A disjunct's serialization is no longer than the whole `listOr`'s. -/
+theorem serF_length_le_of_mem_listOr {f : formula} {fs : List formula}
+    (h : f ∈ fs) : (serF f).length ≤ (serF (listOr fs)).length := by
+  induction fs with
+  | nil => cases h
+  | cons g gs ih =>
+      rcases List.mem_cons.mp h with rfl | h'
+      · show _ ≤ (serF (.forr f (listOr gs))).length
+        simp [serF]; omega
+      · refine le_trans (ih h') ?_
+        show _ ≤ (serF (.forr g (listOr gs))).length
+        simp [serF]; omega
+
+/-- Mid-loop `OUT` ceiling, `listAnd` level: any processed-prefix `andPrefix`
+is bounded by the closed serialization. -/
+theorem andPrefix_take_length_le (fs : List formula) (i : Nat) :
+    (andPrefix (fs.take i)).length ≤ (serF (listAnd fs)).length := by
+  rw [serF_listAnd]
+  calc (andPrefix (fs.take i)).length
+      ≤ (andPrefix (fs.take i)).length + (andPrefix (fs.drop i)).length :=
+        Nat.le_add_right _ _
+    _ = (andPrefix (fs.take i ++ fs.drop i)).length := by
+        rw [andPrefix_append, List.length_append]
+    _ = (andPrefix fs).length := by rw [List.take_append_drop]
+    _ ≤ (andPrefix fs ++ serF .ftrue).length := by simp
+
+/-- Mid-loop `OUT` ceiling, `listOr` level. -/
+theorem orPrefix_take_length_le (fs : List formula) (i : Nat) :
+    (orPrefix (fs.take i)).length ≤ (serF (listOr fs)).length := by
+  rw [serF_listOr]
+  calc (orPrefix (fs.take i)).length
+      ≤ (orPrefix (fs.take i)).length + (orPrefix (fs.drop i)).length :=
+        Nat.le_add_right _ _
+    _ = (orPrefix (fs.take i ++ fs.drop i)).length := by
+        rw [orPrefix_append, List.length_append]
+    _ = (orPrefix fs).length := by rw [List.take_append_drop]
+    _ ≤ _ := by simp
+
+/-- Mid-loop `OUT` ceiling, bit level. -/
+theorem bitsPrefix_take_length_le (start : Nat) (bits : List Bool) (i : Nat) :
+    (bitsPrefix start (bits.take i)).length
+      ≤ (serF (BinaryCCToFSAT.encodeBitsAt start bits)).length := by
+  rw [serF_encodeBitsAt]
+  calc (bitsPrefix start (bits.take i)).length
+      ≤ (bitsPrefix start (bits.take i)).length
+        + (bitsPrefix (start + (bits.take i).length) (bits.drop i)).length :=
+        Nat.le_add_right _ _
+    _ = (bitsPrefix start (bits.take i ++ bits.drop i)).length := by
+        rw [bitsPrefix_append, List.length_append]
+    _ = (bitsPrefix start bits).length := by rw [List.take_append_drop]
+    _ ≤ _ := by simp
+
+/-- Mid-loop `OUT` ceiling, card level. -/
+theorem cardsPrefix_take_length_le (sA sB : Nat) (cs : List (CCCard Bool)) (j : Nat) :
+    (cardsPrefix sA sB (cs.take j)).length
+      ≤ (serF (listOr (cs.map (encodeCardAt sA sB)))).length := by
+  rw [serF_encodeCardsAt]
+  calc (cardsPrefix sA sB (cs.take j)).length
+      ≤ (cardsPrefix sA sB (cs.take j)).length
+        + (cardsPrefix sA sB (cs.drop j)).length := Nat.le_add_right _ _
+    _ = (cardsPrefix sA sB (cs.take j ++ cs.drop j)).length := by
+        rw [cardsPrefix_append, List.length_append]
+    _ = (cardsPrefix sA sB cs).length := by rw [List.take_append_drop]
+    _ ≤ _ := by simp
+
+/-- Dropping bits only shortens the sentinel stream. -/
+private theorem encSList_drop_length_le (l : List Nat) (i : Nat) :
+    (FlatTCCFree.encSList (l.drop i)).length ≤ (FlatTCCFree.encSList l).length := by
+  induction i generalizing l with
+  | zero => simp
+  | succ i ih =>
+      cases l with
+      | nil => simp
+      | cons v xs =>
+          rw [List.drop_succ_cons]
+          refine (ih xs).trans ?_
+          show _ ≤ (FlatTCCFree.encSElem v ++ FlatTCCFree.encSList xs).length
+          simp
+
+/-- Dropping cards only shortens the card stream. -/
+private theorem encCardsOut_drop_length_le (cs : List (CCCard Nat)) (j : Nat) :
+    (FlatTCCFree.encCardsOut (cs.drop j)).length
+      ≤ (FlatTCCFree.encCardsOut cs).length := by
+  induction j generalizing cs with
+  | zero => simp
+  | succ j ih =>
+      cases cs with
+      | nil => simp
+      | cons c cs =>
+          rw [List.drop_succ_cons]
+          refine (ih cs).trans ?_
+          show _ ≤ (FlatTCCFree.encCardOut c ++ FlatTCCFree.encCardsOut cs).length
+          simp
+
+/-- Dropping final strings only shortens the final stream. -/
+private theorem encFinal_drop_length_le (fss : List (List Nat)) (j : Nat) :
+    (FlatTCCFree.encFinal (fss.drop j)).length
+      ≤ (FlatTCCFree.encFinal fss).length := by
+  induction j generalizing fss with
+  | zero => simp
+  | succ j ih =>
+      cases fss with
+      | nil => simp
+      | cons s fss =>
+          rw [List.drop_succ_cons]
+          refine (ih fss).trans ?_
+          show _ ≤ (FlatTCCFree.encSList s ++ FlatTCCFree.encFinal fss).length
+          simp
+
+/-! ### Constant-cost facts for the literal-tag emitters -/
+
+private theorem emitFtrue_cost (s : State) : emitFtrue.cost s = 3 := rfl
+private theorem emitFandTag_cost (s : State) : emitFandTag.cost s = 3 := rfl
+private theorem emitForrTag_cost (s : State) : emitForrTag.cost s = 3 := rfl
+private theorem emitFalse_cost (s : State) : emitFalse.cost s = 9 := rfl
+
+/-! ### The scan-driven bit emitter: cost -/
+
+/-- The loop body of `emitBitsFromScan`, named for the cost pass. -/
+private def bsBody (BASE : Nat) : Cmd :=
+  Cmd.op (.head TFLG SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+  Cmd.op (.concat WREG BASE KBIT) ;; emitFandTag ;; emitLitAt
+
+private theorem emitBitsFromScan_eq (BASE bound : Nat) :
+    emitBitsFromScan BASE bound = (Cmd.forBnd KBIT bound (bsBody BASE) ;; emitFtrue) := rfl
+
+/-- `bsBody`'s only `WREG` write is `WREG := BASE ++ counter`. -/
+private theorem bsBody_WREG (BASE : Nat) (w : State)
+    (hBT : BASE ≠ TFLG) (hBS : BASE ≠ SCAN) :
+    State.get ((bsBody BASE).eval w) WREG = State.get w BASE ++ State.get w KBIT := by
+  unfold bsBody
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq,
+    Cmd.eval_get_of_not_writes _ _ WREG (by decide), Cmd.eval_op]
+  simp only [Op.eval, State.get_set_eq, Cmd.eval_op]
+  rw [State.get_set_ne _ _ _ _ hBS, State.get_set_ne _ _ _ _ hBT,
+    State.get_set_ne _ _ _ _ (show KBIT ≠ SCAN by decide),
+    State.get_set_ne _ _ _ _ (show KBIT ≠ TFLG by decide)]
+
+/-- **`emitBitsFromScan` cost**: quadratic in the ceiling `Ω`. `Ω` must dominate
+the entry `OUT` plus the full emission, the entry `WREG`, and `start + |bits|`. -/
+theorem emitBitsFromScan_cost (BASE bound start : Nat) (bits : List Bool) (u : State)
+    (Ω : Nat)
+    (hBS : BASE ≠ SCAN) (hBO : BASE ≠ OUT) (hBW : BASE ≠ WREG) (hBT : BASE ≠ TFLG)
+    (hBK : BASE ≠ KBIT)
+    (hB : State.get u BASE = List.replicate start 1)
+    (hbnd : (State.get u bound).length = bits.length)
+    (hSC : State.get u SCAN = FlatCCBinFree.bitsNat bits)
+    (hΩO : (State.get u OUT).length
+        + (serF (BinaryCCToFSAT.encodeBitsAt start bits)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩs : start + bits.length ≤ Ω) :
+    (emitBitsFromScan BASE bound).cost u
+      ≤ (Cmd.flatK (bsBody 0) + 6) * ((Ω + 1) * (Ω + 1)) := by
+  rw [emitBitsFromScan_eq, Cmd.cost_seq, emitFtrue_cost]
+  have hloop := Cmd.cost_forBnd_le KBIT bound (bsBody BASE) u
+    (Cmd.flatK (bsBody 0) * (Ω + 1))
+    (fun i st => BSInv BASE start bits u i st ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨by rw [List.drop_zero]; exact hSC,
+      by rw [List.take_zero]; simp [bitsPrefix], fun r _ _ _ _ _ => rfl⟩, hΩW⟩
+    (fun i st hi hM => by
+      obtain ⟨hInv, _⟩ := hM
+      have hi' : i < bits.length := by rw [hbnd] at hi; exact hi
+      refine ⟨BSInv_step BASE start bits u hBS hBO hBW hBT hBK hB i hi' st hInv, ?_⟩
+      rw [bsBody_WREG BASE _ hBT hBS]
+      have hstB : State.get st BASE = List.replicate start 1 := by
+        rw [hInv.2.2 BASE hBS hBO hBW hBT hBK]; exact hB
+      rw [State.get_set_ne _ _ _ _ hBK, State.get_set_eq, hstB]
+      simp only [List.length_append, List.length_replicate]
+      omega)
+    (fun i st hi hM => by
+      obtain ⟨⟨hSCANi, hOUTi, hframei⟩, hWl⟩ := hM
+      have hi' : i < bits.length := by rw [hbnd] at hi; exact hi
+      have hread : ∀ r ∈ Cmd.costReads (bsBody BASE),
+          (State.get (st.set KBIT (List.replicate i 1)) r).length ≤ Ω := by
+        intro r hr
+        have hlist : Cmd.costReads (bsBody BASE)
+            = [SCAN, BASE, KBIT, OUT, WREG, OUT, WREG] := rfl
+        rw [hlist] at hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        have hS' : (State.get (st.set KBIT (List.replicate i 1)) SCAN).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ (show SCAN ≠ KBIT by decide), hSCANi]
+          have hd : (FlatCCBinFree.bitsNat (bits.drop i)).length ≤ bits.length := by
+            rw [show (FlatCCBinFree.bitsNat (bits.drop i)).length
+                = (bits.drop i).length from List.length_map _]
+            rw [List.length_drop]
+            omega
+          omega
+        have hB' : (State.get (st.set KBIT (List.replicate i 1)) BASE).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ hBK,
+            hframei BASE hBS hBO hBW hBT hBK, hB, List.length_replicate]
+          omega
+        have hK' : (State.get (st.set KBIT (List.replicate i 1)) KBIT).length ≤ Ω := by
+          rw [State.get_set_eq, List.length_replicate]
+          omega
+        have hO' : (State.get (st.set KBIT (List.replicate i 1)) OUT).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ (show OUT ≠ KBIT by decide), hOUTi,
+            List.length_append]
+          have := bitsPrefix_take_length_le start bits i
+          omega
+        have hW' : (State.get (st.set KBIT (List.replicate i 1)) WREG).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ (show WREG ≠ KBIT by decide)]
+          exact hWl
+        rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl
+        exacts [hS', hB', hK', hO', hW', hO', hW']
+      exact (Cmd.cost_le_flat (bsBody BASE) rfl
+        (st.set KBIT (List.replicate i 1)) Ω hread).1)
+  -- close the arithmetic
+  have hlen : (State.get u bound).length ≤ Ω := by rw [hbnd]; omega
+  set K := Cmd.flatK (bsBody 0) with hK
+  set A := K * (Ω + 1) with hA
+  set len := (State.get u bound).length with hlenDef
+  have h1 : len * A ≤ (Ω + 1) * A := Nat.mul_le_mul_right A (by omega)
+  have h2 : len * len ≤ Ω * Ω := Nat.mul_le_mul hlen hlen
+  have h3 : (Ω + 1) * A = K * ((Ω + 1) * (Ω + 1)) := by rw [hA]; ring
+  have h4 : (K + 6) * ((Ω + 1) * (Ω + 1))
+      = K * ((Ω + 1) * (Ω + 1)) + 6 * ((Ω + 1) * (Ω + 1)) := by ring
+  have h5 : (Ω + 1) * (Ω + 1) = Ω * Ω + 2 * Ω + 1 := by ring
+  omega
+
+/-! ### The sentinel-driven bit emitter: cost -/
+
+/-- `sentBitBody` either leaves `WREG` alone or writes `BASE ++ counter`. -/
+private theorem sentBitBody_WREG (BASE : Nat) (w : State)
+    (hBT : BASE ≠ TFLG) (hBS : BASE ≠ SCAN) (hBE : BASE ≠ EMARK) :
+    (State.get ((sentBitBody BASE).eval w) WREG).length
+      ≤ max (State.get w WREG).length
+          ((State.get w BASE).length + (State.get w KBIT).length) := by
+  unfold sentBitBody
+  by_cases hD : State.get w DONE = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hD, Cmd.eval_op]
+    simp only [Op.eval]
+    rw [State.get_set_ne _ _ _ _ (show WREG ≠ ZERO by decide)]
+    exact Nat.le_max_left _ _
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hD, Cmd.eval_seq]
+    set w1 := (Cmd.op (.head EMARK SCAN)).eval w with hw1
+    have hw1f : ∀ r : Var, r ≠ EMARK → State.get w1 r = State.get w r := by
+      intro r hr
+      rw [hw1, Cmd.eval_op]
+      exact Op.eval_get_ne_writesTo _ _ _ hr
+    by_cases hE : State.get w1 EMARK = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hE]
+      rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq,
+        Cmd.eval_get_of_not_writes _ _ WREG (by decide), Cmd.eval_op]
+      simp only [Op.eval, State.get_set_eq, Cmd.eval_op]
+      rw [State.get_set_ne _ _ _ _ hBT, State.get_set_ne _ _ _ _ hBS,
+        State.get_set_ne _ _ _ _ (show KBIT ≠ TFLG by decide),
+        State.get_set_ne _ _ _ _ (show KBIT ≠ SCAN by decide),
+        hw1f BASE hBE, hw1f KBIT (by decide)]
+      rw [List.length_append]
+      exact Nat.le_max_right _ _
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hE,
+        Cmd.eval_get_of_not_writes _ _ WREG (by decide),
+        hw1f WREG (by decide)]
+      exact Nat.le_max_left _ _
+
+/-- **`emitBitsFromSent` cost**: quadratic in the ceiling `Ω`. `Ω` must dominate
+the entry `OUT` plus the full emission, the entry `WREG`, and
+`start + |SCAN stream|`. -/
+theorem emitBitsFromSent_cost (BASE start : Nat) (bits : List Bool) (rest : List Nat)
+    (u : State) (Ω : Nat)
+    (hBS : BASE ≠ SCAN) (hBO : BASE ≠ OUT) (hBW : BASE ≠ WREG) (hBT : BASE ≠ TFLG)
+    (hBK : BASE ≠ KBIT) (hBD : BASE ≠ DONE) (hBE : BASE ≠ EMARK) (hBZ : BASE ≠ ZERO)
+    (hB : State.get u BASE = List.replicate start 1)
+    (hZ : State.get u ZERO = [])
+    (hSC : State.get u SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits) ++ rest)
+    (hΩO : (State.get u OUT).length
+        + (serF (BinaryCCToFSAT.encodeBitsAt start bits)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩs : start + (State.get u SCAN).length ≤ Ω) :
+    (emitBitsFromSent BASE).cost u
+      ≤ (Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1)) := by
+  have heq : emitBitsFromSent BASE
+      = (Cmd.op (.clear DONE) ;; (Cmd.forBnd KBIT SCAN (sentBitBody BASE) ;; emitFtrue)) := rfl
+  rw [heq, Cmd.cost_seq, Cmd.cost_seq, emitFtrue_cost, Cmd.cost_op]
+  simp only [Op.cost]
+  have e0 : (Cmd.op (.clear DONE)).eval u = u.set DONE [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  rw [e0]
+  set u1 := u.set DONE [] with hu1
+  have hu1f : ∀ r : Var, r ≠ DONE → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1D : State.get u1 DONE = [] := State.get_set_eq _ _ _
+  have hu1SC : State.get u1 SCAN
+      = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits) ++ rest := by
+    rw [hu1f SCAN (by decide)]; exact hSC
+  have hu1SClen : (State.get u1 SCAN).length = (State.get u SCAN).length := by
+    rw [hu1f SCAN (by decide)]
+  clear_value u1
+  have hsuffix : ∀ i : Nat,
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop i))).length + rest.length
+        ≤ Ω := by
+    intro i
+    have h1 : (FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop i))).length
+        ≤ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits)).length := by
+      rw [show FlatCCBinFree.bitsNat (bits.drop i)
+          = (FlatCCBinFree.bitsNat bits).drop i from List.map_drop ..]
+      exact encSList_drop_length_le _ i
+    have h2 : (State.get u SCAN).length
+        = (FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits)).length + rest.length := by
+      rw [hSC, List.length_append]
+    omega
+  have hloop := Cmd.cost_forBnd_le KBIT SCAN (sentBitBody BASE) u1
+    (Cmd.flatK (sentBitBody 0) * (Ω + 1))
+    (fun i st => SBInv BASE start bits rest u1 i st
+      ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨fun _ => ⟨hu1D, by rw [List.drop_zero]; exact hu1SC,
+        by rw [List.take_zero]; simp [bitsPrefix]⟩,
+      fun h => absurd h (by omega),
+      by rw [hu1f ZERO (by decide)]; exact hZ,
+      fun r _ _ _ _ _ _ _ _ => rfl⟩,
+      by rw [hu1f WREG (by decide)]; exact hΩW⟩
+    (fun i st hi hM => by
+      obtain ⟨hInv, hWprev⟩ := hM
+      refine ⟨SBInv_step BASE start bits rest u1 hBS hBO hBW hBT hBK hBD hBE hBZ
+        (by rw [hu1f BASE hBD]; exact hB) i st hInv, ?_⟩
+      refine le_trans (sentBitBody_WREG BASE _ hBT hBS hBE) ?_
+      have hstB : State.get st BASE = List.replicate start 1 := by
+        rw [hInv.2.2.2 BASE hBS hBO hBW hBT hBK hBD hBE hBZ, hu1f BASE hBD]
+        exact hB
+      rw [State.get_set_ne _ _ _ _ hBK, State.get_set_eq, hstB, List.length_replicate,
+        State.get_set_ne _ _ _ _ (show WREG ≠ KBIT by decide)]
+      have hiΩ : i < (State.get u1 SCAN).length := hi
+      simp only [List.length_replicate]
+      rw [hu1SClen] at hiΩ
+      omega)
+    (fun i st hi hM => by
+      obtain ⟨⟨hph1, hph2, hZERO, hframei⟩, hWl⟩ := hM
+      have hread : ∀ r ∈ Cmd.costReads (sentBitBody BASE),
+          (State.get (st.set KBIT (List.replicate i 1)) r).length ≤ Ω := by
+        intro r hr
+        have hlist : Cmd.costReads (sentBitBody BASE)
+            = [SCAN, BASE, KBIT, OUT, WREG, OUT, WREG,
+               SCAN, SCAN, SCAN, SCAN] := rfl
+        rw [hlist] at hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        have hSCANce : (State.get st SCAN).length ≤ Ω := by
+          by_cases hile : i ≤ bits.length
+          · obtain ⟨_, hS, _⟩ := hph1 hile
+            rw [hS, List.length_append]
+            exact hsuffix i
+          · obtain ⟨_, hS, _⟩ := hph2 (by omega)
+            rw [hS]
+            have := hsuffix 0
+            omega
+        have hOUTce : (State.get st OUT).length ≤ Ω := by
+          by_cases hile : i ≤ bits.length
+          · obtain ⟨_, _, hO⟩ := hph1 hile
+            rw [hO, List.length_append, hu1f OUT (by decide)]
+            have := bitsPrefix_take_length_le start bits i
+            omega
+          · obtain ⟨_, _, hO⟩ := hph2 (by omega)
+            rw [hO, List.length_append, hu1f OUT (by decide)]
+            have h1 := bitsPrefix_take_length_le start bits bits.length
+            rw [List.take_length] at h1
+            omega
+        have hS' : (State.get (st.set KBIT (List.replicate i 1)) SCAN).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ (show SCAN ≠ KBIT by decide)]
+          exact hSCANce
+        have hB' : (State.get (st.set KBIT (List.replicate i 1)) BASE).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ hBK,
+            hframei BASE hBS hBO hBW hBT hBK hBD hBE hBZ, hu1f BASE hBD, hB,
+            List.length_replicate]
+          omega
+        have hK' : (State.get (st.set KBIT (List.replicate i 1)) KBIT).length ≤ Ω := by
+          rw [State.get_set_eq, List.length_replicate]
+          have hiΩ : i < (State.get u1 SCAN).length := hi
+          rw [hu1SClen] at hiΩ
+          omega
+        have hO' : (State.get (st.set KBIT (List.replicate i 1)) OUT).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ (show OUT ≠ KBIT by decide)]
+          exact hOUTce
+        have hW' : (State.get (st.set KBIT (List.replicate i 1)) WREG).length ≤ Ω := by
+          rw [State.get_set_ne _ _ _ _ (show WREG ≠ KBIT by decide)]
+          exact hWl
+        rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+        exacts [hS', hB', hK', hO', hW', hO', hW', hS', hS', hS', hS']
+      exact (Cmd.cost_le_flat (sentBitBody BASE) rfl
+        (st.set KBIT (List.replicate i 1)) Ω hread).1)
+  -- close the arithmetic
+  have hlen : (State.get u1 SCAN).length ≤ Ω := by rw [hu1SClen]; omega
+  set K := Cmd.flatK (sentBitBody 0) with hK
+  set A := K * (Ω + 1) with hA
+  set len := (State.get u1 SCAN).length with hlenDef
+  have h1 : len * A ≤ (Ω + 1) * A := Nat.mul_le_mul_right A (by omega)
+  have h2 : len * len ≤ Ω * Ω := Nat.mul_le_mul hlen hlen
+  have h3 : (Ω + 1) * A = K * ((Ω + 1) * (Ω + 1)) := by rw [hA]; ring
+  have h4 : (K + 8) * ((Ω + 1) * (Ω + 1))
+      = K * ((Ω + 1) * (Ω + 1)) + 8 * ((Ω + 1) * (Ω + 1)) := by ring
+  have h5 : (Ω + 1) * (Ω + 1) = Ω * Ω + 2 * Ω + 1 := by ring
+  omega
+
+/-! ### The final-string parse: cost -/
+
+/-- **`readOneFinal` cost**: quadratic in the ceiling `Ω ≥ |SCANF|`. -/
+theorem readOneFinal_cost (bits : List Bool) (rest : List Nat) (u : State) (Ω : Nat)
+    (hSC : State.get u SCANF
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits) ++ rest)
+    (hΩS : (State.get u SCANF).length ≤ Ω) :
+    readOneFinal.cost u
+      ≤ (Cmd.flatK readFinBody + 10) * ((Ω + 1) * (Ω + 1)) := by
+  have heq : readOneFinal
+      = (Cmd.op (.clear FBITS) ;; (Cmd.op (.clear BLEN) ;; (Cmd.op (.clear DONE) ;;
+        Cmd.forBnd KTMP SCANF readFinBody))) := rfl
+  rw [heq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op,
+    Cmd.cost_op]
+  simp only [Op.cost]
+  have e1 : (Cmd.op (.clear FBITS)).eval u = u.set FBITS [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e2 : (Cmd.op (.clear BLEN)).eval (u.set FBITS [])
+      = (u.set FBITS []).set BLEN [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  have e3 : (Cmd.op (.clear DONE)).eval ((u.set FBITS []).set BLEN [])
+      = ((u.set FBITS []).set BLEN []).set DONE [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  rw [e1, e2, e3]
+  have hu3f : ∀ r : Var, r ≠ FBITS → r ≠ BLEN → r ≠ DONE →
+      State.get (((u.set FBITS []).set BLEN []).set DONE []) r = State.get u r := by
+    intro r h1 h2 h3
+    rw [State.get_set_ne _ _ _ _ h3, State.get_set_ne _ _ _ _ h2,
+      State.get_set_ne _ _ _ _ h1]
+  set u3 := ((u.set FBITS []).set BLEN []).set DONE [] with hu3
+  have hu3D : State.get u3 DONE = [] := State.get_set_eq _ _ _
+  have hu3B : State.get u3 BLEN = [] := by
+    rw [hu3, State.get_set_ne _ _ _ _ (show BLEN ≠ DONE by decide), State.get_set_eq]
+  have hu3F : State.get u3 FBITS = [] := by
+    rw [hu3, State.get_set_ne _ _ _ _ (show FBITS ≠ DONE by decide),
+      State.get_set_ne _ _ _ _ (show FBITS ≠ BLEN by decide), State.get_set_eq]
+  have hu3SC : State.get u3 SCANF
+      = FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits) ++ rest := by
+    rw [hu3]
+    rw [hu3f SCANF (by decide) (by decide) (by decide)]
+    exact hSC
+  have hu3SClen : (State.get u3 SCANF).length = (State.get u SCANF).length := by
+    rw [hu3SC, hSC]
+  clear_value u3
+  have hsuffix : ∀ i : Nat,
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop i))).length + rest.length
+        ≤ Ω := by
+    intro i
+    have h1 : (FlatTCCFree.encSList (FlatCCBinFree.bitsNat (bits.drop i))).length
+        ≤ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits)).length := by
+      rw [show FlatCCBinFree.bitsNat (bits.drop i)
+          = (FlatCCBinFree.bitsNat bits).drop i from List.map_drop ..]
+      exact encSList_drop_length_le _ i
+    have h2 : (State.get u SCANF).length
+        = (FlatTCCFree.encSList (FlatCCBinFree.bitsNat bits)).length + rest.length := by
+      rw [hSC, List.length_append]
+    omega
+  have hbase : RFInv bits rest u3 0 u3 :=
+    ⟨fun _ => ⟨hu3D, by rw [List.drop_zero]; exact hu3SC,
+        by rw [List.take_zero]; exact hu3F,
+        by rw [List.replicate_zero]; exact hu3B⟩,
+      fun h => absurd h (by omega),
+      fun r _ _ _ _ _ _ _ _ => rfl⟩
+  have hloop := Cmd.cost_forBnd_le KTMP SCANF readFinBody u3
+    (Cmd.flatK readFinBody * (Ω + 1))
+    (RFInv bits rest u3) hbase
+    (fun i st _ hM => RFInv_step bits rest u3 i st hM)
+    (fun i st hi hM => by
+      obtain ⟨hph1, hph2, hframei⟩ := hM
+      have hread : ∀ r ∈ Cmd.costReads readFinBody,
+          (State.get (st.set KTMP (List.replicate i 1)) r).length ≤ Ω := by
+        intro r hr
+        have hlist : Cmd.costReads readFinBody
+            = [SCANF, SCANF, SCANF, SCANF, SCANF] := rfl
+        rw [hlist] at hr
+        simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+        have hSCANce : (State.get st SCANF).length ≤ Ω := by
+          by_cases hile : i ≤ bits.length
+          · obtain ⟨_, hS, _⟩ := hph1 hile
+            rw [hS, List.length_append]
+            exact hsuffix i
+          · obtain ⟨_, hS, _⟩ := hph2 (by omega)
+            rw [hS]
+            have := hsuffix 0
+            omega
+        rcases hr with rfl | rfl | rfl | rfl | rfl <;>
+          (rw [State.get_set_ne _ _ _ _ (show SCANF ≠ KTMP by decide)]; exact hSCANce)
+      exact (Cmd.cost_le_flat readFinBody rfl
+        (st.set KTMP (List.replicate i 1)) Ω hread).1)
+  -- close the arithmetic
+  have hlen : (State.get u3 SCANF).length ≤ Ω := by rw [hu3SClen]; omega
+  set K := Cmd.flatK readFinBody with hK
+  set A := K * (Ω + 1) with hA
+  set len := (State.get u3 SCANF).length with hlenDef
+  have h1 : len * A ≤ (Ω + 1) * A := Nat.mul_le_mul_right A (by omega)
+  have h2 : len * len ≤ Ω * Ω := Nat.mul_le_mul hlen hlen
+  have h3 : (Ω + 1) * A = K * ((Ω + 1) * (Ω + 1)) := by rw [hA]; ring
+  have h4 : (K + 10) * ((Ω + 1) * (Ω + 1))
+      = K * ((Ω + 1) * (Ω + 1)) + 10 * ((Ω + 1) * (Ω + 1)) := by ring
+  have h5 : (Ω + 1) * (Ω + 1) = Ω * Ω + 2 * Ω + 1 := by ring
+  omega
+
+
+/-! ### `emitCardsAt`: cost -/
+
+/-- `emitBitsFromSent` never grows `WREG` beyond `max(entry, start + |SCAN|)`
+(each loop write is `BASE ++ counter`). Membership hypothesis dischargeable by
+`decide` at concrete `BASE`. -/
+private theorem emitBitsFromSent_WREG (BASE : Nat) (u : State) (W : Nat)
+    (hBT : BASE ≠ TFLG) (hBS : BASE ≠ SCAN) (hBE : BASE ≠ EMARK) (hBK : BASE ≠ KBIT)
+    (hBD : BASE ≠ DONE)
+    (hBmem : BASE ∉ Cmd.writes (sentBitBody BASE))
+    (hW : (State.get u WREG).length ≤ W)
+    (hBSc : (State.get u BASE).length + (State.get u SCAN).length ≤ W) :
+    (State.get ((emitBitsFromSent BASE).eval u) WREG).length ≤ W := by
+  have heq : emitBitsFromSent BASE
+      = (Cmd.op (.clear DONE) ;;
+          (Cmd.forBnd KBIT SCAN (sentBitBody BASE) ;; emitFtrue)) := rfl
+  rw [heq, Cmd.eval_seq, Cmd.eval_seq, emitFtrue_frame _ WREG (by decide)]
+  have e0 : (Cmd.op (.clear DONE)).eval u = u.set DONE [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  rw [e0]
+  set u1 := u.set DONE [] with hu1
+  have hu1W : (State.get u1 WREG).length ≤ W := by
+    rw [hu1, State.get_set_ne _ _ _ _ (show WREG ≠ DONE by decide)]; exact hW
+  have hu1B : State.get u1 BASE = State.get u BASE := by
+    rw [hu1, State.get_set_ne _ _ _ _ hBD]
+  have hu1SC : State.get u1 SCAN = State.get u SCAN := by
+    rw [hu1, State.get_set_ne _ _ _ _ (show SCAN ≠ DONE by decide)]
+  clear_value u1
+  rw [Cmd.eval_forBnd]
+  have hInv := Cmd.foldlState_range_induct (sentBitBody BASE) KBIT
+    (State.get u1 SCAN).length u1
+    (fun _ st => (State.get st WREG).length ≤ W
+      ∧ State.get st BASE = State.get u1 BASE)
+    ⟨hu1W, rfl⟩
+    (fun i st hi hM => by
+      obtain ⟨hWl, hBf⟩ := hM
+      constructor
+      · refine le_trans (sentBitBody_WREG BASE _ hBT hBS hBE) ?_
+        rw [State.get_set_ne _ _ _ _ (show WREG ≠ KBIT by decide),
+          State.get_set_ne _ _ _ _ hBK, State.get_set_eq, hBf, hu1B,
+          List.length_replicate]
+        have hilt : i < (State.get u1 SCAN).length := hi
+        rw [hu1SC] at hilt
+        exact Nat.max_le.mpr ⟨hWl, by omega⟩
+      · rw [Cmd.eval_get_of_not_writes _ _ BASE hBmem,
+          State.get_set_ne _ _ _ _ hBK]
+        exact hBf)
+  exact hInv.1
+
+/-- Per-iteration effect of the card loop: cost bound + `WREG` stays `≤ Ω`. -/
+private theorem cardEmitBody_effect (sA sB : Nat) (C : BinaryCC) (u1 : State) (Ω : Nat)
+    (hSA1 : State.get u1 STARTA = List.replicate sA 1)
+    (hSB1 : State.get u1 STARTB = List.replicate sB 1)
+    (hΩO : (State.get u1 OUT).length + (serF (encodeCardsAt C sA sB)).length ≤ Ω)
+    (hΩA : sA + (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length ≤ Ω)
+    (hΩB : sB + (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length ≤ Ω)
+    (j : Nat) (st : State)
+    (hInv : CAInv sA sB C.cards u1 j st)
+    (hW : (State.get st WREG).length ≤ Ω) :
+    cardEmitBody.cost (st.set KCARD (List.replicate j 1))
+        ≤ 12 + 2 * ((Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1)))
+    ∧ (State.get (cardEmitBody.eval (st.set KCARD (List.replicate j 1))) WREG).length
+        ≤ Ω := by
+  obtain ⟨hSCAN, hOUT, hZERO, hframe⟩ := hInv
+  set w := st.set KCARD (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KCARD → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwSCAN : State.get w SCAN
+      = FlatTCCFree.encCardsOut ((C.cards.drop j).map FlatCCBinFree.cardNat) := by
+    rw [hwframe SCAN (by decide)]; exact hSCAN
+  have hwOUT : State.get w OUT
+      = State.get u1 OUT ++ cardsPrefix sA sB (C.cards.take j) := by
+    rw [hwframe OUT (by decide)]; exact hOUT
+  have hwZ : State.get w ZERO = [] := by
+    rw [hwframe ZERO (by decide)]; exact hZERO
+  have hwSA : State.get w STARTA = List.replicate sA 1 := by
+    rw [hwframe STARTA (by decide), hframe STARTA (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hSA1
+  have hwSB : State.get w STARTB = List.replicate sB 1 := by
+    rw [hwframe STARTB (by decide), hframe STARTB (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hSB1
+  have hwW : (State.get w WREG).length ≤ Ω := by
+    rw [hwframe WREG (by decide)]; exact hW
+  -- the drop-stream ceiling
+  have hstream : (FlatTCCFree.encCardsOut ((C.cards.drop j).map FlatCCBinFree.cardNat)).length
+      ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+    rw [show (C.cards.drop j).map FlatCCBinFree.cardNat
+        = (C.cards.map FlatCCBinFree.cardNat).drop j from List.map_drop ..]
+    exact encCardsOut_drop_length_le _ j
+  clear_value w
+  by_cases hj : j < C.cards.length
+  · -- live iteration
+    have hdrop : C.cards.drop j = C.cards[j] :: C.cards.drop (j + 1) :=
+      List.drop_eq_getElem_cons hj
+    have htake : C.cards.take (j + 1) = C.cards.take j ++ [C.cards[j]] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hj]; rfl
+    set c := C.cards[j] with hc
+    clear_value c
+    set REST := FlatTCCFree.encCardsOut ((C.cards.drop (j + 1)).map FlatCCBinFree.cardNat)
+      with hREST
+    have hSCANw : State.get w SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hwSCAN, hdrop, encCardsOut_cons, hREST]
+    have hne : (State.get w SCAN).isEmpty = false := by
+      rw [hSCANw]; exact encSList_append_isEmpty _ _
+    have e1 : (Cmd.op (.nonEmpty TFLG SCAN)).eval w = w.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w1 := w.set TFLG [1] with hw1
+    have hw1frame : ∀ r : Var, r ≠ TFLG → State.get w1 r = State.get w r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw1T : State.get w1 TFLG = [1] := State.get_set_eq _ _ _
+    clear_value w1
+    set w2 := emitForrTag.eval w1 with hw2
+    have hw2frame : ∀ r : Var, r ≠ OUT → State.get w2 r = State.get w1 r := by
+      intro r hr; rw [hw2]; exact emitForrTag_frame w1 r hr
+    have hw2OUT : State.get w2 OUT = State.get w1 OUT ++ [1, 0] := by
+      rw [hw2, emitForrTag_run]; exact State.get_set_eq _ _ _
+    clear_value w2
+    set w3 := emitFandTag.eval w2 with hw3
+    have hw3frame : ∀ r : Var, r ≠ OUT → State.get w3 r = State.get w2 r := by
+      intro r hr; rw [hw3]; exact emitFandTag_frame w2 r hr
+    have hw3OUT : State.get w3 OUT = State.get w2 OUT ++ [0, 1] := by
+      rw [hw3, emitFandTag_run]; exact State.get_set_eq _ _ _
+    clear_value w3
+    have hchain : ∀ r : Var, r ≠ OUT → r ≠ TFLG → State.get w3 r = State.get w r := by
+      intro r h1 h2
+      rw [hw3frame r h1, hw2frame r h1, hw1frame r h2]
+    have hw3SCAN : State.get w3 SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)
+          ++ (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) := by
+      rw [hchain SCAN (by decide) (by decide)]; exact hSCANw
+    have hw3Z : State.get w3 ZERO = [] := by
+      rw [hchain ZERO (by decide) (by decide)]; exact hwZ
+    have hw3SA : State.get w3 STARTA = List.replicate sA 1 := by
+      rw [hchain STARTA (by decide) (by decide)]; exact hwSA
+    have hw3SB : State.get w3 STARTB = List.replicate sB 1 := by
+      rw [hchain STARTB (by decide) (by decide)]; exact hwSB
+    have hw3W : (State.get w3 WREG).length ≤ Ω := by
+      rw [hchain WREG (by decide) (by decide)]; exact hwW
+    have hw3OUTfull : State.get w3 OUT
+        = State.get u1 OUT ++ cardsPrefix sA sB (C.cards.take j) ++ [1, 0] ++ [0, 1] := by
+      rw [hw3OUT, hw2OUT, hw1frame OUT (by decide), hwOUT]
+    -- OUT/prefix bookkeeping
+    have hexp : cardsPrefix sA sB (C.cards.take (j + 1))
+        = cardsPrefix sA sB (C.cards.take j)
+          ++ ([1, 0] ++ ([0, 1] ++ (serF (encodeBitsAt sA c.prem)
+              ++ serF (encodeBitsAt sB c.conc)))) := by
+      rw [htake, cardsPrefix_append]
+      simp [cardsPrefix, encodeCardAt, serF, List.append_assoc]
+    have hcpj1 : (cardsPrefix sA sB (C.cards.take (j + 1))).length
+        ≤ (serF (encodeCardsAt C sA sB)).length :=
+      cardsPrefix_take_length_le sA sB C.cards (j + 1)
+    have hlenexp : (cardsPrefix sA sB (C.cards.take (j + 1))).length
+        = (cardsPrefix sA sB (C.cards.take j)).length + 4
+          + (serF (encodeBitsAt sA c.prem)).length
+          + (serF (encodeBitsAt sB c.conc)).length := by
+      rw [hexp]
+      simp [List.length_append]
+      omega
+    -- the SCAN ceilings
+    have hw3SCANlen : (State.get w3 SCAN).length
+        ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+      rw [hw3SCAN, hREST, ← encCardsOut_cons, ← hdrop]
+      exact hstream
+    -- the prem emitter: cost + run facts
+    have hcostA := emitBitsFromSent_cost STARTA sA c.prem
+      (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) w3 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) hw3SA hw3Z hw3SCAN
+      (by rw [hw3OUTfull]
+          simp only [List.length_append, List.length_cons, List.length_nil]
+          omega)
+      hw3W
+      (by rw [hw3SCAN] at hw3SCANlen ⊢
+          omega)
+    obtain ⟨h4SCAN, h4OUT, h4Z, h4frame⟩ :=
+      emitBitsFromSent_run STARTA sA c.prem
+        (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST) w3
+        (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) hw3SA hw3Z hw3SCAN
+    have hWREG4 : (State.get ((emitBitsFromSent STARTA).eval w3) WREG).length ≤ Ω :=
+      emitBitsFromSent_WREG STARTA w3 Ω (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) hw3W
+        (by rw [hw3SA, List.length_replicate, hw3SCAN] at *
+            rw [hw3SCAN] at hw3SCANlen
+            omega)
+    set w4 := (emitBitsFromSent STARTA).eval w3 with hw4
+    have hw4SB : State.get w4 STARTB = List.replicate sB 1 := by
+      rw [hw4, h4frame STARTB (by decide) (by decide) (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide)]
+      exact hw3SB
+    have hw4SCAN : State.get w4 SCAN
+        = FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST := by
+      rw [hw4]; exact h4SCAN
+    have hw4Z : State.get w4 ZERO = [] := by rw [hw4]; exact h4Z
+    have hw4OUT : State.get w4 OUT
+        = State.get w3 OUT ++ serF (encodeBitsAt sA c.prem) := by
+      rw [hw4]; exact h4OUT
+    have hw4W : (State.get w4 WREG).length ≤ Ω := by rw [hw4]; exact hWREG4
+    have hw4SCANlen : (State.get w4 SCAN).length
+        ≤ (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length := by
+      rw [hw4SCAN]
+      have : (State.get w3 SCAN).length
+          = (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.prem)).length
+            + (FlatTCCFree.encSList (FlatCCBinFree.bitsNat c.conc) ++ REST).length := by
+        rw [hw3SCAN, List.length_append]
+      omega
+    clear_value w4
+    -- the conc emitter: cost
+    have hcostB := emitBitsFromSent_cost STARTB sB c.conc REST w4 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) hw4SB hw4Z hw4SCAN
+      (by rw [hw4OUT, hw3OUTfull]
+          simp only [List.length_append, List.length_cons, List.length_nil]
+          omega)
+      hw4W
+      (by rw [hw4SCAN] at hw4SCANlen ⊢
+          omega)
+    -- WREG at exit
+    have hWREG5 : (State.get ((emitBitsFromSent STARTB).eval w4) WREG).length ≤ Ω :=
+      emitBitsFromSent_WREG STARTB w4 Ω (by decide) (by decide) (by decide)
+        (by decide) (by decide) (by decide) hw4W
+        (by rw [hw4SB, List.length_replicate]
+            rw [hw4SCAN] at hw4SCANlen
+            rw [hw4SCAN]
+            omega)
+    -- assemble cost and eval
+    have hcost : cardEmitBody.cost w
+        = 1 + 1 + (1 + (1 + 3 + (1 + 3 + (1 + (emitBitsFromSent STARTA).cost w3
+            + (emitBitsFromSent STARTB).cost w4)))) := by
+      show (Cmd.op (.nonEmpty TFLG SCAN) ;; _).cost w = _
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_ifBit_true _ _ _ _ hw1T,
+        Cmd.cost_seq, emitForrTag_cost, ← hw2, Cmd.cost_seq, emitFandTag_cost,
+        ← hw3, Cmd.cost_seq, ← hw4]
+      simp only [Op.cost]
+    have heval : cardEmitBody.eval w = (emitBitsFromSent STARTB).eval w4 := by
+      unfold cardEmitBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_true _ _ _ _ hw1T, Cmd.eval_seq, ← hw2,
+        Cmd.eval_seq, ← hw3, Cmd.eval_seq, ← hw4]
+    constructor
+    · rw [hcost]
+      set KK := (Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1)) with hKK
+      clear_value KK
+      omega
+    · rw [heval]
+      exact hWREG5
+  · -- idle iteration
+    have hlen : C.cards.length ≤ j := Nat.le_of_not_lt hj
+    have hSCANw : State.get w SCAN = [] := by
+      rw [hwSCAN, List.drop_eq_nil_of_le hlen]
+      rfl
+    have hne : (State.get w SCAN).isEmpty = true := by rw [hSCANw]; rfl
+    have e1 : (Cmd.op (.nonEmpty TFLG SCAN)).eval w = w.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    have hw1T : State.get (w.set TFLG [0]) TFLG ≠ [1] := by
+      rw [State.get_set_eq]; decide
+    constructor
+    · have hcost : cardEmitBody.cost w = 1 + 1 + (1 + 1) := by
+        show (Cmd.op (.nonEmpty TFLG SCAN) ;; _).cost w = _
+        rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_ifBit_false _ _ _ _ hw1T,
+          Cmd.cost_op]
+        simp only [Op.cost]
+      rw [hcost]
+      omega
+    · have heval : cardEmitBody.eval w = (w.set TFLG [0]).set KTMP [] := by
+        unfold cardEmitBody
+        rw [Cmd.eval_seq, e1, Cmd.eval_ifBit_false _ _ _ _ hw1T, Cmd.eval_op]
+        simp only [Op.eval]
+      rw [heval, State.get_set_ne _ _ _ _ (show WREG ≠ KTMP by decide),
+        State.get_set_ne _ _ _ _ (show WREG ≠ TFLG by decide)]
+      exact hwW
+
+/-- **`emitCardsAt` cost**: cubic in the ceiling `Ω`. -/
+theorem emitCardsAt_cost (sA sB : Nat) (C : BinaryCC) (u : State) (Ω : Nat)
+    (hSA : State.get u STARTA = List.replicate sA 1)
+    (hSB : State.get u STARTB = List.replicate sB 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length + (serF (encodeCardsAt C sA sB)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩA : sA + (State.get u CARDS).length ≤ Ω)
+    (hΩB : sB + (State.get u CARDS).length ≤ Ω) :
+    emitCardsAt.cost u
+      ≤ (2 * Cmd.flatK (sentBitBody 0) + 44)
+          * ((Ω + 1) * ((Ω + 1) * (Ω + 1))) := by
+  have heq : emitCardsAt = (Cmd.op (.copy SCAN CARDS) ;;
+      (Cmd.forBnd KCARD CARDS cardEmitBody ;; emitFalse)) := rfl
+  rw [heq, Cmd.cost_seq, Cmd.cost_seq, emitFalse_cost, Cmd.cost_op]
+  simp only [Op.cost]
+  have e0 : (Cmd.op (.copy SCAN CARDS)).eval u
+      = u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hCARDS]
+  rw [e0]
+  set u1 := u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    with hu1
+  have hu1f : ∀ r : Var, r ≠ SCAN → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1SC : State.get u1 SCAN
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    State.get_set_eq _ _ _
+  have hu1CARDSlen : (State.get u1 CARDS).length = (State.get u CARDS).length := by
+    rw [hu1f CARDS (by decide)]
+  clear_value u1
+  have hcards_le : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      = (State.get u CARDS).length := by rw [hCARDS]
+  have hloop := Cmd.cost_forBnd_le KCARD CARDS cardEmitBody u1
+    (12 + 2 * ((Cmd.flatK (sentBitBody 0) + 8) * ((Ω + 1) * (Ω + 1))))
+    (fun j st => CAInv sA sB C.cards u1 j st ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨by rw [List.drop_zero]; exact hu1SC,
+      by rw [List.take_zero]; simp [cardsPrefix],
+      by rw [hu1f ZERO (by decide)]; exact hZ,
+      fun r _ _ _ _ _ _ _ _ _ _ => rfl⟩,
+      by rw [hu1f WREG (by decide)]; exact hΩW⟩
+    (fun j st hj hM => by
+      refine ⟨CAInv_step sA sB C.cards u1
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB) j st hM.1, ?_⟩
+      exact (cardEmitBody_effect sA sB C u1 Ω
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB)
+        (by rw [hu1f OUT (by decide)]; exact hΩO)
+        (by rw [← hcards_le] at hΩA; exact hΩA)
+        (by rw [← hcards_le] at hΩB; exact hΩB)
+        j st hM.1 hM.2).2)
+    (fun j st hj hM =>
+      (cardEmitBody_effect sA sB C u1 Ω
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB)
+        (by rw [hu1f OUT (by decide)]; exact hΩO)
+        (by rw [← hcards_le] at hΩA; exact hΩA)
+        (by rw [← hcards_le] at hΩB; exact hΩB)
+        j st hM.1 hM.2).1)
+  -- close the arithmetic
+  have hΩcards : (State.get u CARDS).length ≤ Ω := by omega
+  set K := Cmd.flatK (sentBitBody 0) with hK
+  set len := (State.get u1 CARDS).length with hlenDef
+  have hlenΩ : len ≤ Ω := by omega
+  set P2 := (Ω + 1) * (Ω + 1) with hP2
+  set B := 12 + 2 * ((K + 8) * P2) with hB
+  have hBle : B ≤ (2 * K + 28) * P2 := by
+    rw [hB]
+    have h12 : 12 ≤ 12 * P2 := by
+      have : 1 ≤ P2 := by rw [hP2]; nlinarith
+      omega
+    have hexp2 : 2 * ((K + 8) * P2) + 12 * P2 = (2 * K + 28) * P2 := by ring
+    omega
+  have hlB : len * B ≤ (Ω + 1) * ((2 * K + 28) * P2) :=
+    Nat.mul_le_mul (by omega) hBle
+  have h3 : (Ω + 1) * ((2 * K + 28) * P2) = (2 * K + 28) * ((Ω + 1) * P2) := by ring
+  have h2 : len * len ≤ Ω * Ω := Nat.mul_le_mul hlenΩ hlenΩ
+  have h4 : (2 * K + 44) * ((Ω + 1) * P2)
+      = (2 * K + 28) * ((Ω + 1) * P2) + 16 * ((Ω + 1) * P2) := by ring
+  have h5 : (Ω + 1) * P2 = Ω * Ω * Ω + 3 * (Ω * Ω) + 3 * Ω + 1 := by
+    rw [hP2]; ring
+  have h6 : Ω * Ω * Ω + 3 * (Ω * Ω) + 3 * Ω + 1 ≥ Ω * Ω + Ω + 1 := by nlinarith
+  have hcopy : (State.get u CARDS).length + 1 ≤ Ω + 1 := by omega
+  omega
+
+/-! ### `stepBody`: cost -/
+
+private theorem one_le_P (Ω : Nat) : 1 ≤ (Ω + 1) * (Ω + 1) :=
+  Nat.mul_pos (Nat.succ_pos Ω) (Nat.succ_pos Ω)
+
+private theorem le_scale (Ω x : Nat) : x ≤ (Ω + 1) * x :=
+  Nat.le_mul_of_pos_left x (Nat.succ_pos Ω)
+
+private theorem mulLoopClose (k m Ω : Nat) (hk : k ≤ Ω) (hm : m ≤ Ω) (hmk : m * k ≤ Ω) :
+    1 + m * (2 * (0 + m * k + k) + 1) + m * m ≤ 7 * ((Ω + 1) * (Ω + 1)) := by
+  nlinarith
+
+private theorem subLoopClose (a m Ω : Nat) (ha : a ≤ Ω) (hm : m ≤ Ω) :
+    1 + m * (a + 1) + m * m ≤ 3 * ((Ω + 1) * (Ω + 1)) := by
+  nlinarith
+
+/-- `emitCardsAt` keeps `WREG ≤ Ω` (loop-exit version of the per-iteration
+clause in `cardEmitBody_effect`). -/
+private theorem emitCardsAt_WREG (sA sB : Nat) (C : BinaryCC) (u : State) (Ω : Nat)
+    (hSA : State.get u STARTA = List.replicate sA 1)
+    (hSB : State.get u STARTB = List.replicate sB 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length + (serF (encodeCardsAt C sA sB)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩA : sA + (State.get u CARDS).length ≤ Ω)
+    (hΩB : sB + (State.get u CARDS).length ≤ Ω) :
+    (State.get (emitCardsAt.eval u) WREG).length ≤ Ω := by
+  have heq : emitCardsAt = (Cmd.op (.copy SCAN CARDS) ;;
+      (Cmd.forBnd KCARD CARDS cardEmitBody ;; emitFalse)) := rfl
+  rw [heq, Cmd.eval_seq, Cmd.eval_seq, emitFalse_frame _ WREG (by decide)]
+  have e0 : (Cmd.op (.copy SCAN CARDS)).eval u
+      = u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hCARDS]
+  rw [e0]
+  set u1 := u.set SCAN (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    with hu1
+  have hu1f : ∀ r : Var, r ≠ SCAN → State.get u1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hu1SC : State.get u1 SCAN
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) :=
+    State.get_set_eq _ _ _
+  have hcards_le : (FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat)).length
+      = (State.get u CARDS).length := by rw [hCARDS]
+  clear_value u1
+  rw [Cmd.eval_forBnd]
+  have hInv := Cmd.foldlState_range_induct cardEmitBody KCARD
+    (State.get u1 CARDS).length u1
+    (fun j st => CAInv sA sB C.cards u1 j st ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨by rw [List.drop_zero]; exact hu1SC,
+      by rw [List.take_zero]; simp [cardsPrefix],
+      by rw [hu1f ZERO (by decide)]; exact hZ,
+      fun r _ _ _ _ _ _ _ _ _ _ => rfl⟩,
+      by rw [hu1f WREG (by decide)]; exact hΩW⟩
+    (fun j st hj hM => by
+      refine ⟨CAInv_step sA sB C.cards u1
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB) j st hM.1, ?_⟩
+      exact (cardEmitBody_effect sA sB C u1 Ω
+        (by rw [hu1f STARTA (by decide)]; exact hSA)
+        (by rw [hu1f STARTB (by decide)]; exact hSB)
+        (by rw [hu1f OUT (by decide)]; exact hΩO)
+        (by rw [← hcards_le] at hΩA; exact hΩA)
+        (by rw [← hcards_le] at hΩB; exact hΩB)
+        j st hM.1 hM.2).2)
+  exact hInv.2
+
+/-- **`stepBody` cost**: cubic in the ceiling `Ω`, plus the `WREG ≤ Ω` exit
+fact the enclosing loop needs. -/
+theorem stepBody_cost (C : BinaryCC) (line step : Nat) (u : State) (Ω : Nat)
+    (hLINEL : State.get u LINEL = List.replicate (line * C.init.length) 1)
+    (hKSTEP : State.get u KSTEP = List.replicate step 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length
+        + (serF (encodeStepConstraint C line step)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩidx : (line + 1) * C.init.length + step * C.offset + step + C.offset
+        + C.width + C.init.length + (State.get u CARDS).length ≤ Ω) :
+    stepBody.cost u
+        ≤ (2 * Cmd.flatK (sentBitBody 0) + 100) * ((Ω + 1) * ((Ω + 1) * (Ω + 1)))
+    ∧ (State.get (stepBody.eval u) WREG).length ≤ Ω := by
+  -- index arithmetic, upfront
+  have hsucc : (line + 1) * C.init.length
+      = line * C.init.length + C.init.length := by ring
+  have hlineL : line * C.init.length + step * C.offset ≤ Ω := by
+    rw [hsucc] at hΩidx; omega
+  -- w1: clear STEPO
+  have e1 : (Cmd.op (.clear STEPO)).eval u = u.set STEPO [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set w1 := u.set STEPO [] with hw1
+  have hw1frame : ∀ r : Var, r ≠ STEPO → State.get w1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw1STEPO : State.get w1 STEPO = [] := State.get_set_eq _ _ _
+  have hw1OFF : State.get w1 OFFSET = List.replicate C.offset 1 := by
+    rw [hw1frame OFFSET (by decide)]; exact hOFF
+  have hw1KSTEPlen : (State.get w1 KSTEP).length = step := by
+    rw [hw1frame KSTEP (by decide), hKSTEP, List.length_replicate]
+  clear_value w1
+  -- w2: the STEPO mul loop (run + cost)
+  have hcMul := cost_mulLoop_le KTMP KSTEP STEPO OFFSET w1 0 C.offset step
+    (by decide) (by decide) (by decide)
+    (by rw [hw1STEPO]; exact Nat.le_refl 0)
+    (by rw [hw1OFF, List.length_replicate])
+    hw1KSTEPlen
+  obtain ⟨h2STEPO, h2frame⟩ :=
+    unaryMulLoop_run KTMP KSTEP OFFSET STEPO w1 C.offset step
+      (by decide) (by decide) (by decide) hw1OFF hw1KSTEPlen hw1STEPO
+  set w2 := (Cmd.forBnd KTMP KSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).eval w1
+    with hw2
+  clear_value w2
+  have hw2LINEL : State.get w2 LINEL = List.replicate (line * C.init.length) 1 := by
+    rw [h2frame LINEL (by decide) (by decide), hw1frame LINEL (by decide)]
+    exact hLINEL
+  -- w3: STARTA := LINEL ++ STEPO
+  have e3 : (Cmd.op (.concat STARTA LINEL STEPO)).eval w2
+      = w2.set STARTA (List.replicate (line * C.init.length + step * C.offset) 1) := by
+    rw [Cmd.eval_op]
+    simp only [Op.eval, hw2LINEL, h2STEPO]
+    congr 1
+    rw [List.replicate_add]
+  have hc3 : Op.cost (.concat STARTA LINEL STEPO) w2
+      = 2 * (line * C.init.length + step * C.offset) + 1 := by
+    show 2 * ((State.get w2 LINEL).length + (State.get w2 STEPO).length) + 1 = _
+    rw [hw2LINEL, h2STEPO, List.length_replicate, List.length_replicate]
+  set w3 := w2.set STARTA (List.replicate (line * C.init.length + step * C.offset) 1)
+    with hw3
+  have hw3frame : ∀ r : Var, r ≠ STARTA → State.get w3 r = State.get w2 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw3SA : State.get w3 STARTA
+      = List.replicate (line * C.init.length + step * C.offset) 1 :=
+    State.get_set_eq _ _ _
+  have hw3LREG : State.get w3 LREG = List.replicate C.init.length 1 := by
+    rw [hw3frame LREG (by decide), h2frame LREG (by decide) (by decide),
+      hw1frame LREG (by decide)]
+    exact hLREG
+  clear_value w3
+  -- w4: STARTB := STARTA ++ LREG
+  have e4 : (Cmd.op (.concat STARTB STARTA LREG)).eval w3
+      = w3.set STARTB (List.replicate
+          (line * C.init.length + step * C.offset + C.init.length) 1) := by
+    rw [Cmd.eval_op]
+    simp only [Op.eval, hw3SA, hw3LREG]
+    congr 1
+    rw [← List.replicate_add]
+  have hc4 : Op.cost (.concat STARTB STARTA LREG) w3
+      = 2 * (line * C.init.length + step * C.offset + C.init.length) + 1 := by
+    show 2 * ((State.get w3 STARTA).length + (State.get w3 LREG).length) + 1 = _
+    rw [hw3SA, hw3LREG, List.length_replicate, List.length_replicate]
+  set w4 := w3.set STARTB (List.replicate
+      (line * C.init.length + step * C.offset + C.init.length) 1) with hw4
+  have hw4frame : ∀ r : Var, r ≠ STARTB → State.get w4 r = State.get w3 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw4SB : State.get w4 STARTB
+      = List.replicate (line * C.init.length + step * C.offset + C.init.length) 1 :=
+    State.get_set_eq _ _ _
+  have hw4STEPO : State.get w4 STEPO = List.replicate (step * C.offset) 1 := by
+    rw [hw4frame STEPO (by decide), hw3frame STEPO (by decide)]; exact h2STEPO
+  have hw4WID : State.get w4 WIDTH = List.replicate C.width 1 := by
+    rw [hw4frame WIDTH (by decide), hw3frame WIDTH (by decide),
+      h2frame WIDTH (by decide) (by decide), hw1frame WIDTH (by decide)]
+    exact hWID
+  clear_value w4
+  -- w5: SUMW := STEPO ++ WIDTH
+  have e5 : (Cmd.op (.concat SUMW STEPO WIDTH)).eval w4
+      = w4.set SUMW (List.replicate (step * C.offset + C.width) 1) := by
+    rw [Cmd.eval_op]
+    simp only [Op.eval, hw4STEPO, hw4WID]
+    congr 1
+    rw [List.replicate_add]
+  have hc5 : Op.cost (.concat SUMW STEPO WIDTH) w4
+      = 2 * (step * C.offset + C.width) + 1 := by
+    show 2 * ((State.get w4 STEPO).length + (State.get w4 WIDTH).length) + 1 = _
+    rw [hw4STEPO, hw4WID, List.length_replicate, List.length_replicate]
+  set w5 := w4.set SUMW (List.replicate (step * C.offset + C.width) 1) with hw5
+  have hw5frame : ∀ r : Var, r ≠ SUMW → State.get w5 r = State.get w4 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw5SUMW : State.get w5 SUMW = List.replicate (step * C.offset + C.width) 1 :=
+    State.get_set_eq _ _ _
+  clear_value w5
+  -- w6: REM := copy SUMW
+  have e6 : (Cmd.op (.copy REM SUMW)).eval w5
+      = w5.set REM (List.replicate (step * C.offset + C.width) 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw5SUMW]
+  have hc6 : Op.cost (.copy REM SUMW) w5 = step * C.offset + C.width + 1 := by
+    show (State.get w5 SUMW).length + 1 = _
+    rw [hw5SUMW, List.length_replicate]
+  set w6 := w5.set REM (List.replicate (step * C.offset + C.width) 1) with hw6
+  have hw6frame : ∀ r : Var, r ≠ REM → State.get w6 r = State.get w5 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw6REM : State.get w6 REM = List.replicate (step * C.offset + C.width) 1 :=
+    State.get_set_eq _ _ _
+  have hw6LREGlen : (State.get w6 LREG).length = C.init.length := by
+    rw [hw6frame LREG (by decide), hw5frame LREG (by decide),
+      hw4frame LREG (by decide), hw3LREG, List.length_replicate]
+  clear_value w6
+  -- w7: the truncated-subtraction loop (run + cost)
+  have hcSub := cost_tailLoop_le KTMP LREG REM w6 (step * C.offset + C.width)
+    C.init.length (by decide)
+    (by rw [hw6REM, List.length_replicate]) hw6LREGlen
+  obtain ⟨h7REM, h7frame⟩ :=
+    unarySubLoop_run KTMP LREG REM w6 (step * C.offset + C.width) C.init.length
+      (by decide) hw6LREGlen hw6REM
+  set w7 := (Cmd.forBnd KTMP LREG (Cmd.op (.tail REM REM))).eval w6 with hw7
+  clear_value w7
+  have h7chain : ∀ r : Var, r ≠ STEPO → r ≠ KTMP → r ≠ STARTA → r ≠ STARTB →
+      r ≠ SUMW → r ≠ REM → State.get w7 r = State.get u r := by
+    intro r h1 h2 h3 h4 h5 h6
+    rw [h7frame r h6 h2, hw6frame r h6, hw5frame r h5, hw4frame r h4,
+      hw3frame r h3, h2frame r h1 h2, hw1frame r h1]
+  have h7OUT : State.get w7 OUT = State.get u OUT :=
+    h7chain OUT (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  have h7Z : State.get w7 ZERO = [] := by
+    rw [h7chain ZERO (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)]
+    exact hZ
+  have h7CARDS : State.get w7 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [h7chain CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)]
+    exact hCARDS
+  have h7CARDSlen : (State.get w7 CARDS).length = (State.get u CARDS).length := by
+    rw [h7chain CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide)]
+  have h7WREG : State.get w7 WREG = State.get u WREG :=
+    h7chain WREG (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+  have h7SA : State.get w7 STARTA
+      = List.replicate (line * C.init.length + step * C.offset) 1 := by
+    rw [h7frame STARTA (by decide) (by decide), hw6frame STARTA (by decide),
+      hw5frame STARTA (by decide), hw4frame STARTA (by decide)]
+    exact hw3SA
+  have h7SB : State.get w7 STARTB
+      = List.replicate (line * C.init.length + step * C.offset + C.init.length) 1 := by
+    rw [h7frame STARTB (by decide) (by decide), hw6frame STARTB (by decide),
+      hw5frame STARTB (by decide)]
+    exact hw4SB
+  by_cases hguard : step * C.offset + C.width ≤ C.init.length
+  · -- guard passes → emitCardsAt
+    have hREM0 : State.get w7 REM = [] := by
+      rw [h7REM, Nat.sub_eq_zero_of_le hguard]
+      rfl
+    have hne : (State.get w7 REM).isEmpty = true := by rw [hREM0]; rfl
+    have e8 : (Cmd.op (.nonEmpty TFLG REM)).eval w7 = w7.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w8 := w7.set TFLG [0] with hw8
+    have hw8frame : ∀ r : Var, r ≠ TFLG → State.get w8 r = State.get w7 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw8Tne : State.get w8 TFLG ≠ [1] := by
+      rw [hw8, State.get_set_eq]; decide
+    clear_value w8
+    have ec : (Cmd.op (.clear GFLG)).eval w8 = w8.set GFLG [] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    have ea : (Cmd.op (.appendOne GFLG)).eval (w8.set GFLG []) = w8.set GFLG [1] := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, State.get_set_eq, State.set_set, List.nil_append]
+    have e9 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).eval w8
+        = w8.set GFLG [1] := by
+      rw [Cmd.eval_ifBit_false _ _ _ _ hw8Tne, Cmd.eval_seq, ec, ea]
+    have hc9 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).cost w8 = 4 := by
+      rw [Cmd.cost_ifBit_false _ _ _ _ hw8Tne, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op,
+        ec]
+      simp only [Op.cost]
+    set w9 := w8.set GFLG [1] with hw9
+    have hw9frame : ∀ r : Var, r ≠ GFLG → State.get w9 r = State.get w8 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw9G : State.get w9 GFLG = [1] := State.get_set_eq _ _ _
+    clear_value w9
+    have h9SA : State.get w9 STARTA
+        = List.replicate (line * C.init.length + step * C.offset) 1 := by
+      rw [hw9frame STARTA (by decide), hw8frame STARTA (by decide)]; exact h7SA
+    have h9SB : State.get w9 STARTB
+        = List.replicate (line * C.init.length + step * C.offset + C.init.length) 1 := by
+      rw [hw9frame STARTB (by decide), hw8frame STARTB (by decide)]; exact h7SB
+    have h9CARDS : State.get w9 CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+      rw [hw9frame CARDS (by decide), hw8frame CARDS (by decide)]; exact h7CARDS
+    have h9CARDSlen : (State.get w9 CARDS).length = (State.get u CARDS).length := by
+      rw [hw9frame CARDS (by decide), hw8frame CARDS (by decide)]; exact h7CARDSlen
+    have h9Z : State.get w9 ZERO = [] := by
+      rw [hw9frame ZERO (by decide), hw8frame ZERO (by decide)]; exact h7Z
+    have h9OUT : State.get w9 OUT = State.get u OUT := by
+      rw [hw9frame OUT (by decide), hw8frame OUT (by decide)]; exact h7OUT
+    have h9WREG : State.get w9 WREG = State.get u WREG := by
+      rw [hw9frame WREG (by decide), hw8frame WREG (by decide)]; exact h7WREG
+    have hstep : encodeStepConstraint C line step
+        = encodeCardsAt C (line * C.init.length + step * C.offset)
+            (line * C.init.length + step * C.offset + C.init.length) := by
+      unfold encodeStepConstraint
+      rw [dif_pos hguard]
+      congr 1
+      rw [Nat.succ_mul]
+      omega
+    have hΩO9 : (State.get w9 OUT).length
+        + (serF (encodeCardsAt C (line * C.init.length + step * C.offset)
+            (line * C.init.length + step * C.offset + C.init.length))).length ≤ Ω := by
+      rw [h9OUT, ← hstep]
+      exact hΩO
+    have hΩW9 : (State.get w9 WREG).length ≤ Ω := by rw [h9WREG]; exact hΩW
+    have hΩA9 : line * C.init.length + step * C.offset
+        + (State.get w9 CARDS).length ≤ Ω := by
+      rw [h9CARDSlen]
+      rw [hsucc] at hΩidx
+      omega
+    have hΩB9 : line * C.init.length + step * C.offset + C.init.length
+        + (State.get w9 CARDS).length ≤ Ω := by
+      rw [h9CARDSlen]
+      rw [hsucc] at hΩidx
+      omega
+    have hcCA := emitCardsAt_cost (line * C.init.length + step * C.offset)
+      (line * C.init.length + step * C.offset + C.init.length) C w9 Ω
+      h9SA h9SB h9CARDS h9Z hΩO9 hΩW9 hΩA9 hΩB9
+    have hWCA := emitCardsAt_WREG (line * C.init.length + step * C.offset)
+      (line * C.init.length + step * C.offset + C.init.length) C w9 Ω
+      h9SA h9SB h9CARDS h9Z hΩO9 hΩW9 hΩA9 hΩB9
+    -- assemble
+    have hcost : stepBody.cost u
+        = 1 + 1 + (1 + (Cmd.forBnd KTMP KSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).cost w1
+          + (1 + Op.cost (.concat STARTA LINEL STEPO) w2
+          + (1 + Op.cost (.concat STARTB STARTA LREG) w3
+          + (1 + Op.cost (.concat SUMW STEPO WIDTH) w4
+          + (1 + Op.cost (.copy REM SUMW) w5
+          + (1 + (Cmd.forBnd KTMP LREG (Cmd.op (.tail REM REM))).cost w6
+          + (1 + 1
+          + (1 + 4
+          + (1 + emitCardsAt.cost w9))))))))) := by
+      unfold stepBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+        Cmd.cost_op, e3, Cmd.cost_seq, Cmd.cost_op, e4, Cmd.cost_seq, Cmd.cost_op,
+        e5, Cmd.cost_seq, Cmd.cost_op, e6, Cmd.cost_seq, ← hw7, Cmd.cost_seq,
+        Cmd.cost_op, e8, Cmd.cost_seq, hc9, e9, Cmd.cost_ifBit_true _ _ _ _ hw9G]
+      simp only [Op.cost]
+    have heval : stepBody.eval u = emitCardsAt.eval w9 := by
+      unfold stepBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hw2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+        Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, ← hw7, Cmd.eval_seq, e8,
+        Cmd.eval_seq, e9, Cmd.eval_ifBit_true _ _ _ _ hw9G]
+    constructor
+    · rw [hcost, hc3, hc4, hc5, hc6]
+      -- collapse everything against the ceiling
+      have hoff : C.offset ≤ Ω := by omega
+      have hsteple : step ≤ Ω := by omega
+      have hso : step * C.offset ≤ Ω := by omega
+      have hwid : C.width ≤ Ω := by omega
+      have hL : C.init.length ≤ Ω := by omega
+      have hsb : line * C.init.length + step * C.offset + C.init.length ≤ Ω := by
+        rw [hsucc] at hΩidx
+        omega
+      have hMulle := le_trans hcMul (mulLoopClose C.offset step Ω hoff hsteple hso)
+      have hSuble := le_trans hcSub
+        (subLoopClose (step * C.offset + C.width) C.init.length Ω (by omega) hL)
+      set K := Cmd.flatK (sentBitBody 0) with hK
+      set P2 := (Ω + 1) * (Ω + 1) with hP2
+      set P3 := (Ω + 1) * P2 with hP3
+      have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+      have hP23 : P2 ≤ P3 := by
+        rw [hP3]
+        exact Nat.le_mul_of_pos_left P2 (by omega)
+      have hcCA' : emitCardsAt.cost w9 ≤ (2 * K + 44) * P3 := hcCA
+      have h44_100 : (2 * K + 44) * P3 + 56 * P3 = (2 * K + 100) * P3 := by ring
+      omega
+    · rw [heval]
+      exact hWCA
+  · -- guard fails → emitFtrue
+    obtain ⟨k, hk⟩ : ∃ k, step * C.offset + C.width - C.init.length = k + 1 :=
+      ⟨step * C.offset + C.width - C.init.length - 1, by omega⟩
+    have hne : (State.get w7 REM).isEmpty = false := by
+      rw [h7REM, hk]
+      rfl
+    have e8 : (Cmd.op (.nonEmpty TFLG REM)).eval w7 = w7.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w8 := w7.set TFLG [1] with hw8
+    have hw8frame : ∀ r : Var, r ≠ TFLG → State.get w8 r = State.get w7 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw8T : State.get w8 TFLG = [1] := State.get_set_eq _ _ _
+    clear_value w8
+    have e9 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).eval w8
+        = w8.set GFLG [] := by
+      rw [Cmd.eval_ifBit_true _ _ _ _ hw8T, Cmd.eval_op]
+      simp only [Op.eval]
+    have hc9 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).cost w8 = 2 := by
+      rw [Cmd.cost_ifBit_true _ _ _ _ hw8T, Cmd.cost_op]
+      simp only [Op.cost]
+    set w9 := w8.set GFLG [] with hw9
+    have hw9frame : ∀ r : Var, r ≠ GFLG → State.get w9 r = State.get w8 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw9Gne : State.get w9 GFLG ≠ [1] := by
+      rw [hw9, State.get_set_eq]; decide
+    clear_value w9
+    have h9WREG : State.get w9 WREG = State.get u WREG := by
+      rw [hw9frame WREG (by decide), hw8frame WREG (by decide)]; exact h7WREG
+    have hcost : stepBody.cost u
+        = 1 + 1 + (1 + (Cmd.forBnd KTMP KSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).cost w1
+          + (1 + Op.cost (.concat STARTA LINEL STEPO) w2
+          + (1 + Op.cost (.concat STARTB STARTA LREG) w3
+          + (1 + Op.cost (.concat SUMW STEPO WIDTH) w4
+          + (1 + Op.cost (.copy REM SUMW) w5
+          + (1 + (Cmd.forBnd KTMP LREG (Cmd.op (.tail REM REM))).cost w6
+          + (1 + 1
+          + (1 + 2
+          + (1 + 3))))))))) := by
+      unfold stepBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+        Cmd.cost_op, e3, Cmd.cost_seq, Cmd.cost_op, e4, Cmd.cost_seq, Cmd.cost_op,
+        e5, Cmd.cost_seq, Cmd.cost_op, e6, Cmd.cost_seq, ← hw7, Cmd.cost_seq,
+        Cmd.cost_op, e8, Cmd.cost_seq, hc9, e9, Cmd.cost_ifBit_false _ _ _ _ hw9Gne,
+        emitFtrue_cost]
+      simp only [Op.cost]
+    have heval : stepBody.eval u = emitFtrue.eval w9 := by
+      unfold stepBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hw2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+        Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, ← hw7, Cmd.eval_seq, e8,
+        Cmd.eval_seq, e9, Cmd.eval_ifBit_false _ _ _ _ hw9Gne]
+    constructor
+    · rw [hcost, hc3, hc4, hc5, hc6]
+      have hoff : C.offset ≤ Ω := by omega
+      have hsteple : step ≤ Ω := by omega
+      have hso : step * C.offset ≤ Ω := by omega
+      have hwid : C.width ≤ Ω := by omega
+      have hL : C.init.length ≤ Ω := by omega
+      have hsb : line * C.init.length + step * C.offset + C.init.length ≤ Ω := by
+        rw [hsucc] at hΩidx
+        omega
+      have hMulle := le_trans hcMul (mulLoopClose C.offset step Ω hoff hsteple hso)
+      have hSuble := le_trans hcSub
+        (subLoopClose (step * C.offset + C.width) C.init.length Ω (by omega) hL)
+      set K := Cmd.flatK (sentBitBody 0) with hK
+      set P2 := (Ω + 1) * (Ω + 1) with hP2
+      set P3 := (Ω + 1) * P2 with hP3
+      have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+      have hP23 : P2 ≤ P3 := by
+        rw [hP3]
+        exact Nat.le_mul_of_pos_left P2 (by omega)
+      have hKP3 : 0 ≤ (2 * K + 44) * P3 := Nat.zero_le _
+      have h44_100 : (2 * K + 44) * P3 + 56 * P3 = (2 * K + 100) * P3 := by ring
+      omega
+    · rw [heval, emitFtrue_frame _ WREG (by decide), h9WREG]
+      exact hΩW
+
+/-! ### `emitAllSteps`: cost -/
+
+private theorem andPrefix_range_succ (g : Nat → formula) (n : Nat) :
+    andPrefix ((List.range (n + 1)).map g)
+      = andPrefix ((List.range n).map g) ++ ([0, 1] ++ serF (g n)) := by
+  rw [List.range_succ, List.map_append, andPrefix_append]
+  simp [andPrefix]
+
+private theorem andPrefix_range_le (g : Nat → formula) (k m : Nat) (h : k ≤ m) :
+    (andPrefix ((List.range k).map g)).length
+      ≤ (serF (listAnd ((List.range m).map g))).length := by
+  have he : (List.range k).map g = ((List.range m).map g).take k := by
+    rw [← List.map_take, List.take_range, Nat.min_eq_left h]
+  rw [he]
+  exact andPrefix_take_length_le _ k
+
+/-- Per-iteration effect of the inner step loop: cost + `WREG ≤ Ω`.
+`u3` is the inner loop's entry state (`LINEL` freshly rebuilt). -/
+private theorem stepIterBody_effect (C : BinaryCC) (line : Nat) (u3 : State) (Ω : Nat)
+    (hLINEL : State.get u3 LINEL = List.replicate (line * C.init.length) 1)
+    (hOFF : State.get u3 OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u3 WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u3 LREG = List.replicate C.init.length 1)
+    (hCARDS : State.get u3 CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hΩOL : (State.get u3 OUT).length
+        + (serF (encodeLineConstraints C line)).length ≤ Ω)
+    (hΩidxL : (line + 1) * C.init.length + C.init.length * C.offset
+        + C.init.length + C.offset + C.width + C.init.length
+        + (State.get u3 CARDS).length ≤ Ω)
+    (i : Nat) (hi : i < C.init.length + 1) (st : State)
+    (hInv : ASInv C line u3 i st) (hW : (State.get st WREG).length ≤ Ω) :
+    stepIterBody.cost (st.set KSTEP (List.replicate i 1))
+        ≤ 4 + (2 * Cmd.flatK (sentBitBody 0) + 100)
+            * ((Ω + 1) * ((Ω + 1) * (Ω + 1)))
+    ∧ (State.get (stepIterBody.eval (st.set KSTEP (List.replicate i 1))) WREG).length
+        ≤ Ω := by
+  obtain ⟨hOUT, hZ, hframe⟩ := hInv
+  set w := st.set KSTEP (List.replicate i 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KSTEP → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwK : State.get w KSTEP = List.replicate i 1 := State.get_set_eq _ _ _
+  clear_value w
+  set w1 := emitFandTag.eval w with hw1
+  have hw1frame : ∀ r : Var, r ≠ OUT → State.get w1 r = State.get w r := by
+    intro r hr; rw [hw1]; exact emitFandTag_frame w r hr
+  have hw1OUT : State.get w1 OUT = State.get w OUT ++ [0, 1] := by
+    rw [hw1, emitFandTag_run]; exact State.get_set_eq _ _ _
+  clear_value w1
+  -- thread the stepBody entry facts to w1
+  have hchain : ∀ r : Var, r ≠ OUT → r ≠ KSTEP →
+      r ≠ SCAN → r ≠ WREG → r ≠ TFLG → r ≠ KBIT → r ≠ DONE → r ≠ EMARK → r ≠ ZERO →
+      r ≠ KTMP → r ≠ KCARD → r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW →
+      r ≠ REM → r ≠ GFLG → State.get w1 r = State.get u3 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+    rw [hw1frame r h1, hwframe r h2,
+      hframe r h3 h1 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h2]
+  have h1LINEL : State.get w1 LINEL = List.replicate (line * C.init.length) 1 := by
+    rw [hchain LINEL (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hLINEL
+  have h1KSTEP : State.get w1 KSTEP = List.replicate i 1 := by
+    rw [hw1frame KSTEP (by decide)]; exact hwK
+  have h1OFF : State.get w1 OFFSET = List.replicate C.offset 1 := by
+    rw [hchain OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hOFF
+  have h1WID : State.get w1 WIDTH = List.replicate C.width 1 := by
+    rw [hchain WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hWID
+  have h1LREG : State.get w1 LREG = List.replicate C.init.length 1 := by
+    rw [hchain LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hLREG
+  have h1CARDS : State.get w1 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [hchain CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)]
+    exact hCARDS
+  have h1CARDSlen : (State.get w1 CARDS).length = (State.get u3 CARDS).length := by
+    rw [h1CARDS, ← hCARDS]
+  have h1Z : State.get w1 ZERO = [] := by
+    rw [hw1frame ZERO (by decide), hwframe ZERO (by decide)]; exact hZ
+  have h1W : (State.get w1 WREG).length ≤ Ω := by
+    rw [hw1frame WREG (by decide), hwframe WREG (by decide)]; exact hW
+  -- the OUT ceiling at w1
+  have h1OUTfull : State.get w1 OUT = State.get u3 OUT
+      ++ andPrefix ((List.range i).map (encodeStepConstraint C line)) ++ [0, 1] := by
+    rw [hw1OUT, hwframe OUT (by decide), hOUT]
+  have hΩO1 : (State.get w1 OUT).length
+      + (serF (encodeStepConstraint C line i)).length ≤ Ω := by
+    have hsucc := andPrefix_range_succ (encodeStepConstraint C line) i
+    have hle := andPrefix_range_le (encodeStepConstraint C line) (i + 1)
+      (C.init.length + 1) hi
+    have hlineC : serF (encodeLineConstraints C line)
+        = serF (listAnd ((List.range (C.init.length + 1)).map
+            (encodeStepConstraint C line))) := rfl
+    rw [hlineC] at hΩOL
+    rw [h1OUTfull]
+    have hlen : (andPrefix ((List.range (i + 1)).map (encodeStepConstraint C line))).length
+        = (andPrefix ((List.range i).map (encodeStepConstraint C line))).length
+          + (2 + (serF (encodeStepConstraint C line i)).length) := by
+      rw [hsucc]
+      simp [List.length_append]
+      omega
+    simp only [List.length_append, List.length_cons, List.length_nil]
+    omega
+  have hΩidxi : (line + 1) * C.init.length + i * C.offset + i + C.offset
+      + C.width + C.init.length + (State.get w1 CARDS).length ≤ Ω := by
+    have hiL : i ≤ C.init.length := by omega
+    have hio : i * C.offset ≤ C.init.length * C.offset :=
+      Nat.mul_le_mul_right _ hiL
+    rw [h1CARDSlen]
+    omega
+  have hSB := stepBody_cost C line i w1 Ω h1LINEL h1KSTEP h1OFF h1WID h1LREG
+    h1CARDS h1Z hΩO1 h1W hΩidxi
+  have hcost : stepIterBody.cost w = 1 + 3 + stepBody.cost w1 := by
+    unfold stepIterBody
+    rw [Cmd.cost_seq, emitFandTag_cost, ← hw1]
+  have heval : stepIterBody.eval w = stepBody.eval w1 := by
+    unfold stepIterBody
+    rw [Cmd.eval_seq, ← hw1]
+  constructor
+  · rw [hcost]
+    have h1 := hSB.1
+    set B := (2 * Cmd.flatK (sentBitBody 0) + 100) * ((Ω + 1) * ((Ω + 1) * (Ω + 1)))
+      with hB
+    clear_value B
+    omega
+  · rw [heval]
+    exact hSB.2
+
+/-- Per-iteration effect of the line loop: cost + `WREG ≤ Ω`. `u0` is the
+`emitAllSteps` entry state. -/
+private theorem lineBody_effect (C : BinaryCC) (u0 : State) (Ω : Nat)
+    (hOFF : State.get u0 OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u0 WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u0 LREG = List.replicate C.init.length 1)
+    (hLREG1 : State.get u0 LREG1 = List.replicate (C.init.length + 1) 1)
+    (hCARDS : State.get u0 CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hΩO : (State.get u0 OUT).length
+        + (serF (encodeAllStepConstraints C)).length ≤ Ω)
+    (hΩidx : C.steps * C.init.length + C.init.length * C.offset + C.init.length
+        + C.offset + C.offset + C.width + C.init.length + C.steps
+        + (State.get u0 CARDS).length ≤ Ω)
+    (j : Nat) (hj : j < C.steps) (st : State)
+    (hInv : ALInv C u0 j st) (hW : (State.get st WREG).length ≤ Ω) :
+    lineBody.cost (st.set KLINE (List.replicate j 1))
+        ≤ (2 * Cmd.flatK (sentBitBody 0) + 140)
+            * ((Ω + 1) * ((Ω + 1) * ((Ω + 1) * (Ω + 1))))
+    ∧ (State.get (lineBody.eval (st.set KLINE (List.replicate j 1))) WREG).length
+        ≤ Ω := by
+  obtain ⟨hOUT, hZ, hframe⟩ := hInv
+  set w := st.set KLINE (List.replicate j 1) with hw
+  have hwframe : ∀ r : Var, r ≠ KLINE → State.get w r = State.get st r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hwK : State.get w KLINE = List.replicate j 1 := State.get_set_eq _ _ _
+  clear_value w
+  set w1 := emitFandTag.eval w with hw1
+  have hw1frame : ∀ r : Var, r ≠ OUT → State.get w1 r = State.get w r := by
+    intro r hr; rw [hw1]; exact emitFandTag_frame w r hr
+  have hw1OUT : State.get w1 OUT = State.get w OUT ++ [0, 1] := by
+    rw [hw1, emitFandTag_run]; exact State.get_set_eq _ _ _
+  clear_value w1
+  -- w2: clear LINEL
+  have e2 : (Cmd.op (.clear LINEL)).eval w1 = w1.set LINEL [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set w2 := w1.set LINEL [] with hw2
+  have hw2frame : ∀ r : Var, r ≠ LINEL → State.get w2 r = State.get w1 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw2LINEL : State.get w2 LINEL = [] := State.get_set_eq _ _ _
+  clear_value w2
+  have h2chain : ∀ r : Var, r ≠ LINEL → r ≠ OUT → r ≠ KLINE →
+      r ≠ SCAN → r ≠ WREG → r ≠ TFLG → r ≠ KBIT → r ≠ DONE → r ≠ EMARK → r ≠ ZERO →
+      r ≠ KTMP → r ≠ KCARD → r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW →
+      r ≠ REM → r ≠ GFLG → r ≠ KSTEP → r ≠ KTMP2 →
+      State.get w2 r = State.get u0 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20
+    rw [hw2frame r h1, hw1frame r h2, hwframe r h3,
+      hframe r h4 h2 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h1 h3 h20]
+  have h2LREG : State.get w2 LREG = List.replicate C.init.length 1 := by
+    rw [h2chain LREG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hLREG
+  have h2KLINElen : (State.get w2 KLINE).length = j := by
+    rw [hw2frame KLINE (by decide), hw1frame KLINE (by decide), hwK,
+      List.length_replicate]
+  -- w3: LINEL := 1^(j·L) (run + cost)
+  have hcMul := cost_mulLoop_le KTMP2 KLINE LINEL LREG w2 0 C.init.length j
+    (by decide) (by decide) (by decide)
+    (by rw [hw2LINEL]; exact Nat.le_refl 0)
+    (by rw [h2LREG, List.length_replicate])
+    h2KLINElen
+  obtain ⟨h3LINEL, h3frame⟩ :=
+    unaryMulLoop_run KTMP2 KLINE LREG LINEL w2 C.init.length j
+      (by decide) (by decide) (by decide) h2LREG h2KLINElen hw2LINEL
+  set w3 := (Cmd.forBnd KTMP2 KLINE (Cmd.op (.concat LINEL LINEL LREG))).eval w2
+    with hw3
+  clear_value w3
+  have h3LINEL' : State.get w3 LINEL = List.replicate (j * C.init.length) 1 := by
+    rw [h3LINEL]
+  have h3chain : ∀ r : Var, r ≠ LINEL → r ≠ KTMP2 → r ≠ OUT → r ≠ KLINE →
+      r ≠ SCAN → r ≠ WREG → r ≠ TFLG → r ≠ KBIT → r ≠ DONE → r ≠ EMARK → r ≠ ZERO →
+      r ≠ KTMP → r ≠ KCARD → r ≠ STEPO → r ≠ STARTA → r ≠ STARTB → r ≠ SUMW →
+      r ≠ REM → r ≠ GFLG → r ≠ KSTEP →
+      State.get w3 r = State.get u0 r := by
+    intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20
+    rw [h3frame r h1 h2,
+      h2chain r h1 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17 h18 h19 h20 h2]
+  have h3OFF : State.get w3 OFFSET = List.replicate C.offset 1 := by
+    rw [h3chain OFFSET (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hOFF
+  have h3WID : State.get w3 WIDTH = List.replicate C.width 1 := by
+    rw [h3chain WIDTH (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hWID
+  have h3LREG : State.get w3 LREG = List.replicate C.init.length 1 := by
+    rw [h3frame LREG (by decide) (by decide)]
+    exact h2LREG
+  have h3LREG1 : State.get w3 LREG1 = List.replicate (C.init.length + 1) 1 := by
+    rw [h3chain LREG1 (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hLREG1
+  have h3LREG1len : (State.get w3 LREG1).length = C.init.length + 1 := by
+    rw [h3LREG1, List.length_replicate]
+  have h3CARDS : State.get w3 CARDS
+      = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat) := by
+    rw [h3chain CARDS (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hCARDS
+  have h3CARDSlen : (State.get w3 CARDS).length = (State.get u0 CARDS).length := by
+    rw [h3CARDS, ← hCARDS]
+  have h3Z : State.get w3 ZERO = [] := by
+    rw [h3frame ZERO (by decide) (by decide), hw2frame ZERO (by decide),
+      hw1frame ZERO (by decide), hwframe ZERO (by decide)]
+    exact hZ
+  have h3W : (State.get w3 WREG).length ≤ Ω := by
+    rw [h3frame WREG (by decide) (by decide), hw2frame WREG (by decide),
+      hw1frame WREG (by decide), hwframe WREG (by decide)]
+    exact hW
+  have h3OUT : State.get w3 OUT = State.get u0 OUT
+      ++ andPrefix ((List.range j).map (encodeLineConstraints C)) ++ [0, 1] := by
+    rw [h3frame OUT (by decide) (by decide), hw2frame OUT (by decide), hw1OUT,
+      hwframe OUT (by decide), hOUT]
+  -- the line-level OUT ceiling at w3
+  have hΩOL3 : (State.get w3 OUT).length
+      + (serF (encodeLineConstraints C j)).length ≤ Ω := by
+    have hsucc := andPrefix_range_succ (encodeLineConstraints C) j
+    have hle := andPrefix_range_le (encodeLineConstraints C) (j + 1) C.steps hj
+    have hallC : serF (encodeAllStepConstraints C)
+        = serF (listAnd ((List.range C.steps).map (encodeLineConstraints C))) := rfl
+    rw [hallC] at hΩO
+    rw [h3OUT]
+    have hlen : (andPrefix ((List.range (j + 1)).map (encodeLineConstraints C))).length
+        = (andPrefix ((List.range j).map (encodeLineConstraints C))).length
+          + (2 + (serF (encodeLineConstraints C j)).length) := by
+      rw [hsucc]
+      simp [List.length_append]
+      omega
+    simp only [List.length_append, List.length_cons, List.length_nil]
+    omega
+  have hΩidxL3 : (j + 1) * C.init.length + C.init.length * C.offset
+      + C.init.length + C.offset + C.width + C.init.length
+      + (State.get w3 CARDS).length ≤ Ω := by
+    have hjs : j + 1 ≤ C.steps := hj
+    have hjL : (j + 1) * C.init.length ≤ C.steps * C.init.length :=
+      Nat.mul_le_mul_right _ hjs
+    rw [h3CARDSlen]
+    omega
+  -- the inner step loop (cost + run + WREG)
+  have hasBase : ASInv C j w3 0 w3 :=
+    ⟨by simp [andPrefix], h3Z,
+      fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+  have hcInner := Cmd.cost_forBnd_le KSTEP LREG1 stepIterBody w3
+    (4 + (2 * Cmd.flatK (sentBitBody 0) + 100) * ((Ω + 1) * ((Ω + 1) * (Ω + 1))))
+    (fun i stt => ASInv C j w3 i stt ∧ (State.get stt WREG).length ≤ Ω)
+    ⟨hasBase, h3W⟩
+    (fun i stt hi hM => by
+      refine ⟨ASInv_step C j w3 h3LINEL' h3OFF h3WID h3LREG h3CARDS i stt hM.1, ?_⟩
+      exact (stepIterBody_effect C j w3 Ω h3LINEL' h3OFF h3WID h3LREG h3CARDS
+        hΩOL3 hΩidxL3 i (by rw [h3LREG1len] at hi; exact hi) stt hM.1 hM.2).2)
+    (fun i stt hi hM =>
+      (stepIterBody_effect C j w3 Ω h3LINEL' h3OFF h3WID h3LREG h3CARDS
+        hΩOL3 hΩidxL3 i (by rw [h3LREG1len] at hi; exact hi) stt hM.1 hM.2).1)
+  have hwInner := Cmd.foldlState_range_induct stepIterBody KSTEP
+    (State.get w3 LREG1).length w3
+    (fun i stt => ASInv C j w3 i stt ∧ (State.get stt WREG).length ≤ Ω)
+    ⟨hasBase, h3W⟩
+    (fun i stt hi hM => by
+      refine ⟨ASInv_step C j w3 h3LINEL' h3OFF h3WID h3LREG h3CARDS i stt hM.1, ?_⟩
+      exact (stepIterBody_effect C j w3 Ω h3LINEL' h3OFF h3WID h3LREG h3CARDS
+        hΩOL3 hΩidxL3 i (by rw [h3LREG1len] at hi; exact hi) stt hM.1 hM.2).2)
+  set w4 := (Cmd.forBnd KSTEP LREG1 stepIterBody).eval w3 with hw4
+  have hw4eval : w4 = Cmd.foldlState stepIterBody KSTEP
+      (List.range (State.get w3 LREG1).length) w3 := by
+    rw [hw4, Cmd.eval_forBnd]
+  have h4W : (State.get w4 WREG).length ≤ Ω := by
+    rw [hw4eval]
+    exact hwInner.2
+  clear_value w4
+  -- assemble lineBody
+  have hcost : lineBody.cost w
+      = 1 + 3 + (1 + 1
+        + (1 + (Cmd.forBnd KTMP2 KLINE (Cmd.op (.concat LINEL LINEL LREG))).cost w2
+        + (1 + (Cmd.forBnd KSTEP LREG1 stepIterBody).cost w3 + 3))) := by
+    unfold lineBody
+    rw [Cmd.cost_seq, emitFandTag_cost, ← hw1, Cmd.cost_seq, Cmd.cost_op, e2,
+      Cmd.cost_seq, ← hw3, Cmd.cost_seq, ← hw4, emitFtrue_cost]
+    simp only [Op.cost]
+  have heval : lineBody.eval w = emitFtrue.eval w4 := by
+    unfold lineBody
+    rw [Cmd.eval_seq, ← hw1, Cmd.eval_seq, e2, Cmd.eval_seq, ← hw3, Cmd.eval_seq,
+      ← hw4]
+  constructor
+  · rw [hcost]
+    -- arithmetic
+    have hjs : j ≤ C.steps := le_of_lt hj
+    have hjL : j * C.init.length ≤ C.steps * C.init.length :=
+      Nat.mul_le_mul_right _ hjs
+    have hL : C.init.length ≤ Ω := by omega
+    have hjΩ : j ≤ Ω := by omega
+    have hjLΩ : j * C.init.length ≤ Ω := by omega
+    have hMulle := le_trans hcMul (mulLoopClose C.init.length j Ω hL hjΩ hjLΩ)
+    have hiters : (State.get w3 LREG1).length ≤ Ω + 1 := by
+      rw [h3LREG1len]; omega
+    set K := Cmd.flatK (sentBitBody 0) with hK
+    clear_value K
+    set P2 := (Ω + 1) * (Ω + 1) with hP2
+    set P3 := (Ω + 1) * P2 with hP3
+    set P4 := (Ω + 1) * P3 with hP4
+    set B := 4 + (2 * K + 100) * P3 with hB
+    have hBle : B ≤ (2 * K + 104) * P3 := by
+      rw [hB]
+      have h1P3 : 1 ≤ P3 := by
+        rw [hP3, hP2]
+        exact le_trans (one_le_P Ω) (Nat.mul_le_mul_left _ (le_scale Ω (Ω + 1)))
+      have h4P3 : 4 + (2 * K + 100) * P3 ≤ 4 * P3 + (2 * K + 100) * P3 := by omega
+      have he : 4 * P3 + (2 * K + 100) * P3 = (2 * K + 104) * P3 := by ring
+      omega
+    have hlB : (State.get w3 LREG1).length * B ≤ (Ω + 1) * ((2 * K + 104) * P3) :=
+      Nat.mul_le_mul hiters hBle
+    have he4 : (Ω + 1) * ((2 * K + 104) * P3) = (2 * K + 104) * P4 := by
+      rw [hP4]; ring
+    have hii : (State.get w3 LREG1).length * (State.get w3 LREG1).length
+        ≤ (Ω + 1) * (Ω + 1) := Nat.mul_le_mul hiters hiters
+    have hP24 : P2 ≤ P4 := by
+      rw [hP4, hP3]
+      exact le_trans (le_scale Ω P2) (Nat.mul_le_mul_left _ (le_scale Ω P2))
+    have hfin : (2 * K + 140) * P4 = (2 * K + 104) * P4 + 36 * P4 := by ring
+    have h1P4 : 1 ≤ P4 := by
+      rw [hP4, hP3, hP2]
+      exact Nat.mul_pos (Nat.succ_pos Ω) (Nat.mul_pos (Nat.succ_pos Ω)
+        (Nat.mul_pos (Nat.succ_pos Ω) (Nat.succ_pos Ω)))
+    omega
+  · rw [heval, emitFtrue_frame _ WREG (by decide)]
+    exact h4W
+
+/-- **`emitAllSteps` cost**: quintic in the ceiling `Ω`, plus `WREG ≤ Ω` exit. -/
+theorem emitAllSteps_cost (C : BinaryCC) (u : State) (Ω : Nat)
+    (hSTEPS : State.get u STEPS = List.replicate C.steps 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hWID : State.get u WIDTH = List.replicate C.width 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hLREG1 : State.get u LREG1 = List.replicate (C.init.length + 1) 1)
+    (hCARDS : State.get u CARDS
+        = FlatTCCFree.encCardsOut (C.cards.map FlatCCBinFree.cardNat))
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length
+        + (serF (encodeAllStepConstraints C)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩidx : C.steps * C.init.length + C.init.length * C.offset + C.init.length
+        + C.offset + C.offset + C.width + C.init.length + C.steps
+        + (State.get u CARDS).length ≤ Ω) :
+    emitAllSteps.cost u
+        ≤ (2 * Cmd.flatK (sentBitBody 0) + 160)
+            * ((Ω + 1) * ((Ω + 1) * ((Ω + 1) * ((Ω + 1) * (Ω + 1)))))
+    ∧ (State.get (emitAllSteps.eval u) WREG).length ≤ Ω := by
+  have heq : emitAllSteps = (Cmd.forBnd KLINE STEPS lineBody ;; emitFtrue) := rfl
+  have hSTEPSlen : (State.get u STEPS).length = C.steps := by
+    rw [hSTEPS, List.length_replicate]
+  have hloop := Cmd.cost_forBnd_le KLINE STEPS lineBody u
+    ((2 * Cmd.flatK (sentBitBody 0) + 140)
+      * ((Ω + 1) * ((Ω + 1) * ((Ω + 1) * (Ω + 1)))))
+    (fun j st => ALInv C u j st ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨by simp [andPrefix], hZ,
+      fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩, hΩW⟩
+    (fun j st hj hM => by
+      refine ⟨ALInv_step C u hOFF hWID hLREG hLREG1 hCARDS j st hM.1, ?_⟩
+      exact (lineBody_effect C u Ω hOFF hWID hLREG hLREG1 hCARDS hΩO hΩidx j
+        (by rw [hSTEPSlen] at hj; exact hj) st hM.1 hM.2).2)
+    (fun j st hj hM =>
+      (lineBody_effect C u Ω hOFF hWID hLREG hLREG1 hCARDS hΩO hΩidx j
+        (by rw [hSTEPSlen] at hj; exact hj) st hM.1 hM.2).1)
+  have hwLoop := Cmd.foldlState_range_induct lineBody KLINE
+    (State.get u STEPS).length u
+    (fun j st => ALInv C u j st ∧ (State.get st WREG).length ≤ Ω)
+    ⟨⟨by simp [andPrefix], hZ,
+      fun r _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ => rfl⟩, hΩW⟩
+    (fun j st hj hM => by
+      refine ⟨ALInv_step C u hOFF hWID hLREG hLREG1 hCARDS j st hM.1, ?_⟩
+      exact (lineBody_effect C u Ω hOFF hWID hLREG hLREG1 hCARDS hΩO hΩidx j
+        (by rw [hSTEPSlen] at hj; exact hj) st hM.1 hM.2).2)
+  rw [heq, Cmd.cost_seq, emitFtrue_cost]
+  constructor
+  · -- arithmetic
+    have hsteps : C.steps ≤ Ω := by omega
+    set K := Cmd.flatK (sentBitBody 0) with hK
+    clear_value K
+    set P2 := (Ω + 1) * (Ω + 1) with hP2
+    set P3 := (Ω + 1) * P2 with hP3
+    set P4 := (Ω + 1) * P3 with hP4
+    set P5 := (Ω + 1) * P4 with hP5
+    rw [hSTEPSlen] at hloop
+    have hlB : C.steps * ((2 * K + 140) * P4) ≤ (Ω + 1) * ((2 * K + 140) * P4) :=
+      Nat.mul_le_mul_right _ (by omega)
+    have he5 : (Ω + 1) * ((2 * K + 140) * P4) = (2 * K + 140) * P5 := by
+      rw [hP5]; ring
+    have hss : C.steps * C.steps ≤ Ω * Ω := Nat.mul_le_mul hsteps hsteps
+    have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+    have hP25 : P2 ≤ P5 := by
+      rw [hP5, hP4, hP3]
+      exact le_trans (le_scale Ω P2) (Nat.mul_le_mul_left _
+        (le_trans (le_scale Ω P2) (Nat.mul_le_mul_left _ (le_scale Ω P2))))
+    have hfin : (2 * K + 160) * P5 = (2 * K + 140) * P5 + 20 * P5 := by ring
+    have h1P5 : 1 ≤ P5 := by
+      rw [hP5, hP4, hP3, hP2]
+      exact Nat.mul_pos (Nat.succ_pos Ω) (Nat.mul_pos (Nat.succ_pos Ω)
+        (Nat.mul_pos (Nat.succ_pos Ω) (Nat.mul_pos (Nat.succ_pos Ω) (Nat.succ_pos Ω))))
+    omega
+  · rw [Cmd.eval_seq, emitFtrue_frame _ WREG (by decide), Cmd.eval_forBnd]
+    exact hwLoop.2
+
+/-! ### `emitFinal`: cost -/
+
+private theorem orPrefix_range_succ (g : Nat → formula) (n : Nat) :
+    orPrefix ((List.range (n + 1)).map g)
+      = orPrefix ((List.range n).map g) ++ ([1, 0] ++ serF (g n)) := by
+  rw [List.range_succ, List.map_append, orPrefix_append]
+  simp [orPrefix]
+
+private theorem orPrefix_range_le (g : Nat → formula) (k m : Nat) (h : k ≤ m) :
+    (orPrefix ((List.range k).map g)).length
+      ≤ (serF (listOr ((List.range m).map g))).length := by
+  have he : (List.range k).map g = ((List.range m).map g).take k := by
+    rw [← List.map_take, List.take_range, Nat.min_eq_left h]
+  rw [he]
+  exact orPrefix_take_length_le _ k
+
+private theorem encSList_length_ge (l : List Nat) :
+    l.length ≤ (FlatTCCFree.encSList l).length := by
+  induction l with
+  | nil => simp [FlatTCCFree.encSList]
+  | cons v xs ih =>
+      show _ ≤ (FlatTCCFree.encSElem v ++ FlatTCCFree.encSList xs).length
+      simp only [List.length_append, List.length_cons, FlatTCCFree.encSElem,
+        List.length_replicate]
+      omega
+
+/-- `emitBitsFromScan` never grows `WREG` beyond `max(entry, start + |bits|)`. -/
+private theorem emitBitsFromScan_WREG (BASE bound : Nat) (u : State) (W : Nat)
+    (hBT : BASE ≠ TFLG) (hBS : BASE ≠ SCAN) (hBK : BASE ≠ KBIT)
+    (hBmem : BASE ∉ Cmd.writes (bsBody BASE))
+    (hW : (State.get u WREG).length ≤ W)
+    (hBb : (State.get u BASE).length + (State.get u bound).length ≤ W) :
+    (State.get ((emitBitsFromScan BASE bound).eval u) WREG).length ≤ W := by
+  rw [emitBitsFromScan_eq, Cmd.eval_seq, emitFtrue_frame _ WREG (by decide),
+    Cmd.eval_forBnd]
+  have hInv := Cmd.foldlState_range_induct (bsBody BASE) KBIT
+    (State.get u bound).length u
+    (fun i st => (State.get st WREG).length ≤ W
+      ∧ State.get st BASE = State.get u BASE)
+    ⟨hW, rfl⟩
+    (fun i st hi hM => by
+      obtain ⟨hWl, hBf⟩ := hM
+      constructor
+      · rw [bsBody_WREG BASE _ hBT hBS,
+          State.get_set_ne _ _ _ _ hBK, State.get_set_eq, hBf,
+          List.length_append, List.length_replicate]
+        omega
+      · rw [Cmd.eval_get_of_not_writes _ _ BASE hBmem,
+          State.get_set_ne _ _ _ _ hBK]
+        exact hBf)
+  exact hInv.1
+
+/-- **`finalStepBody` cost**: quadratic in `Ω`, plus the `WREG ≤ Ω` exit fact. -/
+theorem finalStepBody_cost (C : BinaryCC) (step : Nat) (bits : List Bool) (u : State)
+    (Ω : Nat)
+    (hSTEPSL : State.get u STEPSL = List.replicate (C.steps * C.init.length) 1)
+    (hKFSTEP : State.get u KFSTEP = List.replicate step 1)
+    (hOFF : State.get u OFFSET = List.replicate C.offset 1)
+    (hBLEN : State.get u BLEN = List.replicate bits.length 1)
+    (hLREG : State.get u LREG = List.replicate C.init.length 1)
+    (hFBITS : State.get u FBITS = FlatCCBinFree.bitsNat bits)
+    (hZ : State.get u ZERO = [])
+    (hΩO : (State.get u OUT).length
+        + (serF (encodeFinalAtStep C step bits)).length ≤ Ω)
+    (hΩW : (State.get u WREG).length ≤ Ω)
+    (hΩidx : C.steps * C.init.length + step * C.offset + step + C.offset
+        + bits.length + C.init.length ≤ Ω) :
+    finalStepBody.cost u
+        ≤ (Cmd.flatK (bsBody 0) + 60) * ((Ω + 1) * (Ω + 1))
+    ∧ (State.get (finalStepBody.eval u) WREG).length ≤ Ω := by
+  -- w1: clear STEPO
+  have e1 : (Cmd.op (.clear STEPO)).eval u = u.set STEPO [] := by
+    rw [Cmd.eval_op]; simp only [Op.eval]
+  set w1 := u.set STEPO [] with hw1
+  have hw1frame : ∀ r : Var, r ≠ STEPO → State.get w1 r = State.get u r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw1STEPO : State.get w1 STEPO = [] := State.get_set_eq _ _ _
+  have hw1OFF : State.get w1 OFFSET = List.replicate C.offset 1 := by
+    rw [hw1frame OFFSET (by decide)]; exact hOFF
+  have hw1KFSTEPlen : (State.get w1 KFSTEP).length = step := by
+    rw [hw1frame KFSTEP (by decide), hKFSTEP, List.length_replicate]
+  clear_value w1
+  -- w2: STEPO mul loop
+  have hcMul := cost_mulLoop_le KTMP2 KFSTEP STEPO OFFSET w1 0 C.offset step
+    (by decide) (by decide) (by decide)
+    (by rw [hw1STEPO]; exact Nat.le_refl 0)
+    (by rw [hw1OFF, List.length_replicate])
+    hw1KFSTEPlen
+  obtain ⟨h2STEPO, h2frame⟩ :=
+    unaryMulLoop_run KTMP2 KFSTEP OFFSET STEPO w1 C.offset step
+      (by decide) (by decide) (by decide) hw1OFF hw1KFSTEPlen hw1STEPO
+  set w2 := (Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).eval w1
+    with hw2
+  clear_value w2
+  have hw2BLEN : State.get w2 BLEN = List.replicate bits.length 1 := by
+    rw [h2frame BLEN (by decide) (by decide), hw1frame BLEN (by decide)]
+    exact hBLEN
+  -- w3: SUMW := STEPO ++ BLEN
+  have e3 : (Cmd.op (.concat SUMW STEPO BLEN)).eval w2
+      = w2.set SUMW (List.replicate (step * C.offset + bits.length) 1) := by
+    rw [Cmd.eval_op]
+    simp only [Op.eval, h2STEPO, hw2BLEN]
+    congr 1
+    rw [List.replicate_add]
+  have hc3 : Op.cost (.concat SUMW STEPO BLEN) w2
+      = 2 * (step * C.offset + bits.length) + 1 := by
+    show 2 * ((State.get w2 STEPO).length + (State.get w2 BLEN).length) + 1 = _
+    rw [h2STEPO, hw2BLEN, List.length_replicate, List.length_replicate]
+  set w3 := w2.set SUMW (List.replicate (step * C.offset + bits.length) 1) with hw3
+  have hw3frame : ∀ r : Var, r ≠ SUMW → State.get w3 r = State.get w2 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw3SUMW : State.get w3 SUMW
+      = List.replicate (step * C.offset + bits.length) 1 := State.get_set_eq _ _ _
+  clear_value w3
+  -- w4: REM := copy SUMW
+  have e4 : (Cmd.op (.copy REM SUMW)).eval w3
+      = w3.set REM (List.replicate (step * C.offset + bits.length) 1) := by
+    rw [Cmd.eval_op]; simp only [Op.eval, hw3SUMW]
+  have hc4 : Op.cost (.copy REM SUMW) w3 = step * C.offset + bits.length + 1 := by
+    show (State.get w3 SUMW).length + 1 = _
+    rw [hw3SUMW, List.length_replicate]
+  set w4 := w3.set REM (List.replicate (step * C.offset + bits.length) 1) with hw4
+  have hw4frame : ∀ r : Var, r ≠ REM → State.get w4 r = State.get w3 r :=
+    fun r hr => State.get_set_ne _ _ _ _ hr
+  have hw4REM : State.get w4 REM
+      = List.replicate (step * C.offset + bits.length) 1 := State.get_set_eq _ _ _
+  have hw4LREGlen : (State.get w4 LREG).length = C.init.length := by
+    rw [hw4frame LREG (by decide), hw3frame LREG (by decide),
+      h2frame LREG (by decide) (by decide), hw1frame LREG (by decide),
+      hLREG, List.length_replicate]
+  clear_value w4
+  -- w5: the truncated-subtraction loop
+  have hcSub := cost_tailLoop_le KTMP2 LREG REM w4 (step * C.offset + bits.length)
+    C.init.length (by decide)
+    (by rw [hw4REM, List.length_replicate]) hw4LREGlen
+  obtain ⟨h5REM, h5frame⟩ :=
+    unarySubLoop_run KTMP2 LREG REM w4 (step * C.offset + bits.length) C.init.length
+      (by decide) hw4LREGlen hw4REM
+  set w5 := (Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM))).eval w4 with hw5
+  clear_value w5
+  have h5chain : ∀ r : Var, r ≠ STEPO → r ≠ KTMP2 → r ≠ SUMW → r ≠ REM →
+      State.get w5 r = State.get u r := by
+    intro r h1 h2 h3 h4
+    rw [h5frame r h4 h2, hw4frame r h4, hw3frame r h3, h2frame r h1 h2,
+      hw1frame r h1]
+  have h5OUT : State.get w5 OUT = State.get u OUT :=
+    h5chain OUT (by decide) (by decide) (by decide) (by decide)
+  have h5WREG : State.get w5 WREG = State.get u WREG :=
+    h5chain WREG (by decide) (by decide) (by decide) (by decide)
+  have h5STEPSL : State.get w5 STEPSL
+      = List.replicate (C.steps * C.init.length) 1 := by
+    rw [h5chain STEPSL (by decide) (by decide) (by decide) (by decide)]
+    exact hSTEPSL
+  have h5STEPO : State.get w5 STEPO = List.replicate (step * C.offset) 1 := by
+    rw [h5frame STEPO (by decide) (by decide), hw4frame STEPO (by decide),
+      hw3frame STEPO (by decide)]
+    exact h2STEPO
+  have h5FBITS : State.get w5 FBITS = FlatCCBinFree.bitsNat bits := by
+    rw [h5chain FBITS (by decide) (by decide) (by decide) (by decide)]
+    exact hFBITS
+  -- w6: nonEmpty TFLG REM, w7: the GFLG bit
+  by_cases hguard : step * C.offset + bits.length ≤ C.init.length
+  · have hREM0 : State.get w5 REM = [] := by
+      rw [h5REM, Nat.sub_eq_zero_of_le hguard]
+      rfl
+    have hne : (State.get w5 REM).isEmpty = true := by rw [hREM0]; rfl
+    have e6 : (Cmd.op (.nonEmpty TFLG REM)).eval w5 = w5.set TFLG [0] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w6 := w5.set TFLG [0] with hw6
+    have hw6frame : ∀ r : Var, r ≠ TFLG → State.get w6 r = State.get w5 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw6Tne : State.get w6 TFLG ≠ [1] := by
+      rw [hw6, State.get_set_eq]; decide
+    clear_value w6
+    have ec : (Cmd.op (.clear GFLG)).eval w6 = w6.set GFLG [] := by
+      rw [Cmd.eval_op]; simp only [Op.eval]
+    have ea : (Cmd.op (.appendOne GFLG)).eval (w6.set GFLG []) = w6.set GFLG [1] := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, State.get_set_eq, State.set_set, List.nil_append]
+    have e7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).eval w6
+        = w6.set GFLG [1] := by
+      rw [Cmd.eval_ifBit_false _ _ _ _ hw6Tne, Cmd.eval_seq, ec, ea]
+    have hc7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).cost w6 = 4 := by
+      rw [Cmd.cost_ifBit_false _ _ _ _ hw6Tne, Cmd.cost_seq, Cmd.cost_op, Cmd.cost_op,
+        ec]
+      simp only [Op.cost]
+    set w7 := w6.set GFLG [1] with hw7
+    have hw7frame : ∀ r : Var, r ≠ GFLG → State.get w7 r = State.get w6 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw7G : State.get w7 GFLG = [1] := State.get_set_eq _ _ _
+    clear_value w7
+    have h7STEPSL : State.get w7 STEPSL
+        = List.replicate (C.steps * C.init.length) 1 := by
+      rw [hw7frame STEPSL (by decide), hw6frame STEPSL (by decide)]; exact h5STEPSL
+    have h7STEPO : State.get w7 STEPO = List.replicate (step * C.offset) 1 := by
+      rw [hw7frame STEPO (by decide), hw6frame STEPO (by decide)]; exact h5STEPO
+    -- w8: FSTART := STEPSL ++ STEPO
+    have e8 : (Cmd.op (.concat FSTART STEPSL STEPO)).eval w7
+        = w7.set FSTART (List.replicate
+            (C.steps * C.init.length + step * C.offset) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, h7STEPSL, h7STEPO]
+      congr 1
+      rw [List.replicate_add]
+    have hc8 : Op.cost (.concat FSTART STEPSL STEPO) w7
+        = 2 * (C.steps * C.init.length + step * C.offset) + 1 := by
+      show 2 * ((State.get w7 STEPSL).length + (State.get w7 STEPO).length) + 1 = _
+      rw [h7STEPSL, h7STEPO, List.length_replicate, List.length_replicate]
+    set w8 := w7.set FSTART (List.replicate
+        (C.steps * C.init.length + step * C.offset) 1) with hw8
+    have hw8frame : ∀ r : Var, r ≠ FSTART → State.get w8 r = State.get w7 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw8F : State.get w8 FSTART
+        = List.replicate (C.steps * C.init.length + step * C.offset) 1 :=
+      State.get_set_eq _ _ _
+    have hw8FBITS : State.get w8 FBITS = FlatCCBinFree.bitsNat bits := by
+      rw [hw8frame FBITS (by decide), hw7frame FBITS (by decide),
+        hw6frame FBITS (by decide)]
+      exact h5FBITS
+    have hw8OUT : State.get w8 OUT = State.get u OUT := by
+      rw [hw8frame OUT (by decide), hw7frame OUT (by decide),
+        hw6frame OUT (by decide)]
+      exact h5OUT
+    have hw8WREG : State.get w8 WREG = State.get u WREG := by
+      rw [hw8frame WREG (by decide), hw7frame WREG (by decide),
+        hw6frame WREG (by decide)]
+      exact h5WREG
+    have hw8G : State.get w8 GFLG = [1] := by
+      rw [hw8frame GFLG (by decide)]; exact hw7G
+    clear_value w8
+    -- w9: copy SCAN FBITS
+    have e9 : (Cmd.op (.copy SCAN FBITS)).eval w8
+        = w8.set SCAN (FlatCCBinFree.bitsNat bits) := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hw8FBITS]
+    have hc9 : Op.cost (.copy SCAN FBITS) w8 = bits.length + 1 := by
+      show (State.get w8 FBITS).length + 1 = _
+      rw [hw8FBITS]
+      exact congrArg (· + 1) (List.length_map _)
+    set w9 := w8.set SCAN (FlatCCBinFree.bitsNat bits) with hw9
+    have hw9frame : ∀ r : Var, r ≠ SCAN → State.get w9 r = State.get w8 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw9SCAN : State.get w9 SCAN = FlatCCBinFree.bitsNat bits :=
+      State.get_set_eq _ _ _
+    have hw9F : State.get w9 FSTART
+        = List.replicate (C.steps * C.init.length + step * C.offset) 1 := by
+      rw [hw9frame FSTART (by decide)]; exact hw8F
+    have hw9FBITSlen : (State.get w9 FBITS).length = bits.length := by
+      rw [hw9frame FBITS (by decide), hw8FBITS]
+      exact List.length_map _
+    have hw9OUT : State.get w9 OUT = State.get u OUT := by
+      rw [hw9frame OUT (by decide)]; exact hw8OUT
+    have hw9WREG : State.get w9 WREG = State.get u WREG := by
+      rw [hw9frame WREG (by decide)]; exact hw8WREG
+    clear_value w9
+    have hstep : encodeFinalAtStep C step bits
+        = encodeBitsAt (C.steps * C.init.length + step * C.offset) bits := by
+      unfold encodeFinalAtStep
+      rw [dif_pos hguard]
+    have hcScan := emitBitsFromScan_cost FSTART FBITS
+      (C.steps * C.init.length + step * C.offset) bits w9 Ω
+      (by decide) (by decide) (by decide) (by decide) (by decide)
+      hw9F hw9FBITSlen hw9SCAN
+      (by rw [hw9OUT, ← hstep]; exact hΩO)
+      (by rw [hw9WREG]; exact hΩW)
+      (by omega)
+    have hWScan := emitBitsFromScan_WREG FSTART FBITS w9 Ω
+      (by decide) (by decide) (by decide) (by decide)
+      (by rw [hw9WREG]; exact hΩW)
+      (by rw [hw9F, List.length_replicate, hw9FBITSlen]; omega)
+    have hcost : finalStepBody.cost u
+        = 1 + 1 + (1 + (Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).cost w1
+          + (1 + Op.cost (.concat SUMW STEPO BLEN) w2
+          + (1 + Op.cost (.copy REM SUMW) w3
+          + (1 + (Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM))).cost w4
+          + (1 + 1
+          + (1 + 4
+          + (1 + Op.cost (.concat FSTART STEPSL STEPO) w7
+          + (1 + (1 + Op.cost (.copy SCAN FBITS) w8
+              + (emitBitsFromScan FSTART FBITS).cost w9))))))))) := by
+      unfold finalStepBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+        Cmd.cost_op, e3, Cmd.cost_seq, Cmd.cost_op, e4, Cmd.cost_seq, ← hw5,
+        Cmd.cost_seq, Cmd.cost_op, e6, Cmd.cost_seq, hc7, e7, Cmd.cost_seq,
+        Cmd.cost_op, e8, Cmd.cost_ifBit_true _ _ _ _ hw8G, Cmd.cost_seq,
+        Cmd.cost_op, e9]
+      simp only [Op.cost]
+    have heval : finalStepBody.eval u = (emitBitsFromScan FSTART FBITS).eval w9 := by
+      unfold finalStepBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hw2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+        Cmd.eval_seq, ← hw5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq, e8,
+        Cmd.eval_ifBit_true _ _ _ _ hw8G, Cmd.eval_seq, e9]
+    constructor
+    · rw [hcost, hc3, hc4, hc8, hc9]
+      have hoff : C.offset ≤ Ω := by omega
+      have hsteple : step ≤ Ω := by omega
+      have hso : step * C.offset ≤ Ω := by omega
+      have hbl : bits.length ≤ Ω := by omega
+      have hL : C.init.length ≤ Ω := by omega
+      have hsl : C.steps * C.init.length + step * C.offset ≤ Ω := by omega
+      have hMulle := le_trans hcMul (mulLoopClose C.offset step Ω hoff hsteple hso)
+      have hSuble := le_trans hcSub
+        (subLoopClose (step * C.offset + bits.length) C.init.length Ω (by omega) hL)
+      have hScanle := hcScan
+      set K := Cmd.flatK (bsBody 0) with hK
+      clear_value K
+      set P2 := (Ω + 1) * (Ω + 1) with hP2
+      have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+      have hfin : (K + 60) * P2 = (K + 6) * P2 + 54 * P2 := by ring
+      omega
+    · rw [heval]
+      exact hWScan
+  · -- guard fails → emitFalse
+    obtain ⟨k, hk⟩ : ∃ k, step * C.offset + bits.length - C.init.length = k + 1 :=
+      ⟨step * C.offset + bits.length - C.init.length - 1, by omega⟩
+    have hne : (State.get w5 REM).isEmpty = false := by
+      rw [h5REM, hk]
+      rfl
+    have e6 : (Cmd.op (.nonEmpty TFLG REM)).eval w5 = w5.set TFLG [1] := by
+      rw [Cmd.eval_op]; simp only [Op.eval, hne]
+      rfl
+    set w6 := w5.set TFLG [1] with hw6
+    have hw6frame : ∀ r : Var, r ≠ TFLG → State.get w6 r = State.get w5 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw6T : State.get w6 TFLG = [1] := State.get_set_eq _ _ _
+    clear_value w6
+    have e7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).eval w6
+        = w6.set GFLG [] := by
+      rw [Cmd.eval_ifBit_true _ _ _ _ hw6T, Cmd.eval_op]
+      simp only [Op.eval]
+    have hc7 : (Cmd.ifBit TFLG (Cmd.op (.clear GFLG))
+        (Cmd.op (.clear GFLG) ;; Cmd.op (.appendOne GFLG))).cost w6 = 2 := by
+      rw [Cmd.cost_ifBit_true _ _ _ _ hw6T, Cmd.cost_op]
+      simp only [Op.cost]
+    set w7 := w6.set GFLG [] with hw7
+    have hw7frame : ∀ r : Var, r ≠ GFLG → State.get w7 r = State.get w6 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw7Gne : State.get w7 GFLG ≠ [1] := by
+      rw [hw7, State.get_set_eq]; decide
+    clear_value w7
+    have h7STEPSL : State.get w7 STEPSL
+        = List.replicate (C.steps * C.init.length) 1 := by
+      rw [hw7frame STEPSL (by decide), hw6frame STEPSL (by decide)]; exact h5STEPSL
+    have h7STEPO : State.get w7 STEPO = List.replicate (step * C.offset) 1 := by
+      rw [hw7frame STEPO (by decide), hw6frame STEPO (by decide)]; exact h5STEPO
+    have e8 : (Cmd.op (.concat FSTART STEPSL STEPO)).eval w7
+        = w7.set FSTART (List.replicate
+            (C.steps * C.init.length + step * C.offset) 1) := by
+      rw [Cmd.eval_op]
+      simp only [Op.eval, h7STEPSL, h7STEPO]
+      congr 1
+      rw [List.replicate_add]
+    have hc8 : Op.cost (.concat FSTART STEPSL STEPO) w7
+        = 2 * (C.steps * C.init.length + step * C.offset) + 1 := by
+      show 2 * ((State.get w7 STEPSL).length + (State.get w7 STEPO).length) + 1 = _
+      rw [h7STEPSL, h7STEPO, List.length_replicate, List.length_replicate]
+    set w8 := w7.set FSTART (List.replicate
+        (C.steps * C.init.length + step * C.offset) 1) with hw8
+    have hw8frame : ∀ r : Var, r ≠ FSTART → State.get w8 r = State.get w7 r :=
+      fun r hr => State.get_set_ne _ _ _ _ hr
+    have hw8Gne : State.get w8 GFLG ≠ [1] := by
+      rw [hw8frame GFLG (by decide)]; exact hw7Gne
+    have hw8WREG : State.get w8 WREG = State.get u WREG := by
+      rw [hw8frame WREG (by decide), hw7frame WREG (by decide),
+        hw6frame WREG (by decide)]
+      exact h5WREG
+    clear_value w8
+    have hcost : finalStepBody.cost u
+        = 1 + 1 + (1 + (Cmd.forBnd KTMP2 KFSTEP (Cmd.op (.concat STEPO STEPO OFFSET))).cost w1
+          + (1 + Op.cost (.concat SUMW STEPO BLEN) w2
+          + (1 + Op.cost (.copy REM SUMW) w3
+          + (1 + (Cmd.forBnd KTMP2 LREG (Cmd.op (.tail REM REM))).cost w4
+          + (1 + 1
+          + (1 + 2
+          + (1 + Op.cost (.concat FSTART STEPSL STEPO) w7
+          + (1 + 9)))))))) := by
+      unfold finalStepBody
+      rw [Cmd.cost_seq, Cmd.cost_op, e1, Cmd.cost_seq, ← hw2, Cmd.cost_seq,
+        Cmd.cost_op, e3, Cmd.cost_seq, Cmd.cost_op, e4, Cmd.cost_seq, ← hw5,
+        Cmd.cost_seq, Cmd.cost_op, e6, Cmd.cost_seq, hc7, e7, Cmd.cost_seq,
+        Cmd.cost_op, e8, Cmd.cost_ifBit_false _ _ _ _ hw8Gne, emitFalse_cost]
+      simp only [Op.cost]
+    have heval : finalStepBody.eval u = emitFalse.eval w8 := by
+      unfold finalStepBody
+      rw [Cmd.eval_seq, e1, Cmd.eval_seq, ← hw2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+        Cmd.eval_seq, ← hw5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq, e8,
+        Cmd.eval_ifBit_false _ _ _ _ hw8Gne]
+    constructor
+    · rw [hcost, hc3, hc4, hc8]
+      have hoff : C.offset ≤ Ω := by omega
+      have hsteple : step ≤ Ω := by omega
+      have hso : step * C.offset ≤ Ω := by omega
+      have hbl : bits.length ≤ Ω := by omega
+      have hL : C.init.length ≤ Ω := by omega
+      have hsl : C.steps * C.init.length + step * C.offset ≤ Ω := by omega
+      have hMulle := le_trans hcMul (mulLoopClose C.offset step Ω hoff hsteple hso)
+      have hSuble := le_trans hcSub
+        (subLoopClose (step * C.offset + bits.length) C.init.length Ω (by omega) hL)
+      set K := Cmd.flatK (bsBody 0) with hK
+      clear_value K
+      set P2 := (Ω + 1) * (Ω + 1) with hP2
+      have hP2exp : P2 = Ω * Ω + 2 * Ω + 1 := by rw [hP2]; ring
+      have hKP2 : 0 ≤ K * P2 := Nat.zero_le _
+      have hfin : (K + 60) * P2 = K * P2 + 60 * P2 := by ring
+      omega
+    · rw [heval, emitFalse_frame _ WREG (by decide), hw8WREG]
+      exact hΩW
 
 end BinaryCCFSATFree
