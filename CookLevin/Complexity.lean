@@ -13,5 +13,6 @@ import Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC_free
 import Complexity.NP.SAT.CookLevin.Reductions.FlatCC_to_BinaryCC_free
 import Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_BinaryCC_comp
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_free
+import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_comp
 
 set_option autoImplicit false
