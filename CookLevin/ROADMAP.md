@@ -378,8 +378,12 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
      probe-validated). ✅ `BinaryCC_to_FSAT` DONE (2026-07-11, the expensive
      Tseytin/tableau item — program `buildFSAT`, full run + cost stack,
      `Reductions/BinaryCC_to_FSAT_free.lean`). Remaining: **`FSAT_to_SAT`**
-     (the last tail item — ⚠ first witness needing TREE traversal on-machine;
-     design brief + probe-first instructions in HANDOFF "NEXT TOP-DOWN").
+     (the last tail item — **MID-FLIGHT 2026-07-12-b**: the tree-traversal
+     design risk probed GO (positional Tseytin over the Polish stream, no
+     stack), the machine-friendly map `preTseytin` PROVEN correct &
+     axiom-clean (`fsatToSat_correct`), the full program `buildSAT` written &
+     `#eval`-validated; run/cost lemmas + witness + seam remain — concrete
+     ladder in HANDOFF "NEXT TOP-DOWN").
      `map`-over-lists gates parts (near-complete draft at
      `parked/MapNatList_WIP.lean`).
    - **✅ SETTLED (2026-07-02): the migrated `NPhard'` transport.** There is

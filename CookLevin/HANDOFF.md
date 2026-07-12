@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-12; **`FlatTCC ⪯p' FSAT` is LIVE** — the whole sound-tail prefix down to FSAT is ONE composed free-line witness; only `FSAT → SAT` remains on the tail)
+## Where the proof stands (2026-07-12-b; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct + program written & probed GO; run/cost lemmas, witness, seam remain)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -20,11 +20,16 @@ reasonably provable).
   `SeamData`/`comp` instances —
   `FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO' : FlatTCC ⪯p' BinaryCC`
   and **`BinaryCCFSATComp.flatTCC_to_FSAT_reducesPolyMO' : FlatTCC ⪯p' FSAT`
-  (NEW 2026-07-12)** — the whole sound-tail prefix
+  (2026-07-12)** — the whole sound-tail prefix
   `FlatTCC → FlatCC → BinaryCC → FSAT` as ONE composed free witness
-  (`flatTCC_to_FSAT_witness`). **The only missing tail piece is `FSAT → SAT`
-  as a free witness + its seam**; after it the tail is one chain
-  `FlatTCC ⪯p' SAT` ready for the endpoint bridge.
+  (`flatTCC_to_FSAT_witness`). **The only missing tail piece is `FSAT → SAT`,
+  now MID-FLIGHT (2026-07-12-b):** the machine-friendly map
+  (`PreTseytin.preTseytin`) is PROVEN correct & axiom-clean
+  (`FSATSATFree.fsatToSat_correct`), the full program `buildSAT` is written
+  and `#eval`-validated end-to-end; the run/cost lemmas, the
+  `PolyTimeComputableLang` witness, and the seam remain (~1–2 sessions);
+  after them the tail is one chain `FlatTCC ⪯p' SAT` ready for the endpoint
+  bridge.
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
   `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
@@ -50,56 +55,40 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-12-b (top-down) — `FSAT → SAT` design risk RESOLVED (probe GO) +
+  the map PROVEN + the full program WRITTEN, all green, 2 commits.**
+  The ⚠ tree-recursion risk was probed FIRST (`probes/FSATPreProbe.lean`,
+  three `#eval` checks green): **design (a) — positional-index Tseytin, no
+  stack — GO**, with two design-freedom refinements: (i) FULL grammar (a new
+  `tseytinOr` gadget handles `forr` directly — the `eliminateOR` pass
+  disappears); (ii) fresh-var base `b := (serF f).length` instead of
+  `maxVar+1` (valid since `formula_maxVar_lt_serF_length`; kills the
+  on-machine max computation — one length loop instead). Landed, all
+  axiom-clean: `NP/FSAT_to_SAT_pre.lean` (`ptseytin` — pre-order positional
+  Tseytin with ABSOLUTE variable indexing `q`, fresh block `[q, q+size)`;
+  `preTseytin_correct` via the positional repr invariant `ptseytin_repr`;
+  `preTseytin_kCNF3`/`_3SAT_correct` freebie; `ptseytin_length_le` +
+  `preTseytin_size_le` size fodder) and
+  `Reductions/FSAT_to_SAT_free.lean` (`buildSAT` — the whole program: length
+  loop for `B`, outer token scan, arity-budget `subtreeScan` for right-child
+  indices, gadget emitters; pinned `encodeIn f = [serF f]`; verifier-layout
+  outputs `TALLY`/`CNFOUT`; `fsatToSat` + `fsatToSat_correct`). The probe's
+  pure scan model (`mScan`/`scanClauses`/`subtreeTok`) mirrors the machine
+  loop bit-for-bit — it is the run-lemma blueprint (see NEXT TOP-DOWN).
+  ⚠ Gotchas reconfirmed: omega is BLIND at carrier type `var` (fvar payloads;
+  fix = `Nat`-typed binders / term lemmas) and treats `Nat.max` as an opaque
+  atom (fix = `Nat.max_lt.mpr ⟨by omega, by omega⟩`).
 - **2026-07-12 (top-down) — the `BinaryCC→FSAT` SEAM CLOSED:
-  `BinaryCCFSATComp.flatTCC_to_FSAT_reducesPolyMO' : FlatTCC ⪯p' FSAT`,
-  sorry-free & axiom-clean, probe + build green (3379), one commit.**
-  `Reductions/BinaryCC_to_FSAT_comp.lean`, the second live `SeamData`/`comp`
-  (left witness = the COMPOSED `flatTCC_to_binaryCC_witness` — seams chain on
-  composed witnesses with no new machinery). `mfc` = `scrub2` (clear all
-  regs < 27 except the pinned 5/17–21; constant cost 41 ≤ 44). Probe FIRST:
-  `probes/FSATSeamProbe.lean` `checkBridge57` (AgreeBelow-57 on valid +
-  invalid + empty-stream instances; `instClone` makes the noncomputable
-  intermediate `#eval`-able via `decidable_of_iff _ (validB_iff C)`). Two
-  NEW reusable seam facts: (a) **wider right frame** (57 > 27) — registers
-  27–56 close by `Cmd.eval_length_le` chained through every stage (each
-  `≤ max · 27`) + `get`-of-missing-register-is-`[]` (`get_nil_of_len_le`);
-  (b) the right witness's per-register exit values come from a LOCAL
-  `binConvert_key` lemma (extract of `flatCCBin_reductionLang.computes`'s
-  inline `hkey`; copied, not refactored, to avoid rebuilding the two big
-  witness files). ⚠ New gotcha (cost a bisect): `injection` on the key
-  equation whnf-TIMES-OUT (symbolically executes the reduction programs,
-  ~800K `Nat.rec`); split with `simp only [List.cons.injEq, and_true]` +
-  `obtain` instead. `set_option maxRecDepth 4000` + `maxHeartbeats 1000000`
-  on the seam def (elaborates in ~11s).
-- **2026-07-11 (top-down), session 5 — `BinaryCC ⪯p' FSAT` CLOSED: `cost_le`
-  finished + mechanical fields + the witness, sorry-free & axiom-clean, build
-  green (3378), 4 commits.** (a) **`emitFinal_cost`** — the last two `listOr`
-  folds, direct mirror of `emitAllSteps`'s trio
-  (`finalStepIterBody_effect`/`finalStringBody_effect`, quartic). (b) **Guard
-  costs** — `leCheck_cost`/`dvdCheck_cost` (`dvdBody_effect`),
-  `cardLenItem_cost`/`cardLenCheck_cost` (reuse `CEInv`/`CLInv`), and
-  `computeWF_cost` (straight-line walk crib of `computeWF_run`, using the
-  hypothesis-free write-set frame `Cmd.eval_get_of_not_writes` for the
-  guard/dvd fragments). (c) **`buildFSAT_cost_le`** — the whole accounting at
-  ONE master ceiling `Ω := 2000·(n+1)⁶` (`masterOmega`); `cost_bound :=
-  buildFSATBound` (symbolic over the `flatK` constants, `inOPoly`+`monotonic`
-  proven); `output_size_le` via `BinaryCC_to_FSAT_instance_size_bound`.
-  (d) **Mechanical fields**: `buildFSAT_usesBelow` (`simp only [all subdefs +
-  all register defs, UsesBelow]` then `simp` to collapse the `<`-conjunction —
-  NOT `decide`/`omega`, both choke on the ~100-way nested `∧`),
-  `encodeIn_bitState` (`List.mem_or_eq_of_mem_set` chained over the 6-`set`
-  frame — `encodeIn`'s `.set` is `List.set`, so `unfold encodeIn` + nested
-  `hset`, no `show`), `width_le` (`List.length_set`), `decode_agree`
-  (`Cmd.eval_agree buildFSAT regFrame … FOUT` on the padded frame — generic,
-  no re-run of `buildFSAT_run`). Then `reducesPolyMO'_of_langFree
-  binaryCCFSAT_reductionLang BinaryCC_to_FSAT_instance_correct`.
-  **Arithmetic gotchas that cost time** (record for the seam/SAT cost passes):
-  omega treats `n*n` and `n` as unrelated atoms — supply `hn_nn : n ≤ n*n`
-  and a generous single-atom dominator (`20·(n*n) ≤ Ω`) so every index sum
-  closes; a slack term with a NON-constant coefficient (`(2K+840)*P5`) is an
-  opaque atom to omega — feed it an explicit lower bound
-  (`840*P5 ≤ (2K+840)*P5` via `Nat.mul_le_mul_right`); the final `hgoal`
-  `rw`-chain needs `set_option maxRecDepth 4000`.
+  `flatTCC_to_FSAT_reducesPolyMO' : FlatTCC ⪯p' FSAT`, axiom-clean.**
+  Second live `SeamData`/`comp` (`Reductions/BinaryCC_to_FSAT_comp.lean`),
+  seam ON a composed witness, `mfc = scrub2`, probe-first
+  (`probes/FSATSeamProbe.lean`). Artifacts + the wider-right-frame length
+  argument catalogued in "Proven, reusable"; the `injection`-whnf-timeout
+  gotcha in "Conventions".
+- **2026-07-11 (top-down), session 5 — `BinaryCC ⪯p' FSAT` CLOSED** (cost
+  pass at the `masterOmega` ceiling + mechanical fields + the witness).
+  Everything reusable is catalogued in "Proven, reusable" (the cost toolkit
+  block) and the omega/cost gotchas in "Conventions".
 - **2026-07-05-b…2026-07-11 (top-down), sessions 2–5 (compressed):** the whole
   `BinaryCC ⪯p' FSAT` witness was built and closed — program + probes, the
   full `_run` stack, the guard (`computeWF`), `cost_le` at the master ceiling
@@ -128,8 +117,12 @@ only output); regs 5/17–21 still hold `binaryCCFSAT`'s `encodeIn` values
 (steps/offset/width/init/cards/final); everything else `< 57` is potentially
 dirty (`OUT` = 22 holds a copy of the output; emitter/guard scratch 23–56);
 regs `≥ 57` read `[]` (the composite's `regBound` is 57). So the
-`FSAT_to_SAT` witness should pin `encodeIn f = (all-[]).set 0 (serF f)` and
-its seam `mfc` is scrub-everything-except-reg-0.
+`FSAT_to_SAT` witness pins `encodeIn f = [serF f]` (done, 2026-07-12-b) and
+its seam `mfc` is scrub-everything-except-reg-0. **The `FSAT_to_SAT` witness's
+own exit layout** (what the ENDPOINT bridge sees): reg 0 = `serF f`
+(preserved), reg 1 = `replicate |N| 1`, reg 2 = `encodeCnf N` (regs 1/2 = the
+SAT verifier's `CLAUSE_TALLY`/`CNF_STREAM` layout, by design); scratch 3–26
+dirty; frame 27.
 
 ## The free line — the working architecture (use this, and only this)
 
@@ -165,6 +158,12 @@ its seam `mfc` is scrub-everything-except-reg-0.
     wider-right-frame close (registers above the left frame via
     `Cmd.eval_length_le` + `get_nil_of_len_le`), local `binConvert_key`
     extraction of the predecessor's exit key.
+  - `Reductions/FSAT_to_SAT_free.lean` + `NP/FSAT_to_SAT_pre.lean`: **the
+    tree-traversal pattern** — a TREE-typed *input* consumed by one forward
+    token scan of its Polish serialization: positional fresh variables
+    (`b + token index`, base `b := stream length`), right-child recovery by
+    the arity-budget scan (`subtreeScan`), and a Lean-side positional
+    equivalent (`ptseytin`) proven correct where recursion is free.
 - **The canonical `LangEncodable` layer stays DEAD** (generic product encoding
   is size-unsound — `probes/UnaryProductSizeProbe.lean`). Do not rebuild it.
 
@@ -365,52 +364,60 @@ building C8-4):**
   `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
-**Alternative:** the `FSAT_to_SAT` free witness (the last sound-tail item) —
-also the top-down stream's next item; see the NEXT TOP-DOWN section for the
-full design brief (incl. the NEW tree-recursion design risk). Either stream
-may take it; coordinate so it is not done twice.
+**Alternative:** pieces of the `FSAT_to_SAT` run-lemma ladder (the top-down
+stream's next item, mid-flight — see NEXT TOP-DOWN). Self-contained bottom-up
+bites: the pure-Lean `scanClauses ≡ ptseytin` / `subtreeTok_serF` equivalences
+(step 1(i) there — no machine work), or the drain/budget `_run` lemmas (step
+1(ii)). Coordinate so nothing is done twice.
 
-## NEXT TOP-DOWN session — the `FSAT_to_SAT` free witness (the LAST tail item)
+## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (run lemmas → cost → witness → seam)
 
-The `BinaryCC→FSAT` seam is DONE (2026-07-12): `flatTCC_to_FSAT_witness` +
-`flatTCC_to_FSAT_reducesPolyMO' : FlatTCC ⪯p' FSAT`, axiom-clean. ONE item
-remains to fold the whole sound tail into a single live `⪯p'` chain down to
-SAT: the `FSAT_to_SAT` witness + its seam.
+The design phase is DONE (2026-07-12-b; design (a) probed GO — see the session
+entry). What EXISTS, all green & axiom-clean: the map + its correctness
+(`NP/FSAT_to_SAT_pre.lean`: `preTseytin`, `ptseytin_repr`,
+`preTseytin_correct`, size lemmas), the full program + layouts + chain-step
+correctness (`Reductions/FSAT_to_SAT_free.lean`: `buildSAT`, `encodeIn f =
+[serF f]`, outputs `TALLY`(1)/`CNFOUT`(2) in the SAT verifier's layout,
+`decodeOut = invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`), and the
+probe (`probes/FSATPreProbe.lean` — its pure scan model
+`mScan`/`scanClauses`/`subtreeTok` mirrors the machine bit-for-bit and is the
+run-lemma blueprint). Remaining ladder (~1–2 sessions):
 
-1. **Layout is settled** (do not redesign): pin `encodeIn f` to the composite
-   exit frame — reg 0 (`FOUT`) holds `serF f`, everything else `[]` (see the
-   "Composite tail exit layout" block). The seam
-   `SeamData flatTCC_to_FSAT_witness fsatSAT_reductionLang` is then
-   scrub-everything-except-reg-0 (registers ≥ 57 via the length argument of
-   `BinaryCC_to_FSAT_comp.lean`, if the new witness's frame is wider). The
-   guard question is settled ON PAPER: every `formula` is a valid instance
-   (the type enforces it) → the UNGUARDED pattern of
-   `FlatTCC_to_FlatCC_free.lean`.
-2. **⚠ THE design risk — tree recursion on a `Cmd` (probe FIRST, GO/NO-GO):**
-   `FSAT_to_SAT_tseytin = eliminateOR ∘ tseytin` (`NP/FSAT_to_SAT.lean`) is a
-   pair of STRUCTURAL RECURSIONS over the formula tree, but the machine input
-   is the Polish `serF` bit-stream and the DSL has only counted `forBnd`
-   loops. No previous witness needed tree recursion (BinaryCC→FSAT only
-   *emits* a tree; this one must *traverse* one). Two candidate designs to
-   probe with `#eval` before any proof work:
-   (a) **positional-index Tseytin, no stack**: each node's fresh variable :=
-   `maxVar + 1 + (its serF tag position)`; a child's position/extent is
-   computable by the Polish arity-budget scan (budget starts at 1, `+1` per
-   binary tag, `−1` per leaf, stop at 0) — an O(n²) nested `forBnd`, well
-   within the toolkit. (b) an explicit stack register (push = `concat` a
-   1-bit reg to the front, pop = `head`/`tail`) — a NEW pattern, only if (a)
-   fails. **Design freedom worth using**: the witness need NOT reproduce
-   `FSAT_to_SAT_tseytin` verbatim — any map `m` with `FSAT f ↔ SAT (m f)`
-   (proved at the Lean level, where recursion is free) works for the chain;
-   a machine-friendly `m` (e.g. positional Tseytin over the full grammar,
-   skipping `eliminateOR` mimicry) may be far cheaper than mimicking the
-   existing one. Decide after the probe; record the verdict here.
-3. **Then the standard ladder**: program + `#eval` probe (extend
-   `probes/FSATSerProbe.lean` patterns), `_run` lemmas (fold invariants from
-   `BinaryCC_to_FSAT_free.lean`), `cost_le` (the `masterOmega` pattern),
-   mechanical fields, witness, seam, and the composed
-   `flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT`. Budget ~2–3 sessions
-   if design (a) probes GO.
+1. **Run lemmas** — target: `(buildSAT.eval [serF f]).get CNFOUT =
+   encodeCnf (fsatToSat f)` (+ `TALLY = replicate |N| 1`, + frame clause).
+   **Recommended decomposition (factors the tree OFF the machine proof):**
+   (i) promote the probe's pure model into the witness file and prove
+   `scanClauses`/`subtreeTok` ≡ `ptseytin`/`formula_size` at the Lean level
+   (structural induction generalizing the `rest` suffix, exactly the
+   `deserF_serF` shape — `subtreeTok_serF : first-subtree token count of
+   (serF g ++ rest) = formula_size g` first, then the scan≡tree clause list);
+   (ii) machine ↔ pure model only needs linear fold invariants: the drain
+   loops (`drainVarBody`/`drainSkipBody`) are the guarded sentinel parse
+   (`RFInv` pattern), the budget loop (`budgetBody`) folds the probe's
+   `budgetStep`, the outer loop (`tokenBody`) is a `CAInv`-style
+   `nonEmpty`-guarded stream loop with black-boxed inner `_run` facts.
+2. **`cost_le`** — the `masterOmega` pattern; generous ceiling: outer
+   `|serF f| ≤ 4n` iterations × (budget scan `O(|serF|)` + emission
+   `O(b+n)`) — a single `C·(n+1)³`-ish ceiling should dominate everything.
+3. **Mechanical fields** — copy the `binaryCCFSAT_reductionLang` templates:
+   `usesBelow` (`simp only` over all sub-defs + register defs; frame is 27),
+   `enc_bit` (`serF` cells are `{0,1}` — small induction, or reuse the
+   BinaryCC witness's output-bit lemma), `width_le` (`encodeIn` has length 1),
+   `decode_agree` (`Cmd.eval_agree` at `CNFOUT`), `encBound := fun n => 4*n`
+   (`serF_length_le_size`), `output_size_le` via `preTseytin_size_le` +
+   `serF_length_le_size` (vars < `b + size f` with `b ≤ 4n`).
+4. **The witness + chain step**: `fsatSAT_reductionLang :
+   PolyTimeComputableLang fsatToSat`, then `reducesPolyMO'_of_langFree _
+   fsatToSat_correct : FSAT ⪯p' SAT`.
+5. **The seam**: `SeamData flatTCC_to_FSAT_witness fsatSAT_reductionLang` —
+   `mfc` = scrub-everything-except-reg-0 below the left frame 57 (the
+   `scrub2` pattern of `BinaryCC_to_FSAT_comp.lean`; reg 0 already holds
+   `serF f` = exactly `encodeIn f`; note the RIGHT frame 27 is *narrower*
+   than the left 57 this time — the previous seam's wider-right-frame length
+   argument may be unnecessary, check `SeamData`'s exact obligation). Probe
+   the seam first (`FSATSeamProbe.checkBridge57` pattern). Then the composed
+   **`flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT` — the whole sound
+   tail as ONE live chain.**
 
 **Reusable machinery** (do not re-derive — in
 `Reductions/BinaryCC_to_FSAT_free.lean` §4/§5 and `Lang/CostFlat.lean`): the
@@ -599,7 +606,11 @@ and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
 - **Axiom-check** via a scratch file: `#print axioms <name>` — only
   `propext`/`Classical.choice`/`Quot.sound` for new sorry-free results.
 - **`omega` gotchas:** cannot see through `Var := Nat` variables
-  (`simp only [Var] at *` first), `var`-typed rcases products, or
+  (`simp only [Var] at *` first), `var`-typed rcases products — **and (2026-07-12-b)
+  any goal whose `</=/≤` CARRIER is the `var` abbrev is silently skipped**
+  (`fvar` payloads, `varInCnf` binders: bind `∀ v : Nat, …` explicitly or
+  close with term lemmas); **`Nat.max` is an opaque atom** (close `max _ _ < _`
+  with `Nat.max_lt.mpr ⟨by omega, by omega⟩`); or
   `encodable.size (n : Nat)` (rewrite with `(fun n => rfl : ∀ n : Nat,
   encodable.size n = n)` first); needs GROUPED products (`2*(P*P)`, never
   `2*P*P`); never splits `(l ++ r).length`; times out on products of two

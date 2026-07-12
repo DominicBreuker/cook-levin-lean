@@ -214,19 +214,19 @@ theorem evalVar_append_fresh (a' a : assgn) (v b : Nat)
   simp [hva']
 
 -- If v ∉ pfx, prepending pfx doesn't change evalVar
-private theorem evalVar_prepend_notmem (pfx base : assgn) (v : Nat) (h : v ∉ pfx) :
+theorem evalVar_prepend_notmem (pfx base : assgn) (v : Nat) (h : v ∉ pfx) :
     evalVar (pfx ++ base) v = evalVar base v := by
   simp [evalVar, List.mem_append, h]
 
 -- Inserting a middle assignment (disjoint from outer) doesn't change evalVar
-private theorem evalVar_insert_notmem (outer middle inner : assgn) (v : Nat)
+theorem evalVar_insert_notmem (outer middle inner : assgn) (v : Nat)
     (h : v ∉ middle) :
     evalVar (outer ++ (middle ++ inner)) v = evalVar (outer ++ inner) v := by
   simp only [evalVar, List.mem_append]
   by_cases hout : v ∈ outer <;> simp [hout, h]
 
 -- Prepending a disjoint assignment (no shared vars with N) preserves satisfiability
-private theorem satisfiesCnf_prepend_notmem (pfx base : assgn) (N : cnf)
+theorem satisfiesCnf_prepend_notmem (pfx base : assgn) (N : cnf)
     (hdisjoint : ∀ v, varInCnf v N → v ∉ pfx)
     (hsat : satisfiesCnf base N) :
     satisfiesCnf (pfx ++ base) N := by
@@ -243,7 +243,7 @@ private theorem satisfiesCnf_prepend_notmem (pfx base : assgn) (N : cnf)
     exact heval⟩
 
 -- Inserting a disjoint assignment in the middle preserves satisfiability
-private theorem satisfiesCnf_insert_notmem (outer middle inner : assgn) (N : cnf)
+theorem satisfiesCnf_insert_notmem (outer middle inner : assgn) (N : cnf)
     (hdisjoint : ∀ v, varInCnf v N → v ∉ middle)
     (hsat : satisfiesCnf (outer ++ inner) N) :
     satisfiesCnf (outer ++ (middle ++ inner)) N := by
@@ -278,7 +278,7 @@ theorem evalFormula_append_fresh (a' a : assgn) (b : Nat) (f : formula)
       simp [evalFormula, ih (fun v hv => hf v (varInFormula.neg _ hv))]
 
 -- Splitting satisfiesCnf over append
-private theorem satisfiesCnf_app (a : assgn) (N₁ N₂ : cnf) :
+theorem satisfiesCnf_app (a : assgn) (N₁ N₂ : cnf) :
     satisfiesCnf a (N₁ ++ N₂) ↔ satisfiesCnf a N₁ ∧ satisfiesCnf a N₂ := by
   simp [satisfiesCnf, evalCnf_app_iff]
 
@@ -701,7 +701,7 @@ theorem FSAT_to_3SAT_tseytin_correct (f : formula) :
 
 -- ─── Size bound helpers ──────────────────────────────────────────────────────
 
-private theorem formula_size_le_encodable (f : formula) :
+theorem formula_size_le_encodable (f : formula) :
     formula_size f ≤ encodable.size f := by
   induction f with
   | ftrue => simp [formula_size]
@@ -710,7 +710,7 @@ private theorem formula_size_le_encodable (f : formula) :
   | forr _ _ ih₁ ih₂ => simp only [formula_size, encodable_size_formula_forr]; omega
   | fneg _ ih => simp only [formula_size, encodable_size_formula_fneg]; omega
 
-private theorem formula_maxVar_lt_encodable (f : formula) :
+theorem formula_maxVar_lt_encodable (f : formula) :
     formula_maxVar f < encodable.size f := by
   induction f with
   | ftrue => simp [formula_maxVar]
@@ -788,7 +788,7 @@ private theorem tseytin'_nf_size_le (nf : Nat) (f : formula) :
         _ = nf + formula_size (formula.fneg f) := by simp only [formula_size]; ring
   | forr _ _ _ _ => simp [tseytin', formula_size]
 
-private theorem one_le_encodable_size_formula (f : formula) :
+theorem one_le_encodable_size_formula (f : formula) :
     1 ≤ encodable.size f := by
   cases f <;>
     simp [encodable_size_formula_ftrue, encodable_size_formula_fvar,
@@ -796,14 +796,14 @@ private theorem one_le_encodable_size_formula (f : formula) :
           encodable_size_formula_fneg] <;>
     omega
 
-private theorem encodable_size_literal_le (l : literal) :
+theorem encodable_size_literal_le (l : literal) :
     encodable.size l ≤ l.2 + 2 := by
   obtain ⟨b, v⟩ := l
   have hpair : encodable.size (b, v) = encodable.size b + v + 1 := rfl
   have hbool : encodable.size b ≤ 1 := by cases b <;> decide
   omega
 
-private theorem encodable_size_clause3_le {C : clause} {M : Nat}
+theorem encodable_size_clause3_le {C : clause} {M : Nat}
     (hLen : C.length = 3) (hVars : ∀ l ∈ C, l.2 < M) :
     encodable.size C ≤ 3 * (M + 1) + 3 := by
   obtain ⟨l₁, l₂, l₃, rfl⟩ : ∃ l₁ l₂ l₃, C = [l₁, l₂, l₃] := by
@@ -824,7 +824,7 @@ private theorem encodable_size_clause3_le {C : clause} {M : Nat}
   simp only [encodable_size_list_cons, encodable_size_list_nil]
   linarith
 
-private theorem encodable_size_cnf3_le {N : cnf} {M : Nat}
+theorem encodable_size_cnf3_le {N : cnf} {M : Nat}
     (hClauses : ∀ C ∈ N, C.length = 3)
     (hVars : ∀ v, varInCnf v N → v < M) :
     encodable.size N ≤ N.length * (3 * (M + 1) + 4) := by
