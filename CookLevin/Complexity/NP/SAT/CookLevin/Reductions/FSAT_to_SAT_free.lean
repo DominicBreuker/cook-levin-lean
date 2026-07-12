@@ -280,4 +280,268 @@ theorem formula_maxVar_lt_serF_length (f : formula) :
 theorem fsatToSat_correct (f : formula) : FSAT f ↔ SAT (fsatToSat f) :=
   preTseytin_correct f _ (formula_maxVar_lt_serF_length f)
 
+/-! ## The pure positional-scan model (promoted from `probes/FSATPreProbe.lean`)
+
+The machine's outer token loop and budget scan, as pure Lean functions — the
+run-lemma blueprint (HANDOFF "NEXT TOP-DOWN" step 1(i)). These mirror the `Cmd`
+loops (`tokenBody`/`budgetBody`) bit-for-bit, so the eventual machine ↔ model
+reduction (step 1(ii)) black-boxes the tree recursion entirely: it need only
+prove the machine folds compute these functions, then `mScan_eq_fsatToSat`
+closes the gap. The probe only `#eval`-validated the equivalence; here it is a
+THEOREM (`mScan_eq_fsatToSat`), axiom-clean. -/
+
+open BinaryCCFSATFree (readUnary readUnary_replicate formula_size_le_serF)
+
+/-- One budget-scan step over `(bits, budget, tokens)` — the machine's
+`budgetBody`. Freezes once the budget hits `0`. -/
+def budgetStep : List Nat × Nat × Nat → List Nat × Nat × Nat
+  | (bits, bud, t) =>
+    if bud = 0 then (bits, bud, t) else
+    match bits with
+    | 0 :: 0 :: r => (r, bud - 1, t + 1)             -- ftrue: leaf
+    | 0 :: 1 :: r => (r, bud + 1, t + 1)             -- fand: binary
+    | 1 :: 0 :: r => (r, bud + 1, t + 1)             -- forr: binary
+    | 1 :: 1 :: 0 :: r => (r, bud, t + 1)            -- fneg: unary
+    | 1 :: 1 :: 1 :: r => ((readUnary r).2, bud - 1, t + 1)  -- fvar: leaf
+    | _ => (bits, 0, t)
+
+/-- Token count of the first complete subtree of `bits` (arity-budget scan,
+`|bits|` iterations — the machine's `subtreeScan`). -/
+def subtreeTok (bits : List Nat) : Nat :=
+  ((List.range bits.length).foldl (fun st _ => budgetStep st) (bits, 1, 0)).2.2
+
+/-- The positional clause emitter: scan tokens left to right, emit each node's
+gadget at its token position (the machine's `tokenBody` outer loop). -/
+def scanClauses (b : Nat) : Nat → Nat → List Nat → cnf
+  | 0, _, _ => []
+  | fuel + 1, k, bits =>
+    match bits with
+    | 0 :: 0 :: r => tseytinTrue (b + k) ++ scanClauses b fuel (k + 1) r
+    | 0 :: 1 :: r =>
+        tseytinAnd (b + k) (b + k + 1) (b + k + 1 + subtreeTok r) ++
+          scanClauses b fuel (k + 1) r
+    | 1 :: 0 :: r =>
+        tseytinOr (b + k) (b + k + 1) (b + k + 1 + subtreeTok r) ++
+          scanClauses b fuel (k + 1) r
+    | 1 :: 1 :: 0 :: r => tseytinNot (b + k) (b + k + 1) ++ scanClauses b fuel (k + 1) r
+    | 1 :: 1 :: 1 :: r =>
+        let (v, r') := readUnary r
+        tseytinEquiv v (b + k) ++ scanClauses b fuel (k + 1) r'
+    | _ => []
+
+/-- The full scan model of the map (`b := |bits|`, top clause first). -/
+def mScan (bits : List Nat) : cnf :=
+  [(true, bits.length), (true, bits.length), (true, bits.length)] ::
+    scanClauses bits.length (bits.length + 1) 0 bits
+
+/-! ### The budget scan ≡ `formula_size` (right-child index recovery) -/
+
+theorem budgetStep_ftrue (r : List Nat) (bud t : Nat) (h : bud ≠ 0) :
+    budgetStep (0 :: 0 :: r, bud, t) = (r, bud - 1, t + 1) := by
+  simp only [budgetStep, if_neg h]
+
+theorem budgetStep_fand (r : List Nat) (bud t : Nat) (h : bud ≠ 0) :
+    budgetStep (0 :: 1 :: r, bud, t) = (r, bud + 1, t + 1) := by
+  simp only [budgetStep, if_neg h]
+
+theorem budgetStep_forr (r : List Nat) (bud t : Nat) (h : bud ≠ 0) :
+    budgetStep (1 :: 0 :: r, bud, t) = (r, bud + 1, t + 1) := by
+  simp only [budgetStep, if_neg h]
+
+theorem budgetStep_fneg (r : List Nat) (bud t : Nat) (h : bud ≠ 0) :
+    budgetStep (1 :: 1 :: 0 :: r, bud, t) = (r, bud, t + 1) := by
+  simp only [budgetStep, if_neg h]
+
+theorem budgetStep_fvar (r : List Nat) (bud t : Nat) (h : bud ≠ 0) :
+    budgetStep (1 :: 1 :: 1 :: r, bud, t) = ((readUnary r).2, bud - 1, t + 1) := by
+  simp only [budgetStep, if_neg h]
+
+theorem budgetStep_freeze (bits : List Nat) (t : Nat) :
+    budgetStep (bits, 0, t) = (bits, 0, t) := by
+  simp [budgetStep]
+
+theorem budgetStep_iterate_freeze (m : Nat) (bits : List Nat) (t : Nat) :
+    budgetStep^[m] (bits, 0, t) = (bits, 0, t) := by
+  induction m with
+  | zero => rfl
+  | succ n ih => rw [Function.iterate_succ_apply, budgetStep_freeze, ih]
+
+/-- **The core budget-scan invariant.** Processing exactly the `formula_size g`
+tokens of `serF g` (with a positive budget) consumes the subtree `g`, pays off
+one budget obligation, and adds `formula_size g` to the token count. -/
+theorem budgetStep_iterate_subtree (g : formula) :
+    ∀ (rest : List Nat) (bud t : Nat),
+      budgetStep^[formula_size g] (serF g ++ rest, bud + 1, t)
+        = (rest, bud, t + formula_size g) := by
+  induction g with
+  | ftrue =>
+      intro rest bud t
+      rw [formula_size, Function.iterate_one]
+      show budgetStep (0 :: 0 :: rest, bud + 1, t) = _
+      rw [budgetStep_ftrue rest (bud + 1) t (by omega)]
+      simp
+  | fvar v =>
+      intro rest bud t
+      rw [formula_size, Function.iterate_one]
+      have hr : serF (formula.fvar v) ++ rest
+          = 1 :: 1 :: 1 :: (List.replicate v 1 ++ (0 :: rest)) := by
+        simp [BinaryCCFSATFree.serF]
+      rw [hr, budgetStep_fvar _ (bud + 1) t (by omega), readUnary_replicate]
+      simp
+  | fand a b iha ihb =>
+      intro rest bud t
+      simp only [formula_size]
+      rw [Function.iterate_succ_apply]
+      show budgetStep^[formula_size a + formula_size b]
+            (budgetStep (0 :: 1 :: ((serF a ++ serF b) ++ rest), bud + 1, t)) = _
+      rw [budgetStep_fand _ (bud + 1) t (by omega), List.append_assoc,
+          Nat.add_comm (formula_size a) (formula_size b), Function.iterate_add_apply,
+          iha (serF b ++ rest) (bud + 1) (t + 1),
+          ihb rest bud (t + 1 + formula_size a)]
+      have : t + 1 + formula_size a + formula_size b
+          = t + (formula_size b + formula_size a + 1) := by omega
+      rw [this]
+  | forr a b iha ihb =>
+      intro rest bud t
+      simp only [formula_size]
+      rw [Function.iterate_succ_apply]
+      show budgetStep^[formula_size a + formula_size b]
+            (budgetStep (1 :: 0 :: ((serF a ++ serF b) ++ rest), bud + 1, t)) = _
+      rw [budgetStep_forr _ (bud + 1) t (by omega), List.append_assoc,
+          Nat.add_comm (formula_size a) (formula_size b), Function.iterate_add_apply,
+          iha (serF b ++ rest) (bud + 1) (t + 1),
+          ihb rest bud (t + 1 + formula_size a)]
+      have : t + 1 + formula_size a + formula_size b
+          = t + (formula_size b + formula_size a + 1) := by omega
+      rw [this]
+  | fneg a iha =>
+      intro rest bud t
+      simp only [formula_size]
+      rw [Function.iterate_succ_apply]
+      show budgetStep^[formula_size a]
+            (budgetStep (1 :: 1 :: 0 :: (serF a ++ rest), bud + 1, t)) = _
+      rw [budgetStep_fneg _ (bud + 1) t (by omega), iha rest bud (t + 1)]
+      have : t + 1 + formula_size a = t + (formula_size a + 1) := by omega
+      rw [this]
+
+theorem foldl_range_budgetStep (n : Nat) (init : List Nat × Nat × Nat) :
+    (List.range n).foldl (fun st _ => budgetStep st) init = budgetStep^[n] init := by
+  induction n generalizing init with
+  | zero => rfl
+  | succ m ih =>
+      rw [List.range_succ, List.foldl_append, ih]
+      show budgetStep (budgetStep^[m] init) = budgetStep^[m + 1] init
+      rw [Function.iterate_succ_apply']
+
+/-- **Lemma A**: the arity-budget scan of `serF g ++ rest` recovers exactly the
+token count `formula_size g` of the first subtree. -/
+theorem subtreeTok_serF (g : formula) (rest : List Nat) :
+    subtreeTok (serF g ++ rest) = formula_size g := by
+  have key : budgetStep^[formula_size g] (serF g ++ rest, 1, 0)
+      = (rest, 0, formula_size g) := by
+    simpa using budgetStep_iterate_subtree g rest 0 0
+  unfold subtreeTok
+  rw [foldl_range_budgetStep]
+  obtain ⟨m, hm⟩ : ∃ m, (serF g ++ rest).length = m + formula_size g := by
+    have h1 := formula_size_le_serF g
+    rw [List.length_append]
+    exact ⟨(serF g).length - formula_size g + rest.length, by omega⟩
+  rw [hm, Function.iterate_add_apply, key, budgetStep_iterate_freeze]
+
+/-! ### The scan emitter ≡ the tree recursion -/
+
+theorem scanClauses_nil (b fuel k : Nat) : scanClauses b fuel k [] = [] := by
+  cases fuel <;> simp [scanClauses]
+
+/-- **Lemma B**: scanning `serF f ++ rest` emits exactly `ptseytin (b+k) f`,
+then continues on `rest` with the token counter advanced by `formula_size f`. -/
+theorem scanClauses_serF (b : Nat) (f : formula) :
+    ∀ (fuel k : Nat) (rest : List Nat), formula_size f ≤ fuel →
+      scanClauses b fuel k (serF f ++ rest) =
+        ptseytin (b + k) f ++
+          scanClauses b (fuel - formula_size f) (k + formula_size f) rest := by
+  induction f with
+  | ftrue =>
+      intro fuel k rest h
+      obtain ⟨fuel', rfl⟩ : ∃ m, fuel = m + 1 :=
+        ⟨fuel - 1, by simp only [formula_size] at h; omega⟩
+      show scanClauses b (fuel' + 1) k (0 :: 0 :: rest) = _
+      simp only [scanClauses, ptseytin, formula_size, Nat.add_sub_cancel]
+  | fvar v =>
+      intro fuel k rest h
+      obtain ⟨fuel', rfl⟩ : ∃ m, fuel = m + 1 :=
+        ⟨fuel - 1, by simp only [formula_size] at h; omega⟩
+      have hr : serF (formula.fvar v) ++ rest
+          = 1 :: 1 :: 1 :: (List.replicate v 1 ++ (0 :: rest)) := by
+        simp [BinaryCCFSATFree.serF]
+      rw [hr]
+      simp only [scanClauses, readUnary_replicate, ptseytin, formula_size, Nat.add_sub_cancel]
+  | fand f₁ f₂ ih₁ ih₂ =>
+      intro fuel k rest h
+      obtain ⟨fuel', rfl⟩ : ∃ m, fuel = m + 1 :=
+        ⟨fuel - 1, by simp only [formula_size] at h; omega⟩
+      have ha : formula_size f₁ ≤ fuel' := by simp only [formula_size] at h; omega
+      have hb : formula_size f₂ ≤ fuel' - formula_size f₁ := by
+        simp only [formula_size] at h; omega
+      show scanClauses b (fuel' + 1) k (0 :: 1 :: ((serF f₁ ++ serF f₂) ++ rest)) = _
+      rw [List.append_assoc]
+      simp only [scanClauses]
+      rw [subtreeTok_serF f₁ (serF f₂ ++ rest),
+          ih₁ fuel' (k + 1) (serF f₂ ++ rest) ha,
+          ih₂ (fuel' - formula_size f₁) (k + 1 + formula_size f₁) rest hb]
+      simp only [ptseytin, formula_size]
+      rw [show b + (k + 1) = b + k + 1 from by omega,
+          show b + (k + 1 + formula_size f₁) = b + k + 1 + formula_size f₁ from by omega,
+          show fuel' - formula_size f₁ - formula_size f₂
+              = fuel' + 1 - (formula_size f₁ + formula_size f₂ + 1) from by omega,
+          show k + 1 + formula_size f₁ + formula_size f₂
+              = k + (formula_size f₁ + formula_size f₂ + 1) from by omega]
+      simp only [List.append_assoc]
+  | forr f₁ f₂ ih₁ ih₂ =>
+      intro fuel k rest h
+      obtain ⟨fuel', rfl⟩ : ∃ m, fuel = m + 1 :=
+        ⟨fuel - 1, by simp only [formula_size] at h; omega⟩
+      have ha : formula_size f₁ ≤ fuel' := by simp only [formula_size] at h; omega
+      have hb : formula_size f₂ ≤ fuel' - formula_size f₁ := by
+        simp only [formula_size] at h; omega
+      show scanClauses b (fuel' + 1) k (1 :: 0 :: ((serF f₁ ++ serF f₂) ++ rest)) = _
+      rw [List.append_assoc]
+      simp only [scanClauses]
+      rw [subtreeTok_serF f₁ (serF f₂ ++ rest),
+          ih₁ fuel' (k + 1) (serF f₂ ++ rest) ha,
+          ih₂ (fuel' - formula_size f₁) (k + 1 + formula_size f₁) rest hb]
+      simp only [ptseytin, formula_size]
+      rw [show b + (k + 1) = b + k + 1 from by omega,
+          show b + (k + 1 + formula_size f₁) = b + k + 1 + formula_size f₁ from by omega,
+          show fuel' - formula_size f₁ - formula_size f₂
+              = fuel' + 1 - (formula_size f₁ + formula_size f₂ + 1) from by omega,
+          show k + 1 + formula_size f₁ + formula_size f₂
+              = k + (formula_size f₁ + formula_size f₂ + 1) from by omega]
+      simp only [List.append_assoc]
+  | fneg f₁ ih₁ =>
+      intro fuel k rest h
+      obtain ⟨fuel', rfl⟩ : ∃ m, fuel = m + 1 :=
+        ⟨fuel - 1, by simp only [formula_size] at h; omega⟩
+      have ha : formula_size f₁ ≤ fuel' := by simp only [formula_size] at h; omega
+      show scanClauses b (fuel' + 1) k (1 :: 1 :: 0 :: (serF f₁ ++ rest)) = _
+      simp only [scanClauses]
+      rw [ih₁ fuel' (k + 1) rest ha]
+      simp only [ptseytin, formula_size]
+      rw [show b + (k + 1) = b + k + 1 from by omega,
+          show fuel' - formula_size f₁ = fuel' + 1 - (formula_size f₁ + 1) from by omega,
+          show k + 1 + formula_size f₁ = k + (formula_size f₁ + 1) from by omega]
+      simp only [List.append_assoc]
+
+/-- **The pure model equals the tree-recursive map** (`fsatToSat`). This is the
+theorem the probe only `#eval`-checked; with it, the run-lemma proof (step
+1(ii)) reduces to "the machine folds compute `mScan (serF f)`" — no tree
+recursion on the machine side. -/
+theorem mScan_eq_fsatToSat (f : formula) : mScan (serF f) = fsatToSat f := by
+  have hf : formula_size f ≤ (serF f).length + 1 := by
+    have := formula_size_le_serF f; omega
+  have key := scanClauses_serF (serF f).length f ((serF f).length + 1) 0 [] hf
+  rw [List.append_nil] at key
+  unfold mScan fsatToSat preTseytin
+  rw [key, scanClauses_nil, List.append_nil, Nat.add_zero]
+
 end FSATSATFree
