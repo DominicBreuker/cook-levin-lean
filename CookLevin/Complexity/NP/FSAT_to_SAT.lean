@@ -701,7 +701,7 @@ theorem FSAT_to_3SAT_tseytin_correct (f : formula) :
 
 -- ─── Size bound helpers ──────────────────────────────────────────────────────
 
-private theorem formula_size_le_encodable (f : formula) :
+theorem formula_size_le_encodable (f : formula) :
     formula_size f ≤ encodable.size f := by
   induction f with
   | ftrue => simp [formula_size]
@@ -710,7 +710,7 @@ private theorem formula_size_le_encodable (f : formula) :
   | forr _ _ ih₁ ih₂ => simp only [formula_size, encodable_size_formula_forr]; omega
   | fneg _ ih => simp only [formula_size, encodable_size_formula_fneg]; omega
 
-private theorem formula_maxVar_lt_encodable (f : formula) :
+theorem formula_maxVar_lt_encodable (f : formula) :
     formula_maxVar f < encodable.size f := by
   induction f with
   | ftrue => simp [formula_maxVar]

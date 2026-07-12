@@ -248,4 +248,36 @@ noncomputable def decodeOut (s : State) : cnf :=
 /-- The map the witness computes. -/
 def fsatToSat (f : formula) : cnf := preTseytin (serF f).length f
 
+/-- The machine-friendly fresh-variable base is valid: every original variable
+is below the serialization length (an `fvar v` token alone carries `v + 4`
+bits). This is what replaces the on-machine max computation. -/
+theorem formula_maxVar_lt_serF_length (f : formula) :
+    formula_maxVar f < (serF f).length := by
+  -- NB: `omega`-hostile terrain — the `fvar` payload is `var`-typed (carrier
+  -- opaque to omega) and `formula_maxVar` is a `Nat.max` (an omega atom), so
+  -- the leaf/max steps are closed by term lemmas (HANDOFF `Var := Nat` gotcha)
+  induction f with
+  | ftrue => simp [BinaryCCFSATFree.serF, formula_maxVar]
+  | fvar v =>
+      simp only [BinaryCCFSATFree.serF, formula_maxVar, List.length_append,
+        List.length_cons, List.length_replicate, List.length_nil]
+      exact Nat.lt_succ_of_le (Nat.le_add_left v 3)
+  | fand f₁ f₂ ih₁ ih₂ =>
+      simp only [BinaryCCFSATFree.serF, formula_maxVar, List.length_append,
+        List.length_cons]
+      exact Nat.max_lt.mpr ⟨by omega, by omega⟩
+  | forr f₁ f₂ ih₁ ih₂ =>
+      simp only [BinaryCCFSATFree.serF, formula_maxVar, List.length_append,
+        List.length_cons]
+      exact Nat.max_lt.mpr ⟨by omega, by omega⟩
+  | fneg f₁ ih =>
+      simp only [BinaryCCFSATFree.serF, formula_maxVar, List.length_append,
+        List.length_cons]
+      omega
+
+/-- **The chain-step correctness**: the map the machine computes is a correct
+`FSAT → SAT` reduction (axiom-clean; the `⪯p'` witness's `correct` field). -/
+theorem fsatToSat_correct (f : formula) : FSAT f ↔ SAT (fsatToSat f) :=
+  preTseytin_correct f _ (formula_maxVar_lt_serF_length f)
+
 end FSATSATFree
