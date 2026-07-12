@@ -29,6 +29,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms FlatTCCFree.flatTCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first sound-tail step as a live honest `⪯p'`** (`FlatTCC ⪯p' FlatCC`, unguarded map, `Reductions/FlatTCC_to_FlatCC_free.lean`, 2026-07-02) |
 | `#print axioms FlatCCBinFree.flatCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatCC ⪯p' BinaryCC` live** (guarded map + on-machine validity check; the unguarded map is provably incorrect for this step — `Reductions/FlatCC_to_BinaryCC_free.lean`, 2026-07-03) |
 | `#print axioms FlatTCCBinComp.flatTCC_to_binaryCC_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **first COMPOSED live `⪯p'`** (`FlatTCC ⪯p' BinaryCC` via the **first live `SeamData`/`comp`**, `Reductions/FlatTCC_to_BinaryCC_comp.lean`, 2026-07-03) |
+| `#print axioms BinaryCCFSATComp.flatTCC_to_FSAT_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatTCC ⪯p' FSAT`** (2026-07-12): the whole sound-tail prefix as ONE composed live `⪯p'` via the second live seam (`Reductions/BinaryCC_to_FSAT_comp.lean`); `BinaryCC ⪯p' FSAT` itself live since 2026-07-11 (`BinaryCCFSATFree.binaryCC_reducesPolyMO'`). Only `FSAT → SAT` remains on the tail |
 | `NPhard'` endgame design | **SETTLED, machine-validated & VALIDATED LIVE** (2026-07-02/03): `SeamData`/`PolyTimeComputableLang.comp` fully proven and instantiated on real witnesses; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
 | Genuine `sorry`s (Group C) | **7 in built code** (4 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau; 3 in dead code `MultiToSingle`) — down from ~13 after the 2026-07-02 canonical-layer retirement deleted 6 permanently-unprovable wall sorries |
@@ -374,9 +375,12 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
      ✅ `flatTCC_to_flatCC` DONE (2026-07-02, unguarded map, probe-validated).
      ✅ `FlatCC_to_BinaryCC` DONE (2026-07-03, GUARDED map — the guard is
      provably necessary here — with on-machine validity check;
-     probe-validated). Remaining: **`BinaryCC_to_FSAT` (Tseytin) the
-     expensive tail item** (~1K-LOC formula builder re-expressed as a `Cmd`),
-     `FSAT_to_SAT`. `map`-over-lists gates parts (near-complete draft at
+     probe-validated). ✅ `BinaryCC_to_FSAT` DONE (2026-07-11, the expensive
+     Tseytin/tableau item — program `buildFSAT`, full run + cost stack,
+     `Reductions/BinaryCC_to_FSAT_free.lean`). Remaining: **`FSAT_to_SAT`**
+     (the last tail item — ⚠ first witness needing TREE traversal on-machine;
+     design brief + probe-first instructions in HANDOFF "NEXT TOP-DOWN").
+     `map`-over-lists gates parts (near-complete draft at
      `parked/MapNatList_WIP.lean`).
    - **✅ SETTLED (2026-07-02): the migrated `NPhard'` transport.** There is
      deliberately **no generic `⪯p'`-transitivity**; the answer is
@@ -390,7 +394,11 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
      `flatTCC_reductionLang` to `flatCCBin_reductionLang` (a pure 19-clear
      scrub — seam discipline pins each witness's input layout to its
      predecessor's exit frame), giving the first composed live `⪯p'`
-     `FlatTCC ⪯p' BinaryCC`.
+     `FlatTCC ⪯p' BinaryCC`. ✅ CHAINED (2026-07-12): the second live seam
+     `BinaryCCFSATComp.binaryCC_to_FSAT_seam` composes ON the composed
+     witness, giving `flatTCC_to_FSAT_reducesPolyMO' : FlatTCC ⪯p' FSAT`
+     (`Reductions/BinaryCC_to_FSAT_comp.lean`) — seams stack with no new
+     machinery.
    - At this point **S1 and S2 stop typechecking**; the conditional theorem
      breaks until they are honest — plan the swap as one coordinated batch.
    *Estimate ~2–4K LOC.*
