@@ -1007,6 +1007,20 @@ theorem tail_replicate_succ {α : Type} (n : Nat) (a : α) :
     (List.replicate (n + 1) a).tail = List.replicate n a := by
   rw [List.replicate_succ, List.tail_cons]
 
+/-- Empty budget (`BUD = []`): the `nonEmpty` guard fails ⇒ `budgetBody` is a
+no-op on `SC2`/`BUD`/`T` (the pure `budgetStep` freeze). The complement of the
+five token lemmas — together they characterise `budgetBody` on every state, the
+ingredient the `subtreeScan_run` loop's `bud = 0` case needs. -/
+theorem budgetBody_freeze (s : State) (r : Var)
+    (hr1 : r ≠ SKIP) (hr2 : r ≠ NEB) (hBUD : State.get s BUD = []) :
+    State.get (budgetBody.eval s) r = State.get s r := by
+  rw [budgetBody, Cmd.eval_seq]
+  have e0 : (Cmd.op (.nonEmpty NEB BUD)).eval s = s.set NEB [0] := by
+    rw [Cmd.eval_op, Op.eval, hBUD]; rfl
+  rw [e0, Cmd.eval_ifBit_false _ _ _ _ (by rw [State.get_set_eq]; decide),
+    nop, Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ hr1,
+    State.get_set_ne _ _ _ _ hr2]
+
 /-- ftrue token (`SC2 = 0::0::r`, leaf): `SC2 → r`, `BUD → 1^(bud-1)`,
 `T → 1^(t+1)`. -/
 theorem budgetBody_ftrue (s : State) (r : List Nat) (bud t : Nat) (hbud : bud ≠ 0)
