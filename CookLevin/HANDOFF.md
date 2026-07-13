@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-12-b; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct + program written & probed GO; run/cost lemmas, witness, seam remain)
+## Where the proof stands (2026-07-12-c; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, program written & probed GO, **run-lemma step 1(i) DONE (pure model PROVEN = tree map)**; machine folds (1(ii)), cost, fields, witness, seam remain)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -55,29 +55,38 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-12-b (top-down) — `FSAT → SAT` design risk RESOLVED (probe GO) +
-  the map PROVEN + the full program WRITTEN, all green, 2 commits.**
-  The ⚠ tree-recursion risk was probed FIRST (`probes/FSATPreProbe.lean`,
-  three `#eval` checks green): **design (a) — positional-index Tseytin, no
-  stack — GO**, with two design-freedom refinements: (i) FULL grammar (a new
-  `tseytinOr` gadget handles `forr` directly — the `eliminateOR` pass
-  disappears); (ii) fresh-var base `b := (serF f).length` instead of
-  `maxVar+1` (valid since `formula_maxVar_lt_serF_length`; kills the
-  on-machine max computation — one length loop instead). Landed, all
-  axiom-clean: `NP/FSAT_to_SAT_pre.lean` (`ptseytin` — pre-order positional
-  Tseytin with ABSOLUTE variable indexing `q`, fresh block `[q, q+size)`;
-  `preTseytin_correct` via the positional repr invariant `ptseytin_repr`;
-  `preTseytin_kCNF3`/`_3SAT_correct` freebie; `ptseytin_length_le` +
-  `preTseytin_size_le` size fodder) and
-  `Reductions/FSAT_to_SAT_free.lean` (`buildSAT` — the whole program: length
-  loop for `B`, outer token scan, arity-budget `subtreeScan` for right-child
-  indices, gadget emitters; pinned `encodeIn f = [serF f]`; verifier-layout
-  outputs `TALLY`/`CNFOUT`; `fsatToSat` + `fsatToSat_correct`). The probe's
-  pure scan model (`mScan`/`scanClauses`/`subtreeTok`) mirrors the machine
-  loop bit-for-bit — it is the run-lemma blueprint (see NEXT TOP-DOWN).
-  ⚠ Gotchas reconfirmed: omega is BLIND at carrier type `var` (fvar payloads;
-  fix = `Nat`-typed binders / term lemmas) and treats `Nat.max` as an opaque
-  atom (fix = `Nat.max_lt.mpr ⟨by omega, by omega⟩`).
+- **2026-07-12-c (top-down) — `FSAT → SAT` run-lemma **step 1(i) DONE**: the
+  pure scan model is now PROVEN = the tree map (was `#eval`-only), axiom-clean,
+  1 commit.** Promoted the probe's model into the witness file
+  (`Reductions/FSAT_to_SAT_free.lean`) and proved the equivalence the probe
+  only `#eval`-checked: `subtreeTok_serF : subtreeTok (serF g ++ rest) =
+  formula_size g` (Lemma A — arity-budget scan recovers the first-subtree token
+  count, via the core budget invariant `budgetStep_iterate_subtree` +
+  `budgetStep_iterate_freeze`), `scanClauses_serF` (Lemma B — scanning
+  `serF f ++ rest` emits `ptseytin (b+k) f` then continues on `rest` with the
+  token counter advanced by `formula_size f`), and the headline
+  **`mScan_eq_fsatToSat : mScan (serF f) = fsatToSat f`**. This factors the
+  tree recursion OFF the eventual machine ↔ model reduction — 1(ii) now only
+  needs "the machine folds compute `mScan (serF f)`", no tree induction on the
+  machine side. **Build-integrity fix (surfaced this session):**
+  `FSAT_to_SAT_pre` + `FSAT_to_SAT_free` were landed 2026-07-12-b but never
+  imported by a build root, so `lake build` never checked them — now wired into
+  `Complexity.lean` (full build 3381 jobs green; headline axioms unchanged).
+  ⚠ Gotcha: in `scanClauses_serF`, the `fand`/`forr` case's induction binders
+  `a b` SHADOW the base `b : Nat` — name subformulas `f₁ f₂`. `Nat.add_comm`
+  in a `rw` chain rewrites BOTH the iterate exponent and the goal RHS (commute
+  the final `have` to match, or close with `omega` after `congr`).
+- **2026-07-12-b (top-down) — `FSAT → SAT` design risk RESOLVED + map PROVEN +
+  full program WRITTEN (compressed).** Probe-first (`probes/FSATPreProbe.lean`,
+  green): **design (a) — positional-index Tseytin, no stack — GO**; FULL grammar
+  (`tseytinOr` handles `forr`, no `eliminateOR`); fresh-var base
+  `b := (serF f).length` (valid by `formula_maxVar_lt_serF_length`, kills the
+  on-machine max). Landed axiom-clean: `NP/FSAT_to_SAT_pre.lean` (`ptseytin`,
+  `preTseytin_correct` via `ptseytin_repr`, `preTseytin_kCNF3`/`_3SAT_correct`,
+  `ptseytin_length_le`/`preTseytin_size_le` size fodder) and `buildSAT` +
+  `fsatToSat`/`fsatToSat_correct` (`Reductions/FSAT_to_SAT_free.lean`).
+  ⚠ omega BLIND at carrier `var` (fvar payloads) and treats `Nat.max` as opaque
+  (`Nat.max_lt.mpr ⟨by omega, by omega⟩`).
 - **2026-07-12 (top-down) — the `BinaryCC→FSAT` SEAM CLOSED:
   `flatTCC_to_FSAT_reducesPolyMO' : FlatTCC ⪯p' FSAT`, axiom-clean.**
   Second live `SeamData`/`comp` (`Reductions/BinaryCC_to_FSAT_comp.lean`),
@@ -163,7 +172,15 @@ dirty; frame 27.
     token scan of its Polish serialization: positional fresh variables
     (`b + token index`, base `b := stream length`), right-child recovery by
     the arity-budget scan (`subtreeScan`), and a Lean-side positional
-    equivalent (`ptseytin`) proven correct where recursion is free.
+    equivalent (`ptseytin`) proven correct where recursion is free. **The pure
+    scan model (`budgetStep`/`subtreeTok`/`scanClauses`/`mScan`) is PROVEN =
+    the tree map** (`mScan_eq_fsatToSat`, via `subtreeTok_serF` +
+    `scanClauses_serF`) — the template for "prove the machine folds compute a
+    pure model, then close with the model≡tree equivalence" (factors the tree
+    recursion off the machine proof). The core budget-scan invariant
+    (`budgetStep_iterate_subtree`: processing `serF g`'s tokens pays off one
+    budget obligation) + the freeze lemma are reusable for any prefix-parse
+    counter.
 - **The canonical `LangEncodable` layer stays DEAD** (generic product encoding
   is size-unsound — `probes/UnaryProductSizeProbe.lean`). Do not rebuild it.
 
@@ -364,38 +381,53 @@ building C8-4):**
   `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
-**Alternative:** pieces of the `FSAT_to_SAT` run-lemma ladder (the top-down
-stream's next item, mid-flight — see NEXT TOP-DOWN). Self-contained bottom-up
-bites: the pure-Lean `scanClauses ≡ ptseytin` / `subtreeTok_serF` equivalences
-(step 1(i) there — no machine work), or the drain/budget `_run` lemmas (step
-1(ii)). Coordinate so nothing is done twice.
+**Alternative:** pieces of the `FSAT_to_SAT` run-lemma ladder (top-down's next
+item — see NEXT TOP-DOWN; step 1(i) is now DONE). Self-contained bottom-up bites
+that unblock 1(ii): the `encodeCnf_append` prefix algebra (pure Lean,
+`List.foldr` over `++`), or the `subtreeScan_run` / `drainSkipBody` /
+`drainVarBody` `_run` lemmas (machine folds over the proven pure model — the
+`subtreeScan_run` nested loop is the highest-risk piece, ideal to probe first).
+Coordinate so nothing is done twice.
 
 ## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (run lemmas → cost → witness → seam)
 
-The design phase is DONE (2026-07-12-b; design (a) probed GO — see the session
-entry). What EXISTS, all green & axiom-clean: the map + its correctness
-(`NP/FSAT_to_SAT_pre.lean`: `preTseytin`, `ptseytin_repr`,
-`preTseytin_correct`, size lemmas), the full program + layouts + chain-step
-correctness (`Reductions/FSAT_to_SAT_free.lean`: `buildSAT`, `encodeIn f =
-[serF f]`, outputs `TALLY`(1)/`CNFOUT`(2) in the SAT verifier's layout,
-`decodeOut = invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`), and the
-probe (`probes/FSATPreProbe.lean` — its pure scan model
-`mScan`/`scanClauses`/`subtreeTok` mirrors the machine bit-for-bit and is the
-run-lemma blueprint). Remaining ladder (~1–2 sessions):
+The design phase + run-lemma **step 1(i) are DONE** (2026-07-12-b/-c). What
+EXISTS, all green & axiom-clean: the map + correctness (`NP/FSAT_to_SAT_pre.lean`:
+`preTseytin`, `ptseytin_repr`, `preTseytin_correct`, size lemmas); the full
+program + layouts + chain-step correctness (`Reductions/FSAT_to_SAT_free.lean`:
+`buildSAT`, `encodeIn f = [serF f]`, outputs `TALLY`(1)/`CNFOUT`(2), `decodeOut
+= invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`); **and the pure scan
+model now PROVEN = the tree map** (same file: `budgetStep`/`subtreeTok`/
+`scanClauses`/`mScan` + `subtreeTok_serF`, `scanClauses_serF`,
+`mScan_eq_fsatToSat`). The probe (`probes/FSATPreProbe.lean`) keeps an
+independent `#eval` copy. Remaining ladder (~1–2 sessions):
 
-1. **Run lemmas** — target: `(buildSAT.eval [serF f]).get CNFOUT =
-   encodeCnf (fsatToSat f)` (+ `TALLY = replicate |N| 1`, + frame clause).
-   **Recommended decomposition (factors the tree OFF the machine proof):**
-   (i) promote the probe's pure model into the witness file and prove
-   `scanClauses`/`subtreeTok` ≡ `ptseytin`/`formula_size` at the Lean level
-   (structural induction generalizing the `rest` suffix, exactly the
-   `deserF_serF` shape — `subtreeTok_serF : first-subtree token count of
-   (serF g ++ rest) = formula_size g` first, then the scan≡tree clause list);
-   (ii) machine ↔ pure model only needs linear fold invariants: the drain
-   loops (`drainVarBody`/`drainSkipBody`) are the guarded sentinel parse
-   (`RFInv` pattern), the budget loop (`budgetBody`) folds the probe's
-   `budgetStep`, the outer loop (`tokenBody`) is a `CAInv`-style
-   `nonEmpty`-guarded stream loop with black-boxed inner `_run` facts.
+1. **Run lemmas — step 1(ii): machine folds compute `mScan (serF f)`.** Target:
+   `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` (+ `TALLY =
+   replicate |N| 1`, + frame). Step 1(i) removed the tree recursion, so ONLY
+   linear fold invariants remain. **Prerequisite algebra (cheap, do first):**
+   `encodeCnf_append : encodeCnf (M ++ N) = encodeCnf M ++ encodeCnf N` (it is
+   `List.foldr` over `++` — one lemma; `encodeClause`/`encodeLit` are in
+   `EvalCnfCmd.lean`), the incremental-emission backbone. Recommended order
+   (probe each `#eval`-first, extend `FSATPreProbe`):
+   - **(a) `subtreeScan_run` (the hard nut — do FIRST as a risk probe):**
+     `(subtreeScan.eval s).get T = replicate (subtreeTok (s.get SCAN)) 1`, SCAN
+     preserved, SC2/BUD/T/… scratch framed. The outer `budgetBody` loop folds
+     the pure `budgetStep`; its inner `drainSkipBody` (skip one unary block past
+     the `0`) is a black-boxed `RFInv`-style sentinel skip. Mirror
+     `unaryMulLoop_run` register-genericity + the `CAInv` guard.
+   - **(b) `tokenBody_run` (one iteration ≡ one `scanClauses` token):** dispatch
+     on the tag; `fvar` uses `drainVarBody` (`RFInv` read into `VREG`), the two
+     binary tags black-box `subtreeScan_run`, then emit via the gadget lemmas
+     (`emitLit`→`encodeLit` append, `endClause`→`[0]`+tally). The clause list of
+     each gadget = `encodeCnf` of that gadget (via `encodeCnf_append`).
+   - **(c) the outer `forBnd IDX1 SERF tokenBody` invariant** (`CAInv`
+     `nonEmpty`-guarded stream loop, black-boxing `tokenBody_run`): after the
+     scan is consumed the loop idles (`tokens ≤ bits`), so relate the machine
+     state to `scanClauses` having consumed all tokens.
+   - **(d) phase 0 + assembly:** the `B := 1^|serF f|` length loop, the top
+     clause emission, then `buildSAT_run` composed with `mScan_eq_fsatToSat`
+     (`= encodeCnf (mScan (serF f)) = encodeCnf (fsatToSat f)`).
 2. **`cost_le`** — the `masterOmega` pattern; generous ceiling: outer
    `|serF f| ≤ 4n` iterations × (budget scan `O(|serF|)` + emission
    `O(b+n)`) — a single `C·(n+1)³`-ish ceiling should dominate everything.
@@ -597,8 +629,14 @@ and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
 - **Build:** `export PATH="$HOME/.elan/bin:$PATH"; lake build` (lake **not** on
   PATH; LSP/most MCP can't find it). First build slow — kick off in background.
   Iterate one file directly: `env LEAN_PATH=$(lake env printenv LEAN_PATH)
-  lean <file>` (fast, no lake). Commit per logical step, green.
-  Headline: `Complexity.NP.SAT.CookLevin`.
+  lean <file>` (fast, no lake) or `lake build <Module.Name>`. Commit per logical
+  step, green. Headline: `Complexity.NP.SAT.CookLevin`.
+  ⚠ **The lib roots are `Basic`+`Complexity` (`lakefile.lean`), so `lake build`
+  only checks modules TRANSITIVELY IMPORTED from `Complexity.lean` — a new
+  `.lean` file that nothing imports is INVISIBLE to CI even if it `#eval`s/
+  axiom-checks green in isolation.** When you land a new module, add its import
+  to `Complexity.lean` (2026-07-12-c caught `FSAT_to_SAT_pre`/`_free` had been
+  unimported since 2026-07-12-b). Verify: `find .lake -name "<Module>.olean"`.
 - **Probe** a machine/program end-to-end (`#eval`) *before* proving its run
   lemma: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean probes/X.lean`.
   Probe SEAMS end-to-end too (`FlatCCBinProbe.checkBridge` pattern: assert
