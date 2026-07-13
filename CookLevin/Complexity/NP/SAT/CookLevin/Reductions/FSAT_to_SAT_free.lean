@@ -140,33 +140,35 @@ def drainSkipBody : Cmd :=
     (Cmd.op (.head H3 SC2) ;; Cmd.op (.tail SC2 SC2) ;;
      Cmd.ifBit H3 nop (Cmd.op (.clear DN2) ;; Cmd.op (.appendOne DN2)))
 
-/-- One budget-scan step: if the budget is non-empty, consume one token off
-`SC2`, count it in `T`, and adjust the budget by the token's arity − 1. -/
+/-- The budget-scan body once the `nonEmpty NEB BUD` guard has fired: consume
+one token off `SC2`, count it in `T`, adjust `BUD` by the token's arity − 1
+(factored out so the run lemmas can name it — the `budgetBody_enter` peel). -/
+def budgetBodyInner : Cmd :=
+  Cmd.op (.head H1B SC2) ;; Cmd.op (.tail SC2 SC2) ;;
+  Cmd.op (.head H2B SC2) ;; Cmd.op (.tail SC2 SC2) ;;
+  Cmd.op (.appendOne T) ;;
+  Cmd.ifBit H1B
+    (Cmd.ifBit H2B
+       (-- 11x: read the third bit
+        Cmd.op (.head H2B SC2) ;; Cmd.op (.tail SC2 SC2) ;;
+        Cmd.ifBit H2B
+          (-- 111 fvar: skip the unary payload; leaf ⇒ budget −1
+           Cmd.op (.clear DN2) ;;
+           Cmd.forBnd IDX3 SC2 drainSkipBody ;;
+           Cmd.op (.tail BUD BUD))
+          (-- 110 fneg: arity 1 ⇒ budget unchanged
+           nop))
+       (-- 10 forr: arity 2 ⇒ budget +1
+        Cmd.op (.appendOne BUD)))
+    (Cmd.ifBit H2B
+       (-- 01 fand: arity 2 ⇒ budget +1
+        Cmd.op (.appendOne BUD))
+       (-- 00 ftrue: leaf ⇒ budget −1
+        Cmd.op (.tail BUD BUD)))
+
+/-- One budget-scan step: if the budget is non-empty, run `budgetBodyInner`. -/
 def budgetBody : Cmd :=
-  Cmd.op (.nonEmpty NEB BUD) ;;
-  Cmd.ifBit NEB
-    (Cmd.op (.head H1B SC2) ;; Cmd.op (.tail SC2 SC2) ;;
-     Cmd.op (.head H2B SC2) ;; Cmd.op (.tail SC2 SC2) ;;
-     Cmd.op (.appendOne T) ;;
-     Cmd.ifBit H1B
-       (Cmd.ifBit H2B
-          (-- 11x: read the third bit
-           Cmd.op (.head H2B SC2) ;; Cmd.op (.tail SC2 SC2) ;;
-           Cmd.ifBit H2B
-             (-- 111 fvar: skip the unary payload; leaf ⇒ budget −1
-              Cmd.op (.clear DN2) ;;
-              Cmd.forBnd IDX3 SC2 drainSkipBody ;;
-              Cmd.op (.tail BUD BUD))
-             (-- 110 fneg: arity 1 ⇒ budget unchanged
-              nop))
-          (-- 10 forr: arity 2 ⇒ budget +1
-           Cmd.op (.appendOne BUD)))
-       (Cmd.ifBit H2B
-          (-- 01 fand: arity 2 ⇒ budget +1
-           Cmd.op (.appendOne BUD))
-          (-- 00 ftrue: leaf ⇒ budget −1
-           Cmd.op (.tail BUD BUD))))
-    nop
+  Cmd.op (.nonEmpty NEB BUD) ;; Cmd.ifBit NEB budgetBodyInner nop
 
 /-- `T := 1^(token count of the first complete subtree of SCAN)`; `SCAN` is
 read through a copy (`SC2`) and left untouched. The loop bound `SCAN` (its
@@ -974,5 +976,331 @@ theorem drainVar_run (u : State) (v : Nat) (rest : List Nat)
   obtain ⟨hmain, hframe⟩ := hInv
   rw [if_neg hfin] at hmain
   exact ⟨hmain.2.1, hmain.2.2, hmain.1, hframe⟩
+
+
+/-! ## The per-shape `budgetBody` step lemmas (machine ⇒ pure `budgetStep`) -/
+
+/-- Frame set for `budgetBody`: it writes only
+`{NEB, H1B, H2B, T, SC2, BUD, DN2, SKIP, IDX3}`. -/
+theorem budgetBody_frame (s : State) (r : Var)
+    (hNEB : r ≠ NEB) (hH1B : r ≠ H1B) (hH2B : r ≠ H2B) (hT : r ≠ T)
+    (hSC2 : r ≠ SC2) (hBUD : r ≠ BUD) (hDN2 : r ≠ DN2) (hSKIP : r ≠ SKIP)
+    (hIDX3 : r ≠ IDX3) (hH3 : r ≠ H3) :
+    State.get (budgetBody.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by
+    simp [budgetBody, budgetBodyInner, drainSkipBody, nop, Cmd.writes, Op.writesTo,
+      hNEB, hH1B, hH2B, hT, hSC2, hBUD, hDN2, hSKIP, hIDX3, hH3])
+
+/-- The `nonEmpty NEB BUD` guard fires (enters the body) when `BUD = 1^bud`,
+`bud ≠ 0`. Peels `budgetBody` to its body evaluated on `s.set NEB [1]`. -/
+theorem budgetBody_enter (s : State) (bud : Nat) (hbud : bud ≠ 0)
+    (hBUD : State.get s BUD = List.replicate bud 1) :
+    budgetBody.eval s = budgetBodyInner.eval (s.set NEB [1]) := by
+  rw [budgetBody, Cmd.eval_seq]
+  have e0 : (Cmd.op (.nonEmpty NEB BUD)).eval s = s.set NEB [1] := by
+    rw [Cmd.eval_op, Op.eval, hBUD]
+    cases bud with | zero => omega | succ n => simp
+  rw [e0, Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq])]
+
+/-- `(replicate (n+1) a).tail = replicate n a`. -/
+theorem tail_replicate_succ {α : Type} (n : Nat) (a : α) :
+    (List.replicate (n + 1) a).tail = List.replicate n a := by
+  rw [List.replicate_succ, List.tail_cons]
+
+/-- ftrue token (`SC2 = 0::0::r`, leaf): `SC2 → r`, `BUD → 1^(bud-1)`,
+`T → 1^(t+1)`. -/
+theorem budgetBody_ftrue (s : State) (r : List Nat) (bud t : Nat) (hbud : bud ≠ 0)
+    (hBUD : State.get s BUD = List.replicate bud 1)
+    (hSC : State.get s SC2 = 0 :: 0 :: r)
+    (hT : State.get s T = List.replicate t 1) :
+    State.get (budgetBody.eval s) SC2 = r
+    ∧ State.get (budgetBody.eval s) BUD = List.replicate (bud - 1) 1
+    ∧ State.get (budgetBody.eval s) T = List.replicate (t + 1) 1 := by
+  obtain ⟨bud', rfl⟩ : ∃ m, bud = m + 1 := ⟨bud - 1, by omega⟩
+  rw [budgetBody_enter s (bud' + 1) hbud hBUD, budgetBodyInner]
+  set w := s.set NEB [1] with hw
+  have hwSC : State.get w SC2 = 0 :: 0 :: r := by
+    rw [hw, State.get_set_ne _ _ _ _ (show SC2 ≠ NEB by decide), hSC]
+  have hwBUD : State.get w BUD = List.replicate (bud' + 1) 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show BUD ≠ NEB by decide), hBUD]
+  have hwT : State.get w T = List.replicate t 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show T ≠ NEB by decide), hT]
+  -- evaluate the straight-line prefix in place, leaving `ifBitchain.eval P`
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, hwSC, hwT,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H1B by decide),
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H1B by decide),
+    State.get_set_eq, List.tail_cons]
+  set P := ((((w.set H1B [0]).set SC2 (0 :: r)).set H2B [0]).set SC2 r).set T
+      (List.replicate t 1 ++ [1]) with hPdef
+  have hPH1B : State.get P H1B = [0] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H1B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ H2B by decide)]
+  have hPH2B : State.get P H2B = [0] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  have hPBUD : State.get P BUD = List.replicate (bud' + 1) 1 := by
+    simp only [hPdef,
+      State.get_set_ne _ _ _ _ (show BUD ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H1B by decide), hwBUD]
+  rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hPH1B]; decide),
+      Cmd.eval_ifBit_false _ _ _ _ (by rw [hPH2B]; decide),
+      Cmd.eval_op, Op.eval, hPBUD]
+  refine ⟨?_, ?_, ?_⟩
+  · simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show SC2 ≠ BUD by decide),
+      State.get_set_ne _ _ _ _ (show SC2 ≠ T by decide)]
+  · rw [State.get_set_eq, tail_replicate_succ]; simp
+  · simp only [State.get_set_ne _ _ _ _ (show T ≠ BUD by decide), hPdef, State.get_set_eq]
+    rw [← List.replicate_succ']
+
+/-- fand token (`SC2 = 0::1::r`, binary): `SC2 → r`, `BUD → 1^(bud+1)`,
+`T → 1^(t+1)`. -/
+theorem budgetBody_fand (s : State) (r : List Nat) (bud t : Nat) (hbud : bud ≠ 0)
+    (hBUD : State.get s BUD = List.replicate bud 1)
+    (hSC : State.get s SC2 = 0 :: 1 :: r)
+    (hT : State.get s T = List.replicate t 1) :
+    State.get (budgetBody.eval s) SC2 = r
+    ∧ State.get (budgetBody.eval s) BUD = List.replicate (bud + 1) 1
+    ∧ State.get (budgetBody.eval s) T = List.replicate (t + 1) 1 := by
+  rw [budgetBody_enter s bud hbud hBUD, budgetBodyInner]
+  set w := s.set NEB [1] with hw
+  have hwSC : State.get w SC2 = 0 :: 1 :: r := by
+    rw [hw, State.get_set_ne _ _ _ _ (show SC2 ≠ NEB by decide), hSC]
+  have hwBUD : State.get w BUD = List.replicate bud 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show BUD ≠ NEB by decide), hBUD]
+  have hwT : State.get w T = List.replicate t 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show T ≠ NEB by decide), hT]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, hwSC, hwT,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H1B by decide),
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H1B by decide),
+    State.get_set_eq, List.tail_cons]
+  set P := ((((w.set H1B [0]).set SC2 (1 :: r)).set H2B [1]).set SC2 r).set T
+      (List.replicate t 1 ++ [1]) with hPdef
+  have hPH1B : State.get P H1B = [0] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H1B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ H2B by decide)]
+  have hPH2B : State.get P H2B = [1] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  have hPBUD : State.get P BUD = List.replicate bud 1 := by
+    simp only [hPdef,
+      State.get_set_ne _ _ _ _ (show BUD ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H1B by decide), hwBUD]
+  rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hPH1B]; decide),
+      Cmd.eval_ifBit_true _ _ _ _ hPH2B, Cmd.eval_op, Op.eval, hPBUD]
+  refine ⟨?_, ?_, ?_⟩
+  · simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show SC2 ≠ BUD by decide),
+      State.get_set_ne _ _ _ _ (show SC2 ≠ T by decide)]
+  · rw [State.get_set_eq, ← List.replicate_succ']
+  · simp only [State.get_set_ne _ _ _ _ (show T ≠ BUD by decide), hPdef, State.get_set_eq]
+    rw [← List.replicate_succ']
+
+/-- forr token (`SC2 = 1::0::r`, binary): `SC2 → r`, `BUD → 1^(bud+1)`,
+`T → 1^(t+1)`. -/
+theorem budgetBody_forr (s : State) (r : List Nat) (bud t : Nat) (hbud : bud ≠ 0)
+    (hBUD : State.get s BUD = List.replicate bud 1)
+    (hSC : State.get s SC2 = 1 :: 0 :: r)
+    (hT : State.get s T = List.replicate t 1) :
+    State.get (budgetBody.eval s) SC2 = r
+    ∧ State.get (budgetBody.eval s) BUD = List.replicate (bud + 1) 1
+    ∧ State.get (budgetBody.eval s) T = List.replicate (t + 1) 1 := by
+  rw [budgetBody_enter s bud hbud hBUD, budgetBodyInner]
+  set w := s.set NEB [1] with hw
+  have hwSC : State.get w SC2 = 1 :: 0 :: r := by
+    rw [hw, State.get_set_ne _ _ _ _ (show SC2 ≠ NEB by decide), hSC]
+  have hwBUD : State.get w BUD = List.replicate bud 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show BUD ≠ NEB by decide), hBUD]
+  have hwT : State.get w T = List.replicate t 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show T ≠ NEB by decide), hT]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, hwSC, hwT,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H1B by decide),
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H1B by decide),
+    State.get_set_eq, List.tail_cons]
+  set P := ((((w.set H1B [1]).set SC2 (0 :: r)).set H2B [0]).set SC2 r).set T
+      (List.replicate t 1 ++ [1]) with hPdef
+  have hPH1B : State.get P H1B = [1] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H1B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ H2B by decide)]
+  have hPH2B : State.get P H2B = [0] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  have hPBUD : State.get P BUD = List.replicate bud 1 := by
+    simp only [hPdef,
+      State.get_set_ne _ _ _ _ (show BUD ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H1B by decide), hwBUD]
+  rw [Cmd.eval_ifBit_true _ _ _ _ hPH1B,
+      Cmd.eval_ifBit_false _ _ _ _ (by rw [hPH2B]; decide), Cmd.eval_op, Op.eval, hPBUD]
+  refine ⟨?_, ?_, ?_⟩
+  · simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show SC2 ≠ BUD by decide),
+      State.get_set_ne _ _ _ _ (show SC2 ≠ T by decide)]
+  · rw [State.get_set_eq, ← List.replicate_succ']
+  · simp only [State.get_set_ne _ _ _ _ (show T ≠ BUD by decide), hPdef, State.get_set_eq]
+    rw [← List.replicate_succ']
+
+/-- fneg token (`SC2 = 1::1::0::r`, unary): `SC2 → r`, `BUD → 1^bud`,
+`T → 1^(t+1)`. -/
+theorem budgetBody_fneg (s : State) (r : List Nat) (bud t : Nat) (hbud : bud ≠ 0)
+    (hBUD : State.get s BUD = List.replicate bud 1)
+    (hSC : State.get s SC2 = 1 :: 1 :: 0 :: r)
+    (hT : State.get s T = List.replicate t 1) :
+    State.get (budgetBody.eval s) SC2 = r
+    ∧ State.get (budgetBody.eval s) BUD = List.replicate bud 1
+    ∧ State.get (budgetBody.eval s) T = List.replicate (t + 1) 1 := by
+  rw [budgetBody_enter s bud hbud hBUD, budgetBodyInner]
+  set w := s.set NEB [1] with hw
+  have hwSC : State.get w SC2 = 1 :: 1 :: 0 :: r := by
+    rw [hw, State.get_set_ne _ _ _ _ (show SC2 ≠ NEB by decide), hSC]
+  have hwBUD : State.get w BUD = List.replicate bud 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show BUD ≠ NEB by decide), hBUD]
+  have hwT : State.get w T = List.replicate t 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show T ≠ NEB by decide), hT]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, hwSC, hwT,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H1B by decide),
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H1B by decide),
+    State.get_set_eq, List.tail_cons]
+  set P := ((((w.set H1B [1]).set SC2 (1 :: 0 :: r)).set H2B [1]).set SC2 (0 :: r)).set T
+      (List.replicate t 1 ++ [1]) with hPdef
+  have hPH1B : State.get P H1B = [1] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H1B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ H2B by decide)]
+  have hPH2B : State.get P H2B = [1] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  rw [Cmd.eval_ifBit_true _ _ _ _ hPH1B, Cmd.eval_ifBit_true _ _ _ _ hPH2B]
+  -- read the 3rd bit: head H2B SC2 (P SC2 = 0::r → [0]), tail SC2 (→ r)
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide),
+    show State.get P SC2 = 0 :: r from by
+      simp only [hPdef, State.get_set_eq,
+        State.get_set_ne _ _ _ _ (show SC2 ≠ T by decide)],
+    List.tail_cons]
+  set P2 := (P.set H2B [0]).set SC2 r with hP2def
+  have hP2H2B : State.get P2 H2B = [0] := by
+    simp only [hP2def, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hP2H2B]; decide), nop, Cmd.eval_op, Op.eval]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide), hP2def, State.get_set_eq]
+  · rw [State.get_set_ne _ _ _ _ (show BUD ≠ SKIP by decide), hP2def,
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide), hPdef,
+      State.get_set_ne _ _ _ _ (show BUD ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H1B by decide), hwBUD]
+  · rw [State.get_set_ne _ _ _ _ (show T ≠ SKIP by decide), hP2def,
+      State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show T ≠ H2B by decide), hPdef, State.get_set_eq,
+      ← List.replicate_succ']
+
+/-- fvar token (`SC2 = 1::1::1::(1^v ++ 0::r)`, leaf): `SC2 → r`,
+`BUD → 1^(bud-1)`, `T → 1^(t+1)` (the payload is drained via `drainSkip_run`). -/
+theorem budgetBody_fvar (s : State) (v : Nat) (r : List Nat) (bud t : Nat) (hbud : bud ≠ 0)
+    (hBUD : State.get s BUD = List.replicate bud 1)
+    (hSC : State.get s SC2 = 1 :: 1 :: 1 :: (List.replicate v 1 ++ 0 :: r))
+    (hT : State.get s T = List.replicate t 1) :
+    State.get (budgetBody.eval s) SC2 = r
+    ∧ State.get (budgetBody.eval s) BUD = List.replicate (bud - 1) 1
+    ∧ State.get (budgetBody.eval s) T = List.replicate (t + 1) 1 := by
+  obtain ⟨bud', rfl⟩ : ∃ m, bud = m + 1 := ⟨bud - 1, by omega⟩
+  rw [budgetBody_enter s (bud' + 1) hbud hBUD, budgetBodyInner]
+  set w := s.set NEB [1] with hw
+  have hwSC : State.get w SC2 = 1 :: 1 :: 1 :: (List.replicate v 1 ++ 0 :: r) := by
+    rw [hw, State.get_set_ne _ _ _ _ (show SC2 ≠ NEB by decide), hSC]
+  have hwBUD : State.get w BUD = List.replicate (bud' + 1) 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show BUD ≠ NEB by decide), hBUD]
+  have hwT : State.get w T = List.replicate t 1 := by
+    rw [hw, State.get_set_ne _ _ _ _ (show T ≠ NEB by decide), hT]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, hwSC, hwT,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H1B by decide),
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H2B by decide),
+    State.get_set_ne _ _ _ _ (show T ≠ H1B by decide),
+    State.get_set_eq, List.tail_cons]
+  set P := ((((w.set H1B [1]).set SC2 (1 :: 1 :: (List.replicate v 1 ++ 0 :: r))).set H2B
+      [1]).set SC2 (1 :: (List.replicate v 1 ++ 0 :: r))).set T
+      (List.replicate t 1 ++ [1]) with hPdef
+  have hPH1B : State.get P H1B = [1] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H1B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show H1B ≠ H2B by decide)]
+  have hPH2B : State.get P H2B = [1] := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  have hPSC : State.get P SC2 = 1 :: (List.replicate v 1 ++ 0 :: r) := by
+    simp only [hPdef, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show SC2 ≠ T by decide)]
+  rw [Cmd.eval_ifBit_true _ _ _ _ hPH1B, Cmd.eval_ifBit_true _ _ _ _ hPH2B]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H2B by decide), hPSC, List.tail_cons]
+  set P2 := (P.set H2B [1]).set SC2 (List.replicate v 1 ++ 0 :: r) with hP2def
+  have hP2H2B : State.get P2 H2B = [1] := by
+    simp only [hP2def, State.get_set_eq,
+      State.get_set_ne _ _ _ _ (show H2B ≠ SC2 by decide)]
+  rw [Cmd.eval_ifBit_true _ _ _ _ hP2H2B, Cmd.eval_seq, Cmd.eval_seq,
+    show (Cmd.op (Op.clear DN2)).eval P2 = P2.set DN2 [] from by rw [Cmd.eval_op, Op.eval]]
+  -- clear DN2, then the drain loop, then tail BUD BUD
+  set P3 := P2.set DN2 [] with hP3def
+  have hP3SC : State.get P3 SC2 = List.replicate v 1 ++ 0 :: r := by
+    rw [hP3def, State.get_set_ne _ _ _ _ (show SC2 ≠ DN2 by decide), hP2def, State.get_set_eq]
+  have hP3DN : State.get P3 DN2 = [] := by rw [hP3def, State.get_set_eq]
+  obtain ⟨hRSC, hRDN, hRframe⟩ := drainSkip_run P3 v r hP3SC hP3DN
+  set R := (Cmd.forBnd IDX3 SC2 drainSkipBody).eval P3 with hRdef
+  rw [Cmd.eval_op, Op.eval]
+  have hRBUD : State.get R BUD = List.replicate (bud' + 1) 1 := by
+    rw [hRframe BUD (by decide) (by decide) (by decide) (by decide) (by decide),
+      hP3def, State.get_set_ne _ _ _ _ (show BUD ≠ DN2 by decide), hP2def,
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide), hPdef,
+      State.get_set_ne _ _ _ _ (show BUD ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H2B by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show BUD ≠ H1B by decide), hwBUD]
+  have hRT : State.get R T = List.replicate t 1 ++ [1] := by
+    rw [hRframe T (by decide) (by decide) (by decide) (by decide) (by decide),
+      hP3def, State.get_set_ne _ _ _ _ (show T ≠ DN2 by decide), hP2def,
+      State.get_set_ne _ _ _ _ (show T ≠ SC2 by decide),
+      State.get_set_ne _ _ _ _ (show T ≠ H2B by decide), hPdef, State.get_set_eq]
+  refine ⟨?_, ?_, ?_⟩
+  · rw [State.get_set_ne _ _ _ _ (show SC2 ≠ BUD by decide), hRSC]
+  · rw [State.get_set_eq, hRBUD, tail_replicate_succ]; simp
+  · rw [State.get_set_ne _ _ _ _ (show T ≠ BUD by decide), hRT, ← List.replicate_succ']
 
 end FSATSATFree
