@@ -746,4 +746,233 @@ theorem emitNotG_frame (s : State) (r : Var) (h1 : r ≠ CNFOUT) (h2 : r ≠ TAL
     Op.writesTo, h1, h2])
 
 
+
+/-! ## The drain-skip inner loop (`subtreeScan`'s fvar payload skip) -/
+
+/-- Frame set for `drainSkipBody`: it writes only `H3`, `SC2`, `DN2`, `SKIP`. -/
+theorem drainSkipBody_frame (s : State) (r : Var)
+    (h : r ≠ H3) (h1 : r ≠ SC2) (h2 : r ≠ DN2) (h3 : r ≠ SKIP) :
+    State.get (drainSkipBody.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by
+    simp [drainSkipBody, nop, Cmd.writes, Op.writesTo, h, h1, h2, h3])
+
+/-- `drainSkipBody` once, already done (`DN2 = [1]`): a pure freeze (only `SKIP`). -/
+theorem drainSkipBody_done (s : State) (h : State.get s DN2 = [1]) :
+    drainSkipBody.eval s = s.set SKIP [] := by
+  rw [drainSkipBody, Cmd.eval_ifBit_true _ _ _ _ h, nop, Cmd.eval_op, Op.eval]
+
+/-- `drainSkipBody` once, peeling a `1` (`DN2 = []`, `SC2 = 1::r`). -/
+theorem drainSkipBody_one (s : State) (r : List Nat)
+    (hDN : State.get s DN2 = []) (hSC : State.get s SC2 = 1 :: r) :
+    drainSkipBody.eval s = ((s.set H3 [1]).set SC2 r).set SKIP [] := by
+  have hne : State.get s DN2 ≠ [1] := by rw [hDN]; decide
+  rw [drainSkipBody, Cmd.eval_ifBit_false _ _ _ _ hne]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H3 by decide), hSC, List.tail_cons]
+  rw [Cmd.eval_ifBit_true _ _ _ _
+    (by rw [State.get_set_ne _ _ _ _ (show H3 ≠ SC2 by decide), State.get_set_eq]),
+    nop, Cmd.eval_op, Op.eval]
+
+/-- `drainSkipBody` once, hitting the `0` terminator (`DN2 = []`, `SC2 = 0::r`):
+consumes the `0` and sets the done flag. -/
+theorem drainSkipBody_zero (s : State) (r : List Nat)
+    (hDN : State.get s DN2 = []) (hSC : State.get s SC2 = 0 :: r) :
+    drainSkipBody.eval s = ((s.set H3 [0]).set SC2 r).set DN2 [1] := by
+  have hne : State.get s DN2 ≠ [1] := by rw [hDN]; decide
+  rw [drainSkipBody, Cmd.eval_ifBit_false _ _ _ _ hne]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show SC2 ≠ H3 by decide), hSC, List.tail_cons]
+  rw [Cmd.eval_ifBit_false _ _ _ _
+    (by rw [State.get_set_ne _ _ _ _ (show H3 ≠ SC2 by decide), State.get_set_eq]; decide)]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, State.get_set_eq, State.set_set,
+    List.nil_append]
+
+/-- The fvar-payload skip loop: `SC2 = 1^v ++ 0::rest`, `DN2 = []` ⇒ after
+`forBnd IDX3 SC2 drainSkipBody` (which runs `|SC2|` iterations), `SC2 = rest`,
+`DN2 = [1]`, everything else outside `{SC2,DN2,H3,SKIP,IDX3}` preserved. -/
+theorem drainSkip_run (u : State) (v : Nat) (rest : List Nat)
+    (hSC2 : State.get u SC2 = List.replicate v 1 ++ 0 :: rest)
+    (hDN2 : State.get u DN2 = []) :
+    State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval u) SC2 = rest
+    ∧ State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval u) DN2 = [1]
+    ∧ (∀ r : Var, r ≠ SC2 → r ≠ DN2 → r ≠ H3 → r ≠ SKIP → r ≠ IDX3 →
+        State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval u) r = State.get u r) := by
+  set M : Nat → State → Prop := fun i st =>
+    (if i ≤ v
+      then State.get st DN2 = [] ∧ State.get st SC2 = List.replicate (v - i) 1 ++ 0 :: rest
+      else State.get st DN2 = [1] ∧ State.get st SC2 = rest)
+    ∧ (∀ r : Var, r ≠ SC2 → r ≠ DN2 → r ≠ H3 → r ≠ SKIP → r ≠ IDX3 →
+        State.get st r = State.get u r) with hMdef
+  have h0 : M 0 u := by
+    refine ⟨?_, fun r _ _ _ _ _ => rfl⟩
+    simp only [hMdef, Nat.zero_le, if_true, Nat.sub_zero, hDN2, hSC2, and_self]
+  have hstep : ∀ i st, i < (State.get u SC2).length → M i st →
+      M (i + 1) (drainSkipBody.eval (st.set IDX3 (List.replicate i 1))) := by
+    intro i st _ hM
+    obtain ⟨hmain, hframe⟩ := hM
+    set w := st.set IDX3 (List.replicate i 1) with hw
+    have hwDN2 : State.get w DN2 = State.get st DN2 := State.get_set_ne _ _ _ _ (by decide)
+    have hwSC2 : State.get w SC2 = State.get st SC2 := State.get_set_ne _ _ _ _ (by decide)
+    refine ⟨?_, ?_⟩
+    · by_cases hiv : i ≤ v
+      · have hmain' := hmain; rw [if_pos hiv] at hmain'
+        obtain ⟨hDN, hSC⟩ := hmain'
+        have hDNw : State.get w DN2 = [] := by rw [hwDN2, hDN]
+        by_cases hiv' : i + 1 ≤ v
+        · -- peel a `1`
+          rw [if_pos hiv']
+          have hSCw : State.get w SC2 = 1 :: (List.replicate (v - (i + 1)) 1 ++ 0 :: rest) := by
+            rw [hwSC2, hSC, show v - i = (v - (i + 1)) + 1 from by omega, List.replicate_succ,
+              List.cons_append]
+          rw [drainSkipBody_one w _ hDNw hSCw]
+          refine ⟨?_, ?_⟩
+          · rw [State.get_set_ne _ _ _ _ (show DN2 ≠ SKIP by decide),
+              State.get_set_ne _ _ _ _ (show DN2 ≠ SC2 by decide),
+              State.get_set_ne _ _ _ _ (show DN2 ≠ H3 by decide), hDNw]
+          · rw [State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide), State.get_set_eq]
+        · -- hit the `0`
+          rw [if_neg hiv']
+          have hiveq : i = v := by omega
+          subst hiveq
+          have hSCw : State.get w SC2 = 0 :: rest := by rw [hwSC2, hSC]; simp
+          rw [drainSkipBody_zero w _ hDNw hSCw]
+          refine ⟨State.get_set_eq _ _ _, ?_⟩
+          rw [State.get_set_ne _ _ _ _ (show SC2 ≠ DN2 by decide), State.get_set_eq]
+      · -- done: freeze
+        rw [if_neg (show ¬ (i + 1 ≤ v) from by omega)]
+        have hmain' := hmain; rw [if_neg hiv] at hmain'
+        obtain ⟨hDN, hSC⟩ := hmain'
+        have hDNw : State.get w DN2 = [1] := by rw [hwDN2, hDN]
+        rw [drainSkipBody_done w hDNw]
+        exact ⟨by rw [State.get_set_ne _ _ _ _ (show DN2 ≠ SKIP by decide), hDNw],
+          by rw [State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide), hwSC2, hSC]⟩
+    · intro r hr1 hr2 hr3 hr4 hr5
+      rw [drainSkipBody_frame _ r hr3 hr1 hr2 hr4, hw, State.get_set_ne _ _ _ _ hr5]
+      exact hframe r hr1 hr2 hr3 hr4 hr5
+  have hInv := Cmd.foldlState_range_induct drainSkipBody IDX3 (State.get u SC2).length u M h0 hstep
+  rw [Cmd.eval_forBnd]
+  have hfin : ¬ ((State.get u SC2).length ≤ v) := by
+    rw [hSC2]; simp only [List.length_append, List.length_replicate, List.length_cons]; omega
+  obtain ⟨hmain, hframe⟩ := hInv
+  rw [if_neg hfin] at hmain
+  exact ⟨hmain.2, hmain.1, hframe⟩
+
+/-! ## The fvar-payload drain loop (`tokenBody`'s fvar read into `VREG`) -/
+
+theorem drainVarBody_frame (s : State) (r : Var)
+    (h : r ≠ H3) (h1 : r ≠ SCAN) (h2 : r ≠ VREG) (h3 : r ≠ DN) (h4 : r ≠ SKIP) :
+    State.get (drainVarBody.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by
+    simp [drainVarBody, nop, Cmd.writes, Op.writesTo, h, h1, h2, h3, h4])
+
+theorem drainVarBody_done (s : State) (h : State.get s DN = [1]) :
+    drainVarBody.eval s = s.set SKIP [] := by
+  rw [drainVarBody, Cmd.eval_ifBit_true _ _ _ _ h, nop, Cmd.eval_op, Op.eval]
+
+theorem drainVarBody_one (s : State) (r : List Nat)
+    (hDN : State.get s DN = []) (hSC : State.get s SCAN = 1 :: r) :
+    drainVarBody.eval s
+      = ((s.set H3 [1]).set SCAN r).set VREG (State.get s VREG ++ [1]) := by
+  have hne : State.get s DN ≠ [1] := by rw [hDN]; decide
+  rw [drainVarBody, Cmd.eval_ifBit_false _ _ _ _ hne]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show SCAN ≠ H3 by decide), hSC, List.tail_cons]
+  rw [Cmd.eval_ifBit_true _ _ _ _
+    (by rw [State.get_set_ne _ _ _ _ (show H3 ≠ SCAN by decide), State.get_set_eq])]
+  simp only [Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show VREG ≠ SCAN by decide),
+    State.get_set_ne _ _ _ _ (show VREG ≠ H3 by decide)]
+
+theorem drainVarBody_zero (s : State) (r : List Nat)
+    (hDN : State.get s DN = []) (hSC : State.get s SCAN = 0 :: r) :
+    drainVarBody.eval s = ((s.set H3 [0]).set SCAN r).set DN [1] := by
+  have hne : State.get s DN ≠ [1] := by rw [hDN]; decide
+  rw [drainVarBody, Cmd.eval_ifBit_false _ _ _ _ hne]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show SCAN ≠ H3 by decide), hSC, List.tail_cons]
+  rw [Cmd.eval_ifBit_false _ _ _ _
+    (by rw [State.get_set_ne _ _ _ _ (show H3 ≠ SCAN by decide), State.get_set_eq]; decide)]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, State.get_set_eq, State.set_set,
+    List.nil_append]
+
+/-- The fvar-payload read loop: `SCAN = 1^v ++ 0::rest`, `VREG = []`, `DN = []`
+⇒ after `forBnd IDX3 SCAN drainVarBody`, `SCAN = rest`, `VREG = 1^v`, `DN = [1]`,
+everything else outside `{SCAN,VREG,DN,H3,SKIP,IDX3}` preserved. -/
+theorem drainVar_run (u : State) (v : Nat) (rest : List Nat)
+    (hSCAN : State.get u SCAN = List.replicate v 1 ++ 0 :: rest)
+    (hVREG : State.get u VREG = [])
+    (hDN : State.get u DN = []) :
+    State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval u) SCAN = rest
+    ∧ State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval u) VREG = List.replicate v 1
+    ∧ State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval u) DN = [1]
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ VREG → r ≠ DN → r ≠ H3 → r ≠ SKIP → r ≠ IDX3 →
+        State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval u) r = State.get u r) := by
+  set M : Nat → State → Prop := fun i st =>
+    (if i ≤ v
+      then State.get st DN = [] ∧ State.get st SCAN = List.replicate (v - i) 1 ++ 0 :: rest
+            ∧ State.get st VREG = List.replicate i 1
+      else State.get st DN = [1] ∧ State.get st SCAN = rest
+            ∧ State.get st VREG = List.replicate v 1)
+    ∧ (∀ r : Var, r ≠ SCAN → r ≠ VREG → r ≠ DN → r ≠ H3 → r ≠ SKIP → r ≠ IDX3 →
+        State.get st r = State.get u r) with hMdef
+  have h0 : M 0 u := by
+    refine ⟨?_, fun r _ _ _ _ _ _ => rfl⟩
+    simp only [hMdef, Nat.zero_le, if_true, Nat.sub_zero, hDN, hSCAN, hVREG,
+      List.replicate, and_self]
+  have hstep : ∀ i st, i < (State.get u SCAN).length → M i st →
+      M (i + 1) (drainVarBody.eval (st.set IDX3 (List.replicate i 1))) := by
+    intro i st _ hM
+    obtain ⟨hmain, hframe⟩ := hM
+    set w := st.set IDX3 (List.replicate i 1) with hw
+    have hwDN : State.get w DN = State.get st DN := State.get_set_ne _ _ _ _ (by decide)
+    have hwSCAN : State.get w SCAN = State.get st SCAN := State.get_set_ne _ _ _ _ (by decide)
+    have hwVREG : State.get w VREG = State.get st VREG := State.get_set_ne _ _ _ _ (by decide)
+    refine ⟨?_, ?_⟩
+    · by_cases hiv : i ≤ v
+      · have hmain' := hmain; rw [if_pos hiv] at hmain'
+        obtain ⟨hDNst, hSCst, hVst⟩ := hmain'
+        have hDNw : State.get w DN = [] := by rw [hwDN, hDNst]
+        have hVw : State.get w VREG = List.replicate i 1 := by rw [hwVREG, hVst]
+        by_cases hiv' : i + 1 ≤ v
+        · rw [if_pos hiv']
+          have hSCw : State.get w SCAN = 1 :: (List.replicate (v - (i + 1)) 1 ++ 0 :: rest) := by
+            rw [hwSCAN, hSCst, show v - i = (v - (i + 1)) + 1 from by omega, List.replicate_succ,
+              List.cons_append]
+          rw [drainVarBody_one w _ hDNw hSCw]
+          refine ⟨?_, ?_, ?_⟩
+          · rw [State.get_set_ne _ _ _ _ (show DN ≠ VREG by decide),
+              State.get_set_ne _ _ _ _ (show DN ≠ SCAN by decide),
+              State.get_set_ne _ _ _ _ (show DN ≠ H3 by decide), hDNw]
+          · rw [State.get_set_ne _ _ _ _ (show SCAN ≠ VREG by decide), State.get_set_eq]
+          · rw [State.get_set_eq, hVw, ← List.replicate_succ']
+        · rw [if_neg hiv']
+          have hiveq : i = v := by omega
+          subst hiveq
+          have hSCw : State.get w SCAN = 0 :: rest := by rw [hwSCAN, hSCst]; simp
+          rw [drainVarBody_zero w _ hDNw hSCw]
+          refine ⟨State.get_set_eq _ _ _, ?_, ?_⟩
+          · rw [State.get_set_ne _ _ _ _ (show SCAN ≠ DN by decide), State.get_set_eq]
+          · rw [State.get_set_ne _ _ _ _ (show VREG ≠ DN by decide),
+              State.get_set_ne _ _ _ _ (show VREG ≠ SCAN by decide),
+              State.get_set_ne _ _ _ _ (show VREG ≠ H3 by decide), hVw]
+      · rw [if_neg (show ¬ (i + 1 ≤ v) from by omega)]
+        have hmain' := hmain; rw [if_neg hiv] at hmain'
+        obtain ⟨hDNst, hSCst, hVst⟩ := hmain'
+        have hDNw : State.get w DN = [1] := by rw [hwDN, hDNst]
+        rw [drainVarBody_done w hDNw]
+        refine ⟨?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (show DN ≠ SKIP by decide), hDNw]
+        · rw [State.get_set_ne _ _ _ _ (show SCAN ≠ SKIP by decide), hwSCAN, hSCst]
+        · rw [State.get_set_ne _ _ _ _ (show VREG ≠ SKIP by decide), hwVREG, hVst]
+    · intro r hr1 hr2 hr3 hr4 hr5 hr6
+      rw [drainVarBody_frame _ r hr4 hr1 hr2 hr3 hr5, hw, State.get_set_ne _ _ _ _ hr6]
+      exact hframe r hr1 hr2 hr3 hr4 hr5 hr6
+  have hInv := Cmd.foldlState_range_induct drainVarBody IDX3 (State.get u SCAN).length u M h0 hstep
+  rw [Cmd.eval_forBnd]
+  have hfin : ¬ ((State.get u SCAN).length ≤ v) := by
+    rw [hSCAN]; simp only [List.length_append, List.length_replicate, List.length_cons]; omega
+  obtain ⟨hmain, hframe⟩ := hInv
+  rw [if_neg hfin] at hmain
+  exact ⟨hmain.2.1, hmain.2.2, hmain.1, hframe⟩
+
 end FSATSATFree
