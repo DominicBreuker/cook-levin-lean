@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-12-c; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, program written & probed GO, **run-lemma step 1(i) DONE (pure model PROVEN = tree map)**; machine folds (1(ii)), cost, fields, witness, seam remain)
+## Where the proof stands (2026-07-13; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, program probed GO, run-lemma step 1(i) DONE (pure model = tree map), **step 1(ii) LEAVES DONE: encodeCnf algebra + 5 emit gadgets + 2 drain loops + all 6 `budgetBody` cases PROVEN**; the `subtreeScan_run` Dyck-loop assembly, `tokenBody_run`, the outer loop + assembly, cost, fields, witness, seam remain)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -55,6 +55,43 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-13 (top-down) — `FSAT → SAT` run-lemma **step 1(ii) LEAVES DONE**:
+  every per-token machine step of `buildSAT` is now proven; only the loop
+  assemblies remain. 4 commits, all axiom-clean, full build green (3381).**
+  Landed in `Reductions/FSAT_to_SAT_free.lean`: (1) `encodeCnf_append`
+  (+ `_cons`) — the incremental-emission backbone; (2) the emit-gadget
+  projections `emit{Lit,TrueG,EquivG,AndG,OrG,NotG}_{cnfout,tally,frame}`
+  (each gadget writes exactly `encodeCnf (tseytin…)` onto `CNFOUT` +
+  `numClauses` ones onto `TALLY`; frames free via `Cmd.eval_get_of_not_writes`);
+  (3) the two sentinel-drain inner loops `drainSkip_run` (subtreeScan's fvar
+  payload skip) / `drainVar_run` (tokenBody's fvar read into `VREG`), each
+  built from 3 per-shape step helpers + a two-phase loop invariant; (4)
+  **`budgetBody ⇒ pure budgetStep` for all six cases**: refactored
+  `budgetBody = nonEmpty NEB BUD ;; ifBit NEB budgetBodyInner nop` (named
+  inner body, defeq — probe stays `[true,true,true]`), then
+  `budgetBody_enter` + `budgetBody_{ftrue,fand,forr,fneg,fvar}` (each matches
+  the corresponding `budgetStep_*`; fvar drains via `drainSkip_run`) +
+  `budgetBody_freeze` (bud=0 ⇒ nop). ★ **KEY FINDING for the next agent (the
+  malformed-branch resolution):** `budgetBody` does NOT equal `budgetStep` on
+  *malformed* streams (e.g. `SC2=[]`, bud>0: machine does bud−1, pure freezes),
+  so the `subtreeScan_run` loop CANNOT carry a raw `(SC2,BUD,T)=budgetStep^[i]`
+  invariant. Fix (worked out, not yet coded): carry a **Dyck well-formedness
+  invariant** `∃ gs : List formula, State.get st SC2 = (gs.map serF).flatten ++
+  rest ∧ State.get st BUD = 1^gs.length ∧ State.get st T = 1^(min i (formula_size
+  g)) ∧ (gs.map formula_size).sum + min i (formula_size g) = formula_size g`
+  (init `gs=[g]`). It is preserved by every `budgetBody_*` step (a valid token
+  keeps `SC2` a `serF`-flatten prefix, so the malformed branch is never
+  reached while bud>0) and forces `gs=[]`/bud=0 exactly at `i=formula_size g`,
+  after which `budgetBody_freeze` holds; at `i=|SCAN|≥formula_size g`, `T =
+  1^(formula_size g) = 1^(subtreeTok SCAN)` (⇒ `subtreeTok_serF`). ⚠ gotchas
+  hit: `if pol` needs `reduceIte`+`Bool.false_eq_true`+`if_false` in `simp
+  only`; interleaved `CNFOUT`/`TALLY` sets do NOT collapse (no `State.set_comm`
+  lemma) — use PER-REGISTER projections (peel one register through the chain),
+  never a full-state `(set CNFOUT _).set TALLY _` form; `head`/`tail` reads of a
+  just-`set` register need `State.get_set_eq` in the straight-line simp;
+  `List.replicate_succ'` (append form) not `_succ` for the VREG/T accumulation;
+  the outer `tail BUD BUD`/`clear DN2` reduce out-of-order under `rw [Cmd.eval_op,
+  Op.eval]` — reduce `clear` with an explicit `show … = P.set DN2 []` first.
 - **2026-07-12-c (top-down) — `FSAT → SAT` run-lemma **step 1(i) DONE**: the
   pure scan model is now PROVEN = the tree map (was `#eval`-only), axiom-clean,
   1 commit.** Promoted the probe's model into the witness file
@@ -382,49 +419,62 @@ building C8-4):**
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
 **Alternative:** pieces of the `FSAT_to_SAT` run-lemma ladder (top-down's next
-item — see NEXT TOP-DOWN; step 1(i) is now DONE). Self-contained bottom-up bites
-that unblock 1(ii): the `encodeCnf_append` prefix algebra (pure Lean,
-`List.foldr` over `++`), or the `subtreeScan_run` / `drainSkipBody` /
-`drainVarBody` `_run` lemmas (machine folds over the proven pure model — the
-`subtreeScan_run` nested loop is the highest-risk piece, ideal to probe first).
-Coordinate so nothing is done twice.
+item — see NEXT TOP-DOWN; step 1(i) + all of 1(ii)'s LEAVES are now DONE). The
+self-contained bottom-up bites that remain are the loop ASSEMBLIES:
+`subtreeScan_run` (the Dyck-invariant loop over the proven `budgetBody_*`
+steps — highest risk, the design is in the 2026-07-13 session note), then
+`tokenBody_run` / the outer loop / assembly. Coordinate so nothing is done
+twice.
 
 ## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (run lemmas → cost → witness → seam)
 
-The design phase + run-lemma **step 1(i) are DONE** (2026-07-12-b/-c). What
-EXISTS, all green & axiom-clean: the map + correctness (`NP/FSAT_to_SAT_pre.lean`:
-`preTseytin`, `ptseytin_repr`, `preTseytin_correct`, size lemmas); the full
-program + layouts + chain-step correctness (`Reductions/FSAT_to_SAT_free.lean`:
-`buildSAT`, `encodeIn f = [serF f]`, outputs `TALLY`(1)/`CNFOUT`(2), `decodeOut
-= invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`); **and the pure scan
-model now PROVEN = the tree map** (same file: `budgetStep`/`subtreeTok`/
-`scanClauses`/`mScan` + `subtreeTok_serF`, `scanClauses_serF`,
-`mScan_eq_fsatToSat`). The probe (`probes/FSATPreProbe.lean`) keeps an
-independent `#eval` copy. Remaining ladder (~1–2 sessions):
+The design phase + run-lemma **step 1(i) AND all of step 1(ii)'s LEAVES are
+DONE** (2026-07-12-b/-c, 2026-07-13). What EXISTS, all green & axiom-clean, in
+`Reductions/FSAT_to_SAT_free.lean` (+ `NP/FSAT_to_SAT_pre.lean`): the map +
+correctness (`preTseytin`, `ptseytin_repr`, `preTseytin_correct`, size lemmas);
+the full program + layouts + chain-step correctness (`buildSAT`,
+`encodeIn f = [serF f]`, outputs `TALLY`(1)/`CNFOUT`(2),
+`decodeOut = invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`); the pure
+scan model = the tree map (`budgetStep`/`subtreeTok`/`scanClauses`/`mScan` +
+`subtreeTok_serF`, `scanClauses_serF`, `mScan_eq_fsatToSat`); **and now every
+per-step machine LEAF** — `encodeCnf_append`/`_cons`; the emit-gadget
+projections `emit{Lit,TrueG,EquivG,AndG,OrG,NotG}_{cnfout,tally,frame}`; the
+drain loops `drainSkip_run`/`drainVar_run` (+ their `_done/_one/_zero`
+helpers); and the full `budgetBody` dispatch
+`budgetBody_{enter,ftrue,fand,forr,fneg,fvar,freeze}` (⇒ pure `budgetStep`).
+The probe (`probes/FSATPreProbe.lean`) keeps an independent `#eval` copy.
+Remaining ladder (~1–2 sessions):
 
-1. **Run lemmas — step 1(ii): machine folds compute `mScan (serF f)`.** Target:
-   `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` (+ `TALLY =
-   replicate |N| 1`, + frame). Step 1(i) removed the tree recursion, so ONLY
-   linear fold invariants remain. **Prerequisite algebra (cheap, do first):**
-   `encodeCnf_append : encodeCnf (M ++ N) = encodeCnf M ++ encodeCnf N` (it is
-   `List.foldr` over `++` — one lemma; `encodeClause`/`encodeLit` are in
-   `EvalCnfCmd.lean`), the incremental-emission backbone. Recommended order
-   (probe each `#eval`-first, extend `FSATPreProbe`):
-   - **(a) `subtreeScan_run` (the hard nut — do FIRST as a risk probe):**
-     `(subtreeScan.eval s).get T = replicate (subtreeTok (s.get SCAN)) 1`, SCAN
-     preserved, SC2/BUD/T/… scratch framed. The outer `budgetBody` loop folds
-     the pure `budgetStep`; its inner `drainSkipBody` (skip one unary block past
-     the `0`) is a black-boxed `RFInv`-style sentinel skip. Mirror
-     `unaryMulLoop_run` register-genericity + the `CAInv` guard.
+1. **Run lemmas — step 1(ii) ASSEMBLIES: machine folds compute
+   `mScan (serF f)`.** Target: `(buildSAT.eval [serF f]).get CNFOUT =
+   encodeCnf (fsatToSat f)` (+ `TALLY = replicate |N| 1`, + frame). The leaves
+   are proven; what remains is folding them:
+   - **(a) `subtreeScan_run` (the hard nut — do FIRST):**
+     `(subtreeScan.eval s).get T = replicate (subtreeTok (s.get SCAN)) 1` for
+     `s.get SCAN = serF g ++ rest` (SCAN preserved, scratch framed). ⚠ Do NOT
+     carry a raw `(SC2,BUD,T) = budgetStep^[i]` invariant — `budgetBody`
+     disagrees with `budgetStep` on malformed streams. Carry the **Dyck
+     invariant** spelled out in the 2026-07-13 session note (`∃ gs, SC2 =
+     flatten(map serF gs) ++ rest ∧ BUD = 1^|gs| ∧ T = 1^(min i (formula_size g))
+     ∧ conservation`), folded via `Cmd.foldlState_range_induct` over
+     `budgetBody_{ftrue,fand,forr,fneg,fvar}` (bud>0, gs=g₀::gs' → recurse on
+     g₀'s constructor) + `budgetBody_freeze` (gs=[]). Lands
+     `T = 1^(formula_size g) = 1^(subtreeTok SCAN)` (⇒ `subtreeTok_serF`).
+     Mirror `drainSkip_run`'s two-phase `set M … with hMdef` shape.
    - **(b) `tokenBody_run` (one iteration ≡ one `scanClauses` token):** dispatch
-     on the tag; `fvar` uses `drainVarBody` (`RFInv` read into `VREG`), the two
-     binary tags black-box `subtreeScan_run`, then emit via the gadget lemmas
-     (`emitLit`→`encodeLit` append, `endClause`→`[0]`+tally). The clause list of
-     each gadget = `encodeCnf` of that gadget (via `encodeCnf_append`).
-   - **(c) the outer `forBnd IDX1 SERF tokenBody` invariant** (`CAInv`
-     `nonEmpty`-guarded stream loop, black-boxing `tokenBody_run`): after the
-     scan is consumed the loop idles (`tokens ≤ bits`), so relate the machine
-     state to `scanClauses` having consumed all tokens.
+     on the tag (same head/tail bit-reads as `budgetBody_*`); `fvar` uses
+     `drainVar_run` (into `VREG`), the two binary tags call `subtreeScan_run`
+     for the right-child index, then emit via `emit*G_{cnfout,tally,frame}`.
+     The clause list of each gadget = `encodeCnf` of that gadget's
+     `tseytin…` (via `encodeCnf_append`). Also needs `VA = 1^(b+k)` /
+     `VL = 1^(b+k+1)` set up by the `concat VA B K` / `copy VL VA ;; appendOne`
+     head of `tokenBody` (a `unaryMulLoop`-free straight-line — B and K are
+     already unary).
+   - **(c) the outer `forBnd IDX1 SERF tokenBody` invariant** (`nonEmpty`-guarded
+     stream loop, black-boxing `tokenBody_run`): after the scan is consumed the
+     loop idles (`tokens ≤ bits`), so relate the machine state to `scanClauses`
+     having consumed all tokens (a `min i`-style two-phase invariant like the
+     drain loops, but the "productive" phase runs `formula_size f` steps).
    - **(d) phase 0 + assembly:** the `B := 1^|serF f|` length loop, the top
      clause emission, then `buildSAT_run` composed with `mScan_eq_fsatToSat`
      (`= encodeCnf (mScan (serF f)) = encodeCnf (fsatToSat f)`).
@@ -527,6 +577,21 @@ and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
   local lemma), `get_nil_of_len_le`, `binaryCC_to_FSAT_seam` (seam ON a
   composed witness + the wider-right-frame length close),
   `flatTCC_to_FSAT_witness` + `flatTCC_to_FSAT_reducesPolyMO'`.
+- **The `FSAT_to_SAT` run-lemma LEAVES** (`Reductions/FSAT_to_SAT_free.lean`,
+  2026-07-13, all axiom-clean): `encodeCnf_append`/`_cons` (foldr-over-`++`
+  distribution — the incremental-emission backbone); the emit-gadget
+  projections `emitLit_{cnfout,frame,run}`, `endClause_run`, and per gadget
+  `emit{TrueG,EquivG,AndG,OrG,NotG}_{cnfout,tally,frame}` (write exactly
+  `encodeCnf (tseytin…)` onto `CNFOUT` + `numClauses` ones onto `TALLY`;
+  frames via `Cmd.eval_get_of_not_writes`); the two sentinel-drain inner loops
+  `drainSkip_run` (subtreeScan fvar-payload skip) / `drainVar_run` (tokenBody
+  fvar read into `VREG`) + their per-shape `_done`/`_one`/`_zero` step helpers;
+  and the **complete `budgetBody` dispatch** `budgetBody_frame`,
+  `budgetBody_enter`, `budgetBody_{ftrue,fand,forr,fneg,fvar}` (⇒ pure
+  `budgetStep_*`), `budgetBody_freeze` (bud=0). `budgetBody` is now factored as
+  `nonEmpty NEB BUD ;; ifBit NEB budgetBodyInner nop`. These are the emission
+  leaves + the arity-scan step; the loop assemblies (`subtreeScan_run` /
+  `tokenBody_run` / outer) fold them (NEXT TOP-DOWN §1). Do NOT re-derive.
 - **The FSAT output codec** (`Reductions/BinaryCC_to_FSAT_free.lean`, 2026-07-05):
   `serF`/`deserF`/`decodeF` (prefix/Polish bit-serialization of the `formula`
   tree) + the PROVEN round-trip `decodeF_serF` + `decodeOut_of_serF` — the
