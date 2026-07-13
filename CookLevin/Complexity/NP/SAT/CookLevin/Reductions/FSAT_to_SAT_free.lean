@@ -48,7 +48,7 @@ namespace FSATSATFree
 open Complexity.Lang
 open PreTseytin
 open BinaryCCFSATFree (serF)
-open EvalCnfCmd (encodeCnf)
+open EvalCnfCmd (encodeCnf encodeClause encodeLit)
 
 /-! ## Register layout -/
 
@@ -543,5 +543,207 @@ theorem mScan_eq_fsatToSat (f : formula) : mScan (serF f) = fsatToSat f := by
   rw [List.append_nil] at key
   unfold mScan fsatToSat preTseytin
   rw [key, scanClauses_nil, List.append_nil, Nat.add_zero]
+
+
+/-! ## Run lemmas — step 1(ii): the machine folds compute `mScan (serF f)`
+
+Foundational algebra + the emit-gadget projection lemmas (HANDOFF "NEXT TOP-DOWN"
+step 1(ii), prerequisite (a)). Each gadget's `Cmd` writes exactly its
+`encodeCnf (tseytin…)` onto `CNFOUT` and `numClauses` ones onto `TALLY`; frames
+come free from the write-set (`Cmd.eval_get_of_not_writes`). -/
+
+/-! ## Foundational algebra: `encodeCnf` distributes over `++` -/
+
+theorem encodeCnf_cons (C : clause) (M : cnf) :
+    encodeCnf (C :: M) = encodeClause C ++ encodeCnf M := rfl
+
+theorem encodeCnf_append (M N : cnf) :
+    encodeCnf (M ++ N) = encodeCnf M ++ encodeCnf N := by
+  induction M with
+  | nil => rfl
+  | cons C M ih =>
+      rw [List.cons_append, encodeCnf_cons, encodeCnf_cons, ih, List.append_assoc]
+
+/-! ## Emit-gadget projection lemmas -/
+
+theorem emitLit_cnfout (pol : Bool) (v : Var) (s : State) (vv : Nat)
+    (hv : State.get s v = List.replicate vv 1) (hvc : v ≠ CNFOUT) :
+    State.get ((emitLit pol v).eval s) CNFOUT
+      = State.get s CNFOUT ++ encodeLit (pol, vv) := by
+  cases pol <;>
+    simp [emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+      State.get_set_eq, State.get_set_ne _ _ _ _ hvc, hv, encodeLit,
+      List.append_assoc]
+
+theorem emitLit_frame (pol : Bool) (v r : Var) (s : State) (hr : r ≠ CNFOUT) :
+    State.get ((emitLit pol v).eval s) r = State.get s r := by
+  cases pol <;>
+    simp [emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+      State.get_set_ne _ _ _ _ hr]
+
+/-- Full-state form: `emitLit` only ever writes `CNFOUT`. -/
+theorem emitLit_run (pol : Bool) (v : Var) (s : State) (vv : Nat)
+    (hv : State.get s v = List.replicate vv 1) (hvc : v ≠ CNFOUT) :
+    (emitLit pol v).eval s
+      = s.set CNFOUT (State.get s CNFOUT ++ encodeLit (pol, vv)) := by
+  cases pol <;>
+    simp [emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+      State.get_set_eq, State.get_set_ne _ _ _ _ hvc, hv, encodeLit,
+      State.set_set, List.append_assoc]
+
+/-- `endClause` writes `[0]` onto `CNFOUT` and `[1]` onto `TALLY`. -/
+theorem endClause_run (s : State) :
+    endClause.eval s
+      = (s.set CNFOUT (State.get s CNFOUT ++ [0])).set TALLY
+          (State.get s TALLY ++ [1]) := by
+  simp [endClause, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide)]
+
+/-- The giant-simp lemma bundle for reading `CNFOUT` off an emitted gadget:
+peel each nested `.set` (`CNFOUT` via `get_set_eq`, `TALLY` via `CNFOUT≠TALLY`,
+the var registers via their `≠ CNFOUT`/`≠ TALLY`), unfold both the machine ops
+and `encodeCnf`, and align the two right-nested appends. -/
+theorem emitTrueG_cnfout (s : State) (va : Nat)
+    (hva : State.get s VA = List.replicate va 1) :
+    State.get (emitTrueG.eval s) CNFOUT
+      = State.get s CNFOUT ++ encodeCnf (tseytinTrue va) := by
+  simp only [emitTrueG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VA ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show CNFOUT ≠ TALLY by decide), hva,
+    tseytinTrue, encodeCnf, encodeClause, encodeLit, List.foldr_cons, List.foldr_nil,
+    List.nil_append, List.singleton_append, List.cons_append, List.append_assoc]
+
+theorem emitEquivG_cnfout (s : State) (vr va : Nat)
+    (hvr : State.get s VREG = List.replicate vr 1)
+    (hva : State.get s VA = List.replicate va 1) :
+    State.get (emitEquivG.eval s) CNFOUT
+      = State.get s CNFOUT ++ encodeCnf (tseytinEquiv vr va) := by
+  simp only [emitEquivG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show VREG ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VREG ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VA ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show CNFOUT ≠ TALLY by decide), hvr, hva,
+    tseytinEquiv, encodeCnf, encodeClause, encodeLit, List.foldr_cons, List.foldr_nil,
+    List.nil_append, List.singleton_append, List.cons_append, List.append_assoc]
+
+theorem emitAndG_cnfout (s : State) (va vl vr : Nat)
+    (hva : State.get s VA = List.replicate va 1)
+    (hvl : State.get s VL = List.replicate vl 1)
+    (hvr : State.get s VR = List.replicate vr 1) :
+    State.get (emitAndG.eval s) CNFOUT
+      = State.get s CNFOUT ++ encodeCnf (tseytinAnd va vl vr) := by
+  simp only [emitAndG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VA ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show VL ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VL ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show VR ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VR ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show CNFOUT ≠ TALLY by decide), hva, hvl, hvr,
+    tseytinAnd, encodeCnf, encodeClause, encodeLit, List.foldr_cons, List.foldr_nil,
+    List.nil_append, List.singleton_append, List.cons_append, List.append_assoc]
+
+theorem emitOrG_cnfout (s : State) (va vl vr : Nat)
+    (hva : State.get s VA = List.replicate va 1)
+    (hvl : State.get s VL = List.replicate vl 1)
+    (hvr : State.get s VR = List.replicate vr 1) :
+    State.get (emitOrG.eval s) CNFOUT
+      = State.get s CNFOUT ++ encodeCnf (tseytinOr va vl vr) := by
+  simp only [emitOrG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VA ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show VL ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VL ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show VR ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VR ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show CNFOUT ≠ TALLY by decide), hva, hvl, hvr,
+    tseytinOr, encodeCnf, encodeClause, encodeLit, List.foldr_cons, List.foldr_nil,
+    List.nil_append, List.singleton_append, List.cons_append, List.append_assoc]
+
+theorem emitNotG_cnfout (s : State) (va vl : Nat)
+    (hva : State.get s VA = List.replicate va 1)
+    (hvl : State.get s VL = List.replicate vl 1) :
+    State.get (emitNotG.eval s) CNFOUT
+      = State.get s CNFOUT ++ encodeCnf (tseytinNot va vl) := by
+  simp only [emitNotG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VA ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show VL ≠ CNFOUT by decide),
+    State.get_set_ne _ _ _ _ (show VL ≠ TALLY by decide),
+    State.get_set_ne _ _ _ _ (show CNFOUT ≠ TALLY by decide), hva, hvl,
+    tseytinNot, encodeCnf, encodeClause, encodeLit, List.foldr_cons, List.foldr_nil,
+    List.nil_append, List.singleton_append, List.cons_append, List.append_assoc]
+
+/-! ### `TALLY` projections: each gadget appends `numClauses` ones. -/
+
+theorem emitTrueG_tally (s : State) :
+    State.get (emitTrueG.eval s) TALLY = State.get s TALLY ++ List.replicate 1 1 := by
+  simp only [emitTrueG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), List.replicate]
+
+theorem emitEquivG_tally (s : State) :
+    State.get (emitEquivG.eval s) TALLY = State.get s TALLY ++ List.replicate 2 1 := by
+  simp only [emitEquivG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), List.replicate,
+    List.append_assoc, List.singleton_append, List.cons_append, List.nil_append]
+
+theorem emitAndG_tally (s : State) :
+    State.get (emitAndG.eval s) TALLY = State.get s TALLY ++ List.replicate 3 1 := by
+  simp only [emitAndG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), List.replicate,
+    List.append_assoc, List.singleton_append, List.cons_append, List.nil_append]
+
+theorem emitOrG_tally (s : State) :
+    State.get (emitOrG.eval s) TALLY = State.get s TALLY ++ List.replicate 3 1 := by
+  simp only [emitOrG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), List.replicate,
+    List.append_assoc, List.singleton_append, List.cons_append, List.nil_append]
+
+theorem emitNotG_tally (s : State) :
+    State.get (emitNotG.eval s) TALLY = State.get s TALLY ++ List.replicate 2 1 := by
+  simp only [emitNotG, endClause, emitLit, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+    reduceIte, Bool.false_eq_true, if_false, State.get_set_eq,
+    State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), List.replicate,
+    List.append_assoc, List.singleton_append, List.cons_append, List.nil_append]
+
+/-! ### Generic gadget frame (via the write-set): the gadgets touch only
+`CNFOUT`/`TALLY`. -/
+
+theorem emitTrueG_frame (s : State) (r : Var) (h1 : r ≠ CNFOUT) (h2 : r ≠ TALLY) :
+    State.get (emitTrueG.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by simp [emitTrueG, endClause, emitLit, Cmd.writes,
+    Op.writesTo, h1, h2])
+
+theorem emitEquivG_frame (s : State) (r : Var) (h1 : r ≠ CNFOUT) (h2 : r ≠ TALLY) :
+    State.get (emitEquivG.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by simp [emitEquivG, endClause, emitLit, Cmd.writes,
+    Op.writesTo, h1, h2])
+
+theorem emitAndG_frame (s : State) (r : Var) (h1 : r ≠ CNFOUT) (h2 : r ≠ TALLY) :
+    State.get (emitAndG.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by simp [emitAndG, endClause, emitLit, Cmd.writes,
+    Op.writesTo, h1, h2])
+
+theorem emitOrG_frame (s : State) (r : Var) (h1 : r ≠ CNFOUT) (h2 : r ≠ TALLY) :
+    State.get (emitOrG.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by simp [emitOrG, endClause, emitLit, Cmd.writes,
+    Op.writesTo, h1, h2])
+
+theorem emitNotG_frame (s : State) (r : Var) (h1 : r ≠ CNFOUT) (h2 : r ≠ TALLY) :
+    State.get (emitNotG.eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ s r (by simp [emitNotG, endClause, emitLit, Cmd.writes,
+    Op.writesTo, h1, h2])
+
 
 end FSATSATFree
