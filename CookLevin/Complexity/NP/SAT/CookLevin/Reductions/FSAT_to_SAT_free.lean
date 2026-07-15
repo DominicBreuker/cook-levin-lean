@@ -603,6 +603,25 @@ theorem scanClauses_tok (b fuel k : Nat) (g₀ : formula) (tail : List Nat) :
       rw [hr]
       simp only [scanClauses, tokHead, tokRem]
 
+/-- The Dyck forest after one token: children pushed for compound nodes. -/
+def tokForest : formula → List formula → List formula
+  | .ftrue,   hs => hs
+  | .fvar _,  hs => hs
+  | .fand a b', hs => a :: b' :: hs
+  | .forr a b', hs => a :: b' :: hs
+  | .fneg a,  hs => a :: hs
+
+theorem tokForest_flatten (g₀ : formula) (hs : List formula) :
+    ((tokForest g₀ hs).map serF).flatten = tokRem g₀ ((hs.map serF).flatten) := by
+  cases g₀ <;>
+    simp [tokForest, tokRem, List.map_cons, List.flatten_cons, List.append_assoc]
+
+theorem tokForest_sum (g₀ : formula) (hs : List formula) :
+    ((tokForest g₀ hs).map formula_size).sum + 1
+      = (hs.map formula_size).sum + formula_size g₀ := by
+  cases g₀ <;>
+    simp [tokForest, formula_size, List.map_cons, List.sum_cons] <;> omega
+
 
 /-! ## Run lemmas — step 1(ii): the machine folds compute `mScan (serF f)`
 
@@ -2094,5 +2113,145 @@ theorem tokenBody_run (s : State) (g₀ : formula) (b k : Nat) (tail : List Nat)
         · rw [heval, Cmd.eval_op, Op.eval, State.get_set_eq,
             emitEquivG_frame cD K (by decide) (by decide), hcDK, ← List.replicate_succ']
   exact ⟨hmain.1, hmain.2.1, hmain.2.2.1, hmain.2.2.2, hBout, hframe⟩
+
+/-! ## The outer token loop (`outerLoop_run`) -/
+
+/-- **The outer `forBnd IDX1 SERF tokenBody` loop.** Folds `tokenBody_run` over
+the Dyck forest of remaining subtrees (starting `[f]`): after all `|serF f|`
+iterations, `CNFOUT`/`TALLY` hold the encoding of `scanClauses` over the whole
+stream (the body of `mScan`, sans the top clause). The idle tail iterations
+(stream exhausted) freeze the invariant via the guard. -/
+theorem outerLoop_run (u : State) (f : formula) (C0 T0 : List Nat)
+    (hSCAN : State.get u SCAN = serF f)
+    (hK : State.get u K = [])
+    (hCNF : State.get u CNFOUT = C0)
+    (hTAL : State.get u TALLY = T0)
+    (hB : State.get u B = List.replicate (serF f).length 1)
+    (hbound : State.get u SERF = serF f) :
+    State.get ((Cmd.forBnd IDX1 SERF tokenBody).eval u) CNFOUT
+        = C0 ++ encodeCnf (scanClauses (serF f).length ((serF f).length + 1) 0 (serF f))
+    ∧ State.get ((Cmd.forBnd IDX1 SERF tokenBody).eval u) TALLY
+        = T0 ++ List.replicate
+            (scanClauses (serF f).length ((serF f).length + 1) 0 (serF f)).length 1 := by
+  -- idle behaviour on an exhausted stream
+  have hidle : ∀ t : State, State.get t SCAN = [] →
+      tokenBody.eval t = (t.set NE [0]).set SKIP [] := by
+    intro t ht
+    unfold tokenBody
+    have e0 : (Cmd.op (Op.nonEmpty NE SCAN)).eval t = t.set NE [0] := by
+      rw [Cmd.eval_op, Op.eval, ht]; rfl
+    rw [Cmd.eval_seq, e0, Cmd.eval_ifBit_false _ _ _ _ (by rw [State.get_set_eq]; decide),
+      nop, Cmd.eval_op, Op.eval]
+  set L := (serF f).length with hL
+  have hfsL : formula_size f ≤ L := by rw [hL]; exact formula_size_le_serF f
+  set M : Nat → State → Prop := fun i st =>
+    (∃ (hs : List formula) (done : cnf),
+        State.get st SCAN = (hs.map serF).flatten
+      ∧ State.get st K = List.replicate (min i (formula_size f)) 1
+      ∧ State.get st CNFOUT = C0 ++ encodeCnf done
+      ∧ State.get st TALLY = T0 ++ List.replicate done.length 1
+      ∧ State.get st B = List.replicate L 1
+      ∧ (hs.map formula_size).sum + min i (formula_size f) = formula_size f
+      ∧ scanClauses L (L + 1) 0 (serF f)
+          = done ++ scanClauses L (L + 1 - min i (formula_size f))
+              (min i (formula_size f)) ((hs.map serF).flatten)) with hMdef
+  have h0 : M 0 u := by
+    refine ⟨[f], [], ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    · rw [hSCAN]; simp [List.map_cons, List.map_nil, List.flatten_cons, List.flatten_nil]
+    · rw [hK]; simp
+    · rw [hCNF]; simp [encodeCnf]
+    · rw [hTAL]; simp
+    · rw [hB]
+    · simp [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+    · simp [List.map_cons, List.map_nil, List.flatten_cons, List.flatten_nil]
+  have hstep : ∀ i st, i < (State.get u SERF).length → M i st →
+      M (i + 1) (tokenBody.eval (st.set IDX1 (List.replicate i 1))) := by
+    intro i st _ hM
+    obtain ⟨hs, done, hSC, hKi, hCN, hTL, hBi, hcons, hscan⟩ := hM
+    set w := st.set IDX1 (List.replicate i 1) with hw
+    have hwSC : State.get w SCAN = (hs.map serF).flatten := by
+      rw [hw, State.get_set_ne _ _ _ _ (show SCAN ≠ IDX1 by decide), hSC]
+    have hwK : State.get w K = List.replicate (min i (formula_size f)) 1 := by
+      rw [hw, State.get_set_ne _ _ _ _ (show K ≠ IDX1 by decide), hKi]
+    have hwCN : State.get w CNFOUT = C0 ++ encodeCnf done := by
+      rw [hw, State.get_set_ne _ _ _ _ (show CNFOUT ≠ IDX1 by decide), hCN]
+    have hwTL : State.get w TALLY = T0 ++ List.replicate done.length 1 := by
+      rw [hw, State.get_set_ne _ _ _ _ (show TALLY ≠ IDX1 by decide), hTL]
+    have hwB : State.get w B = List.replicate L 1 := by
+      rw [hw, State.get_set_ne _ _ _ _ (show B ≠ IDX1 by decide), hBi]
+    cases hs with
+    | nil =>
+        -- exhausted: idle step, invariant frozen
+        have hSCnil : State.get w SCAN = [] := by rw [hwSC]; simp
+        have hmineq : min i (formula_size f) = formula_size f := by
+          simp only [List.map_nil, List.sum_nil, Nat.zero_add] at hcons; omega
+        rw [hidle w hSCnil]
+        refine ⟨[], done, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [State.get_set_ne _ _ _ _ (show SCAN ≠ SKIP by decide),
+            State.get_set_ne _ _ _ _ (show SCAN ≠ NE by decide), hwSC]
+        · rw [State.get_set_ne _ _ _ _ (show K ≠ SKIP by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ NE by decide), hwK]
+          congr 1; omega
+        · rw [State.get_set_ne _ _ _ _ (show CNFOUT ≠ SKIP by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ NE by decide), hwCN]
+        · rw [State.get_set_ne _ _ _ _ (show TALLY ≠ SKIP by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ NE by decide), hwTL]
+        · rw [State.get_set_ne _ _ _ _ (show B ≠ SKIP by decide),
+            State.get_set_ne _ _ _ _ (show B ≠ NE by decide), hwB]
+        · simp only [List.map_nil, List.sum_nil, Nat.zero_add]; omega
+        · rw [show min (i + 1) (formula_size f) = formula_size f from by omega]
+          rw [show min i (formula_size f) = formula_size f from hmineq] at hscan
+          exact hscan
+    | cons g₀ hs' =>
+        have hg0pos : 1 ≤ formula_size g₀ := formula_size_pos g₀
+        have hsumdec : ((g₀ :: hs').map formula_size).sum
+            = formula_size g₀ + (hs'.map formula_size).sum := by
+          simp [List.map_cons, List.sum_cons]
+        have hi_lt : i < formula_size f := by omega
+        have hmin : min i (formula_size f) = i := by omega
+        have hmin1 : min (i + 1) (formula_size f) = i + 1 := by omega
+        have hmle : min i (formula_size f) ≤ L := by omega
+        have hwSC' : State.get w SCAN = serF g₀ ++ (hs'.map serF).flatten := by
+          rw [hwSC]; simp [List.map_cons, List.flatten_cons]
+        obtain ⟨hbCN, hbTL, hbSC, hbK, hbB, _⟩ :=
+          tokenBody_run w g₀ L (min i (formula_size f)) ((hs'.map serF).flatten) hwSC' hwB hwK
+        refine ⟨tokForest g₀ hs', done ++ tokHead L (min i (formula_size f)) g₀,
+          ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+        · rw [hbSC, tokForest_flatten]
+        · rw [hbK, hmin, hmin1]
+        · rw [hbCN, hwCN, encodeCnf_append, List.append_assoc]
+        · rw [hbTL, hwTL, List.length_append, List.append_assoc,
+            ← List.replicate_add]
+        · rw [hbB]
+        · rw [hmin1]
+          have := tokForest_sum g₀ hs'; simp only [hsumdec] at hcons ⊢; omega
+        · rw [hmin] at hscan
+          rw [hmin, hmin1, hscan,
+            show (List.map serF (g₀ :: hs')).flatten = serF g₀ ++ (hs'.map serF).flatten from by
+              simp [List.map_cons, List.flatten_cons],
+            show L + 1 - i = (L - i) + 1 from by omega,
+            scanClauses_tok L (L - i) i g₀ ((hs'.map serF).flatten),
+            tokForest_flatten, show L + 1 - (i + 1) = L - i from by omega, List.append_assoc]
+  have hInv := Cmd.foldlState_range_induct tokenBody IDX1 (State.get u SERF).length u M h0 hstep
+  rw [Cmd.eval_forBnd]
+  rw [hbound] at hInv ⊢
+  obtain ⟨hs, done, hSC, hKi, hCN, hTL, hBi, hcons, hscan⟩ := hInv
+  -- at i = L, min L (fs f) = fs f, so hs = []
+  have hmineq : min L (formula_size f) = formula_size f := by omega
+  have hsum0 : (hs.map formula_size).sum = 0 := by rw [hmineq] at hcons; omega
+  have hnil : hs = [] := by
+    cases hs with
+    | nil => rfl
+    | cons g₀ hs' =>
+        exfalso
+        have := formula_size_pos g₀
+        simp [List.map_cons, List.sum_cons] at hsum0; omega
+  subst hnil
+  rw [hmineq] at hscan
+  simp only [List.map_nil, List.flatten_nil] at hscan
+  rw [scanClauses_nil, List.append_nil] at hscan
+  refine ⟨?_, ?_⟩
+  · rw [hCN, hscan]
+  · rw [hTL, hscan]
 
 end FSATSATFree
