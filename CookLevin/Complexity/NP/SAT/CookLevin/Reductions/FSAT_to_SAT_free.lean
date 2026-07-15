@@ -2956,4 +2956,67 @@ theorem subtreeScan_cost (u : State) :
   refine le_trans ?_ hfin
   gcongr
 
+/-! ## Cost accounting — gadget cost constant + token-count (`T`) effect -/
+
+/-- A single opaque constant dominating every gadget/prefix `flatK` used in the
+`tokenBody` cost. -/
+def tokFK : Nat :=
+  100000 + emitTrueG.flatK + emitEquivG.flatK + emitAndG.flatK + emitOrG.flatK
+    + emitNotG.flatK
+
+theorem emitTrueG_flatK_le : emitTrueG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitEquivG_flatK_le : emitEquivG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitAndG_flatK_le : emitAndG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitOrG_flatK_le : emitOrG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitNotG_flatK_le : emitNotG.flatK ≤ tokFK := by unfold tokFK; omega
+
+/-- `budgetBodyInner` appends exactly one to `T`. -/
+theorem budgetBodyInner_T_le (w : State) :
+    (State.get (budgetBodyInner.eval w) T).length ≤ (State.get w T).length + 1 := by
+  unfold budgetBodyInner
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq,
+    Cmd.eval_get_of_not_writes _ _ T (by decide)]
+  -- goal: |T (appendOne T .eval a4)| ≤ |T w| + 1
+  rw [Cmd.eval_op, Op.eval, State.get_set_eq, List.length_append, List.length_singleton,
+    getne _ _ _ (by decide), getne _ _ _ (by decide), getne _ _ _ (by decide),
+    getne _ _ _ (by decide)]
+
+/-- `budgetBody` grows `T` by at most one. -/
+theorem budgetBody_T_le (w : State) :
+    (State.get (budgetBody.eval w) T).length ≤ (State.get w T).length + 1 := by
+  unfold budgetBody
+  rw [Cmd.eval_seq]
+  set w1 := (Cmd.op (Op.nonEmpty NEB BUD)).eval w with hw1
+  have hTw1 : State.get w1 T = State.get w T := getne _ _ _ (by decide)
+  by_cases h : State.get w1 NEB = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ h]
+    refine le_trans (budgetBodyInner_T_le w1) ?_; rw [hTw1]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ h, nop, getne _ _ _ (by decide), hTw1]; omega
+
+/-- `subtreeScan` sets `T` to length `≤ |SCAN|`. -/
+theorem subtreeScan_T_le (s : State) :
+    (State.get (subtreeScan.eval s) T).length ≤ (State.get s SCAN).length := by
+  unfold subtreeScan
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  set p1 := (Cmd.op (Op.copy SC2 SCAN)).eval s with hp1
+  set p2 := (Cmd.op (Op.clear BUD)).eval p1 with hp2
+  set p3 := (Cmd.op (Op.appendOne BUD)).eval p2 with hp3
+  set P0 := (Cmd.op (Op.clear T)).eval p3 with hP0
+  have hSCAN_P0 : State.get P0 SCAN = State.get s SCAN := by
+    rw [hP0, getne _ _ _ (by decide), hp3, getne _ _ _ (by decide), hp2,
+      getne _ _ _ (by decide), hp1, getne _ _ _ (by decide)]
+  have hT_P0 : State.get P0 T = [] := by
+    rw [hP0, Cmd.eval_op, Op.eval, State.get_set_eq]
+  rw [Cmd.eval_forBnd]
+  have h0 : (State.get P0 T).length ≤ 0 := by rw [hT_P0]; simp
+  have hInv := Cmd.foldlState_range_induct budgetBody IDX2 (State.get P0 SCAN).length P0
+    (fun i st => (State.get st T).length ≤ i)
+    h0
+    (fun i st _ hM => by
+      have e : State.get (st.set IDX2 (List.replicate i 1)) T = State.get st T :=
+        State.get_set_ne _ _ _ _ (by decide)
+      refine le_trans (budgetBody_T_le _) ?_; rw [e]; omega)
+  rw [hSCAN_P0] at hInv ⊢
+  exact hInv
+
 end FSATSATFree
