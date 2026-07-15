@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-13; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, program probed GO, run-lemma step 1(i) DONE (pure model = tree map), **step 1(ii) LEAVES DONE: encodeCnf algebra + 5 emit gadgets + 2 drain loops + all 6 `budgetBody` cases PROVEN**; the `subtreeScan_run` Dyck-loop assembly, `tokenBody_run`, the outer loop + assembly, cost, fields, witness, seam remain)
+## Where the proof stands (2026-07-15; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, **the ENTIRE run-lemma ladder is now DONE**: step 1(i) (pure model = tree map) + step 1(ii) leaves + **all four loop assemblies `subtreeScan_run`/`tokenBody_run`/`outerLoop_run`/`buildSAT_run`** — so `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` is PROVEN, axiom-clean. Only **cost, mechanical fields, the witness, and the seam** remain to land `FSAT ⪯p' SAT`)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -55,6 +55,43 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-15 (top-down) — `FSAT → SAT` **run-lemma step 1(ii) ASSEMBLIES ALL
+  DONE**: the machine folds provably compute the map. 4 commits, all axiom-clean,
+  full build green (3381).** Landed in `Reductions/FSAT_to_SAT_free.lean`:
+  (1) **`subtreeScan_run`** — the Dyck-invariant budget-scan loop (the hard nut):
+  carries `∃ gs : List formula` (the forest of pending subtrees) so the malformed
+  branch is never reached while bud > 0; `T := 1^(formula_size g)` for
+  `SCAN = serF g ++ rest`. Folds the six `budgetBody_*` leaves via
+  `Cmd.foldlState_range_induct`; **`omega` handles `Nat.min` natively** (the
+  invariant's `T = 1^(min i (formula_size g))` two-phase counter is closed by
+  plain `omega`, no `Nat.min` gotcha here). (2) **`tokenBody_run`** — one loop
+  iteration = one `scanClauses` token: casing the leading formula `g₀`, each of
+  the 5 shapes reduces the straight-line prefix (`concat VA`/`copy VL`/2×head-tail)
+  to an explicit `set`-chain state, dispatches the tag `ifBit`s, integrates
+  `subtreeScan_run` (binary right-child) / `drainVar_run` (fvar payload), emits via
+  the `emit*G_{cnfout,tally,frame}` leaves, then `appendOne K`. Frame is one line
+  (`Cmd.eval_get_of_not_writes` over `tokenBody.writes` — no per-register list).
+  Model bridge: `tokHead`/`tokRem` + `scanClauses_tok` (the one-token unfold).
+  (3) **`outerLoop_run`** — folds `tokenBody_run` over the Dyck forest (start
+  `[f]`) with a token-level invariant carrying the forest + `done : cnf` + the
+  `scanClauses`-split equation; the idle tail iterations freeze via the guard
+  (`tokenBody` on empty `SCAN` = set-`NE`/`SKIP` nop). Dyck helpers
+  `tokForest`/`tokForest_flatten`/`tokForest_sum` keep the step case-split-free.
+  (4) **`buildSAT_run`** — the assembly: `Bloop_run` (phase-0 `B := 1^|serF f|`),
+  the top clause (the prefix's `emitLit true VA ×3 ;; endClause` **IS** `emitTrueG`
+  — reuse its lemmas at variable `|serF f|`), then `outerLoop_run`, closed against
+  the pure model by `mScan_eq_fsatToSat`. Lands **`(buildSAT.eval [serF f]).get
+  CNFOUT = encodeCnf (fsatToSat f)`** (+ `TALLY = 1^|fsatToSat f|`). ⚠ gotchas:
+  the prefix's inline `emitLit;;emitLit;;emitLit;;endClause;;forBnd` associates
+  `endClause` with `forBnd`, NOT with the `emitLit`s — so `emitTrueG ;; forBnd`
+  is a *different parse*; `unfold buildSAT emitTrueG` then `simp only [Cmd.eval_seq]`
+  reconciles them (both normalise to the same nested `eval`). `omega` whnf-TIMES-OUT
+  on a goal holding `(fsatToSat f).length` (a `preTseytin` atom) — compute the
+  length through `mScan` (`rw [← mScan_eq_fsatToSat]; simp only [mScan,
+  List.length_cons]; omega`) so the big atom is gone before `omega` runs.
+  Iterate the big straight-line lemmas in a scratch file that imports the fresh
+  `.olean` (`env LEAN_PATH=$(lake env printenv LEAN_PATH) lean scratch.lean`) —
+  much faster than re-checking the 1500-line witness file each round.
 - **2026-07-13 (top-down) — `FSAT → SAT` run-lemma **step 1(ii) LEAVES DONE**:
   every per-token machine step of `buildSAT` is now proven; only the loop
   assemblies remain. 4 commits, all axiom-clean, full build green (3381).**
@@ -418,80 +455,51 @@ building C8-4):**
   `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
-**Alternative:** pieces of the `FSAT_to_SAT` run-lemma ladder (top-down's next
-item — see NEXT TOP-DOWN; step 1(i) + all of 1(ii)'s LEAVES are now DONE). The
-self-contained bottom-up bites that remain are the loop ASSEMBLIES:
-`subtreeScan_run` (the Dyck-invariant loop over the proven `budgetBody_*`
-steps — highest risk, the design is in the 2026-07-13 session note), then
-`tokenBody_run` / the outer loop / assembly. Coordinate so nothing is done
-twice.
+**No `FSAT_to_SAT` run-lemma bites remain for bottom-up** — the whole run-lemma
+ladder (leaves + all four loop assemblies) is DONE (2026-07-15). The remaining
+`FSAT_to_SAT` work (cost / mechanical fields / witness / seam, see NEXT
+TOP-DOWN) is top-down's; C8-3 is the clean bottom-up track. If a session wants
+a smaller top-down-adjacent bite, the **`cost_le` accounting** for `buildSAT`
+is self-contained and reuses the `Lang/CostFlat.lean` toolkit + the
+`masterOmega`/`buildFSATBound` pattern — coordinate so it is not done twice.
 
-## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (run lemmas → cost → witness → seam)
+## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (cost → fields → witness → seam)
 
-The design phase + run-lemma **step 1(i) AND all of step 1(ii)'s LEAVES are
-DONE** (2026-07-12-b/-c, 2026-07-13). What EXISTS, all green & axiom-clean, in
-`Reductions/FSAT_to_SAT_free.lean` (+ `NP/FSAT_to_SAT_pre.lean`): the map +
-correctness (`preTseytin`, `ptseytin_repr`, `preTseytin_correct`, size lemmas);
-the full program + layouts + chain-step correctness (`buildSAT`,
-`encodeIn f = [serF f]`, outputs `TALLY`(1)/`CNFOUT`(2),
-`decodeOut = invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`); the pure
-scan model = the tree map (`budgetStep`/`subtreeTok`/`scanClauses`/`mScan` +
-`subtreeTok_serF`, `scanClauses_serF`, `mScan_eq_fsatToSat`); **and now every
-per-step machine LEAF** — `encodeCnf_append`/`_cons`; the emit-gadget
-projections `emit{Lit,TrueG,EquivG,AndG,OrG,NotG}_{cnfout,tally,frame}`; the
-drain loops `drainSkip_run`/`drainVar_run` (+ their `_done/_one/_zero`
-helpers); and the full `budgetBody` dispatch
-`budgetBody_{enter,ftrue,fand,forr,fneg,fvar,freeze}` (⇒ pure `budgetStep`).
-The probe (`probes/FSATPreProbe.lean`) keeps an independent `#eval` copy.
-Remaining ladder (~1–2 sessions):
+The design phase, run-lemma step 1(i), step 1(ii) leaves, **AND all four run-lemma
+loop assemblies are DONE** (2026-07-12-b/-c through 2026-07-15). What EXISTS, all
+green & axiom-clean, in `Reductions/FSAT_to_SAT_free.lean` (+
+`NP/FSAT_to_SAT_pre.lean`): the map + correctness (`preTseytin`, `ptseytin_repr`,
+`preTseytin_correct`, size lemmas); the full program + layouts + chain-step
+correctness (`buildSAT`, `encodeIn f = [serF f]`, outputs `TALLY`(1)/`CNFOUT`(2),
+`decodeOut = invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`); the pure scan
+model = the tree map; every per-step machine leaf; and now **the whole run-lemma
+stack** — `subtreeScan_run`, `tokenBody_run` (+ `tokHead`/`tokRem`/
+`scanClauses_tok`), `outerLoop_run` (+ `tokForest`/`_flatten`/`_sum`),
+`Bloop_run`, and the headline **`buildSAT_run` : `(buildSAT.eval [serF f]).get
+CNFOUT = encodeCnf (fsatToSat f)` ∧ `.get TALLY = 1^|fsatToSat f|`**. So the
+"machine computes the map" obligation (the `computes` field's hard half) is
+**closed**. The probe (`probes/FSATPreProbe.lean`) keeps an independent `#eval`
+copy. **Remaining ladder (~1 session — all mechanical, templates exist):**
 
-1. **Run lemmas — step 1(ii) ASSEMBLIES: machine folds compute
-   `mScan (serF f)`.** Target: `(buildSAT.eval [serF f]).get CNFOUT =
-   encodeCnf (fsatToSat f)` (+ `TALLY = replicate |N| 1`, + frame). The leaves
-   are proven; what remains is folding them:
-   - **(a) `subtreeScan_run` (the hard nut — do FIRST):**
-     `(subtreeScan.eval s).get T = replicate (subtreeTok (s.get SCAN)) 1` for
-     `s.get SCAN = serF g ++ rest` (SCAN preserved, scratch framed). ⚠ Do NOT
-     carry a raw `(SC2,BUD,T) = budgetStep^[i]` invariant — `budgetBody`
-     disagrees with `budgetStep` on malformed streams. Carry the **Dyck
-     invariant** spelled out in the 2026-07-13 session note (`∃ gs, SC2 =
-     flatten(map serF gs) ++ rest ∧ BUD = 1^|gs| ∧ T = 1^(min i (formula_size g))
-     ∧ conservation`), folded via `Cmd.foldlState_range_induct` over
-     `budgetBody_{ftrue,fand,forr,fneg,fvar}` (bud>0, gs=g₀::gs' → recurse on
-     g₀'s constructor) + `budgetBody_freeze` (gs=[]). Lands
-     `T = 1^(formula_size g) = 1^(subtreeTok SCAN)` (⇒ `subtreeTok_serF`).
-     Mirror `drainSkip_run`'s two-phase `set M … with hMdef` shape.
-   - **(b) `tokenBody_run` (one iteration ≡ one `scanClauses` token):** dispatch
-     on the tag (same head/tail bit-reads as `budgetBody_*`); `fvar` uses
-     `drainVar_run` (into `VREG`), the two binary tags call `subtreeScan_run`
-     for the right-child index, then emit via `emit*G_{cnfout,tally,frame}`.
-     The clause list of each gadget = `encodeCnf` of that gadget's
-     `tseytin…` (via `encodeCnf_append`). Also needs `VA = 1^(b+k)` /
-     `VL = 1^(b+k+1)` set up by the `concat VA B K` / `copy VL VA ;; appendOne`
-     head of `tokenBody` (a `unaryMulLoop`-free straight-line — B and K are
-     already unary).
-   - **(c) the outer `forBnd IDX1 SERF tokenBody` invariant** (`nonEmpty`-guarded
-     stream loop, black-boxing `tokenBody_run`): after the scan is consumed the
-     loop idles (`tokens ≤ bits`), so relate the machine state to `scanClauses`
-     having consumed all tokens (a `min i`-style two-phase invariant like the
-     drain loops, but the "productive" phase runs `formula_size f` steps).
-   - **(d) phase 0 + assembly:** the `B := 1^|serF f|` length loop, the top
-     clause emission, then `buildSAT_run` composed with `mScan_eq_fsatToSat`
-     (`= encodeCnf (mScan (serF f)) = encodeCnf (fsatToSat f)`).
-2. **`cost_le`** — the `masterOmega` pattern; generous ceiling: outer
+1. **`cost_le`** — the `masterOmega` pattern; generous ceiling: outer
    `|serF f| ≤ 4n` iterations × (budget scan `O(|serF|)` + emission
    `O(b+n)`) — a single `C·(n+1)³`-ish ceiling should dominate everything.
-3. **Mechanical fields** — copy the `binaryCCFSAT_reductionLang` templates:
-   `usesBelow` (`simp only` over all sub-defs + register defs; frame is 27),
-   `enc_bit` (`serF` cells are `{0,1}` — small induction, or reuse the
-   BinaryCC witness's output-bit lemma), `width_le` (`encodeIn` has length 1),
-   `decode_agree` (`Cmd.eval_agree` at `CNFOUT`), `encBound := fun n => 4*n`
+2. **Mechanical fields** — copy the `binaryCCFSAT_reductionLang` templates:
+   `usesBelow` (`simp only` over all sub-defs + register defs; **frame is 27** —
+   `def FRAME : Nat := 27`, and `tokenBody.writes` is already the write-set fact
+   `buildSAT_run` uses for its frame), `enc_bit` (`serF` cells are `{0,1}` — small
+   induction, or reuse the BinaryCC witness's output-bit lemma), `width_le`
+   (`encodeIn` has length 1), `decode_agree` (`Cmd.eval_agree` at `CNFOUT`;
+   `buildSAT_run` gives the `CNFOUT` value directly), `encBound := fun n => 4*n`
    (`serF_length_le_size`), `output_size_le` via `preTseytin_size_le` +
    `serF_length_le_size` (vars < `b + size f` with `b ≤ 4n`).
-4. **The witness + chain step**: `fsatSAT_reductionLang :
+3. **The witness + chain step**: `fsatSAT_reductionLang :
    PolyTimeComputableLang fsatToSat`, then `reducesPolyMO'_of_langFree _
-   fsatToSat_correct : FSAT ⪯p' SAT`.
-5. **The seam**: `SeamData flatTCC_to_FSAT_witness fsatSAT_reductionLang` —
+   fsatToSat_correct : FSAT ⪯p' SAT`. `computes` = `buildSAT_run.1` (CNFOUT) +
+   `decodeOut_of_serF`-style inverse (`decodeOut = invFun encodeCnf`,
+   `KSat3Free.encodeCnf_injective`); the `TALLY` = `1^|fsatToSat f|` half is
+   `buildSAT_run.2` (the verifier's clause-tally layout).
+4. **The seam**: `SeamData flatTCC_to_FSAT_witness fsatSAT_reductionLang` —
    `mfc` = scrub-everything-except-reg-0 below the left frame 57 (the
    `scrub2` pattern of `BinaryCC_to_FSAT_comp.lean`; reg 0 already holds
    `serF f` = exactly `encodeIn f`; note the RIGHT frame 27 is *narrower*
@@ -589,9 +597,19 @@ and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
   and the **complete `budgetBody` dispatch** `budgetBody_frame`,
   `budgetBody_enter`, `budgetBody_{ftrue,fand,forr,fneg,fvar}` (⇒ pure
   `budgetStep_*`), `budgetBody_freeze` (bud=0). `budgetBody` is now factored as
-  `nonEmpty NEB BUD ;; ifBit NEB budgetBodyInner nop`. These are the emission
-  leaves + the arity-scan step; the loop assemblies (`subtreeScan_run` /
-  `tokenBody_run` / outer) fold them (NEXT TOP-DOWN §1). Do NOT re-derive.
+  `nonEmpty NEB BUD ;; ifBit NEB budgetBodyInner nop`.
+- **The `FSAT_to_SAT` run-lemma LOOP ASSEMBLIES** (same file, 2026-07-15, all
+  axiom-clean — the machine ⇒ map obligation, DONE): **`subtreeScan_run`**
+  (Dyck-forest `∃ gs` invariant folding the `budgetBody_*` leaves;
+  `T = 1^(formula_size g)`), **`tokenBody_run`** (one iteration = one
+  `scanClauses` token, per-shape dispatch integrating `subtreeScan_run`/
+  `drainVar_run`/`emit*G`; frame via `tokenBody.writes`) with model bridge
+  `tokHead`/`tokRem`/`scanClauses_tok`, **`outerLoop_run`** (Dyck-forest token
+  loop; helpers `tokForest`/`tokForest_flatten`/`tokForest_sum`), **`Bloop_run`**
+  (the `B := 1^|serF|` length loop), and **`buildSAT_run`** (the assembly:
+  `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` ∧
+  `.get TALLY = 1^|fsatToSat f|`). The next witness's `computes` field is
+  `buildSAT_run` + `decodeOut = invFun encodeCnf`. Do NOT re-derive.
 - **The FSAT output codec** (`Reductions/BinaryCC_to_FSAT_free.lean`, 2026-07-05):
   `serF`/`deserF`/`decodeF` (prefix/Polish bit-serialization of the `formula`
   tree) + the PROVEN round-trip `decodeF_serF` + `decodeOut_of_serF` — the
