@@ -546,6 +546,63 @@ theorem mScan_eq_fsatToSat (f : formula) : mScan (serF f) = fsatToSat f := by
   unfold mScan fsatToSat preTseytin
   rw [key, scanClauses_nil, List.append_nil, Nat.add_zero]
 
+/-! ### The one-token unfold of `scanClauses` (the `tokenBody`/outer-loop bridge)
+
+`tokHead`/`tokRem` name the clause group and remaining stream produced by
+consuming exactly one Polish token — the machine's `tokenBody` step. For a
+binary node the right-child offset is `formula_size` of the left child (recovered
+on the machine by `subtreeScan`, in the model by `subtreeTok_serF`). -/
+
+/-- The clause group one `tokenBody` step emits (this node's Tseytin gadget). -/
+def tokHead (b k : Nat) : formula → cnf
+  | .ftrue    => tseytinTrue (b + k)
+  | .fvar v   => tseytinEquiv v (b + k)
+  | .fand a _ => tseytinAnd (b + k) (b + k + 1) (b + k + 1 + formula_size a)
+  | .forr a _ => tseytinOr (b + k) (b + k + 1) (b + k + 1 + formula_size a)
+  | .fneg _   => tseytinNot (b + k) (b + k + 1)
+
+/-- The stream remaining after one `tokenBody` step (children pushed onto the
+forest for compound nodes; the whole token consumed for leaves). -/
+def tokRem : formula → List Nat → List Nat
+  | .ftrue,   tail => tail
+  | .fvar _,  tail => tail
+  | .fand a b', tail => serF a ++ serF b' ++ tail
+  | .forr a b', tail => serF a ++ serF b' ++ tail
+  | .fneg a,  tail => serF a ++ tail
+
+/-- **One-token unfold**: `scanClauses` on `serF g₀ ++ tail` emits `g₀`'s gadget
+then continues on `tokRem g₀ tail` with the token counter advanced by one. -/
+theorem scanClauses_tok (b fuel k : Nat) (g₀ : formula) (tail : List Nat) :
+    scanClauses b (fuel + 1) k (serF g₀ ++ tail)
+      = tokHead b k g₀ ++ scanClauses b fuel (k + 1) (tokRem g₀ tail) := by
+  cases g₀ with
+  | ftrue => simp [BinaryCCFSATFree.serF, scanClauses, tokHead, tokRem]
+  | fvar v =>
+      have hr : serF (formula.fvar v) ++ tail
+          = 1 :: 1 :: 1 :: (List.replicate v 1 ++ (0 :: tail)) := by
+        simp [BinaryCCFSATFree.serF]
+      rw [hr]
+      simp only [scanClauses, readUnary_replicate, tokHead, tokRem]
+  | fand a b' =>
+      have hr : serF (formula.fand a b') ++ tail
+          = 0 :: 1 :: (serF a ++ (serF b' ++ tail)) := by
+        simp [BinaryCCFSATFree.serF, List.append_assoc]
+      rw [hr]
+      simp only [scanClauses, tokHead, tokRem]
+      rw [subtreeTok_serF a (serF b' ++ tail), List.append_assoc]
+  | forr a b' =>
+      have hr : serF (formula.forr a b') ++ tail
+          = 1 :: 0 :: (serF a ++ (serF b' ++ tail)) := by
+        simp [BinaryCCFSATFree.serF, List.append_assoc]
+      rw [hr]
+      simp only [scanClauses, tokHead, tokRem]
+      rw [subtreeTok_serF a (serF b' ++ tail), List.append_assoc]
+  | fneg a =>
+      have hr : serF (formula.fneg a) ++ tail = 1 :: 1 :: 0 :: (serF a ++ tail) := by
+        simp [BinaryCCFSATFree.serF]
+      rw [hr]
+      simp only [scanClauses, tokHead, tokRem]
+
 
 /-! ## Run lemmas — step 1(ii): the machine folds compute `mScan (serF f)`
 
@@ -1482,5 +1539,560 @@ theorem subtreeScan_run (u : State) (g : formula) (rest : List Nat)
       (by decide) (by decide) (by decide) (by decide) (by decide), hP0SCAN]
   · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11
     rw [hframef r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11, hP0frame r h1 h2 h3]
+
+/-! ## The outer-loop token step (`tokenBody_run`) -/
+
+/-- **One `tokenBody` iteration = one `scanClauses` token.** For `SCAN` beginning
+with a valid token `serF g₀ ++ tail`, `tokenBody` emits `g₀`'s Tseytin gadget
+(`tokHead b k g₀`, the right-child offset recovered by `subtreeScan_run` for
+binary nodes) onto `CNFOUT`, grows `TALLY` by its clause count, advances the
+token index `K`, and leaves `SCAN = tokRem g₀ tail`. `B` and every non-written
+register are preserved (`Cmd.eval_get_of_not_writes`). -/
+theorem tokenBody_run (s : State) (g₀ : formula) (b k : Nat) (tail : List Nat)
+    (hSCAN : State.get s SCAN = serF g₀ ++ tail)
+    (hB : State.get s B = List.replicate b 1)
+    (hK : State.get s K = List.replicate k 1) :
+    State.get (tokenBody.eval s) CNFOUT
+        = State.get s CNFOUT ++ encodeCnf (tokHead b k g₀)
+    ∧ State.get (tokenBody.eval s) TALLY
+        = State.get s TALLY ++ List.replicate (tokHead b k g₀).length 1
+    ∧ State.get (tokenBody.eval s) SCAN = tokRem g₀ tail
+    ∧ State.get (tokenBody.eval s) K = List.replicate (k + 1) 1
+    ∧ State.get (tokenBody.eval s) B = List.replicate b 1
+    ∧ (∀ r : Var, r ∉ tokenBody.writes → State.get (tokenBody.eval s) r = State.get s r) := by
+  -- guard fires (SCAN nonempty)
+  have hguard : (Cmd.op (Op.nonEmpty NE SCAN)).eval s = s.set NE [1] := by
+    rw [Cmd.eval_op, Op.eval, hSCAN]; cases g₀ <;> simp [BinaryCCFSATFree.serF]
+  set s1 := s.set NE [1] with hs1
+  have hs1B : State.get s1 B = List.replicate b 1 := by
+    rw [hs1, State.get_set_ne _ _ _ _ (show B ≠ NE by decide), hB]
+  have hs1K : State.get s1 K = List.replicate k 1 := by
+    rw [hs1, State.get_set_ne _ _ _ _ (show K ≠ NE by decide), hK]
+  have hs1SC : State.get s1 SCAN = serF g₀ ++ tail := by
+    rw [hs1, State.get_set_ne _ _ _ _ (show SCAN ≠ NE by decide), hSCAN]
+  -- common prefix: concat VA B K ;; copy VL VA ;; appendOne VL
+  set c1 := s1.set VA (List.replicate (b + k) 1) with hc1
+  have e1 : (Cmd.op (Op.concat VA B K)).eval s1 = c1 := by
+    rw [Cmd.eval_op, Op.eval, hs1B, hs1K, ← List.replicate_add, hc1]
+  set c3 := c1.set VL (List.replicate (b + k + 1) 1) with hc3
+  have e2 : (Cmd.op (Op.copy VL VA)).eval c1 = c1.set VL (List.replicate (b + k) 1) := by
+    rw [Cmd.eval_op, Op.eval, hc1, State.get_set_eq]
+  have e3 : (Cmd.op (Op.appendOne VL)).eval (c1.set VL (List.replicate (b + k) 1)) = c3 := by
+    rw [Cmd.eval_op, Op.eval, State.get_set_eq, hc3, State.set_set, ← List.replicate_succ']
+  have hc3SC : State.get c3 SCAN = serF g₀ ++ tail := by
+    rw [hc3, State.get_set_ne _ _ _ _ (show SCAN ≠ VL by decide), hc1,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ VA by decide), hs1SC]
+  have hc3VA : State.get c3 VA = List.replicate (b + k) 1 := by
+    rw [hc3, State.get_set_ne _ _ _ _ (show VA ≠ VL by decide), hc1, State.get_set_eq]
+  have hc3VL : State.get c3 VL = List.replicate (b + k + 1) 1 := by rw [hc3, State.get_set_eq]
+  have hc3K : State.get c3 K = List.replicate k 1 := by
+    rw [hc3, State.get_set_ne _ _ _ _ (show K ≠ VL by decide), hc1,
+      State.get_set_ne _ _ _ _ (show K ≠ VA by decide), hs1K]
+  have hc3CNF : State.get c3 CNFOUT = State.get s CNFOUT := by
+    rw [hc3, State.get_set_ne _ _ _ _ (show CNFOUT ≠ VL by decide), hc1,
+      State.get_set_ne _ _ _ _ (show CNFOUT ≠ VA by decide), hs1,
+      State.get_set_ne _ _ _ _ (show CNFOUT ≠ NE by decide)]
+  have hc3TAL : State.get c3 TALLY = State.get s TALLY := by
+    rw [hc3, State.get_set_ne _ _ _ _ (show TALLY ≠ VL by decide), hc1,
+      State.get_set_ne _ _ _ _ (show TALLY ≠ VA by decide), hs1,
+      State.get_set_ne _ _ _ _ (show TALLY ≠ NE by decide)]
+  -- the frame + B are case-independent
+  have hframe : ∀ r : Var, r ∉ tokenBody.writes → State.get (tokenBody.eval s) r = State.get s r :=
+    fun r hr => Cmd.eval_get_of_not_writes _ _ _ hr
+  have hBout : State.get (tokenBody.eval s) B = List.replicate b 1 := by
+    rw [hframe B (by decide), hB]
+  have hmain : State.get (tokenBody.eval s) CNFOUT
+        = State.get s CNFOUT ++ encodeCnf (tokHead b k g₀)
+      ∧ State.get (tokenBody.eval s) TALLY
+        = State.get s TALLY ++ List.replicate (tokHead b k g₀).length 1
+      ∧ State.get (tokenBody.eval s) SCAN = tokRem g₀ tail
+      ∧ State.get (tokenBody.eval s) K = List.replicate (k + 1) 1 := by
+    cases g₀ with
+    | ftrue =>
+        have hSC : State.get c3 SCAN = 0 :: 0 :: tail := by rw [hc3SC]; rfl
+        set c5 := (c3.set H1 [0]).set SCAN (0 :: tail) with hc5
+        have e4 : (Cmd.op (Op.head H1 SCAN)).eval c3 = c3.set H1 [0] := by
+          rw [Cmd.eval_op, Op.eval, hSC]
+        have e5 : (Cmd.op (Op.tail SCAN SCAN)).eval (c3.set H1 [0]) = c5 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H1 by decide), hSC,
+            List.tail_cons, hc5]
+        have hc5SC : State.get c5 SCAN = 0 :: tail := by rw [hc5, State.get_set_eq]
+        set c7 := (c5.set H2 [0]).set SCAN tail with hc7
+        have e6 : (Cmd.op (Op.head H2 SCAN)).eval c5 = c5.set H2 [0] := by
+          rw [Cmd.eval_op, Op.eval, hc5SC]
+        have e7 : (Cmd.op (Op.tail SCAN SCAN)).eval (c5.set H2 [0]) = c7 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H2 by decide), hc5SC,
+            List.tail_cons, hc7]
+        have hc7H1 : State.get c7 H1 = [0] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show H1 ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide), State.get_set_eq]
+        have hc7H2 : State.get c7 H2 = [0] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H2 ≠ SCAN by decide), State.get_set_eq]
+        have hc7VA : State.get c7 VA = List.replicate (b + k) 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H1 by decide), hc3VA]
+        have hc7CNF : State.get c7 CNFOUT = State.get s CNFOUT := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H1 by decide), hc3CNF]
+        have hc7TAL : State.get c7 TALLY = State.get s TALLY := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H1 by decide), hc3TAL]
+        have hc7K : State.get c7 K = List.replicate k 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H1 by decide), hc3K]
+        have hc7SCo : State.get c7 SCAN = tail := by rw [hc7, State.get_set_eq]
+        have heval : tokenBody.eval s = (Cmd.op (Op.appendOne K)).eval (emitTrueG.eval c7) := by
+          unfold tokenBody
+          rw [Cmd.eval_seq, hguard, Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq]),
+            Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+            Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq,
+            Cmd.eval_ifBit_false _ _ _ _ (by rw [hc7H1]; decide),
+            Cmd.eval_ifBit_false _ _ _ _ (by rw [hc7H2]; decide)]
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ K by decide),
+            emitTrueG_cnfout c7 (b + k) hc7VA, hc7CNF]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ K by decide),
+            emitTrueG_tally c7, hc7TAL]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide),
+            emitTrueG_frame c7 SCAN (by decide) (by decide), hc7SCo]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval, State.get_set_eq,
+            emitTrueG_frame c7 K (by decide) (by decide), hc7K, ← List.replicate_succ']
+    | fneg a =>
+        have hSC : State.get c3 SCAN = 1 :: 1 :: 0 :: (serF a ++ tail) := by
+          rw [hc3SC]; simp [BinaryCCFSATFree.serF]
+        set c5 := (c3.set H1 [1]).set SCAN (1 :: 0 :: (serF a ++ tail)) with hc5
+        have e4 : (Cmd.op (Op.head H1 SCAN)).eval c3 = c3.set H1 [1] := by
+          rw [Cmd.eval_op, Op.eval, hSC]
+        have e5 : (Cmd.op (Op.tail SCAN SCAN)).eval (c3.set H1 [1]) = c5 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H1 by decide), hSC,
+            List.tail_cons, hc5]
+        have hc5SC : State.get c5 SCAN = 1 :: 0 :: (serF a ++ tail) := by
+          rw [hc5, State.get_set_eq]
+        set c7 := (c5.set H2 [1]).set SCAN (0 :: (serF a ++ tail)) with hc7
+        have e6 : (Cmd.op (Op.head H2 SCAN)).eval c5 = c5.set H2 [1] := by
+          rw [Cmd.eval_op, Op.eval, hc5SC]
+        have e7 : (Cmd.op (Op.tail SCAN SCAN)).eval (c5.set H2 [1]) = c7 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H2 by decide), hc5SC,
+            List.tail_cons, hc7]
+        have hc7SC : State.get c7 SCAN = 0 :: (serF a ++ tail) := by rw [hc7, State.get_set_eq]
+        have hc7H1 : State.get c7 H1 = [1] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show H1 ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide), State.get_set_eq]
+        have hc7H2 : State.get c7 H2 = [1] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H2 ≠ SCAN by decide), State.get_set_eq]
+        -- read H3 = [0], SCAN → serF a ++ tail
+        set c9 := (c7.set H3 [0]).set SCAN (serF a ++ tail) with hc9
+        have e8 : (Cmd.op (Op.head H3 SCAN)).eval c7 = c7.set H3 [0] := by
+          rw [Cmd.eval_op, Op.eval, hc7SC]
+        have e9 : (Cmd.op (Op.tail SCAN SCAN)).eval (c7.set H3 [0]) = c9 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H3 by decide), hc7SC,
+            List.tail_cons, hc9]
+        have hc9H3 : State.get c9 H3 = [0] := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show H3 ≠ SCAN by decide), State.get_set_eq]
+        have hc9VA : State.get c9 VA = List.replicate (b + k) 1 := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H1 by decide), hc3VA]
+        have hc9VL : State.get c9 VL = List.replicate (b + k + 1) 1 := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H1 by decide), hc3VL]
+        have hc9CNF : State.get c9 CNFOUT = State.get s CNFOUT := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H1 by decide), hc3CNF]
+        have hc9TAL : State.get c9 TALLY = State.get s TALLY := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H1 by decide), hc3TAL]
+        have hc9K : State.get c9 K = List.replicate k 1 := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H1 by decide), hc3K]
+        have hc9SCo : State.get c9 SCAN = serF a ++ tail := by rw [hc9, State.get_set_eq]
+        have heval : tokenBody.eval s = (Cmd.op (Op.appendOne K)).eval (emitNotG.eval c9) := by
+          unfold tokenBody
+          rw [Cmd.eval_seq, hguard, Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq]),
+            Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+            Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq,
+            Cmd.eval_ifBit_true _ _ _ _ hc7H1, Cmd.eval_ifBit_true _ _ _ _ hc7H2,
+            Cmd.eval_seq, e8, Cmd.eval_seq, e9,
+            Cmd.eval_ifBit_false _ _ _ _ (by rw [hc9H3]; decide)]
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ K by decide),
+            emitNotG_cnfout c9 (b + k) (b + k + 1) hc9VA hc9VL, hc9CNF]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ K by decide), emitNotG_tally c9, hc9TAL]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide),
+            emitNotG_frame c9 SCAN (by decide) (by decide), hc9SCo]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval, State.get_set_eq,
+            emitNotG_frame c9 K (by decide) (by decide), hc9K, ← List.replicate_succ']
+    | fand a b' =>
+        have hSC : State.get c3 SCAN = 0 :: 1 :: (serF a ++ serF b' ++ tail) := by
+          rw [hc3SC]; simp [BinaryCCFSATFree.serF, List.append_assoc]
+        set c5 := (c3.set H1 [0]).set SCAN (1 :: (serF a ++ serF b' ++ tail)) with hc5
+        have e4 : (Cmd.op (Op.head H1 SCAN)).eval c3 = c3.set H1 [0] := by
+          rw [Cmd.eval_op, Op.eval, hSC]
+        have e5 : (Cmd.op (Op.tail SCAN SCAN)).eval (c3.set H1 [0]) = c5 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H1 by decide), hSC,
+            List.tail_cons, hc5]
+        have hc5SC : State.get c5 SCAN = 1 :: (serF a ++ serF b' ++ tail) := by
+          rw [hc5, State.get_set_eq]
+        set c7 := (c5.set H2 [1]).set SCAN (serF a ++ serF b' ++ tail) with hc7
+        have e6 : (Cmd.op (Op.head H2 SCAN)).eval c5 = c5.set H2 [1] := by
+          rw [Cmd.eval_op, Op.eval, hc5SC]
+        have e7 : (Cmd.op (Op.tail SCAN SCAN)).eval (c5.set H2 [1]) = c7 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H2 by decide), hc5SC,
+            List.tail_cons, hc7]
+        have hc7H1 : State.get c7 H1 = [0] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show H1 ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide), State.get_set_eq]
+        have hc7H2 : State.get c7 H2 = [1] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H2 ≠ SCAN by decide), State.get_set_eq]
+        have hc7SCo : State.get c7 SCAN = serF a ++ serF b' ++ tail := by
+          rw [hc7, State.get_set_eq]
+        have hc7VA : State.get c7 VA = List.replicate (b + k) 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H1 by decide), hc3VA]
+        have hc7VL : State.get c7 VL = List.replicate (b + k + 1) 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H1 by decide), hc3VL]
+        have hc7CNF : State.get c7 CNFOUT = State.get s CNFOUT := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H1 by decide), hc3CNF]
+        have hc7TAL : State.get c7 TALLY = State.get s TALLY := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H1 by decide), hc3TAL]
+        have hc7K : State.get c7 K = List.replicate k 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H1 by decide), hc3K]
+        -- subtreeScan on the children stream
+        obtain ⟨hST, hSSCAN, hSframe⟩ := subtreeScan_run c7 a (serF b' ++ tail)
+          (by rw [hc7SCo, List.append_assoc])
+        set cS := subtreeScan.eval c7 with hcS
+        have hcSVL : State.get cS VL = List.replicate (b + k + 1) 1 := by
+          rw [hSframe VL (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7VL]
+        have hcSVA : State.get cS VA = List.replicate (b + k) 1 := by
+          rw [hSframe VA (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7VA]
+        have hcSCNF : State.get cS CNFOUT = State.get s CNFOUT := by
+          rw [hSframe CNFOUT (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7CNF]
+        have hcSTAL : State.get cS TALLY = State.get s TALLY := by
+          rw [hSframe TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7TAL]
+        have hcSK : State.get cS K = List.replicate k 1 := by
+          rw [hSframe K (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7K]
+        set cV := cS.set VR (List.replicate (b + k + 1 + formula_size a) 1) with hcV
+        have eVR : (Cmd.op (Op.concat VR VL T)).eval cS = cV := by
+          rw [Cmd.eval_op, Op.eval, hcSVL, hST, ← List.replicate_add, hcV]
+        have hcVVA : State.get cV VA = List.replicate (b + k) 1 := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show VA ≠ VR by decide), hcSVA]
+        have hcVVL : State.get cV VL = List.replicate (b + k + 1) 1 := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show VL ≠ VR by decide), hcSVL]
+        have hcVVR : State.get cV VR = List.replicate (b + k + 1 + formula_size a) 1 := by
+          rw [hcV, State.get_set_eq]
+        have hcVCNF : State.get cV CNFOUT = State.get s CNFOUT := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show CNFOUT ≠ VR by decide), hcSCNF]
+        have hcVTAL : State.get cV TALLY = State.get s TALLY := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show TALLY ≠ VR by decide), hcSTAL]
+        have hcVK : State.get cV K = List.replicate k 1 := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show K ≠ VR by decide), hcSK]
+        have hcVSC : State.get cV SCAN = serF a ++ (serF b' ++ tail) := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show SCAN ≠ VR by decide), hSSCAN]
+        have heval : tokenBody.eval s = (Cmd.op (Op.appendOne K)).eval (emitAndG.eval cV) := by
+          unfold tokenBody
+          rw [Cmd.eval_seq, hguard, Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq]),
+            Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+            Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq,
+            Cmd.eval_ifBit_false _ _ _ _ (by rw [hc7H1]; decide),
+            Cmd.eval_ifBit_true _ _ _ _ hc7H2, Cmd.eval_seq, ← hcS, Cmd.eval_seq, eVR]
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ K by decide),
+            emitAndG_cnfout cV (b + k) (b + k + 1) (b + k + 1 + formula_size a)
+              hcVVA hcVVL hcVVR, hcVCNF]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ K by decide), emitAndG_tally cV, hcVTAL]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide),
+            emitAndG_frame cV SCAN (by decide) (by decide), hcVSC]
+          simp [tokRem, List.append_assoc]
+        · rw [heval, Cmd.eval_op, Op.eval, State.get_set_eq,
+            emitAndG_frame cV K (by decide) (by decide), hcVK, ← List.replicate_succ']
+    | forr a b' =>
+        have hSC : State.get c3 SCAN = 1 :: 0 :: (serF a ++ serF b' ++ tail) := by
+          rw [hc3SC]; simp [BinaryCCFSATFree.serF, List.append_assoc]
+        set c5 := (c3.set H1 [1]).set SCAN (0 :: (serF a ++ serF b' ++ tail)) with hc5
+        have e4 : (Cmd.op (Op.head H1 SCAN)).eval c3 = c3.set H1 [1] := by
+          rw [Cmd.eval_op, Op.eval, hSC]
+        have e5 : (Cmd.op (Op.tail SCAN SCAN)).eval (c3.set H1 [1]) = c5 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H1 by decide), hSC,
+            List.tail_cons, hc5]
+        have hc5SC : State.get c5 SCAN = 0 :: (serF a ++ serF b' ++ tail) := by
+          rw [hc5, State.get_set_eq]
+        set c7 := (c5.set H2 [0]).set SCAN (serF a ++ serF b' ++ tail) with hc7
+        have e6 : (Cmd.op (Op.head H2 SCAN)).eval c5 = c5.set H2 [0] := by
+          rw [Cmd.eval_op, Op.eval, hc5SC]
+        have e7 : (Cmd.op (Op.tail SCAN SCAN)).eval (c5.set H2 [0]) = c7 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H2 by decide), hc5SC,
+            List.tail_cons, hc7]
+        have hc7H1 : State.get c7 H1 = [1] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show H1 ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide), State.get_set_eq]
+        have hc7H2 : State.get c7 H2 = [0] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H2 ≠ SCAN by decide), State.get_set_eq]
+        have hc7SCo : State.get c7 SCAN = serF a ++ serF b' ++ tail := by
+          rw [hc7, State.get_set_eq]
+        have hc7VA : State.get c7 VA = List.replicate (b + k) 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H1 by decide), hc3VA]
+        have hc7VL : State.get c7 VL = List.replicate (b + k + 1) 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VL ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VL ≠ H1 by decide), hc3VL]
+        have hc7CNF : State.get c7 CNFOUT = State.get s CNFOUT := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H1 by decide), hc3CNF]
+        have hc7TAL : State.get c7 TALLY = State.get s TALLY := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H1 by decide), hc3TAL]
+        have hc7K : State.get c7 K = List.replicate k 1 := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H1 by decide), hc3K]
+        obtain ⟨hST, hSSCAN, hSframe⟩ := subtreeScan_run c7 a (serF b' ++ tail)
+          (by rw [hc7SCo, List.append_assoc])
+        set cS := subtreeScan.eval c7 with hcS
+        have hcSVL : State.get cS VL = List.replicate (b + k + 1) 1 := by
+          rw [hSframe VL (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7VL]
+        have hcSVA : State.get cS VA = List.replicate (b + k) 1 := by
+          rw [hSframe VA (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7VA]
+        have hcSCNF : State.get cS CNFOUT = State.get s CNFOUT := by
+          rw [hSframe CNFOUT (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7CNF]
+        have hcSTAL : State.get cS TALLY = State.get s TALLY := by
+          rw [hSframe TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7TAL]
+        have hcSK : State.get cS K = List.replicate k 1 := by
+          rw [hSframe K (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+            (by decide) (by decide) (by decide) (by decide) (by decide), hc7K]
+        set cV := cS.set VR (List.replicate (b + k + 1 + formula_size a) 1) with hcV
+        have eVR : (Cmd.op (Op.concat VR VL T)).eval cS = cV := by
+          rw [Cmd.eval_op, Op.eval, hcSVL, hST, ← List.replicate_add, hcV]
+        have hcVVA : State.get cV VA = List.replicate (b + k) 1 := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show VA ≠ VR by decide), hcSVA]
+        have hcVVL : State.get cV VL = List.replicate (b + k + 1) 1 := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show VL ≠ VR by decide), hcSVL]
+        have hcVVR : State.get cV VR = List.replicate (b + k + 1 + formula_size a) 1 := by
+          rw [hcV, State.get_set_eq]
+        have hcVCNF : State.get cV CNFOUT = State.get s CNFOUT := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show CNFOUT ≠ VR by decide), hcSCNF]
+        have hcVTAL : State.get cV TALLY = State.get s TALLY := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show TALLY ≠ VR by decide), hcSTAL]
+        have hcVK : State.get cV K = List.replicate k 1 := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show K ≠ VR by decide), hcSK]
+        have hcVSC : State.get cV SCAN = serF a ++ (serF b' ++ tail) := by
+          rw [hcV, State.get_set_ne _ _ _ _ (show SCAN ≠ VR by decide), hSSCAN]
+        have heval : tokenBody.eval s = (Cmd.op (Op.appendOne K)).eval (emitOrG.eval cV) := by
+          unfold tokenBody
+          rw [Cmd.eval_seq, hguard, Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq]),
+            Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+            Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq,
+            Cmd.eval_ifBit_true _ _ _ _ hc7H1,
+            Cmd.eval_ifBit_false _ _ _ _ (by rw [hc7H2]; decide),
+            Cmd.eval_seq, ← hcS, Cmd.eval_seq, eVR]
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ K by decide),
+            emitOrG_cnfout cV (b + k) (b + k + 1) (b + k + 1 + formula_size a)
+              hcVVA hcVVL hcVVR, hcVCNF]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ K by decide), emitOrG_tally cV, hcVTAL]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide),
+            emitOrG_frame cV SCAN (by decide) (by decide), hcVSC]
+          simp [tokRem, List.append_assoc]
+        · rw [heval, Cmd.eval_op, Op.eval, State.get_set_eq,
+            emitOrG_frame cV K (by decide) (by decide), hcVK, ← List.replicate_succ']
+    | fvar v =>
+        have hSC : State.get c3 SCAN
+            = 1 :: 1 :: 1 :: (List.replicate v 1 ++ 0 :: tail) := by
+          rw [hc3SC]; simp [BinaryCCFSATFree.serF]
+        set c5 := (c3.set H1 [1]).set SCAN (1 :: 1 :: (List.replicate v 1 ++ 0 :: tail)) with hc5
+        have e4 : (Cmd.op (Op.head H1 SCAN)).eval c3 = c3.set H1 [1] := by
+          rw [Cmd.eval_op, Op.eval, hSC]
+        have e5 : (Cmd.op (Op.tail SCAN SCAN)).eval (c3.set H1 [1]) = c5 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H1 by decide), hSC,
+            List.tail_cons, hc5]
+        have hc5SC : State.get c5 SCAN = 1 :: 1 :: (List.replicate v 1 ++ 0 :: tail) := by
+          rw [hc5, State.get_set_eq]
+        set c7 := (c5.set H2 [1]).set SCAN (1 :: (List.replicate v 1 ++ 0 :: tail)) with hc7
+        have e6 : (Cmd.op (Op.head H2 SCAN)).eval c5 = c5.set H2 [1] := by
+          rw [Cmd.eval_op, Op.eval, hc5SC]
+        have e7 : (Cmd.op (Op.tail SCAN SCAN)).eval (c5.set H2 [1]) = c7 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H2 by decide), hc5SC,
+            List.tail_cons, hc7]
+        have hc7SC : State.get c7 SCAN = 1 :: (List.replicate v 1 ++ 0 :: tail) := by
+          rw [hc7, State.get_set_eq]
+        have hc7H1 : State.get c7 H1 = [1] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show H1 ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show H1 ≠ SCAN by decide), State.get_set_eq]
+        have hc7H2 : State.get c7 H2 = [1] := by
+          rw [hc7, State.get_set_ne _ _ _ _ (show H2 ≠ SCAN by decide), State.get_set_eq]
+        set c9 := (c7.set H3 [1]).set SCAN (List.replicate v 1 ++ 0 :: tail) with hc9
+        have e8 : (Cmd.op (Op.head H3 SCAN)).eval c7 = c7.set H3 [1] := by
+          rw [Cmd.eval_op, Op.eval, hc7SC]
+        have e9 : (Cmd.op (Op.tail SCAN SCAN)).eval (c7.set H3 [1]) = c9 := by
+          rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H3 by decide), hc7SC,
+            List.tail_cons, hc9]
+        have hc9H3 : State.get c9 H3 = [1] := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show H3 ≠ SCAN by decide), State.get_set_eq]
+        have hc9VA : State.get c9 VA = List.replicate (b + k) 1 := by
+          rw [hc9, State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show VA ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ H1 by decide), hc3VA]
+        have hc9SCo : State.get c9 SCAN = List.replicate v 1 ++ 0 :: tail := by
+          rw [hc9, State.get_set_eq]
+        -- clear VREG, clear DN, then drain the payload into VREG
+        set cclr := (c9.set VREG []).set DN [] with hcclr
+        have e10 : (Cmd.op (Op.clear VREG)).eval c9 = c9.set VREG [] := by
+          rw [Cmd.eval_op, Op.eval]
+        have e11 : (Cmd.op (Op.clear DN)).eval (c9.set VREG []) = cclr := by
+          rw [Cmd.eval_op, Op.eval, hcclr]
+        have hcclrSC : State.get cclr SCAN = List.replicate v 1 ++ 0 :: tail := by
+          rw [hcclr, State.get_set_ne _ _ _ _ (show SCAN ≠ DN by decide),
+            State.get_set_ne _ _ _ _ (show SCAN ≠ VREG by decide), hc9SCo]
+        have hcclrVREG : State.get cclr VREG = [] := by
+          rw [hcclr, State.get_set_ne _ _ _ _ (show VREG ≠ DN by decide), State.get_set_eq]
+        have hcclrDN : State.get cclr DN = [] := by rw [hcclr, State.get_set_eq]
+        obtain ⟨hDSCAN, hDVREG, _hDDN, hDframe⟩ :=
+          drainVar_run cclr v tail hcclrSC hcclrVREG hcclrDN
+        set cD := (Cmd.forBnd IDX3 SCAN drainVarBody).eval cclr with hcD
+        have hcDVA : State.get cD VA = List.replicate (b + k) 1 := by
+          rw [hDframe VA (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+            hcclr, State.get_set_ne _ _ _ _ (show VA ≠ DN by decide),
+            State.get_set_ne _ _ _ _ (show VA ≠ VREG by decide), hc9VA]
+        have hcDCNF : State.get cD CNFOUT = State.get s CNFOUT := by
+          rw [hDframe CNFOUT (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+            hcclr, State.get_set_ne _ _ _ _ (show CNFOUT ≠ DN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ VREG by decide), hc9,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ H1 by decide), hc3CNF]
+        have hcDTAL : State.get cD TALLY = State.get s TALLY := by
+          rw [hDframe TALLY (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+            hcclr, State.get_set_ne _ _ _ _ (show TALLY ≠ DN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ VREG by decide), hc9,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show TALLY ≠ H1 by decide), hc3TAL]
+        have hcDK : State.get cD K = List.replicate k 1 := by
+          rw [hDframe K (by decide) (by decide) (by decide) (by decide) (by decide) (by decide),
+            hcclr, State.get_set_ne _ _ _ _ (show K ≠ DN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ VREG by decide), hc9,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H3 by decide), hc7,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H2 by decide), hc5,
+            State.get_set_ne _ _ _ _ (show K ≠ SCAN by decide),
+            State.get_set_ne _ _ _ _ (show K ≠ H1 by decide), hc3K]
+        have heval : tokenBody.eval s = (Cmd.op (Op.appendOne K)).eval (emitEquivG.eval cD) := by
+          unfold tokenBody
+          rw [Cmd.eval_seq, hguard, Cmd.eval_ifBit_true _ _ _ _ (by rw [State.get_set_eq]),
+            Cmd.eval_seq, e1, Cmd.eval_seq, e2, Cmd.eval_seq, e3, Cmd.eval_seq, e4,
+            Cmd.eval_seq, e5, Cmd.eval_seq, e6, Cmd.eval_seq, e7, Cmd.eval_seq,
+            Cmd.eval_ifBit_true _ _ _ _ hc7H1, Cmd.eval_ifBit_true _ _ _ _ hc7H2,
+            Cmd.eval_seq, e8, Cmd.eval_seq, e9, Cmd.eval_ifBit_true _ _ _ _ hc9H3,
+            Cmd.eval_seq, e10, Cmd.eval_seq, e11, Cmd.eval_seq, ← hcD]
+        refine ⟨?_, ?_, ?_, ?_⟩
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show CNFOUT ≠ K by decide),
+            emitEquivG_cnfout cD v (b + k) hDVREG hcDVA, hcDCNF]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show TALLY ≠ K by decide), emitEquivG_tally cD, hcDTAL]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval,
+            State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide),
+            emitEquivG_frame cD SCAN (by decide) (by decide), hDSCAN]
+          rfl
+        · rw [heval, Cmd.eval_op, Op.eval, State.get_set_eq,
+            emitEquivG_frame cD K (by decide) (by decide), hcDK, ← List.replicate_succ']
+  exact ⟨hmain.1, hmain.2.1, hmain.2.2.1, hmain.2.2.2, hBout, hframe⟩
 
 end FSATSATFree
