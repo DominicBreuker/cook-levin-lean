@@ -1,6 +1,7 @@
 import Complexity.NP.FSAT_to_SAT_pre
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_free
 import Complexity.Complexity.Deciders.EvalCnfCmd
+import Complexity.NP.kSAT_to_SAT_free
 
 set_option autoImplicit false
 
@@ -2388,5 +2389,112 @@ theorem buildSAT_run (f : formula) :
         = 1 + (scanClauses (serF f).length ((serF f).length + 1) 0 (serF f)).length := by
       rw [← mScan_eq_fsatToSat]; simp only [mScan, List.length_cons]; omega
     rw [heval, hLTAL, hlen, List.replicate_add]
+
+/-! ## The mechanical witness fields -/
+
+/-- Every cell of `serF f` is a bit. -/
+theorem serF_bit (f : formula) : ∀ x ∈ serF f, x ≤ 1 := by
+  induction f with
+  | ftrue =>
+      intro x hx
+      rw [show serF formula.ftrue = [0, 0] from rfl] at hx
+      fin_cases hx <;> omega
+  | fvar v =>
+      intro x hx
+      rw [show serF (formula.fvar v) = [1, 1, 1] ++ List.replicate v 1 ++ [0] from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · rcases List.mem_append.mp h with h | h
+        · fin_cases h <;> omega
+        · rw [List.eq_of_mem_replicate h]
+      · fin_cases h <;> omega
+  | fand a b iha ihb =>
+      intro x hx
+      rw [show serF (formula.fand a b) = [0, 1] ++ serF a ++ serF b from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · rcases List.mem_append.mp h with h | h
+        · fin_cases h <;> omega
+        · exact iha x h
+      · exact ihb x h
+  | forr a b iha ihb =>
+      intro x hx
+      rw [show serF (formula.forr a b) = [1, 0] ++ serF a ++ serF b from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · rcases List.mem_append.mp h with h | h
+        · fin_cases h <;> omega
+        · exact iha x h
+      · exact ihb x h
+  | fneg a iha =>
+      intro x hx
+      rw [show serF (formula.fneg a) = [1, 1, 0] ++ serF a from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · fin_cases h <;> omega
+      · exact iha x h
+
+/-- **`enc_bit`**: `encodeIn f` is a `BitState`. -/
+theorem encodeIn_bitState (f : formula) : Compile.BitState (encodeIn f) := by
+  intro reg hreg x hx
+  simp only [encodeIn, List.mem_singleton] at hreg
+  subst hreg
+  exact serF_bit f x hx
+
+/-- **`encodeIn_size`**: the input encoding's size is `≤ 4·|f|` (`encBound`). -/
+theorem encodeIn_size_le (f : formula) :
+    State.size (encodeIn f) ≤ 4 * encodable.size f := by
+  have h := BinaryCCFSATFree.serF_length_le_size f
+  show State.size [serF f] ≤ _
+  simp only [State.size, List.map_cons, List.map_nil, List.foldr_cons, List.foldr_nil]
+  omega
+
+/-- **`width_le`**: the width fits the frame. -/
+theorem encodeIn_width (f : formula) : (encodeIn f).length ≤ FRAME := by
+  show ([serF f] : State).length ≤ FRAME
+  simp [FRAME]
+
+/-- **`usesBelow`**: `buildSAT` touches only registers `< FRAME` (= 27). -/
+theorem buildSAT_usesBelow : Cmd.UsesBelow buildSAT FRAME := by
+  simp only [buildSAT, tokenBody, subtreeScan, budgetBody, budgetBodyInner,
+    drainSkipBody, drainVarBody, emitLit, endClause, emitTrueG, emitEquivG,
+    emitAndG, emitOrG, emitNotG, nop,
+    Cmd.UsesBelow, Op.UsesBelow,
+    SERF, TALLY, CNFOUT, B, K, SCAN, H1, H2, H3, VA, VL, VR, VREG, DN, SC2, BUD,
+    T, NE, SKIP, IDX0, IDX1, IDX2, IDX3, H1B, H2B, NEB, DN2, FRAME]
+  simp
+
+/-- **`computes`**: the decoded output is `fsatToSat f` (`buildSAT_run` +
+`encodeCnf` injectivity). -/
+theorem buildSAT_computes (f : formula) :
+    decodeOut (buildSAT.eval (encodeIn f)) = fsatToSat f := by
+  simp only [decodeOut]
+  rw [(buildSAT_run f).1]
+  exact Function.leftInverse_invFun KSat3Free.encodeCnf_injective _
+
+/-- The output CNF's `encodable.size` is quadratically bounded in `|f|`
+(`output_size_le` fodder; via `preTseytin_size_le` with `b, |f| ≤ 4·|f|`). -/
+theorem fsatToSat_size_le (f : formula) :
+    encodable.size (fsatToSat f) ≤ 300 * (encodable.size f + 1) ^ 2 := by
+  set n := encodable.size f with hn
+  have hb : formula_maxVar f < (serF f).length := formula_maxVar_lt_serF_length f
+  have h := preTseytin_size_le (serF f).length f hb
+  have hfs : formula_size f ≤ (serF f).length := BinaryCCFSATFree.formula_size_le_serF f
+  have hser : (serF f).length ≤ 4 * n := BinaryCCFSATFree.serF_length_le_size f
+  have hfs4 : formula_size f ≤ 4 * n := le_trans hfs hser
+  set fs := formula_size f with hfsdef
+  set b := (serF f).length with hbdef
+  have hgoal : (3 * fs + 1) * (3 * (b + fs + 1) + 4) ≤ 300 * (n + 1) ^ 2 := by
+    have hbn : b ≤ 4 * n := hser
+    nlinarith [Nat.mul_le_mul hfs4 hbn, hfs4, hbn, Nat.zero_le n]
+  calc encodable.size (fsatToSat f) ≤ (3 * fs + 1) * (3 * (b + fs + 1) + 4) := h
+    _ ≤ 300 * (n + 1) ^ 2 := hgoal
+
+/-- **`decode_agree`**: padding the input with empty registers does not change
+the decoded output. -/
+theorem buildSAT_decode_agree (f : formula) (m : Nat) :
+    decodeOut (buildSAT.eval (encodeIn f ++ List.replicate m []))
+      = decodeOut (buildSAT.eval (encodeIn f)) := by
+  have hagree : AgreeBelow FRAME (encodeIn f ++ List.replicate m []) (encodeIn f) :=
+    fun r _ => State.get_append_replicate_nil (encodeIn f) m r
+  have h := Cmd.eval_agree buildSAT FRAME buildSAT_usesBelow hagree CNFOUT (by decide)
+  simp only [decodeOut]
+  rw [h]
 
 end FSATSATFree
