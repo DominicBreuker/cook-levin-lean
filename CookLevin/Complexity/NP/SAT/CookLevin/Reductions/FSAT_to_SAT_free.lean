@@ -1317,4 +1317,170 @@ theorem budgetBody_fvar (s : State) (v : Nat) (r : List Nat) (bud t : Nat) (hbud
   · rw [State.get_set_eq, hRBUD, tail_replicate_succ]; simp
   · rw [State.get_set_ne _ _ _ _ (show T ≠ BUD by decide), hRT, ← List.replicate_succ']
 
+/-! ## The budget-scan loop assembly (`subtreeScan_run`, the Dyck-invariant fold) -/
+
+/-- **The arity-budget scan loop.** Starting from `SCAN = serF g ++ rest`,
+`subtreeScan` sets `T := 1^(formula_size g)` — the token count of the first
+complete subtree (`= subtreeTok (serF g ++ rest)` via `subtreeTok_serF`). `SCAN`
+is preserved (the scan runs off a copy in `SC2`); everything below the frame is
+scratch. The fold carries a **Dyck well-formedness invariant** (`∃ gs`, a forest
+of pending subtrees) rather than a raw `budgetStep^[i]` invariant, because
+`budgetBody` disagrees with `budgetStep` on malformed streams — the invariant
+keeps the machine on the well-formed trajectory, so the malformed branch is never
+reached while the budget is positive. -/
+theorem subtreeScan_run (u : State) (g : formula) (rest : List Nat)
+    (hSCAN : State.get u SCAN = serF g ++ rest) :
+    State.get (subtreeScan.eval u) T = List.replicate (formula_size g) 1
+    ∧ State.get (subtreeScan.eval u) SCAN = serF g ++ rest
+    ∧ (∀ r : Var, r ≠ SC2 → r ≠ BUD → r ≠ T → r ≠ NEB → r ≠ H1B → r ≠ H2B →
+        r ≠ DN2 → r ≠ SKIP → r ≠ IDX3 → r ≠ H3 → r ≠ IDX2 →
+        State.get (subtreeScan.eval u) r = State.get u r) := by
+  -- The post-prefix state: `SC2 = SCAN`, `BUD = 1`, `T = 0`.
+  set P0 : State := ((u.set SC2 (serF g ++ rest)).set BUD [1]).set T [] with hP0
+  have hpre : subtreeScan.eval u = (Cmd.forBnd IDX2 SCAN budgetBody).eval P0 := by
+    unfold subtreeScan
+    rw [Cmd.eval_seq, Cmd.eval_op, Op.eval, hSCAN, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+      Cmd.eval_seq, Cmd.eval_op, Op.eval, Cmd.eval_seq, Cmd.eval_op, Op.eval]
+    congr 1
+    rw [hP0]
+    simp only [State.get_set_eq, List.nil_append, State.set_set]
+  have hP0SC2 : State.get P0 SC2 = serF g ++ rest := by
+    rw [hP0, State.get_set_ne _ _ _ _ (show SC2 ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show SC2 ≠ BUD by decide), State.get_set_eq]
+  have hP0BUD : State.get P0 BUD = [1] := by
+    rw [hP0, State.get_set_ne _ _ _ _ (show BUD ≠ T by decide), State.get_set_eq]
+  have hP0T : State.get P0 T = [] := by rw [hP0, State.get_set_eq]
+  have hP0SCAN : State.get P0 SCAN = serF g ++ rest := by
+    rw [hP0, State.get_set_ne _ _ _ _ (show SCAN ≠ T by decide),
+      State.get_set_ne _ _ _ _ (show SCAN ≠ BUD by decide),
+      State.get_set_ne _ _ _ _ (show SCAN ≠ SC2 by decide), hSCAN]
+  have hP0frame : ∀ r : Var, r ≠ SC2 → r ≠ BUD → r ≠ T →
+      State.get P0 r = State.get u r := by
+    intro r h1 h2 h3
+    rw [hP0, State.get_set_ne _ _ _ _ h3, State.get_set_ne _ _ _ _ h2,
+      State.get_set_ne _ _ _ _ h1]
+  clear_value P0
+  -- The Dyck invariant: `gs` = the forest of pending subtrees.
+  set M : Nat → State → Prop := fun i st =>
+    (∃ gs : List formula,
+        State.get st SC2 = (gs.map serF).flatten ++ rest
+      ∧ State.get st BUD = List.replicate gs.length 1
+      ∧ State.get st T = List.replicate (min i (formula_size g)) 1
+      ∧ (gs.map formula_size).sum + min i (formula_size g) = formula_size g)
+    ∧ (∀ r : Var, r ≠ SC2 → r ≠ BUD → r ≠ T → r ≠ NEB → r ≠ H1B → r ≠ H2B →
+        r ≠ DN2 → r ≠ SKIP → r ≠ IDX3 → r ≠ H3 → r ≠ IDX2 →
+        State.get st r = State.get P0 r) with hMdef
+  have h0 : M 0 P0 := by
+    refine ⟨⟨[g], ?_, ?_, ?_, ?_⟩, fun r _ _ _ _ _ _ _ _ _ _ _ => rfl⟩
+    · rw [hP0SC2]; simp [List.map_cons, List.map_nil, List.flatten_cons, List.flatten_nil]
+    · rw [hP0BUD]; rfl
+    · rw [hP0T]; simp
+    · simp [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil]
+  have hstep : ∀ i st, i < (serF g ++ rest).length → M i st →
+      M (i + 1) (budgetBody.eval (st.set IDX2 (List.replicate i 1))) := by
+    intro i st _ hM
+    obtain ⟨⟨gs, hSC2, hBUD, hT, hcons⟩, hframe⟩ := hM
+    set w := st.set IDX2 (List.replicate i 1) with hw
+    have hwSC2 : State.get w SC2 = State.get st SC2 := State.get_set_ne _ _ _ _ (by decide)
+    have hwBUD : State.get w BUD = State.get st BUD := State.get_set_ne _ _ _ _ (by decide)
+    have hwT : State.get w T = State.get st T := State.get_set_ne _ _ _ _ (by decide)
+    have hframe' : ∀ r : Var, r ≠ SC2 → r ≠ BUD → r ≠ T → r ≠ NEB → r ≠ H1B → r ≠ H2B →
+        r ≠ DN2 → r ≠ SKIP → r ≠ IDX3 → r ≠ H3 → r ≠ IDX2 →
+        State.get (budgetBody.eval w) r = State.get P0 r := by
+      intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11
+      rw [budgetBody_frame w r h4 h5 h6 h3 h1 h2 h7 h8 h9 h10, hw,
+        State.get_set_ne _ _ _ _ h11]
+      exact hframe r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11
+    refine ⟨?_, hframe'⟩
+    cases gs with
+    | nil =>
+        have hBUDe : State.get w BUD = [] := by rw [hwBUD, hBUD]; rfl
+        have hcons' : min i (formula_size g) = formula_size g := by
+          simp only [List.map_nil, List.sum_nil, Nat.zero_add] at hcons; omega
+        refine ⟨[], ?_, ?_, ?_, ?_⟩
+        · rw [budgetBody_freeze w SC2 (by decide) (by decide) hBUDe, hwSC2, hSC2]
+        · rw [budgetBody_freeze w BUD (by decide) (by decide) hBUDe, hBUDe]; rfl
+        · rw [budgetBody_freeze w T (by decide) (by decide) hBUDe, hwT, hT]
+          congr 1; omega
+        · simp only [List.map_nil, List.sum_nil, Nat.zero_add]; omega
+    | cons g₀ gs' =>
+        have hwBUD' : State.get w BUD = List.replicate (gs'.length + 1) 1 := by
+          rw [hwBUD, hBUD, List.length_cons]
+        have hbudne : gs'.length + 1 ≠ 0 := by omega
+        have hg0pos : 1 ≤ formula_size g₀ := formula_size_pos g₀
+        have hsumdecomp : ((g₀ :: gs').map formula_size).sum
+            = formula_size g₀ + (gs'.map formula_size).sum := by
+          simp [List.map_cons, List.sum_cons]
+        have hmin : min i (formula_size g) = i := by omega
+        have hmin1 : min (i + 1) (formula_size g) = i + 1 := by omega
+        have hwT' : State.get w T = List.replicate (min i (formula_size g)) 1 := by rw [hwT, hT]
+        have hSCtail : State.get w SC2 = serF g₀ ++ ((gs'.map serF).flatten ++ rest) := by
+          rw [hwSC2, hSC2]; simp [List.map_cons, List.flatten_cons, List.append_assoc]
+        cases g₀ with
+        | ftrue =>
+            have hSCt : State.get w SC2 = 0 :: 0 :: ((gs'.map serF).flatten ++ rest) := by
+              rw [hSCtail]; rfl
+            obtain ⟨hbSC, hbBUD, hbT⟩ :=
+              budgetBody_ftrue w _ (gs'.length + 1) (min i (formula_size g)) hbudne hwBUD' hSCt hwT'
+            refine ⟨gs', ?_, ?_, ?_, ?_⟩
+            · exact hbSC
+            · rw [hbBUD, Nat.add_sub_cancel]
+            · rw [hbT, hmin, hmin1]
+            · rw [hmin1]; simp only [List.map_cons, List.sum_cons, formula_size] at hcons ⊢; omega
+        | fvar v =>
+            have hSCt : State.get w SC2
+                = 1 :: 1 :: 1 :: (List.replicate v 1 ++ 0 :: ((gs'.map serF).flatten ++ rest)) := by
+              rw [hSCtail]; simp [BinaryCCFSATFree.serF, List.append_assoc]
+            obtain ⟨hbSC, hbBUD, hbT⟩ :=
+              budgetBody_fvar w v _ (gs'.length + 1) (min i (formula_size g)) hbudne hwBUD' hSCt hwT'
+            refine ⟨gs', ?_, ?_, ?_, ?_⟩
+            · exact hbSC
+            · rw [hbBUD, Nat.add_sub_cancel]
+            · rw [hbT, hmin, hmin1]
+            · rw [hmin1]; simp only [List.map_cons, List.sum_cons, formula_size] at hcons ⊢; omega
+        | fand a b =>
+            have hSCt : State.get w SC2
+                = 0 :: 1 :: (serF a ++ serF b ++ ((gs'.map serF).flatten ++ rest)) := by
+              rw [hSCtail]; simp [BinaryCCFSATFree.serF, List.append_assoc]
+            obtain ⟨hbSC, hbBUD, hbT⟩ :=
+              budgetBody_fand w _ (gs'.length + 1) (min i (formula_size g)) hbudne hwBUD' hSCt hwT'
+            refine ⟨a :: b :: gs', ?_, ?_, ?_, ?_⟩
+            · rw [hbSC]; simp [List.map_cons, List.flatten_cons, List.append_assoc]
+            · rw [hbBUD, List.length_cons, List.length_cons]
+            · rw [hbT, hmin, hmin1]
+            · rw [hmin1]; simp only [List.map_cons, List.sum_cons, formula_size] at hcons ⊢; omega
+        | forr a b =>
+            have hSCt : State.get w SC2
+                = 1 :: 0 :: (serF a ++ serF b ++ ((gs'.map serF).flatten ++ rest)) := by
+              rw [hSCtail]; simp [BinaryCCFSATFree.serF, List.append_assoc]
+            obtain ⟨hbSC, hbBUD, hbT⟩ :=
+              budgetBody_forr w _ (gs'.length + 1) (min i (formula_size g)) hbudne hwBUD' hSCt hwT'
+            refine ⟨a :: b :: gs', ?_, ?_, ?_, ?_⟩
+            · rw [hbSC]; simp [List.map_cons, List.flatten_cons, List.append_assoc]
+            · rw [hbBUD, List.length_cons, List.length_cons]
+            · rw [hbT, hmin, hmin1]
+            · rw [hmin1]; simp only [List.map_cons, List.sum_cons, formula_size] at hcons ⊢; omega
+        | fneg a =>
+            have hSCt : State.get w SC2
+                = 1 :: 1 :: 0 :: (serF a ++ ((gs'.map serF).flatten ++ rest)) := by
+              rw [hSCtail]; simp [BinaryCCFSATFree.serF, List.append_assoc]
+            obtain ⟨hbSC, hbBUD, hbT⟩ :=
+              budgetBody_fneg w _ (gs'.length + 1) (min i (formula_size g)) hbudne hwBUD' hSCt hwT'
+            refine ⟨a :: gs', ?_, ?_, ?_, ?_⟩
+            · rw [hbSC]; simp [List.map_cons, List.flatten_cons, List.append_assoc]
+            · rw [hbBUD, List.length_cons]
+            · rw [hbT, hmin, hmin1]
+            · rw [hmin1]; simp only [List.map_cons, List.sum_cons, formula_size] at hcons ⊢; omega
+  have hInv := Cmd.foldlState_range_induct budgetBody IDX2 (serF g ++ rest).length P0 M h0 hstep
+  rw [hpre, Cmd.eval_forBnd, hP0SCAN]
+  obtain ⟨⟨_, _, _, hTf, _⟩, hframef⟩ := hInv
+  have hnge : formula_size g ≤ (serF g ++ rest).length := by
+    rw [List.length_append]; have := formula_size_le_serF g; omega
+  refine ⟨?_, ?_, ?_⟩
+  · rw [hTf, show min (serF g ++ rest).length (formula_size g) = formula_size g from by omega]
+  · rw [hframef SCAN (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide) (by decide) (by decide), hP0SCAN]
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11
+    rw [hframef r h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11, hP0frame r h1 h2 h3]
+
 end FSATSATFree
