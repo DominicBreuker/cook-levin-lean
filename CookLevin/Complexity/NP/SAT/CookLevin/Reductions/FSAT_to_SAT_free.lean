@@ -2497,4 +2497,104 @@ theorem buildSAT_decode_agree (f : formula) (m : Nat) :
   simp only [decodeOut]
   rw [h]
 
+/-! ## Cost accounting — leaf loop cost lemmas -/
+
+/-- Preservation helper: `drainVarBody` never grows `SCAN`. -/
+theorem drainVarBody_SCAN_le (st : State) (m0 : Nat)
+    (h : (State.get st SCAN).length ≤ m0) :
+    (State.get (drainVarBody.eval st) SCAN).length ≤ m0 := by
+  unfold drainVarBody
+  by_cases hDN : State.get st DN = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hDN, nop, Cmd.eval_op, Op.eval,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ SKIP by decide)]
+    exact h
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hDN, Cmd.eval_seq, Cmd.eval_seq]
+    set s0 := (Cmd.op (Op.head H3 SCAN)).eval st with hs0
+    set s1 := (Cmd.op (Op.tail SCAN SCAN)).eval s0 with hs1
+    have hs0SCAN : State.get s0 SCAN = State.get st SCAN := by
+      rw [hs0, Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H3 by decide)]
+    have hSCAN1 : (State.get s1 SCAN).length ≤ m0 := by
+      rw [hs1, Cmd.eval_op, Op.eval, State.get_set_eq, List.length_tail, hs0SCAN]; omega
+    by_cases hH3 : State.get s1 H3 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH3, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (show SCAN ≠ VREG by decide)]
+      exact hSCAN1
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH3, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ DN by decide),
+        State.get_set_ne _ _ _ _ (show SCAN ≠ DN by decide)]
+      exact hSCAN1
+
+/-- Cost of the outer-fvar drain loop `forBnd IDX3 SCAN drainVarBody`:
+`≤ 1 + m·(1560·(m+1)) + m²` where `m = |SCAN|`. -/
+theorem drainVar_cost (s : State) (m : Nat) (hm : (State.get s SCAN).length = m) :
+    (Cmd.forBnd IDX3 SCAN drainVarBody).cost s
+      ≤ 1 + m * (drainVarBody.flatK * (m + 1)) + m * m := by
+  have h := Cmd.cost_forBnd_flat_le IDX3 SCAN drainVarBody (by decide) s m
+    (fun _ st => (State.get st SCAN).length ≤ m)
+    (le_of_eq hm)
+    (fun i st _ hM => by
+      have := drainVarBody_SCAN_le (st.set IDX3 (List.replicate i 1)) m
+        (by rw [State.get_set_ne _ _ _ _ (show SCAN ≠ IDX3 by decide)]; exact hM)
+      exact this)
+    (fun i st _ hM r hr => by
+      rw [show drainVarBody.costReads = [SCAN] from rfl] at hr
+      simp only [List.mem_singleton] at hr
+      subst hr
+      rw [State.get_set_ne _ _ _ _ (show SCAN ≠ IDX3 by decide)]
+      exact hM)
+  rw [hm] at h
+  exact h
+
+/-- Cost of the budget-fvar skip loop `forBnd IDX3 SC2 drainSkipBody`:
+`≤ 1 + m·(1560·(m+1)) + m²` where `m = |SC2|`. -/
+theorem drainSkipBody_SC2_le (st : State) (m0 : Nat)
+    (h : (State.get st SC2).length ≤ m0) :
+    (State.get (drainSkipBody.eval st) SC2).length ≤ m0 := by
+  unfold drainSkipBody
+  by_cases hDN2 : State.get st DN2 = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hDN2, nop, Cmd.eval_op, Op.eval,
+      State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide)]
+    exact h
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hDN2, Cmd.eval_seq, Cmd.eval_seq]
+    set s0 := (Cmd.op (Op.head H3 SC2)).eval st with hs0
+    set s1 := (Cmd.op (Op.tail SC2 SC2)).eval s0 with hs1
+    have hs0SC2 : State.get s0 SC2 = State.get st SC2 := by
+      rw [hs0, Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SC2 ≠ H3 by decide)]
+    have hSC21 : (State.get s1 SC2).length ≤ m0 := by
+      rw [hs1, Cmd.eval_op, Op.eval, State.get_set_eq, List.length_tail, hs0SC2]; omega
+    by_cases hH3 : State.get s1 H3 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH3, nop, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide)]
+      exact hSC21
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH3, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SC2 ≠ DN2 by decide),
+        State.get_set_ne _ _ _ _ (show SC2 ≠ DN2 by decide)]
+      exact hSC21
+
+theorem drainSkip_cost (s : State) (m : Nat) (hm : (State.get s SC2).length = m) :
+    (Cmd.forBnd IDX3 SC2 drainSkipBody).cost s
+      ≤ 1 + m * (drainSkipBody.flatK * (m + 1)) + m * m := by
+  have h := Cmd.cost_forBnd_flat_le IDX3 SC2 drainSkipBody (by decide) s m
+    (fun _ st => (State.get st SC2).length ≤ m)
+    (le_of_eq hm)
+    (fun i st _ hM => by
+      have := drainSkipBody_SC2_le (st.set IDX3 (List.replicate i 1)) m
+        (by rw [State.get_set_ne _ _ _ _ (show SC2 ≠ IDX3 by decide)]; exact hM)
+      exact this)
+    (fun i st _ hM r hr => by
+      rw [show drainSkipBody.costReads = [SC2] from rfl] at hr
+      simp only [List.mem_singleton] at hr
+      subst hr
+      rw [State.get_set_ne _ _ _ _ (show SC2 ≠ IDX3 by decide)]
+      exact hM)
+  rw [hm] at h
+  exact h
+
+/-- Cost of the phase-0 length loop `forBnd IDX0 SERF (appendOne B)`:
+`≤ 1 + m·5 + m²` where `m = |SERF|`. -/
+theorem Bloop_cost (s : State) (m : Nat) (hm : (State.get s SERF).length = m) :
+    (Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).cost s
+      ≤ 1 + m * (Cmd.op (Op.appendOne B)).flatK + m * m :=
+  cost_constLoop_le IDX0 SERF (Cmd.op (Op.appendOne B)) (by decide) rfl s m hm
+
 end FSATSATFree
