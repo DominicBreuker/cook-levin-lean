@@ -3019,4 +3019,57 @@ theorem subtreeScan_T_le (s : State) :
   rw [hSCAN_P0] at hInv ⊢
   exact hInv
 
+/-! ## Cost accounting — emit-gadget bound helper + VREG effect -/
+
+private theorem getne' (o : Op) (s : State) (r : Var) (hr : r ≠ o.writesTo) :
+    State.get ((Cmd.op o).eval s) r = State.get s r := by
+  rw [Cmd.eval_op]; exact Op.eval_get_ne_writesTo o s r hr
+
+/-- A loop-free gadget with all `costReads ≤ E+3N+1` costs `≤ g.flatK · X`
+where `X = (E+N+3)³`. -/
+private theorem gad_le (g : Cmd) (hlf : g.loopFree = true) (E N : Nat) (s' : State)
+    (h : ∀ r ∈ g.costReads, (State.get s' r).length ≤ E + 3 * N + 1) :
+    g.cost s' ≤ g.flatK * (E + N + 3) ^ 3 := by
+  refine le_trans (Cmd.cost_le_flat g hlf s' (E + 3 * N + 1) h).1 ?_
+  refine Nat.mul_le_mul_left _ ?_
+  have hy : (3 : Nat) ≤ E + N + 3 := by omega
+  have hsq : 9 ≤ (E + N + 3) * (E + N + 3) := by nlinarith [hy]
+  have hcube : 3 * (E + N + 3) ≤ (E + N + 3) * (E + N + 3) * (E + N + 3) := by
+    nlinarith [hy, hsq]
+  calc E + 3 * N + 1 + 1 ≤ 3 * (E + N + 3) := by omega
+    _ ≤ (E + N + 3) * (E + N + 3) * (E + N + 3) := hcube
+    _ = (E + N + 3) ^ 3 := by ring
+
+/-- `drainVarBody` grows `VREG` by at most one. -/
+theorem drainVarBody_VREG_le (w : State) :
+    (State.get (drainVarBody.eval w) VREG).length ≤ (State.get w VREG).length + 1 := by
+  unfold drainVarBody
+  by_cases hDN : State.get w DN = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hDN, nop, getne' _ _ _ (by decide)]; omega
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hDN, Cmd.eval_seq, Cmd.eval_seq]
+    set s0 := (Cmd.op (Op.head H3 SCAN)).eval w with hs0
+    set s1 := (Cmd.op (Op.tail SCAN SCAN)).eval s0 with hs1
+    have hVREGs1 : State.get s1 VREG = State.get w VREG := by
+      rw [hs1, getne' _ _ _ (by decide), hs0, getne' _ _ _ (by decide)]
+    by_cases hH3 : State.get s1 H3 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH3, Cmd.eval_op, Op.eval, State.get_set_eq,
+        List.length_append, List.length_singleton, hVREGs1]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH3, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show VREG ≠ DN by decide),
+        State.get_set_ne _ _ _ _ (show VREG ≠ DN by decide), hVREGs1]; omega
+
+/-- The `drainVar` loop leaves `VREG` no longer than `|VREG| + |SCAN|`. -/
+theorem drainVar_VREG_le (s : State) :
+    (State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval s) VREG).length
+      ≤ (State.get s VREG).length + (State.get s SCAN).length := by
+  rw [Cmd.eval_forBnd]
+  have h0 : (State.get s VREG).length ≤ (State.get s VREG).length + 0 := by omega
+  have hInv := Cmd.foldlState_range_induct drainVarBody IDX3 (State.get s SCAN).length s
+    (fun i st => (State.get st VREG).length ≤ (State.get s VREG).length + i) h0
+    (fun i st _ hM => by
+      have e : State.get (st.set IDX3 (List.replicate i 1)) VREG = State.get st VREG :=
+        State.get_set_ne _ _ _ _ (by decide)
+      refine le_trans (drainVarBody_VREG_le _) ?_; rw [e]; omega)
+  exact hInv
+
 end FSATSATFree
