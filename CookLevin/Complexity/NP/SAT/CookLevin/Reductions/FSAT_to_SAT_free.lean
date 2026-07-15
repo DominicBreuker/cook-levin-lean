@@ -2254,4 +2254,139 @@ theorem outerLoop_run (u : State) (f : formula) (C0 T0 : List Nat)
   · rw [hCN, hscan]
   · rw [hTL, hscan]
 
+/-! ## The reduction program's run lemma (`buildSAT_run`, the assembly) -/
+
+/-- The B-length loop: `forBnd IDX0 SERF (appendOne B)` fills `B` with
+`1^|SERF|`; every register other than `B`/`IDX0` is preserved. -/
+theorem Bloop_run (s : State) (hB : State.get s B = []) :
+    State.get ((Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).eval s) B
+        = List.replicate (State.get s SERF).length 1
+    ∧ (∀ r : Var, r ≠ B → r ≠ IDX0 →
+        State.get ((Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).eval s) r = State.get s r) := by
+  set M : Nat → State → Prop := fun i st =>
+    State.get st B = List.replicate i 1
+    ∧ (∀ r : Var, r ≠ B → r ≠ IDX0 → State.get st r = State.get s r) with hMdef
+  have h0 : M 0 s := by
+    refine ⟨?_, fun r _ _ => rfl⟩
+    simp [hB]
+  have hstep : ∀ i st, i < (State.get s SERF).length → M i st →
+      M (i + 1) ((Cmd.op (Op.appendOne B)).eval (st.set IDX0 (List.replicate i 1))) := by
+    intro i st _ hM
+    obtain ⟨hBi, hfr⟩ := hM
+    set w := st.set IDX0 (List.replicate i 1) with hw
+    refine ⟨?_, ?_⟩
+    · rw [Cmd.eval_op, Op.eval, State.get_set_eq, hw,
+        State.get_set_ne _ _ _ _ (show B ≠ IDX0 by decide), hBi, ← List.replicate_succ']
+    · intro r hr1 hr2
+      rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ hr1, hw,
+        State.get_set_ne _ _ _ _ hr2]
+      exact hfr r hr1 hr2
+  have hInv := Cmd.foldlState_range_induct (Cmd.op (Op.appendOne B)) IDX0
+    (State.get s SERF).length s M h0 hstep
+  rw [Cmd.eval_forBnd]
+  exact hInv
+
+theorem buildSAT_run (f : formula) :
+    State.get (buildSAT.eval (encodeIn f)) CNFOUT = encodeCnf (fsatToSat f)
+    ∧ State.get (buildSAT.eval (encodeIn f)) TALLY
+        = List.replicate (fsatToSat f).length 1 := by
+  -- initial reads on `encodeIn f = [serF f]`
+  have hu0SERF : State.get (encodeIn f) SERF = serF f := rfl
+  have hu0B : State.get (encodeIn f) B = [] := rfl
+  -- clear B (already empty, but set anyway)
+  set c_a := (encodeIn f).set B [] with hca
+  have e_clearB : (Cmd.op (Op.clear B)).eval (encodeIn f) = c_a := by
+    rw [Cmd.eval_op, Op.eval, hca]
+  have hcaB : State.get c_a B = [] := by rw [hca, State.get_set_eq]
+  have hcaSERF : State.get c_a SERF = serF f := by
+    rw [hca, State.get_set_ne _ _ _ _ (show SERF ≠ B by decide), hu0SERF]
+  -- B-loop
+  obtain ⟨hcBB, hcBfr⟩ := Bloop_run c_a hcaB
+  set cB := (Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).eval c_a with hcB
+  rw [hcaSERF] at hcBB
+  have hcBSERF : State.get cB SERF = serF f := by
+    rw [hcBfr SERF (by decide) (by decide), hcaSERF]
+  -- copy SCAN SERF
+  set c_scan := cB.set SCAN (serF f) with hcscan
+  have e_copySCAN : (Cmd.op (Op.copy SCAN SERF)).eval cB = c_scan := by
+    rw [Cmd.eval_op, Op.eval, hcBSERF, hcscan]
+  -- clear K, TALLY, CNFOUT
+  set c_k := c_scan.set K [] with hck
+  have e_clearK : (Cmd.op (Op.clear K)).eval c_scan = c_k := by rw [Cmd.eval_op, Op.eval, hck]
+  set c_tal := c_k.set TALLY [] with hctal
+  have e_clearTAL : (Cmd.op (Op.clear TALLY)).eval c_k = c_tal := by rw [Cmd.eval_op, Op.eval, hctal]
+  set c_cnf := c_tal.set CNFOUT [] with hccnf
+  have e_clearCNF : (Cmd.op (Op.clear CNFOUT)).eval c_tal = c_cnf := by
+    rw [Cmd.eval_op, Op.eval, hccnf]
+  -- copy VA B
+  have hccnfB : State.get c_cnf B = List.replicate (serF f).length 1 := by
+    rw [hccnf, State.get_set_ne _ _ _ _ (show B ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show B ≠ TALLY by decide), hck,
+      State.get_set_ne _ _ _ _ (show B ≠ K by decide), hcscan,
+      State.get_set_ne _ _ _ _ (show B ≠ SCAN by decide), hcBB]
+  set c_va := c_cnf.set VA (List.replicate (serF f).length 1) with hcva
+  have e_copyVA : (Cmd.op (Op.copy VA B)).eval c_cnf = c_va := by
+    rw [Cmd.eval_op, Op.eval, hccnfB, hcva]
+  -- the top clause (`emitTrueG` at variable `(serF f).length`), then the loop
+  have heval : buildSAT.eval (encodeIn f)
+      = (Cmd.forBnd IDX1 SERF tokenBody).eval (emitTrueG.eval c_va) := by
+    unfold buildSAT emitTrueG
+    rw [Cmd.eval_seq, e_clearB, Cmd.eval_seq, ← hcB, Cmd.eval_seq, e_copySCAN,
+      Cmd.eval_seq, e_clearK, Cmd.eval_seq, e_clearTAL, Cmd.eval_seq, e_clearCNF,
+      Cmd.eval_seq, e_copyVA]
+    simp only [Cmd.eval_seq]
+  -- reads at the loop's entry state `emitTrueG.eval c_va`
+  have hcvaVA : State.get c_va VA = List.replicate (serF f).length 1 := by
+    rw [hcva, State.get_set_eq]
+  have hcvaSCAN : State.get c_va SCAN = serF f := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show SCAN ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ TALLY by decide), hck,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide), hcscan, State.get_set_eq]
+  have hcvaK : State.get c_va K = [] := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show K ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show K ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show K ≠ TALLY by decide), hck, State.get_set_eq]
+  have hcvaCNF : State.get c_va CNFOUT = [] := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show CNFOUT ≠ VA by decide), hccnf, State.get_set_eq]
+  have hcvaTAL : State.get c_va TALLY = [] := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show TALLY ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), hctal, State.get_set_eq]
+  have hcvaB : State.get c_va B = List.replicate (serF f).length 1 := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show B ≠ VA by decide), hccnfB]
+  have hcvaSERF : State.get c_va SERF = serF f := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show SERF ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show SERF ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show SERF ≠ TALLY by decide), hck,
+      State.get_set_ne _ _ _ _ (show SERF ≠ K by decide), hcscan,
+      State.get_set_ne _ _ _ _ (show SERF ≠ SCAN by decide), hcBSERF]
+  -- emitTrueG: CNFOUT = encodeCnf (tseytinTrue L), TALLY = 1^1, others framed
+  set u1 := emitTrueG.eval c_va with hu1
+  have hu1CNF : State.get u1 CNFOUT = encodeCnf (tseytinTrue (serF f).length) := by
+    rw [hu1, emitTrueG_cnfout c_va (serF f).length hcvaVA, hcvaCNF, List.nil_append]
+  have hu1TAL : State.get u1 TALLY = List.replicate 1 1 := by
+    rw [hu1, emitTrueG_tally c_va, hcvaTAL, List.nil_append]
+  have hu1SCAN : State.get u1 SCAN = serF f := by
+    rw [hu1, emitTrueG_frame c_va SCAN (by decide) (by decide), hcvaSCAN]
+  have hu1K : State.get u1 K = [] := by
+    rw [hu1, emitTrueG_frame c_va K (by decide) (by decide), hcvaK]
+  have hu1B : State.get u1 B = List.replicate (serF f).length 1 := by
+    rw [hu1, emitTrueG_frame c_va B (by decide) (by decide), hcvaB]
+  have hu1SERF : State.get u1 SERF = serF f := by
+    rw [hu1, emitTrueG_frame c_va SERF (by decide) (by decide), hcvaSERF]
+  -- run the outer loop
+  obtain ⟨hLCNF, hLTAL⟩ :=
+    outerLoop_run u1 f (encodeCnf (tseytinTrue (serF f).length)) (List.replicate 1 1)
+      hu1SCAN hu1K hu1CNF hu1TAL hu1B hu1SERF
+  -- the top clause is exactly `mScan`'s head
+  have htop : tseytinTrue (serF f).length
+      ++ scanClauses (serF f).length ((serF f).length + 1) 0 (serF f) = fsatToSat f := by
+    rw [← mScan_eq_fsatToSat]; rfl
+  refine ⟨?_, ?_⟩
+  · rw [heval, hLCNF, ← encodeCnf_append, htop]
+  · have hlen : (fsatToSat f).length
+        = 1 + (scanClauses (serF f).length ((serF f).length + 1) 0 (serF f)).length := by
+      rw [← mScan_eq_fsatToSat]; simp only [mScan, List.length_cons]; omega
+    rw [heval, hLTAL, hlen, List.replicate_add]
+
 end FSATSATFree
