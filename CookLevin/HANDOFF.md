@@ -534,9 +534,22 @@ fold-cost lemma; commit each green):**
    `|CNFOUT| ≤ E`, `|SCAN|,|B|,|K| ≤ N`. Collect coeffs with `cmb` (each combine
    yields `(1+a+b)·X`); the final `Σcoeff ≤ tokFK` is one `omega` (flatKs as
    atoms; `tokFK = 100000 + Σflatk` has ample headroom for the ~8 pieces + the
-   `(E+3N+2) ≤ (E+N+3)³` slack). Est. ~200 lines of the same frame-threading
-   pattern as `budgetBodyInner_cost` (an in-scratch attempt got the skeleton +
-   prefix threading green; the branch bounds are the remaining mechanical work).
+   `(E+3N+2) ≤ (E+N+3)³` slack). **A full candidate proof was written
+   (2026-07-15-b)** — a standalone `tree_cost` (the `ifBit H1/H2/H3` sub-tree,
+   per-branch `gad_le` + loop costs, `cost_ifBit_le` to sum) and a `tokenBody_cost`
+   (prefix threading + `tree_cost` + assembly), both structurally correct. **⚠⚠
+   PERF FINDING — the reason it is NOT landed: `tree_cost` as written is
+   pathologically slow (>14 min / 4 GB, blows the default 200 000 heartbeats).**
+   The next agent MUST fix this before committing:
+   (a) **`clear_value` every `set sA/sB/q1/st3/r1/r2/sd`** immediately after its
+       defining `rw`s (the un-cleared nested `State.set` gotcha — the branch
+       states are re-unfolded by `omega`/`fin_cases`);
+   (b) **precompute the `subtreeScan`/`drainVar`-loop frame facts ONCE** as
+       `private` one-liners (`State.get (subtreeScan.eval s) CNFOUT = … := Cmd.eval_get_of_not_writes _ _ _ (by decide)` for `CNFOUT`/`VA`/`VL`, likewise `drainVar`) — the inline `by decide` on `subtreeScan.writes` recomputes the whole loop's write-set ~8× and is the likely hot spot;
+   (c) **split `tree_cost`'s five branches into separate `private` lemmas** (each
+       takes `st2` + the register bounds) so each elaborates independently and CI
+       stays per-lemma bounded.
+   Structure is validated; it is a **speed** fix, not a math fix.
 4. **`outerLoop_cost`** — `Cmd.cost_forBnd_le IDX1 SERF tokenBody` REUSING
    `outerLoop_run`'s invariant `M` (it already gives `CNFOUT = C0 ++ encodeCnf
    done` with `done` a prefix of the full clause list, so `|CNFOUT| ≤
