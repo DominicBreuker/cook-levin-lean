@@ -4267,4 +4267,36 @@ theorem buildSAT_cost_le (f : formula) :
   clear_value W
   omega
 
+
+/-! ## The free witness and the headline `⪯p'` -/
+
+/-- **`fsatToSat` as a concrete layer program** — the free
+`PolyTimeComputableLang` witness for the LAST sound-tail step (template:
+`binaryCCFSAT_reductionLang`). `decodeOut` inverts the injective `encodeCnf`
+on the SAT verifier's stream register. -/
+noncomputable def fsatSAT_reductionLang : PolyTimeComputableLang fsatToSat where
+  c := buildSAT
+  encodeIn := encodeIn
+  decodeOut := decodeOut
+  cost_bound := satBound
+  cost_bound_poly := satBound_poly
+  cost_bound_mono := satBound_mono
+  encBound := fun n => 4 * n
+  encBound_poly := inOPoly_mul (inOPoly_const 4) inOPoly_id
+  encBound_mono := fun _ _ h => Nat.mul_le_mul_left 4 h
+  encodeIn_size := encodeIn_size_le
+  computes := buildSAT_computes
+  cost_le := buildSAT_cost_le
+  output_size_le := satBound_output
+  enc_bit := encodeIn_bitState
+  regBound := FRAME
+  usesBelow := buildSAT_usesBelow
+  width_le := encodeIn_width
+  decode_agree := buildSAT_decode_agree
+
+/-- **`FSAT ⪯p' SAT`** — the LAST sound-tail step as a live honest TM-backed
+reduction. Axiom-clean: `[propext, Classical.choice, Quot.sound]`. -/
+theorem fsatSAT_reducesPolyMO' : FSAT ⪯p' SAT :=
+  reducesPolyMO'_of_langFree fsatSAT_reductionLang fsatToSat_correct
+
 end FSATSATFree
