@@ -3072,4 +3072,701 @@ theorem drainVar_VREG_le (s : State) :
       refine le_trans (drainVarBody_VREG_le _) ?_; rw [e]; omega)
   exact hInv
 
+
+/-! ## Cost accounting — `tokenBody` (the per-token cost ceiling)
+
+The growing-buffer worry is a NON-ISSUE (HANDOFF key finding): within one
+`tokenBody`, `CNFOUT` is touched only by the single emit gadget of the taken
+branch, so the gadget's entry `|CNFOUT|` is `tokenBody`'s entry `|CNFOUT| ≤ E`;
+`gad_le` absorbs the growth *inside* the gadget. Perf discipline (the
+2026-07-15-b finding): loop frame facts precomputed as `private` one-liners
+(each `by decide` over a loop write-set evaluated ONCE), the five tag branches
+as separate `private` lemmas, `clear_value` on every `set` state. -/
+
+/-- `X := (E+N+3)³` dominates the linear junk: `N ≤ X` and `27 ≤ X`. -/
+private theorem X_facts (E N : Nat) : N ≤ (E + N + 3) ^ 3 ∧ 27 ≤ (E + N + 3) ^ 3 := by
+  have h1 : E + N + 3 ≤ (E + N + 3) ^ 3 := Nat.le_self_pow (by omega) _
+  have h27 : (3 : Nat) ^ 3 ≤ (E + N + 3) ^ 3 := Nat.pow_le_pow_left (by omega) 3
+  omega
+
+/-- `(N+1)² ≤ X` (funds the `drainVar` loop bound). -/
+private theorem sq_le_X (E N : Nat) : (N + 1) * (N + 1) ≤ (E + N + 3) ^ 3 := by
+  have h2 : (N + 1) * (N + 1) ≤ (E + N + 3) * (E + N + 3) :=
+    Nat.mul_le_mul (by omega) (by omega)
+  have h3 : (E + N + 3) * (E + N + 3) ≤ (E + N + 3) ^ 3 := by
+    have he : (E + N + 3) ^ 3 = (E + N + 3) * (E + N + 3) * (E + N + 3) := by ring
+    rw [he]
+    exact Nat.le_mul_of_pos_right _ (by omega)
+  omega
+
+/-- Precomputed frame facts for `subtreeScan` (write-set `decide` done once). -/
+private theorem subtreeScan_fr_CNFOUT (s : State) :
+    State.get (subtreeScan.eval s) CNFOUT = State.get s CNFOUT :=
+  Cmd.eval_get_of_not_writes _ s CNFOUT (by decide)
+
+private theorem subtreeScan_fr_VA (s : State) :
+    State.get (subtreeScan.eval s) VA = State.get s VA :=
+  Cmd.eval_get_of_not_writes _ s VA (by decide)
+
+private theorem subtreeScan_fr_VL (s : State) :
+    State.get (subtreeScan.eval s) VL = State.get s VL :=
+  Cmd.eval_get_of_not_writes _ s VL (by decide)
+
+/-- Precomputed frame facts for the `drainVar` loop. -/
+private theorem drainVarLoop_fr_CNFOUT (s : State) :
+    State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval s) CNFOUT = State.get s CNFOUT :=
+  Cmd.eval_get_of_not_writes _ s CNFOUT (by decide)
+
+private theorem drainVarLoop_fr_VA (s : State) :
+    State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval s) VA = State.get s VA :=
+  Cmd.eval_get_of_not_writes _ s VA (by decide)
+
+/-- Uniform-ceiling `drainVar` loop cost (mirror of `drainSkip_cost_le`). -/
+private theorem drainVar_cost_le (s : State) (M : Nat)
+    (h : (State.get s SCAN).length ≤ M) :
+    (Cmd.forBnd IDX3 SCAN drainVarBody).cost s ≤ 1600 * (M + 1) * (M + 1) := by
+  have hc := drainVar_cost s (State.get s SCAN).length rfl
+  set m := (State.get s SCAN).length with hm
+  have hk : drainVarBody.flatK = 1560 := rfl
+  rw [hk] at hc
+  have : 1 + m * (1560 * (m + 1)) + m * m ≤ 1600 * (M + 1) * (M + 1) := by
+    have hmM : m ≤ M := h
+    nlinarith [hmM, Nat.zero_le m, Nat.zero_le M]
+  omega
+
+/-- ftrue branch: one `emitTrueG` gadget. -/
+private theorem brTrue_cost (st : State) (E N : Nat)
+    (hCNF : (State.get st CNFOUT).length ≤ E)
+    (hVA : (State.get st VA).length ≤ 2 * N) :
+    emitTrueG.cost st ≤ emitTrueG.flatK * (E + N + 3) ^ 3 := by
+  refine gad_le _ rfl E N st ?_
+  intro r hr
+  have e : emitTrueG.costReads = [CNFOUT, VA, CNFOUT, VA, CNFOUT, VA] := rfl
+  rw [e] at hr
+  simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl <;> omega
+
+/-- fand/forr branch payload: `subtreeScan ;; concat VR VL T ;; emitG`
+(`emitG ∈ {emitAndG, emitOrG}` — abstracted over the gadget through its
+`costReads` membership). -/
+private theorem brBin_cost (emitG : Cmd) (hlf : emitG.loopFree = true)
+    (hreads : ∀ r ∈ emitG.costReads, r = CNFOUT ∨ r = VA ∨ r = VL ∨ r = VR)
+    (st : State) (E N : Nat)
+    (hCNF : (State.get st CNFOUT).length ≤ E)
+    (hSCAN : (State.get st SCAN).length ≤ N)
+    (hVA : (State.get st VA).length ≤ 2 * N)
+    (hVL : (State.get st VL).length ≤ 2 * N + 1) :
+    (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitG).cost st
+      ≤ (2010 + emitG.flatK) * (E + N + 3) ^ 3 := by
+  obtain ⟨hNX, h27X⟩ := X_facts E N
+  rw [Cmd.cost_seq, Cmd.cost_seq]
+  -- subtreeScan cost
+  have hss : subtreeScan.cost st ≤ 2000 * (E + N + 3) ^ 3 :=
+    le_trans (subtreeScan_cost st)
+      (Nat.mul_le_mul_left _ (Nat.pow_le_pow_left (by omega) 3))
+  -- state after subtreeScan
+  set s1 := subtreeScan.eval st with hs1
+  have hT1 : (State.get s1 T).length ≤ N := le_trans (subtreeScan_T_le st) hSCAN
+  have hVL1 : (State.get s1 VL).length ≤ 2 * N + 1 := by
+    rw [hs1, subtreeScan_fr_VL]; exact hVL
+  have hVA1 : (State.get s1 VA).length ≤ 2 * N := by
+    rw [hs1, subtreeScan_fr_VA]; exact hVA
+  have hCNF1 : (State.get s1 CNFOUT).length ≤ E := by
+    rw [hs1, subtreeScan_fr_CNFOUT]; exact hCNF
+  clear_value s1
+  -- concat cost + state after concat
+  have hcc : (Cmd.op (Op.concat VR VL T)).cost s1
+      = 2 * ((State.get s1 VL).length + (State.get s1 T).length) + 1 := by
+    rw [Cmd.cost_op]; rfl
+  set s2 := (Cmd.op (Op.concat VR VL T)).eval s1 with hs2
+  have hVR2 : (State.get s2 VR).length ≤ 3 * N + 1 := by
+    rw [hs2, Cmd.eval_op]
+    show (State.get (s1.set VR (State.get s1 VL ++ State.get s1 T)) VR).length ≤ _
+    rw [State.get_set_eq, List.length_append]
+    omega
+  have hCNF2 : (State.get s2 CNFOUT).length ≤ E := by
+    rw [hs2, getne' _ _ _ (by decide)]; exact hCNF1
+  have hVA2 : (State.get s2 VA).length ≤ 2 * N := by
+    rw [hs2, getne' _ _ _ (by decide)]; exact hVA1
+  have hVL2 : (State.get s2 VL).length ≤ 2 * N + 1 := by
+    rw [hs2, getne' _ _ _ (by decide)]; exact hVL1
+  clear_value s2
+  -- the gadget
+  have hg : emitG.cost s2 ≤ emitG.flatK * (E + N + 3) ^ 3 := by
+    refine gad_le _ hlf E N s2 ?_
+    intro r hr
+    rcases hreads r hr with rfl | rfl | rfl | rfl <;> omega
+  -- combine
+  rw [Nat.add_mul]
+  set css := subtreeScan.cost st with hcss
+  clear_value css
+  set cg := emitG.cost s2 with hcg
+  clear_value cg
+  set P := emitG.flatK * (E + N + 3) ^ 3 with hP
+  clear_value P
+  set X := (E + N + 3) ^ 3 with hX
+  clear_value X
+  omega
+
+/-- fvar branch payload: drain the unary payload into `VREG`, emit the equiv
+gadget. -/
+private theorem brVar_cost (st : State) (E N : Nat)
+    (hCNF : (State.get st CNFOUT).length ≤ E)
+    (hSCAN : (State.get st SCAN).length ≤ N)
+    (hVA : (State.get st VA).length ≤ 2 * N) :
+    (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+       Cmd.forBnd IDX3 SCAN drainVarBody ;; emitEquivG).cost st
+      ≤ (1620 + emitEquivG.flatK) * (E + N + 3) ^ 3 := by
+  obtain ⟨hNX, h27X⟩ := X_facts E N
+  rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq]
+  have hc1 : (Cmd.op (Op.clear VREG)).cost st = 1 := by rw [Cmd.cost_op]; rfl
+  set q1 := (Cmd.op (Op.clear VREG)).eval st with hq1
+  have hVREG1 : State.get q1 VREG = [] := by
+    rw [hq1, Cmd.eval_op]
+    show State.get (st.set VREG []) VREG = []
+    rw [State.get_set_eq]
+  have hSCAN1 : (State.get q1 SCAN).length ≤ N := by
+    rw [hq1, getne' _ _ _ (by decide)]; exact hSCAN
+  have hCNF1 : (State.get q1 CNFOUT).length ≤ E := by
+    rw [hq1, getne' _ _ _ (by decide)]; exact hCNF
+  have hVA1 : (State.get q1 VA).length ≤ 2 * N := by
+    rw [hq1, getne' _ _ _ (by decide)]; exact hVA
+  clear_value q1
+  have hc2 : (Cmd.op (Op.clear DN)).cost q1 = 1 := by rw [Cmd.cost_op]; rfl
+  set q2 := (Cmd.op (Op.clear DN)).eval q1 with hq2
+  have hVREG2 : State.get q2 VREG = [] := by
+    rw [hq2, getne' _ _ _ (by decide)]; exact hVREG1
+  have hSCAN2 : (State.get q2 SCAN).length ≤ N := by
+    rw [hq2, getne' _ _ _ (by decide)]; exact hSCAN1
+  have hCNF2 : (State.get q2 CNFOUT).length ≤ E := by
+    rw [hq2, getne' _ _ _ (by decide)]; exact hCNF1
+  have hVA2 : (State.get q2 VA).length ≤ 2 * N := by
+    rw [hq2, getne' _ _ _ (by decide)]; exact hVA1
+  clear_value q2
+  -- the drain loop
+  have hloop : (Cmd.forBnd IDX3 SCAN drainVarBody).cost q2 ≤ 1600 * (E + N + 3) ^ 3 := by
+    refine le_trans (drainVar_cost_le q2 N hSCAN2) ?_
+    have := sq_le_X E N
+    calc 1600 * (N + 1) * (N + 1) = 1600 * ((N + 1) * (N + 1)) := by ring
+      _ ≤ 1600 * (E + N + 3) ^ 3 := Nat.mul_le_mul_left _ this
+  set q3 := (Cmd.forBnd IDX3 SCAN drainVarBody).eval q2 with hq3
+  have hVREG3 : (State.get q3 VREG).length ≤ N := by
+    rw [hq3]
+    refine le_trans (drainVar_VREG_le q2) ?_
+    rw [hVREG2]
+    simpa using hSCAN2
+  have hCNF3 : (State.get q3 CNFOUT).length ≤ E := by
+    rw [hq3, drainVarLoop_fr_CNFOUT]; exact hCNF2
+  have hVA3 : (State.get q3 VA).length ≤ 2 * N := by
+    rw [hq3, drainVarLoop_fr_VA]; exact hVA2
+  clear_value q3
+  -- the gadget
+  have hg : emitEquivG.cost q3 ≤ emitEquivG.flatK * (E + N + 3) ^ 3 := by
+    refine gad_le _ rfl E N q3 ?_
+    intro r hr
+    have e : emitEquivG.costReads
+        = [CNFOUT, VREG, CNFOUT, VA, CNFOUT, VA, CNFOUT, VA,
+           CNFOUT, VREG, CNFOUT, VREG] := rfl
+    rw [e] at hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      omega
+  -- combine
+  rw [hc1, hc2, Nat.add_mul]
+  set cl := (Cmd.forBnd IDX3 SCAN drainVarBody).cost q2 with hcl
+  clear_value cl
+  set cg := emitEquivG.cost q3 with hcg
+  clear_value cg
+  set P := emitEquivG.flatK * (E + N + 3) ^ 3 with hP
+  clear_value P
+  set X := (E + N + 3) ^ 3 with hX
+  clear_value X
+  omega
+
+/-- The 11x sub-tree: read the third tag bit, dispatch fvar/fneg. -/
+private theorem brTag11_cost (st : State) (E N : Nat)
+    (hCNF : (State.get st CNFOUT).length ≤ E)
+    (hSCAN : (State.get st SCAN).length ≤ N)
+    (hVA : (State.get st VA).length ≤ 2 * N)
+    (hVL : (State.get st VL).length ≤ 2 * N + 1) :
+    (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+     Cmd.ifBit H3
+       (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+        Cmd.forBnd IDX3 SCAN drainVarBody ;;
+        emitEquivG)
+       emitNotG).cost st
+      ≤ (1640 + emitEquivG.flatK + emitNotG.flatK) * (E + N + 3) ^ 3 := by
+  obtain ⟨hNX, h27X⟩ := X_facts E N
+  rw [Cmd.cost_seq, Cmd.cost_seq]
+  have hc1 : (Cmd.op (Op.head H3 SCAN)).cost st = 1 := by rw [Cmd.cost_op]; rfl
+  set s1 := (Cmd.op (Op.head H3 SCAN)).eval st with hs1
+  have hSCAN1 : (State.get s1 SCAN).length ≤ N := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hSCAN
+  have hCNF1 : (State.get s1 CNFOUT).length ≤ E := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hCNF
+  have hVA1 : (State.get s1 VA).length ≤ 2 * N := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hVA
+  have hVL1 : (State.get s1 VL).length ≤ 2 * N + 1 := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hVL
+  clear_value s1
+  have hc2 : (Cmd.op (Op.tail SCAN SCAN)).cost s1 = (State.get s1 SCAN).length + 1 := by
+    rw [Cmd.cost_op]; rfl
+  set s2 := (Cmd.op (Op.tail SCAN SCAN)).eval s1 with hs2
+  have hSCAN2 : (State.get s2 SCAN).length ≤ N := by
+    rw [hs2, Cmd.eval_op]
+    show (State.get (s1.set SCAN (State.get s1 SCAN).tail) SCAN).length ≤ _
+    rw [State.get_set_eq, List.length_tail]
+    omega
+  have hCNF2 : (State.get s2 CNFOUT).length ≤ E := by
+    rw [hs2, getne' _ _ _ (by decide)]; exact hCNF1
+  have hVA2 : (State.get s2 VA).length ≤ 2 * N := by
+    rw [hs2, getne' _ _ _ (by decide)]; exact hVA1
+  have hVL2 : (State.get s2 VL).length ≤ 2 * N + 1 := by
+    rw [hs2, getne' _ _ _ (by decide)]; exact hVL1
+  clear_value s2
+  -- the dispatch: both branches
+  have hvar := brVar_cost s2 E N hCNF2 hSCAN2 hVA2
+  have hneg : emitNotG.cost s2 ≤ emitNotG.flatK * (E + N + 3) ^ 3 := by
+    refine gad_le _ rfl E N s2 ?_
+    intro r hr
+    have e : emitNotG.costReads
+        = [CNFOUT, VA, CNFOUT, VL, CNFOUT, VL, CNFOUT, VA, CNFOUT, VL, CNFOUT, VL] := rfl
+    rw [e] at hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+      omega
+  have hif := cost_ifBit_le H3
+    (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+      Cmd.forBnd IDX3 SCAN drainVarBody ;; emitEquivG) emitNotG s2
+  -- combine
+  rw [hc1, hc2, Nat.add_mul, Nat.add_mul]
+  rw [Nat.add_mul] at hvar
+  set cv := (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+      Cmd.forBnd IDX3 SCAN drainVarBody ;; emitEquivG).cost s2 with hcv
+  clear_value cv
+  set cn := emitNotG.cost s2 with hcn
+  clear_value cn
+  set cif := (Cmd.ifBit H3
+      (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+        Cmd.forBnd IDX3 SCAN drainVarBody ;; emitEquivG) emitNotG).cost s2 with hcif
+  clear_value cif
+  set PE := emitEquivG.flatK * (E + N + 3) ^ 3 with hPE
+  clear_value PE
+  set PN := emitNotG.flatK * (E + N + 3) ^ 3 with hPN
+  clear_value PN
+  set X := (E + N + 3) ^ 3 with hX
+  clear_value X
+  omega
+
+/-- The whole tag-dispatch tree: `ifBit H1 (ifBit H2 (11x) (10)) (ifBit H2 (01) (00))`,
+bounded by the SUM of all five branch payloads (`cost_ifBit_le` needs no guard
+knowledge). -/
+private theorem tree_cost (st : State) (E N : Nat)
+    (hCNF : (State.get st CNFOUT).length ≤ E)
+    (hSCAN : (State.get st SCAN).length ≤ N)
+    (hVA : (State.get st VA).length ≤ 2 * N)
+    (hVL : (State.get st VL).length ≤ 2 * N + 1) :
+    (Cmd.ifBit H1
+       (Cmd.ifBit H2
+          (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+           Cmd.ifBit H3
+             (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+              Cmd.forBnd IDX3 SCAN drainVarBody ;;
+              emitEquivG)
+             emitNotG)
+          (subtreeScan ;;
+           Cmd.op (.concat VR VL T) ;;
+           emitOrG))
+       (Cmd.ifBit H2
+          (subtreeScan ;;
+           Cmd.op (.concat VR VL T) ;;
+           emitAndG)
+          emitTrueG)).cost st
+      ≤ (5700 + emitTrueG.flatK + emitEquivG.flatK + emitAndG.flatK
+          + emitOrG.flatK + emitNotG.flatK) * (E + N + 3) ^ 3 := by
+  obtain ⟨hNX, h27X⟩ := X_facts E N
+  have h11 := brTag11_cost st E N hCNF hSCAN hVA hVL
+  have hor := brBin_cost emitOrG rfl
+    (by
+      intro r hr
+      have e : emitOrG.costReads
+          = [CNFOUT, VA, CNFOUT, VL, CNFOUT, VR, CNFOUT, VL, CNFOUT, VA, CNFOUT, VA,
+             CNFOUT, VR, CNFOUT, VA, CNFOUT, VA] := rfl
+      rw [e] at hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+        | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp)
+    st E N hCNF hSCAN hVA hVL
+  have hand := brBin_cost emitAndG rfl
+    (by
+      intro r hr
+      have e : emitAndG.costReads
+          = [CNFOUT, VA, CNFOUT, VL, CNFOUT, VL, CNFOUT, VA, CNFOUT, VR, CNFOUT, VR,
+             CNFOUT, VL, CNFOUT, VR, CNFOUT, VA] := rfl
+      rw [e] at hr
+      simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+      rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl
+        | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;> simp)
+    st E N hCNF hSCAN hVA hVL
+  have htrue := brTrue_cost st E N hCNF hVA
+  -- fold the two inner ifBits then the outer one
+  have hifA := cost_ifBit_le H2
+    (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+     Cmd.ifBit H3
+       (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+        Cmd.forBnd IDX3 SCAN drainVarBody ;;
+        emitEquivG)
+       emitNotG)
+    (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitOrG) st
+  have hifB := cost_ifBit_le H2
+    (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitAndG) emitTrueG st
+  have hifTop := cost_ifBit_le H1
+    (Cmd.ifBit H2
+       (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+        Cmd.ifBit H3
+          (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+           Cmd.forBnd IDX3 SCAN drainVarBody ;;
+           emitEquivG)
+          emitNotG)
+       (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitOrG))
+    (Cmd.ifBit H2
+       (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitAndG) emitTrueG) st
+  -- distribute the coefficient sums and close linearly
+  rw [Nat.add_mul, Nat.add_mul] at h11
+  rw [Nat.add_mul] at hor
+  rw [Nat.add_mul] at hand
+  rw [Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul]
+  set c11 := (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+     Cmd.ifBit H3
+       (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+        Cmd.forBnd IDX3 SCAN drainVarBody ;;
+        emitEquivG)
+       emitNotG).cost st with hc11
+  clear_value c11
+  set cor := (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitOrG).cost st with hcor
+  clear_value cor
+  set cand := (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitAndG).cost st with hcand
+  clear_value cand
+  set ctrue := emitTrueG.cost st with hctrue
+  clear_value ctrue
+  set cifA := (Cmd.ifBit H2
+       (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+        Cmd.ifBit H3
+          (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+           Cmd.forBnd IDX3 SCAN drainVarBody ;;
+           emitEquivG)
+          emitNotG)
+       (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitOrG)).cost st with hcifA
+  clear_value cifA
+  set cifB := (Cmd.ifBit H2
+       (subtreeScan ;; Cmd.op (.concat VR VL T) ;; emitAndG) emitTrueG).cost st with hcifB
+  clear_value cifB
+  set PT := emitTrueG.flatK * (E + N + 3) ^ 3 with hPT
+  clear_value PT
+  set PE := emitEquivG.flatK * (E + N + 3) ^ 3 with hPE
+  clear_value PE
+  set PA := emitAndG.flatK * (E + N + 3) ^ 3 with hPA
+  clear_value PA
+  set PO := emitOrG.flatK * (E + N + 3) ^ 3 with hPO
+  clear_value PO
+  set PN := emitNotG.flatK * (E + N + 3) ^ 3 with hPN
+  clear_value PN
+  set X := (E + N + 3) ^ 3 with hX
+  clear_value X
+  omega
+
+set_option maxHeartbeats 800000 in
+/-- **The per-token cost ceiling** (HANDOFF "NEXT TOP-DOWN" step 3): with the
+emit buffer `≤ E` and the working registers `≤ N` at entry, one `tokenBody`
+iteration costs `≤ tokFK·(E+N+3)³`. -/
+theorem tokenBody_cost (s : State) (E N : Nat)
+    (hCNF : (State.get s CNFOUT).length ≤ E)
+    (hSCAN : (State.get s SCAN).length ≤ N)
+    (hB : (State.get s B).length ≤ N)
+    (hK : (State.get s K).length ≤ N) :
+    tokenBody.cost s ≤ tokFK * (E + N + 3) ^ 3 := by
+  obtain ⟨hNX, h27X⟩ := X_facts E N
+  unfold tokenBody
+  rw [Cmd.cost_seq]
+  have hc0 : (Cmd.op (Op.nonEmpty NE SCAN)).cost s = 1 := by rw [Cmd.cost_op]; rfl
+  set s1 := (Cmd.op (Op.nonEmpty NE SCAN)).eval s with hs1
+  have hCNF1 : (State.get s1 CNFOUT).length ≤ E := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hCNF
+  have hSCAN1 : (State.get s1 SCAN).length ≤ N := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hSCAN
+  have hB1 : (State.get s1 B).length ≤ N := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hB
+  have hK1 : (State.get s1 K).length ≤ N := by
+    rw [hs1, getne' _ _ _ (by decide)]; exact hK
+  clear_value s1
+  -- the guarded big body: peel the straight-line prefix
+  have hbig : (Cmd.op (.concat VA B K) ;;
+      Cmd.op (.copy VL VA) ;; Cmd.op (.appendOne VL) ;;
+      Cmd.op (.head H1 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.op (.head H2 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.ifBit H1
+        (Cmd.ifBit H2
+           (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+            Cmd.ifBit H3
+              (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+               Cmd.forBnd IDX3 SCAN drainVarBody ;;
+               emitEquivG)
+              emitNotG)
+           (subtreeScan ;;
+            Cmd.op (.concat VR VL T) ;;
+            emitOrG))
+        (Cmd.ifBit H2
+           (subtreeScan ;;
+            Cmd.op (.concat VR VL T) ;;
+            emitAndG)
+           emitTrueG) ;;
+      Cmd.op (.appendOne K)).cost s1
+      ≤ (5750 + emitTrueG.flatK + emitEquivG.flatK + emitAndG.flatK
+          + emitOrG.flatK + emitNotG.flatK) * (E + N + 3) ^ 3 + 9 * N + 20 := by
+    rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq,
+      Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq]
+    -- a1: concat VA B K
+    have hca1 : (Cmd.op (Op.concat VA B K)).cost s1
+        = 2 * ((State.get s1 B).length + (State.get s1 K).length) + 1 := by
+      rw [Cmd.cost_op]; rfl
+    set a1 := (Cmd.op (Op.concat VA B K)).eval s1 with ha1
+    have hVAa1 : (State.get a1 VA).length ≤ 2 * N := by
+      rw [ha1, Cmd.eval_op]
+      show (State.get (s1.set VA (State.get s1 B ++ State.get s1 K)) VA).length ≤ _
+      rw [State.get_set_eq, List.length_append]
+      omega
+    have hCNFa1 : (State.get a1 CNFOUT).length ≤ E := by
+      rw [ha1, getne' _ _ _ (by decide)]; exact hCNF1
+    have hSCANa1 : (State.get a1 SCAN).length ≤ N := by
+      rw [ha1, getne' _ _ _ (by decide)]; exact hSCAN1
+    clear_value a1
+    -- a2: copy VL VA
+    have hca2 : (Cmd.op (Op.copy VL VA)).cost a1 = (State.get a1 VA).length + 1 := by
+      rw [Cmd.cost_op]; rfl
+    set a2 := (Cmd.op (Op.copy VL VA)).eval a1 with ha2
+    have hVLa2 : (State.get a2 VL).length ≤ 2 * N := by
+      rw [ha2, Cmd.eval_op]
+      show (State.get (a1.set VL (State.get a1 VA)) VL).length ≤ _
+      rw [State.get_set_eq]
+      exact hVAa1
+    have hVAa2 : (State.get a2 VA).length ≤ 2 * N := by
+      rw [ha2, getne' _ _ _ (by decide)]; exact hVAa1
+    have hCNFa2 : (State.get a2 CNFOUT).length ≤ E := by
+      rw [ha2, getne' _ _ _ (by decide)]; exact hCNFa1
+    have hSCANa2 : (State.get a2 SCAN).length ≤ N := by
+      rw [ha2, getne' _ _ _ (by decide)]; exact hSCANa1
+    clear_value a2
+    -- a3: appendOne VL
+    have hca3 : (Cmd.op (Op.appendOne VL)).cost a2 = 1 := by rw [Cmd.cost_op]; rfl
+    set a3 := (Cmd.op (Op.appendOne VL)).eval a2 with ha3
+    have hVLa3 : (State.get a3 VL).length ≤ 2 * N + 1 := by
+      rw [ha3, Cmd.eval_op]
+      show (State.get (a2.set VL (State.get a2 VL ++ [1])) VL).length ≤ _
+      rw [State.get_set_eq, List.length_append]
+      simp only [List.length_singleton]
+      omega
+    have hVAa3 : (State.get a3 VA).length ≤ 2 * N := by
+      rw [ha3, getne' _ _ _ (by decide)]; exact hVAa2
+    have hCNFa3 : (State.get a3 CNFOUT).length ≤ E := by
+      rw [ha3, getne' _ _ _ (by decide)]; exact hCNFa2
+    have hSCANa3 : (State.get a3 SCAN).length ≤ N := by
+      rw [ha3, getne' _ _ _ (by decide)]; exact hSCANa2
+    clear_value a3
+    -- a4: head H1 SCAN
+    have hca4 : (Cmd.op (Op.head H1 SCAN)).cost a3 = 1 := by rw [Cmd.cost_op]; rfl
+    set a4 := (Cmd.op (Op.head H1 SCAN)).eval a3 with ha4
+    have hVLa4 : (State.get a4 VL).length ≤ 2 * N + 1 := by
+      rw [ha4, getne' _ _ _ (by decide)]; exact hVLa3
+    have hVAa4 : (State.get a4 VA).length ≤ 2 * N := by
+      rw [ha4, getne' _ _ _ (by decide)]; exact hVAa3
+    have hCNFa4 : (State.get a4 CNFOUT).length ≤ E := by
+      rw [ha4, getne' _ _ _ (by decide)]; exact hCNFa3
+    have hSCANa4 : (State.get a4 SCAN).length ≤ N := by
+      rw [ha4, getne' _ _ _ (by decide)]; exact hSCANa3
+    clear_value a4
+    -- a5: tail SCAN SCAN
+    have hca5 : (Cmd.op (Op.tail SCAN SCAN)).cost a4 = (State.get a4 SCAN).length + 1 := by
+      rw [Cmd.cost_op]; rfl
+    set a5 := (Cmd.op (Op.tail SCAN SCAN)).eval a4 with ha5
+    have hSCANa5 : (State.get a5 SCAN).length ≤ N := by
+      rw [ha5, Cmd.eval_op]
+      show (State.get (a4.set SCAN (State.get a4 SCAN).tail) SCAN).length ≤ _
+      rw [State.get_set_eq, List.length_tail]
+      omega
+    have hVLa5 : (State.get a5 VL).length ≤ 2 * N + 1 := by
+      rw [ha5, getne' _ _ _ (by decide)]; exact hVLa4
+    have hVAa5 : (State.get a5 VA).length ≤ 2 * N := by
+      rw [ha5, getne' _ _ _ (by decide)]; exact hVAa4
+    have hCNFa5 : (State.get a5 CNFOUT).length ≤ E := by
+      rw [ha5, getne' _ _ _ (by decide)]; exact hCNFa4
+    clear_value a5
+    -- a6: head H2 SCAN
+    have hca6 : (Cmd.op (Op.head H2 SCAN)).cost a5 = 1 := by rw [Cmd.cost_op]; rfl
+    set a6 := (Cmd.op (Op.head H2 SCAN)).eval a5 with ha6
+    have hSCANa6 : (State.get a6 SCAN).length ≤ N := by
+      rw [ha6, getne' _ _ _ (by decide)]; exact hSCANa5
+    have hVLa6 : (State.get a6 VL).length ≤ 2 * N + 1 := by
+      rw [ha6, getne' _ _ _ (by decide)]; exact hVLa5
+    have hVAa6 : (State.get a6 VA).length ≤ 2 * N := by
+      rw [ha6, getne' _ _ _ (by decide)]; exact hVAa5
+    have hCNFa6 : (State.get a6 CNFOUT).length ≤ E := by
+      rw [ha6, getne' _ _ _ (by decide)]; exact hCNFa5
+    clear_value a6
+    -- a7: tail SCAN SCAN
+    have hca7 : (Cmd.op (Op.tail SCAN SCAN)).cost a6 = (State.get a6 SCAN).length + 1 := by
+      rw [Cmd.cost_op]; rfl
+    set a7 := (Cmd.op (Op.tail SCAN SCAN)).eval a6 with ha7
+    have hSCANa7 : (State.get a7 SCAN).length ≤ N := by
+      rw [ha7, Cmd.eval_op]
+      show (State.get (a6.set SCAN (State.get a6 SCAN).tail) SCAN).length ≤ _
+      rw [State.get_set_eq, List.length_tail]
+      omega
+    have hVLa7 : (State.get a7 VL).length ≤ 2 * N + 1 := by
+      rw [ha7, getne' _ _ _ (by decide)]; exact hVLa6
+    have hVAa7 : (State.get a7 VA).length ≤ 2 * N := by
+      rw [ha7, getne' _ _ _ (by decide)]; exact hVAa6
+    have hCNFa7 : (State.get a7 CNFOUT).length ≤ E := by
+      rw [ha7, getne' _ _ _ (by decide)]; exact hCNFa6
+    clear_value a7
+    -- the tree ;; appendOne K (already peeled by the seq chain above)
+    have htree := tree_cost a7 E N hCNFa7 hSCANa7 hVAa7 hVLa7
+    have hck : (Cmd.op (Op.appendOne K)).cost
+        ((Cmd.ifBit H1
+          (Cmd.ifBit H2
+             (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+              Cmd.ifBit H3
+                (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+                 Cmd.forBnd IDX3 SCAN drainVarBody ;;
+                 emitEquivG)
+                emitNotG)
+             (subtreeScan ;;
+              Cmd.op (.concat VR VL T) ;;
+              emitOrG))
+          (Cmd.ifBit H2
+             (subtreeScan ;;
+              Cmd.op (.concat VR VL T) ;;
+              emitAndG)
+             emitTrueG)).eval a7) = 1 := by
+      rw [Cmd.cost_op]; rfl
+    rw [hca1, hca2, hca3, hca4, hca5, hca6, hca7, hck]
+    rw [Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul] at htree ⊢
+    set ct := (Cmd.ifBit H1
+          (Cmd.ifBit H2
+             (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+              Cmd.ifBit H3
+                (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+                 Cmd.forBnd IDX3 SCAN drainVarBody ;;
+                 emitEquivG)
+                emitNotG)
+             (subtreeScan ;;
+              Cmd.op (.concat VR VL T) ;;
+              emitOrG))
+          (Cmd.ifBit H2
+             (subtreeScan ;;
+              Cmd.op (.concat VR VL T) ;;
+              emitAndG)
+             emitTrueG)).cost a7 with hct
+    clear_value ct
+    set PT := emitTrueG.flatK * (E + N + 3) ^ 3 with hPT
+    clear_value PT
+    set PE := emitEquivG.flatK * (E + N + 3) ^ 3 with hPE
+    clear_value PE
+    set PA := emitAndG.flatK * (E + N + 3) ^ 3 with hPA
+    clear_value PA
+    set PO := emitOrG.flatK * (E + N + 3) ^ 3 with hPO
+    clear_value PO
+    set PN := emitNotG.flatK * (E + N + 3) ^ 3 with hPN
+    clear_value PN
+    set X := (E + N + 3) ^ 3 with hX
+    clear_value X
+    omega
+  -- assemble: guard + ifBit + nop
+  have hif := cost_ifBit_le NE
+    (Cmd.op (.concat VA B K) ;;
+      Cmd.op (.copy VL VA) ;; Cmd.op (.appendOne VL) ;;
+      Cmd.op (.head H1 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.op (.head H2 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.ifBit H1
+        (Cmd.ifBit H2
+           (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+            Cmd.ifBit H3
+              (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+               Cmd.forBnd IDX3 SCAN drainVarBody ;;
+               emitEquivG)
+              emitNotG)
+           (subtreeScan ;;
+            Cmd.op (.concat VR VL T) ;;
+            emitOrG))
+        (Cmd.ifBit H2
+           (subtreeScan ;;
+            Cmd.op (.concat VR VL T) ;;
+            emitAndG)
+           emitTrueG) ;;
+      Cmd.op (.appendOne K)) nop s1
+  have hnop : nop.cost s1 = 1 := by rw [nop, Cmd.cost_op]; rfl
+  rw [hc0]
+  have htokeq : tokFK = 100000 + emitTrueG.flatK + emitEquivG.flatK + emitAndG.flatK
+      + emitOrG.flatK + emitNotG.flatK := rfl
+  rw [htokeq, Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul]
+  rw [Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul, Nat.add_mul] at hbig
+  rw [hnop] at hif
+  set cbig := (Cmd.op (.concat VA B K) ;;
+      Cmd.op (.copy VL VA) ;; Cmd.op (.appendOne VL) ;;
+      Cmd.op (.head H1 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.op (.head H2 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+      Cmd.ifBit H1
+        (Cmd.ifBit H2
+           (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+            Cmd.ifBit H3
+              (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+               Cmd.forBnd IDX3 SCAN drainVarBody ;;
+               emitEquivG)
+              emitNotG)
+           (subtreeScan ;;
+            Cmd.op (.concat VR VL T) ;;
+            emitOrG))
+        (Cmd.ifBit H2
+           (subtreeScan ;;
+            Cmd.op (.concat VR VL T) ;;
+            emitAndG)
+           emitTrueG) ;;
+      Cmd.op (.appendOne K)).cost s1 with hcbig
+  clear_value cbig
+  set cif := (Cmd.ifBit NE
+      (Cmd.op (.concat VA B K) ;;
+        Cmd.op (.copy VL VA) ;; Cmd.op (.appendOne VL) ;;
+        Cmd.op (.head H1 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+        Cmd.op (.head H2 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+        Cmd.ifBit H1
+          (Cmd.ifBit H2
+             (Cmd.op (.head H3 SCAN) ;; Cmd.op (.tail SCAN SCAN) ;;
+              Cmd.ifBit H3
+                (Cmd.op (.clear VREG) ;; Cmd.op (.clear DN) ;;
+                 Cmd.forBnd IDX3 SCAN drainVarBody ;;
+                 emitEquivG)
+                emitNotG)
+             (subtreeScan ;;
+              Cmd.op (.concat VR VL T) ;;
+              emitOrG))
+          (Cmd.ifBit H2
+             (subtreeScan ;;
+              Cmd.op (.concat VR VL T) ;;
+              emitAndG)
+             emitTrueG) ;;
+        Cmd.op (.appendOne K)) nop).cost s1 with hcif
+  clear_value cif
+  set PT := emitTrueG.flatK * (E + N + 3) ^ 3 with hPT
+  clear_value PT
+  set PE := emitEquivG.flatK * (E + N + 3) ^ 3 with hPE
+  clear_value PE
+  set PA := emitAndG.flatK * (E + N + 3) ^ 3 with hPA
+  clear_value PA
+  set PO := emitOrG.flatK * (E + N + 3) ^ 3 with hPO
+  clear_value PO
+  set PN := emitNotG.flatK * (E + N + 3) ^ 3 with hPN
+  clear_value PN
+  set X := (E + N + 3) ^ 3 with hX
+  clear_value X
+  omega
+
 end FSATSATFree
