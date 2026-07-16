@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-15-b; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, **the ENTIRE run-lemma ladder is DONE** (`buildSAT_run`), and **the 6 mechanical witness fields + the 3 leaf loop-cost lemmas are now DONE too** (2026-07-15-b). Only the **cost-assembly ladder (`budgetBody`/`subtreeScan`/`tokenBody`/`outerLoop`/`buildSAT_cost_le`), the witness, and the seam** remain to land `FSAT ⪯p' SAT`)
+## Where the proof stands (2026-07-15-b; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, **the ENTIRE run-lemma ladder is DONE** (`buildSAT_run`), the **6 mechanical witness fields are DONE**, and **the whole budget-scan cost side + ALL emit-side cost infrastructure are now DONE** (2026-07-15-b): `Bloop_cost`, `drainVar_cost`/`drainSkip_cost`, `budgetBody_cost` (triple-nested), `subtreeScan_cost`, plus every effect lemma (`SC2`/`BUD`/`T`/`VREG` monotonicity) and the gadget-bound helper `gad_le`/`tokFK`/`cmb`. Only the **cost ASSEMBLY (`tokenBody_cost` → `outerLoop_cost` → `buildSAT_cost_le`), then the witness, then the seam** remain to land `FSAT ⪯p' SAT`)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -504,28 +504,39 @@ and the **3 leaf loop-cost lemmas** (`drainVar_cost`, `drainSkip_cost`,
 `Bloop_cost`). **Remaining = the cost-assembly ladder, bottom-up (each a `Cmd`
 fold-cost lemma; commit each green):**
 
-1. **`budgetBody_cost`** (bespoke) — `budgetBody = nonEmpty NEB BUD ;; ifBit NEB
-   budgetBodyInner nop`; not loop-free (the fvar case runs `drainSkip`). Prove
-   `budgetBodyInner_cost : |SC2| ≤ M → |BUD| ≤ Mb → cost ≤ C·(M+1)² + Mb + c` by
-   peeling the straight-line prefix (`head/tail SC2` ×2, `appendOne T`) then
-   `by_cases` on `H1B`/`H2B`/(3rd `H2B`) — 5 branches; the fvar branch's
-   `drainSkip_cost` (with `m = |SC2|`) dominates, the rest are `O(M)+O(Mb)`.
-   Then `budgetBody_cost` peels `nonEmpty` (cost 1) + `by_cases` on the guard.
-2. **`subtreeScan_cost`** — `copy SC2 SCAN ;; clear/appendOne BUD ;; clear T ;;
-   forBnd IDX2 SCAN budgetBody`. Use `Cmd.cost_forBnd_le` (the *general* one)
-   with invariant `Minv i st := |SC2 st| ≤ M ∧ |BUD st| ≤ 1 + i` (`M = |SCAN|`;
-   SCAN is the untouched bound register). Preservation: `budgetBodyInner`
-   shrinks/keeps `SC2` and grows `|BUD|` by ≤ 1 per iter (case on the branches —
-   `+1` cases `appendOne BUD`, `−1`/fvar cases `tail`); per-iter ceiling =
-   `budgetBody_cost` at `M, 1+M`. Result `O(M³)`.
-3. **`tokenBody_cost`** (the emit side — the growing `CNFOUT` buffer). Peel the
-   straight-line prefix + `subtreeScan_cost`/`drainVar_cost` + the emit gadgets.
-   Each `emitLit` does `concat CNFOUT CNFOUT v` (cost `2·(|CNFOUT|+|v|)+1`), so
-   the per-emit cost grows with `|CNFOUT|`. **Bound `|CNFOUT|` at every step by
-   its END value** (`CNFOUT` only grows within `tokenBody`, so each intermediate
-   is a prefix of the final ⇒ `≤` its length) and the end value by `Emax`
-   (below). `|v| = |VA|/|VL|/|VR| ≤ b + |serF f| + 1 = O(n)`. Net per-token
-   `O(Emax) + O(n²)`.
+1. **`budgetBody_cost`** — ✅ **DONE (2026-07-15-b)**. `budgetBodyInner_cost`
+   (5-branch dispatch, `drainSkip` dominates) + `budgetBody_cost`; plus the
+   helper `cost_ifBit_le` (`ifBit` cost ≤ `1 + both branches` — avoids content
+   case-splits) and `drainSkip_cost_le`.
+2. **`subtreeScan_cost`** — ✅ **DONE (2026-07-15-b)**. Via `Cmd.cost_forBnd_le`
+   with `Minv i st := |SC2| ≤ M ∧ |BUD| ≤ 1+i`; preservation from the effect
+   lemmas `budgetBody_SC2_le`/`budgetBody_BUD_le` (and the `budgetBodyInner_*`
+   below them). Result `O(m³)`, `m = |SCAN|`.
+3. **`tokenBody_cost`** (the emit side — growing `CNFOUT` buffer). ⚠ **THIS IS
+   THE NEXT BITE.** ALL the infrastructure is landed (2026-07-15-b) — the job is
+   the ASSEMBLY only (no new gadgets, no growing-buffer subtlety — see the KEY
+   FINDING). What EXISTS to plug in: `gad_le` (a loop-free gadget with
+   `costReads ≤ E+3N+1` costs `≤ g.flatK·(E+N+3)³`, via `Cmd.cost_le_flat`),
+   `tokFK` (opaque constant dominating the 5 gadget `flatK`s — do NOT evaluate
+   the ~10³² numerals), `cmb` (combine two `·*X` bounds through a `seq`/`ifBit`),
+   `subtreeScan_cost`/`drainVar_cost`, `subtreeScan_T_le` (`|T| ≤ |SCAN|`, funds
+   `|VR| = |VL|+|T| ≤ 3N+1`), `drainVar_VREG_le` (`|VREG| ≤ |SCAN|`, funds
+   `emitEquivG`). **★ KEY FINDING (the growing-buffer worry is a NON-ISSUE):**
+   within one `tokenBody`, `CNFOUT` is touched **only by the single emit gadget**
+   in the taken branch (the prefix, `subtreeScan`, `drainVar`, `concat VR` never
+   write it), so the gadget's entry `|CNFOUT|` = `tokenBody`'s entry `|CNFOUT|` ≤
+   `E` — no intra-token growth to track; `gad_le`/`cost_le_flat`'s `flatK`
+   absorbs the growth *inside* the gadget. So `tokenBody_cost` is: peel the
+   `nonEmpty`+`ifBit NE` and the 7-op prefix (bounding `|VA| ≤ 2N`, `|VL| ≤
+   2N+1`, framing `CNFOUT/VA/VL` forward), then `cost_ifBit_le` over the tree
+   summing all 5 branches, each = loop costs (`subtreeScan_cost`/`drainVar_cost`)
+   + one `gad_le` gadget. Target `tokenBody.cost s ≤ tokFK·(E+N+3)³` given
+   `|CNFOUT| ≤ E`, `|SCAN|,|B|,|K| ≤ N`. Collect coeffs with `cmb` (each combine
+   yields `(1+a+b)·X`); the final `Σcoeff ≤ tokFK` is one `omega` (flatKs as
+   atoms; `tokFK = 100000 + Σflatk` has ample headroom for the ~8 pieces + the
+   `(E+3N+2) ≤ (E+N+3)³` slack). Est. ~200 lines of the same frame-threading
+   pattern as `budgetBodyInner_cost` (an in-scratch attempt got the skeleton +
+   prefix threading green; the branch bounds are the remaining mechanical work).
 4. **`outerLoop_cost`** — `Cmd.cost_forBnd_le IDX1 SERF tokenBody` REUSING
    `outerLoop_run`'s invariant `M` (it already gives `CNFOUT = C0 ++ encodeCnf
    done` with `done` a prefix of the full clause list, so `|CNFOUT| ≤
