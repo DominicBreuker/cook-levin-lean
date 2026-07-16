@@ -3940,4 +3940,331 @@ theorem outerLoop_cost (u : State) (f : formula) (C0 T0 : List Nat) (E : Nat)
   rw [← hL] at h
   exact h
 
+
+/-! ## Cost accounting — the assembly (`buildSAT_cost_le`) and the witness's
+`cost_bound` (`satBound`) -/
+
+/-- The witness's master size parameter: dominates the emit-buffer ceiling
+(`|C0| + |encodeCnf (fsatToSat f)| ≤ 1600·(n+1)²`) plus the stream length
+(`L ≤ 4n`), so `E + L + 3 ≤ satOmega n`. -/
+def satOmega (n : Nat) : Nat := 1700 * (n + 1) ^ 2
+
+/-- The symbolic cost coefficient (never evaluate the `flatK` numerals). -/
+def satK : Nat := tokFK + 12 * (emitLit true VA).flatK + 100
+
+/-- The witness's `cost_bound`: `satK · (satOmega n + 1)⁴` — `O(n⁸)`. -/
+def satBound (n : Nat) : Nat :=
+  satK * ((satOmega n + 1) * ((satOmega n + 1) * ((satOmega n + 1) * (satOmega n + 1))))
+
+theorem satBound_poly : inOPoly satBound := by
+  refine ⟨8, ⟨satK * 6801 ^ 4, 1, ?_⟩⟩
+  intro n hn
+  have h1 : satOmega n + 1 ≤ 6801 * n ^ 2 := by
+    unfold satOmega
+    have h2 : (n + 1) ^ 2 ≤ (2 * n) ^ 2 := Nat.pow_le_pow_left (by omega) 2
+    have h3 : (2 * n) ^ 2 = 4 * n ^ 2 := by ring
+    have h4 : 1 ≤ n ^ 2 := Nat.one_le_pow _ _ (by omega)
+    omega
+  calc satBound n
+      ≤ satK * ((6801 * n ^ 2) * ((6801 * n ^ 2) * ((6801 * n ^ 2) * (6801 * n ^ 2)))) := by
+        unfold satBound
+        exact Nat.mul_le_mul_left _ (Nat.mul_le_mul h1 (Nat.mul_le_mul h1
+          (Nat.mul_le_mul h1 h1)))
+    _ = satK * 6801 ^ 4 * n ^ 8 := by ring
+
+theorem satBound_mono : monotonic satBound := by
+  intro a b h
+  unfold satBound
+  have hm : satOmega a + 1 ≤ satOmega b + 1 := by
+    unfold satOmega
+    have := Nat.pow_le_pow_left (Nat.add_le_add_right h 1) 2
+    omega
+  exact Nat.mul_le_mul_left _ (Nat.mul_le_mul hm (Nat.mul_le_mul hm
+    (Nat.mul_le_mul hm hm)))
+
+/-- The output size is dominated by the cost bound (`output_size_le`). -/
+theorem satBound_output (f : formula) :
+    encodable.size (fsatToSat f) ≤ satBound (encodable.size f) := by
+  set n := encodable.size f with hn
+  have h1 := fsatToSat_size_le f
+  rw [← hn] at h1
+  have h2 : 300 * (n + 1) ^ 2 ≤ satOmega n + 1 := by unfold satOmega; omega
+  have hK : 1 ≤ satK := by
+    have : (100000 : Nat) ≤ tokFK := by unfold tokFK; omega
+    unfold satK; omega
+  have h3 : satOmega n + 1 ≤ satBound n := by
+    unfold satBound
+    calc satOmega n + 1
+        = 1 * ((satOmega n + 1) * (1 * (1 * 1))) := by ring
+      _ ≤ satK * ((satOmega n + 1)
+            * ((satOmega n + 1) * ((satOmega n + 1) * (satOmega n + 1)))) := by
+          gcongr <;> omega
+  omega
+
+/-- `|encodeLit (pol, v)| = v + 3`. -/
+private theorem encodeLit_length (pol : Bool) (v : Nat) :
+    (encodeLit (pol, v)).length = v + 3 := by
+  simp [EvalCnfCmd.encodeLit]
+
+set_option maxHeartbeats 1000000 in
+/-- **The witness's `cost_le`**: `buildSAT` runs within `satBound` on every
+input (prefix ops exactly, the top-clause emitters by the flat bound, the
+outer loop by `outerLoop_cost` at `E := 1600·(n+1)²`). -/
+theorem buildSAT_cost_le (f : formula) :
+    buildSAT.cost (encodeIn f) ≤ satBound (encodable.size f) := by
+  set n := encodable.size f with hn
+  set L := (serF f).length with hL
+  have hLn : L ≤ 4 * n := by
+    rw [hL, hn]; exact BinaryCCFSATFree.serF_length_le_size f
+  -- ===== the straight-line prefix state chain (mirror `buildSAT_run`) =====
+  have hu0SERF : State.get (encodeIn f) SERF = serF f := rfl
+  have hu0B : State.get (encodeIn f) B = [] := rfl
+  set c_a := (encodeIn f).set B [] with hca
+  have e_clearB : (Cmd.op (Op.clear B)).eval (encodeIn f) = c_a := by
+    rw [Cmd.eval_op, Op.eval, hca]
+  have hcaB : State.get c_a B = [] := by rw [hca, State.get_set_eq]
+  have hcaSERF : State.get c_a SERF = serF f := by
+    rw [hca, State.get_set_ne _ _ _ _ (show SERF ≠ B by decide), hu0SERF]
+  obtain ⟨hcBB, hcBfr⟩ := Bloop_run c_a hcaB
+  set cB := (Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).eval c_a with hcB
+  rw [hcaSERF] at hcBB
+  have hcBSERF : State.get cB SERF = serF f := by
+    rw [hcBfr SERF (by decide) (by decide), hcaSERF]
+  set c_scan := cB.set SCAN (serF f) with hcscan
+  have e_copySCAN : (Cmd.op (Op.copy SCAN SERF)).eval cB = c_scan := by
+    rw [Cmd.eval_op, Op.eval, hcBSERF, hcscan]
+  set c_k := c_scan.set K [] with hck
+  have e_clearK : (Cmd.op (Op.clear K)).eval c_scan = c_k := by rw [Cmd.eval_op, Op.eval, hck]
+  set c_tal := c_k.set TALLY [] with hctal
+  have e_clearTAL : (Cmd.op (Op.clear TALLY)).eval c_k = c_tal := by
+    rw [Cmd.eval_op, Op.eval, hctal]
+  set c_cnf := c_tal.set CNFOUT [] with hccnf
+  have e_clearCNF : (Cmd.op (Op.clear CNFOUT)).eval c_tal = c_cnf := by
+    rw [Cmd.eval_op, Op.eval, hccnf]
+  have hccnfB : State.get c_cnf B = List.replicate (serF f).length 1 := by
+    rw [hccnf, State.get_set_ne _ _ _ _ (show B ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show B ≠ TALLY by decide), hck,
+      State.get_set_ne _ _ _ _ (show B ≠ K by decide), hcscan,
+      State.get_set_ne _ _ _ _ (show B ≠ SCAN by decide), hcBB]
+  set c_va := c_cnf.set VA (List.replicate (serF f).length 1) with hcva
+  have e_copyVA : (Cmd.op (Op.copy VA B)).eval c_cnf = c_va := by
+    rw [Cmd.eval_op, Op.eval, hccnfB, hcva]
+  -- register facts at c_va
+  have hcvaVA : State.get c_va VA = List.replicate (serF f).length 1 := by
+    rw [hcva, State.get_set_eq]
+  have hcvaSCAN : State.get c_va SCAN = serF f := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show SCAN ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ TALLY by decide), hck,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ K by decide), hcscan, State.get_set_eq]
+  have hcvaK : State.get c_va K = [] := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show K ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show K ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show K ≠ TALLY by decide), hck, State.get_set_eq]
+  have hcvaCNF : State.get c_va CNFOUT = [] := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show CNFOUT ≠ VA by decide), hccnf, State.get_set_eq]
+  have hcvaTAL : State.get c_va TALLY = [] := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show TALLY ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show TALLY ≠ CNFOUT by decide), hctal, State.get_set_eq]
+  have hcvaB : State.get c_va B = List.replicate (serF f).length 1 := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show B ≠ VA by decide), hccnfB]
+  have hcvaSERF : State.get c_va SERF = serF f := by
+    rw [hcva, State.get_set_ne _ _ _ _ (show SERF ≠ VA by decide), hccnf,
+      State.get_set_ne _ _ _ _ (show SERF ≠ CNFOUT by decide), hctal,
+      State.get_set_ne _ _ _ _ (show SERF ≠ TALLY by decide), hck,
+      State.get_set_ne _ _ _ _ (show SERF ≠ K by decide), hcscan,
+      State.get_set_ne _ _ _ _ (show SERF ≠ SCAN by decide), hcBSERF]
+  -- ===== the top-clause emit chain (exact states via emitLit_run) =====
+  set e1 := c_va.set CNFOUT (State.get c_va CNFOUT ++ encodeLit (true, L)) with he1
+  have e_lit1 : (emitLit true VA).eval c_va = e1 :=
+    emitLit_run true VA c_va L (by rw [hcvaVA, hL]) (by decide)
+  have he1CNF : State.get e1 CNFOUT = encodeLit (true, L) := by
+    rw [he1, State.get_set_eq, hcvaCNF, List.nil_append]
+  have he1VA : State.get e1 VA = List.replicate L 1 := by
+    rw [he1, State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide), hcvaVA, hL]
+  set e2 := e1.set CNFOUT (State.get e1 CNFOUT ++ encodeLit (true, L)) with he2
+  have e_lit2 : (emitLit true VA).eval e1 = e2 :=
+    emitLit_run true VA e1 L (by rw [he1VA]) (by decide)
+  have he2CNF : State.get e2 CNFOUT = encodeLit (true, L) ++ encodeLit (true, L) := by
+    rw [he2, State.get_set_eq, he1CNF]
+  have he2VA : State.get e2 VA = List.replicate L 1 := by
+    rw [he2, State.get_set_ne _ _ _ _ (show VA ≠ CNFOUT by decide), he1VA]
+  set e3 := e2.set CNFOUT (State.get e2 CNFOUT ++ encodeLit (true, L)) with he3
+  have e_lit3 : (emitLit true VA).eval e2 = e3 :=
+    emitLit_run true VA e2 L (by rw [he2VA]) (by decide)
+  have he3CNF : State.get e3 CNFOUT
+      = encodeLit (true, L) ++ encodeLit (true, L) ++ encodeLit (true, L) := by
+    rw [he3, State.get_set_eq, he2CNF]
+  set e4 := (e3.set CNFOUT (State.get e3 CNFOUT ++ [0])).set TALLY
+      (State.get e3 TALLY ++ [1]) with he4
+  have e_end : endClause.eval e3 = e4 := endClause_run e3
+  have he4CNFlen : (State.get e4 CNFOUT).length = 3 * L + 10 := by
+    rw [he4, State.get_set_ne _ _ _ _ (show CNFOUT ≠ TALLY by decide), State.get_set_eq,
+      he3CNF]
+    simp only [List.length_append, encodeLit_length, List.length_singleton]
+    omega
+  -- registers the loop needs, at e4 (framed through the four sets)
+  have hframe : ∀ r : Var, r ≠ CNFOUT → r ≠ TALLY → State.get e4 r = State.get c_va r := by
+    intro r h1 h2
+    rw [he4, State.get_set_ne _ _ _ _ h2, State.get_set_ne _ _ _ _ h1, he3,
+      State.get_set_ne _ _ _ _ h1, he2, State.get_set_ne _ _ _ _ h1, he1,
+      State.get_set_ne _ _ _ _ h1]
+  have he4SCAN : State.get e4 SCAN = serF f := by
+    rw [hframe SCAN (by decide) (by decide), hcvaSCAN]
+  have he4K : State.get e4 K = [] := by
+    rw [hframe K (by decide) (by decide), hcvaK]
+  have he4B : State.get e4 B = List.replicate (serF f).length 1 := by
+    rw [hframe B (by decide) (by decide), hcvaB]
+  have he4SERF : State.get e4 SERF = serF f := by
+    rw [hframe SERF (by decide) (by decide), hcvaSERF]
+  -- ===== the outer-loop cost at E := 1600·(n+1)² =====
+  have hsq : (n + 1) ^ 2 = n * n + 2 * n + 1 := by ring
+  have hcnflen : (encodeCnf (fsatToSat f)).length ≤ 1500 * (n + 1) ^ 2 := by
+    have h1 := EvalCnfCmd.encodeCnf_length (fsatToSat f)
+    have h2 := fsatToSat_size_le f
+    rw [← hn] at h2
+    calc (encodeCnf (fsatToSat f)).length ≤ 5 * encodable.size (fsatToSat f) := h1
+      _ ≤ 5 * (300 * (n + 1) ^ 2) := Nat.mul_le_mul_left _ h2
+      _ = 1500 * (n + 1) ^ 2 := by ring
+  have hE : (State.get e4 CNFOUT).length + (encodeCnf (fsatToSat f)).length
+      ≤ 1600 * (n + 1) ^ 2 := by
+    rw [he4CNFlen]
+    have : 3 * L + 10 ≤ 100 * (n + 1) ^ 2 := by rw [hsq]; omega
+    omega
+  have hloop := outerLoop_cost e4 f (State.get e4 CNFOUT) (State.get e4 TALLY)
+    (1600 * (n + 1) ^ 2) he4SCAN he4K rfl rfl he4B he4SERF hE
+  rw [← hL] at hloop
+  -- ===== the prefix op costs =====
+  have hc_clearB : (Cmd.op (Op.clear B)).cost (encodeIn f) = 1 := by rw [Cmd.cost_op]; rfl
+  have hc_Bloop : (Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).cost c_a
+      ≤ 1 + L * 5 + L * L := by
+    have h := Bloop_cost c_a L (by rw [hcaSERF, hL])
+    have hk5 : (Cmd.op (Op.appendOne B)).flatK = 5 := rfl
+    rw [hk5] at h
+    exact h
+  have hc_copySCAN : (Cmd.op (Op.copy SCAN SERF)).cost cB = L + 1 := by
+    rw [Cmd.cost_op]
+    show (State.get cB SERF).length + 1 = L + 1
+    rw [hcBSERF, hL]
+  have hc_clearK : (Cmd.op (Op.clear K)).cost c_scan = 1 := by rw [Cmd.cost_op]; rfl
+  have hc_clearTAL : (Cmd.op (Op.clear TALLY)).cost c_k = 1 := by rw [Cmd.cost_op]; rfl
+  have hc_clearCNF : (Cmd.op (Op.clear CNFOUT)).cost c_tal = 1 := by rw [Cmd.cost_op]; rfl
+  have hc_copyVA : (Cmd.op (Op.copy VA B)).cost c_cnf = L + 1 := by
+    rw [Cmd.cost_op]
+    show (State.get c_cnf B).length + 1 = L + 1
+    rw [hccnfB, List.length_replicate, hL]
+  -- ===== the emitter costs (flat bounds at exact entry lengths) =====
+  have hreads : (emitLit true VA).costReads = [CNFOUT, VA] := rfl
+  have hc_lit1 : (emitLit true VA).cost c_va ≤ (emitLit true VA).flatK * (L + 1) := by
+    refine (Cmd.cost_le_flat _ rfl c_va L ?_).1
+    intro r hr
+    rw [hreads] at hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · rw [hcvaCNF]; simp
+    · rw [hcvaVA, List.length_replicate, hL]
+  have hc_lit2 : (emitLit true VA).cost e1 ≤ (emitLit true VA).flatK * (2 * L + 4) := by
+    refine (Cmd.cost_le_flat _ rfl e1 (2 * L + 3) ?_).1
+    intro r hr
+    rw [hreads] at hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · rw [he1CNF, encodeLit_length]; omega
+    · rw [he1VA, List.length_replicate]; omega
+  have hc_lit3 : (emitLit true VA).cost e2 ≤ (emitLit true VA).flatK * (3 * L + 7) := by
+    refine (Cmd.cost_le_flat _ rfl e2 (3 * L + 6) ?_).1
+    intro r hr
+    rw [hreads] at hr
+    simp only [List.mem_cons, List.not_mem_nil, or_false] at hr
+    rcases hr with rfl | rfl
+    · rw [he2CNF]
+      simp only [List.length_append, encodeLit_length]
+      omega
+    · rw [he2VA, List.length_replicate]; omega
+  have hc_end : endClause.cost e3 = 3 := rfl
+  -- ===== peel the seq spine and combine =====
+  unfold buildSAT
+  rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq,
+    Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq,
+    e_clearB, ← hcB, e_copySCAN, e_clearK, e_clearTAL, e_clearCNF, e_copyVA,
+    e_lit1, e_lit2, e_lit3, e_end]
+  rw [hc_clearB, hc_copySCAN, hc_clearK, hc_clearTAL, hc_clearCNF, hc_copyVA, hc_end]
+  -- the master arithmetic: everything ≤ satK · (satOmega n + 1)⁴
+  set Q := satOmega n + 1 with hQ
+  have hsatK : satK = tokFK + 12 * (emitLit true VA).flatK + 100 := rfl
+  have hQval : Q = 1700 * (n + 1) ^ 2 + 1 := by rw [hQ]; rfl
+  have hLQ : L + 1 ≤ Q := by rw [hQval, hsq]; omega
+  -- the loop term: L·(tokFK·(E+L+3)³) ≤ tokFK·Q⁴
+  have hEL3 : 1600 * (n + 1) ^ 2 + L + 3 ≤ Q := by rw [hQval, hsq]; omega
+  have hcube : (1600 * (n + 1) ^ 2 + L + 3) ^ 3 ≤ Q ^ 3 := Nat.pow_le_pow_left hEL3 3
+  have hmain : L * (tokFK * (1600 * (n + 1) ^ 2 + L + 3) ^ 3)
+      ≤ tokFK * (Q * (Q * (Q * Q))) := by
+    calc L * (tokFK * (1600 * (n + 1) ^ 2 + L + 3) ^ 3)
+        ≤ Q * (tokFK * Q ^ 3) :=
+          Nat.mul_le_mul (by omega) (Nat.mul_le_mul_left _ hcube)
+      _ = tokFK * (Q * (Q * (Q * Q))) := by ring
+  -- the emitter junk: KE·(L+1) + KE·(2L+4) + KE·(3L+7) ≤ 12·KE·Q⁴
+  have hemit : (emitLit true VA).flatK * (L + 1) + (emitLit true VA).flatK * (2 * L + 4)
+      + (emitLit true VA).flatK * (3 * L + 7)
+      ≤ 12 * (emitLit true VA).flatK * (Q * (Q * (Q * Q))) := by
+    have h1 : (L + 1) + (2 * L + 4) + (3 * L + 7) ≤ 12 * Q := by
+      have : L + 1 ≤ Q := hLQ
+      omega
+    have hQ4 : Q ≤ Q * (Q * (Q * Q)) := by
+      have h1Q : 1 ≤ Q * (Q * Q) :=
+        Nat.mul_pos (by omega) (Nat.mul_pos (by omega) (by omega))
+      calc Q = Q * 1 := by ring
+        _ ≤ Q * (Q * (Q * Q)) := Nat.mul_le_mul_left _ (by
+            calc 1 ≤ Q * (Q * Q) := h1Q
+              _ ≤ Q * (Q * Q) := le_refl _)
+    calc (emitLit true VA).flatK * (L + 1) + (emitLit true VA).flatK * (2 * L + 4)
+        + (emitLit true VA).flatK * (3 * L + 7)
+        = (emitLit true VA).flatK * ((L + 1) + (2 * L + 4) + (3 * L + 7)) := by ring
+      _ ≤ (emitLit true VA).flatK * (12 * Q) := Nat.mul_le_mul_left _ h1
+      _ ≤ (emitLit true VA).flatK * (12 * (Q * (Q * (Q * Q)))) :=
+          Nat.mul_le_mul_left _ (Nat.mul_le_mul_left _ hQ4)
+      _ = 12 * (emitLit true VA).flatK * (Q * (Q * (Q * Q))) := by ring
+  -- the remaining polynomial junk: 2L² + 10L + 25 ≤ 100·Q⁴
+  have hjunk : 2 * (L * L) + 10 * L + 25 ≤ 100 * (Q * (Q * (Q * Q))) := by
+    have hQ1 : 1 ≤ Q := by rw [hQval]; omega
+    have hLQ' : L ≤ Q := by omega
+    have h2 : L * L ≤ Q * Q := Nat.mul_le_mul hLQ' hLQ'
+    have hQQ4 : Q * Q ≤ Q * (Q * (Q * Q)) := by
+      calc Q * Q = (Q * Q) * 1 := by ring
+        _ ≤ (Q * Q) * (Q * Q) := Nat.mul_le_mul_left _ (Nat.mul_pos (by omega) (by omega))
+        _ = Q * (Q * (Q * Q)) := by ring
+    have hQge : Q ≤ Q * (Q * (Q * Q)) := by
+      calc Q = Q * 1 := by ring
+        _ ≤ Q * (Q * (Q * Q)) := Nat.mul_le_mul_left _
+            (Nat.mul_pos (by omega) (Nat.mul_pos (by omega) (by omega)))
+    omega
+  -- assemble
+  show 1 + 1 + (1 + _ + (1 + (L + 1) + (1 + 1 + (1 + 1 + (1 + 1 + (1 + (L + 1)
+      + (1 + _ + (1 + _ + (1 + _ + (1 + 3 + _)))))))))) ≤ satBound n
+  have hsb : satBound n = tokFK * (Q * (Q * (Q * Q)))
+      + 12 * (emitLit true VA).flatK * (Q * (Q * (Q * Q)))
+      + 100 * (Q * (Q * (Q * Q))) := by
+    rw [show satBound n = satK * (Q * (Q * (Q * Q))) from rfl, hsatK]
+    ring
+  rw [hsb]
+  set KE := (emitLit true VA).flatK with hKE
+  clear_value KE
+  set Q4 := Q * (Q * (Q * Q)) with hQ4d
+  clear_value Q4
+  set P := tokFK * Q4 with hP
+  clear_value P
+  set c1 := (emitLit true VA).cost c_va with hc1v
+  clear_value c1
+  set c2 := (emitLit true VA).cost e1 with hc2v
+  clear_value c2
+  set c3 := (emitLit true VA).cost e2 with hc3v
+  clear_value c3
+  set cbl := (Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).cost c_a with hcblv
+  clear_value cbl
+  set clp := (Cmd.forBnd IDX1 SERF tokenBody).cost e4 with hclpv
+  clear_value clp
+  set W := L * (tokFK * (1600 * (n + 1) ^ 2 + L + 3) ^ 3) with hW
+  clear_value W
+  omega
+
 end FSATSATFree
