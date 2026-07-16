@@ -16,5 +16,6 @@ import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_free
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_comp
 import Complexity.NP.FSAT_to_SAT_pre
 import Complexity.NP.SAT.CookLevin.Reductions.FSAT_to_SAT_free
+import Complexity.NP.SAT.CookLevin.Reductions.FSAT_to_SAT_comp
 
 set_option autoImplicit false
