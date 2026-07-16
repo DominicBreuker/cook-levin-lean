@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-15; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, **the ENTIRE run-lemma ladder is now DONE**: step 1(i) (pure model = tree map) + step 1(ii) leaves + **all four loop assemblies `subtreeScan_run`/`tokenBody_run`/`outerLoop_run`/`buildSAT_run`** — so `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` is PROVEN, axiom-clean. Only **cost, mechanical fields, the witness, and the seam** remain to land `FSAT ⪯p' SAT`)
+## Where the proof stands (2026-07-15-b; **`FlatTCC ⪯p' FSAT` is LIVE**; the last tail step `FSAT → SAT` is MID-FLIGHT — map PROVEN correct, **the ENTIRE run-lemma ladder is DONE** (`buildSAT_run`), the **6 mechanical witness fields are DONE**, and **the whole budget-scan cost side + ALL emit-side cost infrastructure are now DONE** (2026-07-15-b): `Bloop_cost`, `drainVar_cost`/`drainSkip_cost`, `budgetBody_cost` (triple-nested), `subtreeScan_cost`, plus every effect lemma (`SC2`/`BUD`/`T`/`VREG` monotonicity) and the gadget-bound helper `gad_le`/`tokFK`/`cmb`. Only the **cost ASSEMBLY (`tokenBody_cost` → `outerLoop_cost` → `buildSAT_cost_le`), then the witness, then the seam** remain to land `FSAT ⪯p' SAT`)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -55,6 +55,31 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-15-b (top-down) — `FSAT → SAT` witness: **the 6 mechanical fields +
+  the 3 leaf loop-cost lemmas are DONE**, all axiom-clean, full build green
+  (3381). 2 commits.** The last witness field `cost_le` is now the only blocker
+  before the witness + seam. Landed in `Reductions/FSAT_to_SAT_free.lean`
+  (+ `import Complexity.NP.kSAT_to_SAT_free` for `encodeCnf_injective`):
+  (1) **the mechanical fields as standalone theorems** — `serF_bit`/
+  `encodeIn_bitState` (`enc_bit`), `encodeIn_size_le` (`encodeIn_size`, `encBound
+  = 4n`), `encodeIn_width` (`width_le`, |encodeIn|=1), `buildSAT_usesBelow`
+  (`usesBelow`, `FRAME = 27`; one big `simp only` over every sub-def + register
+  def, then `simp`), `buildSAT_computes` (`computes` = `buildSAT_run.1` +
+  `Function.leftInverse_invFun KSat3Free.encodeCnf_injective`), `fsatToSat_size_le`
+  (`output_size_le` fodder, `≤ 300·(n+1)²` via `preTseytin_size_le` with `b,
+  formula_size ≤ 4n`), `buildSAT_decode_agree` (`decode_agree`, `Cmd.eval_agree`
+  at `CNFOUT`). (2) **the 3 leaf loop-cost lemmas** — `drainVar_cost`
+  (`forBnd IDX3 SCAN drainVarBody`) + `drainSkip_cost` (`forBnd IDX3 SC2
+  drainSkipBody`), both via `Cmd.cost_forBnd_flat_le` with a
+  `|scan-reg| ≤ m` invariant proven preserved by the `_SCAN_le`/`_SC2_le` helpers
+  (the drain bodies never grow their scan register); and `Bloop_cost`
+  (`forBnd IDX0 SERF (appendOne B)`) via `cost_constLoop_le`. ⚠ gotchas: the
+  `head` op's output is a `match` (`| x::t => [x]`), NOT `[headD 0]` — do NOT
+  `set` an intermediate state to a guessed form; `set s0 := (Cmd.op (Op.head ..
+  )).eval st` abstractly and derive `State.get s0 SCAN` via `get_set_ne`.
+  `cost_forBnd_flat_le`'s `h0` field is a beta-redex `(fun ..) 0 s` — close with
+  the term `le_of_eq hm`, not `rw`. **The remaining cost ladder** (the only work
+  left for `FSAT ⪯p' SAT`) is scoped in "NEXT TOP-DOWN".
 - **2026-07-15 (top-down) — `FSAT → SAT` **run-lemma step 1(ii) ASSEMBLIES ALL
   DONE**: the machine folds provably compute the map. 4 commits, all axiom-clean,
   full build green (3381).** Landed in `Reductions/FSAT_to_SAT_free.lean`:
@@ -455,69 +480,118 @@ building C8-4):**
   `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
-**No `FSAT_to_SAT` run-lemma bites remain for bottom-up** — the whole run-lemma
-ladder (leaves + all four loop assemblies) is DONE (2026-07-15). The remaining
-`FSAT_to_SAT` work (cost / mechanical fields / witness / seam, see NEXT
-TOP-DOWN) is top-down's; C8-3 is the clean bottom-up track. If a session wants
-a smaller top-down-adjacent bite, the **`cost_le` accounting** for `buildSAT`
-is self-contained and reuses the `Lang/CostFlat.lean` toolkit + the
-`masterOmega`/`buildFSATBound` pattern — coordinate so it is not done twice.
+**No `FSAT_to_SAT` run-lemma or mechanical-field bites remain for bottom-up** —
+the whole run-lemma ladder + the 6 mechanical fields + the 3 leaf loop-cost
+lemmas are DONE (2026-07-15/-b). The ONLY remaining `FSAT_to_SAT` work is the
+**cost-assembly ladder → witness → seam** (see NEXT TOP-DOWN); C8-3 is the clean
+bottom-up track. The cost assembly is **self-contained arithmetic** (no tree
+recursion, no new gadgets) and reuses `Lang/CostFlat.lean` + the 3 landed leaf
+lemmas, so it is a fine **top-down-adjacent bottom-up bite too** — coordinate so
+it is not done twice.
 
-## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (cost → fields → witness → seam)
+## NEXT TOP-DOWN session — finish the `FSAT_to_SAT` witness (cost-assembly → witness → seam)
 
-The design phase, run-lemma step 1(i), step 1(ii) leaves, **AND all four run-lemma
-loop assemblies are DONE** (2026-07-12-b/-c through 2026-07-15). What EXISTS, all
-green & axiom-clean, in `Reductions/FSAT_to_SAT_free.lean` (+
-`NP/FSAT_to_SAT_pre.lean`): the map + correctness (`preTseytin`, `ptseytin_repr`,
-`preTseytin_correct`, size lemmas); the full program + layouts + chain-step
-correctness (`buildSAT`, `encodeIn f = [serF f]`, outputs `TALLY`(1)/`CNFOUT`(2),
-`decodeOut = invFun encodeCnf`, `fsatToSat`, `fsatToSat_correct`); the pure scan
-model = the tree map; every per-step machine leaf; and now **the whole run-lemma
-stack** — `subtreeScan_run`, `tokenBody_run` (+ `tokHead`/`tokRem`/
-`scanClauses_tok`), `outerLoop_run` (+ `tokForest`/`_flatten`/`_sum`),
-`Bloop_run`, and the headline **`buildSAT_run` : `(buildSAT.eval [serF f]).get
-CNFOUT = encodeCnf (fsatToSat f)` ∧ `.get TALLY = 1^|fsatToSat f|`**. So the
-"machine computes the map" obligation (the `computes` field's hard half) is
-**closed**. The probe (`probes/FSATPreProbe.lean`) keeps an independent `#eval`
-copy. **Remaining ladder (~1 session — all mechanical, templates exist):**
+Everything EXCEPT `cost_le` is DONE, all green & axiom-clean, in
+`Reductions/FSAT_to_SAT_free.lean` (+ `NP/FSAT_to_SAT_pre.lean`): the map +
+correctness; the program + layouts + chain-step correctness (`buildSAT`,
+`encodeIn f = [serF f]`, `TALLY`(1)/`CNFOUT`(2), `decodeOut = invFun encodeCnf`,
+`fsatToSat`, `fsatToSat_correct`); the pure-scan-model = tree-map; every per-step
+leaf; the whole **run-lemma stack** up to **`buildSAT_run`** (the `computes` hard
+half — CNFOUT + TALLY); **all 6 mechanical fields** (`buildSAT_computes`,
+`encodeIn_bitState`, `encodeIn_size_le`, `encodeIn_width`, `buildSAT_usesBelow`
+[`FRAME = 27`], `fsatToSat_size_le` [`≤ 300·(n+1)²`], `buildSAT_decode_agree`);
+and the **3 leaf loop-cost lemmas** (`drainVar_cost`, `drainSkip_cost`,
+`Bloop_cost`). **Remaining = the cost-assembly ladder, bottom-up (each a `Cmd`
+fold-cost lemma; commit each green):**
 
-1. **`cost_le`** — the `masterOmega` pattern; generous ceiling: outer
-   `|serF f| ≤ 4n` iterations × (budget scan `O(|serF|)` + emission
-   `O(b+n)`) — a single `C·(n+1)³`-ish ceiling should dominate everything.
-2. **Mechanical fields** — copy the `binaryCCFSAT_reductionLang` templates:
-   `usesBelow` (`simp only` over all sub-defs + register defs; **frame is 27** —
-   `def FRAME : Nat := 27`, and `tokenBody.writes` is already the write-set fact
-   `buildSAT_run` uses for its frame), `enc_bit` (`serF` cells are `{0,1}` — small
-   induction, or reuse the BinaryCC witness's output-bit lemma), `width_le`
-   (`encodeIn` has length 1), `decode_agree` (`Cmd.eval_agree` at `CNFOUT`;
-   `buildSAT_run` gives the `CNFOUT` value directly), `encBound := fun n => 4*n`
-   (`serF_length_le_size`), `output_size_le` via `preTseytin_size_le` +
-   `serF_length_le_size` (vars < `b + size f` with `b ≤ 4n`).
-3. **The witness + chain step**: `fsatSAT_reductionLang :
-   PolyTimeComputableLang fsatToSat`, then `reducesPolyMO'_of_langFree _
-   fsatToSat_correct : FSAT ⪯p' SAT`. `computes` = `buildSAT_run.1` (CNFOUT) +
-   `decodeOut_of_serF`-style inverse (`decodeOut = invFun encodeCnf`,
-   `KSat3Free.encodeCnf_injective`); the `TALLY` = `1^|fsatToSat f|` half is
-   `buildSAT_run.2` (the verifier's clause-tally layout).
-4. **The seam**: `SeamData flatTCC_to_FSAT_witness fsatSAT_reductionLang` —
-   `mfc` = scrub-everything-except-reg-0 below the left frame 57 (the
-   `scrub2` pattern of `BinaryCC_to_FSAT_comp.lean`; reg 0 already holds
-   `serF f` = exactly `encodeIn f`; note the RIGHT frame 27 is *narrower*
-   than the left 57 this time — the previous seam's wider-right-frame length
-   argument may be unnecessary, check `SeamData`'s exact obligation). Probe
-   the seam first (`FSATSeamProbe.checkBridge57` pattern). Then the composed
-   **`flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT` — the whole sound
-   tail as ONE live chain.**
+1. **`budgetBody_cost`** — ✅ **DONE (2026-07-15-b)**. `budgetBodyInner_cost`
+   (5-branch dispatch, `drainSkip` dominates) + `budgetBody_cost`; plus the
+   helper `cost_ifBit_le` (`ifBit` cost ≤ `1 + both branches` — avoids content
+   case-splits) and `drainSkip_cost_le`.
+2. **`subtreeScan_cost`** — ✅ **DONE (2026-07-15-b)**. Via `Cmd.cost_forBnd_le`
+   with `Minv i st := |SC2| ≤ M ∧ |BUD| ≤ 1+i`; preservation from the effect
+   lemmas `budgetBody_SC2_le`/`budgetBody_BUD_le` (and the `budgetBodyInner_*`
+   below them). Result `O(m³)`, `m = |SCAN|`.
+3. **`tokenBody_cost`** (the emit side — growing `CNFOUT` buffer). ⚠ **THIS IS
+   THE NEXT BITE.** ALL the infrastructure is landed (2026-07-15-b) — the job is
+   the ASSEMBLY only (no new gadgets, no growing-buffer subtlety — see the KEY
+   FINDING). What EXISTS to plug in: `gad_le` (a loop-free gadget with
+   `costReads ≤ E+3N+1` costs `≤ g.flatK·(E+N+3)³`, via `Cmd.cost_le_flat`),
+   `tokFK` (opaque constant dominating the 5 gadget `flatK`s — do NOT evaluate
+   the ~10³² numerals), `cmb` (combine two `·*X` bounds through a `seq`/`ifBit`),
+   `subtreeScan_cost`/`drainVar_cost`, `subtreeScan_T_le` (`|T| ≤ |SCAN|`, funds
+   `|VR| = |VL|+|T| ≤ 3N+1`), `drainVar_VREG_le` (`|VREG| ≤ |SCAN|`, funds
+   `emitEquivG`). **★ KEY FINDING (the growing-buffer worry is a NON-ISSUE):**
+   within one `tokenBody`, `CNFOUT` is touched **only by the single emit gadget**
+   in the taken branch (the prefix, `subtreeScan`, `drainVar`, `concat VR` never
+   write it), so the gadget's entry `|CNFOUT|` = `tokenBody`'s entry `|CNFOUT|` ≤
+   `E` — no intra-token growth to track; `gad_le`/`cost_le_flat`'s `flatK`
+   absorbs the growth *inside* the gadget. So `tokenBody_cost` is: peel the
+   `nonEmpty`+`ifBit NE` and the 7-op prefix (bounding `|VA| ≤ 2N`, `|VL| ≤
+   2N+1`, framing `CNFOUT/VA/VL` forward), then `cost_ifBit_le` over the tree
+   summing all 5 branches, each = loop costs (`subtreeScan_cost`/`drainVar_cost`)
+   + one `gad_le` gadget. Target `tokenBody.cost s ≤ tokFK·(E+N+3)³` given
+   `|CNFOUT| ≤ E`, `|SCAN|,|B|,|K| ≤ N`. Collect coeffs with `cmb` (each combine
+   yields `(1+a+b)·X`); the final `Σcoeff ≤ tokFK` is one `omega` (flatKs as
+   atoms; `tokFK = 100000 + Σflatk` has ample headroom for the ~8 pieces + the
+   `(E+3N+2) ≤ (E+N+3)³` slack). **A full candidate proof was written
+   (2026-07-15-b)** — a standalone `tree_cost` (the `ifBit H1/H2/H3` sub-tree,
+   per-branch `gad_le` + loop costs, `cost_ifBit_le` to sum) and a `tokenBody_cost`
+   (prefix threading + `tree_cost` + assembly), both structurally correct. **⚠⚠
+   PERF FINDING — the reason it is NOT landed: `tree_cost` as written is
+   pathologically slow (>14 min / 4 GB, blows the default 200 000 heartbeats).**
+   The next agent MUST fix this before committing:
+   (a) **`clear_value` every `set sA/sB/q1/st3/r1/r2/sd`** immediately after its
+       defining `rw`s (the un-cleared nested `State.set` gotcha — the branch
+       states are re-unfolded by `omega`/`fin_cases`);
+   (b) **precompute the `subtreeScan`/`drainVar`-loop frame facts ONCE** as
+       `private` one-liners (`State.get (subtreeScan.eval s) CNFOUT = … := Cmd.eval_get_of_not_writes _ _ _ (by decide)` for `CNFOUT`/`VA`/`VL`, likewise `drainVar`) — the inline `by decide` on `subtreeScan.writes` recomputes the whole loop's write-set ~8× and is the likely hot spot;
+   (c) **split `tree_cost`'s five branches into separate `private` lemmas** (each
+       takes `st2` + the register bounds) so each elaborates independently and CI
+       stays per-lemma bounded.
+   Structure is validated; it is a **speed** fix, not a math fix.
+4. **`outerLoop_cost`** — `Cmd.cost_forBnd_le IDX1 SERF tokenBody` REUSING
+   `outerLoop_run`'s invariant `M` (it already gives `CNFOUT = C0 ++ encodeCnf
+   done` with `done` a prefix of the full clause list, so `|CNFOUT| ≤
+   |encodeCnf (fsatToSat f)| =: Emax ≤ 5·size(fsatToSat f) = O(n²)` — the uniform
+   emit ceiling `tokenBody_cost` needs). Per-iter ceiling = `tokenBody_cost` at
+   `Emax`. Result `O(n·Emax + n²) = O(n³)`.
+5. **`buildSAT_cost_le`** — peel the straight-line costs (`clear`s/`copy`s
+   `O(n)` each) + `Bloop_cost` + the top-clause `emitTrueG` cost + `outerLoop_cost`
+   (mirror `buildSAT_run`'s `heval` unfolding). Pick `cost_bound := fun n =>
+   C·(n+1)⁴` (generous headroom over the `O(n³)` reality; `masterOmega`-style is
+   also fine). Prove `cost_bound_poly`/`_mono` like `buildFSATBound_poly/_mono`.
+6. **The witness + chain step**: `noncomputable def fsatSAT_reductionLang :
+   PolyTimeComputableLang fsatToSat` filling `computes := buildSAT_computes`,
+   `enc_bit := encodeIn_bitState`, `encodeIn_size := encodeIn_size_le` (with
+   `encBound := fun n => 4*n`), `width_le := encodeIn_width`, `usesBelow :=
+   buildSAT_usesBelow` (`regBound := FRAME`), `decode_agree := buildSAT_decode_agree`,
+   `cost_le := buildSAT_cost_le`, `output_size_le` from `fsatToSat_size_le` (≤
+   cost_bound), `cost_bound`/`_poly`/`_mono` from step 5. Then
+   **`fsatSAT_reducesPolyMO' := reducesPolyMO'_of_langFree fsatSAT_reductionLang
+   fsatToSat_correct : FSAT ⪯p' SAT`** — copy `binaryCC_reducesPolyMO'` exactly.
+7. **The seam** (new file `Reductions/FSAT_to_SAT_comp.lean`):
+   `SeamData flatTCC_to_FSAT_witness fsatSAT_reductionLang` — `mfc` = scrub
+   everything except reg 0 below the left frame 57 (`scrub2` pattern of
+   `BinaryCC_to_FSAT_comp.lean`; reg 0 already holds `serF f = encodeIn f`).
+   Note the RIGHT frame is `FRAME = 27`, *narrower* than the left 57 — so the
+   previous seam's wider-right-frame length argument is likely UNNEEDED; check
+   `SeamData`'s exact obligation. Probe first (`FSATSeamProbe.checkBridge57`
+   pattern). Yields **`flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT`** — the
+   whole sound tail as ONE live chain. Wire the new file into `Complexity.lean`
+   (⚠ unimported files are invisible to CI).
 
-**Reusable machinery** (do not re-derive — in
-`Reductions/BinaryCC_to_FSAT_free.lean` §4/§5 and `Lang/CostFlat.lean`): the
-generic loop-free cost toolkit; the `serF`-length + `and/orPrefix` algebra; the
-per-emitter `_cost`/`_effect` lemmas; the `masterOmega`/`buildFSATBound`
-pattern (one master ceiling, `cost_bound` symbolic over `flatK`);
-the mechanical-field recipes (`Cmd.eval_agree` for `decode_agree`,
-`List.mem_or_eq_of_mem_set` chain for `BitState`, `simp`-closed `UsesBelow`);
-and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
-`BinaryCC_to_FSAT_comp.lean`) for every seam obligation.
+**Reusable machinery** (do not re-derive): the 3 landed leaf cost lemmas; the
+`Lang/CostFlat.lean` toolkit (`Cmd.cost_forBnd_le` [general, per-iter ceiling +
+invariant], `Cmd.cost_forBnd_flat_le` [loop-free body], `cost_constLoop_le`,
+`Cmd.cost_le_flat`); the `masterOmega`/`buildFSATBound` poly/mono pattern; the
+`binaryCCFSAT_reductionLang` witness template (field-for-field) + its
+`binaryCC_reducesPolyMO'`; and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
+`BinaryCC_to_FSAT_comp.lean`). ⚠ Cost gotchas already hit (see also the "cost
+pass" gotchas below): `head` op output is a `match`, not `[headD 0]` — `set` the
+whole `.eval` state abstractly; `cost_forBnd_flat_le`'s `h0` is a beta-redex,
+close with a term (`le_of_eq hm`); `Cmd.cost`/`Cmd.eval` atoms over big states
+make `omega` whnf-TIMEOUT — `set … with h; clear_value` first.
 
 **After the sound tail is one chain**, the remaining top-down work:
 
@@ -610,6 +684,16 @@ and the two live seams (`FlatTCC_to_BinaryCC_comp.lean`,
   `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` ∧
   `.get TALLY = 1^|fsatToSat f|`). The next witness's `computes` field is
   `buildSAT_run` + `decodeOut = invFun encodeCnf`. Do NOT re-derive.
+- **The `FSAT_to_SAT` MECHANICAL FIELDS + LEAF COSTS** (same file, 2026-07-15-b,
+  all axiom-clean): the 6 witness fields as standalone theorems — `serF_bit`/
+  `encodeIn_bitState` (`enc_bit`), `encodeIn_size_le` (`encBound = 4n`),
+  `encodeIn_width` (`width_le`), `buildSAT_usesBelow` (`FRAME = 27`),
+  `buildSAT_computes` (`buildSAT_run.1` + `KSat3Free.encodeCnf_injective`),
+  `fsatToSat_size_le` (`≤ 300·(n+1)²`, `output_size_le` fodder),
+  `buildSAT_decode_agree`; and the 3 leaf loop-cost lemmas `drainVar_cost`/
+  `drainSkip_cost` (via `Cmd.cost_forBnd_flat_le` + the `_SCAN_le`/`_SC2_le`
+  scan-monotonicity helpers) and `Bloop_cost` (via `cost_constLoop_le`). The
+  cost-assembly ladder consumes these unchanged. Do NOT re-derive.
 - **The FSAT output codec** (`Reductions/BinaryCC_to_FSAT_free.lean`, 2026-07-05):
   `serF`/`deserF`/`decodeF` (prefix/Polish bit-serialization of the `formula`
   tree) + the PROVEN round-trip `decodeF_serF` + `decodeOut_of_serF` — the

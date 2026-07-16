@@ -1,6 +1,7 @@
 import Complexity.NP.FSAT_to_SAT_pre
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_free
 import Complexity.Complexity.Deciders.EvalCnfCmd
+import Complexity.NP.kSAT_to_SAT_free
 
 set_option autoImplicit false
 
@@ -2388,5 +2389,687 @@ theorem buildSAT_run (f : formula) :
         = 1 + (scanClauses (serF f).length ((serF f).length + 1) 0 (serF f)).length := by
       rw [← mScan_eq_fsatToSat]; simp only [mScan, List.length_cons]; omega
     rw [heval, hLTAL, hlen, List.replicate_add]
+
+/-! ## The mechanical witness fields -/
+
+/-- Every cell of `serF f` is a bit. -/
+theorem serF_bit (f : formula) : ∀ x ∈ serF f, x ≤ 1 := by
+  induction f with
+  | ftrue =>
+      intro x hx
+      rw [show serF formula.ftrue = [0, 0] from rfl] at hx
+      fin_cases hx <;> omega
+  | fvar v =>
+      intro x hx
+      rw [show serF (formula.fvar v) = [1, 1, 1] ++ List.replicate v 1 ++ [0] from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · rcases List.mem_append.mp h with h | h
+        · fin_cases h <;> omega
+        · rw [List.eq_of_mem_replicate h]
+      · fin_cases h <;> omega
+  | fand a b iha ihb =>
+      intro x hx
+      rw [show serF (formula.fand a b) = [0, 1] ++ serF a ++ serF b from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · rcases List.mem_append.mp h with h | h
+        · fin_cases h <;> omega
+        · exact iha x h
+      · exact ihb x h
+  | forr a b iha ihb =>
+      intro x hx
+      rw [show serF (formula.forr a b) = [1, 0] ++ serF a ++ serF b from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · rcases List.mem_append.mp h with h | h
+        · fin_cases h <;> omega
+        · exact iha x h
+      · exact ihb x h
+  | fneg a iha =>
+      intro x hx
+      rw [show serF (formula.fneg a) = [1, 1, 0] ++ serF a from rfl] at hx
+      rcases List.mem_append.mp hx with h | h
+      · fin_cases h <;> omega
+      · exact iha x h
+
+/-- **`enc_bit`**: `encodeIn f` is a `BitState`. -/
+theorem encodeIn_bitState (f : formula) : Compile.BitState (encodeIn f) := by
+  intro reg hreg x hx
+  simp only [encodeIn, List.mem_singleton] at hreg
+  subst hreg
+  exact serF_bit f x hx
+
+/-- **`encodeIn_size`**: the input encoding's size is `≤ 4·|f|` (`encBound`). -/
+theorem encodeIn_size_le (f : formula) :
+    State.size (encodeIn f) ≤ 4 * encodable.size f := by
+  have h := BinaryCCFSATFree.serF_length_le_size f
+  show State.size [serF f] ≤ _
+  simp only [State.size, List.map_cons, List.map_nil, List.foldr_cons, List.foldr_nil]
+  omega
+
+/-- **`width_le`**: the width fits the frame. -/
+theorem encodeIn_width (f : formula) : (encodeIn f).length ≤ FRAME := by
+  show ([serF f] : State).length ≤ FRAME
+  simp [FRAME]
+
+/-- **`usesBelow`**: `buildSAT` touches only registers `< FRAME` (= 27). -/
+theorem buildSAT_usesBelow : Cmd.UsesBelow buildSAT FRAME := by
+  simp only [buildSAT, tokenBody, subtreeScan, budgetBody, budgetBodyInner,
+    drainSkipBody, drainVarBody, emitLit, endClause, emitTrueG, emitEquivG,
+    emitAndG, emitOrG, emitNotG, nop,
+    Cmd.UsesBelow, Op.UsesBelow,
+    SERF, TALLY, CNFOUT, B, K, SCAN, H1, H2, H3, VA, VL, VR, VREG, DN, SC2, BUD,
+    T, NE, SKIP, IDX0, IDX1, IDX2, IDX3, H1B, H2B, NEB, DN2, FRAME]
+  simp
+
+/-- **`computes`**: the decoded output is `fsatToSat f` (`buildSAT_run` +
+`encodeCnf` injectivity). -/
+theorem buildSAT_computes (f : formula) :
+    decodeOut (buildSAT.eval (encodeIn f)) = fsatToSat f := by
+  simp only [decodeOut]
+  rw [(buildSAT_run f).1]
+  exact Function.leftInverse_invFun KSat3Free.encodeCnf_injective _
+
+/-- The output CNF's `encodable.size` is quadratically bounded in `|f|`
+(`output_size_le` fodder; via `preTseytin_size_le` with `b, |f| ≤ 4·|f|`). -/
+theorem fsatToSat_size_le (f : formula) :
+    encodable.size (fsatToSat f) ≤ 300 * (encodable.size f + 1) ^ 2 := by
+  set n := encodable.size f with hn
+  have hb : formula_maxVar f < (serF f).length := formula_maxVar_lt_serF_length f
+  have h := preTseytin_size_le (serF f).length f hb
+  have hfs : formula_size f ≤ (serF f).length := BinaryCCFSATFree.formula_size_le_serF f
+  have hser : (serF f).length ≤ 4 * n := BinaryCCFSATFree.serF_length_le_size f
+  have hfs4 : formula_size f ≤ 4 * n := le_trans hfs hser
+  set fs := formula_size f with hfsdef
+  set b := (serF f).length with hbdef
+  have hgoal : (3 * fs + 1) * (3 * (b + fs + 1) + 4) ≤ 300 * (n + 1) ^ 2 := by
+    have hbn : b ≤ 4 * n := hser
+    nlinarith [Nat.mul_le_mul hfs4 hbn, hfs4, hbn, Nat.zero_le n]
+  calc encodable.size (fsatToSat f) ≤ (3 * fs + 1) * (3 * (b + fs + 1) + 4) := h
+    _ ≤ 300 * (n + 1) ^ 2 := hgoal
+
+/-- **`decode_agree`**: padding the input with empty registers does not change
+the decoded output. -/
+theorem buildSAT_decode_agree (f : formula) (m : Nat) :
+    decodeOut (buildSAT.eval (encodeIn f ++ List.replicate m []))
+      = decodeOut (buildSAT.eval (encodeIn f)) := by
+  have hagree : AgreeBelow FRAME (encodeIn f ++ List.replicate m []) (encodeIn f) :=
+    fun r _ => State.get_append_replicate_nil (encodeIn f) m r
+  have h := Cmd.eval_agree buildSAT FRAME buildSAT_usesBelow hagree CNFOUT (by decide)
+  simp only [decodeOut]
+  rw [h]
+
+/-! ## Cost accounting — leaf loop cost lemmas -/
+
+/-- Preservation helper: `drainVarBody` never grows `SCAN`. -/
+theorem drainVarBody_SCAN_le (st : State) (m0 : Nat)
+    (h : (State.get st SCAN).length ≤ m0) :
+    (State.get (drainVarBody.eval st) SCAN).length ≤ m0 := by
+  unfold drainVarBody
+  by_cases hDN : State.get st DN = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hDN, nop, Cmd.eval_op, Op.eval,
+      State.get_set_ne _ _ _ _ (show SCAN ≠ SKIP by decide)]
+    exact h
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hDN, Cmd.eval_seq, Cmd.eval_seq]
+    set s0 := (Cmd.op (Op.head H3 SCAN)).eval st with hs0
+    set s1 := (Cmd.op (Op.tail SCAN SCAN)).eval s0 with hs1
+    have hs0SCAN : State.get s0 SCAN = State.get st SCAN := by
+      rw [hs0, Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ H3 by decide)]
+    have hSCAN1 : (State.get s1 SCAN).length ≤ m0 := by
+      rw [hs1, Cmd.eval_op, Op.eval, State.get_set_eq, List.length_tail, hs0SCAN]; omega
+    by_cases hH3 : State.get s1 H3 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH3, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (show SCAN ≠ VREG by decide)]
+      exact hSCAN1
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH3, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SCAN ≠ DN by decide),
+        State.get_set_ne _ _ _ _ (show SCAN ≠ DN by decide)]
+      exact hSCAN1
+
+/-- Cost of the outer-fvar drain loop `forBnd IDX3 SCAN drainVarBody`:
+`≤ 1 + m·(1560·(m+1)) + m²` where `m = |SCAN|`. -/
+theorem drainVar_cost (s : State) (m : Nat) (hm : (State.get s SCAN).length = m) :
+    (Cmd.forBnd IDX3 SCAN drainVarBody).cost s
+      ≤ 1 + m * (drainVarBody.flatK * (m + 1)) + m * m := by
+  have h := Cmd.cost_forBnd_flat_le IDX3 SCAN drainVarBody (by decide) s m
+    (fun _ st => (State.get st SCAN).length ≤ m)
+    (le_of_eq hm)
+    (fun i st _ hM => by
+      have := drainVarBody_SCAN_le (st.set IDX3 (List.replicate i 1)) m
+        (by rw [State.get_set_ne _ _ _ _ (show SCAN ≠ IDX3 by decide)]; exact hM)
+      exact this)
+    (fun i st _ hM r hr => by
+      rw [show drainVarBody.costReads = [SCAN] from rfl] at hr
+      simp only [List.mem_singleton] at hr
+      subst hr
+      rw [State.get_set_ne _ _ _ _ (show SCAN ≠ IDX3 by decide)]
+      exact hM)
+  rw [hm] at h
+  exact h
+
+/-- Cost of the budget-fvar skip loop `forBnd IDX3 SC2 drainSkipBody`:
+`≤ 1 + m·(1560·(m+1)) + m²` where `m = |SC2|`. -/
+theorem drainSkipBody_SC2_le (st : State) (m0 : Nat)
+    (h : (State.get st SC2).length ≤ m0) :
+    (State.get (drainSkipBody.eval st) SC2).length ≤ m0 := by
+  unfold drainSkipBody
+  by_cases hDN2 : State.get st DN2 = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hDN2, nop, Cmd.eval_op, Op.eval,
+      State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide)]
+    exact h
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hDN2, Cmd.eval_seq, Cmd.eval_seq]
+    set s0 := (Cmd.op (Op.head H3 SC2)).eval st with hs0
+    set s1 := (Cmd.op (Op.tail SC2 SC2)).eval s0 with hs1
+    have hs0SC2 : State.get s0 SC2 = State.get st SC2 := by
+      rw [hs0, Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SC2 ≠ H3 by decide)]
+    have hSC21 : (State.get s1 SC2).length ≤ m0 := by
+      rw [hs1, Cmd.eval_op, Op.eval, State.get_set_eq, List.length_tail, hs0SC2]; omega
+    by_cases hH3 : State.get s1 H3 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH3, nop, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (show SC2 ≠ SKIP by decide)]
+      exact hSC21
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH3, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show SC2 ≠ DN2 by decide),
+        State.get_set_ne _ _ _ _ (show SC2 ≠ DN2 by decide)]
+      exact hSC21
+
+theorem drainSkip_cost (s : State) (m : Nat) (hm : (State.get s SC2).length = m) :
+    (Cmd.forBnd IDX3 SC2 drainSkipBody).cost s
+      ≤ 1 + m * (drainSkipBody.flatK * (m + 1)) + m * m := by
+  have h := Cmd.cost_forBnd_flat_le IDX3 SC2 drainSkipBody (by decide) s m
+    (fun _ st => (State.get st SC2).length ≤ m)
+    (le_of_eq hm)
+    (fun i st _ hM => by
+      have := drainSkipBody_SC2_le (st.set IDX3 (List.replicate i 1)) m
+        (by rw [State.get_set_ne _ _ _ _ (show SC2 ≠ IDX3 by decide)]; exact hM)
+      exact this)
+    (fun i st _ hM r hr => by
+      rw [show drainSkipBody.costReads = [SC2] from rfl] at hr
+      simp only [List.mem_singleton] at hr
+      subst hr
+      rw [State.get_set_ne _ _ _ _ (show SC2 ≠ IDX3 by decide)]
+      exact hM)
+  rw [hm] at h
+  exact h
+
+/-- Cost of the phase-0 length loop `forBnd IDX0 SERF (appendOne B)`:
+`≤ 1 + m·5 + m²` where `m = |SERF|`. -/
+theorem Bloop_cost (s : State) (m : Nat) (hm : (State.get s SERF).length = m) :
+    (Cmd.forBnd IDX0 SERF (Cmd.op (Op.appendOne B))).cost s
+      ≤ 1 + m * (Cmd.op (Op.appendOne B)).flatK + m * m :=
+  cost_constLoop_le IDX0 SERF (Cmd.op (Op.appendOne B)) (by decide) rfl s m hm
+
+/-! ## Cost accounting — the budget-scan step (`budgetBody`) -/
+
+/-- `ifBit` cost is bounded by the sum of both branch costs (no need to know the
+guard). -/
+theorem cost_ifBit_le (t : Var) (cT cE : Cmd) (s : State) :
+    (Cmd.ifBit t cT cE).cost s ≤ 1 + cT.cost s + cE.cost s := by
+  by_cases h : State.get s t = [1]
+  · rw [Cmd.cost_ifBit_true _ _ _ _ h]; omega
+  · rw [Cmd.cost_ifBit_false _ _ _ _ h]; omega
+
+/-- The drainSkip loop preserves `BUD` (unconditionally — write-set frame). -/
+theorem drainSkipLoop_BUD (s : State) :
+    State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval s) BUD = State.get s BUD :=
+  Cmd.eval_get_of_not_writes _ s BUD (by decide)
+
+/-- generous drainSkip-loop cost bound in terms of a uniform `M ≥ |SC2|`. -/
+theorem drainSkip_cost_le (s : State) (M : Nat) (h : (State.get s SC2).length ≤ M) :
+    (Cmd.forBnd IDX3 SC2 drainSkipBody).cost s ≤ 1600 * (M + 1) * (M + 1) := by
+  have hc := drainSkip_cost s (State.get s SC2).length rfl
+  set m := (State.get s SC2).length with hm
+  -- drainSkipBody.flatK = 1560
+  have hk : drainSkipBody.flatK = 1560 := rfl
+  rw [hk] at hc
+  have : 1 + m * (1560 * (m + 1)) + m * m ≤ 1600 * (M + 1) * (M + 1) := by
+    have hmM : m ≤ M := h
+    nlinarith [hmM, Nat.zero_le m, Nat.zero_le M]
+  omega
+
+/-- **`budgetBodyInner` cost bound**, uniform in `M ≥ |SC2|` and `Mb ≥ |BUD|`. -/
+theorem budgetBodyInner_cost (st : State) (M Mb : Nat)
+    (hSC2 : (State.get st SC2).length ≤ M) (hBUD : (State.get st BUD).length ≤ Mb) :
+    budgetBodyInner.cost st ≤ 1600 * (M + 1) * (M + 1) + 2 * Mb + 3 * M + 60 := by
+  -- generic op-eval get helpers
+  have getne : ∀ (o : Op) (s : State) (r : Var), r ≠ o.writesTo →
+      State.get ((Cmd.op o).eval s) r = State.get s r := by
+    intro o s r hr; rw [Cmd.eval_op]; exact Op.eval_get_ne_writesTo o s r hr
+  -- prefix states
+  unfold budgetBodyInner
+  rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq]
+  set a1 := (Cmd.op (Op.head H1B SC2)).eval st with ha1
+  set a2 := (Cmd.op (Op.tail SC2 SC2)).eval a1 with ha2
+  set a3 := (Cmd.op (Op.head H2B SC2)).eval a2 with ha3
+  set a4 := (Cmd.op (Op.tail SC2 SC2)).eval a3 with ha4
+  set a5 := (Cmd.op (Op.appendOne T)).eval a4 with ha5
+  -- SC2 lengths through the prefix
+  have hSC2a1 : State.get a1 SC2 = State.get st SC2 := getne _ _ _ (by decide)
+  have hSC2a2 : State.get a2 SC2 = (State.get a1 SC2).tail := by
+    rw [ha2, Cmd.eval_op, Op.eval, State.get_set_eq]
+  have hSC2a3 : State.get a3 SC2 = State.get a2 SC2 := getne _ _ _ (by decide)
+  have hSC2a4 : State.get a4 SC2 = (State.get a3 SC2).tail := by
+    rw [ha4, Cmd.eval_op, Op.eval, State.get_set_eq]
+  have hSC2a5 : State.get a5 SC2 = State.get a4 SC2 := getne _ _ _ (by decide)
+  have hla1 : (State.get a1 SC2).length ≤ M := by rw [hSC2a1]; exact hSC2
+  have hla5 : (State.get a5 SC2).length ≤ M := by
+    rw [hSC2a5, hSC2a4, List.length_tail, hSC2a3, hSC2a2, List.length_tail, hSC2a1]; omega
+  -- BUD through the prefix
+  have hBUDa5 : State.get a5 BUD = State.get st BUD := by
+    rw [ha5, getne _ _ _ (by decide), ha4, getne _ _ _ (by decide), ha3,
+      getne _ _ _ (by decide), ha2, getne _ _ _ (by decide), ha1, getne _ _ _ (by decide)]
+  have hlBUDa5 : (State.get a5 BUD).length ≤ Mb := by rw [hBUDa5]; exact hBUD
+  -- prefix op costs
+  have hcost_head1 : (Cmd.op (Op.head H1B SC2)).cost st = 1 := by rw [Cmd.cost_op]; rfl
+  have hcost_tail1 : (Cmd.op (Op.tail SC2 SC2)).cost a1 = (State.get a1 SC2).length + 1 := by
+    rw [Cmd.cost_op]; rfl
+  have hcost_head2 : (Cmd.op (Op.head H2B SC2)).cost a2 = 1 := by rw [Cmd.cost_op]; rfl
+  have hcost_tail2 : (Cmd.op (Op.tail SC2 SC2)).cost a3 = (State.get a3 SC2).length + 1 := by
+    rw [Cmd.cost_op]; rfl
+  have hcost_app : (Cmd.op (Op.appendOne T)).cost a4 = 1 := by rw [Cmd.cost_op]; rfl
+  have hla3 : (State.get a3 SC2).length ≤ M := by
+    rw [hSC2a3, hSC2a2, List.length_tail, hSC2a1]; omega
+  -- the outer ifBit ≤ sum of branches at a5
+  have hbranch : (Cmd.ifBit H1B
+      (Cmd.ifBit H2B
+        (Cmd.op (Op.head H2B SC2) ;; Cmd.op (Op.tail SC2 SC2) ;;
+          Cmd.ifBit H2B
+            (Cmd.op (Op.clear DN2) ;; Cmd.forBnd IDX3 SC2 drainSkipBody ;;
+              Cmd.op (Op.tail BUD BUD)) nop)
+        (Cmd.op (Op.appendOne BUD)))
+      (Cmd.ifBit H2B (Cmd.op (Op.appendOne BUD)) (Cmd.op (Op.tail BUD BUD)))).cost a5
+      ≤ 1600 * (M + 1) * (M + 1) + 2 * Mb + M + 50 := by
+    refine le_trans (cost_ifBit_le _ _ _ _) ?_
+    -- 11x branch
+    have h11x : (Cmd.ifBit H2B
+        (Cmd.op (Op.head H2B SC2) ;; Cmd.op (Op.tail SC2 SC2) ;;
+          Cmd.ifBit H2B
+            (Cmd.op (Op.clear DN2) ;; Cmd.forBnd IDX3 SC2 drainSkipBody ;;
+              Cmd.op (Op.tail BUD BUD)) nop)
+        (Cmd.op (Op.appendOne BUD))).cost a5
+        ≤ 1600 * (M + 1) * (M + 1) + Mb + M + 30 := by
+      refine le_trans (cost_ifBit_le _ _ _ _) ?_
+      -- the fvar/fneg inner block
+      rw [Cmd.cost_seq, Cmd.cost_seq]
+      set b1 := (Cmd.op (Op.head H2B SC2)).eval a5 with hb1
+      set b2 := (Cmd.op (Op.tail SC2 SC2)).eval b1 with hb2
+      have hSC2b1 : State.get b1 SC2 = State.get a5 SC2 := getne _ _ _ (by decide)
+      have hlb1 : (State.get b1 SC2).length ≤ M := by rw [hSC2b1]; exact hla5
+      have hSC2b2 : State.get b2 SC2 = (State.get b1 SC2).tail := by
+        rw [hb2, Cmd.eval_op, Op.eval, State.get_set_eq]
+      have hlb2 : (State.get b2 SC2).length ≤ M := by
+        rw [hSC2b2, List.length_tail]; omega
+      have hBUDb2 : State.get b2 BUD = State.get a5 BUD := by
+        rw [hb2, getne _ _ _ (by decide), hb1, getne _ _ _ (by decide)]
+      have hlBUDb2 : (State.get b2 BUD).length ≤ Mb := by rw [hBUDb2]; exact hlBUDa5
+      have hcb1 : (Cmd.op (Op.head H2B SC2)).cost a5 = 1 := by rw [Cmd.cost_op]; rfl
+      have hcb2 : (Cmd.op (Op.tail SC2 SC2)).cost b1 = (State.get b1 SC2).length + 1 := by
+        rw [Cmd.cost_op]; rfl
+      -- inner ifBit H2B (fvar) nop ≤ fvar + nop
+      have hinner : (Cmd.ifBit H2B
+          (Cmd.op (Op.clear DN2) ;; Cmd.forBnd IDX3 SC2 drainSkipBody ;;
+            Cmd.op (Op.tail BUD BUD)) nop).cost b2
+          ≤ 1600 * (M + 1) * (M + 1) + Mb + 20 := by
+        refine le_trans (cost_ifBit_le _ _ _ _) ?_
+        -- fvar block cost
+        rw [Cmd.cost_seq, Cmd.cost_seq]
+        set c1 := (Cmd.op (Op.clear DN2)).eval b2 with hc1
+        have hSC2c1 : State.get c1 SC2 = State.get b2 SC2 := getne _ _ _ (by decide)
+        have hlc1 : (State.get c1 SC2).length ≤ M := by rw [hSC2c1]; exact hlb2
+        have hBUDc1 : State.get c1 BUD = State.get b2 BUD := getne _ _ _ (by decide)
+        have hcc1 : (Cmd.op (Op.clear DN2)).cost b2 = 1 := by rw [Cmd.cost_op]; rfl
+        -- drainSkip loop cost
+        have hloop := drainSkip_cost_le c1 M hlc1
+        -- tail BUD BUD after the loop
+        have hBUDloop : State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval c1) BUD
+            = State.get c1 BUD := drainSkipLoop_BUD c1
+        have hct : (Cmd.op (Op.tail BUD BUD)).cost
+            ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval c1)
+            = (State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval c1) BUD).length + 1 := by
+          rw [Cmd.cost_op]; rfl
+        have hlBUDloop : (State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval c1) BUD).length
+            ≤ Mb := by rw [hBUDloop, hBUDc1, hBUDb2]; exact hlBUDa5
+        -- nop cost
+        have hnop : nop.cost b2 = 1 := by rw [nop, Cmd.cost_op]; rfl
+        rw [hcc1, hct, hnop]
+        omega
+      have hcE1 : (Cmd.op (Op.appendOne BUD)).cost a5 = 1 := by rw [Cmd.cost_op]; rfl
+      rw [hcb1, hcb2, hcE1]
+      omega
+    -- 0x branch
+    have h0x : (Cmd.ifBit H2B (Cmd.op (Op.appendOne BUD)) (Cmd.op (Op.tail BUD BUD))).cost a5
+        ≤ Mb + 10 := by
+      refine le_trans (cost_ifBit_le _ _ _ _) ?_
+      have hca : (Cmd.op (Op.appendOne BUD)).cost a5 = 1 := by rw [Cmd.cost_op]; rfl
+      have hct : (Cmd.op (Op.tail BUD BUD)).cost a5 = (State.get a5 BUD).length + 1 := by
+        rw [Cmd.cost_op]; rfl
+      rw [hca, hct]
+      omega
+    omega
+  rw [hcost_head1, hcost_tail1, hcost_head2, hcost_tail2, hcost_app]
+  have hkey := hbranch
+  generalize 1600 * (M + 1) * (M + 1) = Q at hkey ⊢
+  omega
+
+/-- **`budgetBody` cost bound**, uniform in `M ≥ |SC2|` and `Mb ≥ |BUD|`. -/
+theorem budgetBody_cost (st : State) (M Mb : Nat)
+    (hSC2 : (State.get st SC2).length ≤ M) (hBUD : (State.get st BUD).length ≤ Mb) :
+    budgetBody.cost st ≤ 1600 * (M + 1) * (M + 1) + 2 * Mb + 3 * M + 70 := by
+  unfold budgetBody
+  rw [Cmd.cost_seq]
+  set st1 := (Cmd.op (Op.nonEmpty NEB BUD)).eval st with hst1
+  have hSC21 : State.get st1 SC2 = State.get st SC2 := by
+    rw [hst1, Cmd.eval_op]; exact Op.eval_get_ne_writesTo _ _ _ (by decide)
+  have hBUD1 : State.get st1 BUD = State.get st BUD := by
+    rw [hst1, Cmd.eval_op]; exact Op.eval_get_ne_writesTo _ _ _ (by decide)
+  have hcost_ne : (Cmd.op (Op.nonEmpty NEB BUD)).cost st = 1 := by rw [Cmd.cost_op]; rfl
+  have hif : (Cmd.ifBit NEB budgetBodyInner nop).cost st1
+      ≤ 1600 * (M + 1) * (M + 1) + 2 * Mb + 3 * M + 62 := by
+    refine le_trans (cost_ifBit_le _ _ _ _) ?_
+    have hi := budgetBodyInner_cost st1 M Mb (by rw [hSC21]; exact hSC2) (by rw [hBUD1]; exact hBUD)
+    have hnop : nop.cost st1 = 1 := by rw [nop, Cmd.cost_op]; rfl
+    rw [hnop]
+    generalize 1600 * (M + 1) * (M + 1) = Q at hi ⊢
+    omega
+  rw [hcost_ne]
+  generalize 1600 * (M + 1) * (M + 1) = Q at hif ⊢
+  omega
+
+/-! ## Cost accounting — the arity-budget scan (`subtreeScan`) -/
+
+private theorem getne (o : Op) (s : State) (r : Var) (hr : r ≠ o.writesTo) :
+    State.get ((Cmd.op o).eval s) r = State.get s r := by
+  rw [Cmd.eval_op]; exact Op.eval_get_ne_writesTo o s r hr
+
+/-- The drainSkip loop never grows `SC2`. -/
+theorem drainSkipLoop_SC2_le (s : State) :
+    (State.get ((Cmd.forBnd IDX3 SC2 drainSkipBody).eval s) SC2).length
+      ≤ (State.get s SC2).length := by
+  rw [Cmd.eval_forBnd]
+  exact Cmd.foldlState_range_induct drainSkipBody IDX3 (State.get s SC2).length s
+    (fun _ st => (State.get st SC2).length ≤ (State.get s SC2).length) (le_refl _)
+    (fun i st _ hM => drainSkipBody_SC2_le (st.set IDX3 (List.replicate i 1))
+      (State.get s SC2).length
+      (by rw [State.get_set_ne _ _ _ _ (show SC2 ≠ IDX3 by decide)]; exact hM))
+
+/-- `budgetBodyInner` never grows `SC2`. -/
+theorem budgetBodyInner_SC2_le (w : State) :
+    (State.get (budgetBodyInner.eval w) SC2).length ≤ (State.get w SC2).length := by
+  unfold budgetBodyInner
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  set a1 := (Cmd.op (Op.head H1B SC2)).eval w with ha1
+  set a2 := (Cmd.op (Op.tail SC2 SC2)).eval a1 with ha2
+  set a3 := (Cmd.op (Op.head H2B SC2)).eval a2 with ha3
+  set a4 := (Cmd.op (Op.tail SC2 SC2)).eval a3 with ha4
+  set a5 := (Cmd.op (Op.appendOne T)).eval a4 with ha5
+  have hla5 : (State.get a5 SC2).length ≤ (State.get w SC2).length := by
+    rw [ha5, getne _ _ _ (by decide), ha4, Cmd.eval_op, Op.eval, State.get_set_eq,
+      List.length_tail, ha3, getne _ _ _ (by decide), ha2, Cmd.eval_op, Op.eval,
+      State.get_set_eq, List.length_tail, ha1, getne _ _ _ (by decide)]
+    omega
+  refine le_trans ?_ hla5
+  -- branch: SC2 only shrinks or stays
+  by_cases hH1B : State.get a5 H1B = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hH1B]
+    by_cases hH2B : State.get a5 H2B = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH2B, Cmd.eval_seq, Cmd.eval_seq]
+      set b1 := (Cmd.op (Op.head H2B SC2)).eval a5 with hb1
+      set b2 := (Cmd.op (Op.tail SC2 SC2)).eval b1 with hb2
+      have hlb2 : (State.get b2 SC2).length ≤ (State.get a5 SC2).length := by
+        rw [hb2, Cmd.eval_op, Op.eval, State.get_set_eq, List.length_tail, hb1,
+          getne _ _ _ (by decide)]; omega
+      by_cases hH2B' : State.get b2 H2B = [1]
+      · rw [Cmd.eval_ifBit_true _ _ _ _ hH2B', Cmd.eval_seq, Cmd.eval_seq]
+        set c1 := (Cmd.op (Op.clear DN2)).eval b2 with hc1
+        have hSC2c1 : State.get c1 SC2 = State.get b2 SC2 := getne _ _ _ (by decide)
+        -- tail BUD BUD doesn't touch SC2; drainSkip loop shrinks SC2
+        rw [getne _ _ _ (show SC2 ≠ (Op.tail BUD BUD).writesTo by decide)]
+        refine le_trans (drainSkipLoop_SC2_le c1) ?_
+        rw [hSC2c1]; exact hlb2
+      · rw [Cmd.eval_ifBit_false _ _ _ _ hH2B', nop, getne _ _ _ (by decide)]; exact hlb2
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH2B, getne _ _ _ (by decide)]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hH1B]
+    by_cases hH2B : State.get a5 H2B = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH2B, getne _ _ _ (by decide)]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH2B, getne _ _ _ (by decide)]
+
+/-- `budgetBodyInner` grows `BUD` by at most one. -/
+theorem budgetBodyInner_BUD_le (w : State) :
+    (State.get (budgetBodyInner.eval w) BUD).length ≤ (State.get w BUD).length + 1 := by
+  unfold budgetBodyInner
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  set a1 := (Cmd.op (Op.head H1B SC2)).eval w with ha1
+  set a2 := (Cmd.op (Op.tail SC2 SC2)).eval a1 with ha2
+  set a3 := (Cmd.op (Op.head H2B SC2)).eval a2 with ha3
+  set a4 := (Cmd.op (Op.tail SC2 SC2)).eval a3 with ha4
+  set a5 := (Cmd.op (Op.appendOne T)).eval a4 with ha5
+  have hBUDa5 : State.get a5 BUD = State.get w BUD := by
+    rw [ha5, getne _ _ _ (by decide), ha4, getne _ _ _ (by decide), ha3,
+      getne _ _ _ (by decide), ha2, getne _ _ _ (by decide), ha1, getne _ _ _ (by decide)]
+  rw [← hBUDa5]
+  by_cases hH1B : State.get a5 H1B = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hH1B]
+    by_cases hH2B : State.get a5 H2B = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH2B, Cmd.eval_seq, Cmd.eval_seq]
+      set b1 := (Cmd.op (Op.head H2B SC2)).eval a5 with hb1
+      set b2 := (Cmd.op (Op.tail SC2 SC2)).eval b1 with hb2
+      have hBUDb2 : State.get b2 BUD = State.get a5 BUD := by
+        rw [hb2, getne _ _ _ (by decide), hb1, getne _ _ _ (by decide)]
+      by_cases hH2B' : State.get b2 H2B = [1]
+      · rw [Cmd.eval_ifBit_true _ _ _ _ hH2B', Cmd.eval_seq, Cmd.eval_seq]
+        set c1 := (Cmd.op (Op.clear DN2)).eval b2 with hc1
+        have hBUDc1 : State.get c1 BUD = State.get b2 BUD := getne _ _ _ (by decide)
+        -- tail BUD BUD: shrinks; drainSkip loop preserves BUD
+        rw [Cmd.eval_op, Op.eval, State.get_set_eq, drainSkipLoop_BUD, hBUDc1, hBUDb2,
+          List.length_tail]
+        omega
+      · rw [Cmd.eval_ifBit_false _ _ _ _ hH2B', nop, getne _ _ _ (by decide), hBUDb2]; omega
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH2B, Cmd.eval_op, Op.eval, State.get_set_eq,
+        List.length_append, List.length_singleton]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hH1B]
+    by_cases hH2B : State.get a5 H2B = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH2B, Cmd.eval_op, Op.eval, State.get_set_eq,
+        List.length_append, List.length_singleton]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH2B, Cmd.eval_op, Op.eval, State.get_set_eq,
+        List.length_tail]; omega
+
+/-- `budgetBody` never grows `SC2`. -/
+theorem budgetBody_SC2_le (w : State) :
+    (State.get (budgetBody.eval w) SC2).length ≤ (State.get w SC2).length := by
+  unfold budgetBody
+  rw [Cmd.eval_seq]
+  set w1 := (Cmd.op (Op.nonEmpty NEB BUD)).eval w with hw1
+  have hSC2w1 : State.get w1 SC2 = State.get w SC2 := getne _ _ _ (by decide)
+  by_cases h : State.get w1 NEB = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ h]
+    refine le_trans (budgetBodyInner_SC2_le w1) ?_; rw [hSC2w1]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ h, nop, getne _ _ _ (by decide), hSC2w1]
+
+/-- `budgetBody` grows `BUD` by at most one. -/
+theorem budgetBody_BUD_le (w : State) :
+    (State.get (budgetBody.eval w) BUD).length ≤ (State.get w BUD).length + 1 := by
+  unfold budgetBody
+  rw [Cmd.eval_seq]
+  set w1 := (Cmd.op (Op.nonEmpty NEB BUD)).eval w with hw1
+  have hBUDw1 : State.get w1 BUD = State.get w BUD := getne _ _ _ (by decide)
+  by_cases h : State.get w1 NEB = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ h]
+    refine le_trans (budgetBodyInner_BUD_le w1) ?_; rw [hBUDw1]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ h, nop, getne _ _ _ (by decide), hBUDw1]; omega
+
+set_option maxHeartbeats 1000000 in
+/-- **`subtreeScan` cost bound** — `O(m³)` where `m = |SCAN|` (the budget loop
+runs `m` times, each `budgetBody` costs `O(m²)`). -/
+theorem subtreeScan_cost (u : State) :
+    subtreeScan.cost u ≤ 2000 * ((State.get u SCAN).length + 1) ^ 3 := by
+  set m := (State.get u SCAN).length with hm
+  unfold subtreeScan
+  rw [Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq, Cmd.cost_seq]
+  set p1 := (Cmd.op (Op.copy SC2 SCAN)).eval u with hp1
+  set p2 := (Cmd.op (Op.clear BUD)).eval p1 with hp2
+  set p3 := (Cmd.op (Op.appendOne BUD)).eval p2 with hp3
+  set P0 := (Cmd.op (Op.clear T)).eval p3 with hP0
+  -- prefix costs
+  have hc_copy : (Cmd.op (Op.copy SC2 SCAN)).cost u = m + 1 := by rw [Cmd.cost_op]; rfl
+  have hc_cb : (Cmd.op (Op.clear BUD)).cost p1 = 1 := by rw [Cmd.cost_op]; rfl
+  have hc_ab : (Cmd.op (Op.appendOne BUD)).cost p2 = 1 := by rw [Cmd.cost_op]; rfl
+  have hc_ct : (Cmd.op (Op.clear T)).cost p3 = 1 := by rw [Cmd.cost_op]; rfl
+  -- P0 register facts
+  have hSCAN_P0 : State.get P0 SCAN = State.get u SCAN := by
+    rw [hP0, getne _ _ _ (by decide), hp3, getne _ _ _ (by decide), hp2,
+      getne _ _ _ (by decide), hp1, getne _ _ _ (by decide)]
+  have hSC2_P0 : State.get P0 SC2 = State.get u SCAN := by
+    rw [hP0, getne _ _ _ (by decide), hp3, getne _ _ _ (by decide), hp2,
+      getne _ _ _ (by decide), hp1, Cmd.eval_op, Op.eval, State.get_set_eq]
+  have hBUD_P0 : State.get P0 BUD = [1] := by
+    rw [hP0, getne _ _ _ (by decide), hp3, Cmd.eval_op, Op.eval, State.get_set_eq, hp2,
+      Cmd.eval_op, Op.eval, State.get_set_eq, List.nil_append]
+  set B := 1600 * (m + 1) * (m + 1) + 2 * (m + 1) + 3 * m + 70 with hB
+  have h0 : (State.get P0 SC2).length ≤ m ∧ (State.get P0 BUD).length ≤ 1 + 0 := by
+    rw [hSC2_P0, hBUD_P0]; exact ⟨le_refl _, by decide⟩
+  have hloop := Cmd.cost_forBnd_le IDX2 SCAN budgetBody P0 B
+    (fun i st => (State.get st SC2).length ≤ m ∧ (State.get st BUD).length ≤ 1 + i)
+    h0
+    (fun i st _ hM => by
+      obtain ⟨h1, h2⟩ := hM
+      have e1 : State.get (st.set IDX2 (List.replicate i 1)) SC2 = State.get st SC2 :=
+        State.get_set_ne _ _ _ _ (by decide)
+      have e2 : State.get (st.set IDX2 (List.replicate i 1)) BUD = State.get st BUD :=
+        State.get_set_ne _ _ _ _ (by decide)
+      refine ⟨?_, ?_⟩
+      · refine le_trans (budgetBody_SC2_le _) ?_; rw [e1]; exact h1
+      · refine le_trans (budgetBody_BUD_le _) ?_; rw [e2]; omega)
+    (fun i st hi hM => by
+      obtain ⟨h1, h2⟩ := hM
+      have e1 : State.get (st.set IDX2 (List.replicate i 1)) SC2 = State.get st SC2 :=
+        State.get_set_ne _ _ _ _ (by decide)
+      have e2 : State.get (st.set IDX2 (List.replicate i 1)) BUD = State.get st BUD :=
+        State.get_set_ne _ _ _ _ (by decide)
+      rw [hSCAN_P0] at hi
+      exact le_trans (budgetBody_cost _ m (m + 1) (by rw [e1]; exact h1)
+        (by rw [e2]; omega)) (by rw [hB]))
+  rw [hSCAN_P0] at hloop
+  rw [hc_copy, hc_cb, hc_ab, hc_ct]
+  -- combine: prefix (m+8) + loop (1 + m*B + m²) ≤ 2000(m+1)³
+  have hfin : 1 + (m + 1) + (1 + 1 + (1 + 1 + (1 + 1 + (1 + m * B + m * m))))
+      ≤ 2000 * (m + 1) ^ 3 := by
+    rw [hB]
+    nlinarith [Nat.zero_le m, sq_nonneg m, Nat.mul_le_mul_left m (Nat.le_refl (m+1))]
+  refine le_trans ?_ hfin
+  gcongr
+
+/-! ## Cost accounting — gadget cost constant + token-count (`T`) effect -/
+
+/-- A single opaque constant dominating every gadget/prefix `flatK` used in the
+`tokenBody` cost. -/
+def tokFK : Nat :=
+  100000 + emitTrueG.flatK + emitEquivG.flatK + emitAndG.flatK + emitOrG.flatK
+    + emitNotG.flatK
+
+theorem emitTrueG_flatK_le : emitTrueG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitEquivG_flatK_le : emitEquivG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitAndG_flatK_le : emitAndG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitOrG_flatK_le : emitOrG.flatK ≤ tokFK := by unfold tokFK; omega
+theorem emitNotG_flatK_le : emitNotG.flatK ≤ tokFK := by unfold tokFK; omega
+
+/-- `budgetBodyInner` appends exactly one to `T`. -/
+theorem budgetBodyInner_T_le (w : State) :
+    (State.get (budgetBodyInner.eval w) T).length ≤ (State.get w T).length + 1 := by
+  unfold budgetBodyInner
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq,
+    Cmd.eval_get_of_not_writes _ _ T (by decide)]
+  -- goal: |T (appendOne T .eval a4)| ≤ |T w| + 1
+  rw [Cmd.eval_op, Op.eval, State.get_set_eq, List.length_append, List.length_singleton,
+    getne _ _ _ (by decide), getne _ _ _ (by decide), getne _ _ _ (by decide),
+    getne _ _ _ (by decide)]
+
+/-- `budgetBody` grows `T` by at most one. -/
+theorem budgetBody_T_le (w : State) :
+    (State.get (budgetBody.eval w) T).length ≤ (State.get w T).length + 1 := by
+  unfold budgetBody
+  rw [Cmd.eval_seq]
+  set w1 := (Cmd.op (Op.nonEmpty NEB BUD)).eval w with hw1
+  have hTw1 : State.get w1 T = State.get w T := getne _ _ _ (by decide)
+  by_cases h : State.get w1 NEB = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ h]
+    refine le_trans (budgetBodyInner_T_le w1) ?_; rw [hTw1]
+  · rw [Cmd.eval_ifBit_false _ _ _ _ h, nop, getne _ _ _ (by decide), hTw1]; omega
+
+/-- `subtreeScan` sets `T` to length `≤ |SCAN|`. -/
+theorem subtreeScan_T_le (s : State) :
+    (State.get (subtreeScan.eval s) T).length ≤ (State.get s SCAN).length := by
+  unfold subtreeScan
+  rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  set p1 := (Cmd.op (Op.copy SC2 SCAN)).eval s with hp1
+  set p2 := (Cmd.op (Op.clear BUD)).eval p1 with hp2
+  set p3 := (Cmd.op (Op.appendOne BUD)).eval p2 with hp3
+  set P0 := (Cmd.op (Op.clear T)).eval p3 with hP0
+  have hSCAN_P0 : State.get P0 SCAN = State.get s SCAN := by
+    rw [hP0, getne _ _ _ (by decide), hp3, getne _ _ _ (by decide), hp2,
+      getne _ _ _ (by decide), hp1, getne _ _ _ (by decide)]
+  have hT_P0 : State.get P0 T = [] := by
+    rw [hP0, Cmd.eval_op, Op.eval, State.get_set_eq]
+  rw [Cmd.eval_forBnd]
+  have h0 : (State.get P0 T).length ≤ 0 := by rw [hT_P0]; simp
+  have hInv := Cmd.foldlState_range_induct budgetBody IDX2 (State.get P0 SCAN).length P0
+    (fun i st => (State.get st T).length ≤ i)
+    h0
+    (fun i st _ hM => by
+      have e : State.get (st.set IDX2 (List.replicate i 1)) T = State.get st T :=
+        State.get_set_ne _ _ _ _ (by decide)
+      refine le_trans (budgetBody_T_le _) ?_; rw [e]; omega)
+  rw [hSCAN_P0] at hInv ⊢
+  exact hInv
+
+/-! ## Cost accounting — emit-gadget bound helper + VREG effect -/
+
+private theorem getne' (o : Op) (s : State) (r : Var) (hr : r ≠ o.writesTo) :
+    State.get ((Cmd.op o).eval s) r = State.get s r := by
+  rw [Cmd.eval_op]; exact Op.eval_get_ne_writesTo o s r hr
+
+/-- A loop-free gadget with all `costReads ≤ E+3N+1` costs `≤ g.flatK · X`
+where `X = (E+N+3)³`. -/
+private theorem gad_le (g : Cmd) (hlf : g.loopFree = true) (E N : Nat) (s' : State)
+    (h : ∀ r ∈ g.costReads, (State.get s' r).length ≤ E + 3 * N + 1) :
+    g.cost s' ≤ g.flatK * (E + N + 3) ^ 3 := by
+  refine le_trans (Cmd.cost_le_flat g hlf s' (E + 3 * N + 1) h).1 ?_
+  refine Nat.mul_le_mul_left _ ?_
+  have hy : (3 : Nat) ≤ E + N + 3 := by omega
+  have hsq : 9 ≤ (E + N + 3) * (E + N + 3) := by nlinarith [hy]
+  have hcube : 3 * (E + N + 3) ≤ (E + N + 3) * (E + N + 3) * (E + N + 3) := by
+    nlinarith [hy, hsq]
+  calc E + 3 * N + 1 + 1 ≤ 3 * (E + N + 3) := by omega
+    _ ≤ (E + N + 3) * (E + N + 3) * (E + N + 3) := hcube
+    _ = (E + N + 3) ^ 3 := by ring
+
+/-- `drainVarBody` grows `VREG` by at most one. -/
+theorem drainVarBody_VREG_le (w : State) :
+    (State.get (drainVarBody.eval w) VREG).length ≤ (State.get w VREG).length + 1 := by
+  unfold drainVarBody
+  by_cases hDN : State.get w DN = [1]
+  · rw [Cmd.eval_ifBit_true _ _ _ _ hDN, nop, getne' _ _ _ (by decide)]; omega
+  · rw [Cmd.eval_ifBit_false _ _ _ _ hDN, Cmd.eval_seq, Cmd.eval_seq]
+    set s0 := (Cmd.op (Op.head H3 SCAN)).eval w with hs0
+    set s1 := (Cmd.op (Op.tail SCAN SCAN)).eval s0 with hs1
+    have hVREGs1 : State.get s1 VREG = State.get w VREG := by
+      rw [hs1, getne' _ _ _ (by decide), hs0, getne' _ _ _ (by decide)]
+    by_cases hH3 : State.get s1 H3 = [1]
+    · rw [Cmd.eval_ifBit_true _ _ _ _ hH3, Cmd.eval_op, Op.eval, State.get_set_eq,
+        List.length_append, List.length_singleton, hVREGs1]
+    · rw [Cmd.eval_ifBit_false _ _ _ _ hH3, Cmd.eval_seq, Cmd.eval_op, Op.eval,
+        Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ (show VREG ≠ DN by decide),
+        State.get_set_ne _ _ _ _ (show VREG ≠ DN by decide), hVREGs1]; omega
+
+/-- The `drainVar` loop leaves `VREG` no longer than `|VREG| + |SCAN|`. -/
+theorem drainVar_VREG_le (s : State) :
+    (State.get ((Cmd.forBnd IDX3 SCAN drainVarBody).eval s) VREG).length
+      ≤ (State.get s VREG).length + (State.get s SCAN).length := by
+  rw [Cmd.eval_forBnd]
+  have h0 : (State.get s VREG).length ≤ (State.get s VREG).length + 0 := by omega
+  have hInv := Cmd.foldlState_range_induct drainVarBody IDX3 (State.get s SCAN).length s
+    (fun i st => (State.get st VREG).length ≤ (State.get s VREG).length + i) h0
+    (fun i st _ hM => by
+      have e : State.get (st.set IDX3 (List.replicate i 1)) VREG = State.get st VREG :=
+        State.get_set_ne _ _ _ _ (by decide)
+      refine le_trans (drainVarBody_VREG_le _) ?_; rw [e]; omega)
+  exact hInv
 
 end FSATSATFree
