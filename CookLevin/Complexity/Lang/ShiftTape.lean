@@ -130,15 +130,19 @@ theorem insertCarryTM_step_nonblank (ins s y : Nat) (hs : s < 5) (hy : y < 4)
     simp [hsym, hlt, owed, stepFlatTM, insertCarryTM, insertCarryTrans, mkE,
       entryMatchesConfig, applyTransitionEntry, tapeStep, writeCurrentTapeSymbol, moveTapeHead]
 
-/-- One step on a blank cell: write the owed value (appending) and halt. -/
+/-- One step on the blank **frontier** cell (`head = right.length`): write the
+owed value (appending one cell) and halt. (Restated 2026-07-17 for the
+frontier-append write semantics — beyond-frontier writes are now void, and
+every call site of this lemma was already at the frontier.) -/
 theorem insertCarryTM_step_blank (ins s : Nat) (hs : s < 5)
-    (left right : List Nat) (head : Nat) (hge : ¬ head < right.length) :
+    (left right : List Nat) (head : Nat) (heq : head = right.length) :
     stepFlatTM (insertCarryTM ins)
         { state_idx := s, tapes := [(left, head, right)] }
       = some { state_idx := 5,
-               tapes := [(left, head,
-                          right ++ List.replicate (head - right.length) 0 ++ [owed ins s])] } := by
-  have hsym : currentTapeSymbol (left, head, right) = none :=
+               tapes := [(left, head, right ++ [owed ins s])] } := by
+  subst heq
+  have hge : ¬ right.length < right.length := Nat.lt_irrefl _
+  have hsym : currentTapeSymbol (left, right.length, right) = none :=
     currentTapeSymbol_out_of_range hge
   interval_cases s <;>
     simp [hsym, hge, owed, stepFlatTM, insertCarryTM, insertCarryTrans, mkE,
@@ -174,11 +178,11 @@ theorem insertCarryTM_carry_run (ins : Nat) (suf : List Nat) :
   induction suf with
   | nil =>
     intro pre v hv _
-    have hge : ¬ pre.length < (pre ++ ([] : List Nat)).length := by simp
+    have heq : pre.length = (pre ++ ([] : List Nat)).length := by simp
     rw [List.length_nil,
         run_succ_of_step _ _ _ 0
           (not_halt_lt5 ins (1 + v) (by omega) _ rfl)
-          (insertCarryTM_step_blank ins (1 + v) (by omega) [] (pre ++ []) pre.length hge)]
+          (insertCarryTM_step_blank ins (1 + v) (by omega) [] (pre ++ []) pre.length heq)]
     simp [runFlatTM, owed]
   | cons y suf' ih =>
     intro pre v hv hall
@@ -220,10 +224,10 @@ theorem insertCarryTM_run (ins : Nat) (suf pre : List Nat)
                tapes := [([], pre.length + suf.length, pre ++ ins :: suf)] } := by
   cases suf with
   | nil =>
-    have hge : ¬ pre.length < (pre ++ ([] : List Nat)).length := by simp
+    have heq : pre.length = (pre ++ ([] : List Nat)).length := by simp
     rw [List.length_nil,
         run_succ_of_step _ _ _ 0 (not_halt_lt5 ins 0 (by omega) _ rfl)
-          (insertCarryTM_step_blank ins 0 (by omega) [] (pre ++ []) pre.length hge)]
+          (insertCarryTM_step_blank ins 0 (by omega) [] (pre ++ []) pre.length heq)]
     simp [runFlatTM, owed]
   | cons y suf' =>
     have hy : y < 4 := hall y (by simp)

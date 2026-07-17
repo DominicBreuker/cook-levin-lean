@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-16; **THE SOUND TAIL IS COMPLETE — `FlatTCC ⪯p' SAT` is ONE live chain** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean). All four tail steps + three seams are done; the tail now WAITS ON THE FRONT — next: **S1 (the Cook 2D tableau)** top-down and **C8-3** bottom-up)
+## Where the proof stands (2026-07-17; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean) and **S1 HAS A TRUE, DECOMPOSED TARGET**: the 2026-07-17-b risk review found `cookTableau_correct` was FALSE as stated (non-local jump-write semantics + 3 construction defects), fixed the semantics, and landed the v2 card algebra + the full sorried skeleton, agreement PROBED GREEN — next: **S1 direction (1a)** top-down and **C8-3 / S1 leaf lemmas** bottom-up)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -27,9 +27,10 @@ reasonably provable).
   (S1 + C8 must deliver an honest `… ⪯p' FlatTCC` prefix).
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
-  `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (S1), 3×
-  `MultiToSingle` (dead code). Plus the `sorry`-free **vacuous** defs (S1/S2 +
-  size-0 hardness reduction) invisible to `#print axioms` — Group S.
+  `hasDeciderClassical` (`GenNP_is_hard.lean`), 10× `CookTableau` (the S1
+  skeleton sub-lemmas, each with a proof-plan docstring), 3× `MultiToSingle`
+  (dead code). Plus the `sorry`-free **vacuous** defs (S1-stub/S2) invisible
+  to `#print axioms` — Group S.
 - **The compiler (Risk C2) is DONE and CLEAN.** All **9** ops proven &
   axiom-clean; `compileOp_sound_physical_residue` is fully proven with no
   side-conditions. The retired value-as-length trio and BOTH isolation walls
@@ -50,6 +51,48 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-17-b (top-down) — S1 RISK REVIEW + v2 REDESIGN: `cookTableau_correct`
+  was FALSE as stated; the tape semantics are FIXED, the full card algebra is
+  landed, the bijection is DECOMPOSED, and agreement is PROBED GREEN.** Four
+  independent v1 defects were found *before* any bijection work was spent on
+  them: (1) **BLOCKING — non-local jump-writes.** `writeCurrentTapeSymbol`
+  zero-padded writes beyond the tape frontier, so ONE machine step rewrote
+  `head − len` cells at arbitrary distance from the head — inexpressible by
+  ANY local 3-window card family (counterexample: wander ≥ 3 cells past the
+  frontier reading `none`, write once, walk back, branch on `some 0`-vs-blank;
+  the probe's `M2` accept/reject flips under the two semantics). **FIXED in
+  `MachineSemantics.lean`**: the tape is append-only at the frontier —
+  beyond-frontier writes are VOID; all in-range/frontier behaviour unchanged;
+  total fallout was 2 files (`TapeMono`, `ShiftTape.insertCarryTM_step_blank`
+  restated at the frontier — every call site already was there). This is also
+  closer to Coq's `midtape/rightof` tape, which cannot wander at all.
+  (2) v1 had only head-at-CENTER transition cards — *soundness* fails for any
+  machine that moves (the head-adjacent windows had no matching card). v2 has
+  the closed algebra: 3 window positions per entry + `Rmove`/`Lmove`
+  incoming-head families + halt freeze ×3 positions + boundary variants. The
+  completeness linchpin is the deliberate ABSENCE of an all-tape-premise
+  head-at-second-slot family — spurious heads cannot materialise (a head can
+  only arrive from an adjacent cell, which such a window would contain).
+  (3) `moveTapeHead` clamps `Lmove` at tape position 0, but cards are
+  position-blind — v2 rows carry a leading BOUNDARY MARKER (`bCell`, top
+  code) and the clamp cards key on it. (4) v1's `none`-write card wrote the
+  blank; v2's `wEff` keeps the read symbol and implements the
+  frontier-sensitive void write (blank-left-neighbour ⟺ strictly beyond the
+  frontier, under the run invariant "in-range symbols < sig"). Two further
+  prerequisites: `validFlatTM` forces neither transition-KEY-UNIQUENESS
+  (`stepFlatTM` = `find?`, shadowed duplicates would break completeness) nor
+  well-shaped `dst` lists — cards are generated from **`normTrans`**
+  (first-per-key dedup, shape filter, halting-src drop; step-invisible on
+  the run: `stepFlatTM_normM`). The restated `cookTableau_correct` carries
+  the previously-MISSING `validFlatTM`/`tapes = 1`/`list_ofFlatType`
+  hypotheses (v1 was false without them; they are exactly the witness's
+  future guard). Landed: the 10-sorry decomposition skeleton (each with a
+  proof-plan docstring), PROVEN assembly glue + wellformedness + the ported
+  `immediateHalt` constrained case (axiom-clean), the restated degree-10
+  size bound, and `probes/S1TableauProbe.lean` GREEN (every M1/M2 run step
+  card-covered incl. the frontier-append and void-write paths; halt rows
+  freeze; skip-a-row and live-head stalling correctly NOT covered; final
+  patterns exact).
 - **2026-07-17 (bottom-up) — build health DONE: the two giant witness files
   SPLIT; full clean rebuild 4m45s → 4m05s wall (4-core session container).**
   `BinaryCC_to_FSAT_free.lean` and `FSAT_to_SAT_free.lean` are each three
@@ -405,52 +448,68 @@ building C8-4):**
 
 **`FSAT → SAT` is DONE end-to-end (2026-07-16)** and **build health is DONE
 (2026-07-17)** — no bites remain there. **C8-3 is the clean bottom-up track.**
-One further self-contained bottom-up bite, either stream can take it:
+Further self-contained bottom-up bites (no design risk, proof plans in the
+docstrings), either stream can take them:
 
-- **`cookTableau_size_bound`** (`Simulators/CookTableau.lean`, 1 of the 2 S1
-  sorries): the corrected degree-8 polynomial bound; ~150–300 LOC of
-  foldl-over-`flatMap` `encodable.size` arithmetic, no design risk (the note
-  above the sorry has the full analysis). Closing it early de-risks the S1
-  cost ladder.
+- **The S1 leaf lemmas** (`Simulators/CookTableau.lean`, v2): `stepFlatTM_normM`
+  (dedup/filter agreement — induction with a `seen`-keys invariant),
+  `ConfFits_step` (run-invariant preservation — unfold one step),
+  `satFinal_of_halt`/`halt_of_satFinal` (the final-pattern bridge — head-cell
+  code disjointness). Each ~50–150 LOC; they gate the S1 assemblies.
+- **`cookTableau_size_bound`** (restated 2026-07-17-b at degree 10 for the v2
+  card families): ~150–300 LOC of foldl-over-`flatMap` `encodable.size`
+  arithmetic (dominant terms: `Θ(|Σ|³)` copy cards + `Θ(|trans|·|Σ|³)`
+  incoming-head cards, each of size `Θ(|Σ|)`). Closing it early de-risks the
+  S1 cost ladder.
 
-## NEXT TOP-DOWN session — S1, the Cook 2D tableau (the last big unsoundness)
+## NEXT TOP-DOWN session — S1 step 2: prove direction (1a), freeze the layout
 
-The sound tail is ONE live chain waiting at `FlatTCC`; the front must now
-deliver an honest `FlatSingleTMGenNP ⪯p' FlatTCC`. The real construction
-already EXISTS and is partially proven (`Simulators/CookTableau.lean`, 426
-LOC): `cookTableau M s steps` is a genuine computable tableau (no
-if-on-the-answer), `cookTableau_wellformed` is PROVEN, and a constrained-case
-bijection (`cookTableau_correct_immediateHalt`) validated the window
-bookkeeping. **Two sorries remain**: `cookTableau_size_bound` (mechanical,
-see bottom-up bites) and **`cookTableau_correct`** — the load-bearing
-simulation bijection, est. ~6–11K LOC total (Coq port: ~2K lines just for
-the card/transition agreement). Plan, in order (probe-first, commit each
-green):
+The 2026-07-17-b session did the step-1 decomposition **and** the risk
+review that re-founded it (see ★ Latest sessions — read that entry first;
+the v1 statement was false). `Simulators/CookTableau.lean` v2 now IS the
+plan: every remaining obligation is a named `sorry` with a proof-plan
+docstring, the assembly glue is already proven, and
+`probes/S1TableauProbe.lean` validates the card algebra empirically.
+Recommended order (probe-first, commit each green):
 
-1. **Decompose `cookTableau_correct` into a typechecking skeleton** (session
-   1): per the note above the sorry — (1) card-families ⇔ transition-relation
-   agreement (per-constructor inversion), (2) run ⇒ covering soundness (build
-   the row sequence from a run), (3) covering ⇒ run completeness (extract a
-   run; head-at-edge windows; the certificate guess). Land as `def`+`sorry`
-   sub-lemmas so every downstream obligation is visible. Probe direction (1)
-   on a tiny concrete machine first (`#eval` a card membership table against
-   `stepFlatTM` — extend the file's existing probe machinery).
+1. **Direction (1a): `validStep_of_step` + `validStep_of_halt`** — probe-backed
+   and pure window bookkeeping: fix window `i`, case on its position relative
+   to the head's row coordinate `h = cfgHead + 1` (center `i = h−1`, left-of
+   `i = h`, right-of `i = h−2`, incoming `i = h+1`/`h−3`, copy elsewhere,
+   boundary window 0). `freeze_validStep` is the proven template for the
+   drop/replicate gymnastics; `tapeSymAt_head` bridges the machine read;
+   the frontier ⟺ blank-left-neighbour fact needs the `ConfFits.syms_lt`
+   invariant. Take `ConfFits_step` + `stepFlatTM_normM` (mechanical, see
+   bottom-up bites) in the same session if room.
 2. **Freeze the chain-head input layout** (coordinate with C8 — standing risk
    #2): the S1 *witness*'s `encodeIn : (flatTM × List Nat × Nat × Nat) →
    State` must be the layout `probes/C8SeamProbe.lean` pins as
    `headEncodeIn` (reg 1 machine as sentinel bit-stream, reg 2 `s`, regs 3/4
-   unary params) — C8-5's seam targets it. Freezing this EARLY (even before
-   the bijection is closed) unblocks C8-5 planning and prevents a later
-   re-layout of the tableau-emitter program.
-3. **The bijection itself** (~2–4 sessions, the mathematical heart —
-   direction (1) first, it gates both others).
-4. **The free witness program** (after 1–3): a `Cmd` emitting
+   unary params) — C8-5's seam targets it. Freezing this EARLY unblocks C8-5
+   planning and prevents a later re-layout of the tableau-emitter program.
+3. **Direction (1b): `step_of_validStep`** — the inversion heart (~2K lines in
+   the Coq port; est. 1–3 sessions). The docstring lists the four stages;
+   load-bearing facts: head-cell/tape-cell/boundary code disjointness,
+   `normTrans` key-uniqueness, and the no-head-at-second-slot family absence.
+4. **Assemblies `cover_of_run` / `run_of_cover`** — trajectory inductions
+   threading `ConfFits`; the headline `cookTableau_correct` is already
+   assembled from them.
+5. **The prelude/cert-guess layer** (DESIGN task — paper + probe pass BEFORE
+   coding): the deterministic core gives `accepts M [s] steps ↔ tableau`,
+   but the S1 witness needs `(∃ cert, |cert| ≤ maxSize ∧ accepts M
+   [s ++ cert] steps) ↔ tableau'`. Coq's `preludeRules` shape: wildcard
+   cells in the cert region of row 0, guess cards resolving them in covering
+   step 1, contiguity enforced window-locally (no symbol right of a blank in
+   the guessed region), budget `steps + 1`. Extends the alphabet and
+   `cookInit` only — the card algebra and directions (1a)/(1b) are reused
+   as-is on rows 1…steps.
+6. **The free witness program** (after 1–5): a `Cmd` emitting
    `encodeIn (cookTableau M s steps)` from the chain-head layout — the
-   emitter patterns (`BinaryCC_to_FSAT_free`'s per-stream loops, unary
-   mul for the `Θ(|Σ|³)` card enumeration) and the now-standard
-   run/cost/witness/seam ladder apply unchanged. ⚠ size risk: the tableau is
-   **quartic** in `|Σ| = (M.sig+1)(M.states+2)` — budget `satBound`-style
-   headroom from the start.
+   emitter patterns (`BinaryCC_to_FSAT_free`'s per-stream loops, unary mul
+   for the `Θ(|trans|·|Σ|³)` card enumeration) and the standard
+   run/cost/witness/seam ladder apply unchanged. ⚠ size: the card list is
+   `Θ(|trans|·|Σ|⁴)` encoded — budget `satBound`-style headroom from the
+   start (the size bound is stated at degree 10).
 
 **Reusable machinery for ALL of it** (do not re-derive): the
 `Lang/CostFlat.lean` toolkit; the witness templates
@@ -469,6 +528,12 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
 
 ## Locked invariants — do NOT revisit
 
+- **The flat tape is APPEND-ONLY AT THE FRONTIER (2026-07-17-b):**
+  `writeCurrentTapeSymbol` replaces in range, appends exactly at
+  `head = right.length`, and is a NO-OP strictly beyond. Never reintroduce
+  the zero-padding jump-write — it is non-local (one step rewriting cells
+  arbitrarily far from the head) and falsifies every local-window tableau
+  simulation (S1). New machines must not rely on writing past the frontier.
 - **`BitState` / `sig = 4` / numbers UNARY (Option B′).** Fixed 4-symbol
   alphabet; `encodeTape` shifts cells `+1` (`0→1`,`1→2`), `0` separates
   registers, `3` terminates/anchors. Every tape-touching state must be
