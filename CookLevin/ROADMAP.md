@@ -33,7 +33,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatTCC ⪯p' SAT` (2026-07-16): the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` as ONE composed live `⪯p'`** via the third live seam (`Reductions/FSAT_to_SAT_comp.lean`); the last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`, `Reductions/FSAT_to_SAT_free.lean`) is a complete free witness (run + cost ladders + mechanical fields). **The tail is DONE** — it waits on the front (S1/C8) for the endpoint hardness bridge |
 | `NPhard'` endgame design | **SETTLED, machine-validated & VALIDATED LIVE** (2026-07-02/03): `SeamData`/`PolyTimeComputableLang.comp` fully proven and instantiated on real witnesses; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
-| Genuine `sorry`s (Group C) | **7 in built code** (4 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 2× CookTableau; 3 in dead code `MultiToSingle`) — down from ~13 after the 2026-07-02 canonical-layer retirement deleted 6 permanently-unprovable wall sorries |
+| Genuine `sorry`s (Group C) | **15 in built code** (12 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 10× CookTableau — the S1 v2 decomposition skeleton, 2026-07-17, each a named sub-lemma with a proof plan; 3 in dead code `MultiToSingle`) |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
 | Remaining to a real proof | **~12–20K LOC** (breakdown below) |
@@ -109,10 +109,23 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   collapse the phantom bridges and bind the predicates to the single-tape layer
   decider; **folds into C8**. `Simulators/MultiToSingle.lean` is dead code.
 
-- **S1 is feasible but expensive.** The real Cook 2D tableau
-  (`Simulators/CookTableau.lean`, 2 `sorry`s) is a genuine computable
-  construction (no if-on-the-answer). Estimate ~6–11K LOC, bijection-dominated.
-  Alphabet `|Σ|=(M.sig+1)(M.states+2)`; tableau size is **quartic** in `|Σ|`.
+- **S1 is feasible but expensive — and its target is now TRUE and decomposed
+  (2026-07-17).** A risk review found the v1 bijection **false as stated**:
+  the flat tape's zero-padding jump-writes let one TM step rewrite cells
+  arbitrarily far from the head — inexpressible by any local card family.
+  The semantics were **fixed** (`writeCurrentTapeSymbol`: append-only at the
+  frontier, beyond-frontier writes void; 2-file fallout, all call sites were
+  already at the frontier), and v2 of `Simulators/CookTableau.lean` landed
+  the complete card algebra (boundary marker, `normTrans` key-dedup, three
+  window positions + incoming-head + halt-freeze families, the
+  frontier-sensitive `wEff` write effect), the corrected statement (with the
+  previously-missing `validFlatTM`/`tapes = 1`/alphabet hypotheses), a
+  10-sub-lemma skeleton with the assembly PROVEN, and a green `#eval`
+  agreement probe (`probes/S1TableauProbe.lean`). Remaining estimate
+  ~4–9K LOC, inversion-dominated (`step_of_validStep`), plus the
+  prelude/cert-guess layer (design notes in HANDOFF). Alphabet
+  `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is `Θ(|trans|·|Σ|⁴)` encoded
+  (size bound stated at degree 10).
 
 - **C2 is the linchpin — and is under-built (this session's headline finding).**
   Everything (both the reduction side `toFrameworkWitness'` and the decider side
