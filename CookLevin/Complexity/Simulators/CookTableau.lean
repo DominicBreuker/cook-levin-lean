@@ -185,19 +185,133 @@ def normTrans (M : FlatTM) : List FlatTMTransEntry :=
 /-- `M` with the normalised table. -/
 def normM (M : FlatTM) : FlatTM := { M with trans := normTrans M }
 
-/-- **Normalisation is step-invisible on the run** (skeleton, S1 direction 0).
+/-- `entryMatchesConfig` depends only on the entry's key. -/
+private theorem matches_congr_of_sameKey {e1 e2 : FlatTMTransEntry} (cfg : FlatTMConfig)
+    (h : sameKey e1 e2 = true) :
+    entryMatchesConfig e1 cfg = entryMatchesConfig e2 cfg := by
+  simp only [sameKey, Bool.and_eq_true, decide_eq_true_eq] at h
+  simp only [entryMatchesConfig, h.1, h.2]
+
+/-- Two entries matching the same configuration share a key. -/
+private theorem sameKey_of_matches {e1 e2 : FlatTMTransEntry} {cfg : FlatTMConfig}
+    (h1 : entryMatchesConfig e1 cfg = true) (h2 : entryMatchesConfig e2 cfg = true) :
+    sameKey e1 e2 = true := by
+  simp only [entryMatchesConfig, Bool.and_eq_true, beq_iff_eq, decide_eq_true_eq] at h1 h2
+  simp only [sameKey, Bool.and_eq_true, decide_eq_true_eq]
+  exact ⟨h1.1.trans h2.1.symm, h1.2.trans h2.2.symm⟩
+
+/-- Once a matcher is in `seen`, the dedup output contains no matcher at all. -/
+private theorem dedupGo_no_match (cfg : FlatTMConfig) {p : FlatTMTransEntry}
+    (hp : entryMatchesConfig p cfg = true) :
+    ∀ (l seen : List FlatTMTransEntry), p ∈ seen →
+      ∀ e' ∈ dedupGo seen l, entryMatchesConfig e' cfg = false := by
+  intro l
+  induction l with
+  | nil => intro seen _ e' he'; simp [dedupGo] at he'
+  | cons e es ih =>
+    intro seen hpseen e' he'
+    simp only [dedupGo] at he'
+    by_cases hany : seen.any (fun q => sameKey q e) = true
+    · rw [if_pos hany] at he'
+      exact ih seen hpseen e' he'
+    · rw [if_neg hany] at he'
+      rcases List.mem_cons.1 he' with rfl | he'
+      · by_contra hcontra
+        rw [Bool.not_eq_false] at hcontra
+        exact hany (List.any_eq_true.2 ⟨p, hpseen, sameKey_of_matches hp hcontra⟩)
+      · exact ih (e :: seen) (List.mem_cons_of_mem _ hpseen) e' he'
+
+/-- The combined dedup+filter `find?` characterisation: the normalised table's
+first matcher is `M.trans`'s first matcher when the latter passes `entryOK`,
+and nothing otherwise (dedup keeps at most one entry per key, so a filtered-out
+first matcher is not shadowed by a later same-key entry). -/
+private theorem dedupGo_filter_find? (M : FlatTM) (cfg : FlatTMConfig) :
+    ∀ (l seen : List FlatTMTransEntry),
+      (∀ p ∈ seen, entryMatchesConfig p cfg = false) →
+      ((dedupGo seen l).filter (entryOK M)).find? (fun e => entryMatchesConfig e cfg)
+        = (l.find? (fun e => entryMatchesConfig e cfg)).bind
+            (fun e => if entryOK M e then some e else none) := by
+  intro l
+  induction l with
+  | nil => intro seen _; simp [dedupGo]
+  | cons e es ih =>
+    intro seen hseen
+    simp only [dedupGo]
+    by_cases hany : seen.any (fun q => sameKey q e) = true
+    · rw [if_pos hany]
+      have hPe : entryMatchesConfig e cfg = false := by
+        obtain ⟨p, hpseen, hpk⟩ := List.any_eq_true.1 hany
+        rw [← matches_congr_of_sameKey cfg hpk]
+        exact hseen p hpseen
+      rw [List.find?_cons_of_neg (by simp [hPe]), ih seen hseen]
+    · rw [if_neg hany]
+      by_cases hq : entryOK M e = true
+      · rw [List.filter_cons_of_pos hq]
+        by_cases hPe : entryMatchesConfig e cfg = true
+        · rw [List.find?_cons_of_pos (p := fun e => entryMatchesConfig e cfg) hPe,
+            List.find?_cons_of_pos (p := fun e => entryMatchesConfig e cfg) hPe]
+          simp [hq]
+        · rw [List.find?_cons_of_neg (by simp [hPe]),
+            List.find?_cons_of_neg (by simp [hPe])]
+          exact ih (e :: seen) (by
+            intro p hp
+            rcases List.mem_cons.1 hp with rfl | hp
+            · exact Bool.not_eq_true _ ▸ hPe  -- entryMatchesConfig e cfg = false
+            · exact hseen p hp)
+      · rw [List.filter_cons_of_neg hq]
+        by_cases hPe : entryMatchesConfig e cfg = true
+        · rw [List.find?_cons_of_pos (p := fun e => entryMatchesConfig e cfg) hPe]
+          simp only [Option.bind_some, if_neg hq]
+          rw [List.find?_eq_none]
+          intro e' he'
+          have he'' := (List.mem_filter.1 he').1
+          simp [dedupGo_no_match cfg hPe es (e :: seen) (List.mem_cons_self) e' he'']
+        · rw [List.find?_cons_of_neg (by simp [hPe])]
+          exact ih (e :: seen) (by
+            intro p hp
+            rcases List.mem_cons.1 hp with rfl | hp
+            · exact Bool.not_eq_true _ ▸ hPe
+            · exact hseen p hp)
+
+/-- **Normalisation is step-invisible on the run** (S1 direction 0).
 For a single-tape, *non-halting* configuration the normalised machine steps
 exactly like `M`: dedup keeps the first entry per key (which is what `find?`
 returns), a first-per-key entry with malformed `dst` shape yields `none` on
 both sides (`applyTransitionEntry` guard vs. no entry), and halting-source
-entries are unreachable here by `hnh`. Proof plan: induction on `M.trans`
-threading the `seen`-set invariant "no seen entry matches `cfg`";
-`entryMatchesConfig` depends only on the key. -/
+entries are unreachable here by `hnh`. -/
 theorem stepFlatTM_normM (M : FlatTM) (cfg : FlatTMConfig)
     (h1 : cfg.tapes.length = 1)
     (hnh : haltingStateReached M cfg = false) :
     stepFlatTM (normM M) cfg = stepFlatTM M cfg := by
-  sorry  -- S1 skeleton: normalisation agreement. See docstring.
+  show ((normM M).trans.find? (fun e => entryMatchesConfig e cfg)).bind
+      (applyTransitionEntry cfg)
+    = (M.trans.find? (fun e => entryMatchesConfig e cfg)).bind (applyTransitionEntry cfg)
+  have hnorm : (normM M).trans = (dedupGo [] M.trans).filter (entryOK M) := rfl
+  rw [hnorm, dedupGo_filter_find? M cfg M.trans [] (by intro p hp; cases hp)]
+  cases hfind : M.trans.find? (fun e => entryMatchesConfig e cfg) with
+  | none => rfl
+  | some e =>
+    by_cases hq : entryOK M e = true
+    · simp [hq]
+    · simp only [Option.bind_some, if_neg hq, Option.bind_none]
+      -- the found entry is malformed: `applyTransitionEntry` is `none` too
+      have hPe := List.find?_some hfind
+      simp only [entryMatchesConfig, Bool.and_eq_true, beq_iff_eq,
+        decide_eq_true_eq] at hPe
+      have hsrcLen : e.src_tape_vals.length = 1 := by
+        rw [hPe.2, List.length_map, h1]
+      have hhaltbit : (M.halt.getD e.src_state false) = false := by
+        rw [hPe.1]; exact hnh
+      have hOK : ¬(e.dst_write_vals.length = 1 ∧ e.move_dirs.length = 1) := by
+        intro ⟨hd1, hm1⟩
+        apply hq
+        simp [entryOK, hsrcLen, hd1, hm1, -List.getD_eq_getElem?_getD, hhaltbit]
+      symm
+      unfold applyTransitionEntry
+      rw [dif_neg]
+      rw [h1]
+      intro ⟨ha, hb⟩
+      exact hOK ⟨ha.symm, hb.symm⟩
 
 /-! ## Rows -/
 
@@ -517,17 +631,172 @@ theorem ConfFits_init (M : FlatTM) (s : List Nat)
   intro x hx
   exact hs x hx
 
-/-- **Invariant preservation** (skeleton). Proof plan: unfold `stepFlatTM` /
-`applyTransitionEntry` / `tapeStep`; the write keeps or appends one cell
-(`writeCurrentTapeSymbol` post-fix), the move changes the head by at most
-one, the written symbol is bounded by `validFlatTM`'s
-`flatTMOptionSymbolsBounded`, the new state by the entry's `dst_state`
-bound. -/
+/-- Unfolded description of a successful machine step out of a single-tape
+configuration: the fired entry (with its match and single-tape payload) and
+the successor's explicit shape. -/
+private theorem step_desc (M : FlatTM) {cfg cfg' : FlatTMConfig}
+    (htapes : cfg.tapes = [([], cfgHead cfg, cfgRight cfg)])
+    (hstep : stepFlatTM M cfg = some cfg') :
+    ∃ e ∈ M.trans,
+      entryMatchesConfig e cfg = true ∧
+      e.src_state = cfg.state_idx ∧
+      e.src_tape_vals = [currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)] ∧
+      ∃ w mv, e.dst_write_vals = [w] ∧ e.move_dirs = [mv] ∧
+        cfg' = ⟨e.dst_state, [tapeStep ([], cfgHead cfg, cfgRight cfg) w mv]⟩ := by
+  have hstep' : (M.trans.find? (fun e => entryMatchesConfig e cfg)).bind
+      (applyTransitionEntry cfg) = some cfg' := hstep
+  cases hfind : M.trans.find? (fun e => entryMatchesConfig e cfg) with
+  | none => rw [hfind] at hstep'; simp at hstep'
+  | some e =>
+    rw [hfind] at hstep'
+    have happ : applyTransitionEntry cfg e = some cfg' := hstep'
+    have hP := List.find?_some hfind
+    have hPs := hP
+    simp only [entryMatchesConfig, Bool.and_eq_true, beq_iff_eq,
+      decide_eq_true_eq] at hPs
+    have h1 : cfg.tapes.length = 1 := by rw [htapes]; rfl
+    unfold applyTransitionEntry at happ
+    by_cases hlen : cfg.tapes.length = e.dst_write_vals.length ∧
+        cfg.tapes.length = e.move_dirs.length
+    · rw [dif_pos hlen] at happ
+      obtain ⟨w, hw⟩ := List.length_eq_one_iff.1 (h1 ▸ hlen.1).symm
+      obtain ⟨mv, hmv⟩ := List.length_eq_one_iff.1 (h1 ▸ hlen.2).symm
+      refine ⟨e, List.mem_of_find?_eq_some hfind, hP, hPs.1, ?_, w, mv, hw, hmv, ?_⟩
+      · rw [hPs.2, htapes]; rfl
+      · rw [← Option.some_inj, ← happ]
+        rw [htapes, hw, hmv]
+        rfl
+    · rw [dif_neg hlen] at happ
+      simp at happ
+
+/-- The write effect on the single-tape content, packaged: head and (empty)
+left component preserved, length grows by at most one, symbols stay in the
+machine alphabet, cells away from the head unchanged, and the head cell's
+tableau symbol is exactly `wEff` at the strictly-beyond-frontier flag. -/
+private theorem write_facts (M : FlatTM) (hd : Nat) (right : List Nat) (w : Option Nat)
+    (hsig : ∀ x ∈ right, x < M.sig)
+    (hw : match w with | none => True | some v => v < M.sig) :
+    ∃ wr : List Nat,
+      writeCurrentTapeSymbol ([], hd, right) w = ([], hd, wr) ∧
+      right.length ≤ wr.length ∧ wr.length ≤ right.length + 1 ∧
+      (∀ x ∈ wr, x < M.sig) ∧
+      (∀ p, p ≠ hd → tapeSymAt M wr p = tapeSymAt M right p) ∧
+      tapeSymAt M wr hd
+        = wEff M (currentTapeSymbol ([], hd, right)) w (decide (right.length < hd)) := by
+  cases w with
+  | none =>
+    refine ⟨right, rfl, Nat.le_refl _, by omega, hsig, fun _ _ => rfl, ?_⟩
+    show tapeSymAt M right hd = optSym M (currentTapeSymbol ([], hd, right))
+    exact tapeSymAt_head M [] right hd
+  | some u =>
+    have hu : u < M.sig := hw
+    by_cases h1 : hd < right.length
+    · -- in-range write: one cell replaced
+      refine ⟨right.set hd u, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      · simp only [writeCurrentTapeSymbol]
+        rw [dif_pos h1, List.set_eq_take_append_cons_drop, if_pos h1]
+      · rw [List.length_set]
+      · rw [List.length_set]; omega
+      · intro x hx
+        rcases List.mem_or_eq_of_mem_set hx with hx | rfl
+        · exact hsig x hx
+        · exact hu
+      · intro p hp
+        unfold tapeSymAt
+        rw [List.length_set]
+        by_cases h2 : p < right.length
+        · rw [if_pos h2, if_pos h2]
+          congr 1
+          rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+            List.getElem?_set_ne (Ne.symm hp)]
+        · rw [if_neg h2, if_neg h2]
+      · unfold tapeSymAt
+        rw [List.length_set, if_pos h1]
+        have hget : (right.set hd u).getD hd 0 = u := by
+          simp [List.getD_eq_getElem?_getD, h1]
+        rw [hget]
+        unfold wEff currentTapeSymbol
+        rw [dif_pos h1]
+        simp
+    · by_cases h2 : hd = right.length
+      · -- frontier write: one cell appended
+        refine ⟨right ++ [u], ?_, by simp, by simp, ?_, ?_, ?_⟩
+        · simp only [writeCurrentTapeSymbol]
+          rw [dif_neg h1, if_pos h2]
+        · intro x hx
+          rcases List.mem_append.1 hx with hx | hx
+          · exact hsig x hx
+          · rw [List.mem_singleton.1 hx]; exact hu
+        · intro p hp
+          unfold tapeSymAt
+          rw [List.length_append]
+          by_cases h3 : p < right.length
+          · rw [if_pos (by simp; omega), if_pos h3]
+            congr 1
+            rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+              List.getElem?_append_left h3]
+          · rw [if_neg (by simp; omega), if_neg h3]
+        · unfold tapeSymAt
+          rw [List.length_append, if_pos (by simp; omega)]
+          have hget : (right ++ [u]).getD hd 0 = u := by
+            rw [List.getD_eq_getElem?_getD,
+              List.getElem?_append_right (by omega), h2]
+            simp
+          rw [hget]
+          unfold wEff currentTapeSymbol
+          rw [dif_neg h1]
+          have hxb : decide (right.length < hd) = false := by
+            simp; omega
+          rw [hxb]
+          simp
+      · -- strictly beyond the frontier: the write is VOID
+        refine ⟨right, ?_, Nat.le_refl _, by omega, hsig, fun _ _ => rfl, ?_⟩
+        · simp only [writeCurrentTapeSymbol]
+          rw [dif_neg h1, if_neg h2]
+        · unfold tapeSymAt
+          rw [if_neg h1]
+          unfold wEff currentTapeSymbol
+          rw [dif_neg h1]
+          have hxb : decide (right.length < hd) = true := by
+            simp; omega
+          rw [hxb]
+          simp
+
+/-- **Invariant preservation** (S1). The write keeps or appends one cell
+(`write_facts`), the move changes the head by at most one, the written symbol
+is bounded by `validFlatTM`'s `flatTMOptionSymbolsBounded`, the new state by
+the entry's `dst_state` bound. -/
 theorem ConfFits_step (M : FlatTM) {base t : Nat} {cfg cfg' : FlatTMConfig}
     (hV : validFlatTM M) (hfit : ConfFits M base t cfg)
     (hstep : stepFlatTM M cfg = some cfg') :
     ConfFits M base (t + 1) cfg' := by
-  sorry  -- S1 skeleton: run-invariant preservation. See docstring.
+  obtain ⟨e, heMem, hmatch, hsrc, hvals, w, mv, hw, hmv, hcfg'⟩ :=
+    step_desc M hfit.tapes_eq hstep
+  have hvalid := hV.2.2 e heMem
+  have hwmem : w ∈ e.dst_write_vals := by
+    rw [hw]; exact List.mem_singleton.2 rfl
+  have hwbound := hvalid.2.2.2.2.2.2 w hwmem
+  obtain ⟨wr, hwt, hlen1, hlen2, hsyms, hunch, hwrhd⟩ :=
+    write_facts M (cfgHead cfg) (cfgRight cfg) w hfit.syms_lt hwbound
+  obtain ⟨hd', hmv', hbnd⟩ : ∃ hd',
+      moveTapeHead ([], cfgHead cfg, wr) mv = ([], hd', wr) ∧
+      hd' ≤ cfgHead cfg + 1 := by
+    cases mv
+    · exact ⟨cfgHead cfg - 1, rfl, by omega⟩
+    · exact ⟨cfgHead cfg + 1, rfl, by omega⟩
+    · exact ⟨cfgHead cfg, rfl, by omega⟩
+  have htape : tapeStep ([], cfgHead cfg, cfgRight cfg) w mv = ([], hd', wr) := by
+    unfold tapeStep
+    rw [hwt, hmv']
+  subst hcfg'
+  rw [htape]
+  have hh := hfit.head_le
+  have hl := hfit.len_le
+  refine ⟨rfl, hvalid.2.1, ?_, ?_, hsyms⟩
+  · show hd' ≤ t + 1
+    omega
+  · show wr.length ≤ base + (t + 1)
+    omega
 
 /-- **(1a) Card soundness of a machine step** (skeleton): a legal
 non-halting machine step is a card-covered row transition. Proof plan: fix
