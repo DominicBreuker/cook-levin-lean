@@ -50,6 +50,21 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-17 (bottom-up) — build health DONE: the two giant witness files
+  SPLIT; full clean rebuild 4m45s → 4m05s wall (4-core session container).**
+  `BinaryCC_to_FSAT_free.lean` and `FSAT_to_SAT_free.lean` are each three
+  modules now — `*_defs` (codec/program/model defs), `*_run` (the run-lemma
+  ladders), and the ORIGINAL module name (cost + witness + headline `⪯p'`,
+  so every downstream import is unchanged). `FSAT_to_SAT_free_defs` imports
+  ONLY `BinaryCC_to_FSAT_free_defs` (the `serF` codec + layout +
+  `serF_length_le_size`), so the two witness chains build IN PARALLEL
+  (run 19s∥23s, cost 36s∥32s). Content moved verbatim, nothing re-proven;
+  33 BinaryCC run-region loop invariants lost `private` (the cost module
+  consumes them across the new boundary); axiom profiles unchanged, build
+  green (3386). ⚠ FINDING (corrects the old build-health note): `_run` →
+  cost is inherently SERIAL — the cost ladders consume the run lemmas
+  (`buildSAT_cost_le` walks `buildSAT_run`'s state chain), so run∥cost
+  parallelism is impossible; the wall-clock win is the `_defs` extraction.
 - **2026-07-16 (top-down) — `FSAT → SAT` FINISHED: cost assembly + witness +
   seam; THE SOUND TAIL IS ONE LIVE CHAIN.** 5 commits, all axiom-clean, full
   build green (3382). Landed: (1) **`tokenBody_cost`** (`≤ tokFK·(E+N+3)³`) —
@@ -388,24 +403,15 @@ building C8-4):**
   `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
-**`FSAT → SAT` is DONE end-to-end (2026-07-16)** — no bites remain there.
-**C8-3 is the clean bottom-up track.** Two further self-contained bottom-up
-bites, either stream can take them:
+**`FSAT → SAT` is DONE end-to-end (2026-07-16)** and **build health is DONE
+(2026-07-17)** — no bites remain there. **C8-3 is the clean bottom-up track.**
+One further self-contained bottom-up bite, either stream can take it:
 
 - **`cookTableau_size_bound`** (`Simulators/CookTableau.lean`, 1 of the 2 S1
   sorries): the corrected degree-8 polynomial bound; ~150–300 LOC of
   foldl-over-`flatMap` `encodable.size` arithmetic, no design risk (the note
   above the sorry has the full analysis). Closing it early de-risks the S1
   cost ladder.
-- **Build-health (optional, iteration speed only):** the two giant witness
-  files dominate the build's critical path — `BinaryCC_to_FSAT_free.lean`
-  (9.1K LOC, ~69s) and `FSAT_to_SAT_free.lean` (4.3K LOC, ~57s), serialized
-  back-to-back by the import chain (everything else ≤ 28s; whole-project
-  rebuild ≈ 3 min wall). Splitting each into `_defs`/`_run`/`_cost` modules
-  would parallelize run/cost and stop editing-one-lemma from re-elaborating
-  the whole file. Mechanical, but touch only if iteration pain warrants —
-  the scratch-file workflow (`env LEAN_PATH=$(lake env printenv LEAN_PATH)
-  lean scratch.lean` against the built olean) already mitigates.
 
 ## NEXT TOP-DOWN session — S1, the Cook 2D tableau (the last big unsoundness)
 
@@ -668,6 +674,13 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   Iterate one file directly: `env LEAN_PATH=$(lake env printenv LEAN_PATH)
   lean <file>` (fast, no lake) or `lake build <Module.Name>`. Commit per logical
   step, green. Headline: `Complexity.NP.SAT.CookLevin`.
+  The two big witness files are SPLIT (2026-07-17): `BinaryCC_to_FSAT_free`
+  and `FSAT_to_SAT_free` each = `*_defs` → `*_run` → original-name
+  (cost + witness). Importing the original names still pulls in everything;
+  put new codec/def-level lemmas in `_defs`, run lemmas in `_run`,
+  cost/witness work in the original module — and keep `_defs` slim, it is
+  what lets the two chains build in parallel. Editing a `_run` file
+  re-elaborates only it + the modules after it, not a 9K-LOC monolith.
   ⚠ **The lib roots are `Basic`+`Complexity` (`lakefile.lean`), so `lake build`
   only checks modules TRANSITIVELY IMPORTED from `Complexity.lean` — a new
   `.lean` file that nothing imports is INVISIBLE to CI even if it `#eval`s/
