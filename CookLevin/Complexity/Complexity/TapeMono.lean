@@ -11,8 +11,10 @@ a triple `(left, head, right)`; the *content* lives entirely in `right`
 `Compile.flattenTape`). The two tape primitives are:
 
 * `writeCurrentTapeSymbol` — an in-range write replaces one cell
-  (`right.take head ++ sym :: right.drop (head+1)`, **same length**); an
-  out-of-range write pads and appends (**grows**); a `none`-write is a no-op.
+  (`right.take head ++ sym :: right.drop (head+1)`, **same length**); a
+  frontier write (`head = right.length`) appends one cell (**grows**); a
+  beyond-frontier write and a `none`-write are no-ops (2026-07-17 S1
+  semantics fix — see the docstring in `MachineSemantics.lean`).
 * `moveTapeHead` — only changes the head index, never `right`.
 
 Consequently **`right.length` is monotonically non-decreasing along every run**
@@ -41,7 +43,8 @@ the first end-of-tape terminator, plus a left-shift "delete" gadget). -/
 namespace Complexity
 
 /-- A write never shortens the tape content `right`. An in-range write keeps the
-length; an out-of-range write grows it; a `none`-write is a no-op. -/
+length; a frontier write appends one cell; a beyond-frontier write and a
+`none`-write are no-ops. -/
 theorem writeCurrentTapeSymbol_length_le (tape : List Nat × Nat × List Nat)
     (sym : Option Nat) :
     tape.2.2.length ≤ (writeCurrentTapeSymbol tape sym).2.2.length := by
@@ -56,9 +59,11 @@ theorem writeCurrentTapeSymbol_length_le (tape : List Nat × Nat × List Nat)
         List.length_drop, Nat.min_eq_left (Nat.le_of_lt h)]
       omega
     · rw [dif_neg h]
-      simp only [List.length_append, List.length_replicate, List.length_cons,
-        List.length_nil]
-      omega
+      by_cases he : head = right.length
+      · rw [if_pos he]
+        simp
+      · rw [if_neg he]
+        exact Nat.le_refl _
 
 /-- `moveTapeHead` leaves the tape content `right` untouched. -/
 theorem moveTapeHead_content (tape : List Nat × Nat × List Nat) (m : TMMove) :

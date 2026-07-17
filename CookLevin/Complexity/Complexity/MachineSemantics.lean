@@ -86,6 +86,29 @@ def currentTapeSymbol (tape : List Nat × Nat × List Nat) : Option Nat :=
   else
     none
 
+/-- Write a symbol at the head. An in-range write (`head < right.length`)
+replaces one cell; a write **at the frontier** (`head = right.length`) appends
+one cell; a write **strictly beyond the frontier** (`head > right.length`) is a
+**no-op**; a `none`-write is always a no-op.
+
+**⚠ S1 finding (2026-07-17, semantics fix).** The previous definition
+zero-padded jump-writes: at `head > right.length` it produced
+`right ++ replicate (head - right.length) 0 ++ [sym]`, so a **single TM step
+rewrote `head - right.length` cells at arbitrary distance from the head**
+(a machine can move right `k` times past the frontier reading `none`, then
+write once, materialising `0`-cells `k` cells away). That is non-local:
+no 3-cell-window tableau (the Cook 2D construction, `Simulators/CookTableau`)
+can simulate it — the cells `≥ 3` away from the head are forced unchanged by
+copy cards, so `cookTableau_correct` was **false as stated** for adversarial
+(but `validFlatTM`-valid) machines that branch on reading back a padded `0`
+(`some 0`) where the tableau still shows a blank. The fix makes the tape
+**append-only at the frontier**, which restores locality: one step changes at
+most the head cell. This is also closer to the Coq original's tape type
+(`midtape`/`rightof`), where the head can never be more than one cell past the
+written region at all. All in-range and at-frontier behaviour — the only
+behaviour any proven machine in this repo exercises (audited 2026-07-17:
+`insertCarryTM_step_blank`'s call sites all have `head = right.length`) — is
+unchanged. -/
 def writeCurrentTapeSymbol (tape : List Nat × Nat × List Nat) (symbol : Option Nat) :
     List Nat × Nat × List Nat :=
   let left := tape.1
@@ -96,8 +119,10 @@ def writeCurrentTapeSymbol (tape : List Nat × Nat × List Nat) (symbol : Option
   | some sym =>
       if _ : head < right.length then
         (left, head, right.take head ++ sym :: right.drop (head + 1))
+      else if head = right.length then
+        (left, head, right ++ [sym])
       else
-        (left, head, right ++ List.replicate (head - right.length) 0 ++ [sym])
+        (left, head, right)
 
 def moveTapeHead (tape : List Nat × Nat × List Nat) : TMMove → List Nat × Nat × List Nat
   | .Lmove => (tape.1, tape.2.1 - 1, tape.2.2)
