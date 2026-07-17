@@ -798,6 +798,341 @@ theorem ConfFits_step (M : FlatTM) {base t : Nat} {cfg cfg' : FlatTMConfig}
   · show wr.length ≤ base + (t + 1)
     omega
 
+/-! ### Window machinery (shared by directions 1a/1a′ and, later, 1b)
+
+Rows are addressed by *coordinates* (`0` = boundary marker, coordinate
+`j ≥ 1` = tape position `j - 1`); the head of `cfg` sits at coordinate
+`cfgHead cfg + 1`. `rowCell`/`rowX` compute a coordinate's cell, and
+`confRow_window` exposes a 3-window as its three cells, so every covering
+obligation reduces to three cell equations plus a card-membership fact. -/
+
+private theorem dedupGo_subset :
+    ∀ (l seen : List FlatTMTransEntry), ∀ e ∈ dedupGo seen l, e ∈ l := by
+  intro l
+  induction l with
+  | nil => intro seen e he; simp [dedupGo] at he
+  | cons a as ih =>
+    intro seen e he
+    simp only [dedupGo] at he
+    by_cases hany : seen.any (fun q => sameKey q a) = true
+    · rw [if_pos hany] at he
+      exact List.mem_cons_of_mem _ (ih seen e he)
+    · rw [if_neg hany] at he
+      rcases List.mem_cons.1 he with rfl | he
+      · exact List.mem_cons_self
+      · exact List.mem_cons_of_mem _ (ih (a :: seen) e he)
+
+theorem normTrans_subset (M : FlatTM) : ∀ e ∈ normTrans M, e ∈ M.trans := by
+  intro e he
+  exact dedupGo_subset M.trans [] e (List.mem_filter.1 he).1
+
+/-- The first three cells of `l.drop i`, by `getElem`. -/
+private theorem take3_drop {α : Type*} (l : List α) (i : Nat) (h : i + 3 ≤ l.length) :
+    (l.drop i).take 3
+      = [l[i]'(by omega), l[i + 1]'(by omega), l[i + 2]'(by omega)] := by
+  rw [List.drop_eq_getElem_cons (by omega), List.drop_eq_getElem_cons (by omega),
+    List.drop_eq_getElem_cons (by omega)]
+  rfl
+
+/-- Covering a window is three cell equations on each side. -/
+private theorem coversHead_take3 {k : Nat} (card : TCCCard (Fin k))
+    (a b : List (Fin k)) (i : Nat)
+    (hp : (a.drop i).take 3 = (card.prem : List (Fin k)))
+    (hc : (b.drop i).take 3 = (card.conc : List (Fin k))) :
+    TCC.coversHead card (a.drop i) (b.drop i) :=
+  ⟨⟨(a.drop i).drop 3, by rw [← hp]; exact (List.take_append_drop 3 _).symm⟩,
+   ⟨(b.drop i).drop 3, by rw [← hc]; exact (List.take_append_drop 3 _).symm⟩⟩
+
+/-- The cell at row coordinate `j`. -/
+private def rowCell (M : FlatTM) (cfg : FlatTMConfig) (j : Nat) : Fin (Sg M) :=
+  if j = 0 then bCell M
+  else confCell M cfg.state_idx (cfgHead cfg) (cfgRight cfg) (j - 1)
+
+/-- The boundary-or-tape ("left context") view of coordinate `j`; the true
+cell away from the head. -/
+private def rowX (M : FlatTM) (cfg : FlatTMConfig) (j : Nat) :
+    Option (Fin (M.sig + 1)) :=
+  if j = 0 then none else some (tapeSymAt M (cfgRight cfg) (j - 1))
+
+private theorem rowCell_zero (M : FlatTM) (cfg : FlatTMConfig) :
+    rowCell M cfg 0 = bCell M := by
+  unfold rowCell
+  rw [if_pos rfl]
+
+private theorem rowCell_x (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
+    (hne : j ≠ cfgHead cfg + 1) :
+    rowCell M cfg j = xCell M (rowX M cfg j) := by
+  unfold rowCell rowX
+  by_cases h0 : j = 0
+  · rw [if_pos h0, if_pos h0]; rfl
+  · rw [if_neg h0, if_neg h0]
+    unfold confCell
+    rw [if_neg (show ¬(j - 1 = cfgHead cfg) by omega)]
+    rfl
+
+private theorem rowCell_head (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
+    (hj : j = cfgHead cfg + 1) :
+    rowCell M cfg j
+      = hCell M (stateOf M cfg.state_idx)
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg)) := by
+  subst hj
+  unfold rowCell confCell
+  rw [if_neg (by omega), if_pos (by omega)]
+  simp
+
+private theorem rowCell_tape (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
+    (h1 : 1 ≤ j) (hne : j ≠ cfgHead cfg + 1) :
+    rowCell M cfg j = tCell M (tapeSymAt M (cfgRight cfg) (j - 1)) := by
+  unfold rowCell confCell
+  rw [if_neg (by omega), if_neg (by omega)]
+
+private theorem confRow_getElem (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
+    (hj : j ≤ n) (hlt : j < (confRow M cfg n).length) :
+    (confRow M cfg n)[j]'hlt = rowCell M cfg j := by
+  cases j with
+  | zero => rfl
+  | succ k =>
+    have hk : k < n := by
+      have := hlt
+      rw [confRow_length] at this
+      omega
+    simp [confRow, rowCell]
+
+/-- A 3-window of a configuration row, as its three coordinate cells. -/
+private theorem confRow_window (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
+    (h : i + 2 ≤ n) :
+    ((confRow M cfg n).drop i).take 3
+      = [rowCell M cfg i, rowCell M cfg (i + 1), rowCell M cfg (i + 2)] := by
+  have hlen : i + 3 ≤ (confRow M cfg n).length := by rw [confRow_length]; omega
+  rw [take3_drop _ i hlen,
+    confRow_getElem M cfg (j := i) (by omega) (by rw [confRow_length]; omega),
+    confRow_getElem M cfg (j := i + 1) (by omega) (by rw [confRow_length]; omega),
+    confRow_getElem M cfg (j := i + 2) (by omega) (by rw [confRow_length]; omega)]
+
+/-- Under the run invariant, a tape cell is the blank iff its position is
+at/beyond the frontier — the window-local frontier detection. -/
+private theorem tapeSymAt_blank_iff (M : FlatTM) (right : List Nat) (p : Nat)
+    (hsig : ∀ x ∈ right, x < M.sig) :
+    decide (tapeSymAt M right p = blankSym M) = decide (right.length ≤ p) := by
+  unfold tapeSymAt
+  by_cases h : p < right.length
+  · rw [if_pos h]
+    have hmem : right.getD p 0 ∈ right := by
+      rw [List.getD_eq_getElem?_getD, List.getElem?_eq_getElem h]
+      exact List.getElem_mem h
+    have hval := hsig _ hmem
+    have hne : symOf M (right.getD p 0) ≠ blankSym M := by
+      intro hEq
+      have hv := congrArg Fin.val hEq
+      simp only [symOf, blankSym] at hv
+      omega
+    rw [decide_eq_false hne, decide_eq_false (show ¬right.length ≤ p by omega)]
+  · rw [if_neg h]
+    simp [show right.length ≤ p from by omega]
+
+private theorem xIsBlank_some (M : FlatTM) (a : Fin (M.sig + 1)) :
+    xIsBlank M (some a) = decide (a = blankSym M) := by
+  simp [xIsBlank]
+
+/-- The head's left-context cell is blank iff the head is strictly beyond
+the frontier (`wEff`'s `xb` flag is truthful on configuration rows). -/
+private theorem rowX_isBlank (M : FlatTM) (cfg : FlatTMConfig)
+    (hsig : ∀ x ∈ cfgRight cfg, x < M.sig) :
+    xIsBlank M (rowX M cfg (cfgHead cfg))
+      = decide ((cfgRight cfg).length < cfgHead cfg) := by
+  unfold rowX
+  by_cases h0 : cfgHead cfg = 0
+  · rw [if_pos h0, h0]
+    simp [xIsBlank]
+  · rw [if_neg h0, xIsBlank_some,
+      tapeSymAt_blank_iff M _ _ hsig]
+    exact decide_eq_decide.2 (by omega)
+
+/-- A copy-shaped card licenses an unchanged window once its first three
+cells match. -/
+theorem coversHead_copy (M : FlatTM) (x y z : Fin (Sg M)) (l rest : List (Fin (Sg M)))
+    (h : l = x :: y :: z :: rest) :
+    TCC.coversHead (copyCard M x y z) l l := by
+  refine ⟨⟨rest, ?_⟩, ⟨rest, ?_⟩⟩ <;>
+    · show l = [x, y, z] ++ rest
+      exact h
+
+private theorem xOpts_mem (M : FlatTM) (x : Option (Fin (M.sig + 1))) :
+    x ∈ xOpts M := by
+  cases x with
+  | none => simp [xOpts]
+  | some a => simp [xOpts]
+
+theorem copyCard_mem (M : FlatTM) (x : Option (Fin (M.sig + 1))) (b c : Fin (M.sig + 1)) :
+    copyCard M (xCell M x) (tCell M b) (tCell M c) ∈ copyCards M := by
+  unfold copyCards
+  refine List.mem_flatMap.2 ⟨x, xOpts_mem M x, ?_⟩
+  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
+  exact List.mem_map.2 ⟨c, List.mem_finRange c, rfl⟩
+
+theorem haltLeftCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b y z : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (hCell M q b) (tCell M y) (tCell M z) ∈ haltLeftCards M := by
+  unfold haltLeftCards
+  refine List.mem_flatMap.2 ⟨q, List.mem_finRange q, ?_⟩
+  rw [if_pos hq]
+  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
+  refine List.mem_flatMap.2 ⟨y, List.mem_finRange y, ?_⟩
+  exact List.mem_map.2 ⟨z, List.mem_finRange z, rfl⟩
+
+theorem haltCenterCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1))
+    (x : Option (Fin (M.sig + 1))) (z : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (xCell M x) (hCell M q b) (tCell M z) ∈ haltCenterCards M := by
+  unfold haltCenterCards
+  refine List.mem_flatMap.2 ⟨q, List.mem_finRange q, ?_⟩
+  rw [if_pos hq]
+  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
+  refine List.mem_flatMap.2 ⟨x, xOpts_mem M x, ?_⟩
+  exact List.mem_map.2 ⟨z, List.mem_finRange z, rfl⟩
+
+theorem haltRightCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1))
+    (x : Option (Fin (M.sig + 1))) (y : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (xCell M x) (tCell M y) (hCell M q b) ∈ haltRightCards M := by
+  unfold haltRightCards
+  refine List.mem_flatMap.2 ⟨q, List.mem_finRange q, ?_⟩
+  rw [if_pos hq]
+  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
+  refine List.mem_flatMap.2 ⟨x, xOpts_mem M x, ?_⟩
+  exact List.mem_map.2 ⟨y, List.mem_finRange y, rfl⟩
+
+theorem copyCard_mem_cookCards (M : FlatTM) (x : Option (Fin (M.sig + 1)))
+    (b c : Fin (M.sig + 1)) :
+    copyCard M (xCell M x) (tCell M b) (tCell M c) ∈ cookCards M := by
+  unfold cookCards
+  simp only [List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (copyCard_mem M x b c))))
+
+theorem haltLeftCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1))
+    (b y z : Fin (M.sig + 1)) (hq : M.halt.getD q.1 false = true) :
+    copyCard M (hCell M q b) (tCell M y) (tCell M z) ∈ cookCards M := by
+  unfold cookCards
+  simp only [List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inr (haltLeftCard_mem M q b y z hq))))
+
+theorem haltCenterCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1))
+    (b : Fin (M.sig + 1)) (x : Option (Fin (M.sig + 1))) (z : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (xCell M x) (hCell M q b) (tCell M z) ∈ cookCards M := by
+  unfold cookCards
+  simp only [List.mem_append]
+  exact Or.inl (Or.inl (Or.inr (haltCenterCard_mem M q b x z hq)))
+
+theorem haltRightCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1))
+    (b : Fin (M.sig + 1)) (x : Option (Fin (M.sig + 1))) (y : Fin (M.sig + 1))
+    (hq : M.halt.getD q.1 false = true) :
+    copyCard M (xCell M x) (tCell M y) (hCell M q b) ∈ cookCards M := by
+  unfold cookCards
+  simp only [List.mem_append]
+  exact Or.inl (Or.inr (haltRightCard_mem M q b x y hq))
+
+theorem stepCard_mem_cookCards (M : FlatTM) {c : TCCCard (Fin (Sg M))}
+    (hc : c ∈ stepCards M) : c ∈ cookCards M := by
+  unfold cookCards
+  simp only [List.mem_append]
+  exact Or.inr hc
+
+private theorem stepCardCenter_mem (M : FlatTM) {e : FlatTMTransEntry}
+    (he : e ∈ normTrans M) (x : Option (Fin (M.sig + 1))) (z : Fin (M.sig + 1)) :
+    stepCardCenter M (stateOf M e.src_state) (stateOf M e.dst_state)
+      (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+      (e.move_dirs.headD TMMove.Nmove) x z ∈ stepCards M := by
+  unfold stepCards
+  refine List.mem_flatMap.2 ⟨e, he, ?_⟩
+  simp only [stepCardsOf, List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (List.mem_flatMap.2 ⟨x, xOpts_mem M x,
+    List.mem_map.2 ⟨z, List.mem_finRange z, rfl⟩⟩)))
+
+private theorem stepCardsLeft_mem (M : FlatTM) {e : FlatTMTransEntry}
+    (he : e ∈ normTrans M) (xb : Bool) (y z : Fin (M.sig + 1))
+    {c : TCCCard (Fin (Sg M))}
+    (hc : c ∈ stepCardsLeft M (stateOf M e.src_state) (stateOf M e.dst_state)
+      (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+      (e.move_dirs.headD TMMove.Nmove) xb y z) :
+    c ∈ stepCards M := by
+  unfold stepCards
+  refine List.mem_flatMap.2 ⟨e, he, ?_⟩
+  simp only [stepCardsOf, List.mem_append]
+  exact Or.inl (Or.inl (Or.inr (List.mem_flatMap.2 ⟨xb, by cases xb <;> simp,
+    List.mem_flatMap.2 ⟨y, List.mem_finRange y,
+      List.mem_flatMap.2 ⟨z, List.mem_finRange z, hc⟩⟩⟩)))
+
+private theorem stepCardRight_mem (M : FlatTM) {e : FlatTMTransEntry}
+    (he : e ∈ normTrans M) (x : Option (Fin (M.sig + 1))) (y : Fin (M.sig + 1)) :
+    stepCardRight M (stateOf M e.src_state) (stateOf M e.dst_state)
+      (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+      (e.move_dirs.headD TMMove.Nmove) x y ∈ stepCards M := by
+  unfold stepCards
+  refine List.mem_flatMap.2 ⟨e, he, ?_⟩
+  simp only [stepCardsOf, List.mem_append]
+  exact Or.inl (Or.inr (List.mem_flatMap.2 ⟨x, xOpts_mem M x,
+    List.mem_map.2 ⟨y, List.mem_finRange y, rfl⟩⟩))
+
+private theorem stepCardInR_mem (M : FlatTM) {e : FlatTMTransEntry}
+    (he : e ∈ normTrans M)
+    (hmv : e.move_dirs.headD TMMove.Nmove = TMMove.Rmove)
+    (y z u : Fin (M.sig + 1)) :
+    stepCardInR M (stateOf M e.dst_state) y z u ∈ stepCards M := by
+  unfold stepCards
+  refine List.mem_flatMap.2 ⟨e, he, ?_⟩
+  simp only [stepCardsOf, hmv, List.mem_append]
+  exact Or.inr (List.mem_flatMap.2 ⟨y, List.mem_finRange y,
+    List.mem_flatMap.2 ⟨z, List.mem_finRange z,
+      List.mem_map.2 ⟨u, List.mem_finRange u, rfl⟩⟩⟩)
+
+private theorem stepCardInL_mem (M : FlatTM) {e : FlatTMTransEntry}
+    (he : e ∈ normTrans M)
+    (hmv : e.move_dirs.headD TMMove.Nmove = TMMove.Lmove)
+    (x : Option (Fin (M.sig + 1))) (y c : Fin (M.sig + 1)) :
+    stepCardInL M (stateOf M e.dst_state) x y c ∈ stepCards M := by
+  unfold stepCards
+  refine List.mem_flatMap.2 ⟨e, he, ?_⟩
+  simp only [stepCardsOf, hmv, List.mem_append]
+  exact Or.inr (List.mem_flatMap.2 ⟨x, xOpts_mem M x,
+    List.mem_flatMap.2 ⟨y, List.mem_finRange y,
+      List.mem_map.2 ⟨c, List.mem_finRange c, rfl⟩⟩⟩)
+
+/-- A window whose three coordinates carry no head in either row and whose
+tape symbols agree between the rows is covered by a copy card. -/
+private theorem copy_window (M : FlatTM) (cfg cfgB : FlatTMConfig) {n i : Nat}
+    (hi : i + 2 ≤ n)
+    (hA : ∀ j, i ≤ j → j ≤ i + 2 → j ≠ cfgHead cfg + 1)
+    (hB : ∀ j, i ≤ j → j ≤ i + 2 → j ≠ cfgHead cfgB + 1)
+    (hsym : ∀ p, i ≤ p + 1 → p + 1 ≤ i + 2 →
+      tapeSymAt M (cfgRight cfgB) p = tapeSymAt M (cfgRight cfg) p) :
+    TCC.coversHeadList (cookCards M)
+      ((confRow M cfg n).drop i) ((confRow M cfgB n).drop i) := by
+  have hxeq : rowX M cfgB i = rowX M cfg i := by
+    unfold rowX
+    by_cases h0 : i = 0
+    · rw [if_pos h0, if_pos h0]
+    · rw [if_neg h0, if_neg h0, hsym (i - 1) (by omega) (by omega)]
+  refine ⟨copyCard M (xCell M (rowX M cfg i))
+      (tCell M (tapeSymAt M (cfgRight cfg) i))
+      (tCell M (tapeSymAt M (cfgRight cfg) (i + 1))),
+    copyCard_mem_cookCards M _ _ _,
+    coversHead_take3 _ _ _ i ?_ ?_⟩
+  · rw [confRow_window M cfg hi,
+      rowCell_x M cfg (hA i (by omega) (by omega)),
+      rowCell_tape M cfg (j := i + 1) (by omega) (hA (i + 1) (by omega) (by omega)),
+      rowCell_tape M cfg (j := i + 2) (by omega) (hA (i + 2) (by omega) (by omega))]
+    simp only [show i + 1 - 1 = i from by omega, show i + 2 - 1 = i + 1 from by omega]
+    rfl
+  · rw [confRow_window M cfgB hi,
+      rowCell_x M cfgB (hB i (by omega) (by omega)),
+      rowCell_tape M cfgB (j := i + 1) (by omega) (hB (i + 1) (by omega) (by omega)),
+      rowCell_tape M cfgB (j := i + 2) (by omega) (hB (i + 2) (by omega) (by omega)),
+      hxeq]
+    simp only [show i + 1 - 1 = i from by omega, show i + 2 - 1 = i + 1 from by omega]
+    rw [hsym i (by omega) (by omega), hsym (i + 1) (by omega) (by omega)]
+    rfl
+
 /-- **(1a) Card soundness of a machine step** (skeleton): a legal
 non-halting machine step is a card-covered row transition. Proof plan: fix
 window `i` and case on its position relative to the head's row coordinate
@@ -818,16 +1153,71 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
     TCC.validStep (cookCards M) (confRow M cfg n) (confRow M cfg' n) := by
   sorry  -- S1 skeleton: step soundness (direction 1a). See docstring.
 
-/-- **(1a′) Halt freeze** (skeleton): a halting configuration's row covers
-itself — the three head windows by the halt-freeze families, the rest by
-copy cards. (Generalises the proven empty-input case `freeze_validStep`.) -/
+/-- **(1a′) Halt freeze**: a halting configuration's row covers itself —
+the three head windows by the halt-freeze families, the rest by copy cards.
+(Generalises the proven empty-input case `freeze_validStep`.) -/
 theorem validStep_of_halt (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg : FlatTMConfig}
     (hfit : ConfFits M base t cfg)
     (hhead : cfgHead cfg + 3 ≤ n)
     (hh : haltingStateReached M cfg = true) :
     TCC.validStep (cookCards M) (confRow M cfg n) (confRow M cfg n) := by
-  sorry  -- S1 skeleton: halt freeze (direction 1a′).
+  have hstate := hfit.state_lt
+  have hq : M.halt.getD (stateOf M cfg.state_idx).1 false = true := by
+    have hqv : (stateOf M cfg.state_idx).1 = cfg.state_idx := by
+      simp [stateOf]; omega
+    rw [hqv]; exact hh
+  refine ⟨rfl, ?_⟩
+  intro i hi
+  rw [confRow_length] at hi
+  have hcase : i = cfgHead cfg ∨ i = cfgHead cfg + 1 ∨
+      (1 ≤ cfgHead cfg ∧ i = cfgHead cfg - 1) ∨
+      (i + 2 < cfgHead cfg + 1 ∨ cfgHead cfg + 1 < i) := by omega
+  rcases hcase with rfl | rfl | ⟨h1, heq⟩ | hout
+  · -- head at the window's second cell: halt-center
+    refine ⟨copyCard M (xCell M (rowX M cfg (cfgHead cfg)))
+        (hCell M (stateOf M cfg.state_idx) (tapeSymAt M (cfgRight cfg) (cfgHead cfg)))
+        (tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1))),
+      haltCenterCard_mem_cookCards M _ _ _ _ hq,
+      coversHead_take3 _ _ _ _ ?_ ?_⟩ <;>
+    · rw [confRow_window M cfg (by omega),
+        rowCell_x M cfg (j := cfgHead cfg) (by omega),
+        rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+        rowCell_tape M cfg (j := cfgHead cfg + 2) (by omega) (by omega)]
+      simp only [show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega]
+      rfl
+  · -- head at the window's first cell: halt-left
+    refine ⟨copyCard M
+        (hCell M (stateOf M cfg.state_idx) (tapeSymAt M (cfgRight cfg) (cfgHead cfg)))
+        (tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)))
+        (tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))),
+      haltLeftCard_mem_cookCards M _ _ _ _ hq,
+      coversHead_take3 _ _ _ _ ?_ ?_⟩ <;>
+    · rw [confRow_window M cfg (by omega),
+        rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+        rowCell_tape M cfg (j := cfgHead cfg + 1 + 1) (by omega) (by omega),
+        rowCell_tape M cfg (j := cfgHead cfg + 1 + 2) (by omega) (by omega)]
+      simp only [show cfgHead cfg + 1 + 1 - 1 = cfgHead cfg + 1 from by omega,
+        show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+      rfl
+  · -- head at the window's third cell: halt-right
+    subst heq
+    refine ⟨copyCard M (xCell M (rowX M cfg (cfgHead cfg - 1)))
+        (tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)))
+        (hCell M (stateOf M cfg.state_idx) (tapeSymAt M (cfgRight cfg) (cfgHead cfg))),
+      haltRightCard_mem_cookCards M _ _ _ _ hq,
+      coversHead_take3 _ _ _ _ ?_ ?_⟩ <;>
+    · rw [confRow_window M cfg (by omega),
+        rowCell_x M cfg (j := cfgHead cfg - 1) (by omega),
+        rowCell_tape M cfg (j := cfgHead cfg - 1 + 1) (by omega) (by omega),
+        rowCell_head M cfg (j := cfgHead cfg - 1 + 2) (by omega)]
+      simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega]
+      rfl
+  · -- head nowhere in the window: pure copy
+    exact copy_window M cfg cfg (by omega)
+      (fun j hj1 hj2 => by omega)
+      (fun j hj1 hj2 => by omega)
+      (fun p _ _ => rfl)
 
 /-- **(1b) Card completeness — the inversion heart** (skeleton, the Coq
 port's ~2K-line per-constructor analysis). Any card-covered successor of a
@@ -971,71 +1361,6 @@ theorem cookInit_nil (M : FlatTM) (steps : Nat) :
   obtain ⟨p, -, hp⟩ := hc
   rw [← hp]
   exact hcellS p
-
-/-- A copy-shaped card licenses an unchanged window once its first three
-cells match. -/
-theorem coversHead_copy (M : FlatTM) (x y z : Fin (Sg M)) (l rest : List (Fin (Sg M)))
-    (h : l = x :: y :: z :: rest) :
-    TCC.coversHead (copyCard M x y z) l l := by
-  refine ⟨⟨rest, ?_⟩, ⟨rest, ?_⟩⟩ <;>
-    · show l = [x, y, z] ++ rest
-      exact h
-
-theorem copyCard_mem (M : FlatTM) (x : Option (Fin (M.sig + 1))) (b c : Fin (M.sig + 1)) :
-    copyCard M (xCell M x) (tCell M b) (tCell M c) ∈ copyCards M := by
-  unfold copyCards
-  refine List.mem_flatMap.2 ⟨x, ?_, ?_⟩
-  · cases x with
-    | none => simp [xOpts]
-    | some a => simp [xOpts]
-  · refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
-    exact List.mem_map.2 ⟨c, List.mem_finRange c, rfl⟩
-
-theorem haltLeftCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b y z : Fin (M.sig + 1))
-    (hq : M.halt.getD q.1 false = true) :
-    copyCard M (hCell M q b) (tCell M y) (tCell M z) ∈ haltLeftCards M := by
-  unfold haltLeftCards
-  refine List.mem_flatMap.2 ⟨q, List.mem_finRange q, ?_⟩
-  rw [if_pos hq]
-  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
-  refine List.mem_flatMap.2 ⟨y, List.mem_finRange y, ?_⟩
-  exact List.mem_map.2 ⟨z, List.mem_finRange z, rfl⟩
-
-theorem haltCenterCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1))
-    (x : Option (Fin (M.sig + 1))) (z : Fin (M.sig + 1))
-    (hq : M.halt.getD q.1 false = true) :
-    copyCard M (xCell M x) (hCell M q b) (tCell M z) ∈ haltCenterCards M := by
-  unfold haltCenterCards
-  refine List.mem_flatMap.2 ⟨q, List.mem_finRange q, ?_⟩
-  rw [if_pos hq]
-  refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
-  refine List.mem_flatMap.2 ⟨x, ?_, ?_⟩
-  · cases x with
-    | none => simp [xOpts]
-    | some a => simp [xOpts]
-  · exact List.mem_map.2 ⟨z, List.mem_finRange z, rfl⟩
-
-theorem copyCard_mem_cookCards (M : FlatTM) (x : Option (Fin (M.sig + 1)))
-    (b c : Fin (M.sig + 1)) :
-    copyCard M (xCell M x) (tCell M b) (tCell M c) ∈ cookCards M := by
-  unfold cookCards
-  simp only [List.mem_append]
-  exact Or.inl (Or.inl (Or.inl (Or.inl (copyCard_mem M x b c))))
-
-theorem haltLeftCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1))
-    (b y z : Fin (M.sig + 1)) (hq : M.halt.getD q.1 false = true) :
-    copyCard M (hCell M q b) (tCell M y) (tCell M z) ∈ cookCards M := by
-  unfold cookCards
-  simp only [List.mem_append]
-  exact Or.inl (Or.inl (Or.inl (Or.inr (haltLeftCard_mem M q b y z hq))))
-
-theorem haltCenterCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1))
-    (b : Fin (M.sig + 1)) (x : Option (Fin (M.sig + 1))) (z : Fin (M.sig + 1))
-    (hq : M.halt.getD q.1 false = true) :
-    copyCard M (xCell M x) (hCell M q b) (tCell M z) ∈ cookCards M := by
-  unfold cookCards
-  simp only [List.mem_append]
-  exact Or.inl (Or.inl (Or.inr (haltCenterCard_mem M q b x z hq)))
 
 /-- **Freeze step (the load-bearing window bookkeeping, v2).** A halting
 machine's empty-input row covers itself: window 0 (boundary, head, blank)
