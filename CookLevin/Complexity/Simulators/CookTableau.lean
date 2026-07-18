@@ -1133,16 +1133,16 @@ private theorem copy_window (M : FlatTM) (cfg cfgB : FlatTMConfig) {n i : Nat}
     rw [hsym i (by omega) (by omega), hsym (i + 1) (by omega) (by omega)]
     rfl
 
-/-- **(1a) Card soundness of a machine step** (skeleton): a legal
-non-halting machine step is a card-covered row transition. Proof plan: fix
-window `i` and case on its position relative to the head's row coordinate
-`h = cfgHead cfg + 1`: `i = h-1` center (the firing entry's
-`stepCardCenter`; the left-neighbour blankness matches the frontier by the
-invariant, so `wEff` computes the write), `i = h` left-of, `i = h-2`
-right-of, `i = h+1` (`Rmove` incoming) / `i = h-3` (`Lmove` incoming), all
-other windows all-tape (`copyCards`; window 0 via the boundary variants).
-Requires `stepFlatTM_normM` to replace the fired entry by its normalised
-representative (whose cards are the generated ones). -/
+/-- **(1a) Card soundness of a machine step**: a legal non-halting machine
+step is a card-covered row transition. Window `i` is cased on its position
+relative to the head's row coordinate `h = cfgHead cfg + 1`: `i = h-1`
+center (the firing entry's `stepCardCenter`; the left-neighbour blankness
+matches the frontier by the invariant, so `wEff` computes the write),
+`i = h` left-of, `i = h-2` right-of, `i = h+1` (`Rmove` incoming) /
+`i = h-3` (`Lmove` incoming), all other windows all-tape (`copyCards`;
+window 0 via the boundary variants). `stepFlatTM_normM` replaces the fired
+entry by its normalised representative (whose cards are the generated
+ones). -/
 theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg cfg' : FlatTMConfig}
     (hV : validFlatTM M) (hfit : ConfFits M base t cfg)
@@ -1151,7 +1151,471 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
     (hnh : haltingStateReached M cfg = false)
     (hstep : stepFlatTM M cfg = some cfg') :
     TCC.validStep (cookCards M) (confRow M cfg n) (confRow M cfg' n) := by
-  sorry  -- S1 skeleton: step soundness (direction 1a). See docstring.
+  -- switch to the normalised machine: its entries generate the cards
+  have h1tape : cfg.tapes.length = 1 := by rw [hfit.tapes_eq]; rfl
+  have hstepN : stepFlatTM (normM M) cfg = some cfg' := by
+    rw [stepFlatTM_normM M cfg h1tape hnh]; exact hstep
+  obtain ⟨e, heN, hmatch, hsrc, hvals, w, mv, hw, hmv, hcfg'⟩ :=
+    step_desc (normM M) hfit.tapes_eq hstepN
+  have heNT : e ∈ normTrans M := heN
+  have heM : e ∈ M.trans := normTrans_subset M e heNT
+  have hvalid := hV.2.2 e heM
+  -- entry-field views
+  have hmhead : e.src_tape_vals.headD none
+      = currentTapeSymbol ([], cfgHead cfg, cfgRight cfg) := by rw [hvals]; rfl
+  have hwhead : e.dst_write_vals.headD none = w := by rw [hw]; rfl
+  have hmvhead : e.move_dirs.headD TMMove.Nmove = mv := by rw [hmv]; rfl
+  -- the write effect
+  have hwbound := hvalid.2.2.2.2.2.2 w (by rw [hw]; exact List.mem_singleton.2 rfl)
+  obtain ⟨wr, hwt, hlen1, hlen2, hsyms, hunch, hwrhd⟩ :=
+    write_facts M (cfgHead cfg) (cfgRight cfg) w hfit.syms_lt hwbound
+  -- successor projections (the head is per-move, below)
+  have hBst : cfg'.state_idx = e.dst_state := by rw [hcfg']
+  have hBright : cfgRight cfg' = wr := by
+    rw [hcfg']
+    show (tapeStep ([], cfgHead cfg, cfgRight cfg) w mv).2.2 = wr
+    unfold tapeStep
+    rw [hwt]
+    cases mv <;> rfl
+  have hrowXeq : ∀ j, j ≠ cfgHead cfg + 1 → rowX M cfg' j = rowX M cfg j := by
+    intro j hj
+    unfold rowX
+    by_cases h0 : j = 0
+    · rw [if_pos h0, if_pos h0]
+    · rw [if_neg h0, if_neg h0, hBright, hunch (j - 1) (by omega)]
+  -- the machine-read and frontier bridges
+  have hR : tapeSymAt M (cfgRight cfg) (cfgHead cfg)
+      = optSym M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) :=
+    tapeSymAt_head M [] (cfgRight cfg) (cfgHead cfg)
+  have hxbC : xIsBlank M (rowX M cfg (cfgHead cfg))
+      = decide ((cfgRight cfg).length < cfgHead cfg) :=
+    rowX_isBlank M cfg hfit.syms_lt
+  -- card membership at the configuration's own field values
+  have hmemC : ∀ x z, stepCardCenter M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+      (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w mv x z ∈ cookCards M := by
+    intro x z
+    have h0 := stepCardCenter_mem M heNT x z
+    rw [hsrc, hmhead, hwhead, hmvhead] at h0
+    exact stepCard_mem_cookCards M h0
+  have hmemLft : ∀ (xb : Bool) (y z : Fin (M.sig + 1)) (c : TCCCard (Fin (Sg M))),
+      c ∈ stepCardsLeft M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+        (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w mv xb y z →
+      c ∈ cookCards M := by
+    intro xb y z c hc
+    have h0 := stepCardsLeft_mem M heNT xb y z (c := c)
+    rw [hsrc, hmhead, hwhead, hmvhead] at h0
+    exact stepCard_mem_cookCards M (h0 hc)
+  have hmemRgt : ∀ x y, stepCardRight M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+      (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w mv x y ∈ cookCards M := by
+    intro x y
+    have h0 := stepCardRight_mem M heNT x y
+    rw [hsrc, hmhead, hwhead, hmvhead] at h0
+    exact stepCard_mem_cookCards M h0
+  cases mv with
+  | Nmove =>
+    have htape : tapeStep ([], cfgHead cfg, cfgRight cfg) w TMMove.Nmove
+        = ([], cfgHead cfg, wr) := by
+      simp [tapeStep, moveTapeHead, hwt]
+    have hBhd : cfgHead cfg' = cfgHead cfg := by
+      rw [hcfg', htape]; rfl
+    refine ⟨by rw [confRow_length, confRow_length], ?_⟩
+    intro i hi
+    rw [confRow_length] at hi
+    have hcase : i = cfgHead cfg ∨ i = cfgHead cfg + 1 ∨
+        (1 ≤ cfgHead cfg ∧ i = cfgHead cfg - 1) ∨
+        (i + 2 < cfgHead cfg + 1 ∨ cfgHead cfg + 1 < i) := by omega
+    rcases hcase with rfl | rfl | ⟨h1, heq⟩ | hout
+    · -- center window
+      refine ⟨stepCardCenter M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+          (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Nmove
+          (rowX M cfg (cfgHead cfg)) (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+        hmemC _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_x M cfg (j := cfgHead cfg) (by omega),
+          rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+          rowCell_tape M cfg (j := cfgHead cfg + 2) (by omega) (by omega)]
+        simp only [show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega]
+        rw [hR]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_x M cfg' (j := cfgHead cfg) (by rw [hBhd]; omega),
+          rowCell_head M cfg' (j := cfgHead cfg + 1) (by rw [hBhd]),
+          rowCell_tape M cfg' (j := cfgHead cfg + 2) (by omega) (by rw [hBhd]; omega),
+          hBst, hBright, hBhd, hrowXeq (cfgHead cfg) (by omega)]
+        simp only [show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega]
+        rw [hwrhd, hunch (cfgHead cfg + 1) (by omega), ← hxbC]
+        rfl
+    · -- left-of window
+      refine ⟨⟨⟨hCell M (stateOf M cfg.state_idx)
+            (optSym M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg))),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))⟩,
+          ⟨hCell M (stateOf M e.dst_state)
+            (wEff M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w
+              (decide ((cfgRight cfg).length < cfgHead cfg))),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))⟩⟩,
+        hmemLft (decide ((cfgRight cfg).length < cfgHead cfg))
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1))
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2)) _
+          (by simp [stepCardsLeft]),
+        coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+          rowCell_tape M cfg (j := cfgHead cfg + 1 + 1) (by omega) (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg + 1 + 2) (by omega) (by omega)]
+        simp only [show cfgHead cfg + 1 + 1 - 1 = cfgHead cfg + 1 from by omega,
+          show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+        rw [hR]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_head M cfg' (j := cfgHead cfg + 1) (by rw [hBhd]),
+          rowCell_tape M cfg' (j := cfgHead cfg + 1 + 1) (by omega) (by rw [hBhd]; omega),
+          rowCell_tape M cfg' (j := cfgHead cfg + 1 + 2) (by omega) (by rw [hBhd]; omega),
+          hBst, hBright, hBhd]
+        simp only [show cfgHead cfg + 1 + 1 - 1 = cfgHead cfg + 1 from by omega,
+          show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+        rw [hwrhd, hunch (cfgHead cfg + 1) (by omega), hunch (cfgHead cfg + 2) (by omega)]
+        rfl
+    · -- right-of window
+      subst heq
+      have hxbR : decide (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1) = blankSym M)
+          = decide ((cfgRight cfg).length < cfgHead cfg) := by
+        rw [tapeSymAt_blank_iff M _ _ hfit.syms_lt]
+        exact decide_eq_decide.2 (by omega)
+      refine ⟨stepCardRight M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+          (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Nmove
+          (rowX M cfg (cfgHead cfg - 1)) (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)),
+        hmemRgt _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_x M cfg (j := cfgHead cfg - 1) (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg - 1 + 1) (by omega) (by omega),
+          rowCell_head M cfg (j := cfgHead cfg - 1 + 2) (by omega)]
+        simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega]
+        rw [hR]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_x M cfg' (j := cfgHead cfg - 1) (by rw [hBhd]; omega),
+          rowCell_tape M cfg' (j := cfgHead cfg - 1 + 1) (by omega) (by rw [hBhd]; omega),
+          rowCell_head M cfg' (j := cfgHead cfg - 1 + 2) (by rw [hBhd]; omega),
+          hBst, hBright, hBhd, hrowXeq (cfgHead cfg - 1) (by omega)]
+        simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega]
+        rw [hwrhd, hunch (cfgHead cfg - 1) (by omega), ← hxbR]
+        rfl
+    · -- pure copy
+      exact copy_window M cfg cfg' (by omega)
+        (fun j hj1 hj2 => by omega)
+        (fun j hj1 hj2 => by rw [hBhd]; omega)
+        (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+  | Rmove =>
+    have htape : tapeStep ([], cfgHead cfg, cfgRight cfg) w TMMove.Rmove
+        = ([], cfgHead cfg + 1, wr) := by
+      simp [tapeStep, moveTapeHead, hwt]
+    have hBhd : cfgHead cfg' = cfgHead cfg + 1 := by
+      rw [hcfg', htape]; rfl
+    refine ⟨by rw [confRow_length, confRow_length], ?_⟩
+    intro i hi
+    rw [confRow_length] at hi
+    have hcase : i = cfgHead cfg ∨ i = cfgHead cfg + 1 ∨
+        (1 ≤ cfgHead cfg ∧ i = cfgHead cfg - 1) ∨ i = cfgHead cfg + 2 ∨
+        (i + 2 < cfgHead cfg + 1 ∨ cfgHead cfg + 2 < i) := by omega
+    rcases hcase with rfl | rfl | ⟨h1, heq⟩ | rfl | hout
+    · -- center window: the head moves right inside it
+      refine ⟨stepCardCenter M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+          (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Rmove
+          (rowX M cfg (cfgHead cfg)) (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+        hmemC _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_x M cfg (j := cfgHead cfg) (by omega),
+          rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+          rowCell_tape M cfg (j := cfgHead cfg + 2) (by omega) (by omega)]
+        simp only [show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega]
+        rw [hR]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_x M cfg' (j := cfgHead cfg) (by rw [hBhd]; omega),
+          rowCell_tape M cfg' (j := cfgHead cfg + 1) (by omega) (by rw [hBhd]; omega),
+          rowCell_head M cfg' (j := cfgHead cfg + 2) (by rw [hBhd]),
+          hBst, hBright, hBhd, hrowXeq (cfgHead cfg) (by omega)]
+        simp only [show cfgHead cfg + 1 - 1 = cfgHead cfg from by omega]
+        rw [hwrhd, hunch (cfgHead cfg + 1) (by omega), ← hxbC]
+        rfl
+    · -- left-of window: the head leaves right, entering the second cell
+      refine ⟨⟨⟨hCell M (stateOf M cfg.state_idx)
+            (optSym M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg))),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))⟩,
+          ⟨tCell M
+            (wEff M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w
+              (decide ((cfgRight cfg).length < cfgHead cfg))),
+          hCell M (stateOf M e.dst_state) (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+          tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))⟩⟩,
+        hmemLft (decide ((cfgRight cfg).length < cfgHead cfg))
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1))
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2)) _
+          (by simp [stepCardsLeft]),
+        coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+          rowCell_tape M cfg (j := cfgHead cfg + 1 + 1) (by omega) (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg + 1 + 2) (by omega) (by omega)]
+        simp only [show cfgHead cfg + 1 + 1 - 1 = cfgHead cfg + 1 from by omega,
+          show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+        rw [hR]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_tape M cfg' (j := cfgHead cfg + 1) (by omega) (by rw [hBhd]; omega),
+          rowCell_head M cfg' (j := cfgHead cfg + 1 + 1) (by rw [hBhd]),
+          rowCell_tape M cfg' (j := cfgHead cfg + 1 + 2) (by omega) (by rw [hBhd]; omega),
+          hBst, hBright, hBhd]
+        simp only [show cfgHead cfg + 1 - 1 = cfgHead cfg from by omega,
+          show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+        rw [hwrhd, hunch (cfgHead cfg + 1) (by omega), hunch (cfgHead cfg + 2) (by omega)]
+        rfl
+    · -- right-of window: the head leaves it rightward
+      subst heq
+      have hxbR : decide (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1) = blankSym M)
+          = decide ((cfgRight cfg).length < cfgHead cfg) := by
+        rw [tapeSymAt_blank_iff M _ _ hfit.syms_lt]
+        exact decide_eq_decide.2 (by omega)
+      refine ⟨stepCardRight M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+          (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Rmove
+          (rowX M cfg (cfgHead cfg - 1)) (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)),
+        hmemRgt _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_x M cfg (j := cfgHead cfg - 1) (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg - 1 + 1) (by omega) (by omega),
+          rowCell_head M cfg (j := cfgHead cfg - 1 + 2) (by omega)]
+        simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega]
+        rw [hR]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_x M cfg' (j := cfgHead cfg - 1) (by rw [hBhd]; omega),
+          rowCell_tape M cfg' (j := cfgHead cfg - 1 + 1) (by omega) (by rw [hBhd]; omega),
+          rowCell_tape M cfg' (j := cfgHead cfg - 1 + 2) (by omega) (by rw [hBhd]; omega),
+          hBright, hrowXeq (cfgHead cfg - 1) (by omega)]
+        simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega,
+          show cfgHead cfg - 1 + 2 - 1 = cfgHead cfg - 1 + 1 from by omega,
+          show cfgHead cfg - 1 + 1 = cfgHead cfg from by omega]
+        rw [hwrhd, hunch (cfgHead cfg - 1) (by omega), ← hxbR]
+        rfl
+    · -- incoming window: the head enters its first cell from the left
+      refine ⟨stepCardInR M (stateOf M e.dst_state)
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1))
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))
+          (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 3)),
+        stepCard_mem_cookCards M (stepCardInR_mem M heNT hmvhead _ _ _),
+        coversHead_take3 _ _ _ _ ?_ ?_⟩
+      · rw [confRow_window M cfg (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg + 2) (by omega) (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg + 2 + 1) (by omega) (by omega),
+          rowCell_tape M cfg (j := cfgHead cfg + 2 + 2) (by omega) (by omega)]
+        simp only [show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega,
+          show cfgHead cfg + 2 + 1 - 1 = cfgHead cfg + 2 from by omega,
+          show cfgHead cfg + 2 + 2 - 1 = cfgHead cfg + 3 from by omega]
+        rfl
+      · rw [confRow_window M cfg' (by omega),
+          rowCell_head M cfg' (j := cfgHead cfg + 2) (by rw [hBhd]),
+          rowCell_tape M cfg' (j := cfgHead cfg + 2 + 1) (by omega) (by rw [hBhd]; omega),
+          rowCell_tape M cfg' (j := cfgHead cfg + 2 + 2) (by omega) (by rw [hBhd]; omega),
+          hBst, hBright, hBhd]
+        simp only [show cfgHead cfg + 2 + 1 - 1 = cfgHead cfg + 2 from by omega,
+          show cfgHead cfg + 2 + 2 - 1 = cfgHead cfg + 3 from by omega]
+        rw [hunch (cfgHead cfg + 1) (by omega), hunch (cfgHead cfg + 2) (by omega),
+          hunch (cfgHead cfg + 3) (by omega)]
+        rfl
+    · -- pure copy
+      exact copy_window M cfg cfg' (by omega)
+        (fun j hj1 hj2 => by omega)
+        (fun j hj1 hj2 => by rw [hBhd]; omega)
+        (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+  | Lmove =>
+    have htape : tapeStep ([], cfgHead cfg, cfgRight cfg) w TMMove.Lmove
+        = ([], cfgHead cfg - 1, wr) := by
+      simp [tapeStep, moveTapeHead, hwt]
+    have hBhd : cfgHead cfg' = cfgHead cfg - 1 := by
+      rw [hcfg', htape]; rfl
+    refine ⟨by rw [confRow_length, confRow_length], ?_⟩
+    intro i hi
+    rw [confRow_length] at hi
+    by_cases h0 : cfgHead cfg = 0
+    · -- clamp at the left edge: the head stays at position 0
+      have hcase : i = 0 ∨ i = 1 ∨ 2 ≤ i := by omega
+      rcases hcase with rfl | rfl | h2i
+      · -- center window (boundary, head, tape): the clamp card
+        have hxb0 : xIsBlank M (none : Option (Fin (M.sig + 1)))
+            = decide ((cfgRight cfg).length < cfgHead cfg) := by
+          rw [h0]
+          simp [xIsBlank]
+        refine ⟨stepCardCenter M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+            (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Lmove
+            none (tapeSymAt M (cfgRight cfg) 1),
+          hmemC _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+        · rw [confRow_window M cfg (by omega),
+            rowCell_zero M cfg,
+            rowCell_head M cfg (j := 1) (by omega),
+            rowCell_tape M cfg (j := 2) (by omega) (by omega)]
+          rw [hR]
+          rfl
+        · rw [confRow_window M cfg' (by omega),
+            rowCell_zero M cfg',
+            rowCell_head M cfg' (j := 1) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := 2) (by omega) (by rw [hBhd]; omega),
+            hBst, hBright, hBhd]
+          simp only [show cfgHead cfg - 1 = cfgHead cfg from by omega]
+          rw [hwrhd, hunch (2 - 1) (by omega), ← hxb0]
+          rfl
+      · -- left-of window: the clamp variant of the left family
+        refine ⟨⟨⟨hCell M (stateOf M cfg.state_idx)
+              (optSym M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg))),
+            tCell M (tapeSymAt M (cfgRight cfg) 1),
+            tCell M (tapeSymAt M (cfgRight cfg) 2)⟩,
+            ⟨hCell M (stateOf M e.dst_state)
+              (wEff M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w
+                (decide ((cfgRight cfg).length < cfgHead cfg))),
+            tCell M (tapeSymAt M (cfgRight cfg) 1),
+            tCell M (tapeSymAt M (cfgRight cfg) 2)⟩⟩,
+          hmemLft (decide ((cfgRight cfg).length < cfgHead cfg))
+            (tapeSymAt M (cfgRight cfg) 1) (tapeSymAt M (cfgRight cfg) 2) _
+            (by simp [stepCardsLeft]),
+          coversHead_take3 _ _ _ _ ?_ ?_⟩
+        · rw [confRow_window M cfg (by omega),
+            rowCell_head M cfg (j := 1) (by omega),
+            rowCell_tape M cfg (j := 2) (by omega) (by omega),
+            rowCell_tape M cfg (j := 3) (by omega) (by omega)]
+          rw [hR]
+          rfl
+        · rw [confRow_window M cfg' (by omega),
+            rowCell_head M cfg' (j := 1) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := 2) (by omega) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := 3) (by omega) (by rw [hBhd]; omega),
+            hBst, hBright, hBhd]
+          simp only [show cfgHead cfg - 1 = cfgHead cfg from by omega]
+          rw [hwrhd, hunch (2 - 1) (by omega), hunch (3 - 1) (by omega)]
+          rfl
+      · -- pure copy right of the clamped head
+        exact copy_window M cfg cfg' (by omega)
+          (fun j hj1 hj2 => by omega)
+          (fun j hj1 hj2 => by rw [hBhd]; omega)
+          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+    · -- interior left move
+      have hxbL : xIsBlank M (some (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)))
+          = decide ((cfgRight cfg).length < cfgHead cfg) := by
+        rw [xIsBlank_some, tapeSymAt_blank_iff M _ _ hfit.syms_lt]
+        exact decide_eq_decide.2 (by omega)
+      have hcase : i = cfgHead cfg ∨ i = cfgHead cfg + 1 ∨ i = cfgHead cfg - 1 ∨
+          (2 ≤ cfgHead cfg ∧ i = cfgHead cfg - 2) ∨
+          (i + 2 < cfgHead cfg ∨ cfgHead cfg + 1 < i) := by omega
+      rcases hcase with rfl | rfl | heq | ⟨h2, heq⟩ | hout
+      · -- center window: the head leaves left inside it
+        refine ⟨stepCardCenter M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+            (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Lmove
+            (some (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)))
+            (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+          hmemC _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+        · rw [confRow_window M cfg (by omega),
+            rowCell_tape M cfg (j := cfgHead cfg) (by omega) (by omega),
+            rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+            rowCell_tape M cfg (j := cfgHead cfg + 2) (by omega) (by omega)]
+          simp only [show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega]
+          rw [hR]
+          rfl
+        · rw [confRow_window M cfg' (by omega),
+            rowCell_head M cfg' (j := cfgHead cfg) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := cfgHead cfg + 1) (by omega) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := cfgHead cfg + 2) (by omega) (by rw [hBhd]; omega),
+            hBst, hBright, hBhd]
+          simp only [show cfgHead cfg + 1 - 1 = cfgHead cfg from by omega,
+            show cfgHead cfg + 2 - 1 = cfgHead cfg + 1 from by omega]
+          rw [hwrhd, hunch (cfgHead cfg - 1) (by omega),
+            hunch (cfgHead cfg + 1) (by omega), ← hxbL]
+          rfl
+      · -- left-of window: the head exits left (leave variant)
+        refine ⟨⟨⟨hCell M (stateOf M cfg.state_idx)
+              (optSym M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg))),
+            tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+            tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))⟩,
+            ⟨tCell M
+              (wEff M (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w
+                (decide ((cfgRight cfg).length < cfgHead cfg))),
+            tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1)),
+            tCell M (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2))⟩⟩,
+          hmemLft (decide ((cfgRight cfg).length < cfgHead cfg))
+            (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 1))
+            (tapeSymAt M (cfgRight cfg) (cfgHead cfg + 2)) _
+            (by simp [stepCardsLeft]),
+          coversHead_take3 _ _ _ _ ?_ ?_⟩
+        · rw [confRow_window M cfg (by omega),
+            rowCell_head M cfg (j := cfgHead cfg + 1) rfl,
+            rowCell_tape M cfg (j := cfgHead cfg + 1 + 1) (by omega) (by omega),
+            rowCell_tape M cfg (j := cfgHead cfg + 1 + 2) (by omega) (by omega)]
+          simp only [show cfgHead cfg + 1 + 1 - 1 = cfgHead cfg + 1 from by omega,
+            show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+          rw [hR]
+          rfl
+        · rw [confRow_window M cfg' (by omega),
+            rowCell_tape M cfg' (j := cfgHead cfg + 1) (by omega) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := cfgHead cfg + 1 + 1) (by omega) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := cfgHead cfg + 1 + 2) (by omega) (by rw [hBhd]; omega),
+            hBright]
+          simp only [show cfgHead cfg + 1 - 1 = cfgHead cfg from by omega,
+            show cfgHead cfg + 1 + 1 - 1 = cfgHead cfg + 1 from by omega,
+            show cfgHead cfg + 1 + 2 - 1 = cfgHead cfg + 2 from by omega]
+          rw [hwrhd, hunch (cfgHead cfg + 1) (by omega), hunch (cfgHead cfg + 2) (by omega)]
+          rfl
+      · -- right-of window: the head enters its second cell
+        subst heq
+        have hxbR : decide (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1) = blankSym M)
+            = decide ((cfgRight cfg).length < cfgHead cfg) := by
+          rw [tapeSymAt_blank_iff M _ _ hfit.syms_lt]
+          exact decide_eq_decide.2 (by omega)
+        refine ⟨stepCardRight M (stateOf M cfg.state_idx) (stateOf M e.dst_state)
+            (currentTapeSymbol ([], cfgHead cfg, cfgRight cfg)) w TMMove.Lmove
+            (rowX M cfg (cfgHead cfg - 1)) (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)),
+          hmemRgt _ _, coversHead_take3 _ _ _ _ ?_ ?_⟩
+        · rw [confRow_window M cfg (by omega),
+            rowCell_x M cfg (j := cfgHead cfg - 1) (by omega),
+            rowCell_tape M cfg (j := cfgHead cfg - 1 + 1) (by omega) (by omega),
+            rowCell_head M cfg (j := cfgHead cfg - 1 + 2) (by omega)]
+          simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega]
+          rw [hR]
+          rfl
+        · rw [confRow_window M cfg' (by omega),
+            rowCell_x M cfg' (j := cfgHead cfg - 1) (by rw [hBhd]; omega),
+            rowCell_head M cfg' (j := cfgHead cfg - 1 + 1) (by rw [hBhd]),
+            rowCell_tape M cfg' (j := cfgHead cfg - 1 + 2) (by omega) (by rw [hBhd]; omega),
+            hBst, hBright, hBhd, hrowXeq (cfgHead cfg - 1) (by omega)]
+          simp only [show cfgHead cfg - 1 + 2 - 1 = cfgHead cfg from by omega]
+          rw [hwrhd, hunch (cfgHead cfg - 1) (by omega), ← hxbR]
+          rfl
+      · -- incoming window: the head enters its third cell from the right
+        subst heq
+        refine ⟨stepCardInL M (stateOf M e.dst_state)
+            (rowX M cfg (cfgHead cfg - 2))
+            (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 2))
+            (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)),
+          stepCard_mem_cookCards M (stepCardInL_mem M heNT hmvhead _ _ _),
+          coversHead_take3 _ _ _ _ ?_ ?_⟩
+        · rw [confRow_window M cfg (by omega),
+            rowCell_x M cfg (j := cfgHead cfg - 2) (by omega),
+            rowCell_tape M cfg (j := cfgHead cfg - 2 + 1) (by omega) (by omega),
+            rowCell_tape M cfg (j := cfgHead cfg - 2 + 2) (by omega) (by omega)]
+          simp only [show cfgHead cfg - 2 + 1 - 1 = cfgHead cfg - 2 from by omega,
+            show cfgHead cfg - 2 + 2 - 1 = cfgHead cfg - 1 from by omega]
+          rfl
+        · rw [confRow_window M cfg' (by omega),
+            rowCell_x M cfg' (j := cfgHead cfg - 2) (by rw [hBhd]; omega),
+            rowCell_tape M cfg' (j := cfgHead cfg - 2 + 1) (by omega) (by rw [hBhd]; omega),
+            rowCell_head M cfg' (j := cfgHead cfg - 2 + 2) (by rw [hBhd]; omega),
+            hBst, hBright, hBhd, hrowXeq (cfgHead cfg - 2) (by omega)]
+          simp only [show cfgHead cfg - 2 + 1 - 1 = cfgHead cfg - 2 from by omega]
+          rw [hunch (cfgHead cfg - 2) (by omega), hunch (cfgHead cfg - 1) (by omega)]
+          rfl
+      · -- pure copy
+        exact copy_window M cfg cfg' (by omega)
+          (fun j hj1 hj2 => by omega)
+          (fun j hj1 hj2 => by rw [hBhd]; omega)
+          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
 
 /-- **(1a′) Halt freeze**: a halting configuration's row covers itself —
 the three head windows by the halt-freeze families, the rest by copy cards.
