@@ -78,6 +78,14 @@ def headEncodeIn : FlatTM × List Nat × Nat × Nat → State :=
     [[], encSyms (flattenTM M), encSyms s,
      List.replicate maxSize 1, List.replicate steps 1]
 
+/-- `encSyms` unrolls one item at the right end — the incremental-emission
+step every `encSyms`-producing loop invariant closes with. -/
+theorem encSyms_snoc (l : List Nat) (v : Nat) :
+    encSyms (l ++ [v]) = encSyms l ++ 1 :: (List.replicate v 1 ++ [0]) := by
+  unfold encSyms
+  rw [List.foldl_append]
+  rfl
+
 private theorem encSyms_go (l : List Nat) (a : List Nat) (ha : ∀ x ∈ a, x ≤ 1) :
     ∀ x ∈ l.foldl (fun a v => a ++ 1 :: (List.replicate v 1 ++ [0])) a, x ≤ 1 := by
   induction l generalizing a with

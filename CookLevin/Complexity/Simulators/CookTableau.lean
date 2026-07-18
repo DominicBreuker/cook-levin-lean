@@ -56,9 +56,13 @@ never fires those — `runFlatTM` checks halting first).
   (2026-07-18)**: `stepFlatTM_normM`, `ConfFits_step`, `validStep_of_step`,
   `validStep_of_halt`, and `satFinal_of_halt` are all closed, on the shared
   window machinery (`rowCell`/`rowX`/`confRow_window` + the per-family
-  membership lemmas + `copy_window`). Remaining `sorry`s: the (1b) inversion
-  `step_of_validStep`, `halt_of_satFinal`, and the two trajectory assemblies
-  `cover_of_run`/`run_of_cover` — each with a proof-plan docstring.
+  membership lemmas + `copy_window`). **`halt_of_satFinal` is PROVEN
+  (2026-07-18-b)** on the cell-code disjointness algebra (`hCell_val_lb`/
+  `_ub`, `tCell_ne_hCell`, `hCell_ne_bCell`, `tCell_ne_bCell`, `hCell_inj`/
+  `tCell_inj` — also stage-(i) fodder for the (1b) inversion). Remaining
+  `sorry`s: the (1b) inversion `step_of_validStep` and the two trajectory
+  assemblies `cover_of_run`/`run_of_cover` — each with a proof-plan
+  docstring.
 * `cookTableau_correct_immediateHalt` — the constrained-case probe, PROVEN
   against the v2 cards (validates the redesigned families on the base case).
 * `cookTableau_size_bound` — restated (degree 10, see the note) and `sorry`.
@@ -122,6 +126,90 @@ def hCell (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1)) : Fin (Sg 
 /-- The boundary marker (row position 0). -/
 def bCell (M : FlatTM) : Fin (Sg M) :=
   ⟨(M.sig + 1) * (M.states + 2), by unfold Sg; omega⟩
+
+/-! ### Cell-code disjointness — the S1 code algebra
+
+The three cell families occupy disjoint code bands: `tCell` codes are
+`< M.sig + 1`, `hCell` codes lie in `[M.sig + 1, (M.sig + 1)·(M.states + 2))`,
+and `bCell` is the top code `(M.sig + 1)·(M.states + 2)`. Consumed by
+`halt_of_satFinal` (a final-pattern cell in `confRow` can only be the head
+cell) and by stage (i) of the `step_of_validStep` inversion (classifying a
+matched card by its premise cells). -/
+
+theorem hCell_val_lb (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1)) :
+    M.sig + 1 ≤ (hCell M q b).1 := by
+  show M.sig + 1 ≤ (M.sig + 1) * (q.1 + 1) + b.1
+  have h1 : M.sig + 1 ≤ (M.sig + 1) * (q.1 + 1) :=
+    Nat.le_mul_of_pos_right _ (by omega)
+  omega
+
+theorem hCell_val_ub (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1)) :
+    (hCell M q b).1 < (M.sig + 1) * (M.states + 2) := by
+  show (M.sig + 1) * (q.1 + 1) + b.1 < _
+  have hb := b.2
+  have hq := q.2
+  have h1 : (M.sig + 1) * (q.1 + 2) ≤ (M.sig + 1) * (M.states + 2) :=
+    Nat.mul_le_mul_left _ (by omega)
+  have hexp : (M.sig + 1) * (q.1 + 2)
+      = (M.sig + 1) * (q.1 + 1) + (M.sig + 1) := by ring
+  omega
+
+theorem tCell_ne_hCell (M : FlatTM) (a b : Fin (M.sig + 1))
+    (q : Fin (M.states + 1)) : tCell M a ≠ hCell M q b := by
+  intro h
+  have hv : a.1 = (M.sig + 1) * (q.1 + 1) + b.1 := congrArg Fin.val h
+  have h1 := a.2
+  have h2 : M.sig + 1 ≤ (M.sig + 1) * (q.1 + 1) + b.1 := hCell_val_lb M q b
+  omega
+
+theorem hCell_ne_bCell (M : FlatTM) (q : Fin (M.states + 1))
+    (b : Fin (M.sig + 1)) : hCell M q b ≠ bCell M := by
+  intro h
+  have hv : (M.sig + 1) * (q.1 + 1) + b.1 = (M.sig + 1) * (M.states + 2) :=
+    congrArg Fin.val h
+  have h1 : (M.sig + 1) * (q.1 + 1) + b.1 < (M.sig + 1) * (M.states + 2) :=
+    hCell_val_ub M q b
+  omega
+
+theorem tCell_ne_bCell (M : FlatTM) (a : Fin (M.sig + 1)) :
+    tCell M a ≠ bCell M := by
+  intro h
+  have hv : a.1 = (M.sig + 1) * (M.states + 2) := congrArg Fin.val h
+  have h1 := a.2
+  have h2 : M.sig + 1 ≤ (M.sig + 1) * (M.states + 2) :=
+    Nat.le_mul_of_pos_right _ (by omega)
+  omega
+
+theorem tCell_inj (M : FlatTM) {a b : Fin (M.sig + 1)}
+    (h : tCell M a = tCell M b) : a = b := by
+  have hv := congrArg Fin.val h
+  exact Fin.ext hv
+
+theorem hCell_inj (M : FlatTM) {q1 q2 : Fin (M.states + 1)}
+    {b1 b2 : Fin (M.sig + 1)} (h : hCell M q1 b1 = hCell M q2 b2) :
+    q1 = q2 ∧ b1 = b2 := by
+  have hv : (M.sig + 1) * (q1.1 + 1) + b1.1
+      = (M.sig + 1) * (q2.1 + 1) + b2.1 := congrArg Fin.val h
+  have hb1 := b1.2
+  have hb2 := b2.2
+  have hq : q1.1 = q2.1 := by
+    rcases Nat.lt_trichotomy q1.1 q2.1 with hlt | heq | hgt
+    · exfalso
+      have hle : (M.sig + 1) * (q1.1 + 1 + 1) ≤ (M.sig + 1) * (q2.1 + 1) :=
+        Nat.mul_le_mul_left _ (by omega)
+      have hexp : (M.sig + 1) * (q1.1 + 1 + 1)
+          = (M.sig + 1) * (q1.1 + 1) + (M.sig + 1) := by ring
+      omega
+    · exact heq
+    · exfalso
+      have hle : (M.sig + 1) * (q2.1 + 1 + 1) ≤ (M.sig + 1) * (q1.1 + 1) :=
+        Nat.mul_le_mul_left _ (by omega)
+      have hexp : (M.sig + 1) * (q2.1 + 1 + 1)
+          = (M.sig + 1) * (q2.1 + 1) + (M.sig + 1) := by ring
+      omega
+  refine ⟨Fin.ext hq, Fin.ext ?_⟩
+  rw [hq] at hv
+  omega
 
 /-- The blank tape symbol (index `M.sig`). -/
 def blankSym (M : FlatTM) : Fin (M.sig + 1) := ⟨M.sig, Nat.lt_succ_self _⟩
@@ -1750,16 +1838,64 @@ theorem satFinal_of_halt (M : FlatTM) (n : Nat) {base t : Nat}
     conv_lhs => rw [h1]
     simp
 
-/-- Only halting rows satisfy the final patterns (skeleton): a final pattern
-is a singleton halting head cell; head-cell codes are disjoint from tape and
-boundary codes, so its occurrence in `confRow` must be the head cell, whose
-state is `stateOf cfg.state_idx = cfg.state_idx` by `state_lt`. -/
+/-- Only halting rows satisfy the final patterns: a final pattern is a
+singleton halting head cell; head-cell codes are disjoint from tape and
+boundary codes (the cell-code algebra), so its occurrence in `confRow` must
+be the head cell, whose state is `stateOf cfg.state_idx = cfg.state_idx` by
+`state_lt`. -/
 theorem halt_of_satFinal (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg : FlatTMConfig}
     (hfit : ConfFits M base t cfg)
     (hfin : TCC.satFinal (cookFinal M) (confRow M cfg n)) :
     haltingStateReached M cfg = true := by
-  sorry  -- S1 skeleton: satFinal, backward.
+  obtain ⟨subs, hmem, left, right, heq⟩ := hfin
+  -- unpack the final pattern: a singleton halting head cell
+  unfold cookFinal at hmem
+  obtain ⟨q, -, hq⟩ := List.mem_flatMap.1 hmem
+  cases hhalt : M.halt.getD q.1 false with
+  | false => rw [hhalt] at hq; simp at hq
+  | true =>
+    rw [hhalt] at hq
+    simp only [if_true] at hq
+    obtain ⟨b, -, rfl⟩ := List.mem_map.1 hq
+    -- the pattern cell occurs at row coordinate `left.length ≤ n`
+    have hlen : (confRow M cfg n).length = n + 1 := confRow_length M cfg n
+    have hlen2 : left.length + (1 + right.length) = n + 1 := by
+      have hl := congrArg List.length heq
+      simp [hlen, List.length_append] at hl
+      omega
+    have hle : left.length ≤ n := by omega
+    have hlt : left.length < (confRow M cfg n).length := by omega
+    have hget? : (confRow M cfg n)[left.length]? = some (hCell M q b) := by
+      rw [heq, List.append_assoc, List.getElem?_append_right (Nat.le_refl _),
+        Nat.sub_self]
+      rfl
+    have hrow : rowCell M cfg left.length = hCell M q b := by
+      rw [List.getElem?_eq_getElem hlt] at hget?
+      have hg := Option.some.inj hget?
+      rw [confRow_getElem M cfg hle hlt] at hg
+      exact hg
+    -- classify the coordinate by the code bands
+    by_cases h0 : left.length = 0
+    · exfalso
+      rw [h0, rowCell_zero] at hrow
+      exact hCell_ne_bCell M q b hrow.symm
+    by_cases hhd : left.length = cfgHead cfg + 1
+    · -- the head cell: its state is halting
+      rw [rowCell_head M cfg hhd] at hrow
+      obtain ⟨hq', -⟩ := hCell_inj M hrow
+      have hsv : (stateOf M cfg.state_idx).1 = cfg.state_idx := by
+        have hstate := hfit.state_lt
+        simp [stateOf]; omega
+      have hqv : cfg.state_idx = q.1 := by
+        rw [← hsv, hq']
+      unfold haltingStateReached
+      rw [hqv]
+      exact hhalt
+    · -- a tape cell cannot carry a head code
+      exfalso
+      rw [rowCell_tape M cfg (by omega) hhd] at hrow
+      exact tCell_ne_hCell M _ b q hrow
 
 /-- **(2) Run ⟹ covering** (skeleton): an accepting run yields a covering of
 exactly `steps` rows. Proof plan: induction unfolding `runFlatTM` from
