@@ -29,7 +29,7 @@ register before working.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — **`FlatTCC ⪯p' SAT` — the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` is ONE composed live `⪯p'`** (2026-07-16). The last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`) is a full free-line witness — pre-order positional Tseytin over the Polish `serF` stream (`NP/FSAT_to_SAT_pre.lean`), program `buildSAT`, complete run ladder (`buildSAT_run`) and cost ladder (`buildSAT_cost_le`, `satBound = O(n⁸)`), all mechanical fields (`Reductions/FSAT_to_SAT_free.lean`) — chained by the **third live `SeamData`/`comp`** (`Reductions/FSAT_to_SAT_comp.lean`, probe `probes/SATSeamProbe.lean`). The tail is DONE and waits on the front (S1/C8) for the endpoint hardness bridge. |
 | `NPhard'` endgame design | **SETTLED, machine-validated & now LIVE** (2026-07-02/03): `PolyTimeComputableLang.SeamData`/`comp` (Cmd-level chain composition, fully proven, first live seam `FlatTCCBinComp.flatTCC_to_binaryCC_seam`) + `NPhard'`/`NPcomplete'`; hardness is proven at chain endpoints only — see `CookLevin/HANDOFF.md`. |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
-| Genuine `sorry`s in built code | **15** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 10× CookTableau (the S1 **decomposition skeleton**, 2026-07-17: each a named sub-lemma with a proof-plan docstring; the assembly is proven), 3× MultiToSingle (dead code) |
+| Genuine `sorry`s in built code | **10** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 5× CookTableau (the S1 skeleton — **direction (1a) + its gates PROVEN 2026-07-18**: `stepFlatTM_normM`, `ConfFits_step`, `validStep_of_step`, `validStep_of_halt`, `satFinal_of_halt`; remaining: the (1b) inversion, `halt_of_satFinal`, the two trajectory assemblies, the size bound), 3× MultiToSingle (dead code) |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
@@ -84,9 +84,14 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   now append-only at the frontier — plus three card-family defects); the v2
   construction (boundary marker, normalised transition table, the full
   3-position + incoming-head + halt-freeze card algebra) is landed with the
-  corrected statement decomposed into 10 sorried sub-lemmas, the assembly
-  proven, and card/step agreement `#eval`-probed green
-  (`probes/S1TableauProbe.lean`).
+  corrected statement decomposed, the assembly proven, and card/step
+  agreement `#eval`-probed green (`probes/S1TableauProbe.lean`).
+  **Direction (1a) — machine step/halt ⟹ card-covered row transition — is
+  PROVEN (2026-07-18)** together with its gates (`stepFlatTM_normM`,
+  `ConfFits_step`, `satFinal_of_halt`); 5 sorried sub-lemmas remain (the
+  (1b) inversion, `halt_of_satFinal`, the two trajectory assemblies, the
+  size bound). The chain-head input layout is **frozen**
+  (`Reductions/HeadLayout.lean`).
 - **S2 (bridges).** `LM_to_mTM` / `mTM_to_singleTapeTM` use a 1-state
   `bridgeMachine` with empty transitions that **accepts everything**; the
   TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
