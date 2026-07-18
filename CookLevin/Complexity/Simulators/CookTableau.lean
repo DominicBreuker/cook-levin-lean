@@ -52,8 +52,13 @@ never fires those — `runFlatTM` checks halting first).
 * `cookTableau_correct` — **restated** (with the previously-missing
   `validFlatTM` / `tapes = 1` / alphabet hypotheses, without which even the
   trivial-machine cases are false) and **decomposed** into the skeleton below;
-  the assembly from the sub-lemmas is PROVEN, the sub-lemmas are `sorry` with
-  proof plans in their docstrings.
+  the assembly from the sub-lemmas is PROVEN. **Direction (1a) is PROVEN
+  (2026-07-18)**: `stepFlatTM_normM`, `ConfFits_step`, `validStep_of_step`,
+  `validStep_of_halt`, and `satFinal_of_halt` are all closed, on the shared
+  window machinery (`rowCell`/`rowX`/`confRow_window` + the per-family
+  membership lemmas + `copy_window`). Remaining `sorry`s: the (1b) inversion
+  `step_of_validStep`, `halt_of_satFinal`, and the two trajectory assemblies
+  `cover_of_run`/`run_of_cover` — each with a proof-plan docstring.
 * `cookTableau_correct_immediateHalt` — the constrained-case probe, PROVEN
   against the v2 cards (validates the redesigned families on the base case).
 * `cookTableau_size_bound` — restated (degree 10, see the note) and `sorry`.
@@ -1147,7 +1152,7 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg cfg' : FlatTMConfig}
     (hV : validFlatTM M) (hfit : ConfFits M base t cfg)
     (hhead : cfgHead cfg + 3 ≤ n)
-    (hlen : (cfgRight cfg).length + 2 ≤ n)
+    (_hlen : (cfgRight cfg).length + 2 ≤ n)
     (hnh : haltingStateReached M cfg = false)
     (hstep : stepFlatTM M cfg = some cfg') :
     TCC.validStep (cookCards M) (confRow M cfg n) (confRow M cfg' n) := by
@@ -1394,8 +1399,7 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
           rowCell_tape M cfg' (j := cfgHead cfg - 1 + 1) (by omega) (by rw [hBhd]; omega),
           rowCell_tape M cfg' (j := cfgHead cfg - 1 + 2) (by omega) (by rw [hBhd]; omega),
           hBright, hrowXeq (cfgHead cfg - 1) (by omega)]
-        simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega,
-          show cfgHead cfg - 1 + 2 - 1 = cfgHead cfg - 1 + 1 from by omega,
+        simp only [show cfgHead cfg - 1 + 2 - 1 = cfgHead cfg - 1 + 1 from by omega,
           show cfgHead cfg - 1 + 1 = cfgHead cfg from by omega]
         rw [hwrhd, hunch (cfgHead cfg - 1) (by omega), ← hxbR]
         rfl
@@ -1712,16 +1716,39 @@ theorem step_of_validStep (M : FlatTM) (n : Nat) {base t : Nat}
       ∃ cfg', stepFlatTM M cfg = some cfg' ∧ b = confRow M cfg' n) := by
   sorry  -- S1 skeleton: inversion (direction 1b). See docstring.
 
-/-- A halting configuration's row satisfies the final patterns (skeleton):
-the head cell `hCell (stateOf q) (…)` occurs at row coordinate
-`cfgHead cfg + 1 ≤ n`, and `stateOf` is the identity under `state_lt`. -/
+/-- A halting configuration's row satisfies the final patterns: the head
+cell `hCell (stateOf q) (…)` occurs at row coordinate `cfgHead cfg + 1 ≤ n`,
+and `stateOf` is the identity under `state_lt`. -/
 theorem satFinal_of_halt (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg : FlatTMConfig}
     (hfit : ConfFits M base t cfg)
     (hhead : cfgHead cfg < n)
     (hh : haltingStateReached M cfg = true) :
     TCC.satFinal (cookFinal M) (confRow M cfg n) := by
-  sorry  -- S1 skeleton: satFinal, forward.
+  have hstate := hfit.state_lt
+  have hq : M.halt.getD (stateOf M cfg.state_idx).1 false = true := by
+    have hqv : (stateOf M cfg.state_idx).1 = cfg.state_idx := by
+      simp [stateOf]; omega
+    rw [hqv]; exact hh
+  refine ⟨[hCell M (stateOf M cfg.state_idx)
+      (tapeSymAt M (cfgRight cfg) (cfgHead cfg))], ?_, ?_⟩
+  · unfold cookFinal
+    refine List.mem_flatMap.2 ⟨stateOf M cfg.state_idx, List.mem_finRange _, ?_⟩
+    rw [if_pos hq]
+    exact List.mem_map.2 ⟨_, List.mem_finRange _, rfl⟩
+  · -- the head cell sits at list index `cfgHead cfg + 1`
+    have hlt : cfgHead cfg + 1 < (confRow M cfg n).length := by
+      rw [confRow_length]; omega
+    refine ⟨(confRow M cfg n).take (cfgHead cfg + 1),
+      (confRow M cfg n).drop (cfgHead cfg + 1 + 1), ?_⟩
+    have h1 : confRow M cfg n
+        = (confRow M cfg n).take (cfgHead cfg + 1)
+          ++ (confRow M cfg n).drop (cfgHead cfg + 1) :=
+      (List.take_append_drop _ _).symm
+    rw [List.drop_eq_getElem_cons hlt,
+      confRow_getElem M cfg (by omega) hlt, rowCell_head M cfg rfl] at h1
+    conv_lhs => rw [h1]
+    simp
 
 /-- Only halting rows satisfy the final patterns (skeleton): a final pattern
 is a singleton halting head cell; head-cell codes are disjoint from tape and
