@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-18-b; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **S1 DIRECTION (1a) + `halt_of_satFinal` ARE PROVEN** (machine step/halt ⟹ card-covered row transition, its gates, AND the backward final-pattern bridge on the new cell-code disjointness algebra — 6 of the 10 skeleton sorries closed, all axiom-clean), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`, the S1↔C8-5 interface), and **C8-3 IS DONE** (`Reductions/FrontPieces.lean`: `emitConst`/`reencLoop`/`unaryMonomial` + run/frame/cost lemmas, axiom-clean, probe green) — next: **S1 direction (2) assembly + direction (1b)** top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
+## Where the proof stands (2026-07-18-c; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **S1 IS DOWN TO ONE HARD SORRY**: directions (1a), (2) `cover_of_run` (axiom-clean) and the (3) assembly `run_of_cover` are PROVEN, a **machine-checked completeness defect (phantom heads at the row's last cell) was found top-down and FIXED by a right boundary marker** before (1b) effort was spent on the false statement — remaining: the (1b) inversion `step_of_validStep` + the size bound; **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), and **C8-3 IS DONE** (`Reductions/FrontPieces.lean`) — next: **S1 direction (1b)** top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -27,11 +27,11 @@ reasonably provable).
   (S1 + C8 must deliver an honest `… ⪯p' FlatTCC` prefix).
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
-  `hasDeciderClassical` (`GenNP_is_hard.lean`), 4× `CookTableau` (the S1
-  skeleton: `step_of_validStep` (1b), `cover_of_run`/`run_of_cover`,
-  `cookTableau_size_bound` — each with a proof-plan docstring), 3×
-  `MultiToSingle` (dead code). Plus the `sorry`-free **vacuous** defs
-  (S1-stub/S2) invisible to `#print axioms` — Group S.
+  `hasDeciderClassical` (`GenNP_is_hard.lean`), 2× `CookTableau` (the S1
+  remainder: `step_of_validStep` (1b) — proof-plan docstring + the staged
+  plan below — and `cookTableau_size_bound`), 3× `MultiToSingle` (dead
+  code). Plus the `sorry`-free **vacuous** defs (S1-stub/S2) invisible to
+  `#print axioms` — Group S.
 - **The compiler (Risk C2) is DONE and CLEAN.** All **9** ops proven &
   axiom-clean; `compileOp_sound_physical_residue` is fully proven with no
   side-conditions. The retired value-as-length trio and BOTH isolation walls
@@ -52,6 +52,38 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-18-c (top-down) — S1 DIRECTIONS (2) AND (3) ASSEMBLED + THE
+  PHANTOM-HEAD DEFECT FOUND & FIXED (build green 3388, probe green).**
+  (1) **`cover_of_run` (direction 2) PROVEN, axiom-clean**, via
+  `relpower_of_run` (run ⟹ chain induction: halt freeze / live step /
+  stuck-refutes-`hh`, threading `ConfFits` + the `t + k + 3 ≤ n` /
+  `base + t + k + 3 ≤ n` window-room invariants; helpers `ConfFits_mono`,
+  `isValidFlatTapes_single`). (2) **`run_of_cover` (direction 3) ASSEMBLED**
+  on `run_of_relpower` (each covered step is halt-freeze — accept
+  immediately — or the unique machine step; base case via
+  `halt_of_satFinal`); it consumes the still-sorried `step_of_validStep`,
+  deliberately: assembling (3) first PROVED the (1b) statement is strong
+  enough for its consumer. (3) ⚠ **RISK FINDING (BLOCKING, fixed): the v2
+  card algebra was COMPLETENESS-UNSOUND at the right row edge.** An `Lmove`
+  entry into a halting state licensed a spurious `stepCardInL` head at the
+  row's LAST cell — the only cell contained in no second refuting window,
+  so the head-at-second-slot-absence argument fails there. Machine-checked
+  counterexample `M4` (self-loops forever, never accepts, *unreachable*
+  Lmove-into-halt entry): phantom licensed + frozen + final-pattern-matched
+  ⟹ tableau accepted, machine didn't (`probes/S1TableauProbe.lean` §5).
+  **Fix:** `confRow` ends with a RIGHT `bCell` marker (`rowWidth` +5,
+  row length `n + 2`); new cell-preserving `copyRightCards` family (the
+  only family with the marker in slot 3 — the last coordinate cell can
+  never change); `validStep_of_step` AND `step_of_validStep` take
+  `cfgHead + 4 ≤ n` (the Rmove-incoming window must not collide with the
+  marker window; the +4 is available at every call site since a step
+  implies `k ≥ 1` budget). New machinery: `confRow_getElem_last`,
+  `confRow_window_last`, `copyRight_window`. All (1a)/freeze/final-pattern
+  lemmas re-proven; axiom profiles unchanged. ⚠ gotchas: rewriting a
+  `getElem` INDEX is a dependent-motive error — route through `getElem?`
+  (index-rewrite there, then `List.getElem?_eq_getElem`); list-shape
+  equations `(x :: y :: replicate k B) ++ [Bd] = x :: y :: B :: …` close
+  by plain `rfl` (append/replicate whnf) — no `rw` chains needed.
 - **2026-07-18-b (bottom-up) — C8-3 DONE + `halt_of_satFinal` PROVEN (the
   self-contained bite), all axiom-clean, build green (3388).**
   (1) **`Reductions/FrontPieces.lean`** — the three `W_Q` building blocks,
@@ -530,65 +562,64 @@ building C8-4):**
 proof plan in the docstring), either stream can take it:
 
 - **`cookTableau_size_bound`** (restated 2026-07-17-b at degree 10 for the v2
-  card families): ~150–300 LOC of foldl-over-`flatMap` `encodable.size`
-  arithmetic (dominant terms: `Θ(|Σ|³)` copy cards + `Θ(|trans|·|Σ|³)`
-  incoming-head cards, each of size `Θ(|Σ|)`). Closing it early de-risks the
-  S1 cost ladder.
+  card families; statement unchanged by the 2026-07-18-c marker fix — the
+  extra `copyRightCards` family is only `Θ(|Σ|²)` and the row grew one
+  cell): ~150–300 LOC of foldl-over-`flatMap` `encodable.size` arithmetic
+  (dominant terms: `Θ(|Σ|³)` copy cards + `Θ(|trans|·|Σ|³)` incoming-head
+  cards, each of size `Θ(|Σ|)`). Closing it early de-risks the S1 cost
+  ladder.
 
-## NEXT TOP-DOWN session — S1 step 3: direction (2) assembly, then the (1b) inversion
+## NEXT TOP-DOWN session — S1 direction (1b): the inversion `step_of_validStep`
 
-Direction (1a) + its gates are PROVEN and the layout is FROZEN (2026-07-18,
-see ★ Latest sessions — read that entry's tactic notes before touching the
-file). Recommended order (commit each green):
+Directions (1a), (2) and the (3) assembly are PROVEN (2026-07-18/-b/-c) and
+the phantom-head hole is closed — `run_of_cover` already consumes
+`step_of_validStep`'s EXACT statement (so its shape is validated); closing
+(1b) immediately completes `cookTableau_correct` up to the size bound.
+Est. 1–3 sessions (~2K lines in the Coq port). Staged decomposition
+(decompose with sorries first, commit each green; read the 2026-07-18-c
+entry's tactic notes first):
 
-1. **Direction (2): `cover_of_run`** — now FULLY UNBLOCKED (every lemma it
-   consumes is proven: `ConfFits_init`/`ConfFits_step`,
-   `validStep_of_step`/`validStep_of_halt`, `satFinal_of_halt`). Induction
-   unfolding `runFlatTM` from `initFlatConfig M [s]` (`isValidFlatTapes`
-   from `hT`/`hs`): a halting configuration freezes for the remaining budget
-   (`validStep_of_halt` iterated, cf. `freeze_relpower`), a stepping one
-   advances (`validStep_of_step`), a stuck non-halting one contradicts
-   `hacc` (`runFlatTM` then returns the stuck config, still non-halting).
-   Window-room side conditions from the `ConfFits` bounds (`head ≤ t ≤
-   steps`, `len ≤ |s| + t`) against `n = |s| + steps + 3`. Landing this
-   FIRST banks half the bijection while (1b) is still open.
-2. **Direction (1b): `step_of_validStep`** — the inversion heart (~2K lines
-   in the Coq port; est. 1–3 sessions; the docstring lists the four stages).
-   Load-bearing facts: the head/tape/boundary **code-disjointness lemmas —
-   LANDED 2026-07-18-b** (`hCell_val_lb`/`_ub`, `tCell_ne_hCell`,
-   `hCell_ne_bCell`, `tCell_ne_bCell`, `hCell_inj`, `tCell_inj`; ⚠ pair
-   them with defeq ascriptions, `omega` cannot see `(hCell …).1` through an
-   `unfold`), key-uniqueness inside `dedupKeys` (extend the `dedupGo` lemma
-   family), and the deliberate ABSENCE of a head-at-second-slot family.
-   Reuse the window machinery backwards: from `TCC.coversHead card
-   (a.drop i) (b.drop i)` + the row length, extract the three cell equations
-   (an inversion counterpart of `coversHead_take3` — `isPrefix` +
-   `take3_drop` gives `(b.drop i).take 3 = ↑card.conc`, then `b`'s cells
-   pointwise), then enumerate which family the matched card can lie in by
-   its premise cells.
-3. **Direction (3): `run_of_cover`** — extraction by induction on the
-   `relpower` chain threading `ConfFits` and "the current row is `confRow`
-   of the current configuration" via `step_of_validStep`;
-   `runFlatTM_of_halting` on the halting branch; `halt_of_satFinal` (PROVEN
-   2026-07-18-b) fires on the last row.
-4. **The prelude/cert-guess layer** (DESIGN task — paper + probe pass BEFORE
-   coding): the deterministic core gives `accepts M [s] steps ↔ tableau`,
-   but the S1 witness needs `(∃ cert, |cert| ≤ maxSize ∧ accepts M
-   [s ++ cert] steps) ↔ tableau'`. Coq's `preludeRules` shape: wildcard
-   cells in the cert region of row 0, guess cards resolving them in covering
-   step 1, contiguity enforced window-locally (no symbol right of a blank in
-   the guessed region), budget `steps + 1`. Extends the alphabet and
-   `cookInit` only — the card algebra and directions (1a)/(1b) are reused
-   as-is on rows 1…steps.
-5. **The free witness program** (after 1–4): a `Cmd` emitting
-   `encodeIn (cookTableau M s steps)` from the FROZEN chain-head layout
-   (`HeadLayout.headEncodeIn`; its `enc_bit` field is
-   `headEncodeIn_bitState`, already proven) — the emitter patterns
-   (`BinaryCC_to_FSAT_free`'s per-stream loops, unary mul for the
-   `Θ(|trans|·|Σ|³)` card enumeration) and the standard
-   run/cost/witness/seam ladder apply unchanged. ⚠ size: the card list is
-   `Θ(|trans|·|Σ|⁴)` encoded — budget `satBound`-style headroom from the
-   start (the size bound is stated at degree 10).
+1. **Window→cells inversion helpers**: from `hvs`'s per-window
+   `coversHead card (a.drop i) (b.drop i)` + the row lengths, extract the
+   six cell equations (`a[i..i+2] = card.prem`, `b[i..i+2] = card.conc`) —
+   the converse of `coversHead_take3` (`isPrefix` + `take3_drop`; work
+   `getElem?`-based, index rewrites under `getElem` are dependent-motive
+   errors).
+2. **Card classification by premise shape** (the cell-code bands pay here:
+   `hCell_val_lb`/`_ub`, `tCell_ne_hCell`, `hCell_ne_bCell`,
+   `tCell_ne_bCell`, `hCell_inj`/`tCell_inj`; ⚠ defeq-ascription gotcha —
+   `omega` cannot see `(hCell …).1` through an `unfold`): a `cookCards`
+   member with a head-free premise triple is a copy/`copyRight` card
+   (conc = prem) or an incoming card (`stepCardInR` head-at-slot-1 /
+   `stepCardInL` head-at-slot-3); a premise with `hCell q R` matches the
+   halt families (iff `q` halting) or `stepCardsOf` of an entry keyed
+   `(q, m)` — unique after `normTrans` (extend the `dedupGo` family with
+   key-uniqueness inside `dedupKeys`).
+3. **No spurious heads in `b`**: window 0 pins `b[0] = bCell`; the marker
+   window (`copyRightCards` only — cell-preserving) pins `b[n+1] = bCell`
+   AND kills slot-3 phantoms at coordinate `n` (the 2026-07-18-c fix —
+   probe §5 documents the pre-fix hole); every other candidate head cell
+   `j` away from the source head sits at conc slot 2 of head-free window
+   `j − 1`, and no family produces that.
+4. **Center-window determination**: the premise `(x, hCell q R, z)` —
+   halting `q` matches only halt-freeze cards (conc = prem; propagate with
+   stage 3 to `b = confRow cfg n`); non-halting `q` matches only the unique
+   normalised entry's step cards, whose conc + the two overlapping windows
+   + stage 3 determine every cell of `b` as `confRow` of the step (`wEff` ↔
+   `writeCurrentTapeSymbol` via `tapeSymAt_blank_iff`/`rowX_isBlank`); no
+   matching entry ⟹ nothing covers the center window ⟹ `hvs` refuted
+   (stuck case).
+
+After (1b), still top-down, in order: **the prelude/cert-guess layer**
+(DESIGN task — paper + probe BEFORE coding; Coq's `preludeRules`: wildcard
+cert cells in row 0, guess cards resolving them in covering step 1,
+window-local contiguity, budget `steps + 1`; extends the alphabet and
+`cookInit` only — the card algebra and all four directions are reused
+as-is on rows 1…steps) and **the S1 free witness program** (a `Cmd`
+emitting `encodeIn (cookTableau M s steps)` from the FROZEN
+`HeadLayout.headEncodeIn` layout; emitter patterns from
+`BinaryCC_to_FSAT_free`; ⚠ the card list is `Θ(|trans|·|Σ|⁴)` encoded —
+budget `satBound`-style headroom; the size bound is stated at degree 10).
 
 **Reusable machinery for ALL of it** (do not re-derive): the
 `Lang/CostFlat.lean` toolkit; the witness templates
@@ -613,6 +644,12 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   the zero-padding jump-write — it is non-local (one step rewriting cells
   arbitrarily far from the head) and falsifies every local-window tableau
   simulation (S1). New machines must not rely on writing past the frontier.
+- **S1 rows carry a RIGHT boundary marker (2026-07-18-c)** — `confRow` ends
+  with `bCell`, guarded by the cell-preserving `copyRightCards` family, and
+  the step lemmas demand `cfgHead + 4 ≤ n` head-room. Never drop the
+  marker, add another family with the marker in slot 3, or add ANY
+  head-at-second-slot family: each reopens the machine-checked phantom-head
+  completeness hole (`probes/S1TableauProbe.lean` §5).
 - **`BitState` / `sig = 4` / numbers UNARY (Option B′).** Fixed 4-symbol
   alphabet; `encodeTape` shifts cells `+1` (`0→1`,`1→2`), `0` separates
   registers, `3` terminates/anchors. Every tape-touching state must be
@@ -662,7 +699,13 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   `coversHead_take3`, frontier detection `tapeSymAt_blank_iff`/
   `rowX_isBlank`, membership lemmas for all five step families + all four
   copy/halt families, `copy_window`); `validStep_of_step`/
-  `validStep_of_halt`/`satFinal_of_halt`. **The frozen head layout**
+  `validStep_of_halt`/`satFinal_of_halt`. **The S1 trajectory + right-marker
+  layer (2026-07-18-c)**: `ConfFits_mono`, `isValidFlatTapes_single`,
+  `relpower_of_run`/`cover_of_run` (axiom-clean), `run_of_relpower`/
+  `run_of_cover` (assembled over the (1b) sorry), and the marker machinery
+  `copyRightCards` + `copyRightCard_mem(_cookCards)`,
+  `confRow_getElem_last`/`confRow_window_last`/`copyRight_window` —
+  stage (3) of the (1b) plan consumes these. **The frozen head layout**
   (`Reductions/HeadLayout.lean`): `headEncodeIn`/`headRegBound`/`encSyms`/
   `flattenTM` + `headEncodeIn_bitState` — the S1 witness's `encodeIn` and
   C8-5's seam target; imported by `Complexity.lean`, consumed by
