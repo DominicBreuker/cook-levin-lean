@@ -1,5 +1,6 @@
 import Complexity.Lang.PolyTime
 import Complexity.NP.SAT.CookLevin.Subproblems.SingleTMGenNP
+import Complexity.NP.SAT.CookLevin.Reductions.HeadLayout
 
 /-! # C8 scoping probe — the per-`Q` front witness's seam into the chain head
 
@@ -46,51 +47,18 @@ open Complexity.Lang
 
 namespace C8SeamProbe
 
-/-! ## A canonical flattening of a `FlatTM` into a bit register
+/-! ## The chain-head input layout — now FROZEN in built code
 
-The machine is emitted as a CONSTANT, so the only requirement on the
-flattening is that the head layout and the emitter share it. Numbers are
-kept as a `Nat` stream with length prefixes, then the whole stream is
-sentinel-encoded per number (`1 1^v 0` — the project's standard item view),
-which is bit-level (`enc_bit`) and prefix-decodable. -/
+**2026-07-18**: the layout this probe pinned as a candidate is FROZEN as
+`Reductions/HeadLayout.lean` (`HeadLayout.headEncodeIn`, with the
+`enc_bit` certification `headEncodeIn_bitState`). The probe consumes the
+frozen definitions, so it cannot drift from the built contract. -/
 
-def encMoveN : TMMove → Nat
-  | .Lmove => 0
-  | .Rmove => 1
-  | .Nmove => 2
+open HeadLayout (encMoveN encOptN flattenEntry flattenTM encSyms
+  headRegBound headEncodeIn)
 
-def encOptN : Option Nat → List Nat
-  | none => [0]
-  | some v => [1, v]
-
-def flattenEntry (e : FlatTMTransEntry) : List Nat :=
-  [e.src_state, e.src_tape_vals.length]
-    ++ e.src_tape_vals.foldl (fun a o => a ++ encOptN o) []
-    ++ [e.dst_state, e.dst_write_vals.length]
-    ++ e.dst_write_vals.foldl (fun a o => a ++ encOptN o) []
-    ++ [e.move_dirs.length] ++ e.move_dirs.map encMoveN
-
-def flattenTM (M : FlatTM) : List Nat :=
-  [M.sig, M.tapes, M.states, M.start, M.halt.length]
-    ++ M.halt.map (fun b => if b then 1 else 0)
-    ++ [M.trans.length]
-    ++ M.trans.foldl (fun a e => a ++ flattenEntry e) []
-
-/-- Sentinel item view of a `Nat` stream: each `v` becomes `1 1^v 0`. -/
-def encSyms (l : List Nat) : List Nat :=
-  l.foldl (fun a v => a ++ 1 :: (List.replicate v 1 ++ [0])) []
-
-/-! ## The pinned chain-head input layout (PROPOSAL — to be frozen when the
-S1 free witness is built; any change is a probe re-run, not a redesign) -/
-
-/-- Head frame: reg 0 output scratch `[]`, reg 1 machine, reg 2 `s`,
-reg 3 `maxSize` (unary), reg 4 `steps` (unary). -/
-def headRegBound : Nat := 5
-
-def headEncodeIn : FlatTM × List Nat × Nat × Nat → State :=
-  fun (M, s, maxSize, steps) =>
-    [[], encSyms (flattenTM M), encSyms s,
-     List.replicate maxSize 1, List.replicate steps 1]
+-- the frozen frame is what this probe validated
+example : headRegBound = 5 := rfl
 
 /-! ## The toy per-`Q` front program
 
