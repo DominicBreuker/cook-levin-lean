@@ -724,6 +724,12 @@ theorem ConfFits_init (M : FlatTM) (s : List Nat)
   intro x hx
   exact hs x hx
 
+/-- `ConfFits` is monotone in the step counter (the bounds only loosen). -/
+theorem ConfFits_mono (M : FlatTM) {base t t' : Nat} {cfg : FlatTMConfig}
+    (htt : t ≤ t') (hfit : ConfFits M base t cfg) : ConfFits M base t' cfg :=
+  ⟨hfit.tapes_eq, hfit.state_lt, Nat.le_trans hfit.head_le htt,
+    Nat.le_trans hfit.len_le (by omega), hfit.syms_lt⟩
+
 /-- Unfolded description of a successful machine step out of a single-tape
 configuration: the fired entry (with its match and single-tape payload) and
 the successor's explicit shape. -/
@@ -1897,36 +1903,146 @@ theorem halt_of_satFinal (M : FlatTM) (n : Nat) {base t : Nat}
       rw [rowCell_tape M cfg (by omega) hhd] at hrow
       exact tCell_ne_hCell M _ b q hrow
 
-/-- **(2) Run ⟹ covering** (skeleton): an accepting run yields a covering of
-exactly `steps` rows. Proof plan: induction unfolding `runFlatTM` from
-`initFlatConfig M [s]` (`ConfFits_init`/`ConfFits_step` thread the
-invariant; `isValidFlatTapes` from `hT`/`hs`): a halting configuration
-freezes for the remaining budget (`validStep_of_halt` iterated), a stepping
-one advances (`validStep_of_step`), and a stuck non-halting configuration
-contradicts `hacc` (the run then ends non-halting). Close with
-`satFinal_of_halt` on the final row. -/
+/-- A single valid single-tape input. -/
+theorem isValidFlatTapes_single (M : FlatTM) (s : List Nat)
+    (hT : M.tapes = 1) (hs : list_ofFlatType M.sig s) :
+    isValidFlatTapes M [s] = true := by
+  unfold isValidFlatTapes
+  simp only [List.length_singleton, hT, decide_true, List.all_cons, List.all_nil,
+    Bool.and_true, Bool.true_and, isValidFlatTape, List.all_eq_true,
+    decide_eq_true_eq]
+  exact fun x hx => hs x hx
+
+/-- **Run transport (the (2) induction).** A `k`-step machine run out of a
+fitting configuration transports to a `k`-row card-covered chain: a halting
+configuration freezes (`validStep_of_halt`), a live one advances
+(`validStep_of_step`), and a stuck non-halting one ends the run non-halting
+(no chain needed — the hypothesis `haltingStateReached cfg_f` is refuted).
+The window-room invariants `t + k + 3 ≤ n` / `base + t + k + 3 ≤ n` are
+preserved as `t` grows while `k` shrinks. -/
+theorem relpower_of_run (M : FlatTM) (n : Nat) {base : Nat} (hV : validFlatTM M) :
+    ∀ (k t : Nat) (cfg cfg_f : FlatTMConfig),
+      ConfFits M base t cfg →
+      t + k + 3 ≤ n →
+      base + t + k + 3 ≤ n →
+      runFlatTM k M cfg = some cfg_f →
+      haltingStateReached M cfg_f = true →
+      relpower (TCC.validStep (cookCards M)) k (confRow M cfg n) (confRow M cfg_f n) ∧
+        ConfFits M base (t + k) cfg_f
+  | 0, t, cfg, cfg_f, hfit, _hn, _hbn, hrun, _hh => by
+      cases Option.some.inj hrun
+      exact ⟨relpower.refl _, hfit⟩
+  | k + 1, t, cfg, cfg_f, hfit, hn, hbn, hrun, hh => by
+      have hhead3 : cfgHead cfg + 3 ≤ n := by
+        have := hfit.head_le; omega
+      by_cases hhalt : haltingStateReached M cfg = true
+      · -- halted: the row freezes for the whole remaining budget
+        have hfrz : runFlatTM (k + 1) M cfg = some cfg :=
+          runFlatTM_of_halting M cfg (k + 1) hhalt
+        rw [hrun] at hfrz
+        cases Option.some.inj hfrz
+        obtain ⟨hrel, hfit'⟩ := relpower_of_run M n hV k (t + 1) cfg cfg
+          (ConfFits_mono M (Nat.le_succ t) hfit) (by omega) (by omega)
+          (runFlatTM_of_halting M cfg k hhalt) hh
+        exact ⟨relpower.step (validStep_of_halt M n hfit hhead3 hhalt) hrel,
+          ConfFits_mono M (by omega) hfit'⟩
+      · have hnh : haltingStateReached M cfg = false := by
+          rwa [Bool.not_eq_true] at hhalt
+        have hrunEq : runFlatTM (k + 1) M cfg
+            = (match stepFlatTM M cfg with
+               | none => some cfg
+               | some cfg' => runFlatTM k M cfg') := by
+          show (if haltingStateReached M cfg = true then some cfg else _) = _
+          rw [if_neg hhalt]
+          rfl
+        cases hstep : stepFlatTM M cfg with
+        | none =>
+            -- stuck non-halting: the run ends non-halting, refuting `hh`
+            rw [hstep] at hrunEq
+            rw [hrunEq] at hrun
+            cases Option.some.inj hrun
+            simp [hnh] at hh
+        | some cfg' =>
+            rw [hstep] at hrunEq
+            rw [hrunEq] at hrun
+            have hlen2 : (cfgRight cfg).length + 2 ≤ n := by
+              have := hfit.len_le; omega
+            obtain ⟨hrel, hfitf⟩ := relpower_of_run M n hV k (t + 1) cfg' cfg_f
+              (ConfFits_step M hV hfit hstep) (by omega) (by omega) hrun hh
+            exact ⟨relpower.step
+                (validStep_of_step M n hV hfit hhead3 hlen2 hnh hstep) hrel,
+              ConfFits_mono M (by omega) hfitf⟩
+
+/-- **(2) Run ⟹ covering**: an accepting run yields a covering of exactly
+`steps` rows — `relpower_of_run` from the initial configuration
+(`ConfFits_init`), closed by `satFinal_of_halt` on the final row. -/
 theorem cover_of_run (M : FlatTM) (s : List Nat) (steps : Nat)
     (hV : validFlatTM M) (hT : M.tapes = 1) (hs : list_ofFlatType M.sig s)
     (hacc : acceptsFlatTM M [s] steps = true) :
     ∃ sf, relpower (TCC.validStep (cookCards M)) steps (cookInit M s steps) sf ∧
       TCC.satFinal (cookFinal M) sf := by
-  sorry  -- S1 skeleton: soundness assembly (direction 2). See docstring.
+  rw [acceptsFlatTM_eq_true_iff] at hacc
+  obtain ⟨cfg_f, hexec, hh⟩ := hacc
+  rw [execFlatTM_eq_some_runFlatTM (isValidFlatTapes_single M s hT hs)] at hexec
+  obtain ⟨hrel, hfitf⟩ := relpower_of_run M (s.length + steps + 3) hV steps 0
+    (initFlatConfig M [s]) cfg_f (ConfFits_init M s hV hs) (by omega) (by omega)
+    hexec hh
+  exact ⟨confRow M cfg_f (s.length + steps + 3), hrel,
+    satFinal_of_halt M _ hfitf (by have := hfitf.head_le; omega) hh⟩
 
-/-- **(3) Covering ⟹ run** (skeleton): extract the accepting run. Proof
-plan: induction on the `relpower` chain from `cookInit` threading
-`ConfFits` and "the current row is `confRow` of the current run
-configuration" via `step_of_validStep`; on the halting branch the machine
-stays halted (`runFlatTM_of_halting`) and acceptance follows once
-`halt_of_satFinal` fires on the last row; window-room side conditions from
-`ConfFits` bounds (`head ≤ t ≤ steps`, `len ≤ |s| + t`) against
-`n = |s| + steps + 3`. -/
+/-- **Cover transport (the (3) induction).** A `k`-step card-covered chain
+out of a fitting configuration row, ending in a final-pattern row, forces a
+halting machine run: `step_of_validStep` classifies each covered step as
+either the halt freeze (the machine has already accepted — close
+immediately, ignoring the frozen remainder of the chain) or `confRow` of
+the unique machine step (recurse); the base case converts the final
+pattern back to a halting state via `halt_of_satFinal`. -/
+theorem run_of_relpower (M : FlatTM) (n : Nat) {base : Nat} (hV : validFlatTM M) :
+    ∀ (k t : Nat) (cfg : FlatTMConfig) (sf : List (Fin (Sg M))),
+      ConfFits M base t cfg →
+      t + k + 3 ≤ n →
+      base + t + k + 3 ≤ n →
+      relpower (TCC.validStep (cookCards M)) k (confRow M cfg n) sf →
+      TCC.satFinal (cookFinal M) sf →
+      ∃ cfg_f, runFlatTM k M cfg = some cfg_f ∧
+        haltingStateReached M cfg_f = true
+  | 0, t, cfg, sf, hfit, _hn, _hbn, hrel, hfin => by
+      cases hrel with
+      | refl => exact ⟨cfg, rfl, halt_of_satFinal M n hfit hfin⟩
+  | k + 1, t, cfg, sf, hfit, hn, hbn, hrel, hfin => by
+      cases hrel with
+      | step hvs hrest =>
+        have hhead3 : cfgHead cfg + 3 ≤ n := by have := hfit.head_le; omega
+        have hlen2 : (cfgRight cfg).length + 2 ≤ n := by
+          have := hfit.len_le; omega
+        rcases step_of_validStep M n hV hfit hhead3 hlen2 _ hvs with
+          ⟨hhalt, -⟩ | ⟨hnh, cfg', hstep, rfl⟩
+        · -- already halted: accepted within any remaining budget
+          exact ⟨cfg, runFlatTM_of_halting M cfg (k + 1) hhalt, hhalt⟩
+        · obtain ⟨cfg_f, hrun, hh⟩ := run_of_relpower M n hV k (t + 1) cfg' sf
+            (ConfFits_step M hV hfit hstep) (by omega) (by omega) hrest hfin
+          refine ⟨cfg_f, ?_, hh⟩
+          have hunfold : runFlatTM (k + 1) M cfg = runFlatTM k M cfg' := by
+            show (if haltingStateReached M cfg = true then some cfg else _) = _
+            rw [if_neg (by rw [hnh]; exact Bool.false_ne_true), hstep]
+          rw [hunfold, hrun]
+
+/-- **(3) Covering ⟹ run**: extract the accepting run — `run_of_relpower`
+on the covering chain from the initial configuration. -/
 theorem run_of_cover (M : FlatTM) (s : List Nat) (steps : Nat)
     (hV : validFlatTM M) (hT : M.tapes = 1) (hs : list_ofFlatType M.sig s)
     (sf : List (Fin (Sg M)))
     (hrel : relpower (TCC.validStep (cookCards M)) steps (cookInit M s steps) sf)
     (hfin : TCC.satFinal (cookFinal M) sf) :
     acceptsFlatTM M [s] steps = true := by
-  sorry  -- S1 skeleton: completeness assembly (direction 3). See docstring.
+  obtain ⟨cfg_f, hrun, hh⟩ := run_of_relpower M (s.length + steps + 3) hV steps 0
+    (initFlatConfig M [s]) sf (ConfFits_init M s hV hs) (by omega) (by omega)
+    hrel hfin
+  rw [acceptsFlatTM_eq_true_iff]
+  exact ⟨cfg_f,
+    by rw [execFlatTM_eq_some_runFlatTM (isValidFlatTapes_single M s hT hs)]
+       exact hrun,
+    hh⟩
 
 /-- **Main bijection — restated (v2) and assembled from the skeleton.**
 The v1 statement lacked the `validFlatTM`/`tapes = 1`/alphabet hypotheses
