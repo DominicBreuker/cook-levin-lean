@@ -408,11 +408,16 @@ theorem stepFlatTM_normM (M : FlatTM) (cfg : FlatTMConfig)
 
 /-! ## Rows -/
 
-/-- Row width: boundary marker + `|s| + steps + 3` tape positions (so the
-head — which starts at tape position 0 and advances at most one per step —
-always has a full 3-window around it, and the written region always has a
-blank cell after it inside the row). -/
-def rowWidth (s : List Nat) (steps : Nat) : Nat := s.length + steps + 4
+/-- Row width: boundary marker + `|s| + steps + 3` tape positions + the
+**right** boundary marker (so the head — which starts at tape position 0 and
+advances at most one per step — always has a full 3-window around it, and
+the written region always has a blank cell after it inside the row). The
+right marker guards the row's LAST cell: it is the 2026-07-18-c fix for the
+machine-checked **phantom-head defect** — without it, `stepCardInL` (whose
+premise cannot see the head arriving from outside the window) could
+materialise a spurious head at the last cell, the only cell not contained
+in a second, refuting window (`probes/S1TableauProbe.lean` §5). -/
+def rowWidth (s : List Nat) (steps : Nat) : Nat := s.length + steps + 5
 
 /-- Single-tape head projection (the model's `left` component is vestigial —
 see `Compile.flattenTape`). -/
@@ -443,14 +448,16 @@ def confCell (M : FlatTM) (q hd : Nat) (right : List Nat) (p : Nat) : Fin (Sg M)
   if p = hd then hCell M (stateOf M q) (tapeSymAt M right p)
   else tCell M (tapeSymAt M right p)
 
-/-- The tableau row of a configuration: the boundary marker followed by `n`
-tape-position cells. -/
+/-- The tableau row of a configuration: the boundary marker, `n`
+tape-position cells, and the **right** boundary marker (which guards the
+last cell against phantom incoming heads — see `rowWidth`). -/
 def confRow (M : FlatTM) (cfg : FlatTMConfig) (n : Nat) : List (Fin (Sg M)) :=
   bCell M ::
     (List.range n).map (confCell M cfg.state_idx (cfgHead cfg) (cfgRight cfg))
+    ++ [bCell M]
 
 theorem confRow_length (M : FlatTM) (cfg : FlatTMConfig) (n : Nat) :
-    (confRow M cfg n).length = n + 1 := by
+    (confRow M cfg n).length = n + 2 := by
   simp [confRow]
 
 /-- The initial tableau row: the start configuration on tape `s`. -/
@@ -484,6 +491,19 @@ def copyCards (M : FlatTM) : List (TCCCard (Fin (Sg M))) :=
     (List.finRange (M.sig + 1)).flatMap (fun b =>
       (List.finRange (M.sig + 1)).map (fun c =>
         copyCard M (xCell M x) (tCell M b) (tCell M c))))
+
+/-- Identity at the row's rightmost window `(y, z, right-marker)`. This is
+the ONLY family with the boundary marker in the third slot, and its
+conclusion keeps all three cells — so the last cell of a row can never
+change and never host an (incoming) head. Deliberately tape-only in the
+first two slots: the head never reaches the right marker's window
+(`cfgHead + 3 ≤ n`), so no head/marker variants are needed, and their
+absence is what refutes phantom heads at the last cell in the (1b)
+inversion. -/
+def copyRightCards (M : FlatTM) : List (TCCCard (Fin (Sg M))) :=
+  (List.finRange (M.sig + 1)).flatMap (fun y =>
+    (List.finRange (M.sig + 1)).map (fun z =>
+      copyCard M (tCell M y) (tCell M z) (bCell M)))
 
 /-- Halt freeze, head at the window's first cell. -/
 def haltLeftCards (M : FlatTM) : List (TCCCard (Fin (Sg M))) :=
@@ -632,8 +652,8 @@ def stepCards (M : FlatTM) : List (TCCCard (Fin (Sg M))) :=
 
 /-- All cards. -/
 def cookCards (M : FlatTM) : List (TCCCard (Fin (Sg M))) :=
-  copyCards M ++ haltLeftCards M ++ haltCenterCards M ++ haltRightCards M ++
-    stepCards M
+  copyCards M ++ copyRightCards M ++ haltLeftCards M ++ haltCenterCards M ++
+    haltRightCards M ++ stepCards M
 
 /-! ## The construction -/
 
@@ -988,14 +1008,28 @@ private theorem rowCell_tape (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
 private theorem confRow_getElem (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
     (hj : j ≤ n) (hlt : j < (confRow M cfg n).length) :
     (confRow M cfg n)[j]'hlt = rowCell M cfg j := by
+  have hpre : j < (bCell M :: (List.range n).map
+      (confCell M cfg.state_idx (cfgHead cfg) (cfgRight cfg))).length := by
+    simp; omega
+  show ((bCell M :: (List.range n).map
+      (confCell M cfg.state_idx (cfgHead cfg) (cfgRight cfg))) ++ [bCell M])[j]'hlt
+    = rowCell M cfg j
+  rw [List.getElem_append_left hpre]
   cases j with
   | zero => rfl
   | succ k =>
-    have hk : k < n := by
-      have := hlt
-      rw [confRow_length] at this
-      omega
-    simp [confRow, rowCell]
+    have hk : k < n := by omega
+    simp [rowCell]
+
+/-- The last cell (coordinate `n + 1`) is the right boundary marker. -/
+private theorem confRow_getElem_last (M : FlatTM) (cfg : FlatTMConfig) {n : Nat}
+    (hlt : n + 1 < (confRow M cfg n).length) :
+    (confRow M cfg n)[n + 1]'hlt = bCell M := by
+  show ((bCell M :: (List.range n).map
+      (confCell M cfg.state_idx (cfgHead cfg) (cfgRight cfg))) ++ [bCell M])[n + 1]'_
+    = bCell M
+  rw [List.getElem_append_right (by simp)]
+  simp
 
 /-- A 3-window of a configuration row, as its three coordinate cells. -/
 private theorem confRow_window (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
@@ -1007,6 +1041,26 @@ private theorem confRow_window (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
     confRow_getElem M cfg (j := i) (by omega) (by rw [confRow_length]; omega),
     confRow_getElem M cfg (j := i + 1) (by omega) (by rw [confRow_length]; omega),
     confRow_getElem M cfg (j := i + 2) (by omega) (by rw [confRow_length]; omega)]
+
+/-- The rightmost 3-window (`i + 1 = n`): two coordinate cells and the
+right marker. -/
+private theorem confRow_window_last (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
+    (h : i + 1 = n) :
+    ((confRow M cfg n).drop i).take 3
+      = [rowCell M cfg i, rowCell M cfg (i + 1), bCell M] := by
+  have hlen : i + 3 ≤ (confRow M cfg n).length := by rw [confRow_length]; omega
+  have hcell3 : (confRow M cfg n)[i + 2]'(by rw [confRow_length]; omega)
+      = bCell M := by
+    have hq : (confRow M cfg n)[i + 2]? = some (bCell M) := by
+      rw [show i + 2 = n + 1 from by omega,
+        List.getElem?_eq_getElem (by rw [confRow_length]; omega),
+        confRow_getElem_last M cfg]
+    rw [List.getElem?_eq_getElem (by rw [confRow_length]; omega)] at hq
+    exact Option.some.inj hq
+  rw [take3_drop _ i hlen,
+    confRow_getElem M cfg (j := i) (by omega) (by rw [confRow_length]; omega),
+    confRow_getElem M cfg (j := i + 1) (by omega) (by rw [confRow_length]; omega),
+    hcell3]
 
 /-- Under the run invariant, a tape cell is the blank iff its position is
 at/beyond the frontier — the window-local frontier detection. -/
@@ -1069,6 +1123,12 @@ theorem copyCard_mem (M : FlatTM) (x : Option (Fin (M.sig + 1))) (b c : Fin (M.s
   refine List.mem_flatMap.2 ⟨b, List.mem_finRange b, ?_⟩
   exact List.mem_map.2 ⟨c, List.mem_finRange c, rfl⟩
 
+theorem copyRightCard_mem (M : FlatTM) (y z : Fin (M.sig + 1)) :
+    copyCard M (tCell M y) (tCell M z) (bCell M) ∈ copyRightCards M := by
+  unfold copyRightCards
+  refine List.mem_flatMap.2 ⟨y, List.mem_finRange y, ?_⟩
+  exact List.mem_map.2 ⟨z, List.mem_finRange z, rfl⟩
+
 theorem haltLeftCard_mem (M : FlatTM) (q : Fin (M.states + 1)) (b y z : Fin (M.sig + 1))
     (hq : M.halt.getD q.1 false = true) :
     copyCard M (hCell M q b) (tCell M y) (tCell M z) ∈ haltLeftCards M := by
@@ -1106,7 +1166,13 @@ theorem copyCard_mem_cookCards (M : FlatTM) (x : Option (Fin (M.sig + 1)))
     copyCard M (xCell M x) (tCell M b) (tCell M c) ∈ cookCards M := by
   unfold cookCards
   simp only [List.mem_append]
-  exact Or.inl (Or.inl (Or.inl (Or.inl (copyCard_mem M x b c))))
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inl (copyCard_mem M x b c)))))
+
+theorem copyRightCard_mem_cookCards (M : FlatTM) (y z : Fin (M.sig + 1)) :
+    copyCard M (tCell M y) (tCell M z) (bCell M) ∈ cookCards M := by
+  unfold cookCards
+  simp only [List.mem_append]
+  exact Or.inl (Or.inl (Or.inl (Or.inl (Or.inr (copyRightCard_mem M y z)))))
 
 theorem haltLeftCard_mem_cookCards (M : FlatTM) (q : Fin (M.states + 1))
     (b y z : Fin (M.sig + 1)) (hq : M.halt.getD q.1 false = true) :
@@ -1232,6 +1298,33 @@ private theorem copy_window (M : FlatTM) (cfg cfgB : FlatTMConfig) {n i : Nat}
     rw [hsym i (by omega) (by omega), hsym (i + 1) (by omega) (by omega)]
     rfl
 
+/-- The rightmost window — two head-free, symbol-agreeing coordinates and
+the right marker — is covered by a `copyRightCards` card. -/
+private theorem copyRight_window (M : FlatTM) (cfg cfgB : FlatTMConfig) {n i : Nat}
+    (h1 : 1 ≤ i) (hi : i + 1 = n)
+    (hA : ∀ j, i ≤ j → j ≤ i + 1 → j ≠ cfgHead cfg + 1)
+    (hB : ∀ j, i ≤ j → j ≤ i + 1 → j ≠ cfgHead cfgB + 1)
+    (hsym : ∀ p, i ≤ p + 1 → p + 1 ≤ i + 1 →
+      tapeSymAt M (cfgRight cfgB) p = tapeSymAt M (cfgRight cfg) p) :
+    TCC.coversHeadList (cookCards M)
+      ((confRow M cfg n).drop i) ((confRow M cfgB n).drop i) := by
+  refine ⟨copyCard M (tCell M (tapeSymAt M (cfgRight cfg) (i - 1)))
+      (tCell M (tapeSymAt M (cfgRight cfg) i))
+      (bCell M),
+    copyRightCard_mem_cookCards M _ _,
+    coversHead_take3 _ _ _ i ?_ ?_⟩
+  · rw [confRow_window_last M cfg hi,
+      rowCell_tape M cfg (j := i) (by omega) (hA i (by omega) (by omega)),
+      rowCell_tape M cfg (j := i + 1) (by omega) (hA (i + 1) (by omega) (by omega))]
+    simp only [show i + 1 - 1 = i from by omega]
+    rfl
+  · rw [confRow_window_last M cfgB hi,
+      rowCell_tape M cfgB (j := i) (by omega) (hB i (by omega) (by omega)),
+      rowCell_tape M cfgB (j := i + 1) (by omega) (hB (i + 1) (by omega) (by omega))]
+    simp only [show i + 1 - 1 = i from by omega]
+    rw [hsym (i - 1) (by omega) (by omega), hsym i (by omega) (by omega)]
+    rfl
+
 /-- **(1a) Card soundness of a machine step**: a legal non-halting machine
 step is a card-covered row transition. Window `i` is cased on its position
 relative to the head's row coordinate `h = cfgHead cfg + 1`: `i = h-1`
@@ -1239,13 +1332,15 @@ center (the firing entry's `stepCardCenter`; the left-neighbour blankness
 matches the frontier by the invariant, so `wEff` computes the write),
 `i = h` left-of, `i = h-2` right-of, `i = h+1` (`Rmove` incoming) /
 `i = h-3` (`Lmove` incoming), all other windows all-tape (`copyCards`;
-window 0 via the boundary variants). `stepFlatTM_normM` replaces the fired
-entry by its normalised representative (whose cards are the generated
-ones). -/
+window 0 via the boundary variants, the rightmost window via
+`copyRightCards`). `hhead` demands `+ 4` head-room so the `Rmove` incoming
+window never collides with the right-marker window. `stepFlatTM_normM`
+replaces the fired entry by its normalised representative (whose cards are
+the generated ones). -/
 theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg cfg' : FlatTMConfig}
     (hV : validFlatTM M) (hfit : ConfFits M base t cfg)
-    (hhead : cfgHead cfg + 3 ≤ n)
+    (hhead : cfgHead cfg + 4 ≤ n)
     (_hlen : (cfgRight cfg).length + 2 ≤ n)
     (hnh : haltingStateReached M cfg = false)
     (hstep : stepFlatTM M cfg = some cfg') :
@@ -1402,10 +1497,15 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
         rw [hwrhd, hunch (cfgHead cfg - 1) (by omega), ← hxbR]
         rfl
     · -- pure copy
-      exact copy_window M cfg cfg' (by omega)
-        (fun j hj1 hj2 => by omega)
-        (fun j hj1 hj2 => by rw [hBhd]; omega)
-        (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+      by_cases hlast : i + 1 = n
+      · exact copyRight_window M cfg cfg' (by omega) hlast
+          (fun j hj1 hj2 => by omega)
+          (fun j hj1 hj2 => by rw [hBhd]; omega)
+          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+      · exact copy_window M cfg cfg' (by omega)
+          (fun j hj1 hj2 => by omega)
+          (fun j hj1 hj2 => by rw [hBhd]; omega)
+          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
   | Rmove =>
     have htape : tapeStep ([], cfgHead cfg, cfgRight cfg) w TMMove.Rmove
         = ([], cfgHead cfg + 1, wr) := by
@@ -1523,10 +1623,15 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
           hunch (cfgHead cfg + 3) (by omega)]
         rfl
     · -- pure copy
-      exact copy_window M cfg cfg' (by omega)
-        (fun j hj1 hj2 => by omega)
-        (fun j hj1 hj2 => by rw [hBhd]; omega)
-        (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+      by_cases hlast : i + 1 = n
+      · exact copyRight_window M cfg cfg' (by omega) hlast
+          (fun j hj1 hj2 => by omega)
+          (fun j hj1 hj2 => by rw [hBhd]; omega)
+          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+      · exact copy_window M cfg cfg' (by omega)
+          (fun j hj1 hj2 => by omega)
+          (fun j hj1 hj2 => by rw [hBhd]; omega)
+          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
   | Lmove =>
     have htape : tapeStep ([], cfgHead cfg, cfgRight cfg) w TMMove.Lmove
         = ([], cfgHead cfg - 1, wr) := by
@@ -1592,10 +1697,15 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
           rw [hwrhd, hunch (2 - 1) (by omega), hunch (3 - 1) (by omega)]
           rfl
       · -- pure copy right of the clamped head
-        exact copy_window M cfg cfg' (by omega)
-          (fun j hj1 hj2 => by omega)
-          (fun j hj1 hj2 => by rw [hBhd]; omega)
-          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+        by_cases hlast : i + 1 = n
+        · exact copyRight_window M cfg cfg' (by omega) hlast
+            (fun j hj1 hj2 => by omega)
+            (fun j hj1 hj2 => by rw [hBhd]; omega)
+            (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+        · exact copy_window M cfg cfg' (by omega)
+            (fun j hj1 hj2 => by omega)
+            (fun j hj1 hj2 => by rw [hBhd]; omega)
+            (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
     · -- interior left move
       have hxbL : xIsBlank M (some (tapeSymAt M (cfgRight cfg) (cfgHead cfg - 1)))
           = decide ((cfgRight cfg).length < cfgHead cfg) := by
@@ -1710,10 +1820,15 @@ theorem validStep_of_step (M : FlatTM) (n : Nat) {base t : Nat}
           rw [hunch (cfgHead cfg - 2) (by omega), hunch (cfgHead cfg - 1) (by omega)]
           rfl
       · -- pure copy
-        exact copy_window M cfg cfg' (by omega)
-          (fun j hj1 hj2 => by omega)
-          (fun j hj1 hj2 => by rw [hBhd]; omega)
-          (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+        by_cases hlast : i + 1 = n
+        · exact copyRight_window M cfg cfg' (by omega) hlast
+            (fun j hj1 hj2 => by omega)
+            (fun j hj1 hj2 => by rw [hBhd]; omega)
+            (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
+        · exact copy_window M cfg cfg' (by omega)
+            (fun j hj1 hj2 => by omega)
+            (fun j hj1 hj2 => by rw [hBhd]; omega)
+            (fun p hp1 hp2 => by rw [hBright]; exact hunch p (by omega))
 
 /-- **(1a′) Halt freeze**: a halting configuration's row covers itself —
 the three head windows by the halt-freeze families, the rest by copy cards.
@@ -1776,10 +1891,15 @@ theorem validStep_of_halt (M : FlatTM) (n : Nat) {base t : Nat}
       simp only [show cfgHead cfg - 1 + 1 - 1 = cfgHead cfg - 1 from by omega]
       rfl
   · -- head nowhere in the window: pure copy
-    exact copy_window M cfg cfg (by omega)
-      (fun j hj1 hj2 => by omega)
-      (fun j hj1 hj2 => by omega)
-      (fun p _ _ => rfl)
+    by_cases hlast : i + 1 = n
+    · exact copyRight_window M cfg cfg (by omega) hlast
+        (fun j hj1 hj2 => by omega)
+        (fun j hj1 hj2 => by omega)
+        (fun p _ _ => rfl)
+    · exact copy_window M cfg cfg (by omega)
+        (fun j hj1 hj2 => by omega)
+        (fun j hj1 hj2 => by omega)
+        (fun p _ _ => rfl)
 
 /-- **(1b) Card completeness — the inversion heart** (skeleton, the Coq
 port's ~2K-line per-constructor analysis). Any card-covered successor of a
@@ -1789,8 +1909,12 @@ port's ~2K-line per-constructor analysis). Any card-covered successor of a
 and the only conclusions available off such premises keep the cells
 (copy) or place a head at the first (Rmove-in) / third (Lmove-in) slot —
 there is **no head-at-second-slot family**, so a head in `b` adjacent only
-to unchanged tape cells on both sides is impossible, hence `b` has no head
-away from the source head's three-cell neighbourhood; (ii) the center
+to unchanged tape cells on both sides is impossible; an Lmove-in head at
+the row's LAST cell (the one cell with no second refuting window) is
+blocked by the right marker: the last window's premise third slot is
+`bCell`, which no `stepCardInL` premise carries and only `copyRightCards`
+(cell-preserving) covers — hence `b` has no head away from the source
+head's three-cell neighbourhood; (ii) the center
 window's premise `(x, hCell q R, z)` matches only cards of entries keyed
 `(q, m)` — unique after `normTrans` — or halt-freeze cards, never both
 (`normTrans` drops halting sources); (iii) the matched card's conclusion
@@ -1801,7 +1925,7 @@ frontier ⟺ blank-left-neighbour correspondence); (iv) if no entry matches
 theorem step_of_validStep (M : FlatTM) (n : Nat) {base t : Nat}
     {cfg : FlatTMConfig}
     (hV : validFlatTM M) (hfit : ConfFits M base t cfg)
-    (hhead : cfgHead cfg + 3 ≤ n)
+    (hhead : cfgHead cfg + 4 ≤ n)
     (hlen : (cfgRight cfg).length + 2 ≤ n)
     (b : List (Fin (Sg M)))
     (hvs : TCC.validStep (cookCards M) (confRow M cfg n) b) :
@@ -1864,18 +1988,24 @@ theorem halt_of_satFinal (M : FlatTM) (n : Nat) {base t : Nat}
     rw [hhalt] at hq
     simp only [if_true] at hq
     obtain ⟨b, -, rfl⟩ := List.mem_map.1 hq
-    -- the pattern cell occurs at row coordinate `left.length ≤ n`
-    have hlen : (confRow M cfg n).length = n + 1 := confRow_length M cfg n
-    have hlen2 : left.length + (1 + right.length) = n + 1 := by
+    -- the pattern cell occurs at row coordinate `left.length ≤ n + 1`
+    have hlen : (confRow M cfg n).length = n + 2 := confRow_length M cfg n
+    have hlen2 : left.length + (1 + right.length) = n + 2 := by
       have hl := congrArg List.length heq
       simp [hlen, List.length_append] at hl
       omega
-    have hle : left.length ≤ n := by omega
     have hlt : left.length < (confRow M cfg n).length := by omega
     have hget? : (confRow M cfg n)[left.length]? = some (hCell M q b) := by
       rw [heq, List.append_assoc, List.getElem?_append_right (Nat.le_refl _),
         Nat.sub_self]
       rfl
+    by_cases hlastc : left.length = n + 1
+    · -- the last cell is the right marker, never a head cell
+      exfalso
+      rw [hlastc] at hget?
+      rw [List.getElem?_eq_getElem (by omega), confRow_getElem_last M cfg] at hget?
+      exact hCell_ne_bCell M q b (Option.some.inj hget?).symm
+    have hle : left.length ≤ n := by omega
     have hrow : rowCell M cfg left.length = hCell M q b := by
       rw [List.getElem?_eq_getElem hlt] at hget?
       have hg := Option.some.inj hget?
@@ -1965,12 +2095,14 @@ theorem relpower_of_run (M : FlatTM) (n : Nat) {base : Nat} (hV : validFlatTM M)
         | some cfg' =>
             rw [hstep] at hrunEq
             rw [hrunEq] at hrun
+            have hhead4 : cfgHead cfg + 4 ≤ n := by
+              have := hfit.head_le; omega
             have hlen2 : (cfgRight cfg).length + 2 ≤ n := by
               have := hfit.len_le; omega
             obtain ⟨hrel, hfitf⟩ := relpower_of_run M n hV k (t + 1) cfg' cfg_f
               (ConfFits_step M hV hfit hstep) (by omega) (by omega) hrun hh
             exact ⟨relpower.step
-                (validStep_of_step M n hV hfit hhead3 hlen2 hnh hstep) hrel,
+                (validStep_of_step M n hV hfit hhead4 hlen2 hnh hstep) hrel,
               ConfFits_mono M (by omega) hfitf⟩
 
 /-- **(2) Run ⟹ covering**: an accepting run yields a covering of exactly
@@ -2012,10 +2144,10 @@ theorem run_of_relpower (M : FlatTM) (n : Nat) {base : Nat} (hV : validFlatTM M)
   | k + 1, t, cfg, sf, hfit, hn, hbn, hrel, hfin => by
       cases hrel with
       | step hvs hrest =>
-        have hhead3 : cfgHead cfg + 3 ≤ n := by have := hfit.head_le; omega
+        have hhead4 : cfgHead cfg + 4 ≤ n := by have := hfit.head_le; omega
         have hlen2 : (cfgRight cfg).length + 2 ≤ n := by
           have := hfit.len_le; omega
-        rcases step_of_validStep M n hV hfit hhead3 hlen2 _ hvs with
+        rcases step_of_validStep M n hV hfit hhead4 hlen2 _ hvs with
           ⟨hhalt, -⟩ | ⟨hnh, cfg', hstep, rfl⟩
         · -- already halted: accepted within any remaining budget
           exact ⟨cfg, runFlatTM_of_halting M cfg (k + 1) hhalt, hhalt⟩
@@ -2078,12 +2210,14 @@ is coverable for every step budget, matching acceptance. Ported from v1;
 now exercises the boundary marker (window 0 is `(#, head, blank)`) and the
 halt-center/halt-left/copy families. -/
 
-/-- The empty-input initial row: boundary marker, head cell, blanks. -/
+/-- The empty-input initial row: boundary marker, head cell, blanks, and
+the right boundary marker. -/
 theorem cookInit_nil (M : FlatTM) (steps : Nat) :
     cookInit M [] steps =
       bCell M :: hCell M (stateOf M M.start) (blankSym M) ::
-        List.replicate (steps + 2) (tCell M (blankSym M)) := by
+        List.replicate (steps + 2) (tCell M (blankSym M)) ++ [bCell M] := by
   unfold cookInit confRow
+  congr 1
   congr 1
   have hcell0 : confCell M (initFlatConfig M [[]]).state_idx
       (cfgHead (initFlatConfig M [[]])) (cfgRight (initFlatConfig M [[]])) 0
@@ -2118,7 +2252,8 @@ theorem freeze_validStep (M : FlatTM) (steps : Nat)
   set H := hCell M (stateOf M M.start) (blankSym M) with hHdef
   set B := tCell M (blankSym M) with hBdef
   set Bd := bCell M with hBddef
-  have hlen : (Bd :: H :: List.replicate (steps + 2) B).length = steps + 4 := by
+  have hlen : (Bd :: H :: List.replicate (steps + 2) B ++ [Bd]).length
+      = steps + 5 := by
     simp
   rw [hlen] at hi
   rcases i with _ | (_ | j)
@@ -2126,26 +2261,30 @@ theorem freeze_validStep (M : FlatTM) (steps : Nat)
     refine ⟨copyCard M Bd H B, ?_, ?_⟩
     · exact haltCenterCard_mem_cookCards M _ _ none _ hHalt
     · rw [List.drop_zero]
-      apply coversHead_copy M Bd H B _
-        (List.replicate (steps + 1) B)
-      rw [show steps + 2 = (steps + 1) + 1 from rfl, List.replicate_succ]
+      exact coversHead_copy M Bd H B _ (List.replicate (steps + 1) B ++ [Bd]) rfl
   · -- window 1: (head, blank, blank) — halt-left
     refine ⟨copyCard M H B B, haltLeftCard_mem_cookCards M _ _ _ _ hHalt, ?_⟩
-    show TCC.coversHead _ (H :: List.replicate (steps + 2) B)
-      (H :: List.replicate (steps + 2) B)
-    apply coversHead_copy M H B B _ (List.replicate steps B)
-    rw [show steps + 2 = steps + 1 + 1 from rfl, List.replicate_succ,
-      show steps + 1 = steps + 1 from rfl, List.replicate_succ]
-  · -- windows ≥ 2: all-blank — copy with x = some blank
-    refine ⟨copyCard M B B B, copyCard_mem_cookCards M (some (blankSym M))
-      (blankSym M) (blankSym M), ?_⟩
-    show TCC.coversHead _ ((List.replicate (steps + 2) B).drop j)
-      ((List.replicate (steps + 2) B).drop j)
-    rw [List.drop_replicate]
-    apply coversHead_copy M B B B _ (List.replicate (steps + 2 - j - 3) B)
-    generalize hK : steps + 2 - j - 3 = K
-    rw [show steps + 2 - j = 3 + K from by omega, List.replicate_add]
-    rfl
+    exact coversHead_copy M H B B _ (List.replicate steps B ++ [Bd]) rfl
+  · -- windows ≥ 2: all-blank interior, or the rightmost marker window
+    have hj : j ≤ steps := by omega
+    have hdrop : (Bd :: H :: List.replicate (steps + 2) B ++ [Bd]).drop (j + 2)
+        = List.replicate (steps + 2 - j) B ++ [Bd] := by
+      rw [show (Bd :: H :: List.replicate (steps + 2) B ++ [Bd]).drop (j + 2)
+          = (List.replicate (steps + 2) B ++ [Bd]).drop j from rfl,
+        List.drop_append_of_le_length (by rw [List.length_replicate]; omega),
+        List.drop_replicate]
+    by_cases hlastw : j = steps
+    · -- the rightmost window: (blank, blank, right marker)
+      subst hlastw
+      refine ⟨copyCard M B B Bd, copyRightCard_mem_cookCards M _ _, ?_⟩
+      rw [hdrop, show j + 2 - j = 2 from by omega]
+      exact coversHead_copy M B B Bd _ [] rfl
+    · -- all-blank interior window
+      refine ⟨copyCard M B B B, copyCard_mem_cookCards M (some (blankSym M))
+        (blankSym M) (blankSym M), ?_⟩
+      obtain ⟨K, hK⟩ : ∃ K, steps + 2 - j = 3 + K := ⟨steps - j - 1, by omega⟩
+      rw [hdrop, hK, List.replicate_add]
+      exact coversHead_copy M B B B _ (List.replicate K B ++ [Bd]) rfl
 
 theorem freeze_relpower (M : FlatTM) (steps : Nat)
     (hHalt : M.halt.getD (stateOf M M.start).1 false = true) :
@@ -2162,7 +2301,8 @@ theorem freeze_satFinal (M : FlatTM) (steps : Nat)
     rw [if_pos hHalt]
     exact List.mem_map.2 ⟨blankSym M, List.mem_finRange _, rfl⟩
   · rw [cookInit_nil]
-    exact ⟨[bCell M], List.replicate (steps + 2) (tCell M (blankSym M)), rfl⟩
+    exact ⟨[bCell M],
+      List.replicate (steps + 2) (tCell M (blankSym M)) ++ [bCell M], rfl⟩
 
 theorem cookTableau_lang (M : FlatTM) (steps : Nat)
     (hHalt : M.halt.getD (stateOf M M.start).1 false = true) :

@@ -140,3 +140,47 @@ is a card-covered row transition, and the halting row freezes. -/
 #eval (cookFinal M1).any (fun pat =>
   (rowOf M1 [1, 0] 0 9).any (fun c => decide (pat = [c])))
 -- expect: false
+
+/-! ## §5 Phantom-head regression (2026-07-18-c — the RIGHT boundary marker)
+
+The machine-checked counterexample that forced the right marker: `M4`
+self-loops forever (never accepts) but carries an *unreachable* `Lmove`
+entry into halting state 1. Under the left-marker-only v2 rows, a spurious
+`stepCardInL` head at the row's LAST cell was card-licensed — the last cell
+was the only cell contained in no second, refuting window (the
+head-at-second-slot absence argument needs a window with the phantom in its
+*second* slot, which does not exist at the row edge). The phantom froze
+(halting state) and satisfied a final pattern, so
+`FlatTCCLang (cookTableau M4 [] steps)` held while `acceptsFlatTM M4 [[]] k`
+is false for every `k` — `cookTableau_correct`'s completeness direction was
+FALSE. With the right marker, the last coordinate cell sits in the marker
+window `(y, z, #)`, whose only covering family (`copyRightCards`) preserves
+it — the phantom transition is no longer licensed. -/
+
+def M4 : FlatTM :=
+  { sig := 2, tapes := 1, states := 3,
+    trans := [
+      ⟨0, [none], 0, [none], [TMMove.Nmove]⟩,   -- run forever
+      ⟨2, [none], 1, [none], [TMMove.Lmove]⟩],  -- unreachable, into halting 1
+    start := 0, halt := [false, true, false] }
+
+#eval (normTrans M4).length                                  -- expect: 2
+#eval (List.range 8).map (fun k => acceptsFlatTM M4 [[]] k)  -- expect: all false
+
+/-- Row 0 with a phantom halting head planted at coordinate `j`. -/
+def phantomRow (n j : Nat) : List (Fin (Sg M4)) :=
+  (rowOf M4 [] 0 n).set j (hCell M4 (stateOf M4 1) (blankSym M4))
+
+-- sanity: the real (self-loop) step is licensed, incl. the marker window
+#eval validStepB (cookCards M4) (rowOf M4 [] 0 8) (rowOf M4 [] 1 8)
+-- expect: true
+
+-- the phantom at the last coordinate cell is NOT licensed (was TRUE pre-fix)
+#eval validStepB (cookCards M4) (rowOf M4 [] 0 8) (phantomRow 8 8)
+-- expect: false
+
+-- ... nor at the right marker itself, nor one cell in
+#eval validStepB (cookCards M4) (rowOf M4 [] 0 8) (phantomRow 8 9)
+-- expect: false
+#eval validStepB (cookCards M4) (rowOf M4 [] 0 8) (phantomRow 8 7)
+-- expect: false
