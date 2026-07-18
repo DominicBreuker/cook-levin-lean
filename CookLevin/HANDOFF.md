@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-18; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **S1 DIRECTION (1a) IS PROVEN** (machine step/halt ⟹ card-covered row transition, plus its gates `stepFlatTM_normM`/`ConfFits_step`/`satFinal_of_halt` — all axiom-clean, 5 of the 10 skeleton sorries closed), and **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`, the S1↔C8-5 interface) — next: **S1 direction (2) assembly + direction (1b)** top-down and **C8-3** bottom-up)
+## Where the proof stands (2026-07-18-b; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **S1 DIRECTION (1a) + `halt_of_satFinal` ARE PROVEN** (machine step/halt ⟹ card-covered row transition, its gates, AND the backward final-pattern bridge on the new cell-code disjointness algebra — 6 of the 10 skeleton sorries closed, all axiom-clean), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`, the S1↔C8-5 interface), and **C8-3 IS DONE** (`Reductions/FrontPieces.lean`: `emitConst`/`reencLoop`/`unaryMonomial` + run/frame/cost lemmas, axiom-clean, probe green) — next: **S1 direction (2) assembly + direction (1b)** top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -27,12 +27,11 @@ reasonably provable).
   (S1 + C8 must deliver an honest `… ⪯p' FlatTCC` prefix).
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
-  `hasDeciderClassical` (`GenNP_is_hard.lean`), 5× `CookTableau` (the S1
-  skeleton: `step_of_validStep` (1b), `halt_of_satFinal`,
-  `cover_of_run`/`run_of_cover`, `cookTableau_size_bound` — each with a
-  proof-plan docstring), 3× `MultiToSingle` (dead code). Plus the
-  `sorry`-free **vacuous** defs (S1-stub/S2) invisible to `#print axioms` —
-  Group S.
+  `hasDeciderClassical` (`GenNP_is_hard.lean`), 4× `CookTableau` (the S1
+  skeleton: `step_of_validStep` (1b), `cover_of_run`/`run_of_cover`,
+  `cookTableau_size_bound` — each with a proof-plan docstring), 3×
+  `MultiToSingle` (dead code). Plus the `sorry`-free **vacuous** defs
+  (S1-stub/S2) invisible to `#print axioms` — Group S.
 - **The compiler (Risk C2) is DONE and CLEAN.** All **9** ops proven &
   axiom-clean; `compileOp_sound_physical_residue` is fully proven with no
   side-conditions. The retired value-as-length trio and BOTH isolation walls
@@ -53,6 +52,34 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-18-b (bottom-up) — C8-3 DONE + `halt_of_satFinal` PROVEN (the
+  self-contained bite), all axiom-clean, build green (3388).**
+  (1) **`Reductions/FrontPieces.lean`** — the three `W_Q` building blocks,
+  register-generic (`unaryMulLoop_run` style — C8-4 owns the register map),
+  probed first (`probes/C8FrontProbe.lean`, 19 checks green incl. the
+  `C8SeamProbe` toy front REBUILT from the real pieces hitting the frozen
+  `headEncodeIn` register-exactly): `appendConst`/`emitConst` (exact
+  emission + `dst`-only frame + exact cost; the seed-`Cmd` parameter glues
+  constant tails without a `nop`), `appendItem` (the `encSyms` sentinel item),
+  `reencBody`/`reencLoop` (drains a bit register, appends
+  `encSyms (bits.map (· + off))` — `off` is a per-`Q` constant: `off = 1` is
+  the `shiftReg` cell shift the real `s_x = 3 :: encodeRegs (encX x)` needs,
+  `off = 0` the raw toy stream; the shift decision is surfaced to C8-4, not
+  hard-coded), `mulStep`/`powLoop`/`unaryMonomial` (`dst := 1^(c·(n+1)^k+d)`,
+  `src` survives; cost ≤ `monomialCost` with the exact-shape recursive
+  `powCost` + closed form `powCost_le`, degree-`k` monomial). Also
+  `HeadLayout.encSyms_snoc` (additive; both seam probes re-run green).
+  (2) **`halt_of_satFinal` PROVEN** via the new **cell-code disjointness
+  algebra** (`CookTableau.lean`: `hCell_val_lb`/`_ub`, `tCell_ne_hCell`,
+  `hCell_ne_bCell`, `tCell_ne_bCell`, `hCell_inj`, `tCell_inj` — the three
+  disjoint code bands; these pay again in stage (i) of the (1b) inversion):
+  a final pattern is a singleton halting head cell, the bands force its
+  `confRow` occurrence to be the head coordinate, `hCell_inj` + `state_lt`
+  identify the state. ⚠ gotchas: `omega` cannot link `(hCell …).1` to its
+  formula after `unfold` — use defeq ASCRIPTIONS (`have h : sig+1 ≤ (sig+1)*
+  (q.1+1)+b.1 := hCell_val_lb …`); `++` is LEFT-assoc, so an `isSubstring`
+  split needs `List.append_assoc` before `List.getElem?_append_right`; index
+  a row via `getElem?` (non-dependent, `rw`-safe), not `getElem`.
 - **2026-07-18 (top-down) — S1 DIRECTION (1a) PROVEN + THE CHAIN-HEAD LAYOUT
   FROZEN.** All of step-2's plan landed, axiom-clean, build green (3387):
   (1) **`stepFlatTM_normM`** (normalisation agreement) via the combined
@@ -417,10 +444,12 @@ subsuming S2). **The answers to the three scoping questions:**
   `probes/C8GadgetsProbe.lean` green. Artifact list in "Proven, reusable"
   (the C8-2 gadget layer); assembly guidance in the **C8-4 assembly notes**
   below.
-- **C8-3 (Cmd pieces + run lemmas):** `emitConst` (fold of appends; run lemma
-  by induction on the constant), the unary monomial evaluator (`c·(n+1)^k`
-  via k-fold `unaryMulLoop_run`), the per-symbol re-encoder (`expandSent`
-  shape).
+- **C8-3 — ✅ DONE (2026-07-18-b):** `Reductions/FrontPieces.lean` —
+  `emitConst`, `unaryMonomial` (+ `powCost`/`powCost_le`), `reencLoop`
+  (offset-parameterized re-encoder), all with run/frame/cost lemmas,
+  register-generic, axiom-clean; probe `probes/C8FrontProbe.lean` green
+  (incl. the toy front rebuilt from the real pieces against the frozen
+  `headEncodeIn`). Artifact list in "Proven, reusable".
 - **C8-4 (W_Q assembly):** `fQ` + the correctness iff (forward:
   `paddedBitDecider_run` + wrapper transport within the `steps` budget;
   backward: accepted ⇒ format-valid ⇒ decodes ⇒ `rel` ⇒ `Q x` via
@@ -430,29 +459,38 @@ subsuming S2). **The answers to the three scoping questions:**
   C8-3/C8-4 can emit against it today; the `SeamData` instance itself still
   waits for the S1 free witness to exist.
 
-## NEXT BOTTOM-UP session — C8-3 (the `Cmd` pieces + run lemmas)
+## NEXT BOTTOM-UP session — C8-4 (the `W_Q` assembly)
 
-C8-0/C8-1/C8-2 are done, so next is **C8-3**: the `Cmd` building blocks of
-the per-`Q` front program `W_Q` (shape validated by
-`probes/C8SeamProbe.lean` — `buildFront` there is the toy blueprint):
+C8-0…C8-3 are done. Next is **C8-4**: assemble the per-`Q` front witness
+`W_Q : PolyTimeComputableLang fQ`, `fQ x = (M_Q, s_x, maxSize x, steps x)`,
+from the proven pieces. Suggested order (probe-first, commit each green):
 
-1. **`emitConst dst bits`** (the constant-machine emitter): fold of
-   `appendOne`/`appendZero` over a literal list (the probe's `emitBits`).
-   Run lemma by induction on the constant; the frame is OUT-only (mirror the
-   `emit*_run`/`_frame` OUT-only gadget lemmas in
-   `Reductions/BinaryCC_to_FSAT_free.lean`).
-2. **The unary monomial evaluator** for `c·(n+1)^k + d`: `k`-fold
-   `unaryMulLoop_run` (register-generic, already proven in
-   `BinaryCC_to_FSAT_free.lean` — do NOT re-derive) + constant append tail.
-   This funds the `maxSize x`/`steps x` registers (F6).
-3. **The per-symbol re-encoder** (`encX x`'s bit register → the instance's
-   sentinel-expanded `s_x` register): the `expandSent`/`sentLoop_run` shape
-   from `Reductions/FlatCC_to_BinaryCC_free.lean`; per-bit body = the
-   probe's 3-append `forBnd` body.
+1. **The program**: fix a register map (interface `< headRegBound = 5`,
+   scratch ≥ 5) and glue `FrontPieces`: `emitConst` reg 1 with
+   `encSyms (flattenTM M_Q)` (a per-`Q` constant), `s_x` into reg 2
+   (`emitConst`-prefix `encSyms [3]` + per-register `reencLoop` at `off = 1`
+   + `emitConst` separators — decide the EXACT `s_x` cell stream against
+   `encodeRegs` FIRST on paper, then extend `C8FrontProbe` with a real
+   compiled-verifier `#eval` before any lemma), `unaryMonomial` regs 3/4
+   from the hypothesis's `encBound`-derived constants (F6), `clear` the
+   input register(s). `probes/C8FrontProbe.lean` §4 (`buildFront'`) is the
+   validated shape at `off = 0`.
+2. **The machine `M_Q` + correctness iff**: the 2026-07-05 assembly notes
+   below are the plan (forward via `formatCheck_run` → `composeFlatTM_run` →
+   `demoteHalt_run_accept`; backward via `certOKB` split). This is the bulk
+   of the session(s) — likely worth splitting machine-iff and witness-fields
+   across two sessions.
+3. **The witness fields**: run lemma from the `FrontPieces` `_run` lemmas
+   (each is get-exact, so `computes` falls out register-by-register); cost
+   from the exact-shape cost conjuncts (`monomialCost`/`powCost_le` are the
+   `inOPoly` inputs); `enc_bit` against `headEncodeIn_bitState`.
+4. ⚠ Risks to check before coding (standing risk #1/#3): `W_Q.encodeIn`
+   MUST be the hypothesis witness's `encX` layout verbatim (the only honest
+   access to `x`), and the no-instance/garbage-cert direction needs the
+   guard story of F5 — re-read findings F1–F6.
 
-Probe each piece with `#eval` before its run lemma (extend
-`C8SeamProbe`/`C8GadgetsProbe`). These are ordinary `Cmd` fold-invariant
-lemmas — copy `BSInv` (plain fold) from `BinaryCC_to_FSAT_free.lean`.
+One further self-contained bite remains (either stream, no design risk):
+**`cookTableau_size_bound`** (see the block before the top-down section).
 
 **C8-4 assembly notes (recorded 2026-07-05, C8-2 session — read before
 building C8-4):**
@@ -486,19 +524,11 @@ building C8-4):**
   `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
   `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
 
-**`FSAT → SAT` is DONE end-to-end (2026-07-16)** and **build health is DONE
-(2026-07-17)** — no bites remain there. **C8-3 is the clean bottom-up track**
-(and with the layout frozen, its emitters have a fixed target). Further
-self-contained bottom-up bites (no design risk, proof plans in the
-docstrings), either stream can take them:
+**`FSAT → SAT` is DONE end-to-end (2026-07-16)**, **build health is DONE
+(2026-07-17)**, **C8-3 is DONE and `halt_of_satFinal` is PROVEN
+(2026-07-18-b)** — the one remaining self-contained bite (no design risk,
+proof plan in the docstring), either stream can take it:
 
-- **`halt_of_satFinal`** (`Simulators/CookTableau.lean`): the backward
-  final-pattern bridge — needs the head/tape/boundary **code-disjointness
-  lemmas** (`hCell` codes lie in `[(sig+1)·1, (sig+1)·(states+2))`, `tCell`
-  below, `bCell` at the top — `Fin.val` arithmetic), then "the pattern cell
-  occurs in `confRow` ⟹ it is the head cell ⟹ `stateOf q = state_idx`" via
-  `state_lt`. ~50–150 LOC. ⚠ These disjointness lemmas are ALSO stage (i)
-  fodder for the 1b inversion — proving them here pays twice.
 - **`cookTableau_size_bound`** (restated 2026-07-17-b at degree 10 for the v2
   card families): ~150–300 LOC of foldl-over-`flatMap` `encodable.size`
   arithmetic (dominant terms: `Θ(|Σ|³)` copy cards + `Θ(|trans|·|Σ|³)`
@@ -524,20 +554,23 @@ file). Recommended order (commit each green):
    FIRST banks half the bijection while (1b) is still open.
 2. **Direction (1b): `step_of_validStep`** — the inversion heart (~2K lines
    in the Coq port; est. 1–3 sessions; the docstring lists the four stages).
-   Load-bearing facts: the head/tape/boundary **code-disjointness lemmas**
-   (shared with the `halt_of_satFinal` bottom-up bite — check whether a
-   bottom-up session landed them first), key-uniqueness inside
-   `dedupKeys` (extend the `dedupGo` lemma family), and the deliberate
-   ABSENCE of a head-at-second-slot family. Reuse the window machinery
-   backwards: from `TCC.coversHead card (a.drop i) (b.drop i)` + the row
-   length, extract the three cell equations (an inversion counterpart of
-   `coversHead_take3` — `isPrefix` + `take3_drop` gives
-   `(b.drop i).take 3 = ↑card.conc`, then `b`'s cells pointwise), then
-   enumerate which family the matched card can lie in by its premise cells.
-3. **Direction (3): `run_of_cover` + `halt_of_satFinal`** — extraction by
-   induction on the `relpower` chain threading `ConfFits` and "the current
-   row is `confRow` of the current configuration" via `step_of_validStep`;
-   `runFlatTM_of_halting` on the halting branch.
+   Load-bearing facts: the head/tape/boundary **code-disjointness lemmas —
+   LANDED 2026-07-18-b** (`hCell_val_lb`/`_ub`, `tCell_ne_hCell`,
+   `hCell_ne_bCell`, `tCell_ne_bCell`, `hCell_inj`, `tCell_inj`; ⚠ pair
+   them with defeq ascriptions, `omega` cannot see `(hCell …).1` through an
+   `unfold`), key-uniqueness inside `dedupKeys` (extend the `dedupGo` lemma
+   family), and the deliberate ABSENCE of a head-at-second-slot family.
+   Reuse the window machinery backwards: from `TCC.coversHead card
+   (a.drop i) (b.drop i)` + the row length, extract the three cell equations
+   (an inversion counterpart of `coversHead_take3` — `isPrefix` +
+   `take3_drop` gives `(b.drop i).take 3 = ↑card.conc`, then `b`'s cells
+   pointwise), then enumerate which family the matched card can lie in by
+   its premise cells.
+3. **Direction (3): `run_of_cover`** — extraction by induction on the
+   `relpower` chain threading `ConfFits` and "the current row is `confRow`
+   of the current configuration" via `step_of_validStep`;
+   `runFlatTM_of_halting` on the halting branch; `halt_of_satFinal` (PROVEN
+   2026-07-18-b) fires on the last row.
 4. **The prelude/cert-guess layer** (DESIGN task — paper + probe pass BEFORE
    coding): the deterministic core gives `accepts M [s] steps ↔ tableau`,
    but the S1 witness needs `(∃ cert, |cert| ≤ maxSize ∧ accepts M
@@ -604,6 +637,21 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
 
 ## Proven, reusable — do not re-derive
 
+- **The C8-3 front-piece layer (2026-07-18-b,
+  `Reductions/FrontPieces.lean`, all axiom-clean, register-generic —
+  C8-4/C8-5 consume these verbatim)**: `appendConst_run` (seed-`Cmd`-glued
+  constant append, exact cost `+2/cell`), `emitConst_run`/`_bits`,
+  `appendItem_run` (the `encSyms` item), `reencBody`/`reencLoop_run`
+  (bit register → `encSyms ((·+off)`-shifted stream), `scan` drained, `src`
+  intact, quadratic cost), `mulStep_run`/`powLoop_run` (`acc := 1^(a·m^k)`
+  on `unaryMulLoop_run`, cost `powCost` + closed form `powCost_le`),
+  `unaryMonomial_run` (`dst := 1^(c·(n+1)^k+d)`, cost `monomialCost`);
+  `HeadLayout.encSyms_snoc` (the `encSyms` loop-invariant closer).
+- **The S1 cell-code algebra (2026-07-18-b, `Simulators/CookTableau.lean`)**:
+  `hCell_val_lb`/`hCell_val_ub`, `tCell_ne_hCell`/`hCell_ne_bCell`/
+  `tCell_ne_bCell`, `hCell_inj`/`tCell_inj` — the three disjoint code bands;
+  built for `halt_of_satFinal` (now proven), reused by the (1b) inversion's
+  card-classification stage.
 - **The S1 (1a) layer (2026-07-18, `Simulators/CookTableau.lean`, all
   axiom-clean)**: `stepFlatTM_normM` + `normTrans_subset`/`dedupGo_subset` +
   the `dedupGo` `find?` lemma family; `step_desc` (unfolded step: fired
