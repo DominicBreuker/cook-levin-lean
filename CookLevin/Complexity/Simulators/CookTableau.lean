@@ -1901,6 +1901,564 @@ theorem validStep_of_halt (M : FlatTM) (n : Nat) {base t : Nat}
         (fun j hj1 hj2 => by omega)
         (fun p _ _ => rfl)
 
+/-! ### Direction (1b) — inversion machinery
+
+The converse of the window machinery: invert a covering fact into six cell
+equations (`window_card`), classify the matched card by its premise cells
+via the code bands (`cookCards_cases`/`stepCardsOf_cases` + the four shape
+lemmas), and pin every coordinate of the successor row. `rowCellM` is the
+total coordinate view including the right marker at `n + 1`. -/
+
+/-- Total row-cell view: coordinate `n + 1` is the right boundary marker,
+everything below is `rowCell`. -/
+private def rowCellM (M : FlatTM) (cfg : FlatTMConfig) (n j : Nat) : Fin (Sg M) :=
+  if j = n + 1 then bCell M else rowCell M cfg j
+
+private theorem confRow_getElem' (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
+    (hlt : j < (confRow M cfg n).length) :
+    (confRow M cfg n)[j]'hlt = rowCellM M cfg n j := by
+  by_cases hj : j = n + 1
+  · subst hj
+    rw [confRow_getElem_last M cfg]
+    unfold rowCellM
+    rw [if_pos rfl]
+  · have hle : j ≤ n := by rw [confRow_length] at hlt; omega
+    rw [confRow_getElem M cfg hle hlt]
+    unfold rowCellM
+    rw [if_neg hj]
+
+private theorem xCell_ne_hCell (M : FlatTM) (x : Option (Fin (M.sig + 1)))
+    (q : Fin (M.states + 1)) (d : Fin (M.sig + 1)) : xCell M x ≠ hCell M q d := by
+  cases x with
+  | none => exact fun h => hCell_ne_bCell M q d h.symm
+  | some a => exact tCell_ne_hCell M a d q
+
+private theorem xCell_inj (M : FlatTM) {x y : Option (Fin (M.sig + 1))}
+    (h : xCell M x = xCell M y) : x = y := by
+  cases x with
+  | none =>
+    cases y with
+    | none => rfl
+    | some b => exact absurd h.symm (tCell_ne_bCell M b)
+  | some a =>
+    cases y with
+    | none => exact absurd h (tCell_ne_bCell M a)
+    | some b => exact congrArg some (tCell_inj M h)
+
+/-- Away from the head coordinate, a row cell is never a head cell. -/
+private theorem rowCellM_ne_hCell (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
+    (hj : j ≠ cfgHead cfg + 1) (q : Fin (M.states + 1)) (d : Fin (M.sig + 1)) :
+    rowCellM M cfg n j ≠ hCell M q d := by
+  unfold rowCellM
+  by_cases hlast : j = n + 1
+  · rw [if_pos hlast]
+    exact fun h => hCell_ne_bCell M q d h.symm
+  · rw [if_neg hlast, rowCell_x M cfg hj]
+    exact xCell_ne_hCell M _ q d
+
+/-- One covered window of a configuration row, inverted into six cell
+equations (the converse of `coversHead_take3`). -/
+private theorem window_card (M : FlatTM) {cfg : FlatTMConfig} {n : Nat}
+    {b : List (Fin (Sg M))}
+    (hvs : TCC.validStep (cookCards M) (confRow M cfg n) b)
+    {i : Nat} (hi : i + 3 ≤ n + 2) :
+    ∃ card ∈ cookCards M,
+      (card.prem.cardEl1 = rowCellM M cfg n i ∧
+       card.prem.cardEl2 = rowCellM M cfg n (i + 1) ∧
+       card.prem.cardEl3 = rowCellM M cfg n (i + 2)) ∧
+      (b[i]? = some card.conc.cardEl1 ∧ b[i + 1]? = some card.conc.cardEl2 ∧
+       b[i + 2]? = some card.conc.cardEl3) := by
+  obtain ⟨hlenEq, hcov⟩ := hvs
+  rw [confRow_length] at hlenEq
+  obtain ⟨card, hmem, ⟨ra, hra⟩, ⟨rb, hrb⟩⟩ :=
+    hcov i (by rw [confRow_length]; omega)
+  refine ⟨card, hmem, ?_, ?_⟩
+  · have htake : ((confRow M cfg n).drop i).take 3
+        = [card.prem.cardEl1, card.prem.cardEl2, card.prem.cardEl3] := by
+      rw [hra]; rfl
+    rw [take3_drop _ i (by rw [confRow_length]; omega)] at htake
+    simp only [List.cons.injEq, and_true] at htake
+    obtain ⟨e1, e2, e3⟩ := htake
+    exact ⟨by rw [← e1]; exact confRow_getElem' M cfg _,
+           by rw [← e2]; exact confRow_getElem' M cfg _,
+           by rw [← e3]; exact confRow_getElem' M cfg _⟩
+  · have hlb : i + 3 ≤ b.length := by omega
+    have htake : (b.drop i).take 3
+        = [card.conc.cardEl1, card.conc.cardEl2, card.conc.cardEl3] := by
+      rw [hrb]; rfl
+    rw [take3_drop b i hlb] at htake
+    simp only [List.cons.injEq, and_true] at htake
+    obtain ⟨f1, f2, f3⟩ := htake
+    exact ⟨by rw [List.getElem?_eq_getElem (by omega), f1],
+           by rw [List.getElem?_eq_getElem (by omega), f2],
+           by rw [List.getElem?_eq_getElem (by omega), f3]⟩
+
+/-- Every `cookCards` member, by family. -/
+private theorem cookCards_cases (M : FlatTM) {c : TCCCard (Fin (Sg M))}
+    (hc : c ∈ cookCards M) :
+    (∃ x y z, c = copyCard M (xCell M x) (tCell M y) (tCell M z)) ∨
+    (∃ y z, c = copyCard M (tCell M y) (tCell M z) (bCell M)) ∨
+    (∃ q d y z, M.halt.getD q.1 false = true ∧
+      c = copyCard M (hCell M q d) (tCell M y) (tCell M z)) ∨
+    (∃ q d x z, M.halt.getD q.1 false = true ∧
+      c = copyCard M (xCell M x) (hCell M q d) (tCell M z)) ∨
+    (∃ q d x y, M.halt.getD q.1 false = true ∧
+      c = copyCard M (xCell M x) (tCell M y) (hCell M q d)) ∨
+    (∃ e ∈ normTrans M, c ∈ stepCardsOf M e) := by
+  unfold cookCards at hc
+  simp only [List.mem_append] at hc
+  rcases hc with ((((hc | hc) | hc) | hc) | hc) | hc
+  · left
+    unfold copyCards at hc
+    obtain ⟨x, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨y, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨z, -, rfl⟩ := List.mem_map.1 hc
+    exact ⟨x, y, z, rfl⟩
+  · right; left
+    unfold copyRightCards at hc
+    obtain ⟨y, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨z, -, rfl⟩ := List.mem_map.1 hc
+    exact ⟨y, z, rfl⟩
+  · right; right; left
+    unfold haltLeftCards at hc
+    obtain ⟨q, -, hc⟩ := List.mem_flatMap.1 hc
+    by_cases hq : M.halt.getD q.1 false = true
+    · rw [if_pos hq] at hc
+      obtain ⟨d, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨y, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨z, -, rfl⟩ := List.mem_map.1 hc
+      exact ⟨q, d, y, z, hq, rfl⟩
+    · rw [if_neg hq] at hc
+      simp at hc
+  · right; right; right; left
+    unfold haltCenterCards at hc
+    obtain ⟨q, -, hc⟩ := List.mem_flatMap.1 hc
+    by_cases hq : M.halt.getD q.1 false = true
+    · rw [if_pos hq] at hc
+      obtain ⟨d, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨x, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨z, -, rfl⟩ := List.mem_map.1 hc
+      exact ⟨q, d, x, z, hq, rfl⟩
+    · rw [if_neg hq] at hc
+      simp at hc
+  · right; right; right; right; left
+    unfold haltRightCards at hc
+    obtain ⟨q, -, hc⟩ := List.mem_flatMap.1 hc
+    by_cases hq : M.halt.getD q.1 false = true
+    · rw [if_pos hq] at hc
+      obtain ⟨d, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨x, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨y, -, rfl⟩ := List.mem_map.1 hc
+      exact ⟨q, d, x, y, hq, rfl⟩
+    · rw [if_neg hq] at hc
+      simp at hc
+  · right; right; right; right; right
+    unfold stepCards at hc
+    exact List.mem_flatMap.1 hc
+
+/-- Every card of one entry's `stepCardsOf`, by family. -/
+private theorem stepCardsOf_cases (M : FlatTM) (e : FlatTMTransEntry)
+    {c : TCCCard (Fin (Sg M))} (hc : c ∈ stepCardsOf M e) :
+    (∃ x z, c = stepCardCenter M (stateOf M e.src_state) (stateOf M e.dst_state)
+        (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+        (e.move_dirs.headD TMMove.Nmove) x z) ∨
+    (∃ xb y z, c ∈ stepCardsLeft M (stateOf M e.src_state) (stateOf M e.dst_state)
+        (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+        (e.move_dirs.headD TMMove.Nmove) xb y z) ∨
+    (∃ x y, c = stepCardRight M (stateOf M e.src_state) (stateOf M e.dst_state)
+        (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+        (e.move_dirs.headD TMMove.Nmove) x y) ∨
+    (e.move_dirs.headD TMMove.Nmove = TMMove.Rmove ∧
+      ∃ y z u, c = stepCardInR M (stateOf M e.dst_state) y z u) ∨
+    (e.move_dirs.headD TMMove.Nmove = TMMove.Lmove ∧
+      ∃ x y u, c = stepCardInL M (stateOf M e.dst_state) x y u) := by
+  simp only [stepCardsOf, List.mem_append] at hc
+  rcases hc with ((hc | hc) | hc) | hc
+  · left
+    obtain ⟨x, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨z, -, rfl⟩ := List.mem_map.1 hc
+    exact ⟨x, z, rfl⟩
+  · right; left
+    obtain ⟨xb, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨y, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨z, -, hc⟩ := List.mem_flatMap.1 hc
+    exact ⟨xb, y, z, hc⟩
+  · right; right; left
+    obtain ⟨x, -, hc⟩ := List.mem_flatMap.1 hc
+    obtain ⟨y, -, rfl⟩ := List.mem_map.1 hc
+    exact ⟨x, y, rfl⟩
+  · split at hc
+    · right; right; right; left
+      refine ⟨by assumption, ?_⟩
+      obtain ⟨y, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨z, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨u, -, rfl⟩ := List.mem_map.1 hc
+      exact ⟨y, z, u, rfl⟩
+    · right; right; right; right
+      refine ⟨by assumption, ?_⟩
+      obtain ⟨x, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨y, -, hc⟩ := List.mem_flatMap.1 hc
+      obtain ⟨u, -, rfl⟩ := List.mem_map.1 hc
+      exact ⟨x, y, u, rfl⟩
+    · simp at hc
+
+/-- **(1b) stage (i), middle slot.** A card whose premise contains no head
+cell keeps its middle cell: the head-free-matching families are
+copy/copyRight (conc = prem) and the two incoming-head families (which keep
+slot 2). There is deliberately no head-at-second-slot family — this is the
+no-spurious-heads linchpin. -/
+private theorem card_headfree_middle (M : FlatTM) {c : TCCCard (Fin (Sg M))}
+    (hc : c ∈ cookCards M)
+    (h1 : ∀ q d, c.prem.cardEl1 ≠ hCell M q d)
+    (h2 : ∀ q d, c.prem.cardEl2 ≠ hCell M q d)
+    (h3 : ∀ q d, c.prem.cardEl3 ≠ hCell M q d) :
+    c.conc.cardEl2 = c.prem.cardEl2 := by
+  rcases cookCards_cases M hc with
+    ⟨x, y, z, rfl⟩ | ⟨y, z, rfl⟩ | ⟨q, d, y, z, hq, rfl⟩ | ⟨q, d, x, z, hq, rfl⟩ |
+      ⟨q, d, x, y, hq, rfl⟩ | ⟨e, heN, hcof⟩
+  · rfl
+  · rfl
+  · exact absurd rfl (h1 q d)
+  · exact absurd rfl (h2 q d)
+  · exact absurd rfl (h3 q d)
+  · rcases stepCardsOf_cases M e hcof with
+      ⟨x, z, rfl⟩ | ⟨xb, y, z, hcl⟩ | ⟨x, y, rfl⟩ | ⟨hmv, y, z, u, rfl⟩ |
+        ⟨hmv, x, y, u, rfl⟩
+    · exact absurd rfl (h2 _ _)
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd rfl (h1 _ _)
+      | Rmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd rfl (h1 _ _)
+      | Lmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        rcases hcl with rfl | rfl <;> exact absurd rfl (h1 _ _)
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove => rw [hmv] at h3; exact absurd rfl (h3 _ _)
+      | Rmove => rw [hmv] at h3; exact absurd rfl (h3 _ _)
+      | Lmove => rw [hmv] at h3; exact absurd rfl (h3 _ _)
+    · rfl
+    · rfl
+
+/-- **(1b) stage (iii), left edge.** A card matching a boundary-marker first
+slot keeps it. -/
+private theorem card_bfirst (M : FlatTM) {c : TCCCard (Fin (Sg M))}
+    (hc : c ∈ cookCards M) (hb : c.prem.cardEl1 = bCell M) :
+    c.conc.cardEl1 = bCell M := by
+  rcases cookCards_cases M hc with
+    ⟨x, y, z, rfl⟩ | ⟨y, z, rfl⟩ | ⟨q, d, y, z, hq, rfl⟩ | ⟨q, d, x, z, hq, rfl⟩ |
+      ⟨q, d, x, y, hq, rfl⟩ | ⟨e, heN, hcof⟩
+  · exact hb
+  · exact hb
+  · exact hb
+  · exact hb
+  · exact hb
+  · rcases stepCardsOf_cases M e hcof with
+      ⟨x, z, rfl⟩ | ⟨xb, y, z, hcl⟩ | ⟨x, y, rfl⟩ | ⟨hmv, y, z, u, rfl⟩ |
+        ⟨hmv, x, y, u, rfl⟩
+    · have hx : x = none := xCell_inj M (show xCell M x = xCell M none from hb)
+      subst hx
+      cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove => rfl
+      | Rmove => rfl
+      | Lmove => rfl
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd hb (hCell_ne_bCell M _ _)
+      | Rmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd hb (hCell_ne_bCell M _ _)
+      | Lmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        rcases hcl with rfl | rfl <;> exact absurd hb (hCell_ne_bCell M _ _)
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove => rw [hmv] at hb; exact hb
+      | Rmove => rw [hmv] at hb; exact hb
+      | Lmove => rw [hmv] at hb; exact hb
+    · exact absurd hb (tCell_ne_bCell M y)
+    · exact hb
+
+/-- **(1b) stage (iii), right edge.** Only `copyRightCards` has the boundary
+marker in the third premise slot — so the marker window is cell-preserving
+(the 2026-07-18-c phantom-head fix, machine-checked side). -/
+private theorem card_blast (M : FlatTM) {c : TCCCard (Fin (Sg M))}
+    (hc : c ∈ cookCards M) (hb : c.prem.cardEl3 = bCell M) :
+    c.conc = c.prem := by
+  rcases cookCards_cases M hc with
+    ⟨x, y, z, rfl⟩ | ⟨y, z, rfl⟩ | ⟨q, d, y, z, hq, rfl⟩ | ⟨q, d, x, z, hq, rfl⟩ |
+      ⟨q, d, x, y, hq, rfl⟩ | ⟨e, heN, hcof⟩
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · rfl
+  · rcases stepCardsOf_cases M e hcof with
+      ⟨x, z, rfl⟩ | ⟨xb, y, z, hcl⟩ | ⟨x, y, rfl⟩ | ⟨hmv, y, z, u, rfl⟩ |
+        ⟨hmv, x, y, u, rfl⟩
+    · exact absurd hb (tCell_ne_bCell M z)
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd hb (tCell_ne_bCell M _)
+      | Rmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd hb (tCell_ne_bCell M _)
+      | Lmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        rcases hcl with rfl | rfl <;> exact absurd hb (tCell_ne_bCell M _)
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove => rw [hmv] at hb; exact absurd hb (hCell_ne_bCell M _ _)
+      | Rmove => rw [hmv] at hb; exact absurd hb (hCell_ne_bCell M _ _)
+      | Lmove => rw [hmv] at hb; exact absurd hb (hCell_ne_bCell M _ _)
+    · exact absurd hb (tCell_ne_bCell M u)
+    · exact absurd hb (tCell_ne_bCell M u)
+
+/-- **(1b) stage (ii), the center window.** A card whose premise carries a
+head cell in its middle slot is either a halt-freeze card of that (halting)
+state (conc = prem) or the center card of a normalised entry keyed on
+exactly that (state, read) pair. -/
+private theorem card_head_center (M : FlatTM) {c : TCCCard (Fin (Sg M))}
+    {q : Fin (M.states + 1)} {R : Fin (M.sig + 1)}
+    (hc : c ∈ cookCards M) (hh : c.prem.cardEl2 = hCell M q R) :
+    (M.halt.getD q.1 false = true ∧ c.conc = c.prem) ∨
+    (∃ e ∈ normTrans M, ∃ x z,
+      stateOf M e.src_state = q ∧
+      optSym M (e.src_tape_vals.headD none) = R ∧
+      c = stepCardCenter M (stateOf M e.src_state) (stateOf M e.dst_state)
+        (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+        (e.move_dirs.headD TMMove.Nmove) x z ∧
+      c.prem.cardEl1 = xCell M x ∧ c.prem.cardEl3 = tCell M z) := by
+  rcases cookCards_cases M hc with
+    ⟨x, y, z, rfl⟩ | ⟨y, z, rfl⟩ | ⟨q', d, y, z, hq, rfl⟩ | ⟨q', d, x, z, hq, rfl⟩ |
+      ⟨q', d, x, y, hq, rfl⟩ | ⟨e, heN, hcof⟩
+  · exact absurd hh (tCell_ne_hCell M y R q)
+  · exact absurd hh (tCell_ne_hCell M z R q)
+  · exact absurd hh (tCell_ne_hCell M y R q)
+  · obtain ⟨hq', -⟩ := hCell_inj M (show hCell M q' d = hCell M q R from hh)
+    subst hq'
+    exact Or.inl ⟨hq, rfl⟩
+  · exact absurd hh (tCell_ne_hCell M y R q)
+  · rcases stepCardsOf_cases M e hcof with
+      ⟨x, z, rfl⟩ | ⟨xb, y, z, hcl⟩ | ⟨x, y, rfl⟩ | ⟨hmv, y, z, u, rfl⟩ |
+        ⟨hmv, x, y, u, rfl⟩
+    · obtain ⟨hq', hR⟩ := hCell_inj M
+        (show hCell M (stateOf M e.src_state)
+          (optSym M (e.src_tape_vals.headD none)) = hCell M q R from hh)
+      exact Or.inr ⟨e, heN, x, z, hq', hR, rfl, rfl, rfl⟩
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd hh (tCell_ne_hCell M _ R q)
+      | Rmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        subst hcl
+        exact absurd hh (tCell_ne_hCell M _ R q)
+      | Lmove =>
+        rw [hmv] at hcl
+        simp only [stepCardsLeft, List.mem_cons, List.not_mem_nil, or_false] at hcl
+        rcases hcl with rfl | rfl <;> exact absurd hh (tCell_ne_hCell M _ R q)
+    · cases hmv : e.move_dirs.headD TMMove.Nmove with
+      | Nmove => rw [hmv] at hh; exact absurd hh (tCell_ne_hCell M _ R q)
+      | Rmove => rw [hmv] at hh; exact absurd hh (tCell_ne_hCell M _ R q)
+      | Lmove => rw [hmv] at hh; exact absurd hh (tCell_ne_hCell M _ R q)
+    · exact absurd hh (tCell_ne_hCell M z R q)
+    · exact absurd hh (tCell_ne_hCell M y R q)
+
+/-! Key uniqueness of the normalised table: `dedupGo` output is pairwise
+key-distinct, so a matching member IS the `find?` result. -/
+
+/-- Entries surviving `dedupGo` share no key with the `seen` accumulator. -/
+private theorem dedupGo_notin_seen :
+    ∀ (l seen : List FlatTMTransEntry), ∀ e ∈ dedupGo seen l, ∀ p ∈ seen,
+      sameKey p e = false
+  | [], _ => by intro e he; simp [dedupGo] at he
+  | a :: as, seen => by
+      intro e he p hp
+      simp only [dedupGo] at he
+      by_cases hany : seen.any (fun q => sameKey q a) = true
+      · rw [if_pos hany] at he
+        exact dedupGo_notin_seen as seen e he p hp
+      · rw [if_neg hany] at he
+        rcases List.mem_cons.1 he with rfl | he'
+        · by_contra hcon
+          rw [Bool.not_eq_false] at hcon
+          exact hany (List.any_eq_true.2 ⟨p, hp, hcon⟩)
+        · exact dedupGo_notin_seen as (a :: seen) e he' p (List.mem_cons_of_mem _ hp)
+
+/-- `dedupGo` output is pairwise key-distinct. -/
+private theorem dedupGo_pairwise :
+    ∀ (l seen : List FlatTMTransEntry),
+      (dedupGo seen l).Pairwise (fun e1 e2 => sameKey e1 e2 = false)
+  | [], _ => by simp [dedupGo]
+  | a :: as, seen => by
+      simp only [dedupGo]
+      by_cases hany : seen.any (fun q => sameKey q a) = true
+      · rw [if_pos hany]
+        exact dedupGo_pairwise as seen
+      · rw [if_neg hany]
+        refine List.pairwise_cons.2 ⟨?_, dedupGo_pairwise as (a :: seen)⟩
+        intro e he
+        exact dedupGo_notin_seen as (a :: seen) e he a List.mem_cons_self
+
+private theorem normTrans_pairwise (M : FlatTM) :
+    (normTrans M).Pairwise (fun e1 e2 => sameKey e1 e2 = false) :=
+  List.Pairwise.sublist List.filter_sublist (dedupGo_pairwise M.trans [])
+
+/-- In a key-pairwise-distinct list, a matching member IS the `find?` result
+(an earlier matcher would share its key). -/
+private theorem find?_eq_of_pairwise (cfg : FlatTMConfig) :
+    ∀ (l : List FlatTMTransEntry),
+      l.Pairwise (fun e1 e2 => sameKey e1 e2 = false) →
+      ∀ e ∈ l, entryMatchesConfig e cfg = true →
+      l.find? (fun e' => entryMatchesConfig e' cfg) = some e
+  | [] => by intro _ e he; simp at he
+  | a :: as => by
+      intro hpw e he hP
+      rcases List.mem_cons.1 he with rfl | he'
+      · rw [List.find?_cons_of_pos (p := fun e' => entryMatchesConfig e' cfg) hP]
+      · have hkey := (List.pairwise_cons.1 hpw).1 e he'
+        have hane : entryMatchesConfig a cfg = false := by
+          by_contra hcon
+          rw [Bool.not_eq_false] at hcon
+          rw [sameKey_of_matches hcon hP] at hkey
+          simp at hkey
+        rw [List.find?_cons_of_neg (by simp [hane])]
+        exact find?_eq_of_pairwise cfg as (List.pairwise_cons.1 hpw).2 e he' hP
+
+/-- The normalised table's `find?` returns a given matching member. -/
+private theorem normTrans_find?_eq (M : FlatTM) (cfg : FlatTMConfig)
+    {e : FlatTMTransEntry} (he : e ∈ normTrans M)
+    (hP : entryMatchesConfig e cfg = true) :
+    (normTrans M).find? (fun e' => entryMatchesConfig e' cfg) = some e :=
+  find?_eq_of_pairwise cfg (normTrans M) (normTrans_pairwise M) e he hP
+
+/-- `stateOf` is injective below the state bound. -/
+private theorem stateOf_inj_lt (M : FlatTM) {a b : Nat} (ha : a < M.states)
+    (hb : b < M.states) (h : stateOf M a = stateOf M b) : a = b := by
+  have hv := congrArg Fin.val h
+  simp only [stateOf] at hv
+  rw [Nat.min_eq_left (by omega), Nat.min_eq_left (by omega)] at hv
+  exact hv
+
+/-- `optSym` is injective on alphabet-valid option symbols (a valid
+`some v` has `v < M.sig`, so it never collides with the blank). -/
+private theorem optSym_inj_valid (M : FlatTM) {m m' : Option Nat}
+    (hm : match m with | none => True | some v => v < M.sig)
+    (hm' : match m' with | none => True | some v => v < M.sig)
+    (h : optSym M m = optSym M m') : m = m' := by
+  have hv := congrArg Fin.val h
+  cases m with
+  | none =>
+    cases m' with
+    | none => rfl
+    | some v =>
+      exfalso
+      have hv' : v < M.sig := hm'
+      simp only [optSym, blankSym, symOf] at hv
+      rw [Nat.min_eq_left (by omega)] at hv
+      omega
+  | some u =>
+    cases m' with
+    | none =>
+      exfalso
+      have hu : u < M.sig := hm
+      simp only [optSym, blankSym, symOf] at hv
+      rw [Nat.min_eq_left (by omega)] at hv
+      omega
+    | some v =>
+      have hu : u < M.sig := hm
+      have hv' : v < M.sig := hm'
+      simp only [optSym, symOf] at hv
+      rw [Nat.min_eq_left (by omega), Nat.min_eq_left (by omega)] at hv
+      exact congrArg some hv
+
+/-! Coordinate pinning: the successor row's cells, one class at a time. -/
+
+/-- Coordinate 0 of a covered successor is the left boundary marker. -/
+private theorem validStep_zero (M : FlatTM) {cfg : FlatTMConfig} {n : Nat}
+    {b : List (Fin (Sg M))} (hn : 1 ≤ n)
+    (hvs : TCC.validStep (cookCards M) (confRow M cfg n) b) :
+    b[0]? = some (bCell M) := by
+  obtain ⟨card, hmem, ⟨hp1, -, -⟩, ⟨hc1, -, -⟩⟩ :=
+    window_card M hvs (i := 0) (by omega)
+  have hb : card.prem.cardEl1 = bCell M := by
+    rw [hp1]
+    unfold rowCellM
+    rw [if_neg (by omega)]
+    exact rowCell_zero M cfg
+  rw [hc1, card_bfirst M hmem hb]
+
+/-- The last coordinate (`n + 1`) of a covered successor is the right
+marker (via `card_blast` — the phantom-head fix pays here). -/
+private theorem validStep_last (M : FlatTM) {cfg : FlatTMConfig} {n : Nat}
+    {b : List (Fin (Sg M))} (hn : 1 ≤ n)
+    (hvs : TCC.validStep (cookCards M) (confRow M cfg n) b) :
+    b[n + 1]? = some (bCell M) := by
+  obtain ⟨card, hmem, ⟨-, -, hp3⟩, ⟨-, -, hc3⟩⟩ :=
+    window_card M hvs (i := n - 1) (by omega)
+  rw [show n - 1 + 2 = n + 1 from by omega] at hp3 hc3
+  have hb : card.prem.cardEl3 = bCell M := by
+    rw [hp3]
+    unfold rowCellM
+    rw [if_pos rfl]
+  rw [hc3, card_blast M hmem hb, hb]
+
+/-- **Stage (iii): no spurious changes away from the head.** A coordinate
+outside the head's three-coordinate neighbourhood keeps its cell (the middle
+slot of its head-free window, `card_headfree_middle`). -/
+private theorem validStep_away (M : FlatTM) {cfg : FlatTMConfig} {n : Nat}
+    {b : List (Fin (Sg M))}
+    (hvs : TCC.validStep (cookCards M) (confRow M cfg n) b)
+    {j : Nat} (h1 : 1 ≤ j) (hjn : j ≤ n)
+    (hj1 : j ≠ cfgHead cfg) (hj2 : j ≠ cfgHead cfg + 1)
+    (hj3 : j ≠ cfgHead cfg + 2) :
+    b[j]? = some (rowCell M cfg j) := by
+  obtain ⟨card, hmem, ⟨hp1, hp2, hp3⟩, ⟨-, hc2, -⟩⟩ :=
+    window_card M hvs (i := j - 1) (by omega)
+  rw [show j - 1 + 1 = j from by omega] at hp2 hc2
+  rw [show j - 1 + 2 = j + 1 from by omega] at hp3
+  have hmid := card_headfree_middle M hmem
+    (fun q d => by rw [hp1]; exact rowCellM_ne_hCell M cfg (by omega) q d)
+    (fun q d => by rw [hp2]; exact rowCellM_ne_hCell M cfg (by omega) q d)
+    (fun q d => by rw [hp3]; exact rowCellM_ne_hCell M cfg (by omega) q d)
+  rw [hc2, hmid, hp2]
+  unfold rowCellM
+  rw [if_neg (by omega)]
+
+/-- Assemble a successor row from its pinned cells. -/
+private theorem eq_confRow_of_cells (M : FlatTM) (cfg' : FlatTMConfig) {n : Nat}
+    {b : List (Fin (Sg M))} (hlen : b.length = n + 2)
+    (hcells : ∀ j, j < n + 2 → b[j]? = some (rowCellM M cfg' n j)) :
+    b = confRow M cfg' n := by
+  apply List.ext_getElem?
+  intro j
+  by_cases hj : j < n + 2
+  · rw [hcells j hj, List.getElem?_eq_getElem (by rw [confRow_length]; omega),
+      confRow_getElem' M cfg' (by rw [confRow_length]; omega)]
+  · rw [List.getElem?_eq_none (by omega),
+      List.getElem?_eq_none (by rw [confRow_length]; omega)]
+
 /-- **(1b) Card completeness — the inversion heart** (skeleton, the Coq
 port's ~2K-line per-constructor analysis). Any card-covered successor of a
 *configuration row* is forced: the frozen row itself when halting,
