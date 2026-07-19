@@ -1286,15 +1286,166 @@ theorem cert_of_prelude_validStep (M : FlatTM) (s : List Nat)
     · exact fun hlt => hstop hlt
     · intro m hm ih hlt
       exact hprop m (by omega) (ih (by omega))
-  refine ⟨((List.range maxSize).map (fun k => decodeSym M (b.getD (s.length + k + 1) (bCell M)))).take fi,
-    ?_, ?_, ?_⟩
-  · intro x hx
+  set cert := ((List.range maxSize).map
+    (fun k => decodeSym M (b.getD (s.length + k + 1) (bCell M)))).take fi with hcertdef
+  have hcertlen : cert.length = fi := by
+    rw [hcertdef, List.length_take, List.length_map, List.length_range]; omega
+  have hcert_at : ∀ k, k < fi →
+      cert[k]? = some (decodeSym M (b.getD (s.length + k + 1) (bCell M))) := by
+    intro k hk
+    rw [hcertdef, List.getElem?_take, if_pos hk, List.getElem?_map,
+      List.getElem?_range (by omega)]
+    rfl
+  have hcertget : ∀ k, k < fi →
+      cert.getD k 0 = decodeSym M (b.getD (s.length + k + 1) (bCell M)) := by
+    intro k hk
+    rw [List.getD_eq_getElem?_getD, hcert_at k hk, Option.getD_some]
+  have hcert_lt : list_ofFlatType M.sig cert := by
+    intro x hx
     obtain ⟨k, hklt, hxk⟩ := List.mem_iff_getElem.1 hx
-    rw [List.length_take, List.length_map, List.length_range] at hklt
-    rw [List.getElem_take, List.getElem_map, List.getElem_range] at hxk
-    rw [← hxk]; exact hlive k (by omega)
-  · rw [List.length_take, List.length_map, List.length_range]; omega
-  · sorry
+    rw [hcertlen] at hklt
+    have := hcert_at k hklt
+    rw [List.getElem?_eq_getElem (by rw [hcertlen]; exact hklt)] at this
+    rw [← hxk, Option.some.inj this]; exact hlive k hklt
+  have hcert_len : cert.length ≤ maxSize := by rw [hcertlen]; exact hfilen
+  -- resolution uniqueness on non-star coordinates
+  have hres_uniq : ∀ (k : PKind M), k ≠ .star → k ≠ .initStar →
+      ∀ x ∈ pResolutions M k, ∀ y ∈ pResolutions M k, x = y := by
+    intro k hk1 hk2 x hx y hy
+    cases k with
+    | star => exact absurd rfl hk1
+    | initStar => exact absurd rfl hk2
+    | delim => simp only [pResolutions, List.mem_singleton] at hx hy; rw [hx, hy]
+    | blank => simp only [pResolutions, List.mem_singleton] at hx hy; rw [hx, hy]
+    | initBlank => simp only [pResolutions, List.mem_singleton] at hx hy; rw [hx, hy]
+    | fixedSym σ => simp only [pResolutions, List.mem_singleton] at hx hy; rw [hx, hy]
+    | initFixedSym σ => simp only [pResolutions, List.mem_singleton] at hx hy; rw [hx, hy]
+  -- star coordinate ⟺ star region
+  have hgkStar : ∀ j, j ≤ gw →
+      ((gKind M s maxSize steps j = .star ∨ gKind M s maxSize steps j = .initStar) ↔
+        (j ≠ 0 ∧ s.length ≤ j - 1 ∧ j - 1 < s.length + maxSize)) := by
+    intro j hjgw
+    rcases Nat.eq_zero_or_pos j with hj0 | hjpos
+    · subst hj0
+      constructor
+      · rintro (hh | hh) <;> simp [gKind] at hh
+      · rintro ⟨h, _⟩; exact absurd rfl h
+    · have hgkeq : gKind M s maxSize steps j = pKindAt M s maxSize (j - 1) := by
+        unfold gKind; rw [if_neg (by omega), if_pos hjgw]
+      rw [hgkeq]
+      by_cases hfix : j - 1 < s.length
+      · refine ⟨fun hor => absurd hor ?_, fun ⟨_, h2, _⟩ => absurd h2 (by omega)⟩
+        unfold pKindAt; rw [if_pos hfix]
+        by_cases hd : s.getD (j - 1) 0 < M.sig
+        · rw [dif_pos hd]
+          by_cases h0 : j - 1 = 0
+          · rw [if_pos h0]; rintro (h | h) <;> simp at h
+          · rw [if_neg h0]; rintro (h | h) <;> simp at h
+        · rw [dif_neg hd]
+          by_cases h0 : j - 1 = 0
+          · rw [if_pos h0]; rintro (h | h) <;> simp at h
+          · rw [if_neg h0]; rintro (h | h) <;> simp at h
+      · by_cases hlt : j - 1 < s.length + maxSize
+        · refine ⟨fun _ => ⟨by omega, by omega, hlt⟩, fun _ => ?_⟩
+          unfold pKindAt; rw [if_neg hfix, if_pos hlt]
+          by_cases h0 : j - 1 = 0
+          · exact Or.inr (by rw [if_pos h0])
+          · exact Or.inl (by rw [if_neg h0])
+        · refine ⟨fun hor => absurd hor ?_, fun ⟨_, _, h3⟩ => absurd h3 (by omega)⟩
+          unfold pKindAt; rw [if_neg hfix, if_neg hlt]
+          by_cases h0 : j - 1 = 0
+          · rw [if_pos h0]; rintro (h | h) <;> simp at h
+          · rw [if_neg h0]; rintro (h | h) <;> simp at h
+  refine ⟨cert, hcert_lt, hcert_len, ?_⟩
+  rw [hb]; congr 1
+  apply List.ext_getElem
+  · rw [hblen, confRow_length]
+  · intro j hj1 hj2
+    have hjle : j ≤ gw + 1 := by rw [hblen] at hj1; omega
+    obtain ⟨rj, hrjmem, hrjb⟩ := hbcell j hjle
+    have hbj : b[j]'hj1 = rj.1 := by
+      rw [List.getElem?_eq_getElem hj1] at hrjb; exact Option.some.inj hrjb
+    rw [hbj]
+    by_cases hjgw : j ≤ gw
+    · rw [confRow_getElem M (initFlatConfig M [s ++ cert]) hjgw hj2]
+      by_cases hstar : j ≠ 0 ∧ s.length ≤ j - 1 ∧ j - 1 < s.length + maxSize
+      · -- star coordinate: decode the resolution against the guessed cert
+        obtain ⟨hjne0, hp1, hp2⟩ := hstar
+        set k := j - 1 - s.length with hkdef
+        have hjk : j = s.length + k + 1 := by omega
+        have hkmax : k < maxSize := by omega
+        have hbgetj : b.getD (s.length + k + 1) (bCell M) = rj.1 := by
+          rw [← hjk, List.getD_eq_getElem?_getD, hrjb, Option.getD_some]
+        by_cases hp0 : j - 1 = 0
+        · -- head cell, initStar (|s| = 0, k = 0)
+          have hs0 : s.length = 0 := by omega
+          have hk0 : k = 0 := by omega
+          have hgkeq : gKind M s maxSize steps j = .initStar := by
+            have he : gKind M s maxSize steps j = pKindAt M s maxSize (j - 1) := by
+              unfold gKind; rw [if_neg (by omega), if_pos hjgw]
+            rw [he]; unfold pKindAt; rw [if_neg (by omega), if_pos (by omega), if_pos hp0]
+          rw [hgkeq] at hrjmem
+          rw [rowCell_head M _ (by rw [cfgHead_init]; omega), state_init, cfgRight_init,
+            cfgHead_init, show (0 : Nat) = s.length + k from by omega]
+          rcases initStar_res_cases M hrjmem with ⟨σ, rfl⟩ | rfl
+          · have hkfi : k < fi := by
+              by_contra hnfi; push_neg at hnfi
+              have hc := htail k hnfi hkmax
+              rw [hbgetj, decodeSym_hCell] at hc
+              have hv : (⟨σ.1, Nat.lt_succ_of_lt σ.2⟩ : Fin (M.sig + 1)).1 = σ.1 := rfl
+              have := σ.2; omega
+            have hcertk : cert.getD k 0 = σ.1 := by
+              rw [hcertget k hkfi, hbgetj, decodeSym_hCell]
+            rw [tapeSymAt_live M s cert (by omega) (by rw [hcertlen]; omega),
+              show s.length + k - s.length = k from by omega, hcertk, symOf_of_lt M σ.2]
+          · have hkfi : fi ≤ k := by
+              by_contra hnfi; push_neg at hnfi
+              have hc := hlive k hnfi
+              rw [hbgetj, decodeSym_hCell] at hc
+              have : (blankSym M).1 = M.sig := rfl
+              omega
+            rw [tapeSymAt_blank M s cert (by rw [hcertlen]; omega)]
+        · -- interior tape cell, star (j - 1 ≥ 1)
+          have hgkeq : gKind M s maxSize steps j = .star := by
+            have he : gKind M s maxSize steps j = pKindAt M s maxSize (j - 1) := by
+              unfold gKind; rw [if_neg (by omega), if_pos hjgw]
+            rw [he]; unfold pKindAt; rw [if_neg (by omega), if_pos (by omega), if_neg hp0]
+          rw [hgkeq] at hrjmem
+          rw [rowCell_tape M _ (by omega) (by rw [cfgHead_init]; omega), cfgRight_init,
+            show j - 1 = s.length + k from by omega]
+          rcases star_res_cases M hrjmem with ⟨σ, rfl⟩ | rfl
+          · have hkfi : k < fi := by
+              by_contra hnfi; push_neg at hnfi
+              have hc := htail k hnfi hkmax
+              rw [hbgetj, decodeSym_tCell] at hc
+              have hv : (⟨σ.1, Nat.lt_succ_of_lt σ.2⟩ : Fin (M.sig + 1)).1 = σ.1 := rfl
+              have := σ.2; omega
+            have hcertk : cert.getD k 0 = σ.1 := by
+              rw [hcertget k hkfi, hbgetj, decodeSym_tCell]
+            rw [tapeSymAt_live M s cert (by omega) (by rw [hcertlen]; omega),
+              show s.length + k - s.length = k from by omega, hcertk, symOf_of_lt M σ.2]
+          · have hkfi : fi ≤ k := by
+              by_contra hnfi; push_neg at hnfi
+              have hc := hlive k hnfi
+              rw [hbgetj, decodeSym_tCell] at hc
+              have : (blankSym M).1 = M.sig := rfl
+              omega
+            rw [tapeSymAt_blank M s cert (by rw [hcertlen]; omega)]
+      · -- non-star coordinate: unique resolution equals the deterministic cell
+        have hns1 : gKind M s maxSize steps j ≠ .star := fun hh =>
+          hstar ((hgkStar j hjgw).mp (Or.inl hh))
+        have hns2 : gKind M s maxSize steps j ≠ .initStar := fun hh =>
+          hstar ((hgkStar j hjgw).mp (Or.inr hh))
+        have hg := gRes_mem M s maxSize steps hs cert hcert_lt hcert_len hjgw
+        rw [hres_uniq _ hns1 hns2 rj hrjmem _ hg]
+    · have hje : j = gw + 1 := by omega
+      subst hje
+      rw [confRow_getElem_last M (initFlatConfig M [s ++ cert]) hj2]
+      have hgk : gKind M s maxSize steps (gw + 1) = .delim := by
+        unfold gKind; rw [if_neg (by omega), if_neg (by omega)]
+      rw [hgk] at hrjmem
+      simp only [pResolutions, List.mem_singleton] at hrjmem
+      rw [hrjmem]
 
 /-! ## The headline (ASSEMBLED — proven from P1/P2/T1/T2/T3) -/
 
