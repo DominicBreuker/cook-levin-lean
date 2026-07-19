@@ -1,5 +1,6 @@
 import Complexity.Simulators.MultiToSingle
 import Complexity.Simulators.CookTableau
+import Complexity.Simulators.GuessTableau
 
 set_option autoImplicit false
 
@@ -12,8 +13,11 @@ pivot:
   single-tape simulator. Replaces the placeholder `bridgeMachine` in
   `LM_to_mTM.lean` and `mTM_to_singleTapeTM.lean`.
 - `Simulators.CookTableau` (Part 6 of ROADMAP) — the Cook 2D
-  tableau construction. Replaces the placeholder case-split in
+  tableau construction (the deterministic core; `cookTableau_correct`
+  proven 2026-07-18-d). Replaces the placeholder case-split in
   `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`.
+- `Simulators.GuessTableau` — the prelude/cert-guess layer on top of
+  the core (2026-07-19): certificate nondeterminism as row-0 tableau
+  nondeterminism; headline `guessTableau_correct`.
 
-Both modules are skeletons at the current pivot stage: signatures
-and headline bi-implications committed, bodies are `sorry`. -/
+`MultiToSingle` is dead code (S2 needs no simulator — see ROADMAP). -/
