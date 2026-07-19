@@ -153,4 +153,36 @@ def probe5 : Bool :=
 
 #eval probe5   -- the reg-2 emitter verdict; expect true
 
+/-! ## 6. `tallyCells` — the input-cell counter (R2, the monomial argument)
+
+`tallyCells cnt dst srcs` emits `1^(Σ |input reg|)` — the unary measure `n` that
+regs 3/4's `unaryMonomial` consumes (`n := State.size (encX x)`). Validated
+against the total cell count, against `State.size` for `srcs = List.range xWidth`,
+and the single-register `tallyReg` primitive. Scratch: cnt 8, dst 5. -/
+
+-- 3 + 1 + 4 = 8 cells across three registers:
+def cntState : State := [[1, 0, 1], [0], [1, 1, 0, 0]]
+
+-- single-register primitive: 1^|src| onto a fresh dst
+#eval State.get ((tallyReg 8 0 5).eval [[1, 0, 1], [9]]) 5 == List.replicate 3 1  -- expect true
+-- multi-register: total cell count in unary
+#eval State.get ((tallyCells 8 5 [0, 1, 2]).eval cntState) 5
+  == List.replicate 8 1                                             -- expect true
+-- sources survive (read-only):
+#eval ((tallyCells 8 5 [0, 1, 2]).eval cntState).take 3 == cntState   -- expect true
+-- single-register and empty-input edges:
+#eval State.get ((tallyCells 8 5 [0]).eval [[1, 1, 1]]) 5 == List.replicate 3 1  -- expect true
+#eval State.get ((tallyCells 8 5 [0, 1]).eval [[], []]) 5 == ([] : List Nat)     -- expect true
+-- the `srcs = List.range xWidth` ⟹ `State.size` connection (xWidth = 3):
+#eval State.get ((tallyCells 8 5 (List.range 3)).eval cntState) 5
+  == List.replicate (State.size cntState) 1                         -- expect true
+
+def probe6 : Bool :=
+  (State.get ((tallyCells 8 5 [0, 1, 2]).eval cntState) 5 == List.replicate 8 1) &&
+  (((tallyCells 8 5 [0, 1, 2]).eval cntState).take 3 == cntState) &&
+  (State.get ((tallyCells 8 5 (List.range 3)).eval cntState) 5
+      == List.replicate (State.size cntState) 1)
+
+#eval probe6   -- the input-cell-counter verdict; expect true
+
 end C8FrontProbe
