@@ -33,7 +33,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatTCC ⪯p' SAT` (2026-07-16): the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` as ONE composed live `⪯p'`** via the third live seam (`Reductions/FSAT_to_SAT_comp.lean`); the last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`, `Reductions/FSAT_to_SAT_free.lean`) is a complete free witness (run + cost ladders + mechanical fields). **The tail is DONE** — it waits on the front (S1/C8) for the endpoint hardness bridge |
 | `NPhard'` endgame design | **SETTLED, machine-validated & VALIDATED LIVE** (2026-07-02/03): `SeamData`/`PolyTimeComputableLang.comp` fully proven and instantiated on real witnesses; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
-| Genuine `sorry`s (Group C) | **9 in built code** (6 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 4× CookTableau — the S1 v2 skeleton with **direction (1a) + its gates + `halt_of_satFinal` PROVEN 2026-07-18/-b**; 3 in dead code `MultiToSingle`) |
+| Genuine `sorry`s (Group C) | **6 in built code** (3 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 1× CookTableau — **the whole S1 bijection `cookTableau_correct` is sorry-free & axiom-clean, all four directions PROVEN 2026-07-18/-b/-c/-d**; only `cookTableau_size_bound` remains; 3 in dead code `MultiToSingle`) |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
 | Remaining to a real proof | **~12–20K LOC** (breakdown below) |
@@ -129,10 +129,15 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   (1b) inversion's card-classification fodder), and the chain-head input
   layout is **FROZEN** (`Reductions/HeadLayout.lean`, unblocking C8-5
   planning; C8-3's emitters — `Reductions/FrontPieces.lean` — are DONE
-  against it). Remaining estimate ~3–7K LOC, inversion-dominated
-  (`step_of_validStep`), plus the prelude/cert-guess layer (design notes in
-  HANDOFF). Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
-  `Θ(|trans|·|Σ|⁴)` encoded (size bound stated at degree 10).
+  against it). **Directions (2)/(3) are PROVEN (2026-07-18-c, after the
+  machine-checked phantom-head defect at the right row edge was fixed by a
+  right boundary marker), and the (1b) inversion `step_of_validStep` is
+  PROVEN (2026-07-18-d) — the whole bijection `cookTableau_correct` is
+  sorry-free & axiom-clean.** Remaining: `cookTableau_size_bound` (a
+  mechanical bite), the prelude/cert-guess layer (DESIGN task — notes in
+  HANDOFF), and the S1 free witness program; estimate ~2–5K LOC. Alphabet
+  `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is `Θ(|trans|·|Σ|⁴)`
+  encoded (size bound stated at degree 10).
 
 - **C2 is the linchpin — and is under-built (this session's headline finding).**
   Everything (both the reduction side `toFrameworkWitness'` and the decider side
