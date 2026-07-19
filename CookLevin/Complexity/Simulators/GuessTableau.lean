@@ -1006,6 +1006,137 @@ theorem prelude_validStep_of_cert (M : FlatTM) (s : List Nat)
       exact Option.some.inj hc2eq
     rw [he0, he1, he2]; rfl
 
+/-! ### P2 inversion helpers -/
+
+/-- Decode a tape/head cell back to its underlying symbol value. Blank cells
+(and only they) decode to `M.sig`. -/
+def decodeSym (M : FlatTM) (c : Fin (Sg M)) : Nat :=
+  if c.1 ≤ M.sig then c.1 else (c.1 - (M.sig + 1)) % (M.sig + 1)
+
+theorem decodeSym_tCell (M : FlatTM) (b : Fin (M.sig + 1)) :
+    decodeSym M (tCell M b) = b.1 := by
+  have hval : (tCell M b).1 = b.1 := rfl
+  unfold decodeSym
+  rw [hval, if_pos (Nat.le_of_lt_succ b.2)]
+
+theorem decodeSym_hCell (M : FlatTM) (q : Fin (M.states + 1)) (b : Fin (M.sig + 1)) :
+    decodeSym M (hCell M q b) = b.1 := by
+  unfold decodeSym
+  have hlb : M.sig + 1 ≤ (hCell M q b).1 := hCell_val_lb M q b
+  rw [if_neg (by omega)]
+  show ((M.sig + 1) * (q.1 + 1) + b.1 - (M.sig + 1)) % (M.sig + 1) = b.1
+  have hstep : (M.sig + 1) * (q.1 + 1) + b.1 - (M.sig + 1) = b.1 + (M.sig + 1) * q.1 := by
+    have : (M.sig + 1) * (q.1 + 1) = (M.sig + 1) * q.1 + (M.sig + 1) := by ring
+    omega
+  rw [hstep, Nat.add_mul_mod_self_left, Nat.mod_eq_of_lt b.2]
+
+/-- A star resolution is a live symbol cell or the cut (blank) cell. -/
+theorem star_res_cases (M : FlatTM) {r : Fin (Sg M) × PRes}
+    (h : r ∈ pResolutions M (.star : PKind M)) :
+    (∃ σ : Fin M.sig, r = (tCell M ⟨σ.1, Nat.lt_succ_of_lt σ.2⟩, PRes.live)) ∨
+      r = (tCell M (blankSym M), PRes.cut) := by
+  unfold pResolutions at h
+  rw [List.mem_append] at h
+  rcases h with h | h
+  · obtain ⟨σ, -, rfl⟩ := List.mem_map.1 h
+    exact Or.inl ⟨σ, rfl⟩
+  · exact Or.inr (by simpa using h)
+
+/-- An init-star resolution is a live head-symbol cell or the cut head cell. -/
+theorem initStar_res_cases (M : FlatTM) {r : Fin (Sg M) × PRes}
+    (h : r ∈ pResolutions M (.initStar : PKind M)) :
+    (∃ σ : Fin M.sig,
+        r = (hCell M (stateOf M M.start) ⟨σ.1, Nat.lt_succ_of_lt σ.2⟩, PRes.live)) ∨
+      r = (hCell M (stateOf M M.start) (blankSym M), PRes.cut) := by
+  unfold pResolutions at h
+  rw [List.mem_append] at h
+  rcases h with h | h
+  · obtain ⟨σ, -, rfl⟩ := List.mem_map.1 h
+    exact Or.inl ⟨σ, rfl⟩
+  · exact Or.inr (by simpa using h)
+
+/-- **The window-shape extractor.** Every covered window out of the prelude
+row is a prelude card whose kinds are pinned to `gKind` and whose
+conclusion cells (Γ-band) are the resolutions `row1` lands on, subject to
+window-local contiguity. -/
+theorem prelude_window_shape (M : FlatTM) (s : List Nat) (maxSize steps : Nat)
+    {row1 : List (Fin (PSg M))}
+    (h : TCC.validStep (guessCards M) (preludeRow M s maxSize steps) row1)
+    {i : Nat} (hi : i + 3 ≤ guessWidth s maxSize steps + 2) :
+    ∃ r1 r2 r3 : Fin (Sg M) × PRes,
+      r1 ∈ pResolutions M (gKind M s maxSize steps i) ∧
+      r2 ∈ pResolutions M (gKind M s maxSize steps (i + 1)) ∧
+      r3 ∈ pResolutions M (gKind M s maxSize steps (i + 2)) ∧
+      row1[i]? = some (emb M r1.1) ∧ row1[i + 1]? = some (emb M r2.1) ∧
+      row1[i + 2]? = some (emb M r3.1) ∧
+      contigOK r1.2 r2.2 r3.2 = true := by
+  have hlenP : (preludeRow M s maxSize steps).length = guessWidth s maxSize steps + 2 :=
+    preludeRow_length M s maxSize steps
+  have hi' : i + 3 ≤ (preludeRow M s maxSize steps).length := by rw [hlenP]; omega
+  obtain ⟨card, hmem, hcov⟩ := h.2 i hi'
+  obtain ⟨restP, hP⟩ := hcov.1
+  obtain ⟨restC, hC⟩ := hcov.2
+  -- The covering card must be a prelude card (band mismatch rules out embedded cards).
+  have hpre : card ∈ preludeCards M := by
+    rcases List.mem_append.1 hmem with hE | hP'
+    · exfalso
+      obtain ⟨c0, -, rfl⟩ := List.mem_map.1 hE
+      have h0 : (preludeRow M s maxSize steps)[i + 0]? = some (embCard M c0).prem.cardEl1 := by
+        rw [← List.getElem?_drop, hP]; rfl
+      rw [preludeRow_getElem? M s maxSize steps (by omega)] at h0
+      have heq := Option.some.inj h0
+      have hge : Sg M ≤ (pCell M (gKind M s maxSize steps (i + 0))).1 := pCell_ge M _
+      have hlt : ((embCard M c0).prem.cardEl1).1 < Sg M := embCard_prem_lt M c0
+      rw [heq] at hge; omega
+    · exact hP'
+  obtain ⟨k1, k2, k3, r1, hr1, r2, hr2, r3, hr3, hcontig, hcard⟩ := preludeCard_shape M hpre
+  rw [hcard] at hP hC
+  -- unfold the coercions into explicit 3-lists
+  have hPl : (preludeRow M s maxSize steps).drop i
+      = pCell M k1 :: pCell M k2 :: pCell M k3 :: restP := hP
+  have hCl : row1.drop i = emb M r1.1 :: emb M r2.1 :: emb M r3.1 :: restC := hC
+  -- premise reads pin the kinds to gKind
+  have hk1 : k1 = gKind M s maxSize steps (i + 0) := by
+    have e0 : (preludeRow M s maxSize steps)[i + 0]? = some (pCell M k1) := by
+      rw [← List.getElem?_drop, hPl]; rfl
+    rw [preludeRow_getElem? M s maxSize steps (by omega)] at e0
+    exact (pCell_inj M (Option.some.inj e0)).symm
+  have hk2 : k2 = gKind M s maxSize steps (i + 1) := by
+    have e1 : (preludeRow M s maxSize steps)[i + 1]? = some (pCell M k2) := by
+      rw [← List.getElem?_drop, hPl]; rfl
+    rw [preludeRow_getElem? M s maxSize steps (by omega)] at e1
+    exact (pCell_inj M (Option.some.inj e1)).symm
+  have hk3 : k3 = gKind M s maxSize steps (i + 2) := by
+    have e2 : (preludeRow M s maxSize steps)[i + 2]? = some (pCell M k3) := by
+      rw [← List.getElem?_drop, hPl]; rfl
+    rw [preludeRow_getElem? M s maxSize steps (by omega)] at e2
+    exact (pCell_inj M (Option.some.inj e2)).symm
+  -- conclusion reads
+  have hrow0 : row1[i + 0]? = some (emb M r1.1) := by rw [← List.getElem?_drop, hCl]; rfl
+  have hrow1 : row1[i + 1]? = some (emb M r2.1) := by rw [← List.getElem?_drop, hCl]; rfl
+  have hrow2 : row1[i + 2]? = some (emb M r3.1) := by rw [← List.getElem?_drop, hCl]; rfl
+  refine ⟨r1, r2, r3, hk1 ▸ hr1, hk2 ▸ hr2, hk3 ▸ hr3, hrow0, hrow1, hrow2, hcontig⟩
+
+/-- On a star coordinate, the resolution's class is decided by whether its
+decoded symbol is a real symbol (`live`) or the blank (`cut`). -/
+theorem starRes_class (M : FlatTM) {r : Fin (Sg M) × PRes}
+    (h : r ∈ pResolutions M (.star : PKind M) ∨ r ∈ pResolutions M (.initStar : PKind M)) :
+    (decodeSym M r.1 < M.sig → r.2 = .live) ∧ (M.sig ≤ decodeSym M r.1 → r.2 = .cut) := by
+  have hbval : (blankSym M).1 = M.sig := rfl
+  rcases h with h | h
+  · rcases star_res_cases M h with ⟨σ, rfl⟩ | rfl
+    · refine ⟨fun _ => rfl, fun hle => ?_⟩
+      exfalso; rw [decodeSym_tCell] at hle; change M.sig ≤ σ.1 at hle
+      have := σ.2; omega
+    · refine ⟨fun hlt => ?_, fun _ => rfl⟩
+      exfalso; rw [decodeSym_tCell] at hlt; omega
+  · rcases initStar_res_cases M h with ⟨σ, rfl⟩ | rfl
+    · refine ⟨fun _ => rfl, fun hle => ?_⟩
+      exfalso; rw [decodeSym_hCell] at hle; change M.sig ≤ σ.1 at hle
+      have := σ.2; omega
+    · refine ⟨fun hlt => ?_, fun _ => rfl⟩
+      exfalso; rw [decodeSym_hCell] at hlt; omega
+
 /-- **P2 (the prelude inversion).** Any licensed step out of the prelude
 row is the resolution of a valid certificate. -/
 theorem cert_of_prelude_validStep (M : FlatTM) (s : List Nat)
@@ -1015,7 +1146,155 @@ theorem cert_of_prelude_validStep (M : FlatTM) (s : List Nat)
     ∃ cert, list_ofFlatType M.sig cert ∧ cert.length ≤ maxSize ∧
       row1 = (confRow M (initFlatConfig M [s ++ cert])
         (guessWidth s maxSize steps)).map (emb M) := by
-  sorry
+  set gw := guessWidth s maxSize steps with hgw
+  have hgw3 : gw = s.length + maxSize + steps + 3 := by rw [hgw]; rfl
+  have hlenP : (preludeRow M s maxSize steps).length = gw + 2 :=
+    preludeRow_length M s maxSize steps
+  have hrowlen : row1.length = gw + 2 := by rw [← h.1, hlenP]
+  -- per-coordinate resolution
+  have hcoord : ∀ j, j ≤ gw + 1 → ∃ r : Fin (Sg M) × PRes,
+      r ∈ pResolutions M (gKind M s maxSize steps j) ∧ row1[j]? = some (emb M r.1) := by
+    intro j hj
+    by_cases hjs : j + 3 ≤ gw + 2
+    · obtain ⟨r1, _, _, hr1, _, _, hrow0, _, _, _⟩ :=
+        prelude_window_shape M s maxSize steps h (i := j) hjs
+      exact ⟨r1, hr1, hrow0⟩
+    · obtain ⟨_, r2, r3, _, hr2, hr3, _, hrow1, hrow2, _⟩ :=
+        prelude_window_shape M s maxSize steps h (i := gw - 1) (by omega)
+      by_cases hjg : j = gw
+      · refine ⟨r2, ?_, ?_⟩
+        · have he : gw - 1 + 1 = j := by omega
+          rwa [he] at hr2
+        · have he : gw - 1 + 1 = j := by omega
+          rwa [he] at hrow1
+      · have hje : j = gw + 1 := by omega
+        refine ⟨r3, ?_, ?_⟩
+        · have he : gw - 1 + 2 = j := by omega
+          rwa [he] at hr3
+        · have he : gw - 1 + 2 = j := by omega
+          rwa [he] at hrow2
+  -- row1 is Γ-band; take a preimage
+  have hgamma : ∀ x ∈ row1, x.1 < Sg M := by
+    intro x hx
+    obtain ⟨j, hjlt, rfl⟩ := List.mem_iff_getElem.1 hx
+    obtain ⟨r, _, hrow⟩ := hcoord j (by omega)
+    rw [List.getElem?_eq_getElem hjlt] at hrow
+    rw [Option.some.inj hrow]; exact emb_val_lt M r.1
+  obtain ⟨b, hb⟩ := exists_preimage_map_emb M row1 hgamma
+  have hblen : b.length = gw + 2 := by
+    have := congrArg List.length hb
+    rw [List.length_map] at this; omega
+  -- b's cell at each coordinate is its resolution cell
+  have hbcell : ∀ j, j ≤ gw + 1 → ∃ r : Fin (Sg M) × PRes,
+      r ∈ pResolutions M (gKind M s maxSize steps j) ∧
+      b[j]? = some r.1 := by
+    intro j hj
+    obtain ⟨r, hrmem, hrow⟩ := hcoord j hj
+    refine ⟨r, hrmem, ?_⟩
+    rw [hb, List.getElem?_map] at hrow
+    obtain ⟨x, hbx, hex⟩ := Option.map_eq_some_iff.1 hrow
+    rw [hbx, emb_inj M hex]
+  -- the cert, read off the star region
+  set fi : Nat := List.findIdx (fun a => decide (M.sig ≤ a))
+    ((List.range maxSize).map (fun k => decodeSym M ((b.getD (s.length + k + 1) (bCell M)))))
+    with hfi
+  have hfilen : fi ≤ maxSize := by
+    rw [hfi]
+    have := List.findIdx_le_length (p := fun a => decide (M.sig ≤ a))
+      (xs := (List.range maxSize).map (fun k => decodeSym M ((b.getD (s.length + k + 1) (bCell M)))))
+    rwa [List.length_map, List.length_range] at this
+  -- b.getD reads b's resolution cell
+  have hbget : ∀ j (c : Fin (Sg M)), row1[j]? = some (emb M c) → b.getD j (bCell M) = c := by
+    intro j c hjc
+    rw [hb, List.getElem?_map] at hjc
+    obtain ⟨x, hbx, hex⟩ := Option.map_eq_some_iff.1 hjc
+    rw [List.getD_eq_getElem?_getD, hbx, Option.getD_some]; exact emb_inj M hex
+  -- live prefix: decoded star cells below `fi` are real symbols
+  have hlive : ∀ k, k < fi →
+      decodeSym M (b.getD (s.length + k + 1) (bCell M)) < M.sig := by
+    intro k hk
+    have hk' : k < List.findIdx (fun a => decide (M.sig ≤ a))
+        ((List.range maxSize).map (fun k => decodeSym M (b.getD (s.length + k + 1) (bCell M)))) := by
+      rw [← hfi]; exact hk
+    rw [List.lt_findIdx_iff] at hk'
+    obtain ⟨_, hall⟩ := hk'
+    have hf := hall k (le_refl k)
+    rw [List.getElem_map, List.getElem_range] at hf
+    simpa using hf
+  -- the stopping cell (if any) is the blank
+  have hstop : fi < maxSize →
+      M.sig ≤ decodeSym M (b.getD (s.length + fi + 1) (bCell M)) := by
+    intro hlt
+    have hw : List.findIdx (fun a => decide (M.sig ≤ a))
+        ((List.range maxSize).map (fun k => decodeSym M (b.getD (s.length + k + 1) (bCell M))))
+        < ((List.range maxSize).map (fun k => decodeSym M (b.getD (s.length + k + 1) (bCell M)))).length := by
+      rw [List.length_map, List.length_range, ← hfi]; exact hlt
+    have hget := List.findIdx_getElem (w := hw)
+    rw [List.getElem_map, List.getElem_range] at hget
+    rw [← hfi] at hget
+    simpa using hget
+  -- cut propagates right (window-local contiguity)
+  have hprop : ∀ k, k + 1 < maxSize →
+      M.sig ≤ decodeSym M (b.getD (s.length + k + 1) (bCell M)) →
+      M.sig ≤ decodeSym M (b.getD (s.length + (k + 1) + 1) (bCell M)) := by
+    intro k hk1 hcut
+    by_contra hlt
+    push_neg at hlt
+    obtain ⟨r1, r2, r3, hr1, hr2, hr3, hrow0, hrow1, hrow2, hcontig⟩ :=
+      prelude_window_shape M s maxSize steps h (i := s.length + k + 1) (by unfold guessWidth; omega)
+    have hbi : b.getD (s.length + k + 1) (bCell M) = r1.1 := hbget _ _ hrow0
+    have hbi2 : b.getD (s.length + k + 2) (bCell M) = r2.1 := by
+      have := hbget (s.length + k + 1 + 1) r2.1 hrow1
+      rwa [show s.length + k + 1 + 1 = s.length + k + 2 from by omega] at this
+    rw [hbi] at hcut
+    rw [show s.length + (k + 1) + 1 = s.length + k + 2 from by omega, hbi2] at hlt
+    -- gKind at the two star coordinates
+    have hgki : gKind M s maxSize steps (s.length + k + 1) = .star ∨
+        gKind M s maxSize steps (s.length + k + 1) = .initStar := by
+      have he : gKind M s maxSize steps (s.length + k + 1)
+          = pKindAt M s maxSize (s.length + k) := by
+        unfold gKind
+        rw [if_neg (by omega), if_pos (by unfold guessWidth; omega),
+          show s.length + k + 1 - 1 = s.length + k from by omega]
+      rw [he]; unfold pKindAt
+      rw [if_neg (by omega), if_pos (by omega)]
+      by_cases h0 : s.length + k = 0
+      · exact Or.inr (by rw [if_pos h0])
+      · exact Or.inl (by rw [if_neg h0])
+    have hgki2 : gKind M s maxSize steps (s.length + k + 2) = .star := by
+      have he : gKind M s maxSize steps (s.length + k + 2)
+          = pKindAt M s maxSize (s.length + k + 1) := by
+        unfold gKind
+        rw [if_neg (by omega), if_pos (by unfold guessWidth; omega),
+          show s.length + k + 2 - 1 = s.length + k + 1 from by omega]
+      rw [he]; unfold pKindAt
+      rw [if_neg (by omega), if_pos (by omega), if_neg (by omega)]
+    have hr1' : r1 ∈ pResolutions M (.star : PKind M) ∨
+        r1 ∈ pResolutions M (.initStar : PKind M) := by
+      rcases hgki with hh | hh <;> rw [hh] at hr1
+      · exact Or.inl hr1
+      · exact Or.inr hr1
+    have hr2' : r2 ∈ pResolutions M (.star : PKind M) := by rw [← hgki2]; exact hr2
+    have hr1cut : r1.2 = .cut := (starRes_class M hr1').2 hcut
+    have hr2live : r2.2 = .live := (starRes_class M (Or.inl hr2')).1 hlt
+    rw [hr1cut, hr2live] at hcontig
+    simp [contigOK] at hcontig
+  -- everything from `fi` on is cut
+  have htail : ∀ k, fi ≤ k → k < maxSize →
+      M.sig ≤ decodeSym M (b.getD (s.length + k + 1) (bCell M)) := by
+    refine Nat.le_induction ?_ ?_
+    · exact fun hlt => hstop hlt
+    · intro m hm ih hlt
+      exact hprop m (by omega) (ih (by omega))
+  refine ⟨((List.range maxSize).map (fun k => decodeSym M (b.getD (s.length + k + 1) (bCell M)))).take fi,
+    ?_, ?_, ?_⟩
+  · intro x hx
+    obtain ⟨k, hklt, hxk⟩ := List.mem_iff_getElem.1 hx
+    rw [List.length_take, List.length_map, List.length_range] at hklt
+    rw [List.getElem_take, List.getElem_map, List.getElem_range] at hxk
+    rw [← hxk]; exact hlive k (by omega)
+  · rw [List.length_take, List.length_map, List.length_range]; omega
+  · sorry
 
 /-! ## The headline (ASSEMBLED — proven from P1/P2/T1/T2/T3) -/
 
