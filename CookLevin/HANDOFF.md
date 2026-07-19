@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-18-d; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE**: `cookTableau_correct` is **sorry-free & axiom-clean** — all four directions PROVEN incl. the (1b) inversion `step_of_validStep` (2026-07-18-d); the only CookTableau sorry left is `cookTableau_size_bound`; **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`) — next: **the S1 prelude/cert-guess layer (DESIGN task) + the S1 free witness** top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
+## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS DESIGNED, PROBED & SKELETONED** (`Simulators/GuessTableau.lean`, 2026-07-19: `guessTableau_correct` ASSEMBLED, band transfers T1–T3 PROVEN, exactly 2 sorries left — P1/P2, the prelude-step pair), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`) — next: **P1/P2 (the prelude step proofs)** top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -52,135 +52,62 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-18-d (top-down) — S1 DIRECTION (1b) PROVEN:
-  `step_of_validStep` — `cookTableau_correct` IS SORRY-FREE & AXIOM-CLEAN
-  (build green 3388, `S1TableauProbe` output byte-identical).** The
-  inversion layer (all `private`, `Simulators/CookTableau.lean`):
-  (1) `window_card` (a covered window ⟹ six cell equations — prem side as
-  `rowCellM` values, conc side as `b[i]?` facts; `rowCellM` = the total
-  coordinate view incl. the right marker, `confRow_getElem'`).
-  (2) classification `cookCards_cases`/`stepCardsOf_cases` + four shape
-  lemmas: `card_headfree_middle` (head-free premise ⟹ middle cell kept —
-  the no-head-at-second-slot linchpin), `card_bfirst`, `card_blast` (only
-  `copyRightCards` matches a `bCell` third slot — the right-marker fix's
-  designed payoff), `card_head_center` (head-at-middle ⟹ halt-freeze xor
-  the unique normalised entry's center card). (3) key uniqueness
-  (`dedupGo_notin_seen`/`dedupGo_pairwise`/`normTrans_find?_eq`) +
-  `stateOf_inj_lt`/`optSym_inj_valid` (`validFlatTM`'s symbol bounds make
-  the card's (state, read) key faithful — the reason `optSym` collisions
-  with the blank cannot fire a wrong entry). (4) coordinate pinning
-  `validStep_zero`/`validStep_last`/`validStep_away` + the `assemble_row`
-  scaffold (the three head-neighbourhood cells ⟹ the whole row). Main
-  proof: halting ⟹ freeze (`assemble_row` at `cfgN := cfg`); else the
-  center card's entry matches (`entryOK` singleton shapes + the key), IS
-  the `find?` result, fires, and the conc cells equal the stepped row via
-  the `wEff`/`write_facts`/`rowX_isBlank` bridges — per move, with the
-  Lmove clamp/interior split falling out of the left-context cell
-  (`x = none ⟺ head at tape position 0`). ⚠ gotchas: (a) `cases hmv : e`
-  substitutes `e` in the GOAL only — a goal-side `rw [hmv]` after it fails;
-  rewrite hypotheses only. (b) an inline `match x with …` TYPE in a tactic
-  `have` over-generalizes (context hypotheses fold into the match
-  discriminants) — state option-validity as `∀ v, x = some v → v < sig`,
-  or drop the ascription and take the lemma application's own type.
-  (c) `rw [h]`'s trailing auto-`rfl` cannot delta-unfold a def behind a
-  projection — write `(by rw [h]; rfl)`. (d) with a linear equation in
-  context, plain `omega` beats `rw [heq]; omega` — the `rw` can close the
-  goal by rfl and strand the `omega` ("no goals").
-- **2026-07-18-c (top-down) — S1 DIRECTIONS (2) AND (3) ASSEMBLED + THE
-  PHANTOM-HEAD DEFECT FOUND & FIXED (build green 3388, probe green).**
-  (1) **`cover_of_run` (direction 2) PROVEN, axiom-clean**, via
-  `relpower_of_run` (run ⟹ chain induction: halt freeze / live step /
-  stuck-refutes-`hh`, threading `ConfFits` + the `t + k + 3 ≤ n` /
-  `base + t + k + 3 ≤ n` window-room invariants; helpers `ConfFits_mono`,
-  `isValidFlatTapes_single`). (2) **`run_of_cover` (direction 3) ASSEMBLED**
-  on `run_of_relpower` (each covered step is halt-freeze — accept
-  immediately — or the unique machine step; base case via
-  `halt_of_satFinal`); it consumes the still-sorried `step_of_validStep`,
-  deliberately: assembling (3) first PROVED the (1b) statement is strong
-  enough for its consumer. (3) ⚠ **RISK FINDING (BLOCKING, fixed): the v2
-  card algebra was COMPLETENESS-UNSOUND at the right row edge.** An `Lmove`
-  entry into a halting state licensed a spurious `stepCardInL` head at the
-  row's LAST cell — the only cell contained in no second refuting window,
-  so the head-at-second-slot-absence argument fails there. Machine-checked
-  counterexample `M4` (self-loops forever, never accepts, *unreachable*
-  Lmove-into-halt entry): phantom licensed + frozen + final-pattern-matched
-  ⟹ tableau accepted, machine didn't (`probes/S1TableauProbe.lean` §5).
-  **Fix:** `confRow` ends with a RIGHT `bCell` marker (`rowWidth` +5,
-  row length `n + 2`); new cell-preserving `copyRightCards` family (the
-  only family with the marker in slot 3 — the last coordinate cell can
-  never change); `validStep_of_step` AND `step_of_validStep` take
-  `cfgHead + 4 ≤ n` (the Rmove-incoming window must not collide with the
-  marker window; the +4 is available at every call site since a step
-  implies `k ≥ 1` budget). New machinery: `confRow_getElem_last`,
-  `confRow_window_last`, `copyRight_window`. All (1a)/freeze/final-pattern
-  lemmas re-proven; axiom profiles unchanged. ⚠ gotchas: rewriting a
-  `getElem` INDEX is a dependent-motive error — route through `getElem?`
-  (index-rewrite there, then `List.getElem?_eq_getElem`); list-shape
-  equations `(x :: y :: replicate k B) ++ [Bd] = x :: y :: B :: …` close
-  by plain `rfl` (append/replicate whnf) — no `rw` chains needed.
-- **2026-07-18-b (bottom-up) — C8-3 DONE + `halt_of_satFinal` PROVEN (the
-  self-contained bite), all axiom-clean, build green (3388).**
-  (1) **`Reductions/FrontPieces.lean`** — the three `W_Q` building blocks,
-  register-generic (`unaryMulLoop_run` style — C8-4 owns the register map),
-  probed first (`probes/C8FrontProbe.lean`, 19 checks green incl. the
-  `C8SeamProbe` toy front REBUILT from the real pieces hitting the frozen
-  `headEncodeIn` register-exactly): `appendConst`/`emitConst` (exact
-  emission + `dst`-only frame + exact cost; the seed-`Cmd` parameter glues
-  constant tails without a `nop`), `appendItem` (the `encSyms` sentinel item),
-  `reencBody`/`reencLoop` (drains a bit register, appends
-  `encSyms (bits.map (· + off))` — `off` is a per-`Q` constant: `off = 1` is
-  the `shiftReg` cell shift the real `s_x = 3 :: encodeRegs (encX x)` needs,
-  `off = 0` the raw toy stream; the shift decision is surfaced to C8-4, not
-  hard-coded), `mulStep`/`powLoop`/`unaryMonomial` (`dst := 1^(c·(n+1)^k+d)`,
-  `src` survives; cost ≤ `monomialCost` with the exact-shape recursive
-  `powCost` + closed form `powCost_le`, degree-`k` monomial). Also
-  `HeadLayout.encSyms_snoc` (additive; both seam probes re-run green).
-  (2) **`halt_of_satFinal` PROVEN** via the new **cell-code disjointness
-  algebra** (`CookTableau.lean`: `hCell_val_lb`/`_ub`, `tCell_ne_hCell`,
-  `hCell_ne_bCell`, `tCell_ne_bCell`, `hCell_inj`, `tCell_inj` — the three
-  disjoint code bands; these pay again in stage (i) of the (1b) inversion):
-  a final pattern is a singleton halting head cell, the bands force its
-  `confRow` occurrence to be the head coordinate, `hCell_inj` + `state_lt`
-  identify the state. ⚠ gotchas: `omega` cannot link `(hCell …).1` to its
-  formula after `unfold` — use defeq ASCRIPTIONS (`have h : sig+1 ≤ (sig+1)*
-  (q.1+1)+b.1 := hCell_val_lb …`); `++` is LEFT-assoc, so an `isSubstring`
-  split needs `List.append_assoc` before `List.getElem?_append_right`; index
-  a row via `getElem?` (non-dependent, `rw`-safe), not `getElem`.
-- **2026-07-18 (top-down) — S1 DIRECTION (1a) PROVEN + THE CHAIN-HEAD LAYOUT
-  FROZEN.** All of step-2's plan landed, axiom-clean, build green (3387):
-  (1) **`stepFlatTM_normM`** (normalisation agreement) via the combined
-  dedup+filter `find?` characterisation (`dedupGo_filter_find?` with the
-  seen-keys invariant; `dedupGo_no_match` covers the filtered-out-first-match
-  case — dedup guarantees no shadow matcher remains). (2) **`ConfFits_step`**
-  on two shared helpers the rest of S1 keeps consuming: **`step_desc`**
-  (a successful step unfolded: fired entry + single-tape payload `w`/`mv` +
-  the successor's explicit shape) and **`write_facts`** (the packaged write
-  effect: length growth ≤ 1, alphabet preserved, away-from-head cells
-  unchanged, head cell `= wEff` at the `decide (len < hd)` frontier flag —
-  the in-range case rides `List.set`). (3) the **window machinery**:
-  coordinate cells `rowCell`/`rowX`, `confRow_window` (a 3-window = its
-  three cells via `take3_drop`/`coversHead_take3`), the frontier ⟺
-  blank-left-neighbour lemmas (`tapeSymAt_blank_iff`/`rowX_isBlank`),
-  membership lemmas for EVERY card family, and the generic `copy_window`.
-  (4) **`validStep_of_halt`** and **`validStep_of_step`** — the latter by
-  the full 17-branch case analysis (3 moves × {center, left-of, right-of,
-  incoming, copy} incl. the `Lmove` clamp/interior split). (5)
-  **`satFinal_of_halt`**. (6) **the layout freeze**:
-  `Reductions/HeadLayout.lean` promotes `C8SeamProbe.headEncodeIn` to built
-  code (imported by `Complexity.lean`; the probe now consumes the frozen
-  defs so it cannot drift) + `headEncodeIn_bitState` (the future S1
-  witness's `enc_bit` field) — **C8-5's seam target is now fixed; C8-3/C8-4
-  can build against it.** ⚠ tactic notes: the per-window subgoal recipe is
-  4-phase — rw row cells (+`hBst`/`hBright`/`hBhd` projections), simp-show
-  index normalisation, bridge rewrites (`hR`/`hwrhd`/`hunch`/`← hxb*` — the
-  `←` direction turns the row's `decide` frontier form back into the card's
-  `xIsBlank` form so the final `rfl` closes against the unreduced card
-  application), `rfl`. `x + k - 1` is DEFEQ to `x + (k-1)` (no norm needed
-  for `rfl`), but `hd - 1 + 1` is not `hd` — those need `show … from by
-  omega` sims before pattern-matching rewrites. Pass `(j := …)` explicitly
-  to every rowCell rewrite (metavariable indices break the `by omega`
-  side-goals). Structure-instance `{ prem := …, conc := … }` continuation
-  lines mis-parse in `refine` — use nested `⟨⟨⟨…⟩, ⟨…⟩⟩, …⟩`.
+- **2026-07-19 (top-down) — THE PRELUDE/CERT-GUESS LAYER: DESIGNED, PROBED
+  & SKELETONED (`Simulators/GuessTableau.lean`, build green 3389,
+  probe §6 green).** The design (full rationale in the module docstring):
+  (1) **band disjointness** — prelude symbols live in a fresh code band
+  `[Sg M, PSg M)` (`PSg = Sg + 2·sig + 5`: `pDelim`/`pBlank`/`pStar`/
+  `pInitStar`/`pInitBlank`/`pSig σ`/`pInitSig σ`); prelude card premises
+  are prelude-band and conclusions Γ-band, so prelude cards fire EXACTLY
+  on row 0 and Γ cards never fire there — rows 1…steps+1 reuse the
+  deterministic core UNCHANGED through the value-preserving
+  `emb : Fin (Sg M) → Fin (PSg M)`, and `CookTableau.lean` is untouched.
+  **The fourth-band risk is RESOLVED**: no re-audit of `Sg`/`cookCards`;
+  (1a)/(1b) stay closed. (2) row 0 bakes in everything known
+  (`pSig s[p]`; the head position gets the `Init` variant carrying the
+  under-head symbol), so `preludeCards M` depends only on `M`; cert
+  wildcards resolve to symbols `< sig` or blank with **window-local
+  contiguity** (`contigOK`: no `cut` left of a `live`; window overlap
+  makes it global). (3) budget `steps + 1`, interior width `guessWidth =
+  |s| + maxSize + steps + 3`; the trajectory lemmas are consumed at
+  `n = guessWidth`, `base = |s ++ cert|` — already generic, nothing
+  re-proven. **Landed & proven**: `guessTableau_correct` (statement
+  mirrors `FlatSingleTMGenNP`'s `∃ cert` clause) **ASSEMBLED from exactly
+  2 sorries** (P1 `prelude_validStep_of_cert`, P2
+  `cert_of_prelude_validStep`); the whole transfer layer T1
+  (`validStep_emb`), T2 (`relpower_emb`/`relpower_emb_of`), T3
+  (`satFinal_emb`) + band/shape lemmas PROVEN, axiom-clean.
+  ⚠ risk finding (caught by the skeleton pass): **T2 is FALSE without
+  `3 ≤ a.length`** — a row shorter than 3 has no windows, so `validStep`
+  accepts ANY equal-length successor; the hypothesis is now threaded (all
+  real rows have length ≥ 5). Probe §6 (`M5`, acceptance genuinely
+  cert-dependent): all ≤-maxSize resolutions licensed; non-contiguous /
+  beyond-region / wrong-state resolutions refuted; row 0 never freezes and
+  never satisfies the final condition; Γ rows cannot step back; yes-chain
+  end-to-end; `s = []` (`pInitStar`) and `maxSize = 0` (`pInitBlank`)
+  edge shapes green. ⚠ gotchas: `∃ b, l = b.map f` needs an explicit
+  binder type (field notation on an un-annotated `∃` binder fails);
+  `congrArg Fin.val h` must be ascribed at the OUTER Fin type before
+  `Fin.ext` (unifier picks the wrong carrier otherwise).
+- **2026-07-18…-d (top-down ×3 + bottom-up, compressed) — THE WHOLE S1
+  BIJECTION `cookTableau_correct` PROVEN, sorry-free & axiom-clean.**
+  (1a) `validStep_of_step`/`validStep_of_halt` + `stepFlatTM_normM` +
+  `ConfFits_step` + `satFinal_of_halt` on the shared window machinery;
+  `halt_of_satFinal` on the cell-code disjointness algebra; (2)/(3)
+  `cover_of_run`/`run_of_cover` on the trajectory inductions; (1b) the
+  inversion `step_of_validStep` (window inversion → card classification →
+  key uniqueness → coordinate pinning → `assemble_row`). ⚠ **The
+  phantom-head defect** (v2 was completeness-unsound at the right row
+  edge; machine-checked counterexample `M4`, probe §5) was **fixed by the
+  right boundary marker** + `copyRightCards` + the `cfgHead + 4 ≤ n`
+  head-room hypotheses. C8-3 (`Reductions/FrontPieces.lean`) landed the
+  same window (2026-07-18-b). All artifacts catalogued in "Proven,
+  reusable"; the hard-won tactic gotchas (dependent-motive `getElem`
+  rewrites via `getElem?`; `cases hmv : e` substitutes the goal only;
+  inline-`match`-typed `have`s over-generalize; `rw [h]`-auto-`rfl` can't
+  delta-unfold behind projections; `omega` vs. stranded `rw`; defeq
+  ascriptions to link `(hCell …).1` to its formula; `++` left-assoc +
+  `List.append_assoc` before `getElem?_append_right`) in "Conventions".
 - **2026-07-17-b (top-down) — S1 RISK REVIEW + v2 REDESIGN (compressed;
   full rationale lives in the `CookTableau.lean` module docstring).** Four
   independent v1 defects were found *before* bijection effort was spent:
@@ -575,39 +502,48 @@ docstring), either stream can take it:
   cards, each of size `Θ(|Σ|)`). Closing it early de-risks the S1 cost
   ladder.
 
-## NEXT TOP-DOWN session — the S1 prelude/cert-guess layer (DESIGN task)
+## NEXT TOP-DOWN session — P1/P2 (the prelude step proofs)
 
-The deterministic core is DONE: `cookTableau_correct` (all four directions
-+ the `satFinal` bridges) is sorry-free & axiom-clean (2026-07-18-d). What
-remains for the honest `FlatSingleTMGenNP ⪯p' FlatTCC` witness, in order:
+The design task is DONE (2026-07-19): `Simulators/GuessTableau.lean` holds
+the probed prelude/cert-guess layer, `guessTableau_correct` is ASSEMBLED,
+the band transfers T1–T3 are PROVEN, and exactly two sorries remain — the
+prelude-step pair. Both are self-contained proofs about the statically
+known `preludeRow` and the prelude card table; the probe (§6) pins their
+truth on concrete instances. In order:
 
-1. **The prelude/cert-guess layer — DESIGN FIRST (paper + probe BEFORE any
-   lemma).** The instance's `∃ cert` must become tableau nondeterminism —
-   Coq's `preludeRules`: row 0 becomes a *prelude* row with wildcard cells
-   over the cert region, guess cards resolve them in the first covering
-   step, budget `steps + 1`; extends the alphabet and `cookInit` only.
-   Probe first (extend `probes/S1TableauProbe.lean` with a §6: a tiny
-   machine + width-2 cert region — every guess resolution covered, no
-   phantom resolution outside the cert region, both directions on
-   yes/no-instances). ⚠ Risk to surface EARLY (this is why the design task
-   comes before code): the proven (1b) inversion machinery assumes every
-   row cell is `tCell`/`hCell`/`bCell` — wildcard cells are a FOURTH code
-   band. Strongly prefer the route where the prelude step (row 0 → row 1)
-   is special-cased *outside* the induction and rows 1…steps reuse the
-   proven four directions UNCHANGED; if the bands must instead be
-   re-audited, that changes `Sg`/`cookCards` and re-opens (1a)/(1b) —
-   surface that cost before committing. Also decide where `∃ cert` lives:
-   the correctness statement shape is
-   `(∃ cert, accepts (s ++ cert)) ↔ FlatTCCLang (guessTableau …)`.
-2. **The S1 free witness program**: a `Cmd` emitting
-   `encodeIn (cookTableau M s steps)` (with the prelude layer) from the
-   FROZEN `HeadLayout.headEncodeIn` layout; emitter patterns from
+1. **P1 `prelude_validStep_of_cert`** (a valid cert's resolution is
+   licensed): window-by-window on `preludeRow` (the coordinate bookkeeping
+   pattern of `freeze_validStep`). Suggested route: first prove a
+   cell-correspondence lemma "`(confRow M (initFlatConfig M [s ++ cert])
+   n)[p+1] =` the resolution of `pKindAt M s maxSize p` selected by
+   `cert`" (case split `p < |s|` / cert region / beyond; `getD`-vs-`getElem`
+   care), then per window pick the card in `preludeCardsOf` at the actual
+   kind triple (membership lemma for `preludeCardsOf` analogous to
+   `copyCard_mem`; `contigOK` holds because a cert resolution is
+   `live* cut*`).
+2. **P2 `cert_of_prelude_validStep`** (the inversion): from
+   `preludeCard_shape`, each fired card's premise-match pins its kind
+   triple to the actual window (prelude codes are injective per kind —
+   prove a `pCell`-injectivity lemma first), so each row-1 cell is one of
+   the kind's listed resolutions. Define `cert` := the maximal live-star
+   prefix of the star region's resolutions; contiguity via the
+   window-overlap argument (an adjacent `cut`-then-`live` pair would sit
+   in some window, refuted by `contigOK`); symbols `< sig` and
+   `|cert| ≤ maxSize` fall out of the card table; assemble
+   `row1 = (confRow …).map emb` cell-by-cell (the `exists_preimage_map_emb`
+   pattern gives the Γ preimage; then pin it to `confRow`).
+3. Then **the S1 free witness program**: a `Cmd` emitting
+   `encodeIn (guessTableau M s maxSize steps)` from the FROZEN
+   `HeadLayout.headEncodeIn` layout; emitter patterns from
    `BinaryCC_to_FSAT_free`; ⚠ the card list is `Θ(|trans|·|Σ|⁴)` encoded —
-   budget `satBound`-style headroom; the size bound is stated at degree 10.
-   The witness's guard is exactly `cookTableau_correct`'s hypotheses
-   (`validFlatTM`/`tapes = 1`/`list_ofFlatType` — the guarded-map pattern).
-3. **`cookTableau_size_bound`** stays available as the fallback
-   self-contained bite (see the block above) if the design stalls.
+   budget `satBound`-style headroom. The witness's guard is exactly
+   `guessTableau_correct`'s hypotheses (`validFlatTM`/`tapes = 1`/
+   `list_ofFlatType` — the guarded-map pattern, all decidable). It also
+   needs a `guessTableau_size_bound` (state it next to
+   `cookTableau_size_bound`; the prelude adds only `Θ(|Σ|³)` cards, so
+   degree 10 has headroom).
+4. **`cookTableau_size_bound`** stays available as the fallback
+   self-contained bite (see the block above) if P1/P2 stall.
 
 **Reusable machinery for ALL of it** (do not re-derive): the
 `Lang/CostFlat.lean` toolkit; the witness templates
@@ -707,6 +643,20 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   `flattenTM` + `headEncodeIn_bitState` — the S1 witness's `encodeIn` and
   C8-5's seam target; imported by `Complexity.lean`, consumed by
   `probes/C8SeamProbe.lean`.
+- **The S1 prelude/guess layer (2026-07-19, `Simulators/GuessTableau.lean`;
+  everything below PROVEN & axiom-clean unless marked)**: the band alphabet
+  `PSg`/`emb`/`embCard` + `emb_inj`/`emb_val_lt`/`pCell_ge`/
+  `preludeCard_shape`/`preludeCard_prem_ge`; the construction
+  `PKind`/`pCell`/`pResolutions`/`contigOK`/`preludeCardsOf`/`preludeCards`/
+  `guessCards`/`pKindAt`/`preludeRow`/`guessWidth`/`guessFinal`/
+  `guessTableau(Typed)` + `guessTableau_wellformed`; the transfer layer
+  `isPrefix_map_emb`, `prelude_no_cover_emb` (band refutation),
+  `coversHead_emb_of`/`_inv`, **`validStep_emb` (T1)**,
+  `exists_preimage_map_emb`, `validStep_emb_row`, **`relpower_emb` (T2 —
+  ⚠ requires `3 ≤ a.length`; vacuous windows otherwise)**,
+  `relpower_emb_of`, `cookFinal_shape`/`isSubstring_singleton`/
+  **`satFinal_emb` (T3)**; the headline `guessTableau_correct` is ASSEMBLED
+  (sorry via P1/P2 only). Probe: `probes/S1TableauProbe.lean` §6.
 - **The C8-2 gadget layer (2026-07-05)**: `AcceptHalt.demoteHalt` +
   structure/step/halting lemmas, `demoteHalt_run_eq`/`_weak`, the transport
   pair `demoteHalt_run_accept`/`_run_reject`, `acceptsFlatTM`-level

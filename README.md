@@ -29,7 +29,7 @@ register before working.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — **`FlatTCC ⪯p' SAT` — the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` is ONE composed live `⪯p'`** (2026-07-16). The last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`) is a full free-line witness — pre-order positional Tseytin over the Polish `serF` stream (`NP/FSAT_to_SAT_pre.lean`), program `buildSAT`, complete run ladder (`buildSAT_run`) and cost ladder (`buildSAT_cost_le`, `satBound = O(n⁸)`), all mechanical fields (`Reductions/FSAT_to_SAT_free.lean`) — chained by the **third live `SeamData`/`comp`** (`Reductions/FSAT_to_SAT_comp.lean`, probe `probes/SATSeamProbe.lean`). The tail is DONE and waits on the front (S1/C8) for the endpoint hardness bridge. |
 | `NPhard'` endgame design | **SETTLED, machine-validated & now LIVE** (2026-07-02/03): `PolyTimeComputableLang.SeamData`/`comp` (Cmd-level chain composition, fully proven, first live seam `FlatTCCBinComp.flatTCC_to_binaryCC_seam`) + `NPhard'`/`NPcomplete'`; hardness is proven at chain endpoints only — see `CookLevin/HANDOFF.md`. |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
-| Genuine `sorry`s in built code | **6** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 1× CookTableau (**the whole S1 bijection `cookTableau_correct` is sorry-free & axiom-clean — all four directions PROVEN 2026-07-18/-b/-c/-d**, the (1b) inversion `step_of_validStep` closed 2026-07-18-d; remaining: only the size bound `cookTableau_size_bound`), 3× MultiToSingle (dead code) |
+| Genuine `sorry`s in built code | **8** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 1× CookTableau (**the whole S1 bijection `cookTableau_correct` is sorry-free & axiom-clean — all four directions PROVEN 2026-07-18/-b/-c/-d**; remaining: only the size bound `cookTableau_size_bound`), 2× GuessTableau (the prelude-step pair P1/P2 — **the cert-guess layer's headline `guessTableau_correct` is stated & assembled, the band transfers are proven, 2026-07-19**), 3× MultiToSingle (dead code) |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
@@ -100,9 +100,16 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   **The (1b) inversion `step_of_validStep` is PROVEN (2026-07-18-d)**, so
   **the whole bijection `cookTableau_correct` is sorry-free & axiom-clean**
   (`[propext, Classical.choice, Quot.sound]`). 1 sorried sub-lemma remains
-  (the size bound `cookTableau_size_bound`); the S1 *reduction* still needs
-  the prelude/cert-guess layer and the free witness program. The chain-head
-  input layout is **frozen** (`Reductions/HeadLayout.lean`).
+  (the size bound `cookTableau_size_bound`). **The prelude/cert-guess layer
+  is designed, probed & skeletoned (2026-07-19,
+  `Simulators/GuessTableau.lean`)**: a band-disjoint prelude alphabet turns
+  the instance's `∃ cert` into row-0 tableau nondeterminism while reusing
+  the deterministic core unchanged; the headline `guessTableau_correct` is
+  assembled from two remaining sorries (the prelude-step pair P1/P2) and
+  the Γ-band transfer lemmas are proven (probe
+  `probes/S1TableauProbe.lean` §6). After P1/P2 the S1 *reduction* still
+  needs the free witness program. The chain-head input layout is **frozen**
+  (`Reductions/HeadLayout.lean`).
 - **S2 (bridges).** `LM_to_mTM` / `mTM_to_singleTapeTM` use a 1-state
   `bridgeMachine` with empty transitions that **accepts everything**; the
   TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
