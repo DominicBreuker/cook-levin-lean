@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS DESIGNED, PROBED & SKELETONED** (`Simulators/GuessTableau.lean`, 2026-07-19: `guessTableau_correct` ASSEMBLED, band transfers T1–T3 PROVEN, exactly 2 sorries left — P1/P2, the prelude-step pair), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`) — next: **P1/P2 (the prelude step proofs)** top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
+## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
 
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
@@ -52,43 +52,44 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-19 (top-down) — THE PRELUDE/CERT-GUESS LAYER: DESIGNED, PROBED
-  & SKELETONED (`Simulators/GuessTableau.lean`, build green 3389,
-  probe §6 green).** The design (full rationale in the module docstring):
-  (1) **band disjointness** — prelude symbols live in a fresh code band
-  `[Sg M, PSg M)` (`PSg = Sg + 2·sig + 5`: `pDelim`/`pBlank`/`pStar`/
-  `pInitStar`/`pInitBlank`/`pSig σ`/`pInitSig σ`); prelude card premises
-  are prelude-band and conclusions Γ-band, so prelude cards fire EXACTLY
-  on row 0 and Γ cards never fire there — rows 1…steps+1 reuse the
-  deterministic core UNCHANGED through the value-preserving
-  `emb : Fin (Sg M) → Fin (PSg M)`, and `CookTableau.lean` is untouched.
-  **The fourth-band risk is RESOLVED**: no re-audit of `Sg`/`cookCards`;
-  (1a)/(1b) stay closed. (2) row 0 bakes in everything known
-  (`pSig s[p]`; the head position gets the `Init` variant carrying the
-  under-head symbol), so `preludeCards M` depends only on `M`; cert
-  wildcards resolve to symbols `< sig` or blank with **window-local
-  contiguity** (`contigOK`: no `cut` left of a `live`; window overlap
-  makes it global). (3) budget `steps + 1`, interior width `guessWidth =
-  |s| + maxSize + steps + 3`; the trajectory lemmas are consumed at
-  `n = guessWidth`, `base = |s ++ cert|` — already generic, nothing
-  re-proven. **Landed & proven**: `guessTableau_correct` (statement
-  mirrors `FlatSingleTMGenNP`'s `∃ cert` clause) **ASSEMBLED from exactly
-  2 sorries** (P1 `prelude_validStep_of_cert`, P2
-  `cert_of_prelude_validStep`); the whole transfer layer T1
-  (`validStep_emb`), T2 (`relpower_emb`/`relpower_emb_of`), T3
-  (`satFinal_emb`) + band/shape lemmas PROVEN, axiom-clean.
-  ⚠ risk finding (caught by the skeleton pass): **T2 is FALSE without
-  `3 ≤ a.length`** — a row shorter than 3 has no windows, so `validStep`
-  accepts ANY equal-length successor; the hypothesis is now threaded (all
-  real rows have length ≥ 5). Probe §6 (`M5`, acceptance genuinely
-  cert-dependent): all ≤-maxSize resolutions licensed; non-contiguous /
-  beyond-region / wrong-state resolutions refuted; row 0 never freezes and
-  never satisfies the final condition; Γ rows cannot step back; yes-chain
-  end-to-end; `s = []` (`pInitStar`) and `maxSize = 0` (`pInitBlank`)
-  edge shapes green. ⚠ gotchas: `∃ b, l = b.map f` needs an explicit
-  binder type (field notation on an un-annotated `∃` binder fails);
-  `congrArg Fin.val h` must be ascribed at the OUTER Fin type before
-  `Fin.ext` (unifier picks the wrong carrier otherwise).
+- **2026-07-19-b (top-down) — THE PRELUDE/CERT-GUESS LAYER IS COMPLETE:
+  `guessTableau_correct` sorry-free & axiom-clean (`Simulators/GuessTableau.lean`,
+  build green 3389, probe §6 green).** Both remaining sorries closed. The
+  spine both directions share (all axiom-clean, catalogued in "Proven,
+  reusable"): `gKind`/`gCls` (kind + cert-resolution class at a row
+  coordinate), `preludeRow_getElem?`, `gRes_mem` (the deterministic core's
+  cell at a coordinate, paired with `gCls`, is a listed resolution of
+  `gKind`) + `confRow_res_mem`, `gCls_contig` (the cert's `live* cut*`
+  shape ⟹ window-local `contigOK`), and the membership algebra
+  `pCell_inj`/`pKindList_mem`/`preludeCards_mem`/the `pRes_*_mem` family.
+  **P1** (`prelude_validStep_of_cert`) assembles the window cards from
+  `confRow_res_mem` + `gCls_contig`. **P2** (`cert_of_prelude_validStep`)
+  is the inversion: `prelude_window_shape` pins each covered window to a
+  prelude card (band mismatch rules out embedded cards; `pCell_inj` pins
+  the kinds); `row1 = b.map emb`; the cert is read off the star region by
+  `findIdx`/`take` on `decodeSym`-decoded cells; `hlive`/`hstop`/`hprop`
+  (cut propagates right, straight from the window `contigOK`)/`htail` give
+  the `live* cut*` shape; `hgkStar` characterises star coordinates;
+  non-star coordinates close by resolution-uniqueness against `gRes_mem`,
+  star coordinates by the decode. ⚠ gotchas (added to "Conventions"):
+  reuse of the deterministic core's window lemmas across files required
+  **un-`private`-ing** `rowCell`/`confRow_getElem[_last]`/`confRow_window`/
+  `take3_drop`/`coversHead_take3` in `CookTableau.lean` (visibility only);
+  `(⟨v, h⟩ : Fin _).1` is an omega **atom** — feed a `:= rfl` bridge to
+  `σ.1`; `rw`ing a `set`-bound list under `getElem` trips "motive not type
+  correct" (go through `getElem?`); `PKind.noConfusion h` mis-elaborates —
+  close constructor-disjointness with `simp at h`.
+- **2026-07-19 (top-down) — the prelude/cert-guess layer DESIGNED (full
+  rationale in the `GuessTableau.lean` module docstring).** Band
+  disjointness (`PSg = Sg + 2·sig + 5`, a fresh code band above Γ) turns
+  the instance's `∃ cert` into row-0 tableau nondeterminism while reusing
+  the proven deterministic core UNCHANGED through the value-preserving
+  `emb`; row 0 bakes in everything known so `preludeCards M` depends only
+  on `M`; cert contiguity is window-local (`contigOK`). The Γ-band
+  transfers T1 (`validStep_emb`), T2 (`relpower_emb`, ⚠ FALSE without
+  `3 ≤ a.length` — vacuous windows), T3 (`satFinal_emb`) were proven this
+  session and `guessTableau_correct` assembled over the two prelude-step
+  sorries later closed in -b.
 - **2026-07-18…-d (top-down ×3 + bottom-up, compressed) — THE WHOLE S1
   BIJECTION `cookTableau_correct` PROVEN, sorry-free & axiom-clean.**
   (1a) `validStep_of_step`/`validStep_of_halt` + `stepFlatTM_normM` +
@@ -453,8 +454,12 @@ from the proven pieces. Suggested order (probe-first, commit each green):
    access to `x`), and the no-instance/garbage-cert direction needs the
    guard story of F5 — re-read findings F1–F6.
 
-One further self-contained bite remains (either stream, no design risk):
-**`cookTableau_size_bound`** (see the block before the top-down section).
+Two self-contained size-bound bites remain (either stream, no design risk):
+**`cookTableau_size_bound`** (see the block before the top-down section) and
+its sibling **`guessTableau_size_bound`** (needed by the S1 witness; state it
+next to `cookTableau_size_bound` at the same degree 10). Closing either
+early de-risks the S1 cost ladder; a bottom-up session that finishes C8-4
+quickly should pick one up.
 
 **C8-4 assembly notes (recorded 2026-07-05, C8-2 session — read before
 building C8-4):**
@@ -502,48 +507,35 @@ docstring), either stream can take it:
   cards, each of size `Θ(|Σ|)`). Closing it early de-risks the S1 cost
   ladder.
 
-## NEXT TOP-DOWN session — P1/P2 (the prelude step proofs)
+## NEXT TOP-DOWN session — the S1 free-witness program
 
-The design task is DONE (2026-07-19): `Simulators/GuessTableau.lean` holds
-the probed prelude/cert-guess layer, `guessTableau_correct` is ASSEMBLED,
-the band transfers T1–T3 are PROVEN, and exactly two sorries remain — the
-prelude-step pair. Both are self-contained proofs about the statically
-known `preludeRow` and the prelude card table; the probe (§6) pins their
-truth on concrete instances. In order:
+The S1 **correctness** target is CLOSED: `guessTableau_correct`
+(`Simulators/GuessTableau.lean`) is sorry-free & axiom-clean, so `∃ cert,
+… ∧ acceptsFlatTM M [s ++ cert] steps ⟺ FlatTCCLang (guessTableau M s
+maxSize steps)`. What remains for S1 is the honest **reduction witness** that
+maps a `FlatSingleTMGenNP` instance to that `FlatTCC` — the guarded-map
+pattern, guard = exactly `guessTableau_correct`'s decidable hypotheses
+(`validFlatTM`/`tapes = 1`/`list_ofFlatType`). In order:
 
-1. **P1 `prelude_validStep_of_cert`** (a valid cert's resolution is
-   licensed): window-by-window on `preludeRow` (the coordinate bookkeeping
-   pattern of `freeze_validStep`). Suggested route: first prove a
-   cell-correspondence lemma "`(confRow M (initFlatConfig M [s ++ cert])
-   n)[p+1] =` the resolution of `pKindAt M s maxSize p` selected by
-   `cert`" (case split `p < |s|` / cert region / beyond; `getD`-vs-`getElem`
-   care), then per window pick the card in `preludeCardsOf` at the actual
-   kind triple (membership lemma for `preludeCardsOf` analogous to
-   `copyCard_mem`; `contigOK` holds because a cert resolution is
-   `live* cut*`).
-2. **P2 `cert_of_prelude_validStep`** (the inversion): from
-   `preludeCard_shape`, each fired card's premise-match pins its kind
-   triple to the actual window (prelude codes are injective per kind —
-   prove a `pCell`-injectivity lemma first), so each row-1 cell is one of
-   the kind's listed resolutions. Define `cert` := the maximal live-star
-   prefix of the star region's resolutions; contiguity via the
-   window-overlap argument (an adjacent `cut`-then-`live` pair would sit
-   in some window, refuted by `contigOK`); symbols `< sig` and
-   `|cert| ≤ maxSize` fall out of the card table; assemble
-   `row1 = (confRow …).map emb` cell-by-cell (the `exists_preimage_map_emb`
-   pattern gives the Γ preimage; then pin it to `confRow`).
-3. Then **the S1 free witness program**: a `Cmd` emitting
+1. **`guessTableau_size_bound`** — state it next to `cookTableau_size_bound`
+   (same degree-10 `(n+1)^10` shape; the prelude adds only `Θ(|Σ|³)` cards,
+   `Θ(|Σ|)` each, so degree 10 has headroom). Mechanical foldl-over-`flatMap`
+   `encodable.size` arithmetic; do it FIRST — it de-risks the witness's cost
+   ladder and is a self-contained bite. (`cookTableau_size_bound` is the same
+   kind of bite and is still open — either can be taken standalone by either
+   stream; see the block above.)
+2. **The free witness program** (the bulk): a `Cmd` emitting
    `encodeIn (guessTableau M s maxSize steps)` from the FROZEN
-   `HeadLayout.headEncodeIn` layout; emitter patterns from
-   `BinaryCC_to_FSAT_free`; ⚠ the card list is `Θ(|trans|·|Σ|⁴)` encoded —
-   budget `satBound`-style headroom. The witness's guard is exactly
-   `guessTableau_correct`'s hypotheses (`validFlatTM`/`tapes = 1`/
-   `list_ofFlatType` — the guarded-map pattern, all decidable). It also
-   needs a `guessTableau_size_bound` (state it next to
-   `cookTableau_size_bound`; the prelude adds only `Θ(|Σ|³)` cards, so
-   degree 10 has headroom).
-4. **`cookTableau_size_bound`** stays available as the fallback
-   self-contained bite (see the block above) if P1/P2 stall.
+   `HeadLayout.headEncodeIn` layout (`headRegBound = 5`; C8-5's seam MUST
+   hit the same layout, so pin the input frame to it and document the exit
+   frame). ⚠ the card list is `Θ(|trans|·|Σ|⁴)` encoded — budget
+   `satBound`-style headroom in the cost ladder. Emitter/run/cost patterns:
+   copy `BinaryCC_to_FSAT_free` field-for-field (see "Reusable machinery"
+   below). Deliverable: `guessTableau_reducesPolyMO' :
+   FlatSingleTMGenNP ⪯p' FlatTCC` (honest), chaining onto the sound tail's
+   `flatTCC_to_SAT_witness` via a fourth `SeamData`/`comp`.
+3. **`cookTableau_size_bound`** stays available as the fallback
+   self-contained bite (see the block above) if step 1/2 stall.
 
 **Reusable machinery for ALL of it** (do not re-derive): the
 `Lang/CostFlat.lean` toolkit; the witness templates
@@ -643,20 +635,27 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   `flattenTM` + `headEncodeIn_bitState` — the S1 witness's `encodeIn` and
   C8-5's seam target; imported by `Complexity.lean`, consumed by
   `probes/C8SeamProbe.lean`.
-- **The S1 prelude/guess layer (2026-07-19, `Simulators/GuessTableau.lean`;
-  everything below PROVEN & axiom-clean unless marked)**: the band alphabet
-  `PSg`/`emb`/`embCard` + `emb_inj`/`emb_val_lt`/`pCell_ge`/
+- **The S1 prelude/guess layer (2026-07-19/-b, `Simulators/GuessTableau.lean`;
+  everything PROVEN & axiom-clean — `guessTableau_correct` is sorry-free)**:
+  the band alphabet `PSg`/`emb`/`embCard` + `emb_inj`/`emb_val_lt`/`pCell_ge`/
   `preludeCard_shape`/`preludeCard_prem_ge`; the construction
   `PKind`/`pCell`/`pResolutions`/`contigOK`/`preludeCardsOf`/`preludeCards`/
   `guessCards`/`pKindAt`/`preludeRow`/`guessWidth`/`guessFinal`/
-  `guessTableau(Typed)` + `guessTableau_wellformed`; the transfer layer
-  `isPrefix_map_emb`, `prelude_no_cover_emb` (band refutation),
-  `coversHead_emb_of`/`_inv`, **`validStep_emb` (T1)**,
-  `exists_preimage_map_emb`, `validStep_emb_row`, **`relpower_emb` (T2 —
-  ⚠ requires `3 ≤ a.length`; vacuous windows otherwise)**,
-  `relpower_emb_of`, `cookFinal_shape`/`isSubstring_singleton`/
-  **`satFinal_emb` (T3)**; the headline `guessTableau_correct` is ASSEMBLED
-  (sorry via P1/P2 only). Probe: `probes/S1TableauProbe.lean` §6.
+  `guessTableau(Typed)` + `guessTableau_wellformed`; the Γ-transfer layer
+  `isPrefix_map_emb`/`prelude_no_cover_emb`/`coversHead_emb_of`/`_inv`/
+  **`validStep_emb` (T1)**/`exists_preimage_map_emb`/`validStep_emb_row`/
+  **`relpower_emb` (T2 — ⚠ requires `3 ≤ a.length`)**/`relpower_emb_of`/
+  **`satFinal_emb` (T3)**; **the shared coordinate spine** `gKind`/`gCls`/
+  `preludeRow_getElem?`/`gRes_mem`/`confRow_res_mem`/`gCls_cut_live`/
+  `gCls_contig` + the membership algebra `pCell_inj`/`pKindList_mem`/
+  `preludeCardsOf_mem`/`preludeCards_mem`/`pRes_*_mem`; **P1**
+  `prelude_validStep_of_cert`; **the P2 inversion** `cert_of_prelude_validStep`
+  with `decodeSym`(`_tCell`/`_hCell`)/`starRes_class`/`star_res_cases`/
+  `initStar_res_cases`/`prelude_window_shape`. The eventual S1 witness's guard
+  is exactly `guessTableau_correct`'s hypotheses; consume `guessTableau_correct`
+  as a black box. Probe: `probes/S1TableauProbe.lean` §6. (⚠ this un-`private`d
+  the `CookTableau.lean` window lemmas `rowCell`/`confRow_getElem[_last]`/
+  `confRow_window[_last]`/`take3_drop`/`coversHead_take3` — visibility only.)
 - **The C8-2 gadget layer (2026-07-05)**: `AcceptHalt.demoteHalt` +
   structure/step/halting lemmas, `demoteHalt_run_eq`/`_weak`, the transport
   pair `demoteHalt_run_accept`/`_run_reject`, `acceptsFlatTM`-level
