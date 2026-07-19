@@ -86,6 +86,25 @@ theorem encSyms_snoc (l : List Nat) (v : Nat) :
   rw [List.foldl_append]
   rfl
 
+/-- A `foldl` that only appends to its accumulator factors the accumulator out
+of the front — the algebraic core of `encSyms_append`. -/
+private theorem foldl_append_acc (g : Nat → List Nat) (m : List Nat) :
+    ∀ acc : List Nat,
+      m.foldl (fun a v => a ++ g v) acc = acc ++ m.foldl (fun a v => a ++ g v) [] := by
+  induction m with
+  | nil => intro acc; simp
+  | cons v vs ih =>
+      intro acc
+      rw [List.foldl_cons, List.foldl_cons, ih (acc ++ g v), ih ([] ++ g v),
+        List.nil_append, List.append_assoc]
+
+/-- `encSyms` is a monoid homomorphism: it distributes over `++`. Every
+per-register/per-symbol emitter closes its `encSyms`-shaped goal with this. -/
+theorem encSyms_append (l m : List Nat) :
+    encSyms (l ++ m) = encSyms l ++ encSyms m := by
+  unfold encSyms
+  rw [List.foldl_append, foldl_append_acc]
+
 private theorem encSyms_go (l : List Nat) (a : List Nat) (ha : ∀ x ∈ a, x ≤ 1) :
     ∀ x ∈ l.foldl (fun a v => a ++ 1 :: (List.replicate v 1 ++ [0])) a, x ≤ 1 := by
   induction l generalizing a with

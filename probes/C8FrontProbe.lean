@@ -105,4 +105,52 @@ def checkBits (n : Nat) : Bool :=
 -- Summary verdict.
 #eval [0, 1, 2, 5].all (fun n => checkBridge n && checkBits n)   -- expect true
 
+/-! ## 5. `emitRegs` — the reg-2 input-string emitter (`s_x = 3 :: encodeRegs …`)
+
+The real C8-4 reg-2 content is `encSyms s_x` with `s_x = 3 :: encodeRegs (encX x)`
+(NOT the toy's raw `reencLoop` — `encX x` is a MULTI-register split-layout state).
+`emitRegs` folds `reencLoop` (`off = 1`) over the input's registers with `[0]`
+separators, into a scratch `dst` (regs 0..xWidth-1 are the sources, so `dst` sits
+above them — the read/write-collision fix). Validated against
+`encSyms (3 :: encodeRegs sx)` for real multi-register split states, and against
+the split-tape law `s_x ++ cert = encodeTape (encX x ++ certState c)` (the C8-2
+gadget probe's invariant, re-checked from the emitter's own output). -/
+
+open HeadLayout (encSyms)
+
+-- A realistic split-layout input `encX x` (xWidth = 3) and its emitter regs:
+-- srcs = [0,1,2], dst = 5 (scratch, above the sources), scan 6, tflg 7, cnt 8.
+def sxA : State := [[0], [1], [1, 0]]
+
+#eval State.get ((emitRegs 8 6 7 5 [0, 1, 2]).eval sxA) 5
+  == encSyms (3 :: Compile.encodeRegs sxA)                          -- expect true
+-- sources survive (read-only), dst holds the stream:
+#eval ((emitRegs 8 6 7 5 [0, 1, 2]).eval sxA).take 3 == sxA        -- expect true
+-- single-register and empty-register edges:
+#eval State.get ((emitRegs 8 6 7 5 [0]).eval [[1, 1, 0]]) 5
+  == encSyms (3 :: Compile.encodeRegs [[1, 1, 0]])                  -- expect true
+#eval State.get ((emitRegs 8 6 7 5 [0, 1]).eval [[], []]) 5
+  == encSyms (3 :: Compile.encodeRegs [[], []])                     -- expect true
+
+-- The split-tape law from the emitter's `s_x`: decoding `encSyms` back to `s_x`,
+-- `s_x ++ cert` is the canonical `encodeTape` of the reassembled split state.
+def sxB : State := [[0], [1]]
+def certB : List Bool := [true, false]
+def s_xB : List Nat := 3 :: Compile.encodeRegs sxB          -- the machine input string
+def certReg : List Nat := certB.map (fun b => if b then 1 else 0)
+def certTail : List Nat := Compile.shiftReg certReg ++ [0, 3]
+
+#eval s_xB ++ certTail == Compile.encodeTape (sxB ++ [certReg])    -- expect true
+-- and the emitter really produces `encSyms s_xB` in reg 2's slot:
+#eval State.get ((emitRegs 8 6 7 5 [0, 1]).eval sxB) 5 == encSyms s_xB  -- expect true
+
+def probe5 : Bool :=
+  (State.get ((emitRegs 8 6 7 5 [0, 1, 2]).eval sxA) 5
+      == encSyms (3 :: Compile.encodeRegs sxA)) &&
+  (((emitRegs 8 6 7 5 [0, 1, 2]).eval sxA).take 3 == sxA) &&
+  (s_xB ++ certTail == Compile.encodeTape (sxB ++ [certReg])) &&
+  (State.get ((emitRegs 8 6 7 5 [0, 1]).eval sxB) 5 == encSyms s_xB)
+
+#eval probe5   -- the reg-2 emitter verdict; expect true
+
 end C8FrontProbe

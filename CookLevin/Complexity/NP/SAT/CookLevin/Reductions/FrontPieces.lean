@@ -86,6 +86,27 @@ def reencLoop (off : Nat) (cnt scan tflg src dst : Var) : Cmd :=
   Cmd.op (.copy scan src) ;;
   Cmd.forBnd cnt scan (reencBody off scan dst tflg)
 
+/-! ## Piece 3b — the input-string emitter (the head layout's reg-2)
+
+The C8-4 machine input string is `s_x = 3 :: encodeRegs (encX x)` (per the C8-2
+gadget probe: `s_x ++ cert = encodeTape (encX x ++ certState c)` splits the
+canonical tape at the certificate register). The head layout stores it as
+`encSyms s_x` in reg 2. `emitRegs` builds exactly `encSyms (3 :: encodeRegs …)`
+by folding `reencLoop` (`off = 1`, the `shiftReg` cell shift) over the input's
+registers, wrapping each `+1`-shift with `[0]` separators — the `encSyms` image
+of `encodeRegs`. The leading `3` is emitted as the `encSyms` item of symbol `3`.
+
+`srcs` is the list of the input's register indices (`List.range xWidth` at the
+assembly). It is register-generic (like `unaryMulLoop_run`): `dst`/`scan`/`tflg`/
+`cnt` are scratch and MUST be distinct from every source — in particular the
+assembly builds `s_x` in a scratch register ≥ `xWidth`, because reg 2 may itself
+be a source (**read/write collision** — surfaced 2026-07-19-c; do not emit into a
+register the loop still reads). `src` registers survive (read-only). -/
+def emitRegs (cnt scan tflg dst : Var) (srcs : List Var) : Cmd :=
+  srcs.foldl
+    (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0)
+    (Cmd.op (.clear dst) ;; appendItem dst 3)
+
 /-! ## Piece 2 — the unary monomial evaluator -/
 
 /-- One multiply step of the power loop: `acc := 1^(|base| · a)` from
@@ -384,6 +405,130 @@ theorem reencLoop_run (off : Nat) (cnt scan tflg src dst : Var) (s : State)
   · intro r h1 h2 h3 h4
     rw [heval, hfF r h1 h2 h3 h4, huF r h1]
   · rw [hcost]; omega
+
+/-- The core `foldl` induction behind `emitRegs`: from any seed `c0`, the loop
+appends `encSyms (encodeRegs …)` of the sources to whatever `c0` left on `dst`,
+and leaves every non-scratch register at `c0`'s value. -/
+private theorem emitRegs_go (cnt scan tflg dst : Var) :
+    ∀ (srcs : List Var) (c0 : Cmd) (s : State),
+      scan ≠ cnt → scan ≠ dst → scan ≠ tflg → dst ≠ cnt → dst ≠ tflg →
+      (∀ src ∈ srcs, src ≠ dst ∧ src ≠ scan ∧ src ≠ tflg ∧ src ≠ cnt) →
+      (∀ src ∈ srcs, ∀ x ∈ State.get (c0.eval s) src, x ≤ 1) →
+      State.get ((srcs.foldl
+          (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0)
+          c0).eval s) dst
+        = State.get (c0.eval s) dst
+            ++ HeadLayout.encSyms
+                (Compile.encodeRegs (srcs.map (fun src => State.get (c0.eval s) src)))
+      ∧ (∀ r : Var, r ≠ dst → r ≠ scan → r ≠ tflg → r ≠ cnt →
+          State.get ((srcs.foldl
+            (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0)
+            c0).eval s) r = State.get (c0.eval s) r) := by
+  intro srcs
+  induction srcs with
+  | nil =>
+      intro c0 s _ _ _ _ _ _ _
+      refine ⟨?_, fun r _ _ _ _ => rfl⟩
+      simp only [List.foldl_nil, List.map_nil, Compile.encodeRegs_nil,
+        HeadLayout.encSyms, List.foldl_nil, List.append_nil]
+  | cons src rest ih =>
+      intro c0 s hsc hsd hst hdc hdt hdist hbits
+      -- the head source's per-register facts
+      obtain ⟨hsrc_d, hsrc_s, hsrc_t, hsrc_c⟩ := hdist src (List.mem_cons_self ..)
+      -- process the head: c1 = c0 ;; reencLoop ;; appendItem dst 0
+      set c1 : Cmd := (c0 ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0 with hc1
+      have hfold : (src :: rest).foldl
+          (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0) c0
+          = rest.foldl
+            (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0) c1 := by
+        rw [List.foldl_cons]
+      -- evaluate c1 on s
+      set s0 : State := c0.eval s with hs0
+      obtain ⟨hR1, hR2, hR3, _⟩ :=
+        reencLoop_run 1 cnt scan tflg src dst s0 (State.get s0 src)
+          hsc hsd hst hdc hdt rfl (hbits src (List.mem_cons_self ..))
+      set sR : State := (reencLoop 1 cnt scan tflg src dst).eval s0 with hsR
+      obtain ⟨hI1, hI2, _⟩ := appendItem_run dst 0 sR
+      have hc1eval : c1.eval s = (appendItem dst 0).eval sR := by
+        rw [hc1, Cmd.eval_seq, Cmd.eval_seq, ← hs0, ← hsR]
+      -- dst content after c1
+      have hc1dst : State.get (c1.eval s) dst
+          = State.get s0 dst
+              ++ HeadLayout.encSyms (Compile.shiftReg (State.get s0 src) ++ [0]) := by
+        rw [hc1eval, hI1, hR1, HeadLayout.encSyms_append]
+        simp only [Compile.shiftReg]
+        rw [show HeadLayout.encSyms [0] = 1 :: (List.replicate 0 1 ++ [0]) from rfl]
+        rw [List.append_assoc]
+      -- frame after c1: non-scratch registers keep their c0 value
+      have hc1frame : ∀ r : Var, r ≠ dst → r ≠ scan → r ≠ tflg → r ≠ cnt →
+          State.get (c1.eval s) r = State.get s0 r := by
+        intro r h1 h2 h3 h4
+        rw [hc1eval, hI2 r h1, hR3 r h2 h1 h3 h4]
+      -- the remaining sources still see their c0 values through c1
+      have hrest_bits : ∀ s' ∈ rest, ∀ x ∈ State.get (c1.eval s) s', x ≤ 1 := by
+        intro s' hs' x hx
+        obtain ⟨hd, hsc', ht', hcc'⟩ := hdist s' (List.mem_cons_of_mem _ hs')
+        rw [hc1frame s' hd hsc' ht' hcc'] at hx
+        exact hbits s' (List.mem_cons_of_mem _ hs') x hx
+      -- apply IH to the remaining sources, seeded by c1
+      obtain ⟨hIH1, hIH2⟩ := ih c1 s hsc hsd hst hdc hdt
+        (fun src' hsrc' => hdist src' (List.mem_cons_of_mem _ hsrc')) hrest_bits
+      -- rest.map (get (c1.eval s)) = rest.map (get s0)
+      have hmap : rest.map (fun s' => State.get (c1.eval s) s')
+          = rest.map (fun s' => State.get s0 s') := by
+        apply List.map_congr_left
+        intro s' hs'
+        obtain ⟨hd, hsc', ht', hcc'⟩ := hdist s' (List.mem_cons_of_mem _ hs')
+        exact hc1frame s' hd hsc' ht' hcc'
+      refine ⟨?_, ?_⟩
+      · rw [hfold, hIH1, hc1dst, hmap, List.append_assoc, ← HeadLayout.encSyms_append,
+          ← Compile.encodeRegs_cons, List.map_cons]
+      · intro r h1 h2 h3 h4
+        rw [hfold, hIH2 r h1 h2 h3 h4, hc1frame r h1 h2 h3 h4]
+
+/-- **`emitRegs` is correct**: `dst := encSyms (3 :: encodeRegs (input regs))`
+— exactly the head layout's reg-2 content for `s_x = 3 :: encodeRegs (encX x)`
+when `srcs` lists the input's registers. `src` registers survive; `dst`/`scan`/
+`tflg`/`cnt` are the only registers touched. Requires each source bit-level
+(the split-layout `encodeIn` is `BitState`) and all sources distinct from the
+scratch registers. -/
+theorem emitRegs_run (cnt scan tflg dst : Var) (srcs : List Var) (s : State)
+    (hsc : scan ≠ cnt) (hsd : scan ≠ dst) (hst : scan ≠ tflg)
+    (hdc : dst ≠ cnt) (hdt : dst ≠ tflg)
+    (hdist : ∀ src ∈ srcs, src ≠ dst ∧ src ≠ scan ∧ src ≠ tflg ∧ src ≠ cnt)
+    (hbits : ∀ src ∈ srcs, ∀ x ∈ State.get s src, x ≤ 1) :
+    State.get ((emitRegs cnt scan tflg dst srcs).eval s) dst
+        = HeadLayout.encSyms (3 :: Compile.encodeRegs (srcs.map (State.get s)))
+    ∧ (∀ r : Var, r ≠ dst → r ≠ scan → r ≠ tflg → r ≠ cnt →
+        State.get ((emitRegs cnt scan tflg dst srcs).eval s) r = State.get s r) := by
+  -- the seed clears dst then emits the `encSyms` item of the leading `3`
+  set c0 : Cmd := Cmd.op (.clear dst) ;; appendItem dst 3 with hc0
+  have hclear : (Cmd.op (.clear dst)).eval s = s.set dst [] := rfl
+  obtain ⟨hA1, hA2, _⟩ := appendItem_run dst 3 (s.set dst [])
+  have hc0eval : c0.eval s = (appendItem dst 3).eval (s.set dst []) := by
+    rw [hc0, Cmd.eval_seq, hclear]
+  have hc0dst : State.get (c0.eval s) dst = HeadLayout.encSyms [3] := by
+    rw [hc0eval, hA1, State.get_set_eq, List.nil_append]
+    rfl
+  have hc0frame : ∀ r : Var, r ≠ dst → State.get (c0.eval s) r = State.get s r := by
+    intro r hr
+    rw [hc0eval, hA2 r hr, State.get_set_ne _ _ _ _ hr]
+  -- the sources still read their original values through the seed
+  have hc0bits : ∀ src ∈ srcs, ∀ x ∈ State.get (c0.eval s) src, x ≤ 1 := by
+    intro src hs' x hx
+    rw [hc0frame src (hdist src hs').1] at hx
+    exact hbits src hs' x hx
+  obtain ⟨hG1, hG2⟩ := emitRegs_go cnt scan tflg dst srcs c0 s
+    hsc hsd hst hdc hdt hdist hc0bits
+  have hmap : srcs.map (fun src => State.get (c0.eval s) src) = srcs.map (State.get s) := by
+    apply List.map_congr_left
+    intro src hs'
+    exact hc0frame src (hdist src hs').1
+  refine ⟨?_, ?_⟩
+  · rw [emitRegs, hG1, hc0dst, hmap, ← HeadLayout.encSyms_append]
+    rfl
+  · intro r h1 h2 h3 h4
+    rw [emitRegs, hG2 r h1 h2 h3 h4, hc0frame r h1]
 
 /-! ## Run/frame/cost lemmas — piece 2 -/
 

@@ -7,8 +7,17 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4 (the `W_Q` assembly)** bottom-up)
+## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 STARTED** (2026-07-19-c: reg-2 emitter `FrontPieces.emitRegs` axiom-clean; two design risks R1/R2 surfaced, see C8-4 section) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4 regs 3/4 + machine `M_Q`** bottom-up)
 
+- **C8-4 (the `W_Q` assembly) is STARTED (2026-07-19-c).** The reg-2
+  input-string emitter is landed & axiom-clean: `FrontPieces.emitRegs`
+  (+ `emitRegs_run`) builds `encSyms (3 :: encodeRegs (encX x))` — the head
+  layout's reg-2 content — by folding `reencLoop`(`off=1`) over the input's
+  registers, plus `HeadLayout.encSyms_append` (the `encSyms` homomorphism).
+  Probe green (`probes/C8FrontProbe.lean` §5, incl. the split-tape law). **Two
+  design risks surfaced (see the C8-4 section) — resolve on paper before the
+  next assembly step.** Remaining for C8-4: the reg-3/4 monomial args, the
+  machine `M_Q` + correctness iff, the witness fields.
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
   `[propext, Classical.choice, Quot.sound]`.
@@ -52,6 +61,23 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-19-c (bottom-up) — C8-4 STARTED: the reg-2 input-string emitter
+  landed & axiom-clean (`Reductions/FrontPieces.lean`, build green 3389, probe
+  §5 green).** `emitRegs cnt scan tflg dst srcs` folds `reencLoop`(`off=1`) +
+  `[0]` separators over the input's register list, emitting exactly
+  `encSyms (3 :: encodeRegs (srcs.map (State.get s)))` into a scratch `dst`
+  (`emitRegs_run`, `[propext, Quot.sound]`); its `encSyms`-shaped goal closes on
+  the new `HeadLayout.encSyms_append` (encSyms is a `++`-homomorphism).
+  Design settled this session (all `#eval`-validated): `s_x = 3 :: encodeRegs
+  (encX x)` and `s_x ++ cert = encodeTape (encX x ++ certState c)` (the C8-2
+  gadget-probe split, re-derived from the emitter's own `s_x`); the machine's
+  input tape is `[encodeTape (encX x ++ certState c)]`, which the format check
+  passes through unchanged into `paddedBitDecider_run`'s `initFlatConfig` shape.
+  **⚠ two risks surfaced (recorded in the C8-4 section — do NOT skip):**
+  (R1) the reg-2 read/write collision (build `s_x` in scratch, then move —
+  reg 2 may be a source); (R2) the monomial-argument materialization (regs 3/4
+  need `1^n` from the input; decide what `n` is and emit it before
+  `unaryMonomial`). Next bottom-up: R2 + regs 3/4, then the machine iff.
 - **2026-07-19-b (top-down) — THE PRELUDE/CERT-GUESS LAYER IS COMPLETE:
   `guessTableau_correct` sorry-free & axiom-clean (`Simulators/GuessTableau.lean`,
   build green 3389, probe §6 green).** Both remaining sorries closed. The
@@ -426,29 +452,51 @@ subsuming S2). **The answers to the three scoping questions:**
 
 ## NEXT BOTTOM-UP session — C8-4 (the `W_Q` assembly)
 
-C8-0…C8-3 are done. Next is **C8-4**: assemble the per-`Q` front witness
-`W_Q : PolyTimeComputableLang fQ`, `fQ x = (M_Q, s_x, maxSize x, steps x)`,
-from the proven pieces. Suggested order (probe-first, commit each green):
+C8-0…C8-3 are done; **the reg-2 emitter is done (2026-07-19-c)**. C8-4 assembles
+the per-`Q` front witness `W_Q : PolyTimeComputableLang fQ`, `fQ x = (M_Q, s_x,
+maxSize x, steps x)`, from the proven pieces. The **input layout is settled**:
+`encodeIn = W.encX` (the hypothesis witness's split-layout input, standing risk
+#1) at input regs `0..xWidth-1`; `s_x = 3 :: encodeRegs (encX x)`; the machine's
+initial tape is `[encodeTape (encX x ++ certState c)] = [s_x ++ cert]` with
+`cert = shiftReg (c.map bit) ++ [0,3]`. Order (probe-first, commit each green):
 
-1. **The program**: fix a register map (interface `< headRegBound = 5`,
-   scratch ≥ 5) and glue `FrontPieces`: `emitConst` reg 1 with
-   `encSyms (flattenTM M_Q)` (a per-`Q` constant), `s_x` into reg 2
-   (`emitConst`-prefix `encSyms [3]` + per-register `reencLoop` at `off = 1`
-   + `emitConst` separators — decide the EXACT `s_x` cell stream against
-   `encodeRegs` FIRST on paper, then extend `C8FrontProbe` with a real
-   compiled-verifier `#eval` before any lemma), `unaryMonomial` regs 3/4
-   from the hypothesis's `encBound`-derived constants (F6), `clear` the
-   input register(s). `probes/C8FrontProbe.lean` §4 (`buildFront'`) is the
-   validated shape at `off = 0`.
+1. **The program.** DONE for reg 2: `FrontPieces.emitRegs cnt scan tflg dst
+   (List.range xWidth)` emits `encSyms (3 :: encodeRegs (encX x))` — feed it
+   the frozen `encX x` regs. Reg 1 = `emitConst 1 (encSyms (flattenTM M_Q))`
+   (per-`Q` constant). Regs 3/4 = `unaryMonomial` (F6). Remaining:
+
+   - **⚠ R1 (register collision).** `emitRegs` writes `dst` while `reencLoop`
+     still READS the source regs, and reg 2 (the intended output) is itself a
+     source when `xWidth ≥ 3`. **Fix: emit `s_x` into a scratch reg `≥ xWidth`,
+     read all input regs first, and only at the END move scratch→reg 2, emit
+     reg 1, regs 3/4, and `clear` reg 0.** Pick scratch strictly above
+     `max headRegBound xWidth`. Do NOT emit into any register the loop still
+     reads. (`emitRegs` is already register-generic for exactly this.)
+   - **⚠ R2 (monomial-argument materialization).** `unaryMonomial c k d …`
+     consumes `src = 1^n`, but the program's input is bit registers, not a
+     unary number. **Decide what `n` is** — the natural choice is a unary
+     measure the program can compute from the input (e.g. `1^(State.size
+     (encX x))` or `1^(tape length)`), built by a scan/tally `Cmd` (unary
+     count of the input's cells). The hypothesis's `encBound`/`dBound` are
+     polynomials in `encodable.size x`, and `encX_size` bounds
+     `State.size (encX x) ≤ dBound (size x)`; pick `n := State.size (encX x)`
+     (or a cheap over-measure) so `maxSize x = c·(n+1)^k + d` overshoots the
+     real `certBound`+2 and `steps x` overshoots the run budget (F6). This
+     needs a NEW tiny piece: a unary-cell-counter emitter (`1^(total input
+     cells)`), probe it first. This is the one genuinely-unbuilt gadget.
 2. **The machine `M_Q` + correctness iff**: the 2026-07-05 assembly notes
    below are the plan (forward via `formatCheck_run` → `composeFlatTM_run` →
    `demoteHalt_run_accept`; backward via `certOKB` split). This is the bulk
    of the session(s) — likely worth splitting machine-iff and witness-fields
-   across two sessions.
+   across two sessions. Extend `C8FrontProbe` with a **real compiled-verifier
+   `#eval`** of `acceptsFlatTM M_Q [s_x ++ cert] steps` (yes+no cert) BEFORE
+   proving the iff — the whole machine story is cheaply falsifiable.
 3. **The witness fields**: run lemma from the `FrontPieces` `_run` lemmas
-   (each is get-exact, so `computes` falls out register-by-register); cost
-   from the exact-shape cost conjuncts (`monomialCost`/`powCost_le` are the
-   `inOPoly` inputs); `enc_bit` against `headEncodeIn_bitState`.
+   (`emitRegs_run`/`emitConst_run`/`unaryMonomial_run` are get-exact, so
+   `computes` falls out register-by-register); cost from the exact-shape cost
+   conjuncts (`monomialCost`/`powCost_le` are the `inOPoly` inputs; `emitRegs`
+   still needs a cost bound — add it alongside, quadratic-in-`|encX x|`);
+   `enc_bit` against `headEncodeIn_bitState`.
 4. ⚠ Risks to check before coding (standing risk #1/#3): `W_Q.encodeIn`
    MUST be the hypothesis witness's `encX` layout verbatim (the only honest
    access to `x`), and the no-instance/garbage-cert direction needs the
@@ -599,7 +647,12 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   intact, quadratic cost), `mulStep_run`/`powLoop_run` (`acc := 1^(a·m^k)`
   on `unaryMulLoop_run`, cost `powCost` + closed form `powCost_le`),
   `unaryMonomial_run` (`dst := 1^(c·(n+1)^k+d)`, cost `monomialCost`);
-  `HeadLayout.encSyms_snoc` (the `encSyms` loop-invariant closer).
+  `HeadLayout.encSyms_snoc` (the `encSyms` loop-invariant closer). **Added
+  2026-07-19-c**: `emitRegs`/`emitRegs_run` (the reg-2 input-string emitter —
+  `dst := encSyms (3 :: encodeRegs (srcs.map get))`, `src` regs intact, only
+  `dst`/`scan`/`tflg`/`cnt` touched; NO cost bound yet — add one in C8-4) and
+  `HeadLayout.encSyms_append` (encSyms distributes over `++` — the closer for
+  every `encSyms`-of-a-concatenation goal).
 - **The S1 cell-code algebra (2026-07-18-b, `Simulators/CookTableau.lean`)**:
   `hCell_val_lb`/`hCell_val_ub`, `tCell_ne_hCell`/`hCell_ne_bCell`/
   `tCell_ne_bCell`, `hCell_inj`/`tCell_inj` — the three disjoint code bands;
