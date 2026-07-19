@@ -948,7 +948,7 @@ theorem normTrans_subset (M : FlatTM) : ∀ e ∈ normTrans M, e ∈ M.trans := 
   exact dedupGo_subset M.trans [] e (List.mem_filter.1 he).1
 
 /-- The first three cells of `l.drop i`, by `getElem`. -/
-private theorem take3_drop {α : Type*} (l : List α) (i : Nat) (h : i + 3 ≤ l.length) :
+theorem take3_drop {α : Type*} (l : List α) (i : Nat) (h : i + 3 ≤ l.length) :
     (l.drop i).take 3
       = [l[i]'(by omega), l[i + 1]'(by omega), l[i + 2]'(by omega)] := by
   rw [List.drop_eq_getElem_cons (by omega), List.drop_eq_getElem_cons (by omega),
@@ -956,7 +956,7 @@ private theorem take3_drop {α : Type*} (l : List α) (i : Nat) (h : i + 3 ≤ l
   rfl
 
 /-- Covering a window is three cell equations on each side. -/
-private theorem coversHead_take3 {k : Nat} (card : TCCCard (Fin k))
+theorem coversHead_take3 {k : Nat} (card : TCCCard (Fin k))
     (a b : List (Fin k)) (i : Nat)
     (hp : (a.drop i).take 3 = (card.prem : List (Fin k)))
     (hc : (b.drop i).take 3 = (card.conc : List (Fin k))) :
@@ -965,22 +965,22 @@ private theorem coversHead_take3 {k : Nat} (card : TCCCard (Fin k))
    ⟨(b.drop i).drop 3, by rw [← hc]; exact (List.take_append_drop 3 _).symm⟩⟩
 
 /-- The cell at row coordinate `j`. -/
-private def rowCell (M : FlatTM) (cfg : FlatTMConfig) (j : Nat) : Fin (Sg M) :=
+def rowCell (M : FlatTM) (cfg : FlatTMConfig) (j : Nat) : Fin (Sg M) :=
   if j = 0 then bCell M
   else confCell M cfg.state_idx (cfgHead cfg) (cfgRight cfg) (j - 1)
 
 /-- The boundary-or-tape ("left context") view of coordinate `j`; the true
 cell away from the head. -/
-private def rowX (M : FlatTM) (cfg : FlatTMConfig) (j : Nat) :
+def rowX (M : FlatTM) (cfg : FlatTMConfig) (j : Nat) :
     Option (Fin (M.sig + 1)) :=
   if j = 0 then none else some (tapeSymAt M (cfgRight cfg) (j - 1))
 
-private theorem rowCell_zero (M : FlatTM) (cfg : FlatTMConfig) :
+theorem rowCell_zero (M : FlatTM) (cfg : FlatTMConfig) :
     rowCell M cfg 0 = bCell M := by
   unfold rowCell
   rw [if_pos rfl]
 
-private theorem rowCell_x (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
+theorem rowCell_x (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
     (hne : j ≠ cfgHead cfg + 1) :
     rowCell M cfg j = xCell M (rowX M cfg j) := by
   unfold rowCell rowX
@@ -991,7 +991,7 @@ private theorem rowCell_x (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
     rw [if_neg (show ¬(j - 1 = cfgHead cfg) by omega)]
     rfl
 
-private theorem rowCell_head (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
+theorem rowCell_head (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
     (hj : j = cfgHead cfg + 1) :
     rowCell M cfg j
       = hCell M (stateOf M cfg.state_idx)
@@ -1001,13 +1001,13 @@ private theorem rowCell_head (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
   rw [if_neg (by omega), if_pos (by omega)]
   simp
 
-private theorem rowCell_tape (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
+theorem rowCell_tape (M : FlatTM) (cfg : FlatTMConfig) {j : Nat}
     (h1 : 1 ≤ j) (hne : j ≠ cfgHead cfg + 1) :
     rowCell M cfg j = tCell M (tapeSymAt M (cfgRight cfg) (j - 1)) := by
   unfold rowCell confCell
   rw [if_neg (by omega), if_neg (by omega)]
 
-private theorem confRow_getElem (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
+theorem confRow_getElem (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
     (hj : j ≤ n) (hlt : j < (confRow M cfg n).length) :
     (confRow M cfg n)[j]'hlt = rowCell M cfg j := by
   have hpre : j < (bCell M :: (List.range n).map
@@ -1024,7 +1024,7 @@ private theorem confRow_getElem (M : FlatTM) (cfg : FlatTMConfig) {n j : Nat}
     simp [rowCell]
 
 /-- The last cell (coordinate `n + 1`) is the right boundary marker. -/
-private theorem confRow_getElem_last (M : FlatTM) (cfg : FlatTMConfig) {n : Nat}
+theorem confRow_getElem_last (M : FlatTM) (cfg : FlatTMConfig) {n : Nat}
     (hlt : n + 1 < (confRow M cfg n).length) :
     (confRow M cfg n)[n + 1]'hlt = bCell M := by
   show ((bCell M :: (List.range n).map
@@ -1034,7 +1034,7 @@ private theorem confRow_getElem_last (M : FlatTM) (cfg : FlatTMConfig) {n : Nat}
   simp
 
 /-- A 3-window of a configuration row, as its three coordinate cells. -/
-private theorem confRow_window (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
+theorem confRow_window (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
     (h : i + 2 ≤ n) :
     ((confRow M cfg n).drop i).take 3
       = [rowCell M cfg i, rowCell M cfg (i + 1), rowCell M cfg (i + 2)] := by
@@ -1046,7 +1046,7 @@ private theorem confRow_window (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
 
 /-- The rightmost 3-window (`i + 1 = n`): two coordinate cells and the
 right marker. -/
-private theorem confRow_window_last (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
+theorem confRow_window_last (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat}
     (h : i + 1 = n) :
     ((confRow M cfg n).drop i).take 3
       = [rowCell M cfg i, rowCell M cfg (i + 1), bCell M] := by
@@ -1066,7 +1066,7 @@ private theorem confRow_window_last (M : FlatTM) (cfg : FlatTMConfig) {n i : Nat
 
 /-- Under the run invariant, a tape cell is the blank iff its position is
 at/beyond the frontier — the window-local frontier detection. -/
-private theorem tapeSymAt_blank_iff (M : FlatTM) (right : List Nat) (p : Nat)
+theorem tapeSymAt_blank_iff (M : FlatTM) (right : List Nat) (p : Nat)
     (hsig : ∀ x ∈ right, x < M.sig) :
     decide (tapeSymAt M right p = blankSym M) = decide (right.length ≤ p) := by
   unfold tapeSymAt
@@ -1085,13 +1085,13 @@ private theorem tapeSymAt_blank_iff (M : FlatTM) (right : List Nat) (p : Nat)
   · rw [if_neg h]
     simp [show right.length ≤ p from by omega]
 
-private theorem xIsBlank_some (M : FlatTM) (a : Fin (M.sig + 1)) :
+theorem xIsBlank_some (M : FlatTM) (a : Fin (M.sig + 1)) :
     xIsBlank M (some a) = decide (a = blankSym M) := by
   simp [xIsBlank]
 
 /-- The head's left-context cell is blank iff the head is strictly beyond
 the frontier (`wEff`'s `xb` flag is truthful on configuration rows). -/
-private theorem rowX_isBlank (M : FlatTM) (cfg : FlatTMConfig)
+theorem rowX_isBlank (M : FlatTM) (cfg : FlatTMConfig)
     (hsig : ∀ x ∈ cfgRight cfg, x < M.sig) :
     xIsBlank M (rowX M cfg (cfgHead cfg))
       = decide ((cfgRight cfg).length < cfgHead cfg) := by
