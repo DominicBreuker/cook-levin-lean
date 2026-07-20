@@ -10,18 +10,21 @@ reasonably provable).
 ## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 IN PROGRESS** (2026-07-19-c/-d: every gadget exists; **2026-07-20: the front machine `M_Q` + machine-iff DONE (`FrontMachine.lean`); 2026-07-20-b: the ABSTRACT LIFTING `FlatSingleTMGenNP (fQ x) ↔ Q x` DONE & axiom-clean, both the parameterized `fQ_correct` and the hypothesis-free `fQ_correct_concrete` with the F6 monomials proven `inOPoly`, `Reductions/FrontLifting.lean`**) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4's reduction program + witness fields** bottom-up)
 
 - **C8-4 (the `W_Q` assembly) is IN PROGRESS — GADGETS + MACHINE + MACHINE-IFF
-  + ABSTRACT LIFTING DONE.** All gadgets exist (`FrontPieces.emitRegs`/
-  `tallyCells`/`emitConst`/`unaryMonomial`, 2026-07-19-c/-d), the front machine
-  `M_Q` + machine-iff are done (`Reductions/FrontMachine.lean`, 2026-07-20), and
-  **the abstract lifting `FlatSingleTMGenNP (fQ x) ↔ Q x` is done & axiom-clean**
-  (`Reductions/FrontLifting.lean`, 2026-07-20-b): `fQ_correct` (parameterized over
-  `maxSize`/`steps` with two clean domination hypotheses) + `fQ_correct_concrete`
-  (hypothesis-free, with concrete `maxSizeOf`/`stepsOf` proven `inOPoly` — F6
-  monomials exist). **What's left for C8-4**: (ii) the **reduction program** `Cmd`
-  emitting `fQ x`'s four registers (wire the gadgets, R1 discipline, `emitRegs`
-  cost bound still needed); (iii) the `PolyTimeComputableLang` witness fields
-  (`computes` uses `fQ_correct_concrete`; the four output registers must be the
-  encoding of `fQ x`). See the rewritten C8-4 section.
+  + ABSTRACT LIFTING + REDUCTION PROGRAM DONE.** All gadgets exist
+  (`FrontPieces.emitRegs`/`emitConst`/`unaryMonomial`, 2026-07-19-c/-d; note
+  `tallyCells` is now UNUSED, see the finding), the front machine `M_Q` +
+  machine-iff are done (`Reductions/FrontMachine.lean`, 2026-07-20), **the
+  abstract lifting `FlatSingleTMGenNP (fQ x) ↔ Q x` is done & axiom-clean**
+  (`Reductions/FrontLifting.lean`, 2026-07-20-b: `fQ_correct` +
+  `fQ_correct_concrete`, F6 monomials `inOPoly`), and **the reduction PROGRAM +
+  register-exact run lemma are done & axiom-clean** (`Reductions/FrontProgram.lean`,
+  2026-07-20-c: `frontProgram` + `frontProgram_run`). **What's left for C8-4**:
+  (iii) the `PolyTimeComputableLang fQ` **witness fields** — `computes` (from
+  `frontProgram_run` + `decodeOut`), the cost ladder, and the remaining mechanical
+  fields, then wrap into `Q ⪯p' FlatSingleTMGenNP` via `reducesPolyMO'_of_langFree`
+  + `fQ_correct`. ⚠ the design uses a **unary size register** in `encodeIn`
+  (finding 2026-07-20-c); `tallyCells` and the "encodeIn = encX verbatim" note are
+  retired for C8-4. See the rewritten C8-4 section.
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
   `[propext, Classical.choice, Quot.sound]`.
@@ -65,6 +68,37 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-20-c (bottom-up) — C8-4 piece 2: the reduction PROGRAM +
+  register-exact run lemma DONE & axiom-clean (`Reductions/FrontProgram.lean`,
+  build green 3350→full, probe `probes/C8ProgramProbe.lean` green).**
+  `frontProgram MQconst xWidth B cm km dm cs ks ds` wires the C8-3 gadgets
+  (`emitRegs`/`unaryMonomial`×2/`emitConst`) into the four `headEncodeIn`
+  registers, and **`frontProgram_run`** proves regs 0–4 =
+  `headEncodeIn (M_Q, 3::encodeRegs(encX x), cm·(m+1)^km+dm, cs·(m+1)^ks+ds)`
+  for input `s` with `encX x` at regs `0..xWidth-1` and the **size register
+  `1^m` at `xWidth`** (`[propext, Quot.sound]`).
+  **⚠⚠ DESIGN FINDING (risk-based, blocking piece 3 as previously planned):**
+  the HANDOFF's `tallyCells` monomial argument (`1^(State.size (encX x))`)
+  **cannot discharge `fQ_correct`'s `hmax`/`hsteps`**. Those need the emitted
+  budget registers to *dominate* bounds in `encodable.size x` (via
+  `certBoundOf`, `MQbudget ≤ dCap (size x)`), but the tally has only an
+  **upper** bound to `size x` (`encX_size`) — never a lower one (`encX` need
+  not be injective, only Q-value-separating), so no monomial in the tally is
+  provably ≥ a `size x`-budget. The plan was internally inconsistent (demanded
+  both "monomial ≥ stepsOf(size x)" *and* "argument = tally"); `FrontLifting`
+  had punted this exact obligation to piece 2. **Resolution shipped (Option A,
+  local & honest):** `W_Q.encodeIn x := encX x ++ [1^(encodable.size x)]` — a
+  unary size register, so the monomial argument IS `size x` and the F6
+  overshoot is provable (correct direction). This **relaxes the "encodeIn =
+  encX verbatim" note** and makes `tallyCells` unused by C8-4; the C8-5 seam
+  drops the extra register (scratch `≥ headRegBound`). ⚠ owner may prefer
+  **Option B** (add a structural lower-bound field
+  `encodable.size x ≤ sizeLB (State.size (encX x))` to `InNPWitnessLangFreeSplit`,
+  keeping `encodeIn = encX` but changing the frozen C8-0 interface) — flagged
+  for review. Gotchas landed in "Conventions" (metavar-goal omega in
+  gadget-call args; `clear_value`; bare-`omega`-on-a-conjunction choke). Next
+  bottom-up: **piece 3, the `PolyTimeComputableLang fQ` witness fields** — see
+  the rewritten C8-4 section.
 - **2026-07-20-b (bottom-up) — C8-4 piece 1: the abstract lifting
   `FlatSingleTMGenNP (fQ x) ↔ Q x` DONE & axiom-clean
   (`Reductions/FrontLifting.lean`, build green 3391).** The conceptual bridge
@@ -527,62 +561,98 @@ subsuming S2). **The answers to the three scoping questions:**
   and the abstract correctness iff `FlatSingleTMGenNP (fQ x) ↔ Q x`
   (`Reductions/FrontLifting.lean`, 2026-07-20-b: `fQ_correct` +
   `fQ_correct_concrete`, F6 monomials `inOPoly`) are proven & axiom-clean.
-  Remaining: the reduction `Cmd` emitting `fQ x`'s four registers + the
-  `PolyTimeComputableLang` fields — see the "NEXT BOTTOM-UP session" section.
+  The reduction `Cmd` `frontProgram` + its run lemma are DONE
+  (`Reductions/FrontProgram.lean`, 2026-07-20-c). Remaining: the
+  `PolyTimeComputableLang` witness fields — see the "NEXT BOTTOM-UP session"
+  section.
 - **C8-5 (the seam):** `SeamData W_Q W_head` against the head layout — the
   layout is now **FROZEN** (`HeadLayout.headEncodeIn`, 2026-07-18), so
   C8-3/C8-4 can emit against it today; the `SeamData` instance itself still
   waits for the S1 free witness to exist.
 
-## NEXT BOTTOM-UP session — C8-4 (the reduction program + witness fields)
+## NEXT BOTTOM-UP session — C8-4 piece 3 (the `PolyTimeComputableLang` witness)
 
-C8-0…C8-3 are done, **every gadget exists**, the **front machine `M_Q` +
-machine-iff are DONE** (`Reductions/FrontMachine.lean`, 2026-07-20), and **the
-abstract lifting `FlatSingleTMGenNP (fQ x) ↔ Q x` is DONE & axiom-clean**
-(`Reductions/FrontLifting.lean`, 2026-07-20-b — `fQ_correct` parameterized +
-`fQ_correct_concrete` hypothesis-free with `maxSizeOf`/`stepsOf` proven
-`inOPoly`). **Consume `fQ_correct_concrete` as a black box; do NOT re-derive the
-lift.** What remains is `W_Q : PolyTimeComputableLang fQ` (the honest reduction
-map). The **input layout is settled**: `W_Q.encodeIn = W.encX` (the split
-witness's input, standing risk #1); `fQ x = (M_Q, 3 :: encodeRegs (encX x),
-maxSizeOf (size x), stepsOf (size x))` with `M_Q := MQ verifier.c
-verifier.regBound verifier.xWidth`. Two remaining pieces (probe-first, commit
-each green; they are independent):
+C8-0…C8-3, the machine/machine-iff, the abstract lifting, **and the reduction
+PROGRAM** are all DONE & axiom-clean. **Consume `fQ_correct` /
+`fQ_correct_concrete` (`FrontLifting.lean`) and `frontProgram_run`
+(`FrontProgram.lean`) as black boxes; do NOT re-derive the lift or the program.**
+What remains is the single witness `W_Q : PolyTimeComputableLang (fQ …)` and the
+one-line wrap into `Q ⪯p' FlatSingleTMGenNP`.
 
-1. **The reduction program** `Cmd` emitting `fQ x`'s FOUR registers of the
-   `FlatSingleTMGenNP` instance (WIRING — all gadgets built). ⚠ **First decide
-   the OUTPUT encoding**: `fQ x` is a `flatTM × List Nat × Nat × Nat`, so
-   `W_Q`'s output register(s) must encode that tuple; `decodeOut` inverts it.
-   The machine `M_Q` is a per-`Q` CONSTANT (emit `encSyms (flattenTM M_Q)` via
-   `emitConst`); `s_x = 3 :: encodeRegs (encX x)` is emitted by `emitRegs`;
-   `maxSizeOf`/`stepsOf (size x)` are the F6 unary monomials — materialize them
-   with `unaryMonomial` from `nReg := tallyCells cnt nReg (List.range xWidth)`
-   (`= 1^(State.size (encX x))`, R2). **⚠ the F6 constants**: `unaryMonomial`
-   emits `c·(n+1)^k+d`; `stepsOf`/`maxSizeOf` (in `FrontLifting.lean`) are
-   `inOPoly` but NOT literally single monomials, so the program must overshoot
-   them with a `unaryMonomial` monomial `≥ stepsOf (size x)` — extract `c,k,d`
-   classically from `stepsOf_poly`/`maxSizeOf_poly` (`inOPoly` gives `≤ C·n^K`
-   past `n0`; fold the `< n0` prefix into `d`). This overshoot is fine: `fQ`
-   with a LARGER `steps`/`maxSize` still satisfies `fQ_correct` (`hmax`/`hsteps`
-   are `≤`, and the lift's forward direction only needs the budget big enough).
-   Use a `maxSize`/`steps` monomial directly in a `fQ_correct`-instance, NOT
-   `fQ_correct_concrete` verbatim (which pins the exact `stepsOf`).
-   - **⚠ R1 (register-map discipline, NOT new code).** `emitRegs`/`tallyCells`
-     WRITE `dst` while READING source regs `0..xWidth-1`. Emit into scratch
-     `≥ max headRegBound xWidth`, read all inputs first, then move scratch→out,
-     `clear` unused. `C8FrontProbe` §4 demonstrates the pattern.
-   - **`emitRegs` STILL needs a cost bound** (quadratic-in-`|encX x|`, copy
-     `tallyCells_cost`'s foldl-cost template).
-2. **The `PolyTimeComputableLang` witness fields**: `computes` from the
-   `FrontPieces` `_run` lemmas (get-exact, register-by-register) + the output
-   encoding's `decodeOut`; `cost_bound`/`output_size_le` from
-   `monomialCost`/`powCost_le`/`tallyCells_cost` + the new `emitRegs` cost +
-   `stepsOf_poly`/`maxSizeOf_poly`; `encBound` = `W.encX`'s size bound
-   (`W.encX_size` ⟹ `dBound`); `enc_bit` against `headEncodeIn_bitState`. Then
-   C8-5: a fourth `SeamData`/`comp` onto the S1 free witness (waits on S1
-   existing). ⚠ Standing risks #1/#3: `W_Q.encodeIn` MUST be `encX` verbatim;
-   the garbage-cert direction is already handled inside `fQ_correct` via
-   `MQ_no_reject_of_accepts` (F5). Re-read F1–F6.
+**★ The settled design (read this — it supersedes the old plan).** Finding
+2026-07-20-c: the budget registers must dominate `size x`-bounds, so the
+monomial argument must be `size x`, materialized from a **unary size register**
+in the input:
+
+* **`encodeIn x := W.encX x ++ [1^(encodable.size x)]`** (the size register at
+  index `W.xWidth`). NOT `encX` verbatim — that is the whole point of the fix.
+* **`f := fQ W Mmax Mstep`** where `Mmax`/`Mstep : X → Nat` are the F6 overshoot
+  monomials **as functions of `encodable.size x`** — `Mmax x = cm·(size x+1)^km
+  + dm ≥ maxSizeOf W (size x)`, `Mstep x = cs·(size x+1)^ks + ds ≥ stepsOf W
+  (size x)`. Extract `(cm,km,dm)`/`(cs,ks,ds)` classically from
+  `maxSizeOf_poly`/`stepsOf_poly` via a **global monomial bound** lemma
+  (`inOPoly f → ∃ c k d, ∀ n, f n ≤ c·(n+1)^k + d`; `inOPoly` gives `≤ C·n^K`
+  past `n0` — fold the `< n0` prefix into `d` with `maxPrefix`). Prove this
+  helper first; it is reusable.
+* **`c := frontProgram (encSyms (flattenTM M_Q)) W.xWidth B cm km dm cs ks ds`**
+  with `B := max headRegBound (W.xWidth + 1)`, `M_Q := MQ W.verifier.c
+  W.verifier.regBound W.xWidth`.
+* **`decodeOut st := (M_Q, Function.invFun HeadLayout.encSyms (State.get st 2),
+  (State.get st 3).length, (State.get st 4).length)`.** Needs **`encSyms`
+  injective** (prove `Function.Injective HeadLayout.encSyms` — a self-contained
+  prefix-free-decoding lemma; then `Function.leftInverse_invFun` gives
+  `decodeOut (headEncodeIn (fQ x)) = fQ x`). The machine component is the
+  per-`Q` CONSTANT `M_Q` (honest: reg 1 genuinely holds `encSyms (flattenTM
+  M_Q)`, its inverse is the constant).
+
+**The 13 fields** (probe-first is unnecessary — `frontProgram_run` already
+pins the outputs; go straight to the fields):
+- `computes`: `frontProgram_run` gives regs 0–4 = `headEncodeIn (fQ x)`; apply
+  `decodeOut` and the `encSyms`-injectivity left-inverse + the two
+  `(replicate _ 1).length` reads. Feed `frontProgram_run`'s hypotheses:
+  `hsize` = `State.get (encodeIn x) xWidth = 1^(size x)` (holds by construction),
+  `hbits` = `encX_bit` (from `FrontLifting`), `hMQ` = `encSyms_bit`.
+- `cost_bound`/`cost_le`: the program cost is `emitRegs` cost (⚠ **still no cost
+  bound — add one**, copy `tallyCells_cost`'s foldl template; quadratic in the
+  input cell count `≤ dBound (size x)`) + `2·monomialCost` (`powCost_le` closed
+  form) + `emitConst` cost (`1 + 2·|encSyms (flattenTM M_Q)|`, a per-`Q`
+  constant) + 5 copies. All `inOPoly` in `size x` via `dBound_poly` and the
+  monomial degrees.
+- `output_size_le`: `encodable.size (fQ x)` = size of the tuple = `sizeFlatTM
+  M_Q` (const) + `|s_x|` (linear in `size x`) + `Mmax x` + `Mstep x` (the
+  monomials) + overhead; all `inOPoly`.
+- `encBound`/`encodeIn_size`: `State.size (encodeIn x) = State.size (encX x) +
+  size x ≤ dBound (size x) + size x` (from `encX_size`); `encBound := fun n =>
+  dBound n + n`.
+- `enc_bit`: `encX_bit` on the `encX` part, `replicate _ 1` bit-level on the
+  size register.
+- `regBound := B + 9`; `usesBelow`: `frontProgram` touches regs `< B+9` — needs
+  a **`Cmd.UsesBelow` lemma for `frontProgram`** (and for each gadget:
+  `emitRegs`/`unaryMonomial`/`emitConst` have run/frame/cost lemmas but **no
+  `UsesBelow` lemma yet** — add them, register-generic, by induction on the
+  `foldl`/recursion, like the run lemmas).
+- `width_le`: `(encodeIn x).length = xWidth + 1 ≤ B ≤ B+9`.
+- `decode_agree`: padding by empty registers past `B+9` leaves regs 2/3/4
+  unchanged (`Cmd.eval_agree` + `usesBelow`), so `decodeOut` is stable.
+
+**Then** `Q ⪯p' FlatSingleTMGenNP` via `reducesPolyMO'_of_langFree W_Q
+(fun x => (fQ_correct W Mmax Mstep hmax hsteps x).symm)`, discharging
+`hmax`/`hsteps` from the global-monomial-bound helper. (Use `fQ_correct`, NOT
+`fQ_correct_concrete` — the monomials overshoot, they don't hit `maxSizeOf`
+exactly.)
+
+**⚠ Option B alternative (owner call, not yet taken).** Instead of the size
+register, add a structural field `encodable.size x ≤ sizeLB (State.size (encX
+x))` (+ `sizeLB` poly) to `InNPWitnessLangFreeSplit`, keeping `encodeIn = encX`
+and reinstating `tallyCells`. This changes the frozen C8-0 interface (every
+split-witness provider, incl. the eventual SAT membership witness, must supply
+it) — heavier, but keeps the "encodeIn = encX" invariant. If the owner prefers
+B, the `frontProgram`/`decodeOut`/`computes` shapes are unchanged except the
+size register becomes `tallyCells` output and `encodeIn` reverts to `encX`.
+
+Then C8-5: a fourth `SeamData`/`comp` onto the S1 free witness (waits on S1
+existing); `mfc` drops the size register (scratch `≥ headRegBound`) and is
+otherwise the identity onto `headEncodeIn`.
 
 Two self-contained size-bound bites remain (either stream, no design risk):
 **`cookTableau_size_bound`** (see the block before the top-down section) and
@@ -746,6 +816,18 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   width route through the verifier's own bounds); `MQbudget_le`; the `inOPoly`
   proofs `certBoundOf_poly`/`argBound_poly`/`dCap_poly`/`maxSizeOf_poly`/
   `stepsOf_poly` (helper `lin_dCap_poly`).
+- **The C8-4 reduction program (2026-07-20-c, `Reductions/FrontProgram.lean`,
+  `[propext, Quot.sound]` — consume as a black box for the C8-4 witness's
+  `computes`/`cost` fields; do NOT re-derive the wiring)**: `frontProgram
+  MQconst xWidth B cm km dm cs ks ds` (the four-register emitter: `emitRegs`
+  into scratch `B`, two `unaryMonomial`s into `B+1`/`B+2`, `emitConst` into
+  `B+3`, then `clear 0` + 4 copies into output regs 0–4) and
+  **`frontProgram_run`** (regs 0–4 = `headEncodeIn (M_Q, 3::encodeRegs(input),
+  cm·(m+1)^km+dm, cs·(m+1)^ks+ds)` for input split as `encX x ++ [1^m]`,
+  hyps `5 ≤ B`, `xWidth < B`, `MQconst` bit-level, size reg `= 1^m`, sources
+  bit-level). Probe `probes/C8ProgramProbe.lean`. ⚠ **no cost or `UsesBelow`
+  lemma yet** — piece 3 adds them (and `UsesBelow` lemmas for the `FrontPieces`
+  gadgets, which also lack them).
 - **The S1 cell-code algebra (2026-07-18-b, `Simulators/CookTableau.lean`)**:
   `hCell_val_lb`/`hCell_val_ub`, `tCell_ne_hCell`/`hCell_ne_bCell`/
   `tCell_ne_bCell`, `hCell_inj`/`tCell_inj` — the three disjoint code bands;
@@ -1142,6 +1224,23 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   `(fun m => physStepBudget m m) ∘ M` = `inOPoly_comp M_poly physStepBudget_poly`.
   And a `physStepBudget_mono`-bounded `≤` goal after `refine inOPoly_of_le …`
   is a beta-redex — `show`-restate it before `omega`.
+- **NEW (2026-07-20-c, wiring a multi-gadget `Cmd` run lemma —
+  `FrontProgram.lean`):** three `omega` traps, all with the SAME misleading
+  symptom (`omega could not prove` + a counterexample listing only the ambient
+  `hB`/`hxW`, i.e. an *empty* goal model). (a) **An un-ascribed `by omega` as a
+  gadget-call ARGUMENT runs against a still-metavariable goal** (`?scan ≠
+  ?cnt`) — the explicit register args unify too late. Fix: **type-ascribe every
+  one** — `(by omega : (B + 5 : Var) ≠ B + 4)`. (b) **`refine ⟨?_,…,?_⟩ <;>
+  omega` and bare `by omega` on a big `∧`-conjunction** hit the same empty-goal
+  failure. Fix: prove each conjunct as its own ascribed `have`, or (for the
+  final register reads) `by decide` on the constant `≠`s. (c) **After `set sᵢ
+  := …`, `omega` whnf-chokes on the `let`-bound state bodies** — `clear_value
+  s1 s2 s3 s4` (the `hsᵢ` equations survive) before any `omega`-heavy step. Two
+  more: after `set sᵢ`, the gadget's run/frame hyps are **auto-folded to be
+  about `sᵢ`** — use them directly, do NOT `rw [hsᵢ]` (unfolding `sᵢ`
+  mismatches the folded hyp). And `State.get_set_ne _ _ _ _ h` does NOT match a
+  `set`-opaque local (`t0`) — build the copy-block result from explicit `.set`
+  terms (state the read `have`s with explicit types so the `_`s unify).
 - **NEW (2026-07-16, probing):** `#eval` of a `Cmd` with nested `forBnd`s on
   a >1K-bit stream is OUT OF BUDGET (the budget scan is cubic; the T1 seam
   probe timed out at 10 min) — probe BRIDGES register-by-register on big
