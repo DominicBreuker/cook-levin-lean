@@ -209,4 +209,162 @@ theorem fQ_correct (W : InNPWitnessLangFreeSplit Q) (maxSize steps : X → Nat)
       simp only [List.length_cons, List.length_nil]
       omega
 
+/-! ## F6 — concrete `inOPoly` size/step budgets discharging `hmax`/`hsteps`
+
+The two abstract hypotheses of `fQ_correct` are discharged with concrete budget
+functions built from the witness's own polynomial bounds (`certBoundOf`,
+`W.dBound`), extracted classically once per `Q`. This proves the F6 monomials
+*exist* and are polynomial — the risk the HANDOFF flags for the reduction
+program (piece 2) to materialize in unary via `unaryMonomial`. -/
+
+/-- An `inOPoly` upper bound for `encodable.size (x, c)` over size-bounded certs. -/
+noncomputable def argBound (W : InNPWitnessLangFreeSplit Q) (n : Nat) : Nat :=
+  n + certBoundOf W n + 1
+
+/-- The verifier's cost/size budget at `argBound` — dominates both
+`State.size s` and `verifier.c.cost s` for the split pair `s = encX x ++ [certReg c]`. -/
+noncomputable def dCap (W : InNPWitnessLangFreeSplit Q) (n : Nat) : Nat :=
+  W.dBound (argBound W n)
+
+/-- The `State.size` / cost / register-count bounds for the split pair,
+uniformly in size-bounded certs — the raw material for `MQbudget_le`. -/
+theorem front_state_bounds (W : InNPWitnessLangFreeSplit Q) (x : X) (c : List Bool)
+    (hsize : encodable.size c ≤ certBoundOf W (encodable.size x)) :
+    State.size (W.encX x ++ [certReg c]) ≤ dCap W (encodable.size x) ∧
+    W.verifier.c.cost (W.encX x ++ [certReg c]) ≤ dCap W (encodable.size x) ∧
+    (W.encX x ++ [certReg c]).length ≤ W.verifier.regBound := by
+  have hpair : W.verifier.encodeIn (x, c) = W.encX x ++ [certReg c] := by
+    rw [W.encodeIn_eq x c, certState_eq]
+  have hprod : encodable.size ((x, c) : X × List Bool) ≤ argBound W (encodable.size x) := by
+    show encodable.size x + encodable.size c + 1 ≤ argBound W (encodable.size x)
+    unfold argBound; omega
+  have hdmono : W.dBound (encodable.size ((x, c) : X × List Bool)) ≤ dCap W (encodable.size x) :=
+    W.dBound_mono _ _ hprod
+  refine ⟨?_, ?_, ?_⟩
+  · have h := W.verifier.encodeIn_size (x, c); rw [hpair] at h; exact le_trans h hdmono
+  · have h := W.verifier.cost_bound (x, c); rw [hpair] at h; exact le_trans h hdmono
+  · have h := W.verifier.width_le (x, c); rw [hpair] at h; exact h
+
+/-- **The concrete step budget** — a polynomial in `encodable.size x` that
+dominates `MQbudget` for every size-bounded cert (`MQbudget_le`). The compiler
+register frame `regBound + 2·loopDepth + 2` is inlined so the `omega` assembly
+matches `MQbudget`'s unfolding syntactically. -/
+noncomputable def stepsOf (W : InNPWitnessLangFreeSplit Q) (n : Nat) : Nat :=
+  (2 * (dCap W n + W.verifier.regBound + 2) + 1) + 1 +
+    ((W.verifier.regBound + 2 * W.verifier.c.loopDepth + 2)
+        * (2 * dCap W n + 2 * W.verifier.regBound
+            + 2 * (W.verifier.regBound + 2 * W.verifier.c.loopDepth + 2) + 12) + 1 +
+      (Compile.physStepBudget
+        (dCap W n + (W.verifier.regBound + (W.verifier.regBound + 2 * W.verifier.c.loopDepth + 2))
+          + dCap W n + 2) (dCap W n) + 3))
+
+/-- **`MQbudget` is dominated by `stepsOf`** on size-bounded certs. -/
+theorem MQbudget_le (W : InNPWitnessLangFreeSplit Q) (x : X) (c : List Bool)
+    (hsize : encodable.size c ≤ certBoundOf W (encodable.size x)) :
+    MQbudget W.verifier.c W.verifier.regBound (W.encX x ++ [certReg c])
+      ≤ stepsOf W (encodable.size x) := by
+  obtain ⟨hSize, hCost, hLen⟩ := front_state_bounds W x c hsize
+  set s := W.encX x ++ [certReg c] with hs
+  set n := encodable.size x with hn
+  set RB := W.verifier.regBound + 2 * W.verifier.c.loopDepth + 2 with hRB
+  have hTape : (Compile.encodeTape s).length ≤ dCap W n + W.verifier.regBound + 2 := by
+    rw [Compile.encodeTape_length]; omega
+  have hPad : Compile.padBudget RB s
+      ≤ RB * (2 * dCap W n + 2 * W.verifier.regBound + 2 * RB + 12) := by
+    refine le_trans (Compile.padBudget_le RB s) ?_
+    apply Nat.mul_le_mul_left
+    omega
+  have hPhys : Compile.physStepBudget
+        (State.size s + (s.length + RB) + W.verifier.c.cost s + 2) (W.verifier.c.cost s)
+      ≤ Compile.physStepBudget
+        (dCap W n + (W.verifier.regBound + RB) + dCap W n + 2) (dCap W n) := by
+    apply Compile.physStepBudget_mono
+    · omega
+    · exact hCost
+  unfold MQbudget stepsOf
+  set TL := (Compile.encodeTape s).length
+  set PB := Compile.padBudget RB s
+  set PB' := RB * (2 * dCap W n + 2 * W.verifier.regBound + 2 * RB + 12)
+  set PS := Compile.physStepBudget
+      (State.size s + (s.length + RB) + W.verifier.c.cost s + 2) (W.verifier.c.cost s)
+  set PS' := Compile.physStepBudget
+      (dCap W n + (W.verifier.regBound + RB) + dCap W n + 2) (dCap W n)
+  omega
+
+/-- The concrete certificate-size budget. -/
+noncomputable def maxSizeOf (W : InNPWitnessLangFreeSplit Q) (n : Nat) : Nat :=
+  certBoundOf W n + 2
+
+/-! ### The concrete budgets are `inOPoly`
+
+This proves the F6 monomials *exist* as polynomials — the standing risk that a
+poly-time front witness can materialize the size/step registers. -/
+
+theorem certBoundOf_poly (W : InNPWitnessLangFreeSplit Q) : inOPoly (certBoundOf W) :=
+  (Classical.choice W.rel_correct).bound_poly
+
+theorem argBound_poly (W : InNPWitnessLangFreeSplit Q) : inOPoly (argBound W) := by
+  unfold argBound
+  exact inOPoly_add (inOPoly_add inOPoly_id (certBoundOf_poly W)) (inOPoly_const 1)
+
+theorem dCap_poly (W : InNPWitnessLangFreeSplit Q) : inOPoly (dCap W) := by
+  unfold dCap
+  exact inOPoly_comp (argBound_poly W) W.dBound_poly
+
+theorem maxSizeOf_poly (W : InNPWitnessLangFreeSplit Q) : inOPoly (maxSizeOf W) := by
+  unfold maxSizeOf
+  exact inOPoly_add (certBoundOf_poly W) (inOPoly_const 2)
+
+/-- Helper: a constant-linear combination of `dCap` is `inOPoly`. -/
+private theorem lin_dCap_poly (W : InNPWitnessLangFreeSplit Q) (a b : Nat) :
+    inOPoly (fun n => a * dCap W n + b) :=
+  inOPoly_add (inOPoly_mul (inOPoly_const a) (dCap_poly W)) (inOPoly_const b)
+
+theorem stepsOf_poly (W : InNPWitnessLangFreeSplit Q) : inOPoly (stepsOf W) := by
+  unfold stepsOf
+  set R := W.verifier.regBound with hR
+  set RB := R + 2 * W.verifier.c.loopDepth + 2 with hRB
+  -- the `physStepBudget` summand, dominated by its diagonal
+  have hphys : inOPoly (fun n => Compile.physStepBudget
+      (dCap W n + (R + RB) + dCap W n + 2) (dCap W n) + 3) := by
+    refine inOPoly_of_le
+      (g := fun n => Compile.physStepBudget (3 * dCap W n + (R + RB + 2))
+        (3 * dCap W n + (R + RB + 2)) + 3) ?_ ?_
+    · intro n
+      have hmono := Compile.physStepBudget_mono
+        (G := dCap W n + (R + RB) + dCap W n + 2) (G' := 3 * dCap W n + (R + RB + 2))
+        (cost := dCap W n) (cost' := 3 * dCap W n + (R + RB + 2))
+        (by omega) (by omega)
+      show Compile.physStepBudget (dCap W n + (R + RB) + dCap W n + 2) (dCap W n) + 3
+        ≤ Compile.physStepBudget (3 * dCap W n + (R + RB + 2)) (3 * dCap W n + (R + RB + 2)) + 3
+      omega
+    · have hPS : inOPoly (fun n => Compile.physStepBudget
+          (3 * dCap W n + (R + RB + 2)) (3 * dCap W n + (R + RB + 2))) :=
+        inOPoly_comp (f := fun n => 3 * dCap W n + (R + RB + 2))
+          (g := fun m => Compile.physStepBudget m m)
+          (lin_dCap_poly W 3 (R + RB + 2)) Compile.physStepBudget_poly
+      have hsum := inOPoly_add hPS (inOPoly_const 3)
+      exact hsum
+  have hf : inOPoly (fun n => 2 * (dCap W n + R + 2) + 1 + 1) := by
+    have e : (fun n => 2 * (dCap W n + R + 2) + 1 + 1)
+        = (fun n => 2 * dCap W n + (2 * R + 6)) := by funext n; ring
+    rw [e]; exact lin_dCap_poly W 2 (2 * R + 6)
+  have hf' : inOPoly (fun n => RB * (2 * dCap W n + 2 * R + 2 * RB + 12) + 1) := by
+    have e : (fun n => RB * (2 * dCap W n + 2 * R + 2 * RB + 12) + 1)
+        = (fun n => (RB * 2) * dCap W n + (RB * (2 * R + 2 * RB + 12) + 1)) := by
+      funext n; ring
+    rw [e]; exact lin_dCap_poly W (RB * 2) (RB * (2 * R + 2 * RB + 12) + 1)
+  exact inOPoly_add hf (inOPoly_add hf' hphys)
+
+/-- **C8-4 piece 1 (concrete).** The abstract lifting with the two budget
+hypotheses discharged by the concrete `maxSizeOf`/`stepsOf` polynomials — a
+hypothesis-free correctness iff for the fully-determined front instance. -/
+theorem fQ_correct_concrete (W : InNPWitnessLangFreeSplit Q) :
+    ∀ x, FlatSingleTMGenNP
+        (fQ W (fun x => maxSizeOf W (encodable.size x))
+              (fun x => stepsOf W (encodable.size x)) x) ↔ Q x :=
+  fQ_correct W _ _
+    (fun _ => Nat.le_refl _)
+    (fun x c _hrel hsize => MQbudget_le W x c hsize)
+
 end Complexity.Lang.FrontLifting
