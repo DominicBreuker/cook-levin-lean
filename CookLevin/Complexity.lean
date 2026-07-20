@@ -23,5 +23,6 @@ import Complexity.NP.SAT.CookLevin.Reductions.FSAT_to_SAT_free
 import Complexity.NP.SAT.CookLevin.Reductions.FSAT_to_SAT_comp
 import Complexity.NP.SAT.CookLevin.Reductions.HeadLayout
 import Complexity.NP.SAT.CookLevin.Reductions.FrontPieces
+import Complexity.NP.SAT.CookLevin.Reductions.FrontMachine
 
 set_option autoImplicit false

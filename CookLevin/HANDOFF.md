@@ -7,19 +7,20 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 IN PROGRESS** (2026-07-19-c: reg-2 emitter `FrontPieces.emitRegs`; 2026-07-19-d: the **R2 cell-counter `FrontPieces.tallyCells`** — `dst := 1^(Σ|input reg|)`, the monomial argument — landed axiom-clean, so **every C8-4 gadget now exists**; the design risk R1 is a register-map discipline, not new code) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4's machine `M_Q` + correctness iff** bottom-up)
+## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 IN PROGRESS** (2026-07-19-c/-d: every gadget exists; **2026-07-20: the front machine `M_Q` + the machine-level correctness iff — both directions — are DONE & axiom-clean**, `Reductions/FrontMachine.lean`) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4's abstract lifting + reduction program + witness fields** bottom-up)
 
-- **C8-4 (the `W_Q` assembly) is IN PROGRESS — ALL GADGETS NOW EXIST.**
-  The reg-2 input-string emitter `FrontPieces.emitRegs` (2026-07-19-c) builds
-  `encSyms (3 :: encodeRegs (encX x))` — the head layout's reg-2 content — by
-  folding `reencLoop`(`off=1`); the reg-3/4 monomial arg `FrontPieces.tallyCells`
-  (2026-07-19-d, R2) builds `1^(Σ|input reg|)` = `State.size (encX x)` from the
-  bit registers (the `unaryMonomial` argument F6 needed); `emitConst`/
-  `unaryMonomial` do regs 1 and 3/4. All axiom-clean, probe green
-  (`probes/C8FrontProbe.lean` §1–6). **What's left for C8-4 is assembly, not
-  gadgets**: wire them (R1 register-map discipline), the machine `M_Q` +
-  correctness iff (the bulk — split across sessions), the witness fields, and
-  the `emitRegs` cost bound (mechanical; `tallyCells_cost` is the pattern).
+- **C8-4 (the `W_Q` assembly) is IN PROGRESS — GADGETS + MACHINE + MACHINE-IFF
+  DONE.** All gadgets exist (`FrontPieces.emitRegs`/`tallyCells`/`emitConst`/
+  `unaryMonomial`, 2026-07-19-c/-d), and the **front machine `M_Q` + the
+  machine-level correctness iff (`Reductions/FrontMachine.lean`, 2026-07-20)** —
+  `MQ_accepts_of_accept` (forward, explicit `MQbudget`) + `MQ_no_reject_of_accepts`
+  (backward) — are proven & axiom-clean over an abstract verifier `Cmd`. **What's
+  left for C8-4**: (i) the **abstract lifting** `FlatSingleTMGenNP (fQ x) ↔ Q x`
+  (feed the two machine lemmas the split witness's `decides`/`rel_correct` + the
+  `creg ↔ List Bool` cert bijection + F6 monomials); (ii) the **reduction
+  program** `Cmd` emitting `fQ x`'s four registers (wire the gadgets, R1
+  discipline, `emitRegs` cost bound still needed); (iii) the
+  `PolyTimeComputableLang` witness fields. See the rewritten C8-4 section.
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
   `[propext, Classical.choice, Quot.sound]`.
@@ -63,6 +64,36 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-20 (bottom-up) — C8-4: the front machine `M_Q` + the machine-level
+  correctness iff, BOTH directions, axiom-clean (`Reductions/FrontMachine.lean`,
+  build green 3390, new probe `probes/C8MachineProbe.lean` green).** The riskiest
+  C8-4 integration — wiring `formatCheckTM` + `demoteHalt` + `paddedBitDeciderTM`
+  + `composeFlatTM` into one accept-by-halting machine — is DONE. `MQ c k w :=
+  composeFlatTM (formatCheckTM w) (demoteHalt (paddedBitDeciderTM c k)
+  (rejectState c k)) (w+6)` over an **abstract verifier `Cmd c`** (`k = regBound`,
+  `w = xWidth`); `rejectState = 2 + (Compile k c).states + (padRegsTM …).states`
+  (from `paddedBitDecider_run`, `b = 0`). Structural lemmas `MQ_sig`(= 4)/
+  `MQ_tapes`(= 1)/`MQ_valid` + `paddedBitDeciderTM_halt_rejectState` (the reject
+  state's halt bit, via `_halt_shift` at `i = 2`). **Forward**
+  `MQ_accepts_of_accept`: verifier accepts the decoded `sx ++ [creg]` ⇒ `M_Q`
+  accepts `(3::encodeRegs sx) ++ (shiftReg creg ++ [0,3])` for every
+  `steps ≥ MQbudget c k (sx++[creg])` (the **explicit** F6-overshoot budget =
+  format scan + bridge + `paddedBitDecider` budget). **Backward**
+  `MQ_no_reject_of_accepts`: `M_Q` accepts `(3::encodeRegs sx) ++ cert` at ANY
+  budget ⇒ `cert = shiftReg creg ++ [0,3]` for a bit register `creg` AND the
+  verifier does not reject (`(c.eval (sx++[creg])).get 0 ≠ [0]`) — bad grammar
+  ⇒ format-check sticks (`composeFlatTM_stuck_M1`), verifier reject ⇒ park
+  (`demoteHalt_run_reject` + `composeFlatTM_no_early_halt`); the cert width is the
+  constant `w+1`, so the frame hypothesis is the single `w+1 ≤ k`. **⚠ FINDING
+  (design validated, no surprises):** the probe (`#eval acceptsFlatTM M_Q` on
+  yes/no/garbage certs, toy verifier `nonEmpty 0 2`) confirmed the 2026-07-05
+  assembly notes verbatim — the machine story had no misconceptions. Next
+  bottom-up: the **abstract lifting** `FlatSingleTMGenNP (fQ x) ↔ Q x` (combine
+  the two lemmas with `InNPWitnessLangFreeSplit`'s `verifier.decides`/
+  `rel_correct` + the `creg ↔ List Bool` cert bijection + F6 monomials for
+  `maxSize`/`steps`), the **reduction program** (wire `emitRegs`/`tallyCells`/
+  `unaryMonomial`/`emitConst`, R1 discipline), and the witness fields — see the
+  rewritten C8-4 section.
 - **2026-07-19-d (bottom-up) — C8-4: the R2 cell-counter gadget landed &
   axiom-clean (`Reductions/FrontPieces.lean`, build green 3389, probe §6
   green).** `FrontPieces.tallyCells cnt dst srcs` emits
@@ -469,50 +500,60 @@ subsuming S2). **The answers to the three scoping questions:**
 
 ## NEXT BOTTOM-UP session — C8-4 (the `W_Q` assembly)
 
-C8-0…C8-3 are done and **every C8-4 gadget now exists** (reg-2 emitter
-2026-07-19-c, R2 cell-counter 2026-07-19-d). C8-4 assembles the per-`Q` front
-witness `W_Q : PolyTimeComputableLang fQ`, `fQ x = (M_Q, s_x, maxSize x,
-steps x)`, from the proven pieces. The **input layout is settled**:
-`encodeIn = W.encX` (the hypothesis witness's split-layout input, standing risk
-#1) at input regs `0..xWidth-1`; `s_x = 3 :: encodeRegs (encX x)`; the machine's
-initial tape is `[encodeTape (encX x ++ certState c)] = [s_x ++ cert]` with
-`cert = shiftReg (c.map bit) ++ [0,3]`. Order (probe-first, commit each green):
+C8-0…C8-3 are done, **every C8-4 gadget exists**, and **the front machine
+`M_Q` + the machine-level correctness iff are DONE & axiom-clean**
+(`Reductions/FrontMachine.lean`, 2026-07-20 — `MQ`, `MQ_sig`/`_tapes`/`_valid`,
+`MQ_accepts_of_accept` forward with explicit `MQbudget`, `MQ_no_reject_of_accepts`
+backward). What remains to finish `W_Q : PolyTimeComputableLang fQ`,
+`fQ x = (M_Q, s_x, maxSize x, steps x)`. The **input layout is settled**:
+`encodeIn = W.encX` (the split witness's input, standing risk #1) at input regs
+`0..xWidth-1`; `s_x = 3 :: encodeRegs (encX x)`; the machine tape is
+`[encodeTape (encX x ++ certState c)] = [s_x ++ cert]` with
+`cert = shiftReg (c.map bit) ++ [0,3]`. Three remaining pieces (probe-first,
+commit each green — pick either 1 or 2 to lead; they are independent):
 
-1. **The program (all gadgets built — this step is now WIRING).** Reg 2 =
-   `FrontPieces.emitRegs cnt scan tflg dst (List.range xWidth)` (⟹
-   `encSyms (3 :: encodeRegs (encX x))`); reg 1 =
-   `emitConst 1 (encSyms (flattenTM M_Q))` (per-`Q` constant); the monomial
-   argument `nReg := 1^(State.size (encX x))` =
-   `FrontPieces.tallyCells cnt nReg (List.range xWidth)` (R2, DONE); regs 3/4 =
-   `unaryMonomial c k d cnt base tmp nReg dst` reading `nReg` (F6). The one
-   discipline that remains:
-
+1. **The abstract correctness `FlatSingleTMGenNP (fQ x) ↔ Q x`** (the conceptual
+   bridge; do this FIRST — it validates that `FrontMachine`'s hypotheses match
+   what `InNPWitnessLangFreeSplit` supplies). `M_Q := MQ W.verifier.c
+   W.verifier.regBound W.xWidth`; `rejectState`/`acceptState` come from
+   `FrontMachine`. Yes-direction: `Q x → ∃ c, rel x c` (`rel_correct`, the
+   `polyCertRel` cert bound gives `|c| ≤ certBound`), `rel x c → verifier accepts
+   (x,c)` (`verifier.decides`), then `MQ_accepts_of_accept` with `sx := encX x`,
+   `creg := c.map bit`, `haccept` from `decides` + `encodeIn_eq` (`verifier.encodeIn
+   (x,c) = encX x ++ certState c`, so `sx ++ [creg] = verifier.encodeIn (x,c)`);
+   the yes-cert is `shiftReg creg ++ [0,3]`, `list_ofFlatType 4` immediate,
+   `|cert| = |c| + 2`. No-direction: from `∃ cert, … ∧ acceptsFlatTM M_Q [s_x ++
+   cert] steps`, `MQ_no_reject_of_accepts` gives `cert = shiftReg creg ++ [0,3]`
+   and `(c.eval (sx++[creg])).get 0 ≠ [0]`; combine with `decides`' totality
+   (`isAccept ∨ isReject`, i.e. `get 0 ∈ {[1],[0]}`) to get accept, decode
+   `creg` to `c : List Bool` (`creg` bit ⟹ `c := creg.map (·==1)`,
+   `certState c` register-equal), `rel x c`, `Q x` via `rel_correct.sound`.
+   **F6 monomials**: `maxSize x`/`steps x` are concrete `c·(n+1)^k+d` overshooting
+   `certBound + 2` and `MQbudget W.verifier.c regBound (encX x ++ [creg])`
+   respectively (extract constants classically from the `inOPoly` bounds once per
+   `Q`; `unaryMonomial` materializes them). ⚠ `w+1 ≤ regBound` (the backward
+   frame hyp) holds because `w = xWidth` and `encX x ++ [creg]` has `w+1`
+   registers `≤ verifier.regBound` (via `width_le` on the pair layout).
+2. **The reduction program** `Cmd` emitting `fQ x`'s four registers (WIRING — all
+   gadgets built). Reg 1 = `emitConst 1 (encSyms (flattenTM M_Q))` (per-`Q`
+   constant); reg 2 = `emitRegs cnt scan tflg dst (List.range xWidth)`
+   (⟹ `encSyms s_x`); `nReg := tallyCells cnt nReg (List.range xWidth)`
+   (= `1^(State.size (encX x))`, R2); regs 3/4 = `unaryMonomial … nReg …` (F6).
    - **⚠ R1 (register-map discipline, NOT new code).** `emitRegs`/`tallyCells`
-     WRITE their `dst` while still READING the source regs `0..xWidth-1`, and
-     reg 2 is itself a source when `xWidth ≥ 3`. **Fix: emit `s_x` and `nReg`
-     into scratch regs `≥ xWidth`, read all input regs first, and only at the
-     END move scratch→reg 2, emit reg 1, regs 3/4, and `clear` reg 0.** Pick
-     scratch strictly above `max headRegBound xWidth`. Do NOT write any register
-     the emitters still read. Both gadgets are register-generic for exactly
-     this; `C8FrontProbe` §4 already demonstrates the pattern on the toy front.
-2. **The machine `M_Q` + correctness iff**: the 2026-07-05 assembly notes
-   below are the plan (forward via `formatCheck_run` → `composeFlatTM_run` →
-   `demoteHalt_run_accept`; backward via `certOKB` split). This is the bulk
-   of the session(s) — likely worth splitting machine-iff and witness-fields
-   across two sessions. Extend `C8FrontProbe` with a **real compiled-verifier
-   `#eval`** of `acceptsFlatTM M_Q [s_x ++ cert] steps` (yes+no cert) BEFORE
-   proving the iff — the whole machine story is cheaply falsifiable.
-3. **The witness fields**: run lemma from the `FrontPieces` `_run` lemmas
-   (`emitRegs_run`/`tallyCells_run`/`emitConst_run`/`unaryMonomial_run` are
-   get-exact, so `computes` falls out register-by-register); cost from the
-   exact-shape cost conjuncts (`monomialCost`/`powCost_le`/`tallyCells_cost`
-   are the `inOPoly` inputs; **`emitRegs` STILL needs a cost bound** — add it
-   alongside, quadratic-in-`|encX x|`, using `tallyCells_cost`'s foldl-cost
-   pattern as the template); `enc_bit` against `headEncodeIn_bitState`.
-4. ⚠ Risks to check before coding (standing risk #1/#3): `W_Q.encodeIn`
-   MUST be the hypothesis witness's `encX` layout verbatim (the only honest
-   access to `x`), and the no-instance/garbage-cert direction needs the
-   guard story of F5 — re-read findings F1–F6.
+     WRITE `dst` while READING source regs `0..xWidth-1` (reg 2 is a source when
+     `xWidth ≥ 3`). Emit `s_x`/`nReg` into scratch `≥ max headRegBound xWidth`,
+     read all inputs first, then move scratch→reg 2, emit reg 1 and regs 3/4,
+     `clear` reg 0. `C8FrontProbe` §4 demonstrates the pattern.
+   - **`emitRegs` STILL needs a cost bound** (quadratic-in-`|encX x|`, copy
+     `tallyCells_cost`'s foldl-cost template).
+3. **The `PolyTimeComputableLang` witness fields**: `computes` from the
+   `FrontPieces` `_run` lemmas (get-exact, register-by-register) + piece 1's iff;
+   cost from `monomialCost`/`powCost_le`/`tallyCells_cost` + the new `emitRegs`
+   cost; `enc_bit` against `headEncodeIn_bitState`; then a fourth `SeamData`/
+   `comp` onto the S1 free witness (C8-5, waits on S1 existing).
+4. ⚠ Standing risks #1/#3: `W_Q.encodeIn` MUST be `encX` verbatim; the
+   garbage-cert direction is `MQ_no_reject_of_accepts` (F5, DONE at the machine
+   level). Re-read F1–F6.
 
 Two self-contained size-bound bites remain (either stream, no design risk):
 **`cookTableau_size_bound`** (see the block before the top-down section) and
@@ -521,37 +562,10 @@ next to `cookTableau_size_bound` at the same degree 10). Closing either
 early de-risks the S1 cost ladder; a bottom-up session that finishes C8-4
 quickly should pick one up.
 
-**C8-4 assembly notes (recorded 2026-07-05, C8-2 session — read before
-building C8-4):**
-
-- **The machine**: `M_Q := composeFlatTM (formatCheckTM xWidth)
-  (AcceptHalt.demoteHalt (paddedBitDeciderTM c regBound) rejectState)
-  (xWidth + 6)` where `rejectState = 2 + (Compile regBound c).states +
-  (padRegsTM …).states` (accept is `1 + …`, from `paddedBitDecider_run`);
-  `rejectState`'s halt bit is discharged by `paddedBitDeciderTM_halt_shift`
-  at `i = 2`. Validity/tapes/sig lemmas for all three layers exist.
-- **Forward (yes ⇒ accepted)**: `formatCheck_run`/`formatCheck_traj` on
-  `encodeTape (encX x ++ certState c)` (via `encodeIn_eq`; the exit config
-  `([], 0, tape)` IS the `initFlatConfig` shape M₂ needs) →
-  `composeFlatTM_run` → `runFlatTM_first_halt` + `demoteHalt_run_accept`
-  on `paddedBitDecider_run`'s bare output. Budget: `2·|tape|+1 + 1 +
-  (padBudget + 1 + physStepBudget… + 3)` — the `steps x` monomial must
-  overshoot it (F6).
-- **Backward (accepted ⇒ yes)**: split the raw tape as `s_x ++ cert`
-  (`s_x = 3 :: encodeRegs (encX x)`), then case on `certOKB cert`:
-  - **bad**: `formatCheck_stuck` + `composeFlatTM_stuck_M1` ⇒ the composite
-    never halts ⇒ `acceptsFlatTM = false`, contradiction. (Note
-    `formatCheck_stuck`'s trajectory also gives `≠ exit` via
-    `formatCheck_halting_iff` — the only halt state IS the exit.)
-  - **good**: `certOKB_iff` + `encodeTape_certSplit` ⇒ tape
-    `= encodeTape (encX x ++ [creg])`; convert the bit-register `creg` to
-    `c : List Bool` (`certState c` is register-equal); if the verifier
-    rejects, `demoteHalt_run_reject` makes M₂ never halt and
-    `composeFlatTM_no_early_halt` (arbitrary `t₂`) kills the accept —
-    so the verifier accepted ⇒ `rel x c` ⇒ `Q x` via `rel_correct.sound`.
-- **Yes-instance cert**: `cert := shiftReg (c.map bit) ++ [0, 3]` — length
-  `|c| + 2`, so the `maxSize x` monomial must overshoot `certBound + 2`;
-  `list_ofFlatType 4 cert` is immediate (cells ≤ 3).
+**The machine + machine-iff are now BUILT** (`Reductions/FrontMachine.lean`,
+2026-07-20) — the 2026-07-05 forward/backward recipe is realized as
+`MQ_accepts_of_accept`/`MQ_no_reject_of_accepts`. Consume them as black boxes
+(piece 1 above); do not re-derive the compose/demote/format-check plumbing.
 
 **`FSAT → SAT` is DONE end-to-end (2026-07-16)**, **build health is DONE
 (2026-07-17)**, **C8-3 is DONE (2026-07-18-b)**, and **the whole S1
@@ -673,6 +687,21 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   is `State.size (encX x)` — the `unaryMonomial` argument `n`; cost
   `≤ 1 + Σ(2+|src|·5+|src|²)`, the foldl-cost template `emitRegs`'s missing cost
   bound should copy). All `[propext, Quot.sound]`; probe `C8FrontProbe` §6.
+- **The C8-4 front machine + machine-iff (2026-07-20,
+  `Reductions/FrontMachine.lean`, all axiom-clean — consume as black boxes for
+  the C8-4 witness's correctness field)**: `MQ c k w` (the accept-by-halting
+  front machine over an abstract verifier `Cmd`), `rejectState`/`acceptState`
+  (`+2`/`+1` shifted, `acceptState_ne_rejectState`), `M2` (the demoted decider);
+  the structural lemmas `MQ_sig`(= 4)/`MQ_tapes`(= 1)/`MQ_states`/`MQ_valid` +
+  `paddedBitDeciderTM_sig`/`M2_sig`/`_tapes`/`_valid` +
+  `paddedBitDeciderTM_halt_rejectState`; the **explicit budget** `MQbudget c k s`
+  (the F6 overshoot target); **forward** `MQ_accepts_of_accept` (verifier
+  accepts `sx++[creg]` ⇒ `M_Q` accepts `(3::encodeRegs sx)++(shiftReg creg++[0,3])`
+  for `steps ≥ MQbudget`) and **backward** `MQ_no_reject_of_accepts` (`M_Q`
+  accepts `(3::encodeRegs sx)++cert` ⇒ `cert = shiftReg creg++[0,3]` bit-valid ∧
+  `(c.eval (sx++[creg])).get 0 ≠ [0]`; frame hyp is the single `w+1 ≤ k`).
+  Probe `probes/C8MachineProbe.lean` (`#eval acceptsFlatTM M_Q` on yes/no/garbage
+  certs). Do NOT re-derive the compose/demote/format-check plumbing.
 - **The S1 cell-code algebra (2026-07-18-b, `Simulators/CookTableau.lean`)**:
   `hCell_val_lb`/`hCell_val_ub`, `tCell_ne_hCell`/`hCell_ne_bCell`/
   `tCell_ne_bCell`, `hCell_inj`/`tCell_inj` — the three disjoint code bands;
