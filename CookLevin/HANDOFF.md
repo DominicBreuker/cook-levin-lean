@@ -7,17 +7,19 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 STARTED** (2026-07-19-c: reg-2 emitter `FrontPieces.emitRegs` axiom-clean; two design risks R1/R2 surfaced, see C8-4 section) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4 regs 3/4 + machine `M_Q`** bottom-up)
+## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 IN PROGRESS** (2026-07-19-c: reg-2 emitter `FrontPieces.emitRegs`; 2026-07-19-d: the **R2 cell-counter `FrontPieces.tallyCells`** — `dst := 1^(Σ|input reg|)`, the monomial argument — landed axiom-clean, so **every C8-4 gadget now exists**; the design risk R1 is a register-map discipline, not new code) — next: **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down and **C8-4's machine `M_Q` + correctness iff** bottom-up)
 
-- **C8-4 (the `W_Q` assembly) is STARTED (2026-07-19-c).** The reg-2
-  input-string emitter is landed & axiom-clean: `FrontPieces.emitRegs`
-  (+ `emitRegs_run`) builds `encSyms (3 :: encodeRegs (encX x))` — the head
-  layout's reg-2 content — by folding `reencLoop`(`off=1`) over the input's
-  registers, plus `HeadLayout.encSyms_append` (the `encSyms` homomorphism).
-  Probe green (`probes/C8FrontProbe.lean` §5, incl. the split-tape law). **Two
-  design risks surfaced (see the C8-4 section) — resolve on paper before the
-  next assembly step.** Remaining for C8-4: the reg-3/4 monomial args, the
-  machine `M_Q` + correctness iff, the witness fields.
+- **C8-4 (the `W_Q` assembly) is IN PROGRESS — ALL GADGETS NOW EXIST.**
+  The reg-2 input-string emitter `FrontPieces.emitRegs` (2026-07-19-c) builds
+  `encSyms (3 :: encodeRegs (encX x))` — the head layout's reg-2 content — by
+  folding `reencLoop`(`off=1`); the reg-3/4 monomial arg `FrontPieces.tallyCells`
+  (2026-07-19-d, R2) builds `1^(Σ|input reg|)` = `State.size (encX x)` from the
+  bit registers (the `unaryMonomial` argument F6 needed); `emitConst`/
+  `unaryMonomial` do regs 1 and 3/4. All axiom-clean, probe green
+  (`probes/C8FrontProbe.lean` §1–6). **What's left for C8-4 is assembly, not
+  gadgets**: wire them (R1 register-map discipline), the machine `M_Q` +
+  correctness iff (the bulk — split across sessions), the witness fields, and
+  the `emitRegs` cost bound (mechanical; `tallyCells_cost` is the pattern).
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
   `[propext, Classical.choice, Quot.sound]`.
@@ -61,6 +63,21 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-19-d (bottom-up) — C8-4: the R2 cell-counter gadget landed &
+  axiom-clean (`Reductions/FrontPieces.lean`, build green 3389, probe §6
+  green).** `FrontPieces.tallyCells cnt dst srcs` emits
+  `1^(Σ_{src ∈ srcs} |State.get s src|)` — the input registers' total cell
+  count in unary — by folding one `tallyReg` (`forBnd`-bounded-by-`src`
+  appending one `1`/cell) per register into a cleared `dst`; sources survive
+  read-only, only `dst`/`cnt` touched (`tallyReg_run`/`tallyCells_run`, both
+  `[propext, Quot.sound]`). For `srcs = List.range xWidth` the count is exactly
+  `State.size (encX x)` (probe §6 checks this) — **the monomial argument `n`
+  that regs 3/4's `unaryMonomial` consumes (finding F6, risk R2)**. Cost bound
+  `tallyCells_cost` (`≤ 1 + Σ (2 + |src|·5 + |src|²)`, the `inOPoly` input for
+  the witness cost field) landed alongside. **This closes R2 — the one
+  genuinely-unbuilt C8-4 gadget; every piece the `W_Q` assembly needs now
+  exists.** Next bottom-up: the assembly itself (register map + machine `M_Q`
+  iff), NOT more gadgets — see the C8-4 section.
 - **2026-07-19-c (bottom-up) — C8-4 STARTED: the reg-2 input-string emitter
   landed & axiom-clean (`Reductions/FrontPieces.lean`, build green 3389, probe
   §5 green).** `emitRegs cnt scan tflg dst srcs` folds `reencLoop`(`off=1`) +
@@ -452,38 +469,32 @@ subsuming S2). **The answers to the three scoping questions:**
 
 ## NEXT BOTTOM-UP session — C8-4 (the `W_Q` assembly)
 
-C8-0…C8-3 are done; **the reg-2 emitter is done (2026-07-19-c)**. C8-4 assembles
-the per-`Q` front witness `W_Q : PolyTimeComputableLang fQ`, `fQ x = (M_Q, s_x,
-maxSize x, steps x)`, from the proven pieces. The **input layout is settled**:
+C8-0…C8-3 are done and **every C8-4 gadget now exists** (reg-2 emitter
+2026-07-19-c, R2 cell-counter 2026-07-19-d). C8-4 assembles the per-`Q` front
+witness `W_Q : PolyTimeComputableLang fQ`, `fQ x = (M_Q, s_x, maxSize x,
+steps x)`, from the proven pieces. The **input layout is settled**:
 `encodeIn = W.encX` (the hypothesis witness's split-layout input, standing risk
 #1) at input regs `0..xWidth-1`; `s_x = 3 :: encodeRegs (encX x)`; the machine's
 initial tape is `[encodeTape (encX x ++ certState c)] = [s_x ++ cert]` with
 `cert = shiftReg (c.map bit) ++ [0,3]`. Order (probe-first, commit each green):
 
-1. **The program.** DONE for reg 2: `FrontPieces.emitRegs cnt scan tflg dst
-   (List.range xWidth)` emits `encSyms (3 :: encodeRegs (encX x))` — feed it
-   the frozen `encX x` regs. Reg 1 = `emitConst 1 (encSyms (flattenTM M_Q))`
-   (per-`Q` constant). Regs 3/4 = `unaryMonomial` (F6). Remaining:
+1. **The program (all gadgets built — this step is now WIRING).** Reg 2 =
+   `FrontPieces.emitRegs cnt scan tflg dst (List.range xWidth)` (⟹
+   `encSyms (3 :: encodeRegs (encX x))`); reg 1 =
+   `emitConst 1 (encSyms (flattenTM M_Q))` (per-`Q` constant); the monomial
+   argument `nReg := 1^(State.size (encX x))` =
+   `FrontPieces.tallyCells cnt nReg (List.range xWidth)` (R2, DONE); regs 3/4 =
+   `unaryMonomial c k d cnt base tmp nReg dst` reading `nReg` (F6). The one
+   discipline that remains:
 
-   - **⚠ R1 (register collision).** `emitRegs` writes `dst` while `reencLoop`
-     still READS the source regs, and reg 2 (the intended output) is itself a
-     source when `xWidth ≥ 3`. **Fix: emit `s_x` into a scratch reg `≥ xWidth`,
-     read all input regs first, and only at the END move scratch→reg 2, emit
-     reg 1, regs 3/4, and `clear` reg 0.** Pick scratch strictly above
-     `max headRegBound xWidth`. Do NOT emit into any register the loop still
-     reads. (`emitRegs` is already register-generic for exactly this.)
-   - **⚠ R2 (monomial-argument materialization).** `unaryMonomial c k d …`
-     consumes `src = 1^n`, but the program's input is bit registers, not a
-     unary number. **Decide what `n` is** — the natural choice is a unary
-     measure the program can compute from the input (e.g. `1^(State.size
-     (encX x))` or `1^(tape length)`), built by a scan/tally `Cmd` (unary
-     count of the input's cells). The hypothesis's `encBound`/`dBound` are
-     polynomials in `encodable.size x`, and `encX_size` bounds
-     `State.size (encX x) ≤ dBound (size x)`; pick `n := State.size (encX x)`
-     (or a cheap over-measure) so `maxSize x = c·(n+1)^k + d` overshoots the
-     real `certBound`+2 and `steps x` overshoots the run budget (F6). This
-     needs a NEW tiny piece: a unary-cell-counter emitter (`1^(total input
-     cells)`), probe it first. This is the one genuinely-unbuilt gadget.
+   - **⚠ R1 (register-map discipline, NOT new code).** `emitRegs`/`tallyCells`
+     WRITE their `dst` while still READING the source regs `0..xWidth-1`, and
+     reg 2 is itself a source when `xWidth ≥ 3`. **Fix: emit `s_x` and `nReg`
+     into scratch regs `≥ xWidth`, read all input regs first, and only at the
+     END move scratch→reg 2, emit reg 1, regs 3/4, and `clear` reg 0.** Pick
+     scratch strictly above `max headRegBound xWidth`. Do NOT write any register
+     the emitters still read. Both gadgets are register-generic for exactly
+     this; `C8FrontProbe` §4 already demonstrates the pattern on the toy front.
 2. **The machine `M_Q` + correctness iff**: the 2026-07-05 assembly notes
    below are the plan (forward via `formatCheck_run` → `composeFlatTM_run` →
    `demoteHalt_run_accept`; backward via `certOKB` split). This is the bulk
@@ -492,11 +503,12 @@ initial tape is `[encodeTape (encX x ++ certState c)] = [s_x ++ cert]` with
    `#eval`** of `acceptsFlatTM M_Q [s_x ++ cert] steps` (yes+no cert) BEFORE
    proving the iff — the whole machine story is cheaply falsifiable.
 3. **The witness fields**: run lemma from the `FrontPieces` `_run` lemmas
-   (`emitRegs_run`/`emitConst_run`/`unaryMonomial_run` are get-exact, so
-   `computes` falls out register-by-register); cost from the exact-shape cost
-   conjuncts (`monomialCost`/`powCost_le` are the `inOPoly` inputs; `emitRegs`
-   still needs a cost bound — add it alongside, quadratic-in-`|encX x|`);
-   `enc_bit` against `headEncodeIn_bitState`.
+   (`emitRegs_run`/`tallyCells_run`/`emitConst_run`/`unaryMonomial_run` are
+   get-exact, so `computes` falls out register-by-register); cost from the
+   exact-shape cost conjuncts (`monomialCost`/`powCost_le`/`tallyCells_cost`
+   are the `inOPoly` inputs; **`emitRegs` STILL needs a cost bound** — add it
+   alongside, quadratic-in-`|encX x|`, using `tallyCells_cost`'s foldl-cost
+   pattern as the template); `enc_bit` against `headEncodeIn_bitState`.
 4. ⚠ Risks to check before coding (standing risk #1/#3): `W_Q.encodeIn`
    MUST be the hypothesis witness's `encX` layout verbatim (the only honest
    access to `x`), and the no-instance/garbage-cert direction needs the
@@ -652,7 +664,15 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   `dst := encSyms (3 :: encodeRegs (srcs.map get))`, `src` regs intact, only
   `dst`/`scan`/`tflg`/`cnt` touched; NO cost bound yet — add one in C8-4) and
   `HeadLayout.encSyms_append` (encSyms distributes over `++` — the closer for
-  every `encSyms`-of-a-concatenation goal).
+  every `encSyms`-of-a-concatenation goal). **Added 2026-07-19-d**:
+  `tallyReg`/`tallyReg_run` (single register: `dst := dst ++ 1^|src|`,
+  `forBnd`-bounded-by-`src` appending one `1`/cell, cost `≤ 1+|src|·5+|src|²`
+  via `cost_constLoop_le`) and `tallyCells`/`tallyCells_run`/`tallyCells_cost`
+  (the R2 input-cell counter: `dst := 1^(Σ_{src ∈ srcs}|get src|)`, sources
+  read-only, only `dst`/`cnt` touched; for `srcs = List.range xWidth` the count
+  is `State.size (encX x)` — the `unaryMonomial` argument `n`; cost
+  `≤ 1 + Σ(2+|src|·5+|src|²)`, the foldl-cost template `emitRegs`'s missing cost
+  bound should copy). All `[propext, Quot.sound]`; probe `C8FrontProbe` §6.
 - **The S1 cell-code algebra (2026-07-18-b, `Simulators/CookTableau.lean`)**:
   `hCell_val_lb`/`hCell_val_ub`, `tCell_ne_hCell`/`hCell_ne_bCell`/
   `tCell_ne_bCell`, `hCell_inj`/`tCell_inj` — the three disjoint code bands;

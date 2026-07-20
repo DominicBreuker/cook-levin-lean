@@ -783,4 +783,234 @@ theorem powCost_le (m a k : Nat) (h1 : 1 ≤ m) :
             omega
         _ = (a + 1) + (k + 1) * (13 * Y) := by ring
 
+/-! ## Piece 4 — the input-cell counter (the monomial argument, R2/F6)
+
+`unaryMonomial` (regs 3/4) consumes `src = 1^n`, but the program's input is bit
+registers, not a unary number. The natural argument is a unary measure of the
+input the program can compute cheaply: the **total number of cells** across the
+input registers. `tallyCells` emits exactly `1^(Σ |input reg|)`; for `srcs =
+List.range xWidth` (the input's register indices) that is `State.size (encX x)`
+— the split-layout input's aggregate size — the monomial argument `n` the C8-4
+`maxSize x`/`steps x` registers feed into `unaryMonomial`. One `forBnd` per
+register (bounded by that register's length, appending one `1` per cell)
+accumulating into a cleared `dst`; every source is read-only, only `dst`/`cnt`
+change.
+
+Register-generic like every other piece: `cnt`/`dst` are scratch and MUST be
+distinct from every source (`cnt` is the loop counter — reusing a source would
+corrupt a later register's length read; `dst` is the accumulator). C8-4 owns the
+register map. ⚠ this is the piece surfaced as "R2 — the one genuinely-unbuilt
+gadget" (2026-07-19-c). The choice `n := State.size (encX x)` is settled here;
+whether that measure over-shoots the hypothesis's abstract `certBound`/run budget
+is the C8-4 machine-iff session's obligation (`encX_size` bounds
+`State.size (encX x)`), NOT this gadget's. -/
+
+/-- Append `1^|src|` to `dst`: a `forBnd` bounded by `src` (read-only) appending
+one `1` per cell, through the scratch counter `cnt`. -/
+def tallyReg (cnt src dst : Var) : Cmd :=
+  Cmd.forBnd cnt src (Cmd.op (.appendOne dst))
+
+/-- **The input-cell counter** (C8-3 piece 4): `dst := 1^(Σ_{src ∈ srcs}
+|State.get s src|)` — the input registers' total cell count in unary. One
+`tallyReg` per source, accumulating into a cleared `dst`. -/
+def tallyCells (cnt dst : Var) (srcs : List Var) : Cmd :=
+  srcs.foldl (fun c src => c ;; tallyReg cnt src dst) (Cmd.op (.clear dst))
+
+/-- **`tallyReg` is correct**: appends exactly `1^|src|` to `dst`; `src` (the
+loop bound) survives, only `dst`/`cnt` change; cost `≤ 1 + |src|·5 + |src|²`. -/
+theorem tallyReg_run (cnt src dst : Var) (s : State)
+    (hcd : cnt ≠ dst) :
+    State.get ((tallyReg cnt src dst).eval s) dst
+        = State.get s dst ++ List.replicate (State.get s src).length 1
+    ∧ (∀ r : Var, r ≠ dst → r ≠ cnt →
+        State.get ((tallyReg cnt src dst).eval s) r = State.get s r)
+    ∧ (tallyReg cnt src dst).cost s
+        ≤ 1 + (State.get s src).length * 5
+            + (State.get s src).length * (State.get s src).length := by
+  set M : Nat → State → Prop := fun i st =>
+    State.get st dst = State.get s dst ++ List.replicate i 1
+    ∧ (∀ r : Var, r ≠ dst → r ≠ cnt → State.get st r = State.get s r) with hMdef
+  have h0 : M 0 s := ⟨by rw [List.replicate, List.append_nil], fun r _ _ => rfl⟩
+  have hstep : ∀ i st, i < (State.get s src).length → M i st →
+      M (i + 1) ((Cmd.op (.appendOne dst)).eval (st.set cnt (List.replicate i 1))) := by
+    intro i st _ hM
+    obtain ⟨hDi, hfr⟩ := hM
+    set w := st.set cnt (List.replicate i 1) with hw
+    refine ⟨?_, ?_⟩
+    · rw [Cmd.eval_op, Op.eval, State.get_set_eq, hw,
+        State.get_set_ne _ _ _ _ (Ne.symm hcd), hDi, List.append_assoc,
+        ← List.replicate_succ']
+    · intro r hr1 hr2
+      rw [Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ hr1, hw,
+        State.get_set_ne _ _ _ _ hr2]
+      exact hfr r hr1 hr2
+  have hInv := Cmd.foldlState_range_induct (Cmd.op (.appendOne dst)) cnt
+    (State.get s src).length s M h0 hstep
+  refine ⟨?_, ?_, ?_⟩
+  · rw [tallyReg, Cmd.eval_forBnd]; exact hInv.1
+  · intro r h1 h2; rw [tallyReg, Cmd.eval_forBnd]; exact hInv.2 r h1 h2
+  · rw [tallyReg]
+    simpa [Cmd.flatK] using cost_constLoop_le cnt src (Cmd.op (.appendOne dst))
+      rfl rfl s (State.get s src).length rfl
+
+/-- The `foldl` induction behind `tallyCells`: from any seed `c0`, the loop
+appends `1^(Σ |source|)` (source lengths read at `c0`'s exit) to whatever `c0`
+left on `dst`, and leaves every non-scratch register at `c0`'s value. -/
+private theorem tallyCells_go (cnt dst : Var) :
+    ∀ (srcs : List Var) (c0 : Cmd) (s : State),
+      cnt ≠ dst →
+      (∀ src ∈ srcs, src ≠ dst ∧ src ≠ cnt) →
+      State.get ((srcs.foldl
+          (fun c src => c ;; tallyReg cnt src dst) c0).eval s) dst
+        = State.get (c0.eval s) dst
+            ++ List.replicate
+                ((srcs.map (fun src => (State.get (c0.eval s) src).length)).sum) 1
+      ∧ (∀ r : Var, r ≠ dst → r ≠ cnt →
+          State.get ((srcs.foldl
+            (fun c src => c ;; tallyReg cnt src dst) c0).eval s) r
+            = State.get (c0.eval s) r) := by
+  intro srcs
+  induction srcs with
+  | nil =>
+      intro c0 s _ _
+      refine ⟨?_, fun r _ _ => rfl⟩
+      simp
+  | cons src rest ih =>
+      intro c0 s hcd hdist
+      obtain ⟨hsrc_d, hsrc_c⟩ := hdist src (List.mem_cons_self ..)
+      set c1 : Cmd := c0 ;; tallyReg cnt src dst with hc1
+      have hfold : (src :: rest).foldl
+          (fun c src => c ;; tallyReg cnt src dst) c0
+          = rest.foldl (fun c src => c ;; tallyReg cnt src dst) c1 := by
+        rw [List.foldl_cons]
+      set s0 : State := c0.eval s with hs0
+      obtain ⟨hR1, hR2, _⟩ := tallyReg_run cnt src dst s0 hcd
+      have hc1eval : c1.eval s = (tallyReg cnt src dst).eval s0 := by
+        rw [hc1, Cmd.eval_seq, ← hs0]
+      have hc1dst : State.get (c1.eval s) dst
+          = State.get s0 dst ++ List.replicate (State.get s0 src).length 1 := by
+        rw [hc1eval, hR1]
+      have hc1frame : ∀ r : Var, r ≠ dst → r ≠ cnt →
+          State.get (c1.eval s) r = State.get s0 r := by
+        intro r h1 h2; rw [hc1eval, hR2 r h1 h2]
+      obtain ⟨hIH1, hIH2⟩ := ih c1 s hcd
+        (fun s' hs' => hdist s' (List.mem_cons_of_mem _ hs'))
+      have hmap : rest.map (fun s' => (State.get (c1.eval s) s').length)
+          = rest.map (fun s' => (State.get s0 s').length) := by
+        apply List.map_congr_left
+        intro s' hs'
+        obtain ⟨hd, hc⟩ := hdist s' (List.mem_cons_of_mem _ hs')
+        rw [hc1frame s' hd hc]
+      refine ⟨?_, ?_⟩
+      · rw [hfold, hIH1, hc1dst, hmap, List.map_cons, List.sum_cons,
+          List.append_assoc, ← List.replicate_add]
+      · intro r h1 h2
+        rw [hfold, hIH2 r h1 h2, hc1frame r h1 h2]
+
+/-- **`tallyCells` is correct**: `dst := 1^(Σ_{src ∈ srcs} |State.get s src|)`
+— the input registers' total cell count in unary. Sources survive (read-only),
+only `dst`/`cnt` change. Requires `cnt`/`dst` distinct from every source. -/
+theorem tallyCells_run (cnt dst : Var) (srcs : List Var) (s : State)
+    (hcd : cnt ≠ dst)
+    (hdist : ∀ src ∈ srcs, src ≠ dst ∧ src ≠ cnt) :
+    State.get ((tallyCells cnt dst srcs).eval s) dst
+        = List.replicate ((srcs.map (fun src => (State.get s src).length)).sum) 1
+    ∧ (∀ r : Var, r ≠ dst → r ≠ cnt →
+        State.get ((tallyCells cnt dst srcs).eval s) r = State.get s r) := by
+  have hclear : (Cmd.op (.clear dst)).eval s = s.set dst [] := rfl
+  obtain ⟨hG1, hG2⟩ := tallyCells_go cnt dst srcs (Cmd.op (.clear dst)) s hcd hdist
+  have hc0dst : State.get ((Cmd.op (.clear dst)).eval s) dst = [] := by
+    rw [hclear, State.get_set_eq]
+  have hc0frame : ∀ r : Var, r ≠ dst →
+      State.get ((Cmd.op (.clear dst)).eval s) r = State.get s r := by
+    intro r hr; rw [hclear, State.get_set_ne _ _ _ _ hr]
+  have hmap : srcs.map (fun src => (State.get ((Cmd.op (.clear dst)).eval s) src).length)
+      = srcs.map (fun src => (State.get s src).length) := by
+    apply List.map_congr_left
+    intro src hs'
+    rw [hc0frame src (hdist src hs').1]
+  refine ⟨?_, ?_⟩
+  · rw [tallyCells, hG1, hc0dst, hmap, List.nil_append]
+  · intro r h1 h2
+    rw [tallyCells, hG2 r h1 h2, hc0frame r h1]
+
+/-- The per-register cost contribution of the `tallyCells` fold: the seq node
+(`1`) plus `tallyReg`'s `1 + L·5 + L²` at that register's length `L`. -/
+def tallyRegCost (L : Nat) : Nat := 2 + L * 5 + L * L
+
+/-- The `foldl` cost induction behind `tallyCells_cost`. -/
+private theorem tallyCells_cost_go (cnt dst : Var) :
+    ∀ (srcs : List Var) (c0 : Cmd) (s : State),
+      cnt ≠ dst →
+      (∀ src ∈ srcs, src ≠ dst ∧ src ≠ cnt) →
+      (srcs.foldl (fun c src => c ;; tallyReg cnt src dst) c0).cost s
+        ≤ c0.cost s
+          + (srcs.map (fun src => tallyRegCost (State.get (c0.eval s) src).length)).sum := by
+  intro srcs
+  induction srcs with
+  | nil => intro c0 s _ _; simp
+  | cons src rest ih =>
+      intro c0 s hcd hdist
+      obtain ⟨hsrc_d, hsrc_c⟩ := hdist src (List.mem_cons_self ..)
+      set c1 : Cmd := c0 ;; tallyReg cnt src dst with hc1
+      have hfold : (src :: rest).foldl
+          (fun c src => c ;; tallyReg cnt src dst) c0
+          = rest.foldl (fun c src => c ;; tallyReg cnt src dst) c1 := by
+        rw [List.foldl_cons]
+      set s0 : State := c0.eval s with hs0
+      obtain ⟨_, hR2, hR3⟩ := tallyReg_run cnt src dst s0 hcd
+      set L := (State.get s0 src).length with hL
+      have hc1eval : c1.eval s = (tallyReg cnt src dst).eval s0 := by
+        rw [hc1, Cmd.eval_seq, ← hs0]
+      have hc1cost : c1.cost s ≤ c0.cost s + tallyRegCost L := by
+        rw [hc1, Cmd.cost_seq, ← hs0]
+        unfold tallyRegCost
+        generalize L * 5 = A at hR3 ⊢
+        generalize L * L = B at hR3 ⊢
+        omega
+      have hc1frame : ∀ r : Var, r ≠ dst → r ≠ cnt →
+          State.get (c1.eval s) r = State.get s0 r := by
+        intro r h1 h2; rw [hc1eval, hR2 r h1 h2]
+      have hmap : rest.map (fun s' => tallyRegCost (State.get (c1.eval s) s').length)
+          = rest.map (fun s' => tallyRegCost (State.get s0 s').length) := by
+        apply List.map_congr_left
+        intro s' hs'
+        obtain ⟨hd, hc⟩ := hdist s' (List.mem_cons_of_mem _ hs')
+        rw [hc1frame s' hd hc]
+      have hIH := ih c1 s hcd (fun s' hs' => hdist s' (List.mem_cons_of_mem _ hs'))
+      rw [hfold]
+      calc (rest.foldl (fun c src => c ;; tallyReg cnt src dst) c1).cost s
+          ≤ c1.cost s
+              + (rest.map (fun s' => tallyRegCost (State.get (c1.eval s) s').length)).sum :=
+            hIH
+        _ = c1.cost s
+              + (rest.map (fun s' => tallyRegCost (State.get s0 s').length)).sum := by
+            rw [hmap]
+        _ ≤ (c0.cost s + tallyRegCost L)
+              + (rest.map (fun s' => tallyRegCost (State.get s0 s').length)).sum :=
+            Nat.add_le_add_right hc1cost _
+        _ = c0.cost s
+              + ((src :: rest).map (fun s' => tallyRegCost (State.get s0 s').length)).sum := by
+            rw [List.map_cons, List.sum_cons, ← hL, Nat.add_assoc]
+
+/-- **`tallyCells` cost**: `≤ 1 + Σ_{src ∈ srcs} (2 + |src|·5 + |src|²)` — the
+seed `clear` (`1`) plus, per register, the seq node and its cell-loop cost. A
+polynomial in the input cell counts (the `inOPoly` input for the C8-4 witness's
+cost field). -/
+theorem tallyCells_cost (cnt dst : Var) (srcs : List Var) (s : State)
+    (hcd : cnt ≠ dst)
+    (hdist : ∀ src ∈ srcs, src ≠ dst ∧ src ≠ cnt) :
+    (tallyCells cnt dst srcs).cost s
+        ≤ 1 + (srcs.map (fun src => tallyRegCost (State.get s src).length)).sum := by
+  have hc0cost : (Cmd.op (.clear dst)).cost s = 1 := rfl
+  have hmap : srcs.map (fun src => tallyRegCost (State.get ((Cmd.op (.clear dst)).eval s) src).length)
+      = srcs.map (fun src => tallyRegCost (State.get s src).length) := by
+    apply List.map_congr_left
+    intro src hs'
+    have : (Cmd.op (.clear dst)).eval s = s.set dst [] := rfl
+    rw [this, State.get_set_ne _ _ _ _ (hdist src hs').1]
+  have h := tallyCells_cost_go cnt dst srcs (Cmd.op (.clear dst)) s hcd hdist
+  rw [hc0cost, hmap] at h
+  rw [tallyCells]; exact h
+
 end FrontPieces
