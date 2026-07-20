@@ -237,4 +237,121 @@ theorem MQ_accepts_of_accept (c : Cmd) (k w : Nat) (sx : State) (creg : List Nat
     rw [this]; exact hext
   rw [hexec]; exact hhaltMQ
 
+/-! ## Backward: `M_Q` accepts ⇒ cert grammar-valid ∧ verifier does not reject
+
+The certificate register width is a constant (`w + 1` registers), so the frame
+hypothesis is the single `w + 1 ≤ k`. The output is stated as `≠ [0]` (the
+verifier does not *reject* the decoded state); the witness combines this with
+its `decides` totality (`get 0 ∈ {[0], [1]}`) to conclude acceptance. -/
+
+/-- From an accepting `acceptsFlatTM`, recover the halting run of `M_Q` from its
+initial configuration. -/
+private theorem accepts_run (c : Cmd) (k w : Nat) (tape : List Nat) (steps : Nat)
+    (hacc : acceptsFlatTM (MQ c k w) [tape] steps = true) :
+    ∃ cfg, runFlatTM steps (MQ c k w) ⟨0, [([], 0, tape)]⟩ = some cfg ∧
+      haltingStateReached (MQ c k w) cfg = true := by
+  obtain ⟨cfg, hexec, hhaltcfg⟩ := acceptsFlatTM_eq_true_iff.mp hacc
+  by_cases hvalid : isValidFlatTapes (MQ c k w) [tape] = true
+  · rw [execFlatTM_eq_some_runFlatTM hvalid] at hexec
+    have hcfg0 : initFlatConfig (MQ c k w) [tape] = ⟨0, [([], 0, tape)]⟩ := by
+      show (⟨(MQ c k w).start, [([], 0, tape)]⟩ : FlatTMConfig) = ⟨0, [([], 0, tape)]⟩
+      rw [MQ, composeFlatTM_start, formatCheckTM_start]
+    rw [hcfg0] at hexec
+    exact ⟨cfg, hexec, hhaltcfg⟩
+  · rw [execFlatTM, if_neg hvalid] at hexec; exact absurd hexec (by simp)
+
+theorem MQ_no_reject_of_accepts (c : Cmd) (k w : Nat) (sx : State) (cert : List Nat)
+    (steps : Nat)
+    (hbitsx : Compile.BitState sx)
+    (hlen : sx.length = w)
+    (hwk : w + 1 ≤ k)
+    (huses : Cmd.UsesBelow c k)
+    (hacc : acceptsFlatTM (MQ c k w)
+      [(3 :: Compile.encodeRegs sx) ++ cert] steps = true) :
+    ∃ creg, (∀ b ∈ creg, b ≤ 1) ∧ cert = Compile.shiftReg creg ++ [0, 3] ∧
+      (c.eval (sx ++ [creg])).get 0 ≠ [0] := by
+  set tape : List Nat := (3 :: Compile.encodeRegs sx) ++ cert with htape
+  obtain ⟨cfg, hrunMQ, hhaltcfg⟩ := accepts_run c k w tape steps hacc
+  set cfg0 : FlatTMConfig := ⟨0, [([], 0, tape)]⟩ with hcfg0
+  have hcfg0_lt : cfg0.state_idx < (formatCheckTM w).states := by
+    rw [hcfg0]; show (0 : Nat) < (formatCheckTM w).states; rw [formatCheckTM_states]; omega
+  by_cases hgood : certOKB cert = true
+  · -- Grammar-valid: extract the bit register, then rule out reject.
+    obtain ⟨creg, hcregbit, hcerteq⟩ := (certOKB_iff cert).mp hgood
+    refine ⟨creg, hcregbit, hcerteq, ?_⟩
+    intro hreject
+    -- The decoded state and its properties.
+    set s : State := sx ++ [creg] with hs
+    have hbits : Compile.BitState s := by
+      rw [hs]; intro reg hreg x hx
+      rcases List.mem_append.1 hreg with hreg | hreg
+      · exact hbitsx reg hreg x hx
+      · rw [List.mem_singleton] at hreg; subst hreg; exact hcregbit x hx
+    have hlens : s.length = w + 1 := by rw [hs, List.length_append, hlen]; rfl
+    have hwle : s.length ≤ k := by rw [hlens]; exact hwk
+    have htape_s : tape = Compile.encodeTape s := by
+      rw [htape, hcerteq, hs, encodeTape_certSplit]
+    -- Phase 2 (b = 0): the padded decider reaches the reject state.
+    obtain ⟨cfgr, hrunr, hhaltr, hstater⟩ :=
+      Compile.paddedBitDecider_run c s 0 k hbits hwle huses (Or.inl rfl) hreject
+    have hstater' : cfgr.state_idx = rejectState c k := by rw [hstater, rejectState]; rfl
+    -- The wrapped machine parks (never halts) from its start.
+    obtain ⟨t0, _ht0, hrunr0, htrajr0⟩ :=
+      runFlatTM_first_halt (Compile.paddedBitDeciderTM c k) _
+        (initFlatConfig (Compile.paddedBitDeciderTM c k) [Compile.encodeTape s]) cfgr hrunr hhaltr
+    have hM2park := demoteHalt_run_reject (Compile.paddedBitDeciderTM c k) (rejectState c k)
+      hrunr0 htrajr0 hstater' (paddedBitDeciderTM_halt_rejectState c k)
+    -- Phase 1: format check runs to the exit.
+    have hrun1 : runFlatTM (2 * (Compile.encodeTape s).length + 1) (formatCheckTM w) cfg0
+        = some ⟨w + 6, [([], 0, Compile.encodeTape s)]⟩ := by
+      rw [hcfg0, htape_s]; exact formatCheck_run w s hbits hlens
+    have htraj1 : ∀ kk, kk < 2 * (Compile.encodeTape s).length + 1 → ∀ ck,
+        runFlatTM kk (formatCheckTM w) cfg0 = some ck →
+          ck.state_idx ≠ w + 6 ∧ haltingStateReached (formatCheckTM w) ck = false := by
+      rw [hcfg0, htape_s]; exact formatCheck_traj w s hbits hlens
+    -- M₂ never halts (transport the park to `M2`'s start config).
+    have htraj2 : ∀ j, j < steps + 1 → ∀ ck,
+        runFlatTM j (M2 c k) (⟨(M2 c k).start, [([], 0, Compile.encodeTape s)]⟩ : FlatTMConfig)
+            = some ck →
+          haltingStateReached (M2 c k) ck = false := by
+      intro j _ ck hck
+      -- `(M2 c k).start = (paddedBitDeciderTM c k).start` and `initFlatConfig` are defeq.
+      exact hM2park j ck hck
+    have hnohalt := composeFlatTM_no_early_halt (M₁ := formatCheckTM w) (M₂ := M2 c k)
+      (exit := w + 6) (formatCheckTM_valid w) (M2_valid c k)
+      (by rw [formatCheckTM_states]; omega)
+      cfg0 hcfg0_lt [] 0 (Compile.encodeTape s) (sym_bound_encodeTape c k w s hbits)
+      (t₁ := 2 * (Compile.encodeTape s).length + 1) (t₂ := steps + 1)
+      hrun1 htraj1 htraj2
+    have hsteps_lt : steps < 2 * (Compile.encodeTape s).length + 1 + 1 + (steps + 1) := by omega
+    have hfalse : haltingStateReached (MQ c k w) cfg = false := by
+      rw [MQ]
+      have hrunMQ' : runFlatTM steps (composeFlatTM (formatCheckTM w) (M2 c k) (w + 6)) cfg0
+          = some cfg := by rw [← MQ]; exact hrunMQ
+      exact hnohalt steps hsteps_lt cfg hrunMQ'
+    rw [hfalse] at hhaltcfg; exact absurd hhaltcfg (by simp)
+  · -- Grammar-invalid: the format check sticks, so `M_Q` never halts.
+    rw [Bool.not_eq_true] at hgood
+    have hstuck := formatCheck_stuck w sx hbitsx hlen cert hgood
+    have hcfg0FC : (initFlatConfig (formatCheckTM w) [(3 :: Compile.encodeRegs sx) ++ cert])
+        = cfg0 := by
+      rw [hcfg0, htape]
+      show (⟨(formatCheckTM w).start, [([], 0, (3 :: Compile.encodeRegs sx) ++ cert)]⟩
+        : FlatTMConfig) = ⟨0, [([], 0, (3 :: Compile.encodeRegs sx) ++ cert)]⟩
+      rw [formatCheckTM_start]
+    have htraj1 : ∀ kk ck, runFlatTM kk (formatCheckTM w) cfg0 = some ck →
+        ck.state_idx ≠ w + 6 ∧ haltingStateReached (formatCheckTM w) ck = false := by
+      intro kk ck hck
+      have hfalse := hstuck kk ck (by rw [hcfg0FC]; exact hck)
+      refine ⟨fun heq => ?_, hfalse⟩
+      rw [(formatCheck_halting_iff w ck).mpr heq] at hfalse; exact absurd hfalse (by simp)
+    have hnohalt := composeFlatTM_stuck_M1 (M₁ := formatCheckTM w) (M₂ := M2 c k)
+      (exit := w + 6) (formatCheckTM_valid w) cfg0 hcfg0_lt htraj1
+    have hfalse : haltingStateReached (MQ c k w) cfg = false := by
+      rw [MQ]
+      have hrunMQ' : runFlatTM steps (composeFlatTM (formatCheckTM w) (M2 c k) (w + 6)) cfg0
+          = some cfg := by rw [← MQ]; exact hrunMQ
+      exact hnohalt steps cfg hrunMQ'
+    rw [hfalse] at hhaltcfg; exact absurd hhaltcfg (by simp)
+
 end Complexity.Lang.FrontMachine
