@@ -144,6 +144,17 @@ private theorem sym_bound_encodeTape (c : Cmd) (k w : Nat) (s : State)
 
 /-! ## Forward: verifier accept ⇒ `M_Q` accepts -/
 
+/-- **The explicit acceptance budget** (the F6 monomial-overshoot target): the
+format-scan `2·|encodeTape s| + 1`, the composition bridge step, and the padded
+decider's own budget (`paddedBitDecider_run`). The witness's `steps x` must
+overshoot `MQbudget c k (encX x ++ [creg])` — a concrete polynomial in `|s|`. -/
+def MQbudget (c : Cmd) (k : Nat) (s : State) : Nat :=
+  (2 * (Compile.encodeTape s).length + 1) + 1 +
+    (Compile.padBudget (k + 2 * c.loopDepth + 2) s + 1 +
+      (Compile.physStepBudget
+        (State.size s + (s.length + (k + 2 * c.loopDepth + 2)) + c.cost s + 2)
+        (c.cost s) + 3))
+
 /-- **Forward direction of the correctness iff.** If the verifier `c` accepts
 the decoded state `sx ++ [creg]` (bit-level, fitting the register frame), then
 `M_Q` accepts the reassembled tape for every budget `≥ MQbudget`.
@@ -160,7 +171,7 @@ theorem MQ_accepts_of_accept (c : Cmd) (k w : Nat) (sx : State) (creg : List Nat
     (hwle : (sx ++ [creg]).length ≤ k)
     (huses : Cmd.UsesBelow c k)
     (haccept : (c.eval (sx ++ [creg])).get 0 = [1]) :
-    ∃ T, ∀ steps, T ≤ steps →
+    ∀ steps, MQbudget c k (sx ++ [creg]) ≤ steps →
       acceptsFlatTM (MQ c k w)
           [(3 :: Compile.encodeRegs sx) ++ (Compile.shiftReg creg ++ [0, 3])] steps = true := by
   set s : State := sx ++ [creg] with hs
@@ -176,7 +187,7 @@ theorem MQ_accepts_of_accept (c : Cmd) (k w : Nat) (sx : State) (creg : List Nat
   have hne : cfg.state_idx ≠ rejectState c k := by
     rw [hstate']; exact acceptState_ne_rejectState c k
   -- Transport the accept run to the wrapped machine `M2`.
-  obtain ⟨t0, _ht0, hrun0, htraj0⟩ :=
+  obtain ⟨t0, ht0, hrun0, htraj0⟩ :=
     runFlatTM_first_halt (Compile.paddedBitDeciderTM c k) _
       (initFlatConfig (Compile.paddedBitDeciderTM c k) [tape]) cfg hrun hhalt
   have hM2run := demoteHalt_run_accept (Compile.paddedBitDeciderTM c k) (rejectState c k)
@@ -208,7 +219,12 @@ theorem MQ_accepts_of_accept (c : Cmd) (k w : Nat) (sx : State) (creg : List Nat
     [] 0 tape (sym_bound_encodeTape c k w s hbit)
     hrun1 htraj1
     (by rw [hc0M2] at hrunM2; exact hrunM2) hhaltM2
-  refine ⟨(2 * tape.length + 1) + 1 + t0, fun steps hsteps => ?_⟩
+  intro steps hsteps
+  -- The explicit budget bounds `t₁ + 1 + t₀` (`t₀ ≤` the padded decider budget).
+  have hbudle : (2 * tape.length + 1) + 1 + t0 ≤ steps := by
+    have htl : tape.length = (Compile.encodeTape s).length := by rw [htape]
+    unfold MQbudget at hsteps
+    omega
   -- The composed machine halts; extend to any larger budget.
   obtain ⟨k', rfl⟩ : ∃ k', steps = ((2 * tape.length + 1) + 1 + t0) + k' :=
     ⟨steps - ((2 * tape.length + 1) + 1 + t0), by omega⟩
