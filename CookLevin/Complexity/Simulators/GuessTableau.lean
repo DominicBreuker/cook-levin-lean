@@ -303,6 +303,177 @@ theorem guessTableau_wellformed (M : FlatTM) (s : List Nat) (maxSize steps : Nat
   ⟨FlatTCC.flattenTCC_wellformed (guessTableauTyped_wellformed M s maxSize steps),
     FlatTCC.isValidFlattening_flattenTCC _⟩
 
+/-! ## Size bound (`(2·(gn+1))^10`, `gn = s.length + maxSize + steps + |M|`)
+
+Sibling of `cookTableau_size_bound`; reuses its generic toolkit
+(`encodable_size_list_le`, `length_flatMap_le`, `flattenString_size_le`,
+`flattenCard_size_le`, `pow_collapse`) and `cookCards_length_le`. The guess
+tableau adds the `Θ(|Σ|³)`-cards prelude table (`preludeCards`, dominant at
+degree 8 in `gn`) over the bigger alphabet `PSg M`. **The enlarged base is not
+optional here:** `gn^10` fails already at `gn = 2` (`guessTableau` of the
+trivial machine has size `2731 > 2^10 = 1024`), because the prelude band adds a
+constant `Θ(|Σ|)` alphabet offset; `(2·(gn+1))^10` supplies the headroom. Note
+`gn` **includes `maxSize`** (the prelude row width `guessWidth` scales with it),
+unlike `cookTableau_size_bound`'s `n`. -/
+
+theorem pResolutions_length_le (M : FlatTM) (k : PKind M) :
+    (pResolutions M k).length ≤ M.sig + 1 := by
+  cases k <;> simp [pResolutions]
+
+theorem pKindList_length (M : FlatTM) : (pKindList M).length = 5 + 2 * M.sig := by
+  simp [pKindList]; ring
+
+theorem preludeCardsOf_length_le (M : FlatTM) (k1 k2 k3 : PKind M) :
+    (preludeCardsOf M k1 k2 k3).length ≤ (M.sig + 1) * ((M.sig + 1) * (M.sig + 1)) := by
+  unfold preludeCardsOf
+  refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * (M.sig + 1)) ?_) ?_
+  · intro r1 _
+    refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+    · intro r2 _
+      exact le_trans (List.length_filterMap_le _ _) (pResolutions_length_le M k3)
+    · exact Nat.mul_le_mul (pResolutions_length_le M k2) (le_refl (M.sig + 1))
+  · exact Nat.mul_le_mul (pResolutions_length_le M k1) (le_refl ((M.sig + 1) * (M.sig + 1)))
+
+theorem preludeCards_length_le (M : FlatTM) :
+    (preludeCards M).length ≤
+      (5 + 2 * M.sig) * ((5 + 2 * M.sig) *
+        ((5 + 2 * M.sig) * ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1))))) := by
+  unfold preludeCards
+  refine le_trans (length_flatMap_le _ _
+    ((5 + 2 * M.sig) * ((5 + 2 * M.sig) *
+      ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1))))) ?_) ?_
+  · intro k1 _
+    refine le_trans (length_flatMap_le _ _
+      ((5 + 2 * M.sig) * ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1)))) ?_) ?_
+    · intro k2 _
+      refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1))) ?_) ?_
+      · intro k3 _; exact preludeCardsOf_length_le M k1 k2 k3
+      · rw [pKindList_length]
+    · rw [pKindList_length]
+  · rw [pKindList_length]
+
+theorem guessFinal_mem_length (M : FlatTM) : ∀ x ∈ guessFinal M, x.length ≤ 1 := by
+  intro x hx
+  simp only [guessFinal, List.mem_map] at hx
+  obtain ⟨y, hy, rfl⟩ := hx
+  rw [List.length_map]
+  exact cookFinal_mem_length M y hy
+
+theorem guessFinal_length_le (M : FlatTM) :
+    (guessFinal M).length ≤ (M.states + 1) * (M.sig + 1) := by
+  unfold guessFinal; rw [List.length_map]; exact cookFinal_length_le M
+
+theorem guessTableau_size_bound (M : FlatTM) (s : List Nat) (maxSize steps : Nat) :
+    encodable.size (guessTableau M s maxSize steps) ≤
+      (2 * (s.length + maxSize + steps + M.sig + M.states + M.trans.length + 3)) ^ 10 := by
+  set b := s.length + maxSize + steps + M.sig + M.states + M.trans.length + 3 with hb
+  clear_value b
+  have hb1 : 1 ≤ b := by omega
+  have hs1 : M.sig + 1 ≤ b := by omega
+  have hq1 : M.states + 1 ≤ b := by omega
+  have hb2 : 9 ≤ b ^ 2 := by
+    calc (9 : Nat) = 3 ^ 2 := by norm_num
+      _ ≤ b ^ 2 := Nat.pow_le_pow_left (by omega) 2
+  have bpow : ∀ i j : Nat, i ≤ j → b ^ i ≤ b ^ j := fun i j h => Nat.pow_le_pow_right hb1 h
+  -- `PSg M ≤ 2 b^2`
+  have hPSg : PSg M ≤ 2 * b ^ 2 := by
+    unfold PSg Sg
+    have key : (M.sig + 1) * (M.states + 2) + 1 + (2 * M.sig + 5)
+        ≤ 2 * (M.sig + M.states + 3) ^ 2 := by nlinarith
+    have hle : (M.sig + M.states + 3) ^ 2 ≤ b ^ 2 := Nat.pow_le_pow_left (by omega) 2
+    omega
+  -- unfold the flattened size
+  have hsize : encodable.size (guessTableau M s maxSize steps) =
+      PSg M + encodable.size (flattenString (preludeRow M s maxSize steps))
+      + encodable.size ((guessCards M).map FlatTCC.flattenCard)
+      + encodable.size (FlatTCC.flattenFinal (guessFinal M)) + (steps + 1) + 1 := rfl
+  rw [hsize]
+  -- (1) prelude row: `≤ 3 b^8`
+  have hinit : encodable.size (flattenString (preludeRow M s maxSize steps)) ≤ 3 * b ^ 8 := by
+    refine le_trans (flattenString_size_le _) ?_
+    rw [preludeRow_length]; unfold guessWidth
+    have hW : s.length + maxSize + steps + 3 + 2 ≤ b ^ 2 := by
+      have h3 : 3 ≤ b := by omega
+      have hmul : 3 * b ≤ b * b := Nat.mul_le_mul_right b h3
+      have hbsq : b * b = b ^ 2 := (pow_two b).symm
+      omega
+    have hb28 : b ^ 4 ≤ b ^ 8 := bpow 4 8 (by omega)
+    calc (PSg M + 1) * (s.length + maxSize + steps + 3 + 2) ≤ (3 * b ^ 2) * (b ^ 2) :=
+          Nat.mul_le_mul (by omega) hW
+      _ = 3 * b ^ 4 := by ring
+      _ ≤ 3 * b ^ 8 := by omega
+  -- (2) cards: `≤ 280 b^8`
+  have hcards : encodable.size ((guessCards M).map FlatTCC.flattenCard) ≤ 280 * b ^ 8 := by
+    refine le_trans (encodable_size_list_le _ (6 * PSg M + 1) ?_) ?_
+    · intro x hx
+      simp only [List.mem_map] at hx
+      obtain ⟨card, _, rfl⟩ := hx
+      exact flattenCard_size_le card
+    · rw [List.length_map]
+      -- `|guessCards| ≤ 20 b^6`
+      have hlen : (guessCards M).length ≤ 20 * b ^ 6 := by
+        unfold guessCards
+        rw [List.length_append, List.length_map]
+        have hcook : (cookCards M).length ≤ 12 * b ^ 4 :=
+          le_trans (cookCards_length_le M) (Nat.mul_le_mul_left _
+            (Nat.pow_le_pow_left (by omega) 4))
+        have hprel : (preludeCards M).length ≤ 8 * b ^ 6 := by
+          refine le_trans (preludeCards_length_le M) ?_
+          have h2b : 5 + 2 * M.sig ≤ 2 * b := by omega
+          have hprod : (5 + 2 * M.sig) * ((5 + 2 * M.sig) *
+              ((5 + 2 * M.sig) * ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1)))))
+              ≤ (2 * b) * ((2 * b) * ((2 * b) * (b * (b * b)))) :=
+            Nat.mul_le_mul h2b (Nat.mul_le_mul h2b (Nat.mul_le_mul h2b
+              (Nat.mul_le_mul hs1 (Nat.mul_le_mul hs1 hs1))))
+          have heq : (2 * b) * ((2 * b) * ((2 * b) * (b * (b * b)))) = 8 * b ^ 6 := by ring
+          rw [heq] at hprod; exact hprod
+        have h46 : b ^ 4 ≤ b ^ 6 := bpow 4 6 (by omega)
+        omega
+      have hcc : 6 * PSg M + 1 + 1 ≤ 14 * b ^ 2 := by
+        have := hPSg; omega
+      have h68 : b ^ 6 ≤ b ^ 8 := bpow 6 8 (by omega)
+      calc (6 * PSg M + 1 + 1) * (guessCards M).length
+            ≤ (14 * b ^ 2) * (20 * b ^ 6) := Nat.mul_le_mul hcc hlen
+        _ = 280 * b ^ 8 := by ring
+  -- (3) final: `≤ 3 b^8`
+  have hfinal : encodable.size (FlatTCC.flattenFinal (guessFinal M)) ≤ 3 * b ^ 8 := by
+    unfold FlatTCC.flattenFinal
+    refine le_trans (encodable_size_list_le _ (PSg M + 1) ?_) ?_
+    · intro x hx
+      simp only [List.mem_map] at hx
+      obtain ⟨y, hy, rfl⟩ := hx
+      refine le_trans (flattenString_size_le _) ?_
+      have := guessFinal_mem_length M y hy
+      calc (PSg M + 1) * y.length ≤ (PSg M + 1) * 1 := Nat.mul_le_mul_left _ this
+        _ = PSg M + 1 := by ring
+    · rw [List.length_map]
+      have hfl : (guessFinal M).length ≤ b ^ 2 := by
+        refine le_trans (guessFinal_length_le M) ?_
+        rw [pow_two]; exact Nat.mul_le_mul hq1 hs1
+      have hb48 : b ^ 4 ≤ b ^ 8 := bpow 4 8 (by omega)
+      calc (PSg M + 1 + 1) * (guessFinal M).length ≤ (3 * b ^ 2) * (b ^ 2) :=
+            Nat.mul_le_mul (by omega) hfl
+        _ = 3 * b ^ 4 := by ring
+        _ ≤ 3 * b ^ 8 := by omega
+  -- combine: everything `≤ C · b^8`
+  have hPSg8 : PSg M ≤ b ^ 8 := by
+    have h1 : 2 * b ^ 2 ≤ b ^ 3 := by
+      calc 2 * b ^ 2 ≤ b * b ^ 2 := Nat.mul_le_mul (show 2 ≤ b by omega) (le_refl (b ^ 2))
+        _ = b ^ 3 := by ring
+    exact le_trans hPSg (le_trans h1 (bpow 3 8 (by omega)))
+  have hb18 : b ≤ b ^ 8 := by
+    calc b = b ^ 1 := (pow_one b).symm
+      _ ≤ b ^ 8 := bpow 1 8 (by omega)
+  have hsteps8 : steps + 1 ≤ b ^ 8 := le_trans (by omega) hb18
+  have hone8 : (1 : Nat) ≤ b ^ 8 := Nat.one_le_pow _ _ (by omega)
+  refine pow_collapse (C := 290) (d := 8) (by omega) (by omega) hb1 ?_
+  generalize hP : b ^ 8 = P at hPSg8 hinit hcards hfinal hsteps8 hone8 ⊢
+  generalize encodable.size (flattenString (preludeRow M s maxSize steps)) = I at hinit ⊢
+  generalize encodable.size ((guessCards M).map FlatTCC.flattenCard) = Cc at hcards ⊢
+  generalize encodable.size (FlatTCC.flattenFinal (guessFinal M)) = Fn at hfinal ⊢
+  generalize PSg M = G at hPSg8 ⊢
+  omega
+
 /-! ## Band and shape lemmas (PROVEN) -/
 
 theorem pCell_ge (M : FlatTM) (k : PKind M) : Sg M ≤ (pCell M k).1 := by
