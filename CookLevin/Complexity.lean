@@ -25,5 +25,6 @@ import Complexity.NP.SAT.CookLevin.Reductions.HeadLayout
 import Complexity.NP.SAT.CookLevin.Reductions.FrontPieces
 import Complexity.NP.SAT.CookLevin.Reductions.FrontMachine
 import Complexity.NP.SAT.CookLevin.Reductions.FrontLifting
+import Complexity.NP.SAT.CookLevin.Reductions.FrontProgram
 
 set_option autoImplicit false
