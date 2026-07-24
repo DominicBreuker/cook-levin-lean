@@ -196,4 +196,129 @@ theorem frontProgram_run (MQconst : List Nat) (xWidth B : Nat)
   · rw [State.get_set_ne _ _ _ _ (by decide : (3 : Var) ≠ 4), State.get_set_eq, hs4_MX]
   · rw [State.get_set_eq, hs4_ST]
 
+/-- **`frontProgram` cost bound.** The whole program's cost decomposes into the
+`emitRegs` cost (bounded in the witness), the two `unaryMonomial` stage costs
+(`monomialCost`), the constant `emitConst`, and the five `clear`/`copy` ops (whose
+copy sources are the emitted registers, of lengths `|MQconst|`, `|s_x|`, `Mmax`,
+`Mstep`). Piece 3's `cQ_cost_le` consumes this against a single-monomial bound. -/
+theorem frontProgram_cost_le (MQconst : List Nat) (xWidth B : Nat)
+    (cm km dm cs ks ds : Nat) (s : State) (m : Nat)
+    (hB : 5 ≤ B) (hxW : xWidth < B)
+    (hMQ : ∀ x ∈ MQconst, x ≤ 1)
+    (hsize : State.get s xWidth = List.replicate m 1)
+    (hbits : ∀ src ∈ List.range xWidth, ∀ x ∈ State.get s src, x ≤ 1) :
+    (frontProgram MQconst xWidth B cm km dm cs ks ds).cost s
+      ≤ (emitRegs (B + 4) (B + 5) (B + 6) B (List.range xWidth)).cost s
+        + monomialCost cm km dm m + monomialCost cs ks ds m
+        + 3 * MQconst.length
+        + (encSyms (3 :: Compile.encodeRegs ((List.range xWidth).map (State.get s)))).length
+        + (cm * (m + 1) ^ km + dm) + (cs * (m + 1) ^ ks + ds)
+        + 20 := by
+  -- distinctness for the sources (same as `frontProgram_run`)
+  have hdist : ∀ src ∈ List.range xWidth,
+      (src : Var) ≠ B ∧ src ≠ B + 5 ∧ src ≠ B + 6 ∧ src ≠ B + 4 := by
+    intro src hsrc
+    have : src < xWidth := List.mem_range.mp hsrc
+    exact ⟨by omega, by omega, by omega, by omega⟩
+  -- stage 1: emitRegs → s1
+  obtain ⟨hR1, hR2⟩ := emitRegs_run (B + 4) (B + 5) (B + 6) B (List.range xWidth) s
+    (by omega : (B + 5 : Var) ≠ B + 4) (by omega : (B + 5 : Var) ≠ B)
+    (by omega : (B + 5 : Var) ≠ B + 6) (by omega : (B : Var) ≠ B + 4)
+    (by omega : (B : Var) ≠ B + 6) hdist hbits
+  set s1 := (emitRegs (B + 4) (B + 5) (B + 6) B (List.range xWidth)).eval s with hs1
+  have hs1_size : State.get s1 xWidth = List.replicate m 1 := by
+    rw [hR2 xWidth (by omega : (xWidth : Var) ≠ B) (by omega : (xWidth : Var) ≠ B + 5)
+      (by omega : (xWidth : Var) ≠ B + 6) (by omega : (xWidth : Var) ≠ B + 4), hsize]
+  -- stage 2: unaryMonomial (cost hM3)
+  obtain ⟨hM1, hM2, hM3⟩ := unaryMonomial_run cm km dm (B + 4) (B + 7) (B + 8) xWidth (B + 1)
+    s1 m (by omega : (B + 7 : Var) ≠ B + 1) (by omega : (B + 7 : Var) ≠ B + 8)
+    (by omega : (B + 7 : Var) ≠ B + 4) (by omega : (B + 1 : Var) ≠ B + 8)
+    (by omega : (B + 1 : Var) ≠ B + 4) (by omega : (B + 8 : Var) ≠ B + 4) hs1_size
+  set s2 := (unaryMonomial cm km dm (B + 4) (B + 7) (B + 8) xWidth (B + 1)).eval s1 with hs2
+  have hs2_size : State.get s2 xWidth = List.replicate m 1 := by
+    rw [hM2 xWidth (by omega : (xWidth : Var) ≠ B + 1) (by omega : (xWidth : Var) ≠ B + 7)
+      (by omega : (xWidth : Var) ≠ B + 8) (by omega : (xWidth : Var) ≠ B + 4), hs1_size]
+  have hs2_SX : State.get s2 B = State.get s1 B :=
+    hM2 B (by omega : (B : Var) ≠ B + 1) (by omega : (B : Var) ≠ B + 7)
+      (by omega : (B : Var) ≠ B + 8) (by omega : (B : Var) ≠ B + 4)
+  -- stage 3: unaryMonomial (cost hN3)
+  obtain ⟨hN1, hN2, hN3⟩ := unaryMonomial_run cs ks ds (B + 4) (B + 7) (B + 8) xWidth (B + 2)
+    s2 m (by omega : (B + 7 : Var) ≠ B + 2) (by omega : (B + 7 : Var) ≠ B + 8)
+    (by omega : (B + 7 : Var) ≠ B + 4) (by omega : (B + 2 : Var) ≠ B + 8)
+    (by omega : (B + 2 : Var) ≠ B + 4) (by omega : (B + 8 : Var) ≠ B + 4) hs2_size
+  set s3 := (unaryMonomial cs ks ds (B + 4) (B + 7) (B + 8) xWidth (B + 2)).eval s2 with hs3
+  have hs3_SX : State.get s3 B = State.get s1 B := by
+    rw [hN2 B (by omega : (B : Var) ≠ B + 2) (by omega : (B : Var) ≠ B + 7)
+      (by omega : (B : Var) ≠ B + 8) (by omega : (B : Var) ≠ B + 4), hs2_SX]
+  have hs3_MX : State.get s3 (B + 1) = List.replicate (cm * (m + 1) ^ km + dm) 1 := by
+    rw [hN2 (B + 1) (by omega : (B + 1 : Var) ≠ B + 2) (by omega : (B + 1 : Var) ≠ B + 7)
+      (by omega : (B + 1 : Var) ≠ B + 8) (by omega : (B + 1 : Var) ≠ B + 4), hM1]
+  -- stage 4: emitConst (cost hC3)
+  obtain ⟨-, hC2, hC3⟩ := emitConst_run (B + 3) MQconst s3
+  set s4 := (emitConst (B + 3) MQconst).eval s3 with hs4
+  have hs4_MC : State.get s4 (B + 3) = MQconst :=
+    emitConst_run_bits (B + 3) MQconst s3 hMQ
+  have hs4_SX : State.get s4 B
+      = encSyms (3 :: Compile.encodeRegs ((List.range xWidth).map (State.get s))) := by
+    rw [hC2 B (by omega : (B : Var) ≠ B + 3), hs3_SX, hR1]
+  have hs4_MX : State.get s4 (B + 1) = List.replicate (cm * (m + 1) ^ km + dm) 1 := by
+    rw [hC2 (B + 1) (by omega : (B + 1 : Var) ≠ B + 3), hs3_MX]
+  have hs4_ST : State.get s4 (B + 2) = List.replicate (cs * (m + 1) ^ ks + ds) 1 := by
+    rw [hC2 (B + 2) (by omega : (B + 2 : Var) ≠ B + 3), hN1]
+  clear_value s1 s2 s3 s4
+  -- the whole program's cost = 4 seq nodes + the four gadget costs + the tail cost on s4
+  have hcosts : (frontProgram MQconst xWidth B cm km dm cs ks ds).cost s
+      = 1 + (emitRegs (B + 4) (B + 5) (B + 6) B (List.range xWidth)).cost s
+        + (1 + (unaryMonomial cm km dm (B + 4) (B + 7) (B + 8) xWidth (B + 1)).cost s1
+        + (1 + (unaryMonomial cs ks ds (B + 4) (B + 7) (B + 8) xWidth (B + 2)).cost s2
+        + (1 + (emitConst (B + 3) MQconst).cost s3
+        + (Cmd.op (.clear 0) ;; Cmd.op (.copy 1 (B + 3)) ;; Cmd.op (.copy 2 B) ;;
+           Cmd.op (.copy 3 (B + 1)) ;; Cmd.op (.copy 4 (B + 2))).cost s4))) := by
+    show (emitRegs (B + 4) (B + 5) (B + 6) B (List.range xWidth) ;; _).cost s = _
+    rw [Cmd.cost_seq, ← hs1, Cmd.cost_seq, ← hs2, Cmd.cost_seq, ← hs3, Cmd.cost_seq, ← hs4]
+  -- the tail cost: four copies whose sources are the emitted registers
+  set a1 := (Cmd.op (.clear 0)).eval s4 with ha1
+  set a2 := (Cmd.op (.copy 1 (B + 3))).eval a1 with ha2
+  set a3 := (Cmd.op (.copy 2 B)).eval a2 with ha3
+  set a4 := (Cmd.op (.copy 3 (B + 1))).eval a3 with ha4
+  have hlen1 : (State.get a1 (B + 3)).length = MQconst.length := by
+    rw [ha1]; show (State.get (s4.set 0 []) (B + 3)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 3 : Var) ≠ 0), hs4_MC]
+  have hlen2 : (State.get a2 B).length
+      = (encSyms (3 :: Compile.encodeRegs ((List.range xWidth).map (State.get s)))).length := by
+    rw [ha2]; show (State.get (a1.set 1 (State.get a1 (B + 3))) B).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B : Var) ≠ 1), ha1]
+    show (State.get (s4.set 0 []) B).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B : Var) ≠ 0), hs4_SX]
+  have hlen3 : (State.get a3 (B + 1)).length = cm * (m + 1) ^ km + dm := by
+    rw [ha3]; show (State.get (a2.set 2 (State.get a2 B)) (B + 1)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 1 : Var) ≠ 2), ha2]
+    show (State.get (a1.set 1 (State.get a1 (B + 3))) (B + 1)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 1 : Var) ≠ 1), ha1]
+    show (State.get (s4.set 0 []) (B + 1)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 1 : Var) ≠ 0), hs4_MX, List.length_replicate]
+  have hlen4 : (State.get a4 (B + 2)).length = cs * (m + 1) ^ ks + ds := by
+    rw [ha4]; show (State.get (a3.set 3 (State.get a3 (B + 1))) (B + 2)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 2 : Var) ≠ 3), ha3]
+    show (State.get (a2.set 2 (State.get a2 B)) (B + 2)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 2 : Var) ≠ 2), ha2]
+    show (State.get (a1.set 1 (State.get a1 (B + 3))) (B + 2)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 2 : Var) ≠ 1), ha1]
+    show (State.get (s4.set 0 []) (B + 2)).length = _
+    rw [State.get_set_ne _ _ _ _ (by omega : (B + 2 : Var) ≠ 0), hs4_ST, List.length_replicate]
+  have htail : (Cmd.op (.clear 0) ;; Cmd.op (.copy 1 (B + 3)) ;; Cmd.op (.copy 2 B) ;;
+        Cmd.op (.copy 3 (B + 1)) ;; Cmd.op (.copy 4 (B + 2))).cost s4
+      = 4 + 1 + ((State.get a1 (B + 3)).length + 1) + ((State.get a2 B).length + 1)
+        + ((State.get a3 (B + 1)).length + 1) + ((State.get a4 (B + 2)).length + 1) := by
+    show (Cmd.op (.clear 0) ;; _).cost s4 = _
+    rw [Cmd.cost_seq, ← ha1, Cmd.cost_seq, ← ha2, Cmd.cost_seq, ← ha3, Cmd.cost_seq, ← ha4]
+    simp only [Cmd.cost_op, Op.cost]
+    omega
+  -- assemble
+  rw [hcosts, htail, hlen1, hlen2, hlen3, hlen4]
+  have := hM3
+  have := hN3
+  rw [hC3]
+  omega
+
 end FrontProgram
