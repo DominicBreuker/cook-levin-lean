@@ -7,25 +7,21 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-19; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean), **THE S1 BIJECTION IS COMPLETE** (`cookTableau_correct` sorry-free & axiom-clean, 2026-07-18-d; only `cookTableau_size_bound` left in CookTableau), **THE PRELUDE/CERT-GUESS LAYER IS COMPLETE** (`Simulators/GuessTableau.lean`, 2026-07-19-b: `guessTableau_correct` is sorry-free & axiom-clean — P1 `prelude_validStep_of_cert` and P2 `cert_of_prelude_validStep` both PROVEN), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-3 IS DONE** (`Reductions/FrontPieces.lean`), **C8-4 IN PROGRESS** (2026-07-19-c/-d: every gadget exists; **2026-07-20: the front machine `M_Q` + machine-iff DONE (`FrontMachine.lean`); 2026-07-20-b: the ABSTRACT LIFTING `FlatSingleTMGenNP (fQ x) ↔ Q x` DONE & axiom-clean, both the parameterized `fQ_correct` and the hypothesis-free `fQ_correct_concrete` with the F6 monomials proven `inOPoly`, `Reductions/FrontLifting.lean`**) — **C8-4 IS STRUCTURALLY COMPLETE (2026-07-24): `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` typechecks, only 2 pure-`Nat` cost sorries remain, `Reductions/FrontWitness.lean`)** — next: **close the C8-4 cost ladder** (`emitRegs_cost` + `costBoundQ`) bottom-up and **the S1 free-witness program** (emit `guessTableau` as a `PolyTimeComputableLang` reduction) top-down)
+## Where the proof stands (2026-07-24-b; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean — `FlatTCC ⪯p' SAT`), **THE S1 BIJECTION + PRELUDE/CERT-GUESS LAYER ARE COMPLETE** (`cookTableau_correct` & `guessTableau_correct` sorry-free & axiom-clean; only the size bounds `cookTableau_size_bound`/`guessTableau_size_bound` remain), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-0…C8-4 ARE ALL DONE & AXIOM-CLEAN** — **C8-4 COMPLETE (2026-07-24-b): `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` sorry-free & axiom-clean, cost ladder closed, `Reductions/FrontWitness.lean`**) — **THE CRITICAL PATH IS NOW S1 (top-down): the honest reduction `FlatSingleTMGenNP ⪯p' FlatTCC` (emit `guessTableau` as a `PolyTimeComputableLang`)** — once it lands, chain `Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' SAT` = `NPhard'' SAT` via C8-5's seam.
 
-- **C8-4 (the `W_Q` assembly) is STRUCTURALLY COMPLETE — witness + reduction
-  typecheck; only the cost ladder (2 arithmetic sorries) remains
-  (2026-07-24, `Reductions/FrontWitness.lean`).** Gadgets + machine +
-  machine-iff + abstract lifting + reduction program were all done & axiom-clean
-  (`FrontPieces`/`FrontMachine`/`FrontLifting`/`FrontProgram`, 2026-07-19…-20-c).
-  **This session** built the honest witness `WQ : PolyTimeComputableLang (fQ …)`
-  and the endpoint **`front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`** — the
-  whole C8-4 design is now VALIDATED end-to-end. 18 of the 20 fields are proven &
-  axiom-clean (`computes`, `usesBelow` + the full gadget `*_usesBelow` family,
-  `enc_bit`/`encodeIn_size`/`width_le`/`decode_agree`, the `fQ_correct` wrap via
-  the reusable `inOPoly_monomial_bound`); **the ONLY gap is two pure-`Nat` cost
-  bounds** — `cQ_cost_le` and `fQ_output_size_le` (against a placeholder
-  `costBoundQ`), ZERO design risk. Closing them is the next bottom-up session's
-  self-contained task (needs the still-missing `emitRegs` cost bound + a
-  single-monomial `costBoundQ`; step-by-step plan in the rewritten
-  "NEXT BOTTOM-UP" section). The design uses the **unary size register** in
-  `encodeIn` (Option A, finding 2026-07-20-c); `tallyCells` stays UNUSED.
+- **C8-4 (the per-`Q` front `W_Q` assembly) is COMPLETE & AXIOM-CLEAN
+  (2026-07-24-b, `Reductions/FrontWitness.lean`).** For any NP `Q` with an
+  honest split free-line verifier witness `W : InNPWitnessLangFreeSplit Q`, the
+  endpoint reduction **`front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`** is a
+  live, honest, TM-backed reduction into the corrected universal front — all 20
+  `PolyTimeComputableLang` fields proven, `[propext, Classical.choice,
+  Quot.sound]`. The cost ladder is closed: `emitRegs_cost` (the last gadget cost
+  bound, `FrontPieces.lean`), `frontProgram_cost_le` (the whole-program cost
+  decomposition, `FrontProgram.lean`), and `cQ_cost_le`/`fQ_output_size_le`
+  against a single-summand `costBoundQ` (`FrontWitness.lean`). The design uses
+  the **unary size register** in `encodeIn` (Option A); `tallyCells` stays UNUSED.
+  **Consume `front_reducesPolyMO'`, `WQ`, and `fQ_correct` as black boxes — do
+  not re-derive the front.** C8-4 needs no more bottom-up work.
 - **In-NP side: DONE & axiom-clean.** `SAT_inNP.sat_NP`, `FlatClique_in_NP`,
   `KSat3Free.inNP_kSAT3_free`, `KSat3Free.kSAT3_reducesPolyMO'` are all
   `[propext, Classical.choice, Quot.sound]`.
@@ -69,32 +65,36 @@ reasonably provable).
 
 ## ★ Latest sessions
 
-- **2026-07-24 (bottom-up) — C8-4 piece 3: the witness `WQ` + the endpoint
-  reduction `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` TYPECHECK; full
-  build green (3393), 18/20 fields axiom-clean, 2 cost sorries remain
-  (`Reductions/FrontWitness.lean`).** The whole C8-4 design is now VALIDATED
-  end-to-end: for any NP `Q` with a split free-line verifier witness `W`, the
-  per-`Q` front construction is an honest TM-backed reduction into the corrected
-  universal front. **Built & axiom-clean this session:** `encSyms_injective`
-  (+ `decodeSyms`/`decodeSyms_encSyms`, a genuine left inverse — NO `Classical`,
-  so `decodeOut` avoids `invFun`); **`inOPoly_monomial_bound`** (the F6 constant
-  extractor `inOPoly f → ∃ c k d, ∀ n, f n ≤ c·(n+1)^k+d`, reusable); the full
-  gadget **`*_usesBelow`** family + `frontProgram_usesBelow`; `computesQ`
-  (`frontProgram_run` + `hmap : map (range xWidth) get = encX x` via
-  `map_range_get` + the size-register reads); `encodeInQ_size_le`/`_width`/`_bit`/
-  `_bits`, `decodeOutQ_agree`; and the `fQ_correct` wrap (`hmax`/`hsteps`
-  discharged from `maxSizeOf_poly`/`stepsOf_poly` through `inOPoly_monomial_bound`
-  + `MQbudget_le`). **The design held with no surprises** (risk-based: the
-  structural validation confirms `frontProgram_run`/`fQ_correct` compose exactly
-  as planned). **⚠⚠ GOTCHA (cost the most time this session; added to
-  Conventions): `Var` is an `abbrev Nat` that `omega` CANNOT see through** — a
-  goal `(x : Var) < k` makes `omega` treat `x` as opaque and it fails/loops on
-  metavariable atoms; retype with `change (_ : Nat) < _` first. For the
-  gadget-`*_usesBelow` register hyps, `refine <lemma> ?_ … <;> · change (_:Nat)<_;
-  omega` (a bare `by omega` in a metavariable-typed gadget-call arg silently
-  fails). **Next bottom-up: close the 2 cost sorries** (`emitRegs_cost` +
-  single-monomial `costBoundQ` + `Cmd.cost_seq` 9-way split for `cQ_cost_le`,
-  tuple `encodable.size` for `fQ_output_size_le`) — see "NEXT BOTTOM-UP".
+- **2026-07-24-b (bottom-up) — C8-4 DONE: the cost ladder closed,
+  `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` sorry-free & axiom-clean, full
+  build green (3393).** Both cost sorries eliminated (ZERO design surprises — the
+  shapes were pinned). **Built & axiom-clean this session:** `emitRegs_cost`
+  (`FrontPieces.lean`, mirrors `tallyCells_cost`'s `foldl` induction:
+  `≤ 11 + Σ emitRegCost |src|`, per-register `emitRegCost L = 8+13L+2L²`);
+  `frontProgram_cost_le` (`FrontProgram.lean`, mirrors `frontProgram_run`'s
+  s1…s4 threading, tracks cost via `Cmd.cost_seq`: `emitRegs` cost + two
+  `monomialCost` + `emitConst` + the five copy costs read off the emitted
+  registers `|MQconst|`/`|s_x|`/`Mmax`/`Mstep`); and in `FrontWitness.lean` the
+  bound machinery — `monoUB` (closed-form `≥ monomialCost` via `powCost_le`),
+  `monoLin`, `inOPoly_pow_succ`/`monotonic_pow_succ`, `emitRegCost_mono`/`_comp_poly`,
+  `list_nat_size_le`/`encSyms_length_le`/`encodeRegs_cells_le`,
+  `get_length_le_size`/`mem_length_le_size`, `map_range_encX` — feeding a
+  **single-summand `costBoundQ`** (the two `2·monoLin` terms cover both the copy
+  costs AND the output monomials; `10·(dBound n + n)` covers the `s_x`/`encodeRegs`
+  lengths; a big constant absorbs the machine constant + `|MQconst|` + slack) with
+  `costBoundQ_poly`/`_mono` (combinator chain + `gcongr`), `cQ_cost_le` (via
+  `frontProgram_cost_le` + `emitRegs_cost` + `List.sum_le_card_nsmul`) and
+  `fQ_output_size_le` (defeq product/list `encodable.size` decomposition + the
+  `encodeRegs`/`monoLin` bounds). **⚠ gotchas (added to Conventions):** (1) for
+  the `inOPoly` combinator chains, COUNT the `+`s in the target — an off-by-one
+  `inOPoly_add` is an unbalanced-paren parse error, not a type error; (2) do NOT
+  `set n := encodable.size x` then `rw [hn]` back — it leaves `n` and
+  `encodable.size x` as DISTINCT omega atoms (and `W.dBound n` vs
+  `W.dBound (size x)`); keep ONE spelling throughout a proof fed to `omega`;
+  (3) `gcongr` proves `monotonic` of a big polynomial in one shot once the
+  `dBound`-monotonicity is a named `have` in context. **Next: the S1 free-witness
+  program (top-down, critical path) + its size-bound bites (bottom-up)** — see
+  "NEXT BOTTOM-UP"/"NEXT TOP-DOWN".
 - **2026-07-20-c (bottom-up) — C8-4 piece 2: the reduction PROGRAM +
   register-exact run lemma DONE & axiom-clean (`Reductions/FrontProgram.lean`,
   build green 3350→full, probe `probes/C8ProgramProbe.lean` green).**
@@ -583,106 +583,50 @@ subsuming S2). **The answers to the three scoping questions:**
   register-generic, axiom-clean; probe `probes/C8FrontProbe.lean` green
   (incl. the toy front rebuilt from the real pieces against the frozen
   `headEncodeIn`). Artifact list in "Proven, reusable".
-- **C8-4 (W_Q assembly) — MACHINE + LIFTING DONE, PROGRAM/FIELDS LEFT.** The
-  front machine `M_Q` + machine-iff (`Reductions/FrontMachine.lean`, 2026-07-20)
-  and the abstract correctness iff `FlatSingleTMGenNP (fQ x) ↔ Q x`
-  (`Reductions/FrontLifting.lean`, 2026-07-20-b: `fQ_correct` +
-  `fQ_correct_concrete`, F6 monomials `inOPoly`) are proven & axiom-clean.
-  The reduction `Cmd` `frontProgram` + its run lemma are DONE
-  (`Reductions/FrontProgram.lean`, 2026-07-20-c). Remaining: the
-  `PolyTimeComputableLang` witness fields — see the "NEXT BOTTOM-UP session"
-  section.
+- **C8-4 (the per-`Q` `W_Q` assembly) — ✅ DONE & AXIOM-CLEAN (2026-07-24-b).**
+  `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` for any
+  `W : InNPWitnessLangFreeSplit Q` (`Reductions/FrontWitness.lean`), built on the
+  machine + machine-iff (`FrontMachine.lean`), the abstract lifting
+  `fQ_correct`/`fQ_correct_concrete` (`FrontLifting.lean`), and the reduction
+  program `frontProgram`/`frontProgram_run`/`frontProgram_cost_le`
+  (`FrontProgram.lean`). Consume as a black box.
 - **C8-5 (the seam):** `SeamData W_Q W_head` against the head layout — the
   layout is now **FROZEN** (`HeadLayout.headEncodeIn`, 2026-07-18), so
   C8-3/C8-4 can emit against it today; the `SeamData` instance itself still
   waits for the S1 free witness to exist.
 
-## NEXT BOTTOM-UP session — C8-4 piece 3: CLOSE THE COST LADDER (2 sorries)
+## NEXT BOTTOM-UP session — the two size-bound bites (unblock the S1 cost ladder)
 
-**C8-4 is STRUCTURALLY COMPLETE (2026-07-24, `Reductions/FrontWitness.lean`):
-the witness `WQ` and the endpoint reduction `front_reducesPolyMO' : Q ⪯p'
-FlatSingleTMGenNP` typecheck; the whole design is VALIDATED end-to-end.** All
-20 witness fields except two are proven & axiom-clean — `computes` (via
-`frontProgram_run` + `encSyms` left-inverse), `encodeIn_size`, `enc_bit`,
-`width_le`, `usesBelow` (`frontProgram_usesBelow` + the full gadget
-`*_usesBelow` family), `decode_agree`, and the `fQ_correct` wrap (F6 monomials
-from the reusable `inOPoly_monomial_bound`). **The ONLY remaining work is the
-two arithmetic bounds** (pure `Nat`, ZERO design risk — the shapes are pinned):
+**C8-4 is DONE**, so the front is complete. The remaining bottom-up work is the
+two self-contained `encodable.size` bounds that the S1 free-witness cost ladder
+(the top-down critical path) needs. Doing them NOW de-risks that ladder before
+top-down builds it. Both are pure arithmetic, ZERO design risk:
 
-* **`cQ_cost_le`** — `(frontProgram …).cost (encodeInQ x) ≤ costBoundQ (size x)`.
-* **`fQ_output_size_le`** — `encodable.size (fQ x) ≤ costBoundQ (size x)`.
+- **`guessTableau_size_bound`** (the one the S1 witness actually consumes) —
+  state it next to `cookTableau_size_bound` at the same degree-10 `(n+1)^10`
+  shape (the prelude adds only `Θ(|Σ|³)` cards, `Θ(|Σ|)` each, so degree 10 has
+  headroom). Mechanical `foldl`-over-`flatMap` `encodable.size` arithmetic; do
+  this FIRST — it directly unblocks the witness's `output_size_le`.
+- **`cookTableau_size_bound`** (restated 2026-07-17-b at degree 10; the
+  2026-07-18-c marker fix left it unchanged — `copyRightCards` is only
+  `Θ(|Σ|²)`) — ~150–300 LOC, dominant terms `Θ(|Σ|³)` copy + `Θ(|trans|·|Σ|³)`
+  incoming-head cards, each size `Θ(|Σ|)`. Same kind of bite; take it second (or
+  first if `guessTableau_size_bound` stalls).
 
-Both currently `sorry` against the placeholder `costBoundQ := fun _ => 0`.
-**To close them:**
-1. **Add `emitRegs_cost`** (the one still-missing gadget cost bound — HANDOFF
-   flagged it since 2026-07-19-c). Mirror the private `emitRegs_go` induction in
-   `FrontPieces.lean` (frame-preservation `hc1frame` template) but track cost via
-   `Cmd.cost_seq`; each source contributes `reencLoop`'s cost bound (off=1:
-   `3+13L+2L²`, `L=|get s src|`) + `appendItem dst 0` cost (`=3`). Sum bound
-   `≤ 10 + Σ_src (6+13L+2L²)`; for `srcs=range xWidth`, `Σ L = State.size(encX x)`.
-2. **Pick `costBoundQ` = ONE big monomial** `A·(n+1)^K` (manifestly `monotonic`
-   and `inOPoly` — easy, no `monomialCost` mono/poly needed). Take
-   `K := max km ks + 2`, `A` large. Then `costBoundQ_poly`/`_mono` are one-liners.
-3. **`cQ_cost_le`**: `Cmd.cost_seq` splits `frontProgram` into 9 pieces; bound
-   `emitRegs` (step 1), the two `unaryMonomial`s (`monomialCost`, degrees km/ks —
-   dominate `powCost` by `powCost_le`), `emitConst` (`=1+2|MconstQ|`, const), and
-   the 5 `clear`/`copy` ops (`Op.cost copy = |src|+1`; the copy sources at the
-   post-gadget state are `MconstQ`/`s_x`/`1^{Mmax}`/`1^{Mstep}` — lengths from
-   `frontProgram_run`'s register contents, thread the same s1…s4 chain). Then
-   show the sum `≤ A·(n+1)^K` (one `nlinarith`/`calc`; degree headroom in K).
-4. **`fQ_output_size_le`**: `encodable.size (M_Q, s_x, Mmax x, Mstep x)` =
-   `sizeFlatTM M_Q` (per-`Q` const) + `size s_x` + `Mmax x` + `Mstep x` + 3.
-   `size s_x = |encSyms(3::encodeRegs(encX x))|`-bounded via `encodeRegs_length`
-   (`= State.size(encX x)+xWidth`) and `encSyms` length (`= Σ(v+2)`, cells ≤2 on
-   BitState). Dominate by the SAME `A·(n+1)^K`.
+**Reusable size-arithmetic toolkit shipped this session** (all axiom-clean,
+`FrontWitness.lean`): `list_nat_size_le` (`List Nat` size `≤ (c+1)·|l|` when
+cells `≤ c`), `encSyms_length_le` (`(c+2)·|l|`), `encodeRegs_cells_le`
+(BitState `encodeRegs` cells `≤ 2`), `mem_length_le_size`/`get_length_le_size`
+(register length `≤ State.size`), `inOPoly_pow_succ`/`monotonic_pow_succ`
+(`(n+1)^k` is poly/mono). These are exactly the `encodable.size`/length
+manipulations the size-bound bites need — reuse them.
 
-**Reusable now** (all axiom-clean, `FrontWitness.lean`): `encSyms_injective` +
-`decodeSyms`/`decodeSyms_encSyms`; `inOPoly_monomial_bound` (F6 constant
-extractor); the `*_usesBelow` family (`appendConst`/`emitConst`/`appendItem`/
-`reencBody`/`reencLoop`/`emitRegs`/`mulStep`/`powLoop`/`unaryMonomial`/
-`frontProgram`); `get_append_lt`/`get_append_last`/`map_range_get`/
-`size_append_one`/`get_mem`; and the witness scaffolding (`encodeInQ`/`decodeOutQ`/
-`MmachineQ`/`MconstQ`/`BwidthQ`/`MmaxF`/`MstepF`/`cQ`, `computesQ`,
-`encodeInQ_size_le`/`_width`/`_bit`/`_bits`, `decodeOutQ_agree`). ⚠ **gotcha
-(landed in Conventions):** `Var` is an `abbrev Nat` that **`omega` does NOT see
-through** — retype every `x < k` register goal with `change (_ : Nat) < _` first;
-and gadget-`*_usesBelow` register hyps need `refine … ?_ … <;> · change (_:Nat)<_;
-omega` (a bare `by omega` in a metavariable-typed gadget arg fails silently).
-
-**Then C8-5** (waits on the S1 free witness existing): a fourth `SeamData`/`comp`
-onto S1's `headEncodeIn`; `mfc` drops the extra size register (scratch
-`≥ headRegBound`), otherwise identity onto `headEncodeIn`.
-
-**⚠ Option B alternative (owner call, not taken).** Option A (the unary size
-register) is SHIPPED and working. Option B (a structural lower-bound field on
-`InNPWitnessLangFreeSplit`, keeping `encodeIn = encX`) would change the frozen
-C8-0 interface — heavier; only revisit if the owner wants `encodeIn = encX`.
-
-Two self-contained size-bound bites remain (either stream, no design risk):
-**`cookTableau_size_bound`** (see the block before the top-down section) and
-its sibling **`guessTableau_size_bound`** (needed by the S1 witness; state it
-next to `cookTableau_size_bound` at the same degree 10). Closing either
-early de-risks the S1 cost ladder; a bottom-up session that finishes C8-4
-quickly should pick one up.
-
-**The machine + machine-iff + abstract lifting are BUILT** — consume
-`MQ_accepts_of_accept`/`MQ_no_reject_of_accepts` (`FrontMachine.lean`) and
-`fQ_correct`/`fQ_correct_concrete` (`FrontLifting.lean`) as black boxes; do not
-re-derive the compose/demote/format-check plumbing or the predicate-level lift.
-
-**`FSAT → SAT` is DONE end-to-end (2026-07-16)**, **build health is DONE
-(2026-07-17)**, **C8-3 is DONE (2026-07-18-b)**, and **the whole S1
-bijection `cookTableau_correct` is PROVEN (2026-07-18-d)** — the one
-remaining self-contained bite (no design risk, proof plan in the
-docstring), either stream can take it:
-
-- **`cookTableau_size_bound`** (restated 2026-07-17-b at degree 10 for the v2
-  card families; statement unchanged by the 2026-07-18-c marker fix — the
-  extra `copyRightCards` family is only `Θ(|Σ|²)` and the row grew one
-  cell): ~150–300 LOC of foldl-over-`flatMap` `encodable.size` arithmetic
-  (dominant terms: `Θ(|Σ|³)` copy cards + `Θ(|trans|·|Σ|³)` incoming-head
-  cards, each of size `Θ(|Σ|)`). Closing it early de-risks the S1 cost
-  ladder.
+**After both size bounds AND the S1 witness land: C8-5, the seam** (bottom-up):
+a fourth `SeamData`/`comp` onto S1's frozen `HeadLayout.headEncodeIn`
+(`headRegBound = 5`); `mfc` drops `W_Q`'s extra unary size register (scratch
+`≥ headRegBound`), otherwise identity onto `headEncodeIn`. Blocked only on the
+S1 free witness existing. Consume `front_reducesPolyMO'`/`WQ` (C8-4) as a black
+box on the left of the seam.
 
 ## NEXT TOP-DOWN session — the S1 free-witness program
 
@@ -779,9 +723,14 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   `HeadLayout.encSyms_snoc` (the `encSyms` loop-invariant closer). **Added
   2026-07-19-c**: `emitRegs`/`emitRegs_run` (the reg-2 input-string emitter —
   `dst := encSyms (3 :: encodeRegs (srcs.map get))`, `src` regs intact, only
-  `dst`/`scan`/`tflg`/`cnt` touched; NO cost bound yet — add one in C8-4) and
-  `HeadLayout.encSyms_append` (encSyms distributes over `++` — the closer for
-  every `encSyms`-of-a-concatenation goal). **Added 2026-07-19-d**:
+  `dst`/`scan`/`tflg`/`cnt` touched) + **`emitRegs_cost`** (2026-07-24-b:
+  `≤ 11 + Σ_{src} emitRegCost |src|`, `emitRegCost L = 8+13L+2L²`; mirrors
+  `tallyCells_cost`'s `foldl` induction) and `HeadLayout.encSyms_append` (encSyms
+  distributes over `++` — the closer for every `encSyms`-of-a-concatenation goal).
+  **The whole-program cost `FrontProgram.frontProgram_cost_le`** (2026-07-24-b)
+  bounds `(frontProgram …).cost` by `emitRegs.cost + 2·monomialCost + emitConst +
+  the five copy costs` (copy sources read off the emitted registers), mirroring
+  `frontProgram_run`'s s1…s4 threading. **Added 2026-07-19-d**:
   `tallyReg`/`tallyReg_run` (single register: `dst := dst ++ 1^|src|`,
   `forBnd`-bounded-by-`src` appending one `1`/cell, cost `≤ 1+|src|·5+|src|²`
   via `cost_constLoop_le`) and `tallyCells`/`tallyCells_run`/`tallyCells_cost`

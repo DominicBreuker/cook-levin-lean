@@ -1013,4 +1013,124 @@ theorem tallyCells_cost (cnt dst : Var) (srcs : List Var) (s : State)
   rw [hc0cost, hmap] at h
   rw [tallyCells]; exact h
 
+/-! ## Cost bound for `emitRegs` (C8-4)
+
+The reg-2 input-string emitter's cost bound, missing from the 2026-07-19-c run
+lemma. Mirrors the `tallyCells_cost` `foldl` induction (per-source cost that
+depends on the register's length at that fold step, sources read-only so the
+lengths reduce to the input's) but each step contributes the two seq nodes, the
+`appendItem dst 0` (`3`) and `reencLoop`'s quadratic bound (off = 1). -/
+
+/-- The per-register cost contribution of the `emitRegs` fold at register length
+`L`: two seq nodes + `appendItem dst 0` (`3`) + `reencLoop`'s bound
+`3 + 13L + 2L²` (off = 1). -/
+def emitRegCost (L : Nat) : Nat := 8 + 13 * L + 2 * (L * L)
+
+/-- The `foldl` cost induction behind `emitRegs_cost`. -/
+private theorem emitRegs_cost_go (cnt scan tflg dst : Var) :
+    ∀ (srcs : List Var) (c0 : Cmd) (s : State),
+      scan ≠ cnt → scan ≠ dst → scan ≠ tflg → dst ≠ cnt → dst ≠ tflg →
+      (∀ src ∈ srcs, src ≠ dst ∧ src ≠ scan ∧ src ≠ tflg ∧ src ≠ cnt) →
+      (∀ src ∈ srcs, ∀ x ∈ State.get (c0.eval s) src, x ≤ 1) →
+      (srcs.foldl
+          (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0)
+          c0).cost s
+        ≤ c0.cost s
+          + (srcs.map (fun src => emitRegCost (State.get (c0.eval s) src).length)).sum := by
+  intro srcs
+  induction srcs with
+  | nil => intro c0 s _ _ _ _ _ _ _; simp
+  | cons src rest ih =>
+      intro c0 s hsc hsd hst hdc hdt hdist hbits
+      obtain ⟨hsrc_d, hsrc_s, hsrc_t, hsrc_c⟩ := hdist src (List.mem_cons_self ..)
+      set c1 : Cmd := (c0 ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0 with hc1
+      have hfold : (src :: rest).foldl
+          (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0) c0
+          = rest.foldl
+            (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0) c1 := by
+        rw [List.foldl_cons]
+      set s0 : State := c0.eval s with hs0
+      obtain ⟨_, hR2, hR3, hR4⟩ :=
+        reencLoop_run 1 cnt scan tflg src dst s0 (State.get s0 src)
+          hsc hsd hst hdc hdt rfl (hbits src (List.mem_cons_self ..))
+      set sR : State := (reencLoop 1 cnt scan tflg src dst).eval s0 with hsR
+      obtain ⟨_, hI2, hI3⟩ := appendItem_run dst 0 sR
+      set L := (State.get s0 src).length with hL
+      have hc1eval : c1.eval s = (appendItem dst 0).eval sR := by
+        rw [hc1, Cmd.eval_seq, Cmd.eval_seq, ← hs0, ← hsR]
+      have hc1cost : c1.cost s ≤ c0.cost s + emitRegCost L := by
+        rw [hc1, Cmd.cost_seq, Cmd.cost_seq, Cmd.eval_seq, ← hs0, ← hsR, hI3]
+        unfold emitRegCost
+        have hexp : L * (L + 2 * 1 + 10) = L * L + 12 * L := by ring
+        rw [hexp] at hR4
+        generalize L * L = B at hR4 ⊢
+        omega
+      have hc1frame : ∀ r : Var, r ≠ dst → r ≠ scan → r ≠ tflg → r ≠ cnt →
+          State.get (c1.eval s) r = State.get s0 r := by
+        intro r h1 h2 h3 h4
+        rw [hc1eval, hI2 r h1, hR3 r h2 h1 h3 h4]
+      have hrest_bits : ∀ s' ∈ rest, ∀ x ∈ State.get (c1.eval s) s', x ≤ 1 := by
+        intro s' hs' x hx
+        obtain ⟨hd, hsc', ht', hcc'⟩ := hdist s' (List.mem_cons_of_mem _ hs')
+        rw [hc1frame s' hd hsc' ht' hcc'] at hx
+        exact hbits s' (List.mem_cons_of_mem _ hs') x hx
+      have hmap : rest.map (fun s' => emitRegCost (State.get (c1.eval s) s').length)
+          = rest.map (fun s' => emitRegCost (State.get s0 s').length) := by
+        apply List.map_congr_left
+        intro s' hs'
+        obtain ⟨hd, hsc', ht', hcc'⟩ := hdist s' (List.mem_cons_of_mem _ hs')
+        rw [hc1frame s' hd hsc' ht' hcc']
+      have hIH := ih c1 s hsc hsd hst hdc hdt
+        (fun s' hs' => hdist s' (List.mem_cons_of_mem _ hs')) hrest_bits
+      rw [hfold]
+      calc (rest.foldl
+              (fun c src => (c ;; reencLoop 1 cnt scan tflg src dst) ;; appendItem dst 0)
+              c1).cost s
+          ≤ c1.cost s
+              + (rest.map (fun s' => emitRegCost (State.get (c1.eval s) s').length)).sum := hIH
+        _ = c1.cost s
+              + (rest.map (fun s' => emitRegCost (State.get s0 s').length)).sum := by rw [hmap]
+        _ ≤ (c0.cost s + emitRegCost L)
+              + (rest.map (fun s' => emitRegCost (State.get s0 s').length)).sum :=
+            Nat.add_le_add_right hc1cost _
+        _ = c0.cost s
+              + ((src :: rest).map (fun s' => emitRegCost (State.get s0 s').length)).sum := by
+            rw [List.map_cons, List.sum_cons, ← hL, Nat.add_assoc]
+
+/-- **`emitRegs` cost**: `≤ 11 + Σ_{src ∈ srcs} emitRegCost |src|` — the seed
+`clear ;; appendItem dst 3` (`11`) plus, per source, the fold's per-register
+contribution. A polynomial in the input register lengths (the `inOPoly` input
+for the C8-4 witness's cost field). -/
+theorem emitRegs_cost (cnt scan tflg dst : Var) (srcs : List Var) (s : State)
+    (hsc : scan ≠ cnt) (hsd : scan ≠ dst) (hst : scan ≠ tflg)
+    (hdc : dst ≠ cnt) (hdt : dst ≠ tflg)
+    (hdist : ∀ src ∈ srcs, src ≠ dst ∧ src ≠ scan ∧ src ≠ tflg ∧ src ≠ cnt)
+    (hbits : ∀ src ∈ srcs, ∀ x ∈ State.get s src, x ≤ 1) :
+    (emitRegs cnt scan tflg dst srcs).cost s
+        ≤ 11 + (srcs.map (fun src => emitRegCost (State.get s src).length)).sum := by
+  set c0 : Cmd := Cmd.op (.clear dst) ;; appendItem dst 3 with hc0
+  have hclear : (Cmd.op (.clear dst)).eval s = s.set dst [] := rfl
+  have hc0eval : c0.eval s = (appendItem dst 3).eval (s.set dst []) := by
+    rw [hc0, Cmd.eval_seq, hclear]
+  have hc0frame : ∀ r : Var, r ≠ dst → State.get (c0.eval s) r = State.get s r := by
+    intro r hr
+    obtain ⟨_, hA2, _⟩ := appendItem_run dst 3 (s.set dst [])
+    rw [hc0eval, hA2 r hr, State.get_set_ne _ _ _ _ hr]
+  have hc0cost : c0.cost s = 11 := by
+    obtain ⟨_, _, hA3⟩ := appendItem_run dst 3 (s.set dst [])
+    rw [hc0, Cmd.cost_seq, Cmd.cost_op, hclear, hA3]
+    rfl
+  have hc0bits : ∀ src ∈ srcs, ∀ x ∈ State.get (c0.eval s) src, x ≤ 1 := by
+    intro src hs' x hx
+    rw [hc0frame src (hdist src hs').1] at hx
+    exact hbits src hs' x hx
+  have hmap : srcs.map (fun src => emitRegCost (State.get (c0.eval s) src).length)
+      = srcs.map (fun src => emitRegCost (State.get s src).length) := by
+    apply List.map_congr_left
+    intro src hs'
+    rw [hc0frame src (hdist src hs').1]
+  have h := emitRegs_cost_go cnt scan tflg dst srcs c0 s hsc hsd hst hdc hdt hdist hc0bits
+  rw [hc0cost, hmap] at h
+  rw [emitRegs]; exact h
+
 end FrontPieces
