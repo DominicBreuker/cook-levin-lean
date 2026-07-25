@@ -35,6 +35,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `axiom` declarations | **0** |
 | `#print axioms S1Map.s1Map_correct` | `[propext, Classical.choice, Quot.sound]` — **the S1 reduction map is correct** (2026-07-25, `Reductions/S1Map.lean`): the guarded map `s1Map` satisfies `FlatSingleTMGenNP x ↔ FlatTCCLang (s1Map x)`, with `s1Map_size_le` at `(2·(n+3))^10`. The `PolyTimeComputableLang` skeleton is up (`Reductions/S1Witness.lean`, both layouts pinned, output key injective, mechanical fields proven); only the program `s1Program` is open |
 | `#print axioms S1Parse.stagePG_run` | `[propext, Quot.sound]` — **the S1 program's stages P (parse) and G (guard) are built** (2026-07-25-b, `Reductions/S1Parse.lean`, sorry-free): the machine register is parsed into a pinned scratch frame (registers 6–13) and `S1Map.s1GuardB` is decided on-machine into a flag, with `stagePG_usesBelow : UsesBelow 32`. Cost measured **cubic** (`probes/S1ParseProbe.lean`) — the parse is not the S1 budget driver. Stages Σ / I / C / F / M and the cost ladder remain open |
+| `#print axioms S1Cards.cardBlocks_eq` | `[propext, Classical.choice, Quot.sound]` — **stage C (the card emitter) is DE-RISKED** (2026-07-25-c, `Reductions/S1Cards.lean`, sorry-free): the `Fin`-typed, `finRange`/`filterMap`-driven `guessCards M` is proven equal to `cardBlocks M`, seven nested `List.range` streams over the numbers stage P parses, with one equation per card family. Plus `normModel_eq` (the `normTrans` dedup as a three-number key pass + one halt-bit lookup) and `stageMNo` (the guard-false branch of the multiplex). ⚠ two measured findings: the prelude family is `Θ(σ³)`, **not** `Θ(σ⁶)`, and the emitter must append cell-by-cell (never `concat`) since `Op.cost concat` reads the whole destination |
 | `encodable FlatTM` | ✅ **CORRECTED (2026-07-25)** to the data-field sum. The old `sizeFlatTM` charged a flat `5` per transition entry, which made the S1 witness's `encodeIn_size` obligation **unsatisfiable** (`probes/S1SizeGapProbe.lean`); zero ripple, full build green |
 | Genuine `sorry`s (Group C) | **7 in built code**: 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), and 2 deliberate S1 skeleton markers (`S1Witness.lean`: `flattenTM_size_le`, `s1Program`). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
@@ -163,10 +164,14 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   the card emitter), and it **never desynchronises even on invalid machines**
   (`flattenEntry` writes each list's own length before its payload), so neither
   stage carries a validity hypothesis.
-  Remaining: the S1 free witness **program** stages Σ / I / C / F / M, the
-  whole-program cost ladder, and the `computes`/`cost_le`/`usesBelow` fields;
-  estimate ~2K LOC, decomposed in the `S1Witness.lean` module docstring. The
-  card emitter (C) is the only piece whose shape is still unknown. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
+  **Stage C's pure model is DONE (2026-07-25-c, `Reductions/S1Cards.lean`,
+  sorry-free & axiom-clean)**: `cardBlocks_eq` restates the whole card stream
+  as seven `List.range` nests over the parsed numbers (one proven equation per
+  card family), `normModel_eq` specifies the `normTrans` dedup on-machine, and
+  `stageMNo` closes the multiplex's guard-false branch. Remaining: the S1 free
+  witness **program** `Cmd`s for stages Σ / I / C / F / M-yes, the
+  whole-program cost ladder, and the `computes`/`cost_le`/`usesBelow` fields.
+  No piece's *shape* is unknown any more. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
   `Θ(|trans|·|Σ|⁴)` encoded (counts pinned by
   `cookCards_length_le`/`preludeCards_length_le`).
 
