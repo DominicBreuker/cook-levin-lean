@@ -408,13 +408,11 @@ def computableTime' {α : Type u} {β : Type v} : α → (β → Nat) → Prop
       -- The time bound captures the complexity of f
       ∀ y : β, f y ≤ steps
 
--- Size of a flatTM encoding (in natural numbers)
-def sizeFlatTM (M : FlatTM) : Nat :=
-  -- Size is roughly: sig + tapes + states + trans entries + start + halt
-  M.sig + M.tapes + M.states + 
-  (M.trans.length * 5) +  -- Approximate: each transition has ~5 components
-  M.start + M.halt.length
-
--- Size of flatTM input (machine, maxSize, steps)
-def sizeFlatTMInput (M : FlatTM) (maxSize steps : Nat) : Nat :=
-  sizeFlatTM M + maxSize + steps
+-- DELETED 2026-07-25 (S1 top-down finding): `sizeFlatTM` / `sizeFlatTMInput`.
+-- `sizeFlatTM` charged a flat `5` per transition entry ("Approximate: each
+-- transition has ~5 components"), ignoring the entries' payloads, and was the
+-- `encodable FlatTM` measure — which made the S1 witness's `encodeIn_size`
+-- obligation unsatisfiable (the head layout's machine register grows without
+-- bound at constant `sizeFlatTM`; `probes/S1SizeGapProbe.lean`). The honest
+-- data-field-sum measure now lives next to the instance in `Definitions.lean`.
+-- `sizeFlatTMInput` had no callers.

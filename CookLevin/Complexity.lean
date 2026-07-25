@@ -27,5 +27,7 @@ import Complexity.NP.SAT.CookLevin.Reductions.FrontMachine
 import Complexity.NP.SAT.CookLevin.Reductions.FrontLifting
 import Complexity.NP.SAT.CookLevin.Reductions.FrontProgram
 import Complexity.NP.SAT.CookLevin.Reductions.FrontWitness
+import Complexity.NP.SAT.CookLevin.Reductions.S1Map
+import Complexity.NP.SAT.CookLevin.Reductions.S1Witness
 
 set_option autoImplicit false
