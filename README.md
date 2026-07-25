@@ -29,7 +29,8 @@ register before working.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — **`FlatTCC ⪯p' SAT` — the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` is ONE composed live `⪯p'`** (2026-07-16). The last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`) is a full free-line witness — pre-order positional Tseytin over the Polish `serF` stream (`NP/FSAT_to_SAT_pre.lean`), program `buildSAT`, complete run ladder (`buildSAT_run`) and cost ladder (`buildSAT_cost_le`, `satBound = O(n⁸)`), all mechanical fields (`Reductions/FSAT_to_SAT_free.lean`) — chained by the **third live `SeamData`/`comp`** (`Reductions/FSAT_to_SAT_comp.lean`, probe `probes/SATSeamProbe.lean`). The tail is DONE and waits on the front (S1/C8) for the endpoint hardness bridge. |
 | `NPhard'` endgame design | **SETTLED, machine-validated & now LIVE** (2026-07-02/03): `PolyTimeComputableLang.SeamData`/`comp` (Cmd-level chain composition, fully proven, first live seam `FlatTCCBinComp.flatTCC_to_binaryCC_seam`) + `NPhard'`/`NPcomplete'`; hardness is proven at chain endpoints only — see `CookLevin/HANDOFF.md`. |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
-| Genuine `sorry`s in built code | **5** (Group C — completion): `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are now fully `sorry`-free** — the whole S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds `cookTableau_size_bound`/`guessTableau_size_bound`** are sorry-free & axiom-clean (2026-07-18…-24). |
+| `#print axioms S1Map.s1Map_correct` | **`[propext, Classical.choice, Quot.sound]`** — the **S1 reduction map is correct** (2026-07-25): `FlatSingleTMGenNP x ↔ FlatTCCLang (s1Map x)` for the guarded map `s1Map`, with `s1Map_size_le` bounding its output. The *program* computing `s1Map` is the one remaining piece of the honest chain head (`Reductions/S1Witness.lean`, skeleton). |
+| Genuine `sorry`s in built code | **7** (Group C — completion). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). Two deliberate S1 skeleton markers (`Reductions/S1Witness.lean`, 2026-07-25): `flattenTM_size_le` (a specified bottom-up bite) and `s1Program` (the open reduction program, which also leaves three fields of `s1_reductionLang` open). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
@@ -108,8 +109,17 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   `cookTableau_size_bound`/`guessTableau_size_bound` are PROVEN (2026-07-24,
   `≤ (2·(n+1))^10`; see the HANDOFF risk finding on the base), so
   `CookTableau.lean`/`GuessTableau.lean` are now fully `sorry`-free.** The S1
-  *reduction* still needs the free witness program; the chain-head input layout
-  is **frozen** (`Reductions/HeadLayout.lean`).
+  *reduction* is now half-built: the **map is DONE & axiom-clean**
+  (2026-07-25, `Reductions/S1Map.lean`) — the decidable guard `s1GuardB`, the
+  map `s1Map`, the correctness iff `s1Map_correct`, and the output-size bound
+  `s1Map_size_le` — and the witness skeleton (`Reductions/S1Witness.lean`)
+  pins both layouts (input = the frozen `Reductions/HeadLayout.lean`; output =
+  `FlatTCCFree.encodeIn` verbatim, making the next seam a pure scrub) and
+  proves the output key injective plus every mechanical field. **What remains
+  is the program `s1Program` and its three fields** — the whole critical path.
+  ⚠ Landing this required correcting `encodable FlatTM`, whose old measure
+  (`sizeFlatTM`, a flat `5` per transition entry) made the witness's
+  `encodeIn_size` obligation *unsatisfiable* (`probes/S1SizeGapProbe.lean`).
 - **S2 (bridges).** `LM_to_mTM` / `mTM_to_singleTapeTM` use a 1-state
   `bridgeMachine` with empty transitions that **accepts everything**; the
   TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
