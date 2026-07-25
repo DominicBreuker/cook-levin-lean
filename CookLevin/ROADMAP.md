@@ -33,7 +33,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatTCC ⪯p' SAT` (2026-07-16): the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` as ONE composed live `⪯p'`** via the third live seam (`Reductions/FSAT_to_SAT_comp.lean`); the last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`, `Reductions/FSAT_to_SAT_free.lean`) is a complete free witness (run + cost ladders + mechanical fields). **The tail is DONE** — it waits on the front (S1/C8) for the endpoint hardness bridge |
 | `NPhard'` endgame design | **SETTLED, machine-validated & VALIDATED LIVE** (2026-07-02/03): `SeamData`/`PolyTimeComputableLang.comp` fully proven and instantiated on real witnesses; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
-| Genuine `sorry`s (Group C) | **8 in built code** (5 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 1× CookTableau — **the whole S1 bijection `cookTableau_correct` is sorry-free & axiom-clean, all four directions PROVEN 2026-07-18/-b/-c/-d**; only `cookTableau_size_bound` remains — and 2× GuessTableau (the prelude-step pair P1/P2; **the cert-guess layer is designed, probed & assembled, 2026-07-19**); 3 in dead code `MultiToSingle`) |
+| Genuine `sorry`s (Group C) | **5 in built code** (2 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`; 3 in dead code `MultiToSingle`). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are now fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** (`cookTableau_size_bound`/`guessTableau_size_bound`, `≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
 | Remaining to a real proof | **~12–20K LOC** (breakdown below) |
@@ -133,17 +133,19 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   machine-checked phantom-head defect at the right row edge was fixed by a
   right boundary marker), and the (1b) inversion `step_of_validStep` is
   PROVEN (2026-07-18-d) — the whole bijection `cookTableau_correct` is
-  sorry-free & axiom-clean.** **The prelude/cert-guess layer is designed,
-  probed & skeletoned (2026-07-19, `Simulators/GuessTableau.lean`)**: a
-  band-disjoint prelude alphabet (`PSg = Sg + 2·sig + 5`) turns `∃ cert`
-  into row-0 nondeterminism, reusing the deterministic core UNCHANGED
-  through a value-preserving embedding; `guessTableau_correct` is
-  assembled and the Γ-band transfers are proven — two sorries remain (the
-  prelude-step pair P1/P2, plan in HANDOFF). Remaining after that:
-  `cookTableau_size_bound` (a mechanical bite) and the S1 free witness
-  program; estimate ~2–4K LOC. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`;
-  the card list is `Θ(|trans|·|Σ|⁴)` encoded (size bound stated at
-  degree 10; the prelude adds only `Θ(|Σ|³)` cards).
+  sorry-free & axiom-clean.** **The prelude/cert-guess layer is COMPLETE
+  (2026-07-19-b, `Simulators/GuessTableau.lean`)**: a band-disjoint prelude
+  alphabet (`PSg = Sg + 2·sig + 5`) turns `∃ cert` into row-0 nondeterminism,
+  reusing the deterministic core UNCHANGED through a value-preserving
+  embedding; `guessTableau_correct` is sorry-free & axiom-clean (P1/P2 +
+  Γ-band transfers all proven). **Both size bounds
+  `cookTableau_size_bound`/`guessTableau_size_bound` are PROVEN (2026-07-24,
+  `≤ (2·(n+1))^10`), so both tableau files are fully `sorry`-free.**
+  Remaining: the S1 free witness program (the honest reduction `Cmd` emitting
+  `guessTableau` into the frozen `HeadLayout.headEncodeIn`); estimate ~2–3K
+  LOC. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
+  `Θ(|trans|·|Σ|⁴)` encoded (counts pinned by
+  `cookCards_length_le`/`preludeCards_length_le`).
 
 - **C2 is the linchpin — and is under-built (this session's headline finding).**
   Everything (both the reduction side `toFrameworkWitness'` and the decider side

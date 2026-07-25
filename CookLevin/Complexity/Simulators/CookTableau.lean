@@ -63,11 +63,14 @@ never fires those — `runFlatTM` checks halting first).
   **Directions (2) `cover_of_run` and (3) `run_of_cover` are PROVEN
   (2026-07-18-c)** on the trajectory inductions, and **the (1b) inversion
   `step_of_validStep` is PROVEN (2026-07-18-d)** — so `cookTableau_correct`
-  is now **sorry-free**. The only remaining `sorry` in this file is
-  `cookTableau_size_bound`.
+  is now **sorry-free**. **`cookTableau_size_bound` is PROVEN too
+  (2026-07-24, bottom-up) — this file is now fully `sorry`-free.**
 * `cookTableau_correct_immediateHalt` — the constrained-case probe, PROVEN
   against the v2 cards (validates the redesigned families on the base case).
-* `cookTableau_size_bound` — restated (degree 10, see the note) and `sorry`.
+* `cookTableau_size_bound` — PROVEN at `(2·(n+1))^10` (see the note by the
+  theorem for why the enlarged base, not `n^10`). Ships a reusable generic
+  toolkit (`encodable_size_list_le`, `length_flatMap_le`, `flattenString_size_le`,
+  `flattenCard_size_le`, `pow_collapse`) consumed by `guessTableau_size_bound`.
 * **Certificate nondeterminism is NOT here yet**: this file is the
   *deterministic core* `acceptsFlatTM M [s] steps ↔ tableau coverable`. The
   full S1 reduction needs a *prelude/guess layer* on top (wildcard cells in
@@ -695,21 +698,417 @@ theorem cookTableau_wellformed (M : FlatTM) (s : List Nat) (steps : Nat)
   · exact FlatTCC.flattenTCC_wellformed (cookTableauTyped_wellformed M s steps)
   · exact FlatTCC.isValidFlattening_flattenTCC _
 
-/-! ## Size bound (documented gap)
+/-! ## Generic `encodable.size` toolkit for tableau size bounds
 
-The card list dominates: `copyCards` is `Θ(|Σ|³)` cards of encoded size
-`Θ(|Σ|)` each (`Θ(|Σ|⁴)` total), and each normalised entry contributes
-`Θ(|Σ|³)` incoming-head cards (`Θ(|trans|·|Σ|⁴)` total). With
-`|Σ| = (M.sig+1)(M.states+2)+1 ≤ n²` for
-`n := s.length + steps + M.sig + M.states + M.trans.length + 2`, the total is
-`O(n⁹)`; the degree-10 bound below has generous headroom. Still polynomial —
-that is all `⪯p'` needs. Proving it is `~150–300` LOC of
-foldl-over-`flatMap` `encodable.size` arithmetic (a clean bottom-up bite,
-no design risk). -/
+These are reused by `guessTableau_size_bound` (`GuessTableau.lean`). All are
+purely mechanical length/`encodable.size` arithmetic. -/
+
+/-- `encodable.size` of a list with all elements bounded is `≤ (c+1)·|l|`. -/
+theorem encodable_size_list_le {α : Type*} [encodable α] (l : List α) (c : Nat)
+    (h : ∀ x ∈ l, encodable.size x ≤ c) : encodable.size l ≤ (c + 1) * l.length := by
+  induction l with
+  | nil => simp [encodable_size_list_nil]
+  | cons a t ih =>
+      rw [encodable_size_list_cons, List.length_cons, Nat.mul_add, Nat.mul_one]
+      have ha : encodable.size a ≤ c := h a (List.mem_cons_self ..)
+      have ht := ih (fun x hx => h x (List.mem_cons_of_mem _ hx))
+      omega
+
+/-- Length of a `flatMap` with uniformly bounded fibers. -/
+theorem length_flatMap_le {α : Type*} {β : Type*} (l : List α) (f : α → List β)
+    (c : Nat) (h : ∀ x ∈ l, (f x).length ≤ c) :
+    (l.flatMap f).length ≤ l.length * c := by
+  induction l with
+  | nil => simp
+  | cons a t ih =>
+      rw [List.flatMap_cons, List.length_append, List.length_cons, Nat.succ_mul]
+      have ha := h a (List.mem_cons_self ..)
+      have ht := ih (fun x hx => h x (List.mem_cons_of_mem _ hx))
+      omega
+
+/-- `flattenString` of a `List (Fin k)` has `encodable.size ≤ (k+1)·|xs|`. -/
+theorem flattenString_size_le {k : Nat} (xs : List (Fin k)) :
+    encodable.size (flattenString xs) ≤ (k + 1) * xs.length := by
+  have hlen : (flattenString xs).length = xs.length := by simp [flattenString]
+  rw [← hlen]
+  apply encodable_size_list_le
+  intro x hx
+  simp only [flattenString, List.mem_map] at hx
+  obtain ⟨y, _, rfl⟩ := hx
+  have h1 : encodable.size (y.1 : Nat) = y.1 := rfl
+  have h2 := y.2
+  omega
+
+/-- Flattening a card sends its six `< k` cells to `Nat`s summing to `≤ 6k+1`. -/
+theorem flattenCard_size_le {k : Nat} (card : TCCCard (Fin k)) :
+    encodable.size (FlatTCC.flattenCard card) ≤ 6 * k + 1 := by
+  have h1 := card.prem.cardEl1.2
+  have h2 := card.prem.cardEl2.2
+  have h3 := card.prem.cardEl3.2
+  have h4 := card.conc.cardEl1.2
+  have h5 := card.conc.cardEl2.2
+  have h6 := card.conc.cardEl3.2
+  have he : encodable.size (FlatTCC.flattenCard card) =
+      (card.prem.cardEl1.1 + card.prem.cardEl2.1 + card.prem.cardEl3.1 + 1)
+      + (card.conc.cardEl1.1 + card.conc.cardEl2.1 + card.conc.cardEl3.1 + 1) + 1 := rfl
+  omega
+
+/-- Final collapse: a `C·b^d` bound (`C ≤ 1024`, `d ≤ 10`) is `≤ (2·b)^10`. -/
+theorem pow_collapse {C d b total : Nat} (hC : C ≤ 1024) (hd : d ≤ 10) (hb : 1 ≤ b)
+    (h : total ≤ C * b ^ d) : total ≤ (2 * b) ^ 10 := by
+  calc total ≤ C * b ^ d := h
+    _ ≤ 1024 * b ^ 10 := Nat.mul_le_mul hC (Nat.pow_le_pow_right hb hd)
+    _ = (2 * b) ^ 10 := by rw [Nat.mul_pow]
+
+/-! ## Card-list length bounds (all `M`-only, mechanical `flatMap` counting) -/
+
+theorem xOpts_length (M : FlatTM) : (xOpts M).length = M.sig + 2 := by simp [xOpts]
+
+theorem copyCards_length_le (M : FlatTM) :
+    (copyCards M).length ≤ (M.sig + 2) * ((M.sig + 1) * (M.sig + 1)) := by
+  unfold copyCards
+  refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * (M.sig + 1)) ?_) ?_
+  · intro x _
+    refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+    · intro b _; rw [List.length_map, List.length_finRange]
+    · rw [List.length_finRange]
+  · rw [xOpts_length]
+
+theorem copyRightCards_length_le (M : FlatTM) :
+    (copyRightCards M).length ≤ (M.sig + 1) * (M.sig + 1) := by
+  unfold copyRightCards
+  refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+  · intro y _; rw [List.length_map, List.length_finRange]
+  · rw [List.length_finRange]
+
+theorem haltLeftCards_length_le (M : FlatTM) :
+    (haltLeftCards M).length ≤
+      (M.states + 1) * ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1))) := by
+  unfold haltLeftCards
+  refine le_trans (length_flatMap_le _ _
+    ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1))) ?_) ?_
+  · intro q _
+    split
+    · refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * (M.sig + 1)) ?_) ?_
+      · intro b _
+        refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+        · intro y _; rw [List.length_map, List.length_finRange]
+        · rw [List.length_finRange]
+      · rw [List.length_finRange]
+    · simp
+  · rw [List.length_finRange]
+
+theorem haltCenterCards_length_le (M : FlatTM) :
+    (haltCenterCards M).length ≤
+      (M.states + 1) * ((M.sig + 1) * ((M.sig + 2) * (M.sig + 1))) := by
+  unfold haltCenterCards
+  refine le_trans (length_flatMap_le _ _
+    ((M.sig + 1) * ((M.sig + 2) * (M.sig + 1))) ?_) ?_
+  · intro q _
+    split
+    · refine le_trans (length_flatMap_le _ _ ((M.sig + 2) * (M.sig + 1)) ?_) ?_
+      · intro b _
+        refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+        · intro x _; rw [List.length_map, List.length_finRange]
+        · rw [xOpts_length]
+      · rw [List.length_finRange]
+    · simp
+  · rw [List.length_finRange]
+
+theorem haltRightCards_length_le (M : FlatTM) :
+    (haltRightCards M).length ≤
+      (M.states + 1) * ((M.sig + 1) * ((M.sig + 2) * (M.sig + 1))) := by
+  unfold haltRightCards
+  refine le_trans (length_flatMap_le _ _
+    ((M.sig + 1) * ((M.sig + 2) * (M.sig + 1))) ?_) ?_
+  · intro q _
+    split
+    · refine le_trans (length_flatMap_le _ _ ((M.sig + 2) * (M.sig + 1)) ?_) ?_
+      · intro b _
+        refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+        · intro x _; rw [List.length_map, List.length_finRange]
+        · rw [xOpts_length]
+      · rw [List.length_finRange]
+    · simp
+  · rw [List.length_finRange]
+
+theorem stepCardsLeft_length_le (M : FlatTM) (q q' : Fin (M.states + 1))
+    (m w : Option Nat) (mv : TMMove) (xb : Bool) (y z : Fin (M.sig + 1)) :
+    (stepCardsLeft M q q' m w mv xb y z).length ≤ 2 := by
+  cases mv <;> simp [stepCardsLeft]
+
+theorem stepCardsOf_length_le (M : FlatTM) (e : FlatTMTransEntry) :
+    (stepCardsOf M e).length ≤ 7 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1))) := by
+  unfold stepCardsOf
+  simp only [List.length_append]
+  have g1 : ((xOpts M).flatMap (fun x =>
+      (List.finRange (M.sig + 1)).map (fun z =>
+        stepCardCenter M (stateOf M e.src_state) (stateOf M e.dst_state)
+          (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+          (e.move_dirs.headD TMMove.Nmove) x z))).length ≤ (M.sig + 2) * (M.sig + 1) := by
+    refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+    · intro x _; rw [List.length_map, List.length_finRange]
+    · rw [xOpts_length]
+  have g2 : (([false, true]).flatMap (fun xb =>
+      (List.finRange (M.sig + 1)).flatMap (fun y =>
+        (List.finRange (M.sig + 1)).flatMap (fun z =>
+          stepCardsLeft M (stateOf M e.src_state) (stateOf M e.dst_state)
+            (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+            (e.move_dirs.headD TMMove.Nmove) xb y z)))).length
+      ≤ 2 * ((M.sig + 1) * ((M.sig + 1) * 2)) := by
+    refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * ((M.sig + 1) * 2)) ?_) ?_
+    · intro xb _
+      refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * 2) ?_) ?_
+      · intro y _
+        refine le_trans (length_flatMap_le _ _ 2 ?_) ?_
+        · intro z _; exact stepCardsLeft_length_le _ _ _ _ _ _ _ _ _
+        · rw [List.length_finRange]
+      · rw [List.length_finRange]
+    · simp
+  have g3 : ((xOpts M).flatMap (fun x =>
+      (List.finRange (M.sig + 1)).map (fun y =>
+        stepCardRight M (stateOf M e.src_state) (stateOf M e.dst_state)
+          (e.src_tape_vals.headD none) (e.dst_write_vals.headD none)
+          (e.move_dirs.headD TMMove.Nmove) x y))).length ≤ (M.sig + 2) * (M.sig + 1) := by
+    refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+    · intro x _; rw [List.length_map, List.length_finRange]
+    · rw [xOpts_length]
+  have g4 : (match e.move_dirs.headD TMMove.Nmove with
+      | TMMove.Rmove =>
+          (List.finRange (M.sig + 1)).flatMap (fun y =>
+            (List.finRange (M.sig + 1)).flatMap (fun z =>
+              (List.finRange (M.sig + 1)).map (fun u =>
+                stepCardInR M (stateOf M e.dst_state) y z u)))
+      | TMMove.Lmove =>
+          (xOpts M).flatMap (fun x =>
+            (List.finRange (M.sig + 1)).flatMap (fun y =>
+              (List.finRange (M.sig + 1)).map (fun c =>
+                stepCardInL M (stateOf M e.dst_state) x y c)))
+      | TMMove.Nmove => []).length ≤ (M.sig + 2) * ((M.sig + 1) * (M.sig + 1)) := by
+    cases e.move_dirs.headD TMMove.Nmove
+    · -- Lmove
+      refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * (M.sig + 1)) ?_) ?_
+      · intro x _
+        refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+        · intro y _; rw [List.length_map, List.length_finRange]
+        · rw [List.length_finRange]
+      · rw [xOpts_length]
+    · -- Rmove
+      refine le_trans (length_flatMap_le _ _ ((M.sig + 1) * (M.sig + 1)) ?_) ?_
+      · intro y _
+        refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+        · intro z _; rw [List.length_map, List.length_finRange]
+        · rw [List.length_finRange]
+      · rw [List.length_finRange]
+        exact Nat.mul_le_mul_right _ (by omega)
+    · -- Nmove
+      simp
+  have key : ∀ a b c d : Nat,
+      a ≤ (M.sig + 2) * (M.sig + 1) → b ≤ 2 * ((M.sig + 1) * ((M.sig + 1) * 2)) →
+      c ≤ (M.sig + 2) * (M.sig + 1) → d ≤ (M.sig + 2) * ((M.sig + 1) * (M.sig + 1)) →
+      a + b + c + d ≤ 7 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1))) := by
+    intro a b c d ha hb hc hd
+    have e1 : (M.sig + 2) * (M.sig + 1) ≤ (M.sig + 2) * ((M.sig + 1) * (M.sig + 1)) := by
+      apply Nat.mul_le_mul_left; nlinarith [Nat.zero_le M.sig]
+    have e2 : 2 * ((M.sig + 1) * ((M.sig + 1) * 2))
+        ≤ 4 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1))) := by nlinarith [Nat.zero_le M.sig]
+    omega
+  exact key _ _ _ _ g1 g2 g3 g4
+
+/-- `dedupGo` never lengthens its input. -/
+theorem dedupGo_length_le (seen l : List FlatTMTransEntry) :
+    (dedupGo seen l).length ≤ l.length := by
+  induction l generalizing seen with
+  | nil => simp [dedupGo]
+  | cons e es ih =>
+      unfold dedupGo
+      split
+      · exact le_trans (ih seen) (by simp)
+      · simp only [List.length_cons]; exact Nat.succ_le_succ (ih (e :: seen))
+
+theorem normTrans_length_le (M : FlatTM) : (normTrans M).length ≤ M.trans.length := by
+  unfold normTrans
+  exact le_trans (List.length_filter_le _ _) (dedupGo_length_le _ _)
+
+theorem stepCards_length_le (M : FlatTM) :
+    (stepCards M).length ≤
+      M.trans.length * (7 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1)))) := by
+  unfold stepCards
+  refine le_trans (length_flatMap_le _ _
+    (7 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1)))) ?_) ?_
+  · intro e _; exact stepCardsOf_length_le M e
+  · exact Nat.mul_le_mul_right _ (normTrans_length_le M)
+
+/-- Total card count, `≤ 12·(|M|+3)^4` (reused by `guessTableau_size_bound`). -/
+theorem cookCards_length_le (M : FlatTM) :
+    (cookCards M).length ≤ 12 * (M.sig + M.states + M.trans.length + 3) ^ 4 := by
+  set mb := M.sig + M.states + M.trans.length + 3 with hmb
+  have hs1 : M.sig + 1 ≤ mb := by omega
+  have hs2 : M.sig + 2 ≤ mb := by omega
+  have hq1 : M.states + 1 ≤ mb := by omega
+  have htr : M.trans.length ≤ mb := by omega
+  have hmb1 : 1 ≤ mb := by omega
+  unfold cookCards
+  simp only [List.length_append]
+  have hcopy := copyCards_length_le M
+  have hcopyR := copyRightCards_length_le M
+  have hhL := haltLeftCards_length_le M
+  have hhC := haltCenterCards_length_le M
+  have hhR := haltRightCards_length_le M
+  have hstep := stepCards_length_le M
+  have b3 : mb * (mb * mb) ≤ mb ^ 4 := by
+    have h : mb * (mb * mb) = mb ^ 3 := by ring
+    rw [h]; exact Nat.pow_le_pow_right hmb1 (by omega)
+  have b2 : mb * mb ≤ mb ^ 4 := by
+    have h : mb * mb = mb ^ 2 := by ring
+    rw [h]; exact Nat.pow_le_pow_right hmb1 (by omega)
+  have b4eq : mb * (mb * (mb * mb)) = mb ^ 4 := by ring
+  have c1 : (M.sig + 2) * ((M.sig + 1) * (M.sig + 1)) ≤ mb ^ 4 :=
+    le_trans (Nat.mul_le_mul hs2 (Nat.mul_le_mul hs1 hs1)) b3
+  have c2 : (M.sig + 1) * (M.sig + 1) ≤ mb ^ 4 :=
+    le_trans (Nat.mul_le_mul hs1 hs1) b2
+  have c3 : (M.states + 1) * ((M.sig + 1) * ((M.sig + 1) * (M.sig + 1))) ≤ mb ^ 4 :=
+    b4eq ▸ Nat.mul_le_mul hq1 (Nat.mul_le_mul hs1 (Nat.mul_le_mul hs1 hs1))
+  have c4 : (M.states + 1) * ((M.sig + 1) * ((M.sig + 2) * (M.sig + 1))) ≤ mb ^ 4 :=
+    b4eq ▸ Nat.mul_le_mul hq1 (Nat.mul_le_mul hs1 (Nat.mul_le_mul hs2 hs1))
+  have c5 : M.trans.length * (7 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1))))
+      ≤ 7 * mb ^ 4 := by
+    have hrw : M.trans.length * (7 * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1))))
+        = 7 * (M.trans.length * ((M.sig + 2) * ((M.sig + 1) * (M.sig + 1)))) := by ring
+    rw [hrw]
+    apply Nat.mul_le_mul_left
+    exact b4eq ▸ Nat.mul_le_mul htr (Nat.mul_le_mul hs2 (Nat.mul_le_mul hs1 hs1))
+  omega
+
+theorem cookFinal_length_le (M : FlatTM) :
+    (cookFinal M).length ≤ (M.states + 1) * (M.sig + 1) := by
+  unfold cookFinal
+  refine le_trans (length_flatMap_le _ _ (M.sig + 1) ?_) ?_
+  · intro q _
+    split
+    · rw [List.length_map, List.length_finRange]
+    · simp
+  · rw [List.length_finRange]
+
+theorem cookFinal_mem_length (M : FlatTM) :
+    ∀ x ∈ cookFinal M, x.length ≤ 1 := by
+  intro x hx
+  simp only [cookFinal, List.mem_flatMap, List.mem_finRange, true_and] at hx
+  obtain ⟨q, hq⟩ := hx
+  split at hq
+  · simp only [List.mem_map] at hq
+    obtain ⟨b, _, rfl⟩ := hq
+    simp
+  · simp at hq
+
+/-! ## Size bound (`(2·(n+1))^10`, `n = s.length + steps + |M|`)
+
+**Risk-based finding (this session).** The card list dominates: `copyCards`
+is `Θ(|Σ|³)` cards, and each normalised entry contributes `Θ(|Σ|³)`
+incoming-head cards; with `|Σ| ≤ n²` the total is a low-degree polynomial in
+`n`. The *previously stated* bound `n^10` is numerically true but is **not
+provable from loose factored bounds** — a loose `≤ 102·(n+1)^6` already
+overshoots `n^10` at `n = 2` (`n^10 = 1024`). We bound instead by
+`(2·(n+1))^10 = 1024·(n+1)^10`, whose `2^10` slack absorbs loose constants;
+it is `inOPoly`/`monotonic` all the same (all `⪯p'` needs). See
+`guessTableau_size_bound` for the sibling bound (which additionally *requires*
+the enlarged base — `gn^10` fails at `gn = 2`). -/
 theorem cookTableau_size_bound (M : FlatTM) (s : List Nat) (steps : Nat) :
     encodable.size (cookTableau M s steps) ≤
-      (s.length + steps + M.sig + M.states + M.trans.length + 2) ^ 10 := by
-  sorry  -- mechanical foldl-over-flatMap size sum; see the note above.
+      (2 * (s.length + steps + M.sig + M.states + M.trans.length + 3)) ^ 10 := by
+  set b := s.length + steps + M.sig + M.states + M.trans.length + 3 with hb
+  have hb1 : 1 ≤ b := by omega
+  have hs1 : M.sig + 1 ≤ b := by omega
+  have hs2 : M.sig + 2 ≤ b := by omega
+  have hq1 : M.states + 1 ≤ b := by omega
+  have htr : M.trans.length ≤ b := by omega
+  have hb2 : 9 ≤ b ^ 2 := by
+    calc (9 : Nat) = 3 ^ 2 := by norm_num
+      _ ≤ b ^ 2 := Nat.pow_le_pow_left (by omega) 2
+  -- powers-of-`b` monotonicity helpers
+  have bpow : ∀ i j : Nat, i ≤ j → b ^ i ≤ b ^ j := fun i j h => Nat.pow_le_pow_right hb1 h
+  -- `Sg M ≤ b^2`
+  have hSg : Sg M ≤ b ^ 2 := by
+    unfold Sg
+    have key : (M.sig + 1) * (M.states + 2) + 1 ≤ (M.sig + M.states + 3) ^ 2 := by nlinarith
+    have hle : (M.sig + M.states + 3) ^ 2 ≤ b ^ 2 := Nat.pow_le_pow_left (by omega) 2
+    omega
+  -- unfold the flattened size
+  have hsize : encodable.size (cookTableau M s steps) =
+      Sg M + encodable.size (flattenString (cookInit M s steps))
+      + encodable.size ((cookCards M).map FlatTCC.flattenCard)
+      + encodable.size (FlatTCC.flattenFinal (cookFinal M)) + steps + 1 := rfl
+  rw [hsize]
+  -- Bound the three list summands by `C · b^6`.
+  -- (1) init row
+  have hinit : encodable.size (flattenString (cookInit M s steps)) ≤ 2 * b ^ 6 := by
+    refine le_trans (flattenString_size_le _) ?_
+    rw [cookInit_length]; unfold rowWidth
+    have hW : s.length + steps + 5 ≤ b ^ 2 := by
+      have h3 : 3 ≤ b := by omega
+      have hmul : 3 * b ≤ b * b := Nat.mul_le_mul_right b h3
+      have hbsq : b * b = b ^ 2 := (pow_two b).symm
+      omega
+    have hb46 : b ^ 4 ≤ b ^ 6 := bpow 4 6 (by omega)
+    calc (Sg M + 1) * (s.length + steps + 5) ≤ (2 * b ^ 2) * (b ^ 2) :=
+          Nat.mul_le_mul (by omega) hW
+      _ = 2 * b ^ 4 := by ring
+      _ ≤ 2 * b ^ 6 := by omega
+  -- (2) cards
+  have hcards : encodable.size ((cookCards M).map FlatTCC.flattenCard) ≤ 96 * b ^ 6 := by
+    refine le_trans (encodable_size_list_le _ (6 * Sg M + 1) ?_) ?_
+    · intro x hx
+      simp only [List.mem_map] at hx
+      obtain ⟨card, _, rfl⟩ := hx
+      exact flattenCard_size_le card
+    · rw [List.length_map]
+      -- `|cookCards| ≤ 12 b^4`
+      have hlen : (cookCards M).length ≤ 12 * b ^ 4 := by
+        refine le_trans (cookCards_length_le M) ?_
+        apply Nat.mul_le_mul_left
+        exact Nat.pow_le_pow_left (by omega) 4
+      have hcc : (6 * Sg M + 1 + 1) ≤ 8 * b ^ 2 := by
+        have h1 : Sg M ≤ b ^ 2 := hSg
+        omega
+      calc (6 * Sg M + 1 + 1) * (cookCards M).length
+            ≤ (8 * b ^ 2) * (12 * b ^ 4) := Nat.mul_le_mul hcc hlen
+        _ = 96 * b ^ 6 := by ring
+  -- (3) final patterns
+  have hfinal : encodable.size (FlatTCC.flattenFinal (cookFinal M)) ≤ 2 * b ^ 6 := by
+    unfold FlatTCC.flattenFinal
+    refine le_trans (encodable_size_list_le _ (Sg M + 1) ?_) ?_
+    · intro x hx
+      simp only [List.mem_map] at hx
+      obtain ⟨y, hy, rfl⟩ := hx
+      refine le_trans (flattenString_size_le _) ?_
+      have := cookFinal_mem_length M y hy
+      calc (Sg M + 1) * y.length ≤ (Sg M + 1) * 1 := Nat.mul_le_mul_left _ this
+        _ = Sg M + 1 := by ring
+    · rw [List.length_map]
+      have hfl : (cookFinal M).length ≤ b ^ 2 := by
+        refine le_trans (cookFinal_length_le M) ?_
+        rw [pow_two]; exact Nat.mul_le_mul hq1 hs1
+      have hb46 : b ^ 4 ≤ b ^ 6 := bpow 4 6 (by omega)
+      calc (Sg M + 1 + 1) * (cookFinal M).length ≤ (2 * b ^ 2) * (b ^ 2) :=
+            Nat.mul_le_mul (by omega) hfl
+        _ = 2 * b ^ 4 := by ring
+        _ ≤ 2 * b ^ 6 := by omega
+  -- combine: everything `≤ C · b^6`
+  have hSg6 : Sg M ≤ b ^ 6 := le_trans hSg (bpow 2 6 (by omega))
+  have hb16 : b ≤ b ^ 6 := by
+    calc b = b ^ 1 := (pow_one b).symm
+      _ ≤ b ^ 6 := bpow 1 6 (by omega)
+  have hsteps6 : steps ≤ b ^ 6 := le_trans (by omega) hb16
+  have hone6 : (1 : Nat) ≤ b ^ 6 := Nat.one_le_pow _ _ (by omega)
+  refine pow_collapse (C := 104) (d := 6) (by omega) (by omega) hb1 ?_
+  -- goal: Sg M + Sinit + Scards + Sfinal + steps + 1 ≤ 104 * b^6.
+  -- Generalise the big atoms so `omega` sees a clean linear problem.
+  generalize hP : b ^ 6 = P at hSg6 hinit hcards hfinal hsteps6 hone6 ⊢
+  generalize encodable.size (flattenString (cookInit M s steps)) = I at hinit ⊢
+  generalize encodable.size ((cookCards M).map FlatTCC.flattenCard) = Cc at hcards ⊢
+  generalize encodable.size (FlatTCC.flattenFinal (cookFinal M)) = Fn at hfinal ⊢
+  generalize Sg M = G at hSg6 ⊢
+  omega
 
 /-! ## Correctness — the decomposed skeleton (S1)
 

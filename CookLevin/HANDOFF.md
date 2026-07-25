@@ -7,7 +7,7 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
-## Where the proof stands (2026-07-24-b; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean — `FlatTCC ⪯p' SAT`), **THE S1 BIJECTION + PRELUDE/CERT-GUESS LAYER ARE COMPLETE** (`cookTableau_correct` & `guessTableau_correct` sorry-free & axiom-clean; only the size bounds `cookTableau_size_bound`/`guessTableau_size_bound` remain), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-0…C8-4 ARE ALL DONE & AXIOM-CLEAN** — **C8-4 COMPLETE (2026-07-24-b): `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` sorry-free & axiom-clean, cost ladder closed, `Reductions/FrontWitness.lean`**) — **THE CRITICAL PATH IS NOW S1 (top-down): the honest reduction `FlatSingleTMGenNP ⪯p' FlatTCC` (emit `guessTableau` as a `PolyTimeComputableLang`)** — once it lands, chain `Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' SAT` = `NPhard'' SAT` via C8-5's seam.
+## Where the proof stands (2026-07-24-b; **THE SOUND TAIL IS COMPLETE** (`FSATSATComp.flatTCC_to_SAT_reducesPolyMO'`, axiom-clean — `FlatTCC ⪯p' SAT`), **THE S1 BIJECTION + PRELUDE/CERT-GUESS LAYER + BOTH SIZE BOUNDS ARE COMPLETE** (`cookTableau_correct`, `guessTableau_correct`, `cookTableau_size_bound`, `guessTableau_size_bound` all sorry-free & axiom-clean; `CookTableau.lean`/`GuessTableau.lean` are now fully sorry-free), **THE CHAIN-HEAD LAYOUT IS FROZEN** (`Reductions/HeadLayout.lean`), **C8-0…C8-4 ARE ALL DONE & AXIOM-CLEAN** — **C8-4 COMPLETE (2026-07-24-b): `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` sorry-free & axiom-clean, cost ladder closed, `Reductions/FrontWitness.lean`**) — **THE CRITICAL PATH IS NOW S1 (top-down): the honest reduction `FlatSingleTMGenNP ⪯p' FlatTCC` (emit `guessTableau` as a `PolyTimeComputableLang`)** — once it lands, chain `Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' SAT` = `NPhard'' SAT` via C8-5's seam.
 
 - **C8-4 (the per-`Q` front `W_Q` assembly) is COMPLETE & AXIOM-CLEAN
   (2026-07-24-b, `Reductions/FrontWitness.lean`).** For any NP `Q` with an
@@ -40,11 +40,11 @@ reasonably provable).
   (S1 + C8 must deliver an honest `… ⪯p' FlatTCC` prefix).
 - **Headline `CookLevin` still depends on `sorryAx` — wholly hardness-side.**
   `sorry`s in built code: `red_inNP`'s `inTimePoly` half (`NP.lean`),
-  `hasDeciderClassical` (`GenNP_is_hard.lean`), 1× `CookTableau`
-  (`cookTableau_size_bound` only — **the bijection `cookTableau_correct`
-  is sorry-free & axiom-clean, 2026-07-18-d**), 3× `MultiToSingle` (dead
-  code). Plus the `sorry`-free **vacuous** defs (S1-stub/S2) invisible to
-  `#print axioms` — Group S.
+  `hasDeciderClassical` (`GenNP_is_hard.lean`), 3× `MultiToSingle` (dead
+  code). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean`
+  are now FULLY sorry-free** (both size bounds landed 2026-07-24-c). Plus the
+  `sorry`-free **vacuous** defs (S1-stub/S2) invisible to `#print axioms` —
+  Group S.
 - **The compiler (Risk C2) is DONE and CLEAN.** All **9** ops proven &
   axiom-clean; `compileOp_sound_physical_residue` is fully proven with no
   side-conditions. The retired value-as-length trio and BOTH isolation walls
@@ -65,6 +65,41 @@ reasonably provable).
 
 ## ★ Latest sessions
 
+- **2026-07-24-c (bottom-up) — BOTH S1 SIZE BOUNDS DONE:
+  `cookTableau_size_bound` & `guessTableau_size_bound` sorry-free & axiom-clean
+  (`[propext, Classical.choice, Quot.sound]`); full build green (3393);
+  `CookTableau.lean`/`GuessTableau.lean` now FULLY sorry-free.** ⚠⚠ **RISK
+  FINDING (bound shape — numerically validated first, `probes/SizeBoundProbe.lean`):
+  the previously-stated `n^10` is NOT provable from loose factored bounds** —
+  a loose `≤ 102·(n+1)^6` already OVERSHOOTS `n^10` at `n=2` (`n^10=1024`, real
+  size 34); the pure-power collapse inflates small-`n` past the target. Both
+  bounds are now stated at **`(2·(n+1))^10` = `1024·(n+1)^10`**, whose `2^10`
+  slack trivially absorbs loose bounds (`total ≤ C·b^d`, `C ≤ 1024`, `d ≤ 10`);
+  still `inOPoly`/`monotonic` (all `⪯p'` needs — no consumer yet, full freedom).
+  **`guessTableau_size_bound` additionally REQUIRES the enlarged base** — `gn^10`
+  fails at `gn=2` (guessTableau of the trivial machine has `size 2731 > 1024`,
+  from the prelude band's constant `Θ(|Σ|)` alphabet offset `PSg=Sg+2σ+5`) —
+  **and its `gn` INCLUDES `maxSize`** (the prelude row width `guessWidth` scales
+  with it), unlike cook's `n`: `gn = |s|+maxSize+steps+σ+states+|trans|+2`.
+  Real degrees are low (cook `≤102·b^6`, guess `≤290·b^8`, `b=n+1`); the risk was
+  entirely the small-`n` constant, not asymptotics. **Reusable toolkit shipped
+  (`CookTableau.lean`, all axiom-clean — consume verbatim):** generic
+  `encodable_size_list_le`/`length_flatMap_le`/`flattenString_size_le`/
+  `flattenCard_size_le`/`pow_collapse`; M-only card counts
+  `xOpts_length`, `copyCards_length_le`…`stepCards_length_le`,
+  `stepCardsOf_length_le`, `normTrans_length_le` (via `dedupGo_length_le`),
+  `cookCards_length_le` (`≤12·(σ+states+|trans|+3)^4`), `cookFinal_length_le`/
+  `_mem_length`; and in `GuessTableau.lean` `pResolutions_length_le`,
+  `pKindList_length`, `preludeCardsOf`/`preludeCards_length_le`,
+  `guessFinal_length_le`/`_mem_length`. ⚠ gotchas (added to Conventions):
+  (1) `ring`/`omega` on `b^k` where `b` is a `set`-let of a many-term sum
+  whnf-TIMES-OUT at `b^8` (`b^6` was under budget) — `clear_value b` right after
+  `set b`, keeping the `hb` equation for `omega`'s linear facts; (2) omega tangles
+  multiple partial power relations (`b`, `b²`, `b⁶`) + `hb` — `generalize b^k = P`
+  and the big `encodable.size` atoms before the final `omega`; (3) `length_flatMap_le`
+  needs the fiber bound `c` passed EXPLICITLY (`.trans` can't infer it). **Bottom-up's
+  last self-contained size bite is closed; the critical path is now purely
+  TOP-DOWN (the S1 free-witness program).** See NEXT TOP-DOWN / NEXT BOTTOM-UP.
 - **2026-07-24-b (bottom-up) — C8-4 DONE: the cost ladder closed,
   `front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP` sorry-free & axiom-clean, full
   build green (3393).** Both cost sorries eliminated (ZERO design surprises — the
@@ -595,68 +630,35 @@ subsuming S2). **The answers to the three scoping questions:**
   C8-3/C8-4 can emit against it today; the `SeamData` instance itself still
   waits for the S1 free witness to exist.
 
-## NEXT BOTTOM-UP session — the two size-bound bites (unblock the S1 cost ladder)
+## NEXT TOP-DOWN session — the S1 free-witness program (THE CRITICAL PATH)
 
-**C8-4 is DONE**, so the front is complete. The remaining bottom-up work is the
-two self-contained `encodable.size` bounds that the S1 free-witness cost ladder
-(the top-down critical path) needs. Doing them NOW de-risks that ladder before
-top-down builds it. Both are pure arithmetic, ZERO design risk:
+Everything S1 depends on is now proven: `guessTableau_correct` (the bijection,
+sorry-free & axiom-clean) **and `guessTableau_size_bound`** (the `output_size_le`
+input, `≤ (2·(gn+1))^10`, `gn = |s|+maxSize+steps+σ+states+|trans|+2`, landed
+2026-07-24-c). What remains is the honest **reduction witness** mapping a
+`FlatSingleTMGenNP` instance `(M, s, maxSize, steps)` to `guessTableau M s
+maxSize steps : FlatTCC` — the guarded-map pattern, guard = exactly
+`guessTableau_correct`'s decidable hypotheses (`validFlatTM`/`tapes = 1`/
+`list_ofFlatType`). This is the whole S1 build-out:
 
-- **`guessTableau_size_bound`** (the one the S1 witness actually consumes) —
-  state it next to `cookTableau_size_bound` at the same degree-10 `(n+1)^10`
-  shape (the prelude adds only `Θ(|Σ|³)` cards, `Θ(|Σ|)` each, so degree 10 has
-  headroom). Mechanical `foldl`-over-`flatMap` `encodable.size` arithmetic; do
-  this FIRST — it directly unblocks the witness's `output_size_le`.
-- **`cookTableau_size_bound`** (restated 2026-07-17-b at degree 10; the
-  2026-07-18-c marker fix left it unchanged — `copyRightCards` is only
-  `Θ(|Σ|²)`) — ~150–300 LOC, dominant terms `Θ(|Σ|³)` copy + `Θ(|trans|·|Σ|³)`
-  incoming-head cards, each size `Θ(|Σ|)`. Same kind of bite; take it second (or
-  first if `guessTableau_size_bound` stalls).
-
-**Reusable size-arithmetic toolkit shipped this session** (all axiom-clean,
-`FrontWitness.lean`): `list_nat_size_le` (`List Nat` size `≤ (c+1)·|l|` when
-cells `≤ c`), `encSyms_length_le` (`(c+2)·|l|`), `encodeRegs_cells_le`
-(BitState `encodeRegs` cells `≤ 2`), `mem_length_le_size`/`get_length_le_size`
-(register length `≤ State.size`), `inOPoly_pow_succ`/`monotonic_pow_succ`
-(`(n+1)^k` is poly/mono). These are exactly the `encodable.size`/length
-manipulations the size-bound bites need — reuse them.
-
-**After both size bounds AND the S1 witness land: C8-5, the seam** (bottom-up):
-a fourth `SeamData`/`comp` onto S1's frozen `HeadLayout.headEncodeIn`
-(`headRegBound = 5`); `mfc` drops `W_Q`'s extra unary size register (scratch
-`≥ headRegBound`), otherwise identity onto `headEncodeIn`. Blocked only on the
-S1 free witness existing. Consume `front_reducesPolyMO'`/`WQ` (C8-4) as a black
-box on the left of the seam.
-
-## NEXT TOP-DOWN session — the S1 free-witness program
-
-The S1 **correctness** target is CLOSED: `guessTableau_correct`
-(`Simulators/GuessTableau.lean`) is sorry-free & axiom-clean, so `∃ cert,
-… ∧ acceptsFlatTM M [s ++ cert] steps ⟺ FlatTCCLang (guessTableau M s
-maxSize steps)`. What remains for S1 is the honest **reduction witness** that
-maps a `FlatSingleTMGenNP` instance to that `FlatTCC` — the guarded-map
-pattern, guard = exactly `guessTableau_correct`'s decidable hypotheses
-(`validFlatTM`/`tapes = 1`/`list_ofFlatType`). In order:
-
-1. **`guessTableau_size_bound`** — state it next to `cookTableau_size_bound`
-   (same degree-10 `(n+1)^10` shape; the prelude adds only `Θ(|Σ|³)` cards,
-   `Θ(|Σ|)` each, so degree 10 has headroom). Mechanical foldl-over-`flatMap`
-   `encodable.size` arithmetic; do it FIRST — it de-risks the witness's cost
-   ladder and is a self-contained bite. (`cookTableau_size_bound` is the same
-   kind of bite and is still open — either can be taken standalone by either
-   stream; see the block above.)
-2. **The free witness program** (the bulk): a `Cmd` emitting
+1. **The free witness program** (the bulk): a `Cmd` emitting
    `encodeIn (guessTableau M s maxSize steps)` from the FROZEN
-   `HeadLayout.headEncodeIn` layout (`headRegBound = 5`; C8-5's seam MUST
-   hit the same layout, so pin the input frame to it and document the exit
-   frame). ⚠ the card list is `Θ(|trans|·|Σ|⁴)` encoded — budget
-   `satBound`-style headroom in the cost ladder. Emitter/run/cost patterns:
-   copy `BinaryCC_to_FSAT_free` field-for-field (see "Reusable machinery"
-   below). Deliverable: `guessTableau_reducesPolyMO' :
-   FlatSingleTMGenNP ⪯p' FlatTCC` (honest), chaining onto the sound tail's
-   `flatTCC_to_SAT_witness` via a fourth `SeamData`/`comp`.
-3. **`cookTableau_size_bound`** stays available as the fallback
-   self-contained bite (see the block above) if step 1/2 stall.
+   `HeadLayout.headEncodeIn` layout (`headRegBound = 5`; C8-5's seam MUST hit
+   the same layout — pin the input frame to it and document the exit frame).
+   ⚠ the flattened card list is `Θ(|trans|·|Σ|⁴)` (see `cookCards_length_le` /
+   `preludeCards_length_le` for the exact counts) — budget `satBound`-style
+   headroom in the cost ladder; the size-bound proof already gives the closed
+   `≤ (2·(gn+1))^10` output bound to feed `output_size_le` (via
+   `inOPoly`/`monotonic` of `(·)^10`). Emitter/run/cost patterns: copy
+   `BinaryCC_to_FSAT_free` field-for-field. Deliverable:
+   `guessTableau_reducesPolyMO' : FlatSingleTMGenNP ⪯p' FlatTCC` (honest),
+   chaining onto the sound tail's `flatTCC_to_SAT_witness` via a fourth
+   `SeamData`/`comp`.
+2. **Consider splitting the card-emitter to the bottom-up stream** (see NEXT
+   BOTTOM-UP) — the `Θ(|trans|·|Σ|⁴)` card stream is the biggest single piece
+   and matches the established emitter-gadget/assembly split (as `FrontProgram`
+   split from `FrontWitness`). If bottom-up ships the emitter+run+cost gadget,
+   top-down assembles it into the witness + seam.
 
 **Reusable machinery for ALL of it** (do not re-derive): the
 `Lang/CostFlat.lean` toolkit; the witness templates
@@ -670,6 +672,43 @@ folds ⇒ model).
 **After S1 + C8**, the remaining assembly: swap the headline to
 `NPhard''`/`NPcomplete''` over the composed front+tail chain and delete the
 legacy `⪯p` front (the S2 collapse) — see the C8 section above.
+
+## NEXT BOTTOM-UP session — de-risk the S1 witness, then C8-5
+
+The last self-contained bottom-up *bites* (both size bounds) are DONE, so the
+critical path is top-down. Bottom-up now has two concrete, independent options —
+pick whichever the owner prefers (the first de-risks the critical path, the
+second is off it but needed for the final `NPcomplete''`):
+
+1. **The S1 card-emitter gadget (de-risks the top-down critical path).** Build
+   the `Cmd` that emits the flattened `guessCards`/`preludeCards` stream
+   (`Θ(|trans|·|Σ|⁴)` cells) into a scratch register, with its `_run` and
+   `_cost` lemmas, as a black box for the S1 witness to assemble — mirroring the
+   `FrontProgram`↔`FrontWitness` split and the `BinaryCC_to_FSAT` emitter
+   templates (`emitCardsAt`/`emitAllSteps` + the `CAInv`/`ASInv` fold
+   invariants). The card counts/degrees are pinned by the new
+   `cookCards_length_le`/`preludeCards_length_le`, and the output size by
+   `guessTableau_size_bound` — consume both. This is the biggest single S1 piece;
+   splitting it out lets top-down focus on the register wiring + seam.
+2. **The endgame SAT-verifier Split adaptation (off critical path, needed for
+   `NPcomplete''`).** The live SAT verifier does not factor verbatim as an
+   `InNPWitnessLangFreeSplit` (C8-1 finding): `assgn` certs are `List Nat`
+   (sentinel-unary) and `encodeState` has 8 trailing scratch `[]`s after the
+   cert register. Build the adaptation = trailing-`[]` trim + a bits→sentinel
+   decode-prefix `Cmd` (a `DecidesLang.FreePrecomposeData` on the SAT verifier).
+   Pure bottom-up, self-contained, unblocks the in-NP half of `NPcomplete'' SAT`.
+
+**C8-5 (the seam)** stays blocked on the S1 free witness existing (needs both
+`WQ`/`front_reducesPolyMO'` and the S1 witness). When it unblocks: a fourth
+`SeamData`/`comp` onto S1's frozen `HeadLayout.headEncodeIn` (`headRegBound=5`);
+`mfc` drops `W_Q`'s extra unary size register (scratch `≥ headRegBound`),
+otherwise identity onto `headEncodeIn`. Consume `front_reducesPolyMO'`/`WQ` and
+`guessTableau_reducesPolyMO'` as black boxes on the two sides.
+
+**Recommendation:** run a **TOP-DOWN** session next (the S1 free-witness program
+is the sole critical path and everything it needs is now proven). If two agents
+run in parallel, the second takes bottom-up option 1 (the card-emitter gadget),
+coordinating the scratch-register frame with the top-down witness up front.
 
 ---
 
@@ -852,6 +891,22 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
   as a black box. Probe: `probes/S1TableauProbe.lean` §6. (⚠ this un-`private`d
   the `CookTableau.lean` window lemmas `rowCell`/`confRow_getElem[_last]`/
   `confRow_window[_last]`/`take3_drop`/`coversHead_take3` — visibility only.)
+- **The S1 size-bound layer (2026-07-24-c, all axiom-clean — the generic
+  toolkit is a project-wide `encodable.size` utility, consume everywhere)**:
+  in `CookTableau.lean` — generic `encodable_size_list_le` (`size l ≤ (c+1)·|l|`),
+  `length_flatMap_le` (`(l.flatMap f).length ≤ |l|·c`, pass `c` EXPLICITLY),
+  `flattenString_size_le` (`≤ (k+1)·|xs|`), `flattenCard_size_le` (`≤ 6k+1`),
+  `pow_collapse` (`total ≤ C·b^d`, `C≤1024`, `d≤10` ⇒ `≤ (2b)^10`); the M-only
+  card counts `xOpts_length`, `copyCards`/`copyRightCards`/`haltLeftCards`/
+  `haltCenterCards`/`haltRightCards`/`stepCardsLeft`/`stepCardsOf`/`stepCards`_
+  `length_le`, `dedupGo_length_le`→`normTrans_length_le`, `cookCards_length_le`
+  (`≤12·(σ+states+|trans|+3)^4`), `cookFinal_length_le`/`_mem_length`; and
+  **`cookTableau_size_bound`** (`≤ (2·(n+1))^10`). In `GuessTableau.lean` —
+  `pResolutions_length_le`/`pKindList_length`/`preludeCardsOf_length_le`/
+  `preludeCards_length_le` (`≤ (5+2σ)³·(σ+1)³`), `guessFinal_length_le`/
+  `_mem_length`, `PSg M ≤ 2b²`, and **`guessTableau_size_bound`**
+  (`≤ (2·(gn+1))^10`, `gn` includes `maxSize`). Numerically validated:
+  `probes/SizeBoundProbe.lean`.
 - **The C8-2 gadget layer (2026-07-05)**: `AcceptHalt.demoteHalt` +
   structure/step/halting lemmas, `demoteHalt_run_eq`/`_weak`, the transport
   pair `demoteHalt_run_accept`/`_run_reject`, `acceptsFlatTM`-level
@@ -1028,6 +1083,23 @@ legacy `⪯p` front (the S2 collapse) — see the C8 section above.
 
 ## Conventions & hard-won gotchas
 
+- **⚠ Polynomial size bounds — degree/base discipline (2026-07-24-c).**
+  (a) **`ring`/`omega` whnf-TIMES-OUT on `b^k` when `b` is a `set`-let of a
+  many-term sum** — the power expands to `C(terms+k-1,k)` monomials (fine at
+  `b^6`, dead at `b^8`). `clear_value b` right after `set b := … with hb`; the
+  `hb` equation survives and `omega` still uses it for the linear facts, while
+  `ring`/`omega` treat `b` as an opaque atom. (b) **A `C·b^d` collapse
+  (`d`≤top) OVERSHOOTS `n^d_top` at small `n`** — `102·(n+1)^6 > (n+1)^10`… no,
+  `> n^10` at `n=2`; the pure-power upper bound inflates the small-`n` value
+  past a tight target. State size bounds at **`(2·(base))^10`** (`= 1024·base^10`)
+  so the `2^10` slack absorbs any `C ≤ 1024`, `d ≤ 10` loose bound; still
+  `inOPoly`/`monotonic`. (c) For the FINAL `omega` combining `Sg + Σᵢ size(…) ≤
+  C·b^d`, **`generalize b^d = P` and each big `encodable.size(…)` atom to a fresh
+  var first** — otherwise `omega` tangles the partial power relations (`b`,`b²`,`b^d`)
+  and `hb`, and whnf-chokes on the `encodable.size` giants. (d) `length_flatMap_le`
+  needs its fiber-bound `c` passed EXPLICITLY (`(… ?_).trans ?_` can't infer the
+  middle); for a `≤`-fiber second leg use `Nat.mul_le_mul h (le_refl _)`, for a
+  `=`-length second leg `rw [<len eq>]`.
 - **⚠ `Var` (= `abbrev Nat`) is OPAQUE to `omega` (2026-07-24).** A register goal
   `(x : Var) < k` makes `omega` treat `x` as an atom it can't relate to `Nat`
   arithmetic — it fails ("No usable constraints") or reports bogus counterexamples
