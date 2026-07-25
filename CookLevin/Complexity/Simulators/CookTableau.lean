@@ -253,7 +253,10 @@ exactly these two fields, so two same-key entries shadow each other. -/
 def sameKey (e1 e2 : FlatTMTransEntry) : Bool :=
   decide (e1.src_state = e2.src_state) && decide (e1.src_tape_vals = e2.src_tape_vals)
 
-private def dedupGo (seen : List FlatTMTransEntry) :
+/-- The key-dedup worker. **Public (visibility only, 2026-07-25-c)** so that
+`Reductions/S1Cards.lean` can state the emitter's on-machine dedup model
+(`S1Cards.dedupK`) against it. -/
+def dedupGo (seen : List FlatTMTransEntry) :
     List FlatTMTransEntry → List FlatTMTransEntry
   | [] => []
   | e :: es =>

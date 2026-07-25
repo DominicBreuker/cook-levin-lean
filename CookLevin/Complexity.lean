@@ -30,5 +30,6 @@ import Complexity.NP.SAT.CookLevin.Reductions.FrontWitness
 import Complexity.NP.SAT.CookLevin.Reductions.S1Map
 import Complexity.NP.SAT.CookLevin.Reductions.S1Witness
 import Complexity.NP.SAT.CookLevin.Reductions.S1Parse
+import Complexity.NP.SAT.CookLevin.Reductions.S1Cards
 
 set_option autoImplicit false
