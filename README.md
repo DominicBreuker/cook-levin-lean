@@ -30,7 +30,8 @@ register before working.
 | `NPhard'` endgame design | **SETTLED, machine-validated & now LIVE** (2026-07-02/03): `PolyTimeComputableLang.SeamData`/`comp` (Cmd-level chain composition, fully proven, first live seam `FlatTCCBinComp.flatTCC_to_binaryCC_seam`) + `NPhard'`/`NPcomplete'`; hardness is proven at chain endpoints only — see `CookLevin/HANDOFF.md`. |
 | `axiom` declarations | **0** (project policy: `def`+`sorry` over `axiom`) |
 | `#print axioms S1Map.s1Map_correct` | **`[propext, Classical.choice, Quot.sound]`** — the **S1 reduction map is correct** (2026-07-25): `FlatSingleTMGenNP x ↔ FlatTCCLang (s1Map x)` for the guarded map `s1Map`, with `s1Map_size_le` bounding its output. The *program* computing `s1Map` is the one remaining piece of the honest chain head (`Reductions/S1Witness.lean`, skeleton). |
-| Genuine `sorry`s in built code | **7** (Group C — completion). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). Two deliberate S1 skeleton markers (`Reductions/S1Witness.lean`, 2026-07-25): `flattenTM_size_le` (a specified bottom-up bite) and `s1Program` (the open reduction program, which also leaves three fields of `s1_reductionLang` open). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
+| `#print axioms S1Parse.stagePG_run` | **`[propext, Quot.sound]`** — the **S1 program's first two stages are built** (2026-07-25-b, `Reductions/S1Parse.lean`): stage **P** parses the frozen head layout's machine register into a pinned scratch frame, stage **G** decides `S1Map.s1GuardB` on-machine; both sorry-free. Measured cost is **cubic** (`probes/S1ParseProbe.lean`), so the parse is not the S1 budget driver. Stages Σ / I / C / F / M remain open. |
+| Genuine `sorry`s in built code | **7** (Group C — completion; unchanged — the new `Reductions/S1Parse.lean` is sorry-free). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). Two deliberate S1 skeleton markers (`Reductions/S1Witness.lean`, 2026-07-25): `flattenTM_size_le` (a specified bottom-up bite) and `s1Program` (the open reduction program, which also leaves three fields of `s1_reductionLang` open). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
@@ -117,6 +118,17 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   `FlatTCCFree.encodeIn` verbatim, making the next seam a pure scrub) and
   proves the output key injective plus every mechanical field. **What remains
   is the program `s1Program` and its three fields** — the whole critical path.
+  **Two of the program's seven stages have landed (2026-07-25-b,
+  `Reductions/S1Parse.lean`, sorry-free & axiom-clean):** stage **P** (parse)
+  drains `encSyms (flattenTM M)` into a pinned scratch frame and stage **G**
+  (guard) decides `S1Map.s1GuardB` on-machine (`stagePG_run`), fixing the
+  register frame every later stage lives in (`stagePG_usesBelow : UsesBelow 32`;
+  `s1RegBound = 48`). Two findings: the parse's cost is **cubic**, so it is not
+  the budget driver; and because `flattenEntry` writes each list's own length
+  before its payload, **the parse never desynchronises even on invalid
+  machines**, so neither stage needs a validity hypothesis. Stages Σ / I / C /
+  F / M are open — the card emitter (C) is the only piece whose shape is still
+  unknown.
   ⚠ Landing this required correcting `encodable FlatTM`, whose old measure
   (`sizeFlatTM`, a flat `5` per transition entry) made the witness's
   `encodeIn_size` obligation *unsatisfiable* (`probes/S1SizeGapProbe.lean`).
@@ -230,7 +242,7 @@ CookLevin/
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6),
 │   │   │                               Frame, PolyTime (S3/C4 bridges), gadgets (sound)
 │   │   └── …
-│   ├── Simulators/                  -- CookTableau (S1, real, 2 sorries); MultiToSingle (dead code)
+│   ├── Simulators/                  -- CookTableau + GuessTableau (S1, sorry-free); MultiToSingle (dead code)
 │   ├── GenNP_is_hard.lean           -- NPhard_GenNP via hasDeciderClassical (C8 sorry)
 │   ├── L_to_LM / LM_to_mTM / mTM_to_singleTapeTM.lean  -- bridges (S2, vacuous)
 │   └── NP/
