@@ -81,9 +81,28 @@ instance : encodable FlatTMTransEntry where
         encodable.size entry.dst_state + encodable.size entry.dst_write_vals +
         encodable.size entry.move_dirs + 1, Nat.le_refl _⟩
 
+/-- **The honest `FlatTM` size** (2026-07-25, S1 top-down finding; Part 0.1's
+data-field-sum policy applied to the machine type).
+
+The former measure `sizeFlatTM` (`MachineSemantics.lean`, self-described as
+"Approximate: each transition has ~5 components") charged a **flat 5 per
+transition entry**, ignoring the entry's *contents* — so a machine with one
+entry whose `dst_state`/`src_tape_vals`/`dst_write_vals` carry huge numbers had
+constant size. That makes the S1 witness's `encodeIn_size` obligation
+(`State.size (HeadLayout.headEncodeIn x) ≤ encBound (encodable.size x)`,
+`encBound` polynomial) **unsatisfiable**: `headEncodeIn`'s machine register is
+`encSyms (flattenTM M)`, whose length is `Σ (v+2)` over the flattened entry
+payloads and therefore unbounded at constant `sizeFlatTM`
+(`probes/S1SizeGapProbe.lean`: size `12` vs register length `52 / 1052 /
+10052`). Measured here as the sum of every data field, reusing the already-
+honest `encodable FlatTMTransEntry`. -/
 instance : encodable FlatTM where
-  size := sizeFlatTM
-  size_ge_logical := fun M => ⟨sizeFlatTM M, Nat.le_refl _⟩
+  size := fun M =>
+    M.sig + M.tapes + M.states + M.start +
+      encodable.size M.halt + encodable.size M.trans + 1
+  size_ge_logical := fun M =>
+    ⟨M.sig + M.tapes + M.states + M.start +
+      encodable.size M.halt + encodable.size M.trans + 1, Nat.le_refl _⟩
 
 abbrev var := Nat
 abbrev literal := Bool × var

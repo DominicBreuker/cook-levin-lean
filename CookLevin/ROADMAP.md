@@ -33,7 +33,9 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms FSATSATComp.flatTCC_to_SAT_reducesPolyMO'` | `[propext, Classical.choice, Quot.sound]` — **`FlatTCC ⪯p' SAT` (2026-07-16): the WHOLE sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` as ONE composed live `⪯p'`** via the third live seam (`Reductions/FSAT_to_SAT_comp.lean`); the last step `FSAT ⪯p' SAT` (`FSATSATFree.fsatSAT_reducesPolyMO'`, `Reductions/FSAT_to_SAT_free.lean`) is a complete free witness (run + cost ladders + mechanical fields). **The tail is DONE** — it waits on the front (S1/C8) for the endpoint hardness bridge |
 | `NPhard'` endgame design | **SETTLED, machine-validated & VALIDATED LIVE** (2026-07-02/03): `SeamData`/`PolyTimeComputableLang.comp` fully proven and instantiated on real witnesses; `NPhard'`/`NPcomplete'` defined; hardness at chain endpoints only |
 | `axiom` declarations | **0** |
-| Genuine `sorry`s (Group C) | **5 in built code** (2 on the live path: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`; 3 in dead code `MultiToSingle`). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are now fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** (`cookTableau_size_bound`/`guessTableau_size_bound`, `≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
+| `#print axioms S1Map.s1Map_correct` | `[propext, Classical.choice, Quot.sound]` — **the S1 reduction map is correct** (2026-07-25, `Reductions/S1Map.lean`): the guarded map `s1Map` satisfies `FlatSingleTMGenNP x ↔ FlatTCCLang (s1Map x)`, with `s1Map_size_le` at `(2·(n+3))^10`. The `PolyTimeComputableLang` skeleton is up (`Reductions/S1Witness.lean`, both layouts pinned, output key injective, mechanical fields proven); only the program `s1Program` is open |
+| `encodable FlatTM` | ✅ **CORRECTED (2026-07-25)** to the data-field sum. The old `sizeFlatTM` charged a flat `5` per transition entry, which made the S1 witness's `encodeIn_size` obligation **unsatisfiable** (`probes/S1SizeGapProbe.lean`); zero ripple, full build green |
+| Genuine `sorry`s (Group C) | **7 in built code**: 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), and 2 deliberate S1 skeleton markers (`S1Witness.lean`: `flattenTM_size_le`, `s1Program`). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
 | Remaining to a real proof | **~12–20K LOC** (breakdown below) |
@@ -141,9 +143,19 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   Γ-band transfers all proven). **Both size bounds
   `cookTableau_size_bound`/`guessTableau_size_bound` are PROVEN (2026-07-24,
   `≤ (2·(n+1))^10`), so both tableau files are fully `sorry`-free.**
-  Remaining: the S1 free witness program (the honest reduction `Cmd` emitting
-  `guessTableau` into the frozen `HeadLayout.headEncodeIn`); estimate ~2–3K
-  LOC. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
+  **The reduction MAP is DONE & axiom-clean (2026-07-25,
+  `Reductions/S1Map.lean`)**: the decidable guard `s1GuardB` (+
+  `isValidFlatTM_iff`), the guarded map `s1Map`, the correctness iff
+  `s1Map_correct`, and `s1Map_size_le`. ⚠ the guard is **mandatory** here —
+  unlike `FlatTCC → FlatCC`, the unguarded map is unsound backwards (an
+  invalid `M` still yields a possibly-coverable tableau). The witness skeleton
+  (`Reductions/S1Witness.lean`) pins the input layout (frozen `headEncodeIn`)
+  and the output layout (`FlatTCCFree.encodeIn` verbatim on regs 1–5, so the
+  next seam is a pure scrub of reg 0 and `[6, 57)`), proves the output key
+  injective and every mechanical field.
+  Remaining: the S1 free witness **program** `s1Program` (the honest reduction
+  `Cmd`) and its `computes`/`cost_le`/`usesBelow` fields; estimate ~2–3K LOC,
+  decomposed into seven stages in the `S1Witness.lean` module docstring. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
   `Θ(|trans|·|Σ|⁴)` encoded (counts pinned by
   `cookCards_length_le`/`preludeCards_length_le`).
 
