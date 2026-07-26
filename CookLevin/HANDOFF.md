@@ -12,7 +12,7 @@ reasonably provable).
 **reference index**, not narration: consult it before building anything, do not
 read it front to back.
 
-## Where the proof stands (2026-07-25-c)
+## Where the proof stands (2026-07-26)
 
 **The sound tail: COMPLETE & axiom-clean.**
 `FSATSATComp.flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT` — the whole chain
@@ -23,103 +23,132 @@ read it front to back.
 for any `W : InNPWitnessLangFreeSplit Q`. Consume it, `WQ` and `fQ_correct` as
 black boxes — do not re-derive the front.
 
-**S1 — the last gap, THE CRITICAL PATH.** Everything except the *program* is
-done:
+**S1 — the last gap, THE CRITICAL PATH.** Five of the seven program stages are
+built; **stage C and stage M-yes are all that is left of the program.**
 
 | piece | status |
 |---|---|
 | tableau mathematics (`Simulators/CookTableau.lean`, `GuessTableau.lean`) | ✅ sorry-free, axiom-clean, incl. both size bounds |
 | reduction map + guard + correctness iff + output bound (`Reductions/S1Map.lean`) | ✅ axiom-clean |
-| witness skeleton, both layouts pinned, output key injective (`Reductions/S1Witness.lean`) | ✅ mechanical fields proven |
-| **program stage P (parse) + stage G (guard)** (`Reductions/S1Parse.lean`) | ✅ 2026-07-25-b, axiom-clean |
-| **stage C's pure model + `normTrans` spec + stage M's no-branch** (`Reductions/S1Cards.lean`) | ✅ **NEW (2026-07-25-c)**, sorry-free, axiom-clean |
-| program stages Σ / I / C / F / M-yes (the **`Cmd`s**) | ❌ open |
-| the whole-program cost ladder | ❌ open |
+| witness skeleton, both layouts pinned, output key injective, `flattenTM_size_le` (`Reductions/S1Witness.lean`) | ✅ all mechanical fields proven |
+| program stages **P** (parse) + **G** (guard) (`Reductions/S1Parse.lean`) | ✅ axiom-clean |
+| stage C's pure model + `normTrans` spec + stage **M-no** (`Reductions/S1Cards.lean`) | ✅ sorry-free, axiom-clean |
+| **the atom `emitBlk` + stages Σ / I / F** (`Reductions/S1Emit.lean`) | ✅ **NEW (2026-07-26)**, sorry-free, axiom-clean |
+| **stage C (the card emitter)** — model proven, `Cmd` unwritten | ❌ open, the big one |
+| **stage M-yes** (five copies + `1^(steps+1)`) | ❌ open, half a day |
+| the program skeleton `s1Program` + the three witness fields | ❌ open (top-down) |
+| the whole-program cost ladder | ❌ open, LAST |
 
-`s1Program` and the three witness fields that consume it (`computes` /
-`cost_le` / `usesBelow`) are the entire remaining critical path. When they land,
-two seams close `Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' SAT` = `NPhard'' SAT`:
-**C8-5** (`W_Q` → S1, `mfc` drops `W_Q`'s extra unary size register) and the
-**fourth tail seam** (S1 → the sound tail), a **pure register scrub**.
+When they land, two seams close
+`Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' SAT` = `NPhard'' SAT`: **C8-5**
+(`W_Q` → S1, `mfc` drops `W_Q`'s extra unary size register) and the **fourth
+tail seam** (S1 → the sound tail), a **pure register scrub**.
 
-**Sorries in built code: 7** — five pre-existing (`red_inNP`'s `inTimePoly` half
+**Sorries in built code: 6** — five pre-existing (`red_inNP`'s `inTimePoly` half
 in `NP.lean`; `hasDeciderClassical` in `GenNP_is_hard.lean`; 3× `MultiToSingle`,
-dead code) plus the two S1 skeleton markers in `S1Witness.lean`
-(`flattenTM_size_le`, `s1Program`). `S1Parse.lean` and `S1Cards.lean` are
-**sorry-free**. The headline `CookLevin`'s `sorryAx` is unchanged and still
-wholly hardness-side.
+dead code) plus the one S1 skeleton marker `s1Program` in `S1Witness.lean`
+(which also leaves three fields of `s1_reductionLang` open). `S1Parse.lean`,
+`S1Cards.lean` and `S1Emit.lean` are **sorry-free**. The headline `CookLevin`'s
+`sorryAx` is unchanged and still wholly hardness-side.
 
 ## ★ Latest session
 
-**2026-07-25-c (top-down) — stage C is DE-RISKED: its pure model is built and
-PROVEN equal to `guessCards`, the `normTrans` gadget is specified on-machine,
-and stage M's no-branch is closed. Sorry-free & axiom-clean. Full build green.**
+**2026-07-26 (bottom-up) — the emitter atom and stages Σ / I / F are BUILT and
+PROVEN; `flattenTM_size_le` is closed — after being found FALSE as stated.
+Sorry-free & axiom-clean. Full build green.**
 
-New file `Reductions/S1Cards.lean` (~1K LOC, `[propext, Classical.choice,
-Quot.sound]`), probe `probes/S1CardModelProbe.lean` (all green). One
-visibility-only change: `CookTableau.dedupGo` is no longer `private`.
+New file `Reductions/S1Emit.lean` (~1.6K LOC), new probe
+`probes/S1EmitProbe.lean` (all green), `probes/S1SizeGapProbe.lean` §3 added.
+`S1Witness.lean` now imports `S1Parse` (no cycle).
 
-**Endpoints to consume — stage C now has a concrete, machine-shaped target:**
+**Endpoints to consume — three of the five remaining stages are real `Cmd`s:**
 
-* **`S1Cards.cardBlocks_eq : cardsFlat (guessCards M) = cardBlocks M`** and
-  **`S1Cards.encCards_eq`** (`encCardsIn (guessTableau …).cards
-  = encNats (cardBlocks M)`). `cardBlocks M` is seven `List.range` nests over
-  the numbers stage P parsed — no `Fin`, no `finRange`, no `filterMap`.
-  Per-family equations (`copyCards_flat`, …, `preludeCards_flat`,
-  `stepCardsOf_flat`) are separate, so the emitter can be built and proven one
-  family at a time.
-* **`S1Cards.normModel_eq`** — `normTrans M` = "dedup by the three-number key
-  `keyOf`, then keep the non-halting sources" on every guarded instance, with
-  `sameKey_eq` (the key comparison is three numbers, not a list) and
-  `entryOK_eq` (the filter is one `PHALT` bit lookup at index `src_state`).
-* **`S1Cards.stageMNo` + `stageMNo_run`/`_frame`/`_usesBelow`** — the
-  guard-false branch: five `clear`s onto registers `1`–`5`, which is exactly
-  `FlatTCCFree.encodeIn S1Map.s1No` there.
+* **`S1Emit.emitBlk cnt src dst`** + `emitBlk_run` / `emitBlk_cost`
+  (`≤ 3 + 5v + v²`) / `emitBlk_usesBelow` — appends `FlatTCCFree.encNat v
+  = 1^v 0` reading `v` as `|src|`. Register-generic. **Every large output is
+  built with this.**
+* **`S1Emit.loadSg` / `loadSg_run`** — `ESG := 1^(Sg M)` off `PSIG`/`PSTATES`,
+  the program's only multiplication, paid once outside every loop.
+* **`S1Emit.stageSig` / `stageSig_run` / `stageSig_usesBelow`** —
+  `EOUT_S = 1^(PSg M)`.
+* **`S1Emit.stageFin` / `stageFin_run` / `stageFin_usesBelow`**, with the model
+  `finBlocks` + **`finBlocks_eq`** — `EOUT_F = encFinal (flattenFinal
+  (guessFinal M))`.
+* **`S1Emit.stageInit` / `stageInit_run` / `stageInit_usesBelow`**, with the
+  models `cellsA`/`cellsB`/`cellsC`/`initBlocks` + **`initBlocks_eq`** —
+  `EOUT_I = encNats (flattenString (preludeRow M s maxSize steps))`.
+* Reusable inside stage C: **`repOne`**, **`iniCellK` / `iniLoopK_run`** (a
+  constant-value cell in a loop, with an optional first-iteration bonus),
+  `encNats_singleton`, `encFinal_append`, `encFinal_singleton`,
+  `drop_getElem_cons` / `tail_drop_succ` / `getD_of_le` / `encSyms_len_ge`.
 
-⚠ **FINDING 1 (scale — the emitter is CUBIC, not sextic).** The prelude family
-is `Θ(σ³)` cards, not `Θ(σ⁶)`: only `star`/`initStar` have more than one
-resolution, so the innermost count is `(Σₖ|resOf k|)³ = (4σ+5)³` (measured
-exactly: `probes/S1CardModelProbe.lean` §4 — `(125,637,1933,4397,8413,14365)`
-against `(4σ+5)³`). `GuessTableau.preludeCards_length_le` is a very loose
-over-estimate. Total cards `Θ((1+Q+T)·σ³)`; total emitted cells `Θ(n⁵)`-ish.
+⚠ **FINDING 1 (a stated lemma was FALSE — the session's real payoff).**
+`S1Witness.flattenTM_size_le` was `size (flattenTM M) ≤ 3 * size M`, annotated
+"the constant `3` has slack". The **trivial machine** (`sig = tapes = states =
+start = 0`, `halt = trans = []`) has `size M = 1` and
+`flattenTM M = [0,0,0,0,0,0]` of size `6`. `flattenTM` always writes six header
+cells, so a machine of size 1 cannot pay for them *multiplicatively*. Corrected
+and proven: **`≤ 3 * size M + 3`**, tight at that machine. `headEncodeIn_size_le`
+absorbed the change unchanged. **The general lesson, applicable to every future
+size bound: an encoding with a fixed-size header always needs an additive term,
+and a probe that samples only non-degenerate instances will not see it — always
+`#eval` the empty/zero instance** (`probes/S1SizeGapProbe.lean` §3).
 
-⚠ **FINDING 2 (cost — two hard rules for the emitter).** (a) **Never `concat`
-onto the card register**: `Op.cost (concat dst a b) = 2(|a|+|b|)+1` charges the
-whole register per append, which alone would make the emitter quadratic in its
-own output. Append cell by cell (`appendOne`/`appendZero`, unit cost) inside a
-`forBnd`. (b) **A unary block of value `v` costs `Θ(v²)`** because `Cmd.run`'s
-`forBnd` charges `iters²`; with `v < PSg ≈ σ·Q` that is `Θ(n⁴)` per block and
-`Θ(n⁸)` overall — inside the degree-10 budget, but only two orders of slack.
-Hoist every product (`hv sig q b`) out of the inner loops and maintain it
-incrementally.
+⚠ **FINDING 2 (stage F needs NO validity hypothesis).** `cookFinal` runs `q`
+over `[0, states]` and asks `M.halt.getD q false`; the emitter drains `PHALT`
+one `head` cell per `q`, and a drained-empty `head` yields `[]`, which `ifBit`
+reads as *false* — exactly `getD`'s out-of-range value. So the `|halt| = states`
+guard conjunct is not needed by F on any machine (probe covers a machine whose
+halt list is shorter than `states`).
 
-⚠ **FINDING 3 (budget — the degree-10 ceiling is NOT binding).**
-`PolyTimeComputableLang.cost_bound` is a *free* polynomial: its only duties are
-`inOPoly`, `monotonic`, dominating the cost, and dominating the **output size**
-(`output_size_le` is stated against `cost_bound`, which is why `s1Bound` was
-reused). If the emitter's ladder does not fit `(2(n+3))^10`, raise
-`S1Witness.cost_bound` to any bigger monotone polynomial and re-close
-`output_size_le` by transitivity through `S1Map.s1Map_size_le`. **Do not
-contort the emitter to hit degree 10.**
+⚠ **FINDING 3 (the emitter template stage C must copy).** `hv sig q b
+= (sig+1)(q+1) + b` is **never multiplied inside a loop**: one register holds
+`1^((sig+1)(q+1))` and grows by `1^(sig+1)` per `q` iteration, and `b` is *the
+inner `forBnd`'s own counter register*. The innermost body is then two
+`tallyReg`s plus three constant appends. **Every one of stage C's seven families
+has this shape** — a product of loop indices is an incrementally maintained
+register plus the innermost counter.
 
-**Design decisions pinned by this session — do not re-litigate.**
+⚠ **FINDING 4 (stage I is three consecutive loops, not one branching loop).**
+`pKindAt`'s positional case split *partitions* the row, so the emitter is three
+sequential loops bounded by registers that already hold those lengths (reg `2`,
+reg `3`, reg `4`+3) — no on-machine comparison of the position against anything.
+The only positional datum left is "is this the row's first cell": one flag
+register (`EE`) cleared by the first cell emitted. Loop A is **idle-tolerant**
+(`S1Parse.sLoop`'s pattern) because the layer has no "number of items in a
+sentinel stream" register to loop on.
 
-1. **Stages Σ / I / C / F / M-yes sit under ONE `Cmd.ifBit S1Parse.FLG`.**
-   `Cmd.run` charges only the taken branch, so on an invalid machine the whole
-   emitter is skipped at constant cost — and every stage's run lemma may
-   **assume the guard** (`validFlatTM M`, `M.tapes = 1`,
-   `list_ofFlatType M.sig s`). That is what makes `normModel_eq` usable and
-   what keeps `stepBlocks`'s arity reasoning trivial.
-2. **The prelude premise triple needs no case analysis**: `pCell` of kind
-   index `k` is literally `Sg M + k` (`S1Cards.pcellv`). The *conclusion* side
-   runs over `resOf k`; materialise that list into one register per kind
-   (value/class pairs) and scan it, instead of branching on the seven kinds.
-3. **A transition entry contributes exactly nine numbers** (`stepBlocks`):
-   `sig`, `states`, `q = min src_state states`, `q' = min dst_state states`,
-   the two `(tag, val)` option pairs and the move code — precisely what
-   `S1Parse`'s entry scan already walks past.
-4. **`emb` is a no-op on the flat encoding**, so the cook cards and the prelude
-   cards are two independent streams the emitter can write back to back.
+⚠ **FINDING 5 (the guard is load-bearing, not a convenience).** Stage I does not
+test `s[p] < sig` — under `list_ofFlatType M.sig s` that branch is unreachable.
+`probes/S1EmitProbe.lean` exhibits an **off-guard** instance (`M.sig = 0`,
+non-empty input) where the emitter and `preludeRow` genuinely disagree. This
+confirms design decision 1 (everything under one `Cmd.ifBit S1Parse.FLG`) is
+required for correctness, not just for cost.
+
+**The emitter register frame — PINNED (`Reductions/S1Emit.lean` docstring).**
+
+```
+32 EOUT_S  Σ's output (1^PSg)     37 ESG  1^(Sg M)     43 EJ1  loop counter
+33 EOUT_I  I's output             38 EA   scratch      44 EJ2  loop counter
+34 EOUT_C  C's output (stage C)   39 EB   scratch      45 EJ3  loop counter
+35 EOUT_F  F's output             40 EC   scratch      46 EK1  scratch
+36 EOUT_T  1^(steps+1) (stage M)  41 ED   scratch      47 EK2  scratch
+                                  42 EE   scratch
+```
+`32`–`36` persist to stage M; `37`–`47` are scratch every stage reuses. Nothing
+here touches `0`–`13` (stage P's outputs and the head layout) — each stage's
+`_run` carries an explicit frame clause saying so, and the probe checks it by
+`#eval` on registers `0`–`13`.
+
+**Earlier, still binding (2026-07-25-c, stage C's model).** `S1Cards.cardBlocks_eq`
+/ `encCards_eq` (stage C's target is seven `List.range` streams with one proven
+equation per family), `normModel_eq` (the `normTrans` dedup is a three-number
+key pass plus one `PHALT` bit lookup), `stageMNo` (the guard-false branch), and
+its three findings: the prelude family is **`Θ(σ³)`, not `Θ(σ⁶)`**; **never
+`concat` onto an output register** (`Op.cost concat` charges the whole
+destination) and a unary block of value `v` costs `Θ(v²)`; and **`cost_bound` is
+a free polynomial** — raise it rather than contort the emitter (it must keep
+dominating `S1Map.s1Map_size_le`, that is its only constraint).
 
 **Earlier, still binding (2026-07-25-b, stages P+G).** `stagePG_run` leaves
 `1^sig`, `1^tapes`, `1^states`, `1^start`, `1^|halt|`, the halt **bit list**,
@@ -128,23 +157,18 @@ contort the emitter to hit degree 10.**
 empty; plus `stagePG_usesBelow : UsesBelow stagePG 32` and `stagePG_frame`
 (registers `1`–`5` untouched). Its findings that still constrain new work:
 
-1. **P+G are cubic**, so the parse is not the budget driver — do not optimise
-   it (`probes/S1ParseProbe.lean` §4).
-2. **The parse never desynchronises, on any machine**: `flattenEntry` writes
-   each list's own length before its payload, so `stageP_run`/`stageG_run` take
-   no validity hypothesis.
+1. **P+G are cubic**, so the parse is not the budget driver — do not optimise it.
+2. **The parse never desynchronises, on any machine** (`flattenEntry` writes each
+   list's own length before its payload), so P/G take no validity hypothesis.
 3. **`CliqueRelTM.readNum`/`ltBit` are reused verbatim**, so registers `15`
    (`HEAD`), `16` (`INBLK`), `22` (`LT_B`), `26` (`SKIPR`) are RESERVED for the
    whole S1 program.
-4. **`forBnd` samples its bound register's length ONCE at entry**
-   (`Cmd.eval_forBnd`), so a loop may overwrite its own bound.
-5. **`PHALT` (register 11) is a RAW BIT LIST** `M.halt.map bitOf` — stage F
-   reads it with `head`/`tail`, stage C's `entryOK` reads index `src_state`
-   with a `forBnd` bounded by `1^src_state`.
-6. **The suffix-peel proof shape**: name every command suffix (`pSuf1`…,
-   `gSuf0`…) and peel with `rw [Cmd.eval_seq]`, never `rfl`; each register a
-   suffix does not write is then ONE `Cmd.eval_get_of_not_writes` (`by decide`
-   on the write set). **Copy this shape for stages Σ / I / C / F / M.**
+4. **`forBnd` samples its bound register's length ONCE at entry**, so a loop may
+   overwrite its own bound.
+5. **`PHALT` (register 11) is a RAW BIT LIST** `M.halt.map bitOf`.
+6. **The suffix-peel proof shape**: name every command suffix and peel with
+   `rw [Cmd.eval_seq]`, never `rfl`; each register a suffix does not write is
+   then ONE `Cmd.eval_get_of_not_writes` (`by decide` on the write set).
 
 **The S1 register frame — PINNED (`Reductions/S1Parse.lean` docstring).**
 
@@ -156,9 +180,8 @@ empty; plus `stagePG_usesBelow : UsesBelow stagePG 32` and `stagePG_frame`
 4  1^steps   (in) / FINAL (out)        10  PNHALT    16 INBLK ⊘   23 TSCAN
 5  STEPS (out)                         11  PHALT     22 LT_B  ⊘   24 NEF
                                                      26 SKIPR ⊘   27–31 I1–I5
-19, 25 free · 32–47 FREE for stages Σ / I / C / F / M · s1RegBound = 48
+19, 25 free · 32–47 the emitter frame above · s1RegBound = 48
 ```
-`stagePG.loopDepth = 3`; max register written = `31`.
 
 ## ★ Earlier sessions — the findings that still constrain new work
 
@@ -166,6 +189,8 @@ Everything durable lives in "Proven, reusable", "Locked invariants" and
 "Conventions"; git history has the narration. Kept here only where a *finding*
 still binds.
 
+- **2026-07-25-c (top-down)** — stage C's pure model (`S1Cards`), the `normTrans`
+  spec and stage M-no; its three findings are under "★ Latest session" above.
 - **2026-07-25-b (bottom-up)** — the S1 program's stages P + G; its six binding
   findings are listed under "★ Latest session" above (they still govern every
   new stage).
@@ -341,51 +366,62 @@ The per-`Q` front is built and axiom-clean. What a future session needs:
   composed front+tail chain and delete the legacy `⪯p` front (that IS the S2
   collapse; `Simulators/MultiToSingle.lean` is already dead code).
 
-## NEXT TOP-DOWN session — assemble the program skeleton, then the seam
+## NEXT TOP-DOWN session — the program skeleton, then the seams
 
-Stage C's *shape* is now known (`Reductions/S1Cards.lean`); what is still
-unwritten top-down is the **program skeleton that all five remaining stages
-plug into**, and the fourth seam behind it. In this order:
+Three of the five remaining stages are now real `Cmd`s with real `_run` lemmas
+(`Reductions/S1Emit.lean`), so the skeleton is no longer a paper exercise: **the
+yes-branch half of `computes` can be proven today modulo only stage C and stage
+M-yes.** In this order:
 
-1. **The program skeleton + the no-branch half of `computes` (do this first —
-   it is closeable end-to-end today).** New file `Reductions/S1Program.lean`:
+1. **`Reductions/S1Program.lean` — the skeleton and the guard-false half of
+   `computes` (closeable end-to-end today).**
    * **Move** `s1Key` / `s1Extract` / `SIGMA…STEPS` / `s1RegBound` out of
      `S1Witness.lean` into it (they are program-layout definitions, and
-     `S1Witness` must import the program, not the other way round). `S1Witness`
-     then imports `S1Program` and keeps only the witness record + the size
-     lemmas. Nothing else references them — a mechanical move.
+     `S1Witness` must import the program, not vice versa). Mechanical: nothing
+     else references them.
    * Define
      `s1Program := S1Parse.stagePG ;; Cmd.ifBit S1Parse.FLG yesBranch S1Cards.stageMNo`
-     with `yesBranch` the (still `sorry`) composite `Σ ;; I ;; C ;; F ;; M-yes`.
+     with `yesBranch := S1Emit.stageSig ;; S1Emit.stageInit ;; stageC ;;
+     S1Emit.stageFin ;; stageMYes` (only `stageC` and `stageMYes` still `sorry`).
    * **Prove the guard-false half of `computes` for real**:
-     `¬ s1GuardB M s → s1Extract (s1Program.eval (headEncodeIn x)) = s1Key (s1Map x)`,
+     `¬ s1GuardB M s → s1Extract (s1Program.eval (headEncodeIn x)) = s1Key (s1Map x)`
      from `stagePG_run` (flag + reg `0` empty), `Cmd.eval_ifBit_false`,
      `S1Cards.stageMNo_run` and `S1Map.s1Map_neg`. `s1Key S1Map.s1No` is five
-     empty registers (checked). This pins the multiplex and makes half of the
-     critical-path field real instead of a `sorry`.
-   * Also state `s1Program_usesBelow` modulo `yesBranch`'s (`stagePG_usesBelow`
-     is `32`, `stageMNo_usesBelow` is `6`, so the frame is whatever the yes
-     branch needs — keep it `≤ 48`).
-2. **The `yesBranch` interface contract.** Before any emitter exists, write the
-   five stage signatures as `sorry`-backed `_run` statements against
-   `S1Parse`'s outputs and `S1Cards`'s models (Σ → `1^(PSg M)` in `SIGMA`,
-   I → `encNats (flattenString (preludeRow …))` in `INIT`, C →
-   `encNats (S1Cards.cardBlocks M)` in `CARDS`, F → `encFinal …` in `FINAL`,
-   M-yes → the copies into `1`–`5` plus `1^steps`+1 into `STEPS`). Then the
-   yes-branch half of `computes` can be *proven from those five statements*
-   before a single emitter is built — the last place a layout mismatch can
-   still be found cheaply. ⚠ Note `guessTableauTyped.steps = steps + 1`, so
-   `STEPS` is **not** a copy of register `4`.
-3. **The fourth seam** (blocked on `s1Program` being concrete, i.e. on step 1
-   plus at least a placeholder-free `yesBranch`):
+     empty registers.
+   * `s1Program_usesBelow 48` modulo `yesBranch` (`stagePG_usesBelow = 32`,
+     `stageMNo_usesBelow = 6`, and Σ / I / F are each `usesBelow 48`).
+2. **A COARSE FRAME PREDICATE — do this while assembling, it pays for itself.**
+   Every stage's `_run` currently carries an explicit `r ≠ …` chain (Σ: 5
+   registers, F: 10, I: 14 incl. `readNum`'s reserved trio). Define once
+   ```
+   abbrev EDirty (r : Var) : Prop :=
+     (32 ≤ r ∧ r < 48) ∨ r = CliqueRelTM.HEAD ∨ r = CliqueRelTM.INBLK
+       ∨ r = CliqueRelTM.SKIPR
+   ```
+   plus `ne_of_not_dirty (h : ¬ EDirty r) (k) (hk : EDirty k) : r ≠ k :=
+   fun rfl => h hk`, and derive `stageSig_frame` / `stageFin_frame` /
+   `stageInit_frame` (`∀ r, ¬ EDirty r → … = s.get r`) as three-line corollaries.
+   Then the yes-branch composition is one hypothesis per stage, not fourteen.
+   ⚠ `EDirty` at a concrete register must be discharged by `decide`/`omega`
+   through a `change (_ : Nat) …` — `Var` is opaque to `omega`.
+3. **The yes-branch half of `computes`, modulo stage C and M-yes.** With the
+   frame predicate in hand this is a straight chain: `stageSig_run` →
+   `stageInit_run` (needs the guard's `list_ofFlatType`, available from
+   `S1Map.s1GuardB_iff`) → `stageC_run` (`sorry`, stated against
+   `S1Cards.encCards_eq`) → `stageFin_run` → `stageMYes_run` (`sorry`), then
+   `S1Map.s1Map_pos` and `S1Witness.s1Key`. **This is the last place a layout
+   mismatch can still be found cheaply — do it before stage C is built.**
+   ⚠ `guessTableauTyped.steps = steps + 1`, so `STEPS` is **not** a copy of
+   register `4`.
+4. **The fourth seam** (blocked on a placeholder-free `s1Program`):
    `SeamData s1_reductionLang FSATSATComp.flatTCC_to_SAT_witness`, `mfc` a pure
    scrub of register `0` and every S1 scratch register in `[6, 57)`, `bridge`
-   is `AgreeBelow 57`, the right `encodeIn` **is** `FlatTCCFree.encodeIn`
-   (`rfl`). Template: `Reductions/FSAT_to_SAT_comp.lean`.
-4. **C8-5** (the other seam): `SeamData WQ s1_reductionLang` on the frozen
+   `AgreeBelow 57`, right `encodeIn` **is** `FlatTCCFree.encodeIn` (`rfl`).
+   Template: `Reductions/FSAT_to_SAT_comp.lean`.
+5. **C8-5**: `SeamData WQ s1_reductionLang` on the frozen
    `HeadLayout.headEncodeIn`; `mfc` drops `W_Q`'s extra unary size register.
    Same blocker.
-5. **Off the critical path, fully independent** (right pick for a parallel
+6. **Off the critical path, fully independent** (the right pick for a parallel
    agent): the SAT-verifier Split adaptation for the in-NP half of
    `NPcomplete'' SAT` — see the C8 endgame note above.
 
@@ -395,75 +431,79 @@ templates (`flatTCC_reductionLang`, `binaryCCFSAT_reductionLang`,
 2026-07-16 cost-assembly pattern (per-branch `private` lemmas + precomputed
 frame facts + `clear_value` discipline + symbolic `flatK` constants).
 
-## NEXT BOTTOM-UP session — the emitter gadgets
+## NEXT BOTTOM-UP session — stage M-yes, then stage C family by family
 
-Everything below is now **fully specified** and independent. Take them in this
-order; the first three are small and can be done in one session.
+Items 0–3 and 5 of the previous plan are DONE (`emitBlk`, Σ, I, F,
+`flattenTM_size_le`). What is left, in the order to take it:
 
-0. **The atom every stage needs: `emitBlk`.** A gadget appending
-   `FlatTCCFree.encNat v = 1^v 0` onto an output register from a source
-   register holding `1^v`: `forBnd i src (appendOne dst) ;; appendZero dst`.
-   Cost `≈ |src|² + |src|`. Prove `emitBlk_run` (`dst := dst ++ encNat v`,
-   `src` intact) + `emitBlk_cost` once and consume it in C, I and F.
-   ⚠ **Never build output with `concat`** — see FINDING 2 above.
-1. **Stage Σ (smallest).** `SIGMA := 1^(PSg M)` with
-   `PSg M = (σ+1)·(states+2) + 1 + 2σ + 5` — `unaryMulLoop_run` (proven) plus
-   appends, off `PSIG`/`PSTATES`. Half a day.
-2. **Stage I (init row).** `INIT := encNats (flattenString (preludeRow M s
-   maxSize steps))`: a `forBnd` over `p < guessWidth = |s| + maxSize + steps
-   + 3` emitting `pCell (pKindAt M s maxSize p)`, three positional cases plus
-   the `p = 0` "init" variants, bracketed by two `pDelim` cells. `s[p]` comes
-   from a **sequential** scan of register `2` (`p` increases), so no random
-   access; `stagePG_frame` guarantees registers `2`/`3`/`4` still hold
-   `encSyms s` / `1^maxSize` / `1^steps`. Use `S1Cards.sgv`/`pcellv` for the
-   band arithmetic (prelude cell of kind index `k` is `Sg M + k`).
-3. **Stage F (final).** `FINAL := encFinal (flattenFinal (guessFinal M))` —
-   `Θ(states·σ)` singleton patterns `[hCell M q b]`, emitted only for halting
-   `q`, gated on the `q`-th cell of `PHALT` (raw bit list, walked in step with
-   the state loop). Cell values via `S1Cards.hv`.
-4. **Stage C, family by family — the big one, but now decomposed.** Target:
-   `CARDS := FlatTCCFree.encNats (S1Cards.cardBlocks M)`, and `cardBlocks` is
-   an explicit `++` of seven streams with a per-family equation already proven,
-   so build and prove **one family per sitting**, in this order:
-   a. `copyBlocks` (three plain loops, no gating) — this is the *template*:
-      six value registers + `emitBlk` ×6 in the innermost body.
+1. **Stage M-yes (small — start here, half a day).** `EOUT_T := 1^(steps + 1)`
+   then five copies into the output registers:
+   ```
+   copy EOUT_T 4 ;; appendOne EOUT_T ;;          -- BEFORE any output write
+   copy 1 EOUT_S ;; copy 2 EOUT_I ;; copy 3 EOUT_C ;; copy 4 EOUT_F ;;
+   copy 5 EOUT_T
+   ```
+   ⚠ **Order matters**: registers `1`–`4` are the *input* layout, so `EOUT_T`
+   must be built from register `4` (`1^steps`) *before* `copy 4 EOUT_F`
+   overwrites it, and nothing may read registers `1`–`4` afterwards. The `+1` is
+   `guessTableauTyped.steps = steps + 1` — do not "simplify" it to a copy.
+   State the run lemma as `s1Extract (stageMYes.eval s) = s1Key (guessTableau …)`
+   given the four `EOUT_*` values, so the top-down assembly consumes one fact.
+2. **Stage C, family by family — the big one, now fully templated.** Target:
+   `EOUT_C := FlatTCCFree.encNats (S1Cards.cardBlocks M)`, and `cardBlocks` is an
+   explicit `++` of seven streams with a per-family equation already proven, so
+   build and prove **one family per sitting**, in this order:
+   a. `copyBlocks` (three plain loops, no gating) — the template: six value
+      registers, `emitBlk` ×6 in the innermost body, each value register
+      maintained incrementally exactly as `stageFin`'s `EC` is (FINDING 3).
    b. `copyRightBlocks` (two loops), then `haltLeft/Center/RightBlocks` (adds
-      the `PHALT` random-access gate — same lookup stage F needs).
+      the `PHALT` **random-access** gate — a `forBnd` bounded by `1^q` walking
+      `PHALT`; stage F's sequential drain does not apply here).
    c. `preludeBlocks`: materialise `resOf k` into a register per kind
       (value/class pairs) and scan it three times; the premise triple is
-      `Sg M + kᵢ` (`pcellv`), the filter is `contigB` on three class codes.
+      `Sg M + kᵢ` (`S1Cards.pcellv`), the filter is `contigB` on three class
+      codes.
    d. the transition families: first the dedup pass
       (`S1Cards.normModel`/`normModel_eq` — three-number keys in one "seen"
       register, `O(T²)` iterations of constant work), then `stepBlocks`'s four
       sub-nests off the nine parsed numbers.
    ⚠ Counts and scale: `Θ((1+Q+T)·σ³)` cards, `Θ(n⁵)` cells; numbers in
    `probes/S1CardModelProbe.lean` §3–4. Re-`#eval` that probe after any model
-   change.
-5. **`flattenTM_size_le` (`S1Witness.lean`) — a good warm-up bite.**
-   `encodable.size (HeadLayout.flattenTM M) ≤ 3 * encodable.size M`, the last
-   step of `encodeIn_size`. Route: turn the two `foldl (fun a e => a ++ f e)`
-   accumulators into `flatMap` (**`S1Parse.foldl_append_nil` is exactly that
-   lemma — un-`private` it**, or reuse `S1Parse.transFlat_eq`/`optsFlat_eq`),
-   push `encodable.size` through `++` and `flatMap`, then bound each entry
-   field against `encodable FlatTMTransEntry`. The constant `3` has slack and
-   is numerically checked in `probes/S1SizeGapProbe.lean` §2.
-6. **The cost ladder, LAST** (`stagePG_cost_le` + the emitter's). Measured
-   cubic for P+G; state it at `≤ K·(State.size s + 1)³` and close with
-   `Cmd.cost_forBnd_le` per loop. Assemble the whole-program ladder once, after
-   every stage exists — and remember FINDING 3: **raise `cost_bound` rather
-   than fight for degree 10.**
+   change. ⚠ Register budget: stage C gets `EOUT_C` plus `ESG`…`EK2` (11
+   scratch) plus, if it needs more, `14`, `18`–`21`, `23`–`25`, `27`–`31` (P/G
+   scratch, free once G has run) — but NOT `13` (`PTRANS`, which it re-scans)
+   and not the reserved `15`/`16`/`22`/`26`.
+   ⚠ Each family's `_run` may assume the guard (`validFlatTM M`, `M.tapes = 1`)
+   — it sits under `Cmd.ifBit S1Parse.FLG`.
+3. **The cost ladder, LAST** (`stagePG_cost_le` + the emitter's). Measured cubic
+   for P+G. `emitBlk_cost` (`≤ 3 + 5v + v²`) is the leaf; `Cmd.cost_forBnd_le`
+   per loop above it. Assemble once, after every stage exists — and remember:
+   **raise `cost_bound` rather than fight for degree 10** (it only has to
+   dominate the cost and `S1Map.s1Map_size_le`).
 
-**Recommendation: run a BOTTOM-UP session next**, on items 0–3 (the `emitBlk`
-atom plus stages Σ / I / F). They are small, fully specified, mutually
-independent, and they produce the emitter template that item 4 then repeats
-seven times. A parallel agent should take top-down item 1 (the program skeleton
-+ the no-branch half of `computes`) — it touches different files and closes a
-real `sorry` today.
+**Recommendation: run a BOTTOM-UP session next**, on item 1 (stage M-yes, which
+completes the *shape* of the yes branch) and then item 2a–2b (the copy and halt
+card families, which establish the stage-C emitter template on the two simplest
+of the seven families). A parallel agent should take top-down items 1–3 — those
+touch different files, close a real `sorry` today, and are the last cheap
+opportunity to catch a layout mismatch before the largest remaining `Cmd` is
+written.
 
 ---
 
 ## Locked invariants — do NOT revisit
 
+- **The emitter register frame is PINNED (2026-07-26, `Reductions/S1Emit.lean`)**:
+  `32`–`36` are the five stage outputs (Σ, I, C, F, `1^(steps+1)`) and persist
+  to stage M; `37`–`47` are shared scratch every stage reuses. Changing it
+  re-opens `stageSig_run`, `stageFin_run`, `stageInit_run` and all three
+  `usesBelow`s.
+- **Every size bound over an encoding with a fixed-size header needs an ADDITIVE
+  term (2026-07-26).** `size (flattenTM M) ≤ 3·size M` was stated as having
+  "slack" and is false at the trivial machine (`size M = 1`, six header cells).
+  The correct shape is `c·size M + d`; `d = 3` here and is tight. Probe the
+  empty/zero instance of every new size claim — a probe over "realistic"
+  instances will print `true` and hide it (`probes/S1SizeGapProbe.lean` §3).
 - **Stage C's target is `S1Cards.cardBlocks` (2026-07-25-c)** — the seven
   `List.range` streams, in that order, `emb`-free. Changing the model re-opens
   ten proven equations; extend it only by adding a family at the end (and
@@ -532,6 +572,29 @@ real `sorry` today.
 
 ## Proven, reusable — do not re-derive
 
+- **The S1 emitter atom + stages Σ / I / F (2026-07-26, `Reductions/S1Emit.lean`,
+  sorry-free & axiom-clean — consume as black boxes; do NOT re-derive an
+  append gadget or restate the prelude row / final patterns)**: the atom
+  **`emitBlk`** + `emitBlk_run` / `emitBlk_cost` (`≤ 3 + 5v + v²`) /
+  `emitBlk_usesBelow` (register-generic); `loadSg` / **`loadSg_run`**
+  (`1^(Sg M)`, the only multiplication, hoisted); **`stageSig`/`stageSig_run`/
+  `stageSig_usesBelow`**; the stage-F model `finBlocks` + **`finBlocks_eq`** and
+  **`stageFin`/`stageFin_run`/`stageFin_usesBelow`**; the stage-I models
+  `cellsA`/`cellsB`/`cellsC`/`initBlocks` + **`initBlocks_eq`** (guarded) and
+  **`stageInit`/`stageInit_run`/`stageInit_usesBelow`**; the shared loop
+  machinery `repOne`/`repOne_run`, `iniCellK`/**`iniLoopK_run`** (a
+  constant-value cell loop with a first-iteration bonus — reuse it for any
+  "same value every iteration except the first" stream), `enop`; and the codec
+  algebra `encNats_singleton`, `encFinal_append`, `encFinal_singleton`, plus the
+  list helpers `drop_getElem_cons`/`tail_drop_succ`/`getD_of_le`/
+  `encSyms_len_ge`. Probe: `probes/S1EmitProbe.lean`.
+- **The `encodable.size` list algebra (2026-07-26, `Reductions/S1Witness.lean`,
+  project-wide utility)**: `nat_size_append`, **`list_size_map_sum`**
+  (`size l = (l.map (size · + 1)).sum` — the lemma every list size argument
+  wants), `list_size_cons`, `nat_size_flatMap`, `length_eq_sum_ones`,
+  `mul_sum_map`; the per-field bounds `opts_size_le`/`moves_size_le`/
+  `halt_size_le` (each in the "payload + its own item slot ≤ 2·charge" shape)
+  and `entry_size_le`; and **`flattenTM_size_le`** (`≤ 3·size M + 3`).
 - **The stage-C pure model (2026-07-25-c, `Reductions/S1Cards.lean`,
   sorry-free & axiom-clean — consume as black boxes; do NOT restate the card
   stream from `guessCards`)**: the plumbing `cnats`/`cardsFlat` +
@@ -1243,6 +1306,33 @@ real `sorry` today.
   `str.index` anchors.** If the anchors come out in the wrong order the slice is
   `""` and `str.replace("", new)` inserts `new` between every character (a
   1.8M-line file). Anchor edits on literal text, or assert `start < end` first.
+- **NEW (2026-07-26): a state built as `([] : State).set a x |>.set b y` in a
+  PROBE elaborates its `.set`s to `List.set`, not `State.set`** (the 2026-07-12
+  gotcha, hit again from the other side) — and `List.set [] 2 v = []`, so every
+  register reads `[]` and every check silently prints `false`. Write
+  `State.set (State.set ([] : State) a x) b y` explicitly when constructing a
+  probe state.
+- **NEW (2026-07-26): `rw [if_pos h]` fails when the condition is a `Bool`
+  coerced to `Prop`.** `h : (fst && decide (j = 0)) = true` does not match the
+  `if`'s decidable instance (the pattern comes out with a doubled `decide`).
+  Use `cases hfb : (<the Bool>) with | true => … | false => …` and `simp [hfb]`
+  in each branch — `hfb` rewrites the condition to a literal and the `reduceIte`
+  simproc finishes.
+- **NEW (2026-07-26): `simp only` does not close a goal whose two sides are the
+  same STUCK `match`** (e.g. `Op.eval (.head dst src)` after rewriting the source
+  register). Finish with an explicit `rfl`.
+- **NEW (2026-07-26): an `induction l` INSIDE a `have` whose ambient context
+  mentions `l` produces an unusable IH** (`omega` then fails on the fold sums).
+  Extract every such induction as a standalone `private` lemma over a fresh list
+  variable — `length_eq_sum_ones` / `mul_sum_map` / `trans_sum_le` are the model.
+- **NEW (2026-07-26): a `_run` lemma with an 11-register frame chain is a smell.**
+  Bundle the dirty set as one `abbrev … : Prop` (`S1Emit.IClean`) and project
+  with `hr.2.2.…`; better still define the coarse `EDirty` predicate over the
+  whole scratch block once (NEXT TOP-DOWN item 2) so composition is one
+  hypothesis per stage. Keep BOTH frame forms available:
+  `Cmd.eval_get_of_not_writes … (by decide)` is the cheapest step for a
+  CONCRETE register but needs it outside the write set, and a dirty-set-keyed
+  lemma cannot serve a concrete register that is merely not written.
 - Methodology: **skeleton-first; refine the highest-risk gap next; decompose
   `sorry`s, don't elaborate them; probe before committing engineering;
   `def`+`sorry` over `axiom` (count = 0); build green between commits.**
