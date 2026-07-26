@@ -34,7 +34,8 @@ register before working.
 | `#print axioms S1Parse.stagePG_run` | **`[propext, Quot.sound]`** — the **S1 program's first two stages are built** (2026-07-25-b, `Reductions/S1Parse.lean`): stage **P** parses the frozen head layout's machine register into a pinned scratch frame, stage **G** decides `S1Map.s1GuardB` on-machine; both sorry-free. Measured cost is **cubic** (`probes/S1ParseProbe.lean`), so the parse is not the S1 budget driver. |
 | `#print axioms S1Emit.stageInit_run` | **`[propext, Classical.choice, Quot.sound]`** — **three more S1 program stages are built** (2026-07-26, `Reductions/S1Emit.lean`, sorry-free): the emitter atom `emitBlk` (one bare unary block, appended cell by cell — never `concat`) plus stage **Σ** (`1^(PSg M)`), stage **I** (the prelude row, `stageInit_run`) and stage **F** (the final patterns, `stageFin_run`), each with a pure `List.range` model proven equal to the `Fin`-typed definition (`initBlocks_eq`, `finBlocks_eq`). **Stage C (the card emitter) and stage M-yes are all that is left of the program.** Probe: `probes/S1EmitProbe.lean`. |
 | `#print axioms S1Witness.flattenTM_size_le` | **`[propext, Classical.choice, Quot.sound]`** — `encodable.size (flattenTM M) ≤ 3·encodable.size M + 3` (2026-07-26). ⚠ Its previous statement (without the `+ 3`, annotated "the constant 3 has slack") was **FALSE** — `flattenTM` always writes six header cells, so the trivial machine has `size M = 1` and stream size `6`. See `probes/S1SizeGapProbe.lean` §3; the general rule (a fixed-size header forces an additive term) is now a locked invariant. |
-| Genuine `sorry`s in built code | **6** (Group C — completion; `Reductions/S1Parse.lean`, `S1Cards.lean` and `S1Emit.lean` are sorry-free). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). One deliberate S1 skeleton marker (`Reductions/S1Witness.lean`): `s1Program` (the open reduction program, which also leaves three fields of `s1_reductionLang` open). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
+| `#print axioms S1Program.noBranch_computes` | **`[propext, Quot.sound]`** — **the S1 reduction program is ASSEMBLED** (2026-07-26-b, `Reductions/S1Program.lean`): `s1Program = stagePG ;; ifBit FLG yesBranch stageMNo`, and its `computes` obligation is proven — the **guard-false half outright and axiom-clean** (this lemma, stated over an arbitrary yes branch so that the placeholder stages do not pollute its axiom list), the guard-true half (`yesBranch_run`) modulo only `stageC_run` and `stageMYes_run`. `S1Witness.s1_reductionLang` now discharges `computes`, `usesBelow` and `decode_agree` from real program lemmas; **`cost_le` is its only open field.** Probe: `probes/S1ProgramProbe.lean`. |
+| Genuine `sorry`s in built code | **12** (Group C — completion; `Reductions/S1Parse.lean`, `S1Cards.lean` and `S1Emit.lean` are sorry-free). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). Six deliberate S1 stage markers in `Reductions/S1Program.lean` (`stageC` / `stageMYes` and their `_run` / `_usesBelow` contracts — only the two `def`s are real gaps). One cost obligation: `S1Witness.s1_reductionLang.cost_le`. The rise from 6 is a **decomposition, not a regression** — one opaque `s1Program` marker became six contracts the assembly already typechecks against. **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
@@ -154,9 +155,24 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   times; the prelude row is three consecutive segment loops plus one first-cell
   flag, not one branching loop; and the guard is **load-bearing**, not a
   convenience — the probe exhibits an off-guard instance where stage I and
-  `preludeRow` genuinely disagree. **Stage C and stage M-yes are all that is
-  left of the program.** The same session closed `flattenTM_size_le` after
-  finding its previous statement false (see the table above).
+  `preludeRow` genuinely disagree. The same session closed `flattenTM_size_le`
+  after finding its previous statement false (see the table above).
+  **The program is now ASSEMBLED (2026-07-26-b, `Reductions/S1Program.lean`):**
+  `s1Program = stagePG ;; ifBit FLG yesBranch stageMNo`; the guard-false half of
+  `computes` is proven outright and axiom-clean (`noBranch_computes`), the
+  guard-true half (`yesBranch_run`) modulo only the two open stage contracts
+  `stageC_run` / `stageMYes_run`, and `S1Witness.s1_reductionLang` discharges
+  `computes` / `usesBelow` / `decode_agree` — **`cost_le` is its only open
+  field. Stage C, stage M-yes and the cost ladder are all that is left.**
+  Three findings: a `sorry` inside a `def` puts `sorryAx` in the axiom list of
+  every lemma *mentioning* it, so skeleton-phase lemmas must quantify over the
+  placeholder to stay honest-checkable; `#eval` refuses any expression reaching a
+  `sorry` even down an untaken branch, so a skeleton program cannot be probed end
+  to end; and a sorried `_run` contract is an unchecked assumption —
+  `probes/S1ProgramProbe.lean` checks both contracts numerically against
+  `s1Key (guessTableau …)` on the real frozen head layout. Measured there: the
+  card register is `>99.8%` of the emitted output, so **stage C alone is the cost
+  ladder.**
   ⚠ Landing this required correcting `encodable FlatTM`, whose old measure
   (`sizeFlatTM`, a flat `5` per transition entry) made the witness's
   `encodeIn_size` obligation *unsatisfiable* (`probes/S1SizeGapProbe.lean`).

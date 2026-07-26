@@ -75,7 +75,7 @@ def wideM : FlatTM :=
 /-! ## §3 — the emitter target
 
 What the S1 program must actually produce on registers 1–5 for a tiny instance:
-`S1Witness.s1Key (S1Map.s1Map x)`. Printed as register lengths — the card
+`S1Program.s1Key (S1Map.s1Map x)`. Printed as register lengths — the card
 register is the `Θ(|trans|·|Σ|⁴)` stream the bottom-up card-emitter owns. -/
 
 def tinyM : FlatTM :=
@@ -88,7 +88,7 @@ def tinyM : FlatTM :=
 #eval S1Map.s1GuardB tinyM [0]
 
 -- output register lengths: [Sigma, init, cards, final, steps]
-#eval (S1Witness.s1Key (S1Map.s1Map (tinyM, [0], 1, 1))).map List.length
+#eval (S1Program.s1Key (S1Map.s1Map (tinyM, [0], 1, 1))).map List.length
 
 -- input register lengths of the frozen head layout, same instance
 #eval (headEncodeIn (tinyM, [0], 1, 1)).map List.length
