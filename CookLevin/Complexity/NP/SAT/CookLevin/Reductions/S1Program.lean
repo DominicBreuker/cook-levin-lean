@@ -184,6 +184,53 @@ contract below is what the assembly consumes and must not change.
 The validity hypotheses are free: stage C sits under `Cmd.ifBit S1Parse.FLG`,
 so the guard has already established them. -/
 
+/-! ### Risk check: the five built families fit inside `CDirty`
+
+`Reductions/S1CardEmit.lean` builds the first five of `cardBlocks`' seven
+summands (`S1CardEmit.cFive`) with its own dirty list `AD`. `stageC` will be
+`cFive ;; <the two remaining families>`, so `stageC_run`'s frame clause is only
+meetable if `AD ∪ {EOUT_C} ⊆ CDirty` — a fact that is cheap to prove now and
+expensive to discover after the last two families are written. -/
+
+/-- Every register `S1CardEmit.cFive` may dirty is in the P/G scratch block or
+the shared emitter scratch. -/
+theorem mem_AD_cases {r : Var} (h : r ∈ S1CardEmit.AD) :
+    (14 ≤ r ∧ r < 32) ∨ (37 ≤ r ∧ r < 48) := by
+  simp only [S1CardEmit.AD] at h
+  fin_cases h <;> decide
+
+/-- **The five built card families stay inside stage C's stated licence.** -/
+theorem cFive_frame (M : flatTM) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
+    (r : Var) (hd : ¬ CDirty r) :
+    State.get (S1CardEmit.cFive.eval s) r = State.get s r :=
+  (S1CardEmit.cFive_run M s hsig hst hph).2 r
+    (fun he => hd (by rw [he]; exact Or.inr (Or.inl rfl)))
+    (fun hm => hd (by
+      rcases mem_AD_cases hm with h | h
+      · exact Or.inr (Or.inr h)
+      · exact Or.inl (Or.inl h)))
+
+/-- The five families' registers are disjoint from everything the assembly
+still needs after stage C: the input layout `1`–`5`, the parse outputs it
+re-reads (`PSIG`, `PSTATES`, `PHALT`, `PNTRANS`, `PTRANS`) and the two earlier
+emitter outputs (`EOUT_S`, `EOUT_I`). -/
+theorem cFive_preserves (M : flatTM) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
+    (r : Var)
+    (hr : r = SIGMA ∨ r = INIT ∨ r = CARDS ∨ r = FINAL ∨ r = STEPS
+      ∨ r = S1Parse.PSIG ∨ r = S1Parse.PSTATES ∨ r = S1Parse.PHALT
+      ∨ r = S1Parse.PNTRANS ∨ r = S1Parse.PTRANS
+      ∨ r = S1Emit.EOUT_S ∨ r = S1Emit.EOUT_I) :
+    State.get (S1CardEmit.cFive.eval s) r = State.get s r := by
+  refine cFive_frame M s hsig hst hph r ?_
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    exact by decide
+
 /-- **OPEN (the S1 critical path).** The card emitter. -/
 def stageC : Cmd := sorry
 
