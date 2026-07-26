@@ -42,13 +42,14 @@ def bigW (k : Nat) : FlatTM :=
 
 /-! ## §2 — the constants asserted in `S1Witness.lean`
 
-`flattenTM_size_le : encodable.size (flattenTM M) ≤ 3 * encodable.size M`
-(the open bottom-up bite) and, downstream of it,
+`flattenTM_size_le : encodable.size (flattenTM M) ≤ 3 * encodable.size M + 3`
+(PROVEN 2026-07-26 — see §3 for why the additive term is forced) and,
+downstream of it,
 `headEncodeIn_size_le : State.size (headEncodeIn x) ≤ 8 * encodable.size x + 4`.
 Both must print `true` on every row. -/
 
 def checkFlatten (M : FlatTM) : Bool :=
-  encodable.size (flattenTM M) ≤ 3 * encodable.size M
+  decide (encodable.size (flattenTM M) ≤ 3 * encodable.size M + 3)
 
 def checkHead (M : FlatTM) (s : List Nat) (mx st : Nat) : Bool :=
   Complexity.Lang.State.size (headEncodeIn (M, s, mx, st))
@@ -91,3 +92,36 @@ def tinyM : FlatTM :=
 
 -- input register lengths of the frozen head layout, same instance
 #eval (headEncodeIn (tinyM, [0], 1, 1)).map List.length
+
+/-! ## §3 — why `flattenTM_size_le` needs an ADDITIVE term (2026-07-26)
+
+The statement carried here until 2026-07-26 was
+`encodable.size (flattenTM M) ≤ 3 * encodable.size M`, with the comment "the
+constant `3` has slack". It is **FALSE**. `flattenTM` always writes six header
+cells (`sig`, `tapes`, `states`, `start`, `|halt|`, `|trans|`), and a machine
+whose `encodable.size` is `1` cannot pay for six cells multiplicatively.
+
+The three witnesses below print `(size M, size (flattenTM M), old claim,
+new claim)`. The old claim is `false` on all three; the new bound
+`3·size M + 3` is TIGHT on the first and the third.
+
+The lesson for future size lemmas: a bound on an encoding with a **fixed-size
+header** always needs an additive term, and a probe that only samples
+non-degenerate instances will not see it. Probe the empty/zero machine. -/
+
+def degenM : List FlatTM :=
+  [-- the trivial machine: size 1, stream [0,0,0,0,0,0] of size 6
+   { sig := 0, tapes := 0, states := 0, start := 0, halt := [], trans := [] },
+   -- one alphabet symbol: size 2, stream size 7
+   { sig := 1, tapes := 0, states := 0, start := 0, halt := [], trans := [] },
+   -- one empty transition entry: size 3, stream size 12 (tight at 3·3+3)
+   { sig := 0, tapes := 0, states := 0, start := 0, halt := [],
+     trans := [{ src_state := 0, src_tape_vals := [], dst_state := 0,
+                 dst_write_vals := [], move_dirs := [] }] }]
+
+#eval degenM.map (fun M => (encodable.size M, encodable.size (flattenTM M),
+  decide (encodable.size (flattenTM M) ≤ 3 * encodable.size M),
+  decide (encodable.size (flattenTM M) ≤ 3 * encodable.size M + 3)))
+-- expect [(1, 6, false, true), (2, 7, false, true), (3, 12, false, true)]
+
+#eval degenM.all checkFlatten     -- expect true
