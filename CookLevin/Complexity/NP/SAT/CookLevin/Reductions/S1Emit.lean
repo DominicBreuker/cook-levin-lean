@@ -3,6 +3,7 @@ import Complexity.NP.SAT.CookLevin.Reductions.FrontPieces
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
+set_option maxHeartbeats 1000000
 
 /-! # S1, part 5 — the emitter atom and the program stages **Σ**, **F**, **I**
 
@@ -49,12 +50,15 @@ to compute the model.** `initBlocks`/`finBlocks` below are those models.
    lengths (`SREG`, `3 = 1^maxSize`, `4 = 1^steps`) — no on-machine comparison of
    `p` against anything. The only genuinely positional datum is "is this the
    row's first cell", which is one flag register cleared by the first cell
-   emitted (`EFST`).
+   emitted (`EE`). Machine-checked: `probes/S1EmitProbe.lean` §3 covers the
+   empty string, `maxSize = 0` and `steps = 0` corners, where the row's first
+   cell falls in the second or third segment.
 4. **Stage I may assume the guard for `s[p] < sig`, and must.** `pKindAt`'s
    out-of-alphabet fallback (`s.getD p 0 ≥ M.sig` ⇒ blank) is unreachable under
    `list_ofFlatType M.sig s`, which the `Cmd.ifBit S1Parse.FLG` multiplex
    guarantees. Testing it on-machine would cost a `ltBit` per cell for a branch
-   that never fires.
+   that never fires. The guard is genuinely load-bearing here — the probe
+   exhibits an off-guard instance where emitter and definition disagree.
 
 ## The register frame (inside `S1Parse`'s pinned frame)
 
@@ -742,5 +746,804 @@ theorem stageFin_usesBelow : Cmd.UsesBelow stageFin 48 := by
   simp [stageFin, finPre, finBody, finInner, enop, FrontPieces.tallyReg,
     Cmd.UsesBelow, Op.UsesBelow, EOUT_F, EA, EB, EC, ED, EE, EJ1, EJ2, EJ3, EK1,
     S1Parse.PSIG, S1Parse.PSTATES, S1Parse.PHALT]
+
+/-! ## Stage I — the prelude row
+
+`preludeRow M s maxSize steps` is `pDelim`, then `guessWidth = |s| + maxSize +
+steps + 3` cells, then `pDelim`. The positional case split of `pKindAt` is a
+partition of the row into **three consecutive segments** — the input string, the
+cert wildcards, the definitely-blank tail — so the emitter is three sequential
+loops bounded by the three registers that already hold those lengths. The only
+positional datum left is "is this the row's first cell", one flag register
+(`EE`) cleared by the first cell emitted. -/
+
+/-- The input-string segment: cell `p < |str|` carries `Sg + 5 + str[p]`,
+promoted to its `Init` variant (`+ sig`) at `p = 0`. -/
+def cellsA (sg sig : Nat) (str : List Nat) : List Nat :=
+  (List.range str.length).map
+    (fun p => sg + 5 + (if p = 0 then sig else 0) + str.getD p 0)
+
+/-- The cert-wildcard segment: `pStar`, or `pInitStar` at the row's first
+cell. -/
+def cellsB (sg : Nat) (fst : Bool) (n : Nat) : List Nat :=
+  (List.range n).map (fun j => if fst && decide (j = 0) then sg + 3 else sg + 2)
+
+/-- The definitely-blank tail: `pBlank`, or `pInitBlank` at the row's first
+cell. -/
+def cellsC (sg : Nat) (fst : Bool) (n : Nat) : List Nat :=
+  (List.range n).map (fun j => if fst && decide (j = 0) then sg + 4 else sg + 1)
+
+/-- **Stage I's pure model**: the prelude row's cell codes, in row order. -/
+def initBlocks (sg sig : Nat) (str : List Nat) (maxSize steps : Nat) : List Nat :=
+  sg :: (cellsA sg sig str ++ cellsB sg str.isEmpty maxSize
+      ++ cellsC sg (str.isEmpty && decide (maxSize = 0)) (steps + 3)) ++ [sg]
+
+private theorem kindA (M : flatTM) (str : List Nat) (maxSize p : Nat)
+    (hb : list_ofFlatType M.sig str) (hp : p < str.length) :
+    Sg M + S1Cards.kindIdx M (pKindAt M str maxSize p)
+      = Sg M + 5 + (if p = 0 then M.sig else 0) + str.getD p 0 := by
+  have hv : str.getD p 0 < M.sig := by
+    rw [List.getD_eq_getElem _ _ hp]
+    exact hb _ (List.getElem_mem hp)
+  unfold pKindAt
+  rw [if_pos hp, dif_pos hv]
+  by_cases h0 : p = 0
+  · rw [if_pos h0, if_pos h0]; show Sg M + (5 + M.sig + str.getD p 0) = _; omega
+  · rw [if_neg h0, if_neg h0]; show Sg M + (5 + str.getD p 0) = _; omega
+
+private theorem kindB (M : flatTM) (str : List Nat) (maxSize p : Nat)
+    (h1 : str.length ≤ p) (h2 : p < str.length + maxSize) :
+    Sg M + S1Cards.kindIdx M (pKindAt M str maxSize p)
+      = if p = 0 then Sg M + 3 else Sg M + 2 := by
+  unfold pKindAt
+  rw [if_neg (Nat.not_lt.mpr h1), if_pos h2]
+  by_cases h0 : p = 0
+  · rw [if_pos h0, if_pos h0]; rfl
+  · rw [if_neg h0, if_neg h0]; rfl
+
+private theorem kindC (M : flatTM) (str : List Nat) (maxSize p : Nat)
+    (h : str.length + maxSize ≤ p) :
+    Sg M + S1Cards.kindIdx M (pKindAt M str maxSize p)
+      = if p = 0 then Sg M + 4 else Sg M + 1 := by
+  have h1 : ¬ p < str.length := by omega
+  unfold pKindAt
+  rw [if_neg h1, if_neg (Nat.not_lt.mpr h)]
+  by_cases h0 : p = 0
+  · rw [if_pos h0, if_pos h0]; rfl
+  · rw [if_neg h0, if_neg h0]; rfl
+
+/-- **The model is the definition** (on guarded instances — `pKindAt`'s
+out-of-alphabet fallback is unreachable under `list_ofFlatType`). -/
+theorem initBlocks_eq (M : flatTM) (str : List Nat) (maxSize steps : Nat)
+    (hb : list_ofFlatType M.sig str) :
+    flattenString (preludeRow M str maxSize steps)
+      = initBlocks (Sg M) M.sig str maxSize steps := by
+  have hrow : flattenString (preludeRow M str maxSize steps)
+      = Sg M :: ((List.range (guessWidth str maxSize steps)).map
+          (fun p => Sg M + S1Cards.kindIdx M (pKindAt M str maxSize p))) ++ [Sg M] := by
+    unfold flattenString preludeRow
+    simp only [List.map_append, List.map_cons, List.map_nil, List.map_map]
+    refine congrArg (fun l => (pDelim M).1 :: l ++ [(pDelim M).1]) ?_
+    refine List.map_congr_left (fun p _ => ?_)
+    show (pCell M (pKindAt M str maxSize p)).1 = _
+    rw [S1Cards.pcellv, ← S1Cards.sgv_eq]
+  rw [hrow]
+  unfold initBlocks cellsA cellsB cellsC
+  refine congrArg (fun l => Sg M :: l ++ [Sg M]) ?_
+  have hw : guessWidth str maxSize steps = str.length + (maxSize + (steps + 3)) := by
+    unfold guessWidth; omega
+  rw [hw, List.range_add, List.range_add]
+  simp only [List.map_append, List.map_map, Function.comp_def, List.append_assoc]
+  refine congrArg₂ (· ++ ·) ?_ (congrArg₂ (· ++ ·) ?_ ?_)
+  · refine List.map_congr_left (fun p hp => ?_)
+    exact kindA M str maxSize p hb (List.mem_range.mp hp)
+  · refine List.map_congr_left (fun j hj => ?_)
+    have hj' : j < maxSize := List.mem_range.mp hj
+    show Sg M + S1Cards.kindIdx M (pKindAt M str maxSize (str.length + j)) = _
+    rw [kindB M str maxSize _ (Nat.le_add_right _ _) (by omega)]
+    by_cases h0 : str.length + j = 0
+    · have hs : str.length = 0 := by omega
+      have hjz : j = 0 := by omega
+      have hsn : str = [] := List.eq_nil_of_length_eq_zero hs
+      rw [if_pos h0, if_pos (by simp [hsn, hjz])]
+    · rw [if_neg h0, if_neg ?_]
+      simp only [Bool.and_eq_true, decide_eq_true_eq, List.isEmpty_iff_length_eq_zero]
+      rintro ⟨hs, hjz⟩
+      omega
+  · refine List.map_congr_left (fun j hj => ?_)
+    have hj' : j < steps + 3 := List.mem_range.mp hj
+    show Sg M + S1Cards.kindIdx M (pKindAt M str maxSize (str.length + (maxSize + j))) = _
+    rw [kindC M str maxSize _ (by omega)]
+    by_cases h0 : str.length + (maxSize + j) = 0
+    · have hs : str.length = 0 := by omega
+      have hm : maxSize = 0 := by omega
+      have hjz : j = 0 := by omega
+      have hsn : str = [] := List.eq_nil_of_length_eq_zero hs
+      rw [if_pos h0, if_pos (by simp [hsn, hm, hjz])]
+    · rw [if_neg h0, if_neg ?_]
+      simp only [Bool.and_eq_true, decide_eq_true_eq, List.isEmpty_iff_length_eq_zero]
+      rintro ⟨⟨hs, hm⟩, hjz⟩
+      omega
+
+/-! ### The machine
+
+Three sequential loops. Loop A is **idle-tolerant** (`S1Parse.sLoop`'s pattern):
+it is bounded by the item stream `encSyms str`, whose length exceeds `|str|`, and
+a `nonEmpty` test turns the surplus iterations into no-ops — the layer has no
+"length of a sentinel stream" register to loop on. Loops B and C are bounded by
+`1^maxSize` and `1^(steps+3)` exactly. -/
+
+/-- The head layout's `1^maxSize` register. -/
+def HMAX : Var := 3
+/-- The head layout's `1^steps` register. -/
+def HSTP : Var := 4
+
+/-- The registers stage I's loops may write (`CliqueRelTM.readNum`'s three
+reserved scratch registers included). `ESG`, `EA`, `EB` and stage P's outputs
+are deliberately outside it. -/
+abbrev IClean (r : Var) : Prop :=
+  r ≠ EOUT_I ∧ r ≠ EC ∧ r ≠ ED ∧ r ≠ EE ∧ r ≠ EJ1 ∧ r ≠ EJ2 ∧ r ≠ EJ3 ∧ r ≠ EK1 ∧
+    r ≠ CliqueRelTM.HEAD ∧ r ≠ CliqueRelTM.INBLK ∧ r ≠ CliqueRelTM.SKIPR
+
+/-- `k` unit appends onto the init register. -/
+private def repOne : Nat → Cmd
+  | 0 => enop
+  | (k + 1) => Cmd.op (.appendOne EOUT_I) ;; repOne k
+
+/-- One input-string cell: `Sg + 5 + (first? sig : 0) + s[p]`. -/
+private def iniCellA : Cmd :=
+  FrontPieces.tallyReg EJ2 ESG EOUT_I ;;
+  repOne 5 ;;
+  Cmd.ifBit EE (FrontPieces.tallyReg EJ2 S1Parse.PSIG EOUT_I) enop ;;
+  FrontPieces.tallyReg EJ2 ED EOUT_I ;;
+  Cmd.op (.appendZero EOUT_I) ;;
+  Cmd.op (.clear EE)
+
+private def iniBodyA : Cmd :=
+  Cmd.op (.nonEmpty EK1 EC) ;;
+  Cmd.ifBit EK1 (S1Parse.readItem ED EC EJ3 ;; iniCellA) enop
+
+private def iniMid : Cmd :=
+  Cmd.op (.clear EOUT_I) ;;
+  Cmd.op (.copy EC S1Parse.SREG) ;;
+  Cmd.op (.clear EE) ;; Cmd.op (.appendOne EE) ;;
+  Cmd.op (.copy EB HSTP) ;; Cmd.op (.appendOne EB) ;; Cmd.op (.appendOne EB) ;;
+    Cmd.op (.appendOne EB)
+
+private def iniPre : Cmd := loadSg ;; iniMid ;; emitBlk EJ2 ESG EOUT_I
+
+/-! ### Model algebra: the three segments grow by one cell -/
+
+theorem encNats_singleton (v : Nat) :
+    FlatTCCFree.encNats [v] = FlatTCCFree.encNat v := by
+  simp [FlatTCCFree.encNats]
+
+private theorem cellsA_snoc (sg sig : Nat) (l : List Nat) (v : Nat) :
+    cellsA sg sig (l ++ [v])
+      = cellsA sg sig l ++ [sg + 5 + (if l.length = 0 then sig else 0) + v] := by
+  unfold cellsA
+  have hlen : (l ++ [v]).length = l.length + 1 := by simp
+  rw [hlen, List.range_succ, List.map_append, List.map_cons, List.map_nil]
+  refine congrArg₂ (· ++ ·) (List.map_congr_left (fun p hp => ?_)) ?_
+  · have hp' : p < l.length := List.mem_range.mp hp
+    have : (l ++ [v]).getD p 0 = l.getD p 0 := by
+      rw [List.getD_eq_getElem _ _ (by simp; omega), List.getD_eq_getElem _ _ hp',
+        List.getElem_append_left hp']
+    rw [this]
+  · have : (l ++ [v]).getD l.length 0 = v := by
+      rw [List.getD_eq_getElem _ _ (by simp)]
+      rw [List.getElem_append_right (Nat.le_refl _)]
+      simp
+    simp only [this]
+
+private theorem cellsB_snoc (sg : Nat) (fst : Bool) (n : Nat) :
+    cellsB sg fst (n + 1)
+      = cellsB sg fst n ++ [if fst && decide (n = 0) then sg + 3 else sg + 2] := by
+  unfold cellsB; rw [List.range_succ, List.map_append]; rfl
+
+private theorem cellsC_snoc (sg : Nat) (fst : Bool) (n : Nat) :
+    cellsC sg fst (n + 1)
+      = cellsC sg fst n ++ [if fst && decide (n = 0) then sg + 4 else sg + 1] := by
+  unfold cellsC; rw [List.range_succ, List.map_append]; rfl
+
+/-! ### The two constant segments (loops B and C)
+
+Both bodies have the same shape — append `1^(Sg + k)`, plus `1^m` more when this
+is the row's first cell — so one gadget and one loop lemma serve both:
+`k = 2, m = 1` is `pStar`/`pInitStar`, `k = 1, m = 3` is `pBlank`/`pInitBlank`. -/
+
+/-- One constant cell: `Sg + k`, or `Sg + k + m` at the row's first cell. -/
+private def iniCellK (k m : Nat) : Cmd :=
+  FrontPieces.tallyReg EJ2 ESG EOUT_I ;;
+  repOne k ;;
+  Cmd.ifBit EE (repOne m) enop ;;
+  Cmd.op (.appendZero EOUT_I) ;;
+  Cmd.op (.clear EE)
+
+/-- The constant segments' shared model. -/
+private def cellsK (sg : Nat) (fst : Bool) (k m n : Nat) : List Nat :=
+  (List.range n).map (fun j => if fst && decide (j = 0) then sg + k + m else sg + k)
+
+private theorem cellsK_snoc (sg : Nat) (fst : Bool) (k m n : Nat) :
+    cellsK sg fst k m (n + 1)
+      = cellsK sg fst k m n
+        ++ [if fst && decide (n = 0) then sg + k + m else sg + k] := by
+  unfold cellsK; rw [List.range_succ, List.map_append]; rfl
+
+private theorem cellsB_eq_K (sg : Nat) (fst : Bool) (n : Nat) :
+    cellsB sg fst n = cellsK sg fst 2 1 n := by
+  unfold cellsB cellsK
+  refine List.map_congr_left (fun j _ => ?_)
+  by_cases h : fst && decide (j = 0) <;> simp [h] <;> omega
+
+private theorem cellsC_eq_K (sg : Nat) (fst : Bool) (n : Nat) :
+    cellsC sg fst n = cellsK sg fst 1 3 n := by
+  unfold cellsC cellsK
+  refine List.map_congr_left (fun j _ => ?_)
+  by_cases h : fst && decide (j = 0) <;> simp [h] <;> omega
+
+/-- **Stage I.** `EOUT_I := encNats (flattenString (preludeRow M s maxSize steps))`. -/
+def stageInit : Cmd :=
+  iniPre ;;
+  Cmd.forBnd EJ1 S1Parse.SREG iniBodyA ;;
+  Cmd.forBnd EJ1 HMAX (iniCellK 2 1) ;;
+  Cmd.forBnd EJ1 EB (iniCellK 1 3) ;;
+  emitBlk EJ2 ESG EOUT_I
+
+private theorem repOne_run : ∀ (k : Nat) (s : State),
+    State.get ((repOne k).eval s) EOUT_I = State.get s EOUT_I ++ List.replicate k 1
+    ∧ (∀ r : Var, r ≠ EOUT_I → r ≠ EK1 → State.get ((repOne k).eval s) r = State.get s r)
+  | 0, s => by
+      refine ⟨?_, ?_⟩
+      · show State.get ((Cmd.op (.clear EK1)).eval s) EOUT_I = _
+        rw [Cmd.eval_op]
+        simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EK1)]
+        simp
+      · intro r _ h2
+        show State.get ((Cmd.op (.clear EK1)).eval s) r = _
+        rw [Cmd.eval_op]; exact State.get_set_ne _ _ _ _ h2
+  | (k + 1), s => by
+      have hev : (repOne (k + 1)).eval s
+          = (repOne k).eval ((Cmd.op (.appendOne EOUT_I)).eval s) := by
+        show (Cmd.op (.appendOne EOUT_I) ;; repOne k).eval s = _
+        rw [Cmd.eval_seq]
+      obtain ⟨h1, h2⟩ := repOne_run k ((Cmd.op (.appendOne EOUT_I)).eval s)
+      refine ⟨?_, ?_⟩
+      · rw [hev, h1, Cmd.eval_op]
+        simp only [Op.eval, State.get_set_eq, List.append_assoc]
+        simp [List.replicate_succ]
+      · intro r a1 a2
+        rw [hev, h2 r a1 a2, Cmd.eval_op]
+        exact State.get_set_ne _ _ _ _ a1
+
+/-- The constant-segment loop. -/
+private theorem iniLoopK_run (sg : Nat) (fst : Bool) (k m : Nat) (bnd : Var) (n : Nat)
+    (w : State) (pre : List Nat)
+    (hn : (State.get w bnd).length = n)
+    (hSG : State.get w ESG = List.replicate sg 1)
+    (hO : State.get w EOUT_I = pre)
+    (hE : State.get w EE = (if fst then [1] else [])) :
+    State.get ((Cmd.forBnd EJ1 bnd (iniCellK k m)).eval w) EOUT_I
+        = pre ++ FlatTCCFree.encNats (cellsK sg fst k m n)
+    ∧ State.get ((Cmd.forBnd EJ1 bnd (iniCellK k m)).eval w) EE
+        = (if fst && decide (n = 0) then [1] else [])
+    ∧ (∀ r : Var, IClean r →
+        State.get ((Cmd.forBnd EJ1 bnd (iniCellK k m)).eval w) r = State.get w r) := by
+  set MK : Nat → State → Prop := fun j t =>
+    State.get t EOUT_I = pre ++ FlatTCCFree.encNats (cellsK sg fst k m j)
+    ∧ State.get t EE = (if fst && decide (j = 0) then [1] else [])
+    ∧ (∀ r : Var, IClean r → State.get t r = State.get w r) with hMK
+  have h0 : MK 0 w := by
+    refine ⟨by rw [hO]; simp [cellsK, FlatTCCFree.encNats], ?_, fun _ _ => rfl⟩
+    rw [hE]; simp
+  have hstep : ∀ j t, j < (State.get w bnd).length → MK j t →
+      MK (j + 1) ((iniCellK k m).eval (t.set EJ1 (List.replicate j 1))) := by
+    intro j t _ hM
+    obtain ⟨gO, gE, gFr⟩ := hM
+    set t0 := t.set EJ1 (List.replicate j 1) with ht0
+    have b0O : State.get t0 EOUT_I = pre ++ FlatTCCFree.encNats (cellsK sg fst k m j) := by
+      rw [ht0, State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EJ1)]; exact gO
+    have b0E : State.get t0 EE = (if fst && decide (j = 0) then [1] else []) := by
+      rw [ht0, State.get_set_ne _ _ _ _ (by decide : (EE : Var) ≠ EJ1)]; exact gE
+    have b0S : State.get t0 ESG = List.replicate sg 1 := by
+      rw [ht0, State.get_set_ne _ _ _ _ (by decide : (ESG : Var) ≠ EJ1),
+        gFr ESG (by decide)]
+      exact hSG
+    have b0Fr : ∀ r : Var, IClean r → State.get t0 r = State.get w r := by
+      intro r hr
+      rw [ht0, State.get_set_ne _ _ _ _ hr.2.2.2.2.1]; exact gFr r hr
+    clear_value t0
+    obtain ⟨c1O, c1Fr, -⟩ := FrontPieces.tallyReg_run EJ2 ESG EOUT_I t0 (by decide)
+    set c1 := (FrontPieces.tallyReg EJ2 ESG EOUT_I).eval t0 with hc1
+    clear_value c1
+    obtain ⟨c2O, c2Fr⟩ := repOne_run k c1
+    set c2 := (repOne k).eval c1 with hc2
+    clear_value c2
+    have c2E : State.get c2 EE = (if fst && decide (j = 0) then [1] else []) := by
+      rw [c2Fr EE (by decide) (by decide), c1Fr EE (by decide) (by decide)]; exact b0E
+    set c3 := (Cmd.ifBit EE (repOne m) enop).eval c2 with hc3
+    have c3O : State.get c3 EOUT_I
+        = State.get c2 EOUT_I ++ List.replicate (if fst && decide (j = 0) then m else 0) 1
+        ∧ (∀ r : Var, r ≠ EOUT_I → r ≠ EK1 → State.get c3 r = State.get c2 r) := by
+      cases hfb : (fst && decide (j = 0)) with
+      | true =>
+        have ht : State.get c2 EE = [1] := by rw [c2E]; simp [hfb]
+        obtain ⟨d1, d2⟩ := repOne_run m c2
+        rw [hc3, Cmd.eval_ifBit_true _ _ _ _ ht]
+        exact ⟨by rw [d1]; simp [hfb], d2⟩
+      | false =>
+        have ht : State.get c2 EE ≠ [1] := by
+          rw [c2E]; simp [hfb]
+        rw [hc3, Cmd.eval_ifBit_false _ _ _ _ ht]
+        refine ⟨?_, ?_⟩
+        · show State.get ((Cmd.op (.clear EK1)).eval c2) EOUT_I = _
+          rw [Cmd.eval_op]
+          simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EK1)]
+          simp [hfb]
+        · intro r _ a2
+          show State.get ((Cmd.op (.clear EK1)).eval c2) r = _
+          rw [Cmd.eval_op]; exact State.get_set_ne _ _ _ _ a2
+    obtain ⟨c3O, c3Fr⟩ := c3O
+    clear_value c3
+    set c4 := (Cmd.op (.appendZero EOUT_I)).eval c3 with hc4
+    have c4O : State.get c4 EOUT_I = State.get c3 EOUT_I ++ [0] := by
+      rw [hc4, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
+    have c4Fr : ∀ r : Var, r ≠ EOUT_I → State.get c4 r = State.get c3 r := by
+      intro r hr; rw [hc4, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+    clear_value c4
+    set c5 := (Cmd.op (.clear EE)).eval c4 with hc5
+    have c5E : State.get c5 EE = [] := by
+      rw [hc5, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
+    have c5O : State.get c5 EOUT_I = State.get c4 EOUT_I := by
+      rw [hc5, Cmd.eval_op]
+      exact State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EE)
+    have c5Fr : ∀ r : Var, r ≠ EE → State.get c5 r = State.get c4 r := by
+      intro r hr; rw [hc5, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+    clear_value c5
+    have hev : (iniCellK k m).eval t0 = c5 := by
+      rw [hc5, hc4, hc3, hc2, hc1]
+      unfold iniCellK
+      rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+    refine ⟨?_, ?_, ?_⟩
+    · rw [hev, c5O, c4O, c3O, c2O, c1O, b0S, b0O, List.length_replicate,
+        cellsK_snoc, S1Cards.encNats_append, encNats_singleton]
+      cases hfb : (fst && decide (j = 0)) with
+      | true =>
+        simp only [hfb, if_true, FlatTCCFree.encNat, List.append_assoc,
+          ← List.replicate_add]
+      | false =>
+        simp only [hfb, FlatTCCFree.encNat, List.append_assoc, ← List.replicate_add]
+        simp
+    · rw [hev, c5E]; simp
+    · intro r hr
+      rw [hev, c5Fr r hr.2.2.2.1, c4Fr r hr.1, c3Fr r hr.1 hr.2.2.2.2.2.2.2.1,
+        c2Fr r hr.1 hr.2.2.2.2.2.2.2.1,
+        c1Fr r hr.1 hr.2.2.2.2.2.1]
+      exact b0Fr r hr
+  have key := Cmd.foldlState_range_induct (iniCellK k m) EJ1 (State.get w bnd).length w
+    MK h0 hstep
+  rw [Cmd.eval_forBnd, hn]
+  rw [hn] at key
+  exact key
+
+/-! ### The input-string segment (loop A) -/
+
+private theorem encSyms_len_ge : ∀ l : List Nat, l.length ≤ (encSyms l).length
+  | [] => Nat.le_refl 0
+  | v :: l => by
+      rw [S1Parse.encSyms_cons']
+      have := encSyms_len_ge l
+      simp only [List.length_cons, List.length_append, List.length_replicate]
+      omega
+
+/-- `readItem`'s frame at a concrete register. -/
+private theorem readItem_frame' (s : State) (r : Var)
+    (hr : r ∉ (S1Parse.readItem ED EC EJ3).writes) :
+    State.get ((S1Parse.readItem ED EC EJ3).eval s) r = State.get s r :=
+  Cmd.eval_get_of_not_writes _ _ _ hr
+
+/-- `readItem` touches nothing outside stage I's dirty set. -/
+private theorem readItem_frame (s : State) (r : Var) (hr : IClean r) :
+    State.get ((S1Parse.readItem ED EC EJ3).eval s) r = State.get s r := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11⟩ := hr
+  refine Cmd.eval_get_of_not_writes _ _ _ ?_
+  simp [S1Parse.readItem, CliqueRelTM.readNum, CliqueRelTM.cSkip, Cmd.writes,
+    Op.writesTo, h2, h3, h7, h9, h10, h11]
+
+/-- One input-string cell. -/
+private theorem iniCellA_run (sg sig v : Nat) (u : State) (pre : List Nat) (fst : Bool)
+    (hSG : State.get u ESG = List.replicate sg 1)
+    (hPS : State.get u S1Parse.PSIG = List.replicate sig 1)
+    (hD : State.get u ED = List.replicate v 1)
+    (hO : State.get u EOUT_I = pre)
+    (hE : State.get u EE = (if fst then [1] else [])) :
+    State.get (iniCellA.eval u) EOUT_I
+        = pre ++ FlatTCCFree.encNat (sg + 5 + (if fst then sig else 0) + v)
+    ∧ State.get (iniCellA.eval u) EE = []
+    ∧ (∀ r : Var, r ≠ EOUT_I → r ≠ EE → r ≠ EJ2 → r ≠ EK1 →
+        State.get (iniCellA.eval u) r = State.get u r) := by
+  obtain ⟨e1O, e1Fr, -⟩ := FrontPieces.tallyReg_run EJ2 ESG EOUT_I u (by decide)
+  set e1 := (FrontPieces.tallyReg EJ2 ESG EOUT_I).eval u with he1
+  clear_value e1
+  obtain ⟨e2O, e2Fr⟩ := repOne_run 5 e1
+  set e2 := (repOne 5).eval e1 with he2
+  clear_value e2
+  have e2E : State.get e2 EE = (if fst then [1] else []) := by
+    rw [e2Fr EE (by decide) (by decide), e1Fr EE (by decide) (by decide)]; exact hE
+  have e2P : State.get e2 S1Parse.PSIG = List.replicate sig 1 := by
+    rw [e2Fr S1Parse.PSIG (by decide) (by decide),
+      e1Fr S1Parse.PSIG (by decide) (by decide)]
+    exact hPS
+  set e3 := (Cmd.ifBit EE (FrontPieces.tallyReg EJ2 S1Parse.PSIG EOUT_I) enop).eval e2
+    with he3
+  have e3fact : State.get e3 EOUT_I
+        = State.get e2 EOUT_I ++ List.replicate (if fst then sig else 0) 1
+      ∧ (∀ r : Var, r ≠ EOUT_I → r ≠ EJ2 → r ≠ EK1 →
+          State.get e3 r = State.get e2 r) := by
+    cases fst with
+    | true =>
+      have ht : State.get e2 EE = [1] := by rw [e2E]; rfl
+      obtain ⟨d1, d2, -⟩ := FrontPieces.tallyReg_run EJ2 S1Parse.PSIG EOUT_I e2 (by decide)
+      rw [he3, Cmd.eval_ifBit_true _ _ _ _ ht]
+      exact ⟨by rw [d1, e2P, List.length_replicate]; rfl, fun r a1 a2 _ => d2 r a1 a2⟩
+    | false =>
+      have ht : State.get e2 EE ≠ [1] := by rw [e2E]; decide
+      rw [he3, Cmd.eval_ifBit_false _ _ _ _ ht]
+      refine ⟨?_, ?_⟩
+      · show State.get ((Cmd.op (.clear EK1)).eval e2) EOUT_I = _
+        rw [Cmd.eval_op]
+        simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EK1)]
+        simp
+      · intro r _ _ a3
+        show State.get ((Cmd.op (.clear EK1)).eval e2) r = _
+        rw [Cmd.eval_op]; exact State.get_set_ne _ _ _ _ a3
+  obtain ⟨e3O, e3Fr⟩ := e3fact
+  clear_value e3
+  have e3D : State.get e3 ED = List.replicate v 1 := by
+    rw [e3Fr ED (by decide) (by decide) (by decide),
+      e2Fr ED (by decide) (by decide), e1Fr ED (by decide) (by decide)]
+    exact hD
+  obtain ⟨e4O, e4Fr, -⟩ := FrontPieces.tallyReg_run EJ2 ED EOUT_I e3 (by decide)
+  set e4 := (FrontPieces.tallyReg EJ2 ED EOUT_I).eval e3 with he4
+  clear_value e4
+  set e5 := (Cmd.op (.appendZero EOUT_I)).eval e4 with he5
+  have e5O : State.get e5 EOUT_I = State.get e4 EOUT_I ++ [0] := by
+    rw [he5, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
+  have e5Fr : ∀ r : Var, r ≠ EOUT_I → State.get e5 r = State.get e4 r := by
+    intro r hr; rw [he5, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value e5
+  set e6 := (Cmd.op (.clear EE)).eval e5 with he6
+  have e6E : State.get e6 EE = [] := by
+    rw [he6, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
+  have e6Fr : ∀ r : Var, r ≠ EE → State.get e6 r = State.get e5 r := by
+    intro r hr; rw [he6, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value e6
+  have hev : iniCellA.eval u = e6 := by
+    rw [he6, he5, he4, he3, he2, he1]
+    unfold iniCellA
+    rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  refine ⟨?_, e6E ▸ (by rw [hev]), ?_⟩
+  · rw [hev, e6Fr EOUT_I (by decide), e5O, e4O, e3D, List.length_replicate, e3O,
+      e2O, e1O, hSG, hO]
+    simp only [List.length_replicate, FlatTCCFree.encNat, List.append_assoc,
+      ← List.replicate_add]
+  · intro r a1 a2 a3 a4
+    rw [hev, e6Fr r a2, e5Fr r a1, e4Fr r a1 a3, e3Fr r a1 a3 a4,
+      e2Fr r a1 a4, e1Fr r a1 a3]
+
+private theorem iniBodyA_step (sg sig : Nat) (str : List Nat) (w : State) (pre : List Nat)
+    (hSG : State.get w ESG = List.replicate sg 1)
+    (hPS : State.get w S1Parse.PSIG = List.replicate sig 1)
+    (i : Nat) (t : State)
+    (hO : State.get t EOUT_I = pre ++ FlatTCCFree.encNats (cellsA sg sig (str.take i)))
+    (hC : State.get t EC = encSyms (str.drop i))
+    (hE : State.get t EE = (if (str.take i).isEmpty then [1] else []))
+    (hFr : ∀ r : Var, IClean r → State.get t r = State.get w r) :
+    State.get (iniBodyA.eval (t.set EJ1 (List.replicate i 1))) EOUT_I
+        = pre ++ FlatTCCFree.encNats (cellsA sg sig (str.take (i + 1)))
+    ∧ State.get (iniBodyA.eval (t.set EJ1 (List.replicate i 1))) EC
+        = encSyms (str.drop (i + 1))
+    ∧ State.get (iniBodyA.eval (t.set EJ1 (List.replicate i 1))) EE
+        = (if (str.take (i + 1)).isEmpty then [1] else [])
+    ∧ (∀ r : Var, IClean r →
+        State.get (iniBodyA.eval (t.set EJ1 (List.replicate i 1))) r = State.get w r) := by
+  set t0 := t.set EJ1 (List.replicate i 1) with ht0
+  have a0O : State.get t0 EOUT_I
+      = pre ++ FlatTCCFree.encNats (cellsA sg sig (str.take i)) := by
+    rw [ht0, State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EJ1)]; exact hO
+  have a0C : State.get t0 EC = encSyms (str.drop i) := by
+    rw [ht0, State.get_set_ne _ _ _ _ (by decide : (EC : Var) ≠ EJ1)]; exact hC
+  have a0E : State.get t0 EE = (if (str.take i).isEmpty then [1] else []) := by
+    rw [ht0, State.get_set_ne _ _ _ _ (by decide : (EE : Var) ≠ EJ1)]; exact hE
+  have a0Fr : ∀ r : Var, IClean r → State.get t0 r = State.get w r := by
+    intro r hr; rw [ht0, State.get_set_ne _ _ _ _ hr.2.2.2.2.1]; exact hFr r hr
+  have a0SG : State.get t0 ESG = List.replicate sg 1 := by
+    rw [a0Fr ESG (by decide)]; exact hSG
+  have a0PS : State.get t0 S1Parse.PSIG = List.replicate sig 1 := by
+    rw [a0Fr S1Parse.PSIG (by decide)]; exact hPS
+  clear_value t0
+  set n1 := (Cmd.op (.nonEmpty EK1 EC)).eval t0 with hn1
+  have n1K : State.get n1 EK1
+      = (if (encSyms (str.drop i)).isEmpty then [0] else [1]) := by
+    rw [hn1, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq, a0C]
+  have n1Fr : ∀ r : Var, r ≠ EK1 → State.get n1 r = State.get t0 r := by
+    intro r hr; rw [hn1, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value n1
+  have hev : iniBodyA.eval t0
+      = (Cmd.ifBit EK1 (S1Parse.readItem ED EC EJ3 ;; iniCellA) enop).eval n1 := by
+    rw [hn1]; unfold iniBodyA; rw [Cmd.eval_seq]
+  by_cases hi : i < str.length
+  · -- a live iteration
+    have hdrop : str.drop i = (str[i]'hi) :: str.drop (i + 1) := drop_getElem_cons str i hi
+    have htake : str.take (i + 1) = str.take i ++ [str[i]'hi] := by
+      rw [List.take_add_one, List.getElem?_eq_getElem hi]; rfl
+    have hlen : (str.take i).length = i := by
+      rw [List.length_take]; omega
+    have htest : State.get n1 EK1 = [1] := by
+      rw [n1K, hdrop, S1Parse.encSyms_cons']; rfl
+    have n1C : State.get n1 EC = encSyms ((str[i]'hi) :: str.drop (i + 1)) := by
+      rw [n1Fr EC (by decide), a0C, hdrop]
+    obtain ⟨rD, rC⟩ := S1Parse.readItem_run n1 (str[i]'hi) (str.drop (i + 1))
+      ED EC EJ3 (by decide) n1C
+    set p1 := (S1Parse.readItem ED EC EJ3).eval n1 with hp1
+    have p1O : State.get p1 EOUT_I
+        = pre ++ FlatTCCFree.encNats (cellsA sg sig (str.take i)) := by
+      rw [hp1, readItem_frame' _ EOUT_I (by decide), n1Fr EOUT_I (by decide)]; exact a0O
+    have p1E : State.get p1 EE = (if (str.take i).isEmpty then [1] else []) := by
+      rw [hp1, readItem_frame' _ EE (by decide), n1Fr EE (by decide)]; exact a0E
+    have p1SG : State.get p1 ESG = List.replicate sg 1 := by
+      rw [hp1, readItem_frame' _ ESG (by decide), n1Fr ESG (by decide)]; exact a0SG
+    have p1PS : State.get p1 S1Parse.PSIG = List.replicate sig 1 := by
+      rw [hp1, readItem_frame' _ S1Parse.PSIG (by decide), n1Fr S1Parse.PSIG (by decide)]
+      exact a0PS
+    have p1Fr : ∀ r : Var, IClean r → State.get p1 r = State.get w r := by
+      intro r hr
+      rw [hp1, readItem_frame _ r hr, n1Fr r hr.2.2.2.2.2.2.2.1]
+      exact a0Fr r hr
+    clear_value p1
+    obtain ⟨cO, cE, cFr⟩ := iniCellA_run sg sig (str[i]'hi) p1 _ (str.take i).isEmpty
+      p1SG p1PS rD p1O p1E
+    have hev2 : iniBodyA.eval t0 = iniCellA.eval p1 := by
+      rw [hev, Cmd.eval_ifBit_true _ _ _ _ htest, Cmd.eval_seq, ← hp1]
+    have hemp : ((str.take i).isEmpty = true) ↔ (i = 0) := by
+      constructor
+      · intro h
+        have h' : str.take i = [] := List.isEmpty_iff.mp h
+        rw [← hlen, h']; rfl
+      · rintro rfl; simp
+    have hif : (if ((str.take i).isEmpty = true) then sig else 0)
+        = (if i = 0 then sig else 0) := by
+      by_cases h0 : i = 0
+      · rw [if_pos h0, if_pos (hemp.mpr h0)]
+      · rw [if_neg h0, if_neg (fun hh => h0 (hemp.mp hh))]
+    have hne : ¬ ((str.take (i + 1)).isEmpty = true) := by
+      rw [htake]; simp
+      exact fun hh => absurd (hh ▸ hi) (by simp)
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [hev2, cO, htake, cellsA_snoc, S1Cards.encNats_append, encNats_singleton,
+        List.append_assoc, hlen, hif]
+    · rw [hev2, cFr EC (by decide) (by decide) (by decide) (by decide)]; exact rC
+    · rw [hev2, cE, if_neg hne]
+    · intro r hr
+      rw [hev2, cFr r hr.1 hr.2.2.2.1 hr.2.2.2.2.2.1 hr.2.2.2.2.2.2.2.1]
+      exact p1Fr r hr
+  · -- an idle iteration
+    have hle : str.length ≤ i := Nat.le_of_not_lt hi
+    have hd : str.drop i = [] := List.drop_eq_nil_of_le hle
+    have hd1 : str.drop (i + 1) = [] := List.drop_eq_nil_of_le (by omega)
+    have ht1 : str.take (i + 1) = str.take i := by
+      rw [List.take_of_length_le hle, List.take_of_length_le (by omega)]
+    have htest : State.get n1 EK1 ≠ [1] := by
+      rw [n1K, hd]; decide
+    have hev2 : iniBodyA.eval t0 = (Cmd.op (.clear EK1)).eval n1 := by
+      rw [hev, Cmd.eval_ifBit_false _ _ _ _ htest]; rfl
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [hev2, Cmd.eval_op]
+      simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (EOUT_I : Var) ≠ EK1)]
+      rw [n1Fr EOUT_I (by decide), a0O, ht1]
+    · rw [hev2, Cmd.eval_op]
+      simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (EC : Var) ≠ EK1)]
+      rw [n1Fr EC (by decide), a0C, hd, hd1]
+    · rw [hev2, Cmd.eval_op]
+      simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (EE : Var) ≠ EK1)]
+      rw [n1Fr EE (by decide), a0E, ht1]
+    · intro r hr
+      rw [hev2, Cmd.eval_op]
+      simp only [Op.eval, State.get_set_ne _ _ _ _ hr.2.2.2.2.2.2.2.1]
+      rw [n1Fr r hr.2.2.2.2.2.2.2.1]
+      exact a0Fr r hr
+
+/-- The input-string loop. -/
+private theorem iniLoopA_run (sg sig : Nat) (str : List Nat) (w : State) (pre : List Nat)
+    (hSG : State.get w ESG = List.replicate sg 1)
+    (hPS : State.get w S1Parse.PSIG = List.replicate sig 1)
+    (hSR : State.get w S1Parse.SREG = encSyms str)
+    (hO : State.get w EOUT_I = pre)
+    (hC : State.get w EC = encSyms str)
+    (hE : State.get w EE = [1]) :
+    State.get ((Cmd.forBnd EJ1 S1Parse.SREG iniBodyA).eval w) EOUT_I
+        = pre ++ FlatTCCFree.encNats (cellsA sg sig str)
+    ∧ State.get ((Cmd.forBnd EJ1 S1Parse.SREG iniBodyA).eval w) EE
+        = (if str.isEmpty then [1] else [])
+    ∧ (∀ r : Var, IClean r →
+        State.get ((Cmd.forBnd EJ1 S1Parse.SREG iniBodyA).eval w) r = State.get w r) := by
+  set N := (encSyms str).length with hN
+  set MA : Nat → State → Prop := fun i t =>
+    State.get t EOUT_I = pre ++ FlatTCCFree.encNats (cellsA sg sig (str.take i))
+    ∧ State.get t EC = encSyms (str.drop i)
+    ∧ State.get t EE = (if (str.take i).isEmpty then [1] else [])
+    ∧ (∀ r : Var, IClean r → State.get t r = State.get w r) with hMA
+  have h0 : MA 0 w := by
+    refine ⟨by rw [hO]; simp [cellsA, FlatTCCFree.encNats], by rw [hC]; simp, ?_,
+      fun _ _ => rfl⟩
+    rw [hE]; simp
+  have hstep : ∀ i t, i < (State.get w S1Parse.SREG).length → MA i t →
+      MA (i + 1) (iniBodyA.eval (t.set EJ1 (List.replicate i 1))) := by
+    intro i t _ hM
+    obtain ⟨a, b, c, d⟩ := hM
+    exact iniBodyA_step sg sig str w pre hSG hPS i t a b c d
+  have key := Cmd.foldlState_range_induct iniBodyA EJ1
+    (State.get w S1Parse.SREG).length w MA h0 hstep
+  rw [hSR] at key
+  obtain ⟨kO, -, kE, kFr⟩ := key
+  have hge : str.length ≤ N := encSyms_len_ge str
+  have htk : str.take N = str := List.take_of_length_le hge
+  rw [Cmd.eval_forBnd, hSR, ← hN]
+  exact ⟨by rw [kO, htk], by rw [kE, htk], kFr⟩
+
+/-! ### The assembly -/
+
+private theorem iniMid_run (str : List Nat) (steps : Nat) (s : State)
+    (hS : State.get s S1Parse.SREG = encSyms str)
+    (hsp : State.get s HSTP = List.replicate steps 1) :
+    State.get (iniMid.eval s) EOUT_I = []
+    ∧ State.get (iniMid.eval s) EC = encSyms str
+    ∧ State.get (iniMid.eval s) EE = [1]
+    ∧ State.get (iniMid.eval s) EB = List.replicate (steps + 3) 1
+    ∧ (∀ r : Var, r ≠ EOUT_I → r ≠ EC → r ≠ EE → r ≠ EB →
+        State.get (iniMid.eval s) r = State.get s r) := by
+  simp only [iniMid, Cmd.eval_seq, Cmd.eval_op, Op.eval]
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    exact hS
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    simp
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [hsp, ← List.replicate_succ', ← List.replicate_succ', ← List.replicate_succ']
+  · intro r h1 h2 h3 h4
+    repeat first
+      | rw [State.get_set_ne _ _ _ _ h1]
+      | rw [State.get_set_ne _ _ _ _ h2]
+      | rw [State.get_set_ne _ _ _ _ h3]
+      | rw [State.get_set_ne _ _ _ _ h4]
+
+private theorem iniPre_run (M : flatTM) (str : List Nat) (steps : Nat) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hS : State.get s S1Parse.SREG = encSyms str)
+    (hsp : State.get s HSTP = List.replicate steps 1) :
+    State.get (iniPre.eval s) EOUT_I = FlatTCCFree.encNat (Sg M)
+    ∧ State.get (iniPre.eval s) EC = encSyms str
+    ∧ State.get (iniPre.eval s) EE = [1]
+    ∧ State.get (iniPre.eval s) EB = List.replicate (steps + 3) 1
+    ∧ State.get (iniPre.eval s) ESG = List.replicate (Sg M) 1
+    ∧ (∀ r : Var, r ≠ EOUT_I → r ≠ EC → r ≠ EE → r ≠ EB → r ≠ ESG → r ≠ EA →
+        r ≠ EJ1 → r ≠ EJ2 → State.get (iniPre.eval s) r = State.get s r) := by
+  obtain ⟨lSG, lFr⟩ := loadSg_run M s hsig hst
+  set s0 := loadSg.eval s with hs0
+  have s0S : State.get s0 S1Parse.SREG = encSyms str := by
+    rw [lFr S1Parse.SREG (by decide) (by decide) (by decide) (by decide)]; exact hS
+  have s0P : State.get s0 HSTP = List.replicate steps 1 := by
+    rw [lFr HSTP (by decide) (by decide) (by decide) (by decide)]; exact hsp
+  clear_value s0
+  obtain ⟨mO, mC, mE, mB, mFr⟩ := iniMid_run str steps s0 s0S s0P
+  set s1 := iniMid.eval s0 with hs1
+  have s1SG : State.get s1 ESG = List.replicate (Sg M) 1 := by
+    rw [mFr ESG (by decide) (by decide) (by decide) (by decide)]; exact lSG
+  clear_value s1
+  obtain ⟨eO, eFr⟩ := emitBlk_run EJ2 ESG EOUT_I s1 (Sg M) (by decide) s1SG
+  have hev : iniPre.eval s = (emitBlk EJ2 ESG EOUT_I).eval s1 := by
+    unfold iniPre; rw [Cmd.eval_seq, Cmd.eval_seq, ← hs0, ← hs1]
+  refine ⟨by rw [hev, eO, mO]; simp, ?_, ?_, ?_, ?_, ?_⟩
+  · rw [hev, eFr EC (by decide) (by decide)]; exact mC
+  · rw [hev, eFr EE (by decide) (by decide)]; exact mE
+  · rw [hev, eFr EB (by decide) (by decide)]; exact mB
+  · rw [hev, eFr ESG (by decide) (by decide)]; exact s1SG
+  · intro r h1 h2 h3 h4 h5 h6 h7 h8
+    rw [hev, eFr r h1 h8, mFr r h1 h2 h3 h4]
+    exact lFr r h6 h4 h5 h7
+
+/-- **Stage I is correct.** The init register holds the guess tableau's own
+`init` stream. The guard's `list_ofFlatType M.sig str` is used (and only used) to
+know `pKindAt`'s out-of-alphabet branch is unreachable. -/
+theorem stageInit_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hS : State.get s S1Parse.SREG = encSyms str)
+    (hmx : State.get s HMAX = List.replicate maxSize 1)
+    (hsp : State.get s HSTP = List.replicate steps 1)
+    (hb : list_ofFlatType M.sig str) :
+    State.get (stageInit.eval s) EOUT_I
+        = FlatTCCFree.encNats (flattenString (preludeRow M str maxSize steps))
+    ∧ (∀ r : Var, IClean r → r ≠ EA → r ≠ EB → r ≠ ESG →
+        State.get (stageInit.eval s) r = State.get s r) := by
+  obtain ⟨pO, pC, pE, pB, pSG, pFr⟩ := iniPre_run M str steps s hsig hst hS hsp
+  set u := iniPre.eval s with hu
+  have uP : State.get u S1Parse.PSIG = List.replicate M.sig 1 := by
+    rw [pFr S1Parse.PSIG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hsig
+  have uS : State.get u S1Parse.SREG = encSyms str := by
+    rw [pFr S1Parse.SREG (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hS
+  have uM : State.get u HMAX = List.replicate maxSize 1 := by
+    rw [pFr HMAX (by decide) (by decide) (by decide) (by decide) (by decide)
+      (by decide) (by decide) (by decide)]
+    exact hmx
+  clear_value u
+  -- loop A
+  obtain ⟨aO, aE, aFr⟩ := iniLoopA_run (Sg M) M.sig str u _ pSG uP uS pO pC pE
+  set v := (Cmd.forBnd EJ1 S1Parse.SREG iniBodyA).eval u with hv
+  have vSG : State.get v ESG = List.replicate (Sg M) 1 := by
+    rw [aFr ESG (by decide)]; exact pSG
+  have vM : (State.get v HMAX).length = maxSize := by
+    rw [aFr HMAX (by decide), uM, List.length_replicate]
+  have vB : State.get v EB = List.replicate (steps + 3) 1 := by
+    rw [aFr EB (by decide)]; exact pB
+  clear_value v
+  -- loop B
+  obtain ⟨bO, bE, bFr⟩ := iniLoopK_run (Sg M) str.isEmpty 2 1 HMAX maxSize v _
+    vM vSG rfl aE
+  set x := (Cmd.forBnd EJ1 HMAX (iniCellK 2 1)).eval v with hx
+  have xSG : State.get x ESG = List.replicate (Sg M) 1 := by
+    rw [bFr ESG (by decide)]; exact vSG
+  have xB : (State.get x EB).length = steps + 3 := by
+    rw [bFr EB (by decide), vB, List.length_replicate]
+  clear_value x
+  -- loop C
+  obtain ⟨cO, -, cFr⟩ := iniLoopK_run (Sg M) (str.isEmpty && decide (maxSize = 0)) 1 3
+    EB (steps + 3) x _ xB xSG rfl bE
+  set y := (Cmd.forBnd EJ1 EB (iniCellK 1 3)).eval x with hy
+  have ySG : State.get y ESG = List.replicate (Sg M) 1 := by
+    rw [cFr ESG (by decide)]; exact xSG
+  clear_value y
+  obtain ⟨zO, zFr⟩ := emitBlk_run EJ2 ESG EOUT_I y (Sg M) (by decide) ySG
+  have hev : stageInit.eval s = (emitBlk EJ2 ESG EOUT_I).eval y := by
+    unfold stageInit
+    rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, ← hu, ← hv, ← hx, ← hy]
+  refine ⟨?_, ?_⟩
+  · rw [hev, zO, cO, bO, aO, initBlocks_eq M str maxSize steps hb,
+      ← cellsB_eq_K, ← cellsC_eq_K]
+    unfold initBlocks
+    rw [S1Cards.encNats_append, encNats_singleton]
+    show _ = (FlatTCCFree.encNat (Sg M)
+      ++ FlatTCCFree.encNats (cellsA (Sg M) M.sig str
+          ++ cellsB (Sg M) str.isEmpty maxSize
+          ++ cellsC (Sg M) (str.isEmpty && decide (maxSize = 0)) (steps + 3)))
+      ++ FlatTCCFree.encNat (Sg M)
+    rw [S1Cards.encNats_append, S1Cards.encNats_append]
+    simp only [List.append_assoc]
+  · intro r h1 h2 h3 h4
+    rw [hev, zFr r h1.1 h1.2.2.2.2.2.1, cFr r h1, bFr r h1, aFr r h1]
+    exact pFr r h1.1 h1.2.1 h1.2.2.2.1 h3 h4 h2 h1.2.2.2.2.1 h1.2.2.2.2.2.1
+
+theorem stageInit_usesBelow : Cmd.UsesBelow stageInit 48 := by
+  simp [stageInit, iniPre, iniMid, iniBodyA, iniCellA, iniCellK, repOne, enop,
+    emitBlk, loadSg, sgPre, sgLoop, FrontPieces.tallyReg, S1Parse.readItem,
+    CliqueRelTM.readNum,
+    CliqueRelTM.cSkip, Cmd.UsesBelow, Op.UsesBelow,
+    EOUT_I, EA, EB, EC, ED, EE, ESG, EJ1, EJ2, EJ3, EK1, HMAX, HSTP,
+    S1Parse.PSIG, S1Parse.PSTATES, S1Parse.SREG,
+    CliqueRelTM.HEAD, CliqueRelTM.INBLK, CliqueRelTM.SKIPR]
 
 end S1Emit

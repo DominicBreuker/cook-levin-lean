@@ -76,9 +76,47 @@ def finFrameOK (M : FlatTM) : Bool :=
 
 #eval eMs.map finFrameOK   -- expect [true, true, true, true]
 
+/-! ## §3 — stage I -/
+
+def initOK (M : FlatTM) (str : List Nat) (maxSize steps : Nat) : Bool :=
+  State.get (stageInit.eval (mkState M str maxSize steps)) EOUT_I
+    == FlatTCCFree.encNats (flattenString (preludeRow M str maxSize steps))
+
+/-- Corner cases: empty string (the head cell then falls in the star segment,
+or in the blank segment when `maxSize = 0`), `maxSize = 0`, `steps = 0`. -/
+def initCases : List (List Nat × Nat × Nat) :=
+  [([], 0, 0), ([], 2, 0), ([], 0, 3), ([1], 0, 0), ([1, 0], 2, 3),
+   ([0, 1, 1], 1, 2), ([1, 1, 0, 0], 4, 1)]
+
+/-- Only guarded instances: `pKindAt`'s out-of-alphabet fallback is unreachable
+under `list_ofFlatType M.sig s`, so the emitter (which does not test it) is only
+claimed correct there. -/
+def guardedCases (M : FlatTM) : List (List Nat × Nat × Nat) :=
+  initCases.filter (fun c => c.1.all (fun x => decide (x < M.sig)))
+
+#eval eMs.map (fun M => (guardedCases M).all (fun c => initOK M c.1 c.2.1 c.2.2))
+                           -- expect [true, true, true, true]
+
+-- **The guard is load-bearing** (and this is why stage I sits under
+-- `Cmd.ifBit S1Parse.FLG`): on an UNGUARDED instance — here `M.sig = 0` with a
+-- non-empty input string, so `pKindAt` takes its out-of-alphabet blank branch —
+-- the emitter and the definition disagree.
+#eval initOK eM2 [1] 0 0    -- expect false: off-guard, by design
+
+/-- Stage I must not disturb the head layout's registers or stage P's outputs
+(register `2` is both its input and, later, the INIT output register). -/
+def initFrameOK (M : FlatTM) : Bool :=
+  let s := mkState M [1, 0] 2 3
+  let t := stageInit.eval s
+  ([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] : List Nat).all
+    (fun r => State.get t r == State.get s r)
+
+#eval eMs.map initFrameOK  -- expect [true, true, true, true]
+
 /-! ## §4 — scale
 
 The two small registers: `PSg M` cells for Σ, `Θ(states·σ)` patterns for F. -/
 
 #eval eMs.map (fun M => (PSg M,
-  (State.get (stageFin.eval (mkState M [] 0 0)) EOUT_F).length))
+  (State.get (stageFin.eval (mkState M [] 0 0)) EOUT_F).length,
+  (State.get (stageInit.eval (mkState M [1, 0] 2 3)) EOUT_I).length))
