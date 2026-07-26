@@ -1,4 +1,4 @@
-import Complexity.NP.SAT.CookLevin.Reductions.S1Emit
+import Complexity.NP.SAT.CookLevin.Reductions.S1CardEmit
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -216,11 +216,21 @@ theorem stageC_usesBelow : Cmd.UsesBelow stageC 48 := by
 afterwards. And the `+ 1` is `guessTableauTyped.steps = steps + 1` — it is
 **not** a copy of register `4`. -/
 
-/-- **OPEN.** The output multiplex on the guard-true branch. -/
-def stageMYes : Cmd := sorry
+/-- **The output multiplex on the guard-true branch.**
 
-/-- **OPEN.** Stage M-yes's contract, stated so that the assembly consumes
-exactly one fact: the five output registers hold `s1Key` of the tableau. -/
+`EOUT_T := 1^(steps+1)` off register `4`, then the five copies. The build of
+`EOUT_T` **must** come first: `S1Emit.HSTP = 4 = FINAL`, so `copy FINAL EOUT_F`
+destroys the `1^steps` this reads. -/
+def stageMYes : Cmd :=
+  Cmd.op (.copy S1Emit.EOUT_T S1Emit.HSTP) ;; Cmd.op (.appendOne S1Emit.EOUT_T) ;;
+  Cmd.op (.copy SIGMA S1Emit.EOUT_S) ;;
+  Cmd.op (.copy INIT S1Emit.EOUT_I) ;;
+  Cmd.op (.copy CARDS S1Emit.EOUT_C) ;;
+  Cmd.op (.copy FINAL S1Emit.EOUT_F) ;;
+  Cmd.op (.copy STEPS S1Emit.EOUT_T)
+
+/-- **Stage M-yes is correct.** The five output registers hold `s1Key` of the
+tableau. -/
 theorem stageMYes_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : State)
     (hsp : State.get s S1Emit.HSTP = List.replicate steps 1)
     (hS : State.get s S1Emit.EOUT_S = List.replicate (PSg M) 1)
@@ -230,11 +240,78 @@ theorem stageMYes_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : S
     (hF : State.get s S1Emit.EOUT_F
         = FlatTCCFree.encFinal (FlatTCC.flattenFinal (guessFinal M))) :
     s1Extract (stageMYes.eval s) = s1Key (guessTableau M str maxSize steps) := by
-  sorry
+  -- `1^(steps+1)` into `EOUT_T`, before register `4` is overwritten
+  set t1 := (Cmd.op (.copy S1Emit.EOUT_T S1Emit.HSTP)).eval s with ht1
+  have h1T : State.get t1 S1Emit.EOUT_T = List.replicate steps 1 := by
+    rw [ht1, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]; exact hsp
+  have h1Fr : ∀ r : Var, r ≠ S1Emit.EOUT_T → State.get t1 r = State.get s r := by
+    intro r hr; rw [ht1, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value t1
+  set t2 := (Cmd.op (.appendOne S1Emit.EOUT_T)).eval t1 with ht2
+  have h2T : State.get t2 S1Emit.EOUT_T = List.replicate (steps + 1) 1 := by
+    rw [ht2, Cmd.eval_op]
+    simp only [Op.eval, State.get_set_eq, h1T, ← List.replicate_succ']
+  have h2Fr : ∀ r : Var, r ≠ S1Emit.EOUT_T → State.get t2 r = State.get t1 r := by
+    intro r hr; rw [ht2, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value t2
+  -- the five sources, restated on `t2`
+  have g_S : State.get t2 S1Emit.EOUT_S = List.replicate (PSg M) 1 := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hS
+  have g_I : State.get t2 S1Emit.EOUT_I
+      = FlatTCCFree.encNats (flattenString (preludeRow M str maxSize steps)) := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hI
+  have g_C : State.get t2 S1Emit.EOUT_C
+      = FlatTCCFree.encNats (S1Cards.cardBlocks M) := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hC
+  have g_F : State.get t2 S1Emit.EOUT_F
+      = FlatTCCFree.encFinal (FlatTCC.flattenFinal (guessFinal M)) := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hF
+  -- the copy block
+  have hev : stageMYes.eval s
+      = (Cmd.op (.copy SIGMA S1Emit.EOUT_S) ;; Cmd.op (.copy INIT S1Emit.EOUT_I) ;;
+          Cmd.op (.copy CARDS S1Emit.EOUT_C) ;; Cmd.op (.copy FINAL S1Emit.EOUT_F) ;;
+          Cmd.op (.copy STEPS S1Emit.EOUT_T)).eval t2 := by
+    rw [ht2, ht1]; unfold stageMYes; rw [Cmd.eval_seq, Cmd.eval_seq]
+  have hkey : s1Key (guessTableau M str maxSize steps)
+      = [List.replicate (PSg M) 1,
+         FlatTCCFree.encNats (flattenString (preludeRow M str maxSize steps)),
+         FlatTCCFree.encNats (S1Cards.cardBlocks M),
+         FlatTCCFree.encFinal (FlatTCC.flattenFinal (guessFinal M)),
+         List.replicate (steps + 1) 1] := by
+    have h3 : FlatTCCFree.encCardsIn (guessTableau M str maxSize steps).cards
+        = FlatTCCFree.encNats (S1Cards.cardBlocks M) :=
+      S1Cards.encCards_eq M str maxSize steps
+    unfold s1Key
+    rw [h3]
+    rfl
+  rw [hev, hkey]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, s1Extract, List.cons.injEq, and_true]
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_S]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_I]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_C]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_F]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    exact h2T
 
-/-- **OPEN.** `decide`-able once `stageMYes` is a concrete `Cmd`. -/
 theorem stageMYes_usesBelow : Cmd.UsesBelow stageMYes 48 := by
-  sorry
+  simp [stageMYes, Cmd.UsesBelow, Op.UsesBelow, SIGMA, INIT, CARDS, FINAL, STEPS,
+    S1Emit.EOUT_S, S1Emit.EOUT_I, S1Emit.EOUT_C, S1Emit.EOUT_F, S1Emit.EOUT_T,
+    S1Emit.HSTP]
 
 /-! ## The yes branch -/
 
