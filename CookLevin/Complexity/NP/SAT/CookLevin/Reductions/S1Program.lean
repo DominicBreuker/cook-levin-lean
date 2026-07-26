@@ -1,4 +1,4 @@
-import Complexity.NP.SAT.CookLevin.Reductions.S1Emit
+import Complexity.NP.SAT.CookLevin.Reductions.S1CardEmit
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -184,6 +184,53 @@ contract below is what the assembly consumes and must not change.
 The validity hypotheses are free: stage C sits under `Cmd.ifBit S1Parse.FLG`,
 so the guard has already established them. -/
 
+/-! ### Risk check: the five built families fit inside `CDirty`
+
+`Reductions/S1CardEmit.lean` builds the first five of `cardBlocks`' seven
+summands (`S1CardEmit.cFive`) with its own dirty list `AD`. `stageC` will be
+`cFive ;; <the two remaining families>`, so `stageC_run`'s frame clause is only
+meetable if `AD ∪ {EOUT_C} ⊆ CDirty` — a fact that is cheap to prove now and
+expensive to discover after the last two families are written. -/
+
+/-- Every register `S1CardEmit.cFive` may dirty is in the P/G scratch block or
+the shared emitter scratch. -/
+theorem mem_AD_cases {r : Var} (h : r ∈ S1CardEmit.AD) :
+    (14 ≤ r ∧ r < 32) ∨ (37 ≤ r ∧ r < 48) := by
+  simp only [S1CardEmit.AD] at h
+  fin_cases h <;> decide
+
+/-- **The five built card families stay inside stage C's stated licence.** -/
+theorem cFive_frame (M : flatTM) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
+    (r : Var) (hd : ¬ CDirty r) :
+    State.get (S1CardEmit.cFive.eval s) r = State.get s r :=
+  (S1CardEmit.cFive_run M s hsig hst hph).2 r
+    (fun he => hd (by rw [he]; exact Or.inr (Or.inl rfl)))
+    (fun hm => hd (by
+      rcases mem_AD_cases hm with h | h
+      · exact Or.inr (Or.inr h)
+      · exact Or.inl (Or.inl h)))
+
+/-- The five families' registers are disjoint from everything the assembly
+still needs after stage C: the input layout `1`–`5`, the parse outputs it
+re-reads (`PSIG`, `PSTATES`, `PHALT`, `PNTRANS`, `PTRANS`) and the two earlier
+emitter outputs (`EOUT_S`, `EOUT_I`). -/
+theorem cFive_preserves (M : flatTM) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
+    (r : Var)
+    (hr : r = SIGMA ∨ r = INIT ∨ r = CARDS ∨ r = FINAL ∨ r = STEPS
+      ∨ r = S1Parse.PSIG ∨ r = S1Parse.PSTATES ∨ r = S1Parse.PHALT
+      ∨ r = S1Parse.PNTRANS ∨ r = S1Parse.PTRANS
+      ∨ r = S1Emit.EOUT_S ∨ r = S1Emit.EOUT_I) :
+    State.get (S1CardEmit.cFive.eval s) r = State.get s r := by
+  refine cFive_frame M s hsig hst hph r ?_
+  rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
+    exact by decide
+
 /-- **OPEN (the S1 critical path).** The card emitter. -/
 def stageC : Cmd := sorry
 
@@ -216,11 +263,21 @@ theorem stageC_usesBelow : Cmd.UsesBelow stageC 48 := by
 afterwards. And the `+ 1` is `guessTableauTyped.steps = steps + 1` — it is
 **not** a copy of register `4`. -/
 
-/-- **OPEN.** The output multiplex on the guard-true branch. -/
-def stageMYes : Cmd := sorry
+/-- **The output multiplex on the guard-true branch.**
 
-/-- **OPEN.** Stage M-yes's contract, stated so that the assembly consumes
-exactly one fact: the five output registers hold `s1Key` of the tableau. -/
+`EOUT_T := 1^(steps+1)` off register `4`, then the five copies. The build of
+`EOUT_T` **must** come first: `S1Emit.HSTP = 4 = FINAL`, so `copy FINAL EOUT_F`
+destroys the `1^steps` this reads. -/
+def stageMYes : Cmd :=
+  Cmd.op (.copy S1Emit.EOUT_T S1Emit.HSTP) ;; Cmd.op (.appendOne S1Emit.EOUT_T) ;;
+  Cmd.op (.copy SIGMA S1Emit.EOUT_S) ;;
+  Cmd.op (.copy INIT S1Emit.EOUT_I) ;;
+  Cmd.op (.copy CARDS S1Emit.EOUT_C) ;;
+  Cmd.op (.copy FINAL S1Emit.EOUT_F) ;;
+  Cmd.op (.copy STEPS S1Emit.EOUT_T)
+
+/-- **Stage M-yes is correct.** The five output registers hold `s1Key` of the
+tableau. -/
 theorem stageMYes_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : State)
     (hsp : State.get s S1Emit.HSTP = List.replicate steps 1)
     (hS : State.get s S1Emit.EOUT_S = List.replicate (PSg M) 1)
@@ -230,11 +287,78 @@ theorem stageMYes_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : S
     (hF : State.get s S1Emit.EOUT_F
         = FlatTCCFree.encFinal (FlatTCC.flattenFinal (guessFinal M))) :
     s1Extract (stageMYes.eval s) = s1Key (guessTableau M str maxSize steps) := by
-  sorry
+  -- `1^(steps+1)` into `EOUT_T`, before register `4` is overwritten
+  set t1 := (Cmd.op (.copy S1Emit.EOUT_T S1Emit.HSTP)).eval s with ht1
+  have h1T : State.get t1 S1Emit.EOUT_T = List.replicate steps 1 := by
+    rw [ht1, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]; exact hsp
+  have h1Fr : ∀ r : Var, r ≠ S1Emit.EOUT_T → State.get t1 r = State.get s r := by
+    intro r hr; rw [ht1, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value t1
+  set t2 := (Cmd.op (.appendOne S1Emit.EOUT_T)).eval t1 with ht2
+  have h2T : State.get t2 S1Emit.EOUT_T = List.replicate (steps + 1) 1 := by
+    rw [ht2, Cmd.eval_op]
+    simp only [Op.eval, State.get_set_eq, h1T, ← List.replicate_succ']
+  have h2Fr : ∀ r : Var, r ≠ S1Emit.EOUT_T → State.get t2 r = State.get t1 r := by
+    intro r hr; rw [ht2, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value t2
+  -- the five sources, restated on `t2`
+  have g_S : State.get t2 S1Emit.EOUT_S = List.replicate (PSg M) 1 := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hS
+  have g_I : State.get t2 S1Emit.EOUT_I
+      = FlatTCCFree.encNats (flattenString (preludeRow M str maxSize steps)) := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hI
+  have g_C : State.get t2 S1Emit.EOUT_C
+      = FlatTCCFree.encNats (S1Cards.cardBlocks M) := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hC
+  have g_F : State.get t2 S1Emit.EOUT_F
+      = FlatTCCFree.encFinal (FlatTCC.flattenFinal (guessFinal M)) := by
+    rw [h2Fr _ (by decide), h1Fr _ (by decide)]; exact hF
+  -- the copy block
+  have hev : stageMYes.eval s
+      = (Cmd.op (.copy SIGMA S1Emit.EOUT_S) ;; Cmd.op (.copy INIT S1Emit.EOUT_I) ;;
+          Cmd.op (.copy CARDS S1Emit.EOUT_C) ;; Cmd.op (.copy FINAL S1Emit.EOUT_F) ;;
+          Cmd.op (.copy STEPS S1Emit.EOUT_T)).eval t2 := by
+    rw [ht2, ht1]; unfold stageMYes; rw [Cmd.eval_seq, Cmd.eval_seq]
+  have hkey : s1Key (guessTableau M str maxSize steps)
+      = [List.replicate (PSg M) 1,
+         FlatTCCFree.encNats (flattenString (preludeRow M str maxSize steps)),
+         FlatTCCFree.encNats (S1Cards.cardBlocks M),
+         FlatTCCFree.encFinal (FlatTCC.flattenFinal (guessFinal M)),
+         List.replicate (steps + 1) 1] := by
+    have h3 : FlatTCCFree.encCardsIn (guessTableau M str maxSize steps).cards
+        = FlatTCCFree.encNats (S1Cards.cardBlocks M) :=
+      S1Cards.encCards_eq M str maxSize steps
+    unfold s1Key
+    rw [h3]
+    rfl
+  rw [hev, hkey]
+  simp only [Cmd.eval_seq, Cmd.eval_op, Op.eval, s1Extract, List.cons.injEq, and_true]
+  refine ⟨?_, ?_, ?_, ?_, ?_⟩
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_S]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_I]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_C]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    rw [g_F]
+  · repeat first
+      | rw [State.get_set_eq]
+      | rw [State.get_set_ne _ _ _ _ (by decide)]
+    exact h2T
 
-/-- **OPEN.** `decide`-able once `stageMYes` is a concrete `Cmd`. -/
 theorem stageMYes_usesBelow : Cmd.UsesBelow stageMYes 48 := by
-  sorry
+  simp [stageMYes, Cmd.UsesBelow, Op.UsesBelow, SIGMA, INIT, CARDS, FINAL, STEPS,
+    S1Emit.EOUT_S, S1Emit.EOUT_I, S1Emit.EOUT_C, S1Emit.EOUT_F, S1Emit.EOUT_T,
+    S1Emit.HSTP]
 
 /-! ## The yes branch -/
 
