@@ -7,7 +7,7 @@ set_option maxHeartbeats 1000000
 
 /-! # S1, part 5 — the emitter atom and the program stages **Σ**, **F**, **I**
 
-Three of the five remaining stages of `S1Witness.s1Program`, plus the atom every
+Three of the five remaining stages of `S1Program.s1Program`, plus the atom every
 one of them (and stage C) is built from.
 
 * **`emitBlk`** — append one bare unary block `FlatTCCFree.encNat v = 1^v 0` to

@@ -6,7 +6,7 @@ set_option maxRecDepth 4000
 
 /-! # S1, part 4 — the **pure model of stage C** (the card emitter)
 
-Stage C of `S1Witness.s1Program` must write
+Stage C of `S1Program.s1Program` must write
 
     FlatTCCFree.encCardsIn (flattenCard <$> GuessTableau.guessCards M)
 

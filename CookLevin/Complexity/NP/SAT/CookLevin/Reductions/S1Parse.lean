@@ -8,7 +8,7 @@ set_option maxRecDepth 8000
 
 /-! # S1, part 3 — the program's stages **P (parse)** and **G (guard)**
 
-The first two of the seven stages of `S1Witness.s1Program` (`FlatSingleTMGenNP
+The first two of the seven stages of `S1Program.s1Program` (`FlatSingleTMGenNP
 ⪯p' FlatTCC`), built bottom-up as standalone gadgets with `_run` lemmas — the
 `FrontProgram` ↔ `FrontWitness` split.
 
