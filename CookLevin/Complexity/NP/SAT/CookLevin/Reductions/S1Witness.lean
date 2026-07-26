@@ -1,6 +1,7 @@
 import Complexity.NP.SAT.CookLevin.Reductions.S1Map
 import Complexity.NP.SAT.CookLevin.Reductions.HeadLayout
 import Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC_free
+import Complexity.NP.SAT.CookLevin.Reductions.S1Parse
 
 set_option autoImplicit false
 
@@ -243,20 +244,178 @@ theorem encSyms_length_le_size (l : List Nat) :
     (HeadLayout.encSyms l).length ≤ 2 * encodable.size l := by
   rw [encSyms_length, list_nat_size_eq]; omega
 
-/-- **BOTTOM-UP BITE (open).** The flattened machine stream is linear in the
-machine's honest `encodable.size`.
+/-! ### The machine stream is linear in the honest machine size
 
-Every piece of `HeadLayout.flattenTM M` is a data field of `M` (or a length of
-one), and `encOptN` charges `v + 2` per `Option Nat` whose `encodable.size` is
-`v + 1`; so the constant `3` has slack. The proof is a routine — but not
-short — chain: turn the two `foldl (fun a e => a ++ f e)` accumulators into
-`flatMap` (the private `HeadLayout.foldl_append_acc` is exactly this), push
-`encodable.size` through `++` and `flatMap`, then bound each entry field
-against `encodable FlatTMTransEntry`. Numerically checked in
-`probes/S1SizeGapProbe.lean`. -/
+⚠ **The additive `+ 3` is not slack — it is forced (2026-07-26).** The version
+of this lemma stated before that session, `size (flattenTM M) ≤ 3 * size M`, is
+**FALSE**: the trivial machine (`sig = tapes = states = start = 0`,
+`halt = trans = []`) has `size M = 1` but `flattenTM M = [0,0,0,0,0,0]`, whose
+`encodable.size` is `6`. `flattenTM` always writes six header cells, and the
+header of a machine of size `1` cannot be paid for multiplicatively. The bound
+below is TIGHT at that machine (`6 = 3·1 + 3`) and at
+`trans = [⟨0,[],0,[],[]⟩]` (`12 = 3·3 + 3`). `probes/S1SizeGapProbe.lean` §3
+carries all three witnesses — **any future re-statement must keep an additive
+term.** (The old probe only ever evaluated the claim on machines with a
+non-degenerate header, which is why it printed `true`.) -/
+
+private theorem nat_size_append (a b : List Nat) :
+    encodable.size (a ++ b) = encodable.size a + encodable.size b := by
+  rw [list_nat_size_eq, list_nat_size_eq, list_nat_size_eq, List.sum_append,
+    List.length_append]
+  omega
+
+/-- `encodable.size` of a list, as the sum of its elements' charges. -/
+private theorem list_size_map_sum {α : Type} [encodable α] (l : List α) :
+    encodable.size l = (l.map (fun x => encodable.size x + 1)).sum := by
+  show l.foldl (fun acc x => acc + encodable.size x + 1) 0 = _
+  have h : ∀ (m : List α) (a : Nat),
+      m.foldl (fun acc x => acc + encodable.size x + 1) a
+        = a + (m.map (fun x => encodable.size x + 1)).sum := by
+    intro m
+    induction m with
+    | nil => intro a; simp
+    | cons y ys ih =>
+        intro a
+        rw [List.foldl_cons, ih]
+        simp only [List.map_cons, List.sum_cons]
+        omega
+  simpa using h l 0
+
+private theorem list_size_cons {α : Type} [encodable α] (a : α) (l : List α) :
+    encodable.size (a :: l) = encodable.size a + 1 + encodable.size l := by
+  rw [list_size_map_sum (a :: l), list_size_map_sum l]
+  simp only [List.map_cons, List.sum_cons]
+
+private theorem nat_size_flatMap {α : Type} (f : α → List Nat) (l : List α) :
+    encodable.size (l.flatMap f) = (l.map (fun a => encodable.size (f a))).sum := by
+  induction l with
+  | nil => rfl
+  | cons a l ih =>
+      rw [List.flatMap_cons, nat_size_append, ih]
+      simp only [List.map_cons, List.sum_cons]
+
+/-- One `Option Nat` costs at most twice its charge, *including* its own item
+slot — the shape the entry bound needs. -/
+private theorem opts_size_le : ∀ l : List (Option Nat),
+    encodable.size (S1Parse.optsFlat l) + l.length ≤ 2 * encodable.size l
+  | [] => by exact Nat.zero_le _
+  | o :: l => by
+      have ih := opts_size_le l
+      have hflat : S1Parse.optsFlat (o :: l)
+          = HeadLayout.encOptN o ++ S1Parse.optsFlat l := List.flatMap_cons ..
+      have hb : encodable.size (HeadLayout.encOptN o) + 1
+          ≤ 2 * (encodable.size o + 1) := by
+        cases o with
+        | none =>
+            show encodable.size ([0] : List Nat) + 1 ≤ 2 * (0 + 1)
+            rw [list_nat_size_eq]; simp
+        | some v =>
+            have hv : encodable.size (some v : Option Nat) = v + 1 := rfl
+            show encodable.size ([1, v] : List Nat) + 1 ≤ _
+            rw [list_nat_size_eq, hv]; simp; omega
+      rw [hflat, nat_size_append, list_size_cons, List.length_cons]
+      omega
+
+private theorem moves_size_le : ∀ l : List TMMove,
+    encodable.size (l.map HeadLayout.encMoveN) + l.length ≤ 2 * encodable.size l
+  | [] => by exact Nat.zero_le _
+  | m :: l => by
+      have ih := moves_size_le l
+      have hm : encodable.size (m :: l) = 2 + encodable.size l := by
+        rw [list_size_cons]; cases m <;> rfl
+      have hs : encodable.size ((m :: l).map HeadLayout.encMoveN)
+          = HeadLayout.encMoveN m + 1 + encodable.size (l.map HeadLayout.encMoveN) := by
+        rw [List.map_cons, list_size_cons]; rfl
+      have hle : HeadLayout.encMoveN m ≤ 2 := by cases m <;> decide
+      rw [hs, hm, List.length_cons]
+      omega
+
+private theorem halt_size_le : ∀ l : List Bool,
+    encodable.size (l.map (fun b => if b then 1 else 0)) + l.length
+      ≤ 2 * encodable.size l
+  | [] => by exact Nat.zero_le _
+  | b :: l => by
+      have ih := halt_size_le l
+      have hs : encodable.size ((b :: l).map (fun b => if b then 1 else 0))
+          = (if b then 1 else 0) + 1
+            + encodable.size (l.map (fun b => if b then 1 else 0)) := by
+        rw [List.map_cons, list_size_cons]; rfl
+      have hm : encodable.size (b :: l) = (if b then 1 else 0) + 1 + encodable.size l := by
+        rw [list_size_cons]; cases b <;> rfl
+      rw [hs, hm, List.length_cons]
+      cases b <;> simp <;> omega
+
+private theorem entry_size_le (e : FlatTMTransEntry) :
+    encodable.size (HeadLayout.flattenEntry e) ≤ 2 * encodable.size e + 3 := by
+  have h1 := opts_size_le e.src_tape_vals
+  have h2 := opts_size_le e.dst_write_vals
+  have h3 := moves_size_le e.move_dirs
+  have hsz : encodable.size e
+      = encodable.size e.src_state + encodable.size e.src_tape_vals
+        + encodable.size e.dst_state + encodable.size e.dst_write_vals
+        + encodable.size e.move_dirs + 1 := rfl
+  have hst : encodable.size e.src_state = e.src_state := rfl
+  have hdt : encodable.size e.dst_state = e.dst_state := rfl
+  have hA : encodable.size ([e.src_state, e.src_tape_vals.length] : List Nat)
+      = e.src_state + e.src_tape_vals.length + 2 := by
+    rw [list_nat_size_eq]; simp
+  have hB : encodable.size ([e.dst_state, e.dst_write_vals.length] : List Nat)
+      = e.dst_state + e.dst_write_vals.length + 2 := by
+    rw [list_nat_size_eq]; simp
+  have hC : encodable.size ([e.move_dirs.length] : List Nat)
+      = e.move_dirs.length + 1 := by
+    rw [list_nat_size_eq]; simp
+  rw [S1Parse.flattenEntry_eq, nat_size_append, nat_size_append, nat_size_append,
+    nat_size_append, nat_size_append, hA, hB, hC]
+  omega
+
+private theorem length_eq_sum_ones {α : Type} (l : List α) :
+    l.length = (l.map (fun _ => 1)).sum := by
+  induction l with
+  | nil => rfl
+  | cons a l ih => simp only [List.map_cons, List.sum_cons, List.length_cons]; omega
+
+private theorem mul_sum_map {α : Type} (c : Nat) (f : α → Nat) (l : List α) :
+    c * (l.map f).sum = (l.map (fun a => c * f a)).sum := by
+  induction l with
+  | nil => simp
+  | cons a l ih => simp only [List.map_cons, List.sum_cons, Nat.mul_add, ih]
+
+private theorem trans_sum_le : ∀ l : List FlatTMTransEntry,
+    (l.map (fun e => encodable.size (HeadLayout.flattenEntry e))).sum
+        + (l.map (fun _ : FlatTMTransEntry => 1)).sum
+      ≤ (l.map (fun e => 3 * (encodable.size e + 1))).sum
+  | [] => by simp
+  | a :: l => by
+      have ih := trans_sum_le l
+      have ha := entry_size_le a
+      have hge : 1 ≤ encodable.size a := by
+        show 1 ≤ encodable.size a.src_state + _ + _ + _ + _ + 1
+        omega
+      simp only [List.map_cons, List.sum_cons]
+      omega
+
+/-- **The flattened machine stream is linear in the machine's honest
+`encodable.size`** — with a forced additive constant, see the section note. -/
 theorem flattenTM_size_le (M : FlatTM) :
-    encodable.size (HeadLayout.flattenTM M) ≤ 3 * encodable.size M := by
-  sorry
+    encodable.size (HeadLayout.flattenTM M) ≤ 3 * encodable.size M + 3 := by
+  have hH := halt_size_le M.halt
+  have hT : encodable.size (S1Parse.transFlat M) + M.trans.length
+      ≤ 3 * encodable.size M.trans := by
+    unfold S1Parse.transFlat
+    rw [nat_size_flatMap, list_size_map_sum M.trans, length_eq_sum_ones M.trans,
+      mul_sum_map 3 (fun e => encodable.size e + 1) M.trans]
+    exact trans_sum_le M.trans
+  have hA : encodable.size ([M.sig, M.tapes, M.states, M.start, M.halt.length] : List Nat)
+      = M.sig + M.tapes + M.states + M.start + M.halt.length + 5 := by
+    rw [list_nat_size_eq]; simp; omega
+  have hB : encodable.size ([M.trans.length] : List Nat) = M.trans.length + 1 := by
+    rw [list_nat_size_eq]; simp
+  have hM : encodable.size M
+      = M.sig + M.tapes + M.states + M.start
+        + encodable.size M.halt + encodable.size M.trans + 1 := rfl
+  rw [S1Parse.flattenTM_eq, nat_size_append, nat_size_append, nat_size_append, hA, hB]
+  omega
 
 /-- The frozen head layout's total register content is linear in the instance
 size — `encodeIn_size` with `encBound n = 8·n + 4`. -/
