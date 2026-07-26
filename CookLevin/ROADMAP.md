@@ -14,7 +14,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 
 ---
 
-## Status snapshot (verified 2026-07-04)
+## Status snapshot (verified 2026-07-26-b)
 
 | | |
 |---|---|
@@ -37,7 +37,9 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms S1Parse.stagePG_run` | `[propext, Quot.sound]` — **the S1 program's stages P (parse) and G (guard) are built** (2026-07-25-b, `Reductions/S1Parse.lean`, sorry-free): the machine register is parsed into a pinned scratch frame (registers 6–13) and `S1Map.s1GuardB` is decided on-machine into a flag, with `stagePG_usesBelow : UsesBelow 32`. Cost measured **cubic** (`probes/S1ParseProbe.lean`) — the parse is not the S1 budget driver. Stages Σ / I / C / F / M and the cost ladder remain open |
 | `#print axioms S1Cards.cardBlocks_eq` | `[propext, Classical.choice, Quot.sound]` — **stage C (the card emitter) is DE-RISKED** (2026-07-25-c, `Reductions/S1Cards.lean`, sorry-free): the `Fin`-typed, `finRange`/`filterMap`-driven `guessCards M` is proven equal to `cardBlocks M`, seven nested `List.range` streams over the numbers stage P parses, with one equation per card family. Plus `normModel_eq` (the `normTrans` dedup as a three-number key pass + one halt-bit lookup) and `stageMNo` (the guard-false branch of the multiplex). ⚠ two measured findings: the prelude family is `Θ(σ³)`, **not** `Θ(σ⁶)`, and the emitter must append cell-by-cell (never `concat`) since `Op.cost concat` reads the whole destination |
 | `encodable FlatTM` | ✅ **CORRECTED (2026-07-25)** to the data-field sum. The old `sizeFlatTM` charged a flat `5` per transition entry, which made the S1 witness's `encodeIn_size` obligation **unsatisfiable** (`probes/S1SizeGapProbe.lean`); zero ripple, full build green |
-| Genuine `sorry`s (Group C) | **7 in built code**: 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), and 2 deliberate S1 skeleton markers (`S1Witness.lean`: `flattenTM_size_le`, `s1Program`). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
+| `#print axioms S1Emit.stageInit_run` | `[propext, Classical.choice, Quot.sound]` — **the emitter atom + program stages Σ / I / F are built** (2026-07-26, `Reductions/S1Emit.lean`, sorry-free): `emitBlk` (a bare unary block appended cell by cell, never `concat`), `stageSig`, `stageInit`, `stageFin`, each with a pure `List.range` model proven equal to the `Fin`-typed definition (`initBlocks_eq`, `finBlocks_eq`). Findings: stage F needs no validity hypothesis; head-cell codes are maintained *incrementally* (no multiplication inside any loop) — the template stage C repeats seven times; and the guard is load-bearing for stage I |
+| `#print axioms S1Program.noBranch_computes` | `[propext, Quot.sound]` — **the S1 reduction PROGRAM is assembled** (2026-07-26-b, `Reductions/S1Program.lean`): `s1Program = stagePG ;; ifBit FLG yesBranch stageMNo`, with the **guard-false half of `computes` proven outright and axiom-clean** (this lemma, quantified over an arbitrary yes branch so the placeholder stages stay out of its axiom list) and the guard-true half (`yesBranch_run`) proven modulo only `stageC_run` / `stageMYes_run`. `S1Witness.s1_reductionLang` now discharges `computes`, `usesBelow` and `decode_agree`; **`cost_le` is its only open field.** Probe: `probes/S1ProgramProbe.lean` (measured: the card register is `>99.8%` of the emitted output — **stage C alone is the cost ladder**) |
+| Genuine `sorry`s (Group C) | **12 in built code**: 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), 6 deliberate S1 stage markers (`S1Program.lean`: `stageC` / `stageMYes` plus their `_run` / `_usesBelow` contracts — only the two `def`s are real gaps), and 1 cost obligation (`S1Witness.s1_reductionLang.cost_le`). The rise from 7 is a **decomposition, not a regression**: one opaque `s1Program` marker became six contracts the assembly already typechecks against. **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
 | Remaining to a real proof | **~12–20K LOC** (breakdown below) |
@@ -168,10 +170,18 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   sorry-free & axiom-clean)**: `cardBlocks_eq` restates the whole card stream
   as seven `List.range` nests over the parsed numbers (one proven equation per
   card family), `normModel_eq` specifies the `normTrans` dedup on-machine, and
-  `stageMNo` closes the multiplex's guard-false branch. Remaining: the S1 free
-  witness **program** `Cmd`s for stages Σ / I / C / F / M-yes, the
-  whole-program cost ladder, and the `computes`/`cost_le`/`usesBelow` fields.
-  No piece's *shape* is unknown any more. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
+  `stageMNo` closes the multiplex's guard-false branch.
+  **The emitter atom and stages Σ / I / F are BUILT (2026-07-26,
+  `Reductions/S1Emit.lean`, sorry-free & axiom-clean)**, and **the program is
+  ASSEMBLED (2026-07-26-b, `Reductions/S1Program.lean`)**: `s1Program =
+  stagePG ;; ifBit FLG yesBranch stageMNo`, `computes` proven — the guard-false
+  half outright and axiom-clean, the guard-true half modulo only the two stage
+  contracts `stageC_run` / `stageMYes_run` — and `usesBelow` / `decode_agree`
+  closed, so `s1_reductionLang` is down to `cost_le`.
+  **Remaining: stage C (the card emitter), stage M-yes, and the cost ladder.**
+  No piece's *shape* is unknown any more, and the two open stages now have
+  *stated contracts the assembly already consumes* — build to them, do not
+  restate them. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
   `Θ(|trans|·|Σ|⁴)` encoded (counts pinned by
   `cookCards_length_le`/`preludeCards_length_le`).
 

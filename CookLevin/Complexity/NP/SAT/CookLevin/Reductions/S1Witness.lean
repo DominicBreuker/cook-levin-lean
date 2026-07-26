@@ -1,7 +1,4 @@
-import Complexity.NP.SAT.CookLevin.Reductions.S1Map
-import Complexity.NP.SAT.CookLevin.Reductions.HeadLayout
-import Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC_free
-import Complexity.NP.SAT.CookLevin.Reductions.S1Parse
+import Complexity.NP.SAT.CookLevin.Reductions.S1Program
 
 set_option autoImplicit false
 
@@ -90,25 +87,15 @@ namespace S1Witness
 
 open Complexity.Lang
 
-/-! ## The output key (= `FlatTCCFree.encodeIn` registers 1–5) -/
+/-! ## The output key (= `FlatTCCFree.encodeIn` registers 1–5)
 
-/-- The S1 program's output registers, in order: the successor witness's own
-input layout. -/
-def s1Key (C : FlatTCC) : List (List Nat) :=
-  [List.replicate C.Sigma 1, FlatTCCFree.encNats C.init,
-   FlatTCCFree.encCardsIn C.cards, FlatTCCFree.encFinal C.final,
-   List.replicate C.steps 1]
+⚠ **Moved (2026-07-26).** `s1Key` / `s1Extract` / `SIGMA`…`STEPS` /
+`s1RegBound` now live in `Reductions/S1Program.lean` — they are program-layout
+definitions, and this file imports the program rather than the other way
+round. Their injectivity, which is a *witness* fact (`decodeOut` honesty),
+stays here. -/
 
-def SIGMA : Var := 1
-def INIT  : Var := 2
-def CARDS : Var := 3
-def FINAL : Var := 4
-def STEPS : Var := 5
-
-/-- Read the output key back off a state. -/
-def s1Extract (s : State) : List (List Nat) :=
-  [State.get s SIGMA, State.get s INIT, State.get s CARDS,
-   State.get s FINAL, State.get s STEPS]
+open S1Program (s1Key s1Extract SIGMA INIT CARDS FINAL STEPS s1RegBound)
 
 /-! ### Injectivity of the output key
 
@@ -191,7 +178,7 @@ theorem encCardsIn_injective : Function.Injective FlatTCCFree.encCardsIn := by
 /-- **The output layout is decodable.** -/
 theorem s1Key_injective : Function.Injective s1Key := by
   intro a b h
-  simp only [s1Key, List.cons.injEq, and_true] at h
+  simp only [S1Program.s1Key, List.cons.injEq, and_true] at h
   obtain ⟨h1, h2, h3, h4, h5⟩ := h
   cases a with
   | mk aS ai ac af ast =>
@@ -433,31 +420,24 @@ theorem headEncodeIn_size_le (x : flatTM × List Nat × Nat × Nat) :
     List.foldr_nil, List.length_replicate, List.length_nil]
   omega
 
-/-! ## The program — NOT YET BUILT
+/-! ## The program — ASSEMBLED (`Reductions/S1Program.lean`)
 
-`def` + `sorry` (project policy: never `axiom`). The stages are specified in
-the module docstring; the run and cost fields below are the two obligations
-this placeholder carries. -/
-
-/-- **OPEN (the S1 critical path).** The `Cmd` emitting `S1Map.s1Map` from the
-frozen head layout. See the module docstring for the seven-stage
-decomposition. -/
-def s1Program : Cmd := sorry
-
-/-- Provisional program frame. The final value is whatever the built program
-needs; it must be `≥ 6` (output 1–5 plus scratch). Keeping it `≤ 57` (the
-tail composite's frame) keeps the fourth seam's `mfc` a constant-size scrub —
-see the module docstring. -/
-def s1RegBound : Nat := 48
+`S1Program.s1Program = stagePG ;; ifBit FLG yesBranch stageMNo`. Five of its
+seven stages are built and proven; **stage C and stage M-yes** are the only
+`sorry`s left in it, and the whole guard-false branch of `computes` is proven
+end to end (`S1Program.s1Program_computes_neg`). What remains open *in this
+file* is the cost ladder. -/
 
 /-! ## The witness -/
 
 private instance : Nonempty FlatTCC := ⟨S1Map.s1No⟩
 
-/-- **The S1 free reduction witness — SKELETON.** Mechanical fields proven;
-`computes` / `cost_le` / `usesBelow` wait on `s1Program`. -/
+/-- **The S1 free reduction witness.** Every field is now discharged from a
+real program lemma except `cost_le` (the whole-program cost ladder, the LAST
+item of the S1 build plan); `computes` and `usesBelow` are conditional only on
+stage C and stage M-yes. -/
 noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map where
-  c := s1Program
+  c := S1Program.s1Program
   encodeIn := HeadLayout.headEncodeIn
   decodeOut := fun s => Function.invFun s1Key (s1Extract s)
   -- The cost ceiling: the card stream dominates, `Θ(|trans|·|Σ|⁴)` blocks of
@@ -472,27 +452,30 @@ noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map where
     inOPoly_add (inOPoly_mul (inOPoly_const 8) inOPoly_id) (inOPoly_const 4)
   encBound_mono := fun a b h => Nat.add_le_add_right (Nat.mul_le_mul_left 8 h) 4
   encodeIn_size := headEncodeIn_size_le
-  computes := by
-    -- OPEN: `s1Extract (s1Program.eval (headEncodeIn x)) = s1Key (s1Map x)`,
-    -- then `Function.leftInverse_invFun s1Key_injective`.
-    sorry
+  computes := fun x => by
+    rw [S1Program.s1Program_computes x]
+    exact Function.leftInverse_invFun s1Key_injective _
   cost_le := by
-    -- OPEN: the cost ladder over the seven stages.
+    -- OPEN (the LAST S1 item): the cost ladder over the seven stages.
     sorry
   output_size_le := S1Map.s1Map_size_le
   enc_bit := HeadLayout.headEncodeIn_bitState
   regBound := s1RegBound
-  usesBelow := by
-    -- OPEN: `decide`-able once `s1Program` is a concrete `Cmd`.
-    sorry
+  usesBelow := S1Program.s1Program_usesBelow
   width_le := fun x => by
     obtain ⟨M, s, maxSize, steps⟩ := x
     show (HeadLayout.headEncodeIn (M, s, maxSize, steps)).length ≤ s1RegBound
-    simp [HeadLayout.headEncodeIn, s1RegBound]
-  decode_agree := by
-    -- OPEN: `Cmd.eval_agree` on the padded state (the template is
-    -- `FlatTCCFree.flatTCC_reductionLang.decode_agree`); needs `usesBelow`.
-    sorry
+    simp [HeadLayout.headEncodeIn, S1Program.s1RegBound]
+  decode_agree := fun x m => by
+    have hagree : AgreeBelow s1RegBound
+        (HeadLayout.headEncodeIn x ++ List.replicate m []) (HeadLayout.headEncodeIn x) :=
+      fun r _ => State.get_append_replicate_nil _ _ _
+    have h := Cmd.eval_agree S1Program.s1Program s1RegBound
+      S1Program.s1Program_usesBelow hagree
+    show Function.invFun s1Key (s1Extract _) = Function.invFun s1Key (s1Extract _)
+    unfold S1Program.s1Extract
+    rw [h SIGMA (by decide), h INIT (by decide), h CARDS (by decide),
+      h FINAL (by decide), h STEPS (by decide)]
 
 /-- **The honest chain head — SKELETON (`sorry`-backed via `s1Program`).**
 Once `s1Program` lands this is the real `FlatSingleTMGenNP ⪯p' FlatTCC`, and
