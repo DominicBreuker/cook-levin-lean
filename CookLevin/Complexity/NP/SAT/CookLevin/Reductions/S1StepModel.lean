@@ -117,8 +117,7 @@ theorem stepCenterBlocks_seg (σ st q q' mT mV wT wV mv : Nat) :
     simp
   · refine List.flatMap_congr (fun z _ => ?_)
     have hx : xv σ st (σ + 1) = σ := by simp [xv]
-    have hb : decide (σ + 1 = σ + 1) = true := by simp
-    simp only [hx, hb, cCard]
+    simp only [hx, cCard]
     simp
 
 /-! ## `stepLeftBlocks` — two straight-line copies -/
@@ -142,7 +141,7 @@ theorem stepLeftBlocks_seg (σ q q' mT mV wT wV mv : Nat) :
   simp only [List.range_zero, List.flatMap_nil, List.nil_append]
   refine congrArg₂ _ ?_ ?_ <;>
     refine List.flatMap_congr (fun y _ => List.flatMap_congr (fun z _ => ?_)) <;>
-    simp only [lCard, decide_eq_true_eq] <;> norm_num
+    simp only [lCard] <;> norm_num
 
 /-! ## `stepRightBlocks` — the split is on the INNER loop
 
