@@ -42,6 +42,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms S1CardEmit.cFive_run` | `[propext, Classical.choice, Quot.sound]` — **stage M-yes is CLOSED and five of stage C's seven card families are BUILT** (2026-07-26-c, `Reductions/S1Program.lean` + the new `Reductions/S1CardEmit.lean`, both sorry-free): `copyBlocks`, `copyRightBlocks` and the three halt families as real `Cmd`s, assembled as `cFive`, plus the reusable emitter loop principle `emitLoop_run`, the atoms `emitBlk2`/`emitId`, `loadX` and the gated `q` loop `haltFam`. `yesBranch_run` is now modulo `stageC_run` alone. ⚠ **measured (`probes/S1CardEmitProbe.lean` §3): `preludeBlocks` is ~96% of the card register** — the prelude family, not `stepBlocks`, is the cost ladder, which reverses the planned build order |
 | `#print axioms FrontS1Comp.SAT_NPhard''_of_S1` | `[propext, Classical.choice, Quot.sound]` — **the whole HARDNESS half is `sorry`-free modulo ONE program meeting THREE contracts** (2026-07-27): `hcomputes` (`s1Extract (c.eval (headEncodeIn x)) = s1Key (s1Map x)`), `huses` (`UsesBelow c s1RegBound`), `hcost` (`c.cost (headEncodeIn x) ≤ S1Map.s1Bound (size x)`) ⇒ `NPhard'' SAT`. Front, both head seams, the S1 reduction and the entire sound tail are inside it; it does **not** route through `hasDeciderClassical` |
 | `#print axioms S1SATComp.s1Bridge` / `FrontS1Comp.frontBridge` | `[propext, (Classical.choice,) Quot.sound]` — **the last two structural interfaces are validated** (2026-07-27): the fourth seam `Reductions/S1_to_FlatTCC_comp.lean` (S1 → the composed tail; `mfc` erases reg `0` + `[6,48)`, `[48,57)` closes by the length argument) and C8-5 `Reductions/Front_to_S1_comp.lean` (front → S1 on the frozen head layout; `mfc` erases `[5,57)`). Both `mfc`s are built from the reusable `S1SATComp.clearRange`; probe `probes/SeamS1Probe.lean` |
+| `#print axioms S1Prelude.preludeBlocks_seg` | `[propext, Classical.choice, Quot.sound]` — **stage C's prelude family is emitter-shaped** (2026-07-27-b, `Reductions/S1Prelude.lean`, sorry-free): `preludeBlocks` (~96% of the card register) re-stated as `preludeSeg`, the nesting the `Cmd` implements. Four findings, each a theorem: kind loops are all *outside* the resolution loops (interleaving emits a permutation of an order-sensitive target); a kind is four numbers, not a pair-list register; `contigB` is one carried bit; the seven-segment kind split removes every on-machine comparison. Plus the reusable `emitList` and `minReg`, and the preamble `pPre` (`PConst`, incl. `min M.start M.states` and `1^((σ+1)(q0+1))`). ⚠ measured: `CDirty`'s 30 registers are **exactly** exhausted by this family, and the cost budget has ~12 orders of magnitude of slack. Probe: `probes/S1PreludeProbe.lean` |
 | Genuine `sorry`s (Group C) | **9 in built code**: 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), 3 S1 stage markers (`S1Program.lean`: `stageC` plus its `_run` / `_usesBelow` contract — only the `def` is a real gap), and 1 cost obligation (`S1Witness.s1Program_cost_le`, now a standalone named theorem with the build plan in its docstring). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
@@ -184,9 +185,13 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   seams landed 2026-07-27**, so `NPhard'' SAT` now follows from the three S1
   contracts alone (`FrontS1Comp.SAT_NPhard''_of_S1`, axiom-clean).
   **Stage M-yes is CLOSED and five of stage C's seven card families are built
-  (2026-07-26-c, `Reductions/S1CardEmit.lean`). Remaining: stage C's
-  `preludeBlocks` (~96% of the card register — the cost driver) and
-  `stepBlocks`, then the cost ladder.**
+  (2026-07-26-c, `Reductions/S1CardEmit.lean`). The prelude family — the
+  remaining cost driver — was made emitter-shaped 2026-07-27-b
+  (`Reductions/S1Prelude.lean`): `preludeBlocks_seg` fixes the `Cmd`'s
+  structure, `emitList`/`minReg` are the two atoms the last two families need,
+  and `pPre` supplies `min M.start M.states` and the head band's base.
+  Remaining: the prelude's `Cmd`, `stepBlocks`, the `stageC` assembly, then the
+  cost ladder.**
   No piece's *shape* is unknown any more, and the two open stages now have
   *stated contracts the assembly already consumes* — build to them, do not
   restate them. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
