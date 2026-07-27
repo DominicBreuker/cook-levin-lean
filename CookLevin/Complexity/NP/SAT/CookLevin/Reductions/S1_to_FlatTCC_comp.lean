@@ -244,17 +244,27 @@ theorem s1Bridge (c : Cmd)
       rw [flatTCC_encodeIn_length]
       omega
 
-/-! ## The seam and the composed witness -/
+/-! ## The seam and the composed witness
+
+Everything below is stated **over the program parameter** (`…Of`) and
+instantiated at `S1Program.s1Program` immediately after. The `…Of` forms are
+axiom-clean: they say "given a program meeting the three S1 contracts, the
+whole chain composes", which is precisely the risk statement a top-down
+session owes the bottom-up one. -/
 
 set_option maxHeartbeats 1000000 in
-/-- **The fourth live seam** — S1 into the whole composed sound tail. Every
-field but `bridge` is mechanical; `bridge` is `s1Bridge` specialised to the
-real program. -/
-noncomputable def s1_to_SAT_seam :
-    S1Witness.s1_reductionLang.SeamData FSATSATComp.flatTCC_to_SAT_witness where
+/-- **The fourth live seam**, over an arbitrary S1 program. Every field but
+`bridge` is mechanical; `bridge` is `s1Bridge`. -/
+noncomputable def s1_to_SAT_seamOf (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (S1Witness.s1WitnessOf c hcomputes huses hcost).SeamData
+      FSATSATComp.flatTCC_to_SAT_witness where
   mfc := scrub4
-  bridge := s1Bridge S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow
+  bridge := s1Bridge c hcomputes huses
   decode_frame := fun s t hst => by
     show FSATSATFree.decodeOut s = FSATSATFree.decodeOut t
     unfold FSATSATFree.decodeOut
@@ -268,15 +278,48 @@ noncomputable def s1_to_SAT_seam :
     show 48 ≤ max S1Program.s1RegBound 57
     decide
 
-/-- **The composed witness for `FlatSingleTMGenNP → SAT`** — the S1 reduction
-followed by the whole sound tail, as ONE free layer witness. -/
+/-- **The composed `FlatSingleTMGenNP → SAT` witness**, over an arbitrary S1
+program: the S1 reduction followed by the whole sound tail, as ONE free layer
+witness. -/
+noncomputable def s1_to_SAT_witnessOf (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    PolyTimeComputableLang
+      ((FSATSATFree.fsatToSat
+        ∘ (BinaryCC_to_FSAT_instance
+          ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map) :=
+  PolyTimeComputableLang.comp (S1Witness.s1WitnessOf c hcomputes huses hcost)
+    FSATSATComp.flatTCC_to_SAT_witness (s1_to_SAT_seamOf c hcomputes huses hcost)
+
+/-- The composite's register frame is the tail's `57` (the S1 witness's `48`
+is narrower). Needed as an *equation* downstream: with the program still a
+parameter, `by decide` cannot run on a goal mentioning it. -/
+theorem s1_to_SAT_witnessOf_regBound (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (s1_to_SAT_witnessOf c hcomputes huses hcost).regBound = 57 := rfl
+
+/-- **The fourth live seam** at the real program. -/
+noncomputable def s1_to_SAT_seam :
+    S1Witness.s1_reductionLang.SeamData FSATSATComp.flatTCC_to_SAT_witness :=
+  s1_to_SAT_seamOf S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le
+
+/-- **The composed witness for `FlatSingleTMGenNP → SAT`** at the real
+program. -/
 noncomputable def s1_to_SAT_witness :
     PolyTimeComputableLang
       ((FSATSATFree.fsatToSat
         ∘ (BinaryCC_to_FSAT_instance
           ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map) :=
-  PolyTimeComputableLang.comp S1Witness.s1_reductionLang
-    FSATSATComp.flatTCC_to_SAT_witness s1_to_SAT_seam
+  s1_to_SAT_witnessOf S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le
 
 /-- The composed map's pointwise correctness — the five chain steps chained
 once. Extracted so C8-5 can reuse it (its own correctness obligation is this
@@ -297,6 +340,20 @@ theorem s1_to_SAT_correct (x : flatTM × List Nat × Nat × Nat) :
               (BinaryCC_to_FSAT_instance
                 (FlatCC_to_BinaryCC_instance
                   (flatTCC_to_flatCC (S1Map.s1Map x)))))))))
+
+/-- **`FlatSingleTMGenNP ⪯p' SAT` from the three S1 contracts alone** —
+axiom-clean. This is the honest form of "S1 is the only gap left in the
+chain": supply a program that computes the output key, stays in the frame and
+runs inside `S1Map.s1Bound`, and the whole reduction to SAT follows. -/
+theorem s1_to_SAT_reducesPolyMO'_of (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    FlatSingleTMGenNP ⪯p' SAT :=
+  reducesPolyMO'_of_langFree (s1_to_SAT_witnessOf c hcomputes huses hcost)
+    s1_to_SAT_correct
 
 /-- **`FlatSingleTMGenNP ⪯p' SAT`** — the honest chain from the corrected
 universal front problem all the way to SAT, as one composed live `⪯p'`. -/

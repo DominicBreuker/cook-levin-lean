@@ -139,18 +139,34 @@ theorem frontBridge (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat)
 
 /-! ## The seam, the composed witness, and the endpoint -/
 
+/-! The seam, the composed witness and the endpoint are all stated **over the
+S1 program parameter** first (`…Of` / `…_of_S1`) and instantiated at the real
+program afterwards. The `…Of` forms are axiom-clean, so `SAT_NPhard''_of_S1`
+is a machine-checked statement of exactly what is left of Cook–Levin's
+hardness half: *one* program meeting *three* contracts. -/
+
 set_option maxHeartbeats 1000000 in
 /-- **The fifth live seam** — the per-`Q` front into the composed
 `FlatSingleTMGenNP → SAT` witness, on the frozen head layout. -/
-noncomputable def front_to_SAT_seam (W : InNPWitnessLangFreeSplit Q)
-    (cm km dm cs ks ds : Nat) :
-    (WQ W cm km dm cs ks ds).SeamData S1SATComp.s1_to_SAT_witness where
+noncomputable def front_to_SAT_seamOf (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+    (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
+    (WQ W cm km dm cs ks ds).SeamData
+      (S1SATComp.s1_to_SAT_witnessOf c hcomputes huses hcost) where
   mfc := headScrub
   bridge := frontBridge W cm km dm cs ks ds
   decode_frame := fun s t hst => by
     show FSATSATFree.decodeOut s = FSATSATFree.decodeOut t
     unfold FSATSATFree.decodeOut
-    rw [hst FSATSATFree.CNFOUT (by decide)]
+    have h57 : FSATSATFree.CNFOUT
+        < (S1SATComp.s1_to_SAT_witnessOf c hcomputes huses hcost).regBound := by
+      rw [S1SATComp.s1_to_SAT_witnessOf_regBound]
+      decide
+    rw [hst FSATSATFree.CNFOUT h57]
   mfcBound := fun _ => 110
   mfcBound_poly := inOPoly_const 110
   mfcBound_mono := fun _ _ _ => le_refl 110
@@ -161,6 +177,79 @@ noncomputable def front_to_SAT_seam (W : InNPWitnessLangFreeSplit Q)
       (Nat.le_max_right (BwidthQ W + 9) _)
 
 /-- **The whole honest chain as ONE free layer witness**: `Q → SAT`. -/
+noncomputable def front_to_SAT_witnessOf (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+    (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
+    PolyTimeComputableLang
+      (((FSATSATFree.fsatToSat
+          ∘ (BinaryCCToFSAT.BinaryCC_to_FSAT_instance
+            ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map)
+        ∘ (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x))) :=
+  PolyTimeComputableLang.comp (WQ W cm km dm cs ks ds)
+    (S1SATComp.s1_to_SAT_witnessOf c hcomputes huses hcost)
+    (front_to_SAT_seamOf c hcomputes huses hcost W cm km dm cs ks ds)
+
+/-- **`Q ⪯p' SAT` for every NP problem presented with a split free-line
+verifier witness** — the whole chain, front and tail, as one composed live
+honest `⪯p'`. -/
+theorem front_to_SAT_reducesPolyMO'_of (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+    (W : InNPWitnessLangFreeSplit Q) :
+    Q ⪯p' SAT := by
+  obtain ⟨cm, km, dm, hmB⟩ := inOPoly_monomial_bound (maxSizeOf_poly W)
+  obtain ⟨cs, ks, ds, hsB⟩ := inOPoly_monomial_bound (stepsOf_poly W)
+  refine reducesPolyMO'_of_langFree
+    (front_to_SAT_witnessOf c hcomputes huses hcost W cm km dm cs ks ds)
+    (fun x => ?_)
+  have hfront : FlatSingleTMGenNP
+      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x) ↔ Q x :=
+    fQ_correct W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x)
+      (fun x => hmB (encodable.size x))
+      (fun x cert _hrel hsize =>
+        le_trans (MQbudget_le W x cert hsize) (hsB (encodable.size x)))
+      x
+  exact hfront.symm.trans
+    (S1SATComp.s1_to_SAT_correct
+      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x))
+
+/-- **`NPhard'' SAT` from the three S1 contracts alone — AXIOM-CLEAN.**
+
+This is the whole hardness half of Cook–Levin reduced to one interface: give
+a `Cmd` that (1) lays `S1Program.s1Key (s1Map x)` on registers `1`–`5` of the
+frozen head layout, (2) stays inside `s1RegBound = 48`, and (3) costs at most
+`S1Map.s1Bound`. Nothing else is missing — not the front, not the tail, not
+either seam. Note in particular that this path does **not** go through
+`GenNP_is_hard.hasDeciderClassical`: the legacy hardness `sorry` is bypassed,
+not inherited. -/
+theorem SAT_NPhard''_of_S1 (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c S1Program.s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    NPhard'' SAT :=
+  fun _Y _eY _Q hQ => by
+    obtain ⟨W⟩ := hQ
+    exact front_to_SAT_reducesPolyMO'_of c hcomputes huses hcost W
+
+/-! ## …at the real program -/
+
+/-- **The fifth live seam** at the real S1 program. -/
+noncomputable def front_to_SAT_seam (W : InNPWitnessLangFreeSplit Q)
+    (cm km dm cs ks ds : Nat) :
+    (WQ W cm km dm cs ks ds).SeamData S1SATComp.s1_to_SAT_witness :=
+  front_to_SAT_seamOf S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le W cm km dm cs ks ds
+
+/-- **The whole honest chain as ONE free layer witness**: `Q → SAT`. -/
 noncomputable def front_to_SAT_witness (W : InNPWitnessLangFreeSplit Q)
     (cm km dm cs ks ds : Nat) :
     PolyTimeComputableLang
@@ -168,33 +257,21 @@ noncomputable def front_to_SAT_witness (W : InNPWitnessLangFreeSplit Q)
           ∘ (BinaryCCToFSAT.BinaryCC_to_FSAT_instance
             ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map)
         ∘ (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x))) :=
-  PolyTimeComputableLang.comp (WQ W cm km dm cs ks ds)
-    S1SATComp.s1_to_SAT_witness (front_to_SAT_seam W cm km dm cs ks ds)
+  front_to_SAT_witnessOf S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le W cm km dm cs ks ds
 
-/-- **`Q ⪯p' SAT` for every NP problem presented with a split free-line
-verifier witness** — the whole chain, front and tail, as one composed live
-honest `⪯p'`. -/
+/-- **`Q ⪯p' SAT`** for every NP problem presented with a split free-line
+verifier witness. -/
 theorem front_to_SAT_reducesPolyMO' (W : InNPWitnessLangFreeSplit Q) :
-    Q ⪯p' SAT := by
-  obtain ⟨cm, km, dm, hmB⟩ := inOPoly_monomial_bound (maxSizeOf_poly W)
-  obtain ⟨cs, ks, ds, hsB⟩ := inOPoly_monomial_bound (stepsOf_poly W)
-  refine reducesPolyMO'_of_langFree (front_to_SAT_witness W cm km dm cs ks ds)
-    (fun x => ?_)
-  have hfront : FlatSingleTMGenNP
-      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x) ↔ Q x :=
-    fQ_correct W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x)
-      (fun x => hmB (encodable.size x))
-      (fun x c _hrel hsize => le_trans (MQbudget_le W x c hsize) (hsB (encodable.size x)))
-      x
-  exact hfront.symm.trans
-    (S1SATComp.s1_to_SAT_correct
-      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x))
+    Q ⪯p' SAT :=
+  front_to_SAT_reducesPolyMO'_of S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le W
 
 /-- **`NPhard'' SAT`** — the honest migrated hardness statement, over NP
-problems presented with a split free-line verifier witness. -/
+problems presented with a split free-line verifier witness. Conditional only
+on the three S1 contracts (see `SAT_NPhard''_of_S1`). -/
 theorem SAT_NPhard'' : NPhard'' SAT :=
-  fun _Y _eY _Q hQ => by
-    obtain ⟨W⟩ := hQ
-    exact front_to_SAT_reducesPolyMO' W
+  SAT_NPhard''_of_S1 S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le
 
 end FrontS1Comp

@@ -428,16 +428,40 @@ seven stages are built and proven; **stage C and stage M-yes** are the only
 end to end (`S1Program.s1Program_computes_neg`). What remains open *in this
 file* is the cost ladder. -/
 
-/-! ## The witness -/
+/-! ## The witness
+
+⚠ **The witness is built in two steps on purpose (2026-07-27, top-down).**
+`s1WitnessOf` takes the program as a PARAMETER together with the three
+contracts it has to meet, and `s1_reductionLang` is its instantiation at
+`S1Program.s1Program`. That is the project's skeleton-phase discipline
+applied to the witness itself: every downstream construction (both seams, the
+composed chain, `NPhard'' SAT`) can be stated over `s1WitnessOf` and is then
+**axiom-clean**, so `#print axioms` keeps distinguishing "this interface is
+validated" from "stage C is still a placeholder". Do not inline
+`s1WitnessOf` back into `s1_reductionLang`.
+
+The three contracts are exactly the remaining S1 obligations:
+
+1. `hcomputes` — `S1Program.s1Program_computes` (open only through
+   `stageC_run`);
+2. `huses` — `S1Program.s1Program_usesBelow` (open only through
+   `stageC_usesBelow`);
+3. `hcost` — `s1Program_cost_le` below, the cost ladder, **still open**.
+-/
 
 private instance : Nonempty FlatTCC := ⟨S1Map.s1No⟩
 
-/-- **The S1 free reduction witness.** Every field is now discharged from a
-real program lemma except `cost_le` (the whole-program cost ladder, the LAST
-item of the S1 build plan); `computes` and `usesBelow` are conditional only on
-stage C and stage M-yes. -/
-noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map where
-  c := S1Program.s1Program
+/-- **The S1 free reduction witness, over an arbitrary program meeting the
+three S1 contracts.** Every other field is discharged from a proven lemma of
+this file / `S1Map`. -/
+noncomputable def s1WitnessOf (c : Cmd)
+    (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
+      s1Extract (c.eval (HeadLayout.headEncodeIn x)) = s1Key (S1Map.s1Map x))
+    (huses : Cmd.UsesBelow c s1RegBound)
+    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (HeadLayout.headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    PolyTimeComputableLang S1Map.s1Map where
+  c := c
   encodeIn := HeadLayout.headEncodeIn
   decodeOut := fun s => Function.invFun s1Key (s1Extract s)
   -- The cost ceiling: the card stream dominates, `Θ(|trans|·|Σ|⁴)` blocks of
@@ -453,15 +477,13 @@ noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map where
   encBound_mono := fun a b h => Nat.add_le_add_right (Nat.mul_le_mul_left 8 h) 4
   encodeIn_size := headEncodeIn_size_le
   computes := fun x => by
-    rw [S1Program.s1Program_computes x]
+    rw [hcomputes x]
     exact Function.leftInverse_invFun s1Key_injective _
-  cost_le := by
-    -- OPEN (the LAST S1 item): the cost ladder over the seven stages.
-    sorry
+  cost_le := hcost
   output_size_le := S1Map.s1Map_size_le
   enc_bit := HeadLayout.headEncodeIn_bitState
   regBound := s1RegBound
-  usesBelow := S1Program.s1Program_usesBelow
+  usesBelow := huses
   width_le := fun x => by
     obtain ⟨M, s, maxSize, steps⟩ := x
     show (HeadLayout.headEncodeIn (M, s, maxSize, steps)).length ≤ s1RegBound
@@ -470,12 +492,36 @@ noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map where
     have hagree : AgreeBelow s1RegBound
         (HeadLayout.headEncodeIn x ++ List.replicate m []) (HeadLayout.headEncodeIn x) :=
       fun r _ => State.get_append_replicate_nil _ _ _
-    have h := Cmd.eval_agree S1Program.s1Program s1RegBound
-      S1Program.s1Program_usesBelow hagree
+    have h := Cmd.eval_agree c s1RegBound huses hagree
     show Function.invFun s1Key (s1Extract _) = Function.invFun s1Key (s1Extract _)
     unfold S1Program.s1Extract
     rw [h SIGMA (by decide), h INIT (by decide), h CARDS (by decide),
       h FINAL (by decide), h STEPS (by decide)]
+
+/-- **OPEN — the whole-program cost ladder**, the LAST item of the S1 build
+plan and the only S1 obligation that is not a program contract.
+
+Everything a bottom-up session needs is here in the statement: bound the seven
+stages' `Cmd.cost` on the frozen head layout by `S1Map.s1Bound` (the *same*
+free polynomial that already carries `output_size_le`, degree 10 — raise it
+rather than fight for a degree, its only constraint is that it keeps
+dominating `S1Map.s1Map_size_le`). Measured leaves: P+G is cubic
+(`probes/S1ParseProbe.lean`), `S1Emit.emitBlk_cost ≤ 3 + 5v + v²` is the
+emitter leaf, `Cmd.cost_forBnd_le` sits above each loop, and
+`preludeBlocks` is ~96% of the emitted output
+(`probes/S1CardEmitProbe.lean` §3), so budget the program as that family's
+cost plus a constant factor. -/
+theorem s1Program_cost_le (x : flatTM × List Nat × Nat × Nat) :
+    S1Program.s1Program.cost (HeadLayout.headEncodeIn x)
+      ≤ S1Map.s1Bound (encodable.size x) := by
+  sorry
+
+/-- **The S1 free reduction witness** — `s1WitnessOf` at the real program.
+Its `computes`/`usesBelow` are conditional only on stage C, its `cost_le`
+only on `s1Program_cost_le`. -/
+noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map :=
+  s1WitnessOf S1Program.s1Program S1Program.s1Program_computes
+    S1Program.s1Program_usesBelow s1Program_cost_le
 
 /-- **The honest chain head — SKELETON (`sorry`-backed via `s1Program`).**
 Once `s1Program` lands this is the real `FlatSingleTMGenNP ⪯p' FlatTCC`, and
