@@ -12,178 +12,228 @@ reasonably provable).
 **reference index**, not narration: consult it before building anything, do not
 read it front to back.
 
-## Where the proof stands (2026-07-26-c)
+## Where the proof stands (2026-07-27)
 
-**The sound tail: COMPLETE & axiom-clean.**
-`FSATSATComp.flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT` — the whole chain
-`FlatTCC → FlatCC → BinaryCC → FSAT → SAT` as ONE composed free witness.
+**The hardness half of Cook–Levin is now proven modulo ONE program meeting
+THREE contracts — and that statement is `sorry`-free.**
 
-**The front (C8-0…C8-4): COMPLETE & axiom-clean.**
-`Complexity.Lang.FrontWitness.front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`
-for any `W : InNPWitnessLangFreeSplit Q`. Consume it, `WQ` and `fQ_correct` as
-black boxes — do not re-derive the front.
+```
+FrontS1Comp.SAT_NPhard''_of_S1 (c : Cmd)
+  (hcomputes : ∀ x, s1Extract (c.eval (headEncodeIn x)) = s1Key (S1Map.s1Map x))
+  (huses     : Cmd.UsesBelow c S1Program.s1RegBound)
+  (hcost     : ∀ x, c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+  : NPhard'' SAT
+depends on axioms: [propext, Classical.choice, Quot.sound]
+```
 
-**S1 — the last gap, THE CRITICAL PATH.** The program is assembled and every
-stage but **C** is built; inside stage C, five of seven card families are built.
+Front, both new seams, the S1 reduction map and the whole sound tail are all
+inside that theorem. It does **not** route through
+`GenNP_is_hard.hasDeciderClassical` — the legacy hardness `sorry` is bypassed,
+not inherited. Everything left of hardness is `S1Program.stageC` (`def`+`sorry`)
+and the cost ladder `S1Witness.s1Program_cost_le` (`sorry`), i.e. contracts (1)–(3).
 
 | piece | status |
 |---|---|
-| tableau mathematics (`Simulators/CookTableau.lean`, `GuessTableau.lean`) | ✅ incl. both size bounds |
-| reduction map + guard + correctness iff + output bound (`Reductions/S1Map.lean`) | ✅ |
-| witness fields (`Reductions/S1Witness.lean`) | ✅ all proven; only `cost_le` open |
-| program stages **P** + **G** (`Reductions/S1Parse.lean`) | ✅ |
-| stage C's pure model + `normTrans` spec + stage **M-no** (`Reductions/S1Cards.lean`) | ✅ |
-| the atom `emitBlk` + stages **Σ** / **I** / **F** (`Reductions/S1Emit.lean`) | ✅ |
-| the program `s1Program` + `computes` (both branches) + `usesBelow` (`Reductions/S1Program.lean`) | ✅ modulo `stageC_run` only |
-| **stage M-yes** (`Reductions/S1Program.lean`) | ✅ **NEW (2026-07-26-c)** |
-| **stage C families 1–5** + preamble + `cFive` (`Reductions/S1CardEmit.lean`) | ✅ **NEW (2026-07-26-c)** |
-| **stage C families 6–7** (`preludeBlocks`, `stepBlocks`) + the `stageC` assembly | ❌ open, the big one |
-| the whole-program cost ladder (`cost_le`) | ❌ open, LAST |
-| **the fourth tail seam** (S1 → the sound tail) | ❌ open, top-down, writable NOW |
-| **C8-5** (`WQ` → S1) | ❌ open, top-down, writable NOW |
+| the sound tail `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` | ✅ ONE composed free witness, axiom-clean |
+| the front `Q ⪯p' FlatSingleTMGenNP` (C8-0…C8-4) | ✅ axiom-clean; consume `WQ` / `front_reducesPolyMO'` / `fQ_correct` as black boxes |
+| tableau mathematics + both size bounds | ✅ |
+| S1 map + guard + correctness iff + output bound (`S1Map.lean`) | ✅ |
+| S1 program stages **P G Σ I F M-no M-yes** | ✅ |
+| stage C families 1–5 (`S1CardEmit.cFive`) | ✅ |
+| **the fourth seam** S1 → tail (`S1_to_FlatTCC_comp.lean`) | ✅ **NEW (2026-07-27)** |
+| **C8-5**, the fifth seam front → S1 (`Front_to_S1_comp.lean`) | ✅ **NEW (2026-07-27)** |
+| **`NPhard'' SAT`** modulo the three S1 contracts | ✅ **NEW (2026-07-27)**, axiom-clean |
+| **stage C families 6–7** (`preludeBlocks`, `stepBlocks`) + `stageC` | ❌ open — THE critical path |
+| **the cost ladder** `S1Witness.s1Program_cost_le` | ❌ open, LAST |
+| `inNPLangFreeSplit SAT` (⇒ `NPcomplete'' SAT`) | ❌ open, top-down, independent |
 
-When the two seams land,
-`Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' SAT` = `NPhard'' SAT`.
-
-**Sorries in built code: 9** — five pre-existing (`red_inNP`'s `inTimePoly`
-half in `NP.lean`; `hasDeciderClassical` in `GenNP_is_hard.lean`; 3×
-`MultiToSingle`, dead code); three in `S1Program.lean` (`stageC` /
+**Sorries in built code: 9** (unchanged) — five pre-existing (`red_inNP`'s
+`inTimePoly` half in `NP.lean`; `hasDeciderClassical` in `GenNP_is_hard.lean`;
+3× `MultiToSingle`, dead code); three in `S1Program.lean` (`stageC` /
 `stageC_run` / `stageC_usesBelow` — only the `def` is a real gap, the two
-theorems are its contract); and `S1Witness.s1_reductionLang.cost_le`.
-`S1Parse`, `S1Cards`, `S1Emit` and `S1CardEmit` are sorry-free. The headline
-`CookLevin`'s `sorryAx` is unchanged and still wholly hardness-side.
+theorems are its contract); and `S1Witness.s1Program_cost_le`.
 
 ## ★ Latest session
 
-**2026-07-26-c (bottom-up) — stage M-yes is PROVEN, and five of stage C's seven
-card families are BUILT.** `yesBranch_run` is now modulo `stageC_run` alone.
-
-New file `Reductions/S1CardEmit.lean` (~1.3K LOC, sorry-free, axiom-clean); new
-probe `probes/S1CardEmitProbe.lean` (all green). `S1Program.lean` imports it,
-and `Complexity.lean` imports both (do not forget this for new modules).
+**2026-07-27 (top-down) — the two seams landed, and "S1 is the only gap" became
+a theorem.** New: `Reductions/S1_to_FlatTCC_comp.lean`,
+`Reductions/Front_to_S1_comp.lean`, `probes/SeamS1Probe.lean`.
 
 **Endpoints to consume — do NOT re-derive:**
 
-* **`S1CardEmit.emitLoop_run`** — *the* emitter loop principle. If `body`
-  appends `encNats (f i)` to `dst` at iteration `i` and dirties only the
-  registers in a **list** `D`, then `forBnd cnt bnd body` appends
-  `encNats ((List.range n).flatMap f)`. Every family is 2–4 applications of it.
-  **Use a `List Var` dirty set, not a predicate**: `r ∉ D` at a concrete
-  register is `by decide`, and `nmem_sub (by decide)` / `ne_of_nmem (by decide)`
-  move a frame clause up a level or down to a per-gadget `≠`.
-* **`S1CardEmit.emitBlk2` / `emitId`** + `_run` — the two-source block
-  (`encNat (|src1| + |src2|)`) and the identity card `p₁ p₂ p₃ p₁ p₂ p₃`.
-  The permanently empty `CZ` supplies the `0` of a one-source value, so one
-  atom serves both shapes.
-* **`S1CardEmit.loadX` / `haltBody` / `haltFam`** — the left-context cell and
-  the shared gated `q` loop (`stageFin`'s drain, reused verbatim).
-* **`S1CardEmit.cPre` / `cCopy` / `cRight` / `cHaltLeft` / `cHaltCenter` /
-  `cHaltRight` / `cFive`** + `_run`, `CConst` / `CConst_frame`, `cFive_usesBelow`.
-* **`S1Program.stageMYes` / `stageMYes_run` / `stageMYes_usesBelow`** — closed.
-* **`S1Program.cFive_frame` / `cFive_preserves`** — the risk check that
-  `cFive`'s actual dirty set fits `CDirty`, and that it preserves registers
-  `1`–`5`, `PSIG`/`PSTATES`/`PHALT`/`PNTRANS`/`PTRANS` and `EOUT_S`/`EOUT_I`.
+* **`S1SATComp.clearRange` + `clearRange_get` / `_cost` (`≤ 2n+1`) /
+  `_usesBelow`** — the reusable scrub gadget (`clear lo … clear (lo+n)`), one
+  induction instead of a literal `clear` chain plus a 26-step `rw`. **Every
+  future seam's `mfc` should be built from this.** Its `get` lemma is a single
+  `if lo ≤ r ∧ r ≤ lo + n then [] else get t r`.
+* **`S1SATComp.scrub4` / `scrub4_get`** (erase reg `0` + `[6,48)`) and
+  **`FrontS1Comp.headScrub` / `headScrub_get`** (erase `[5,57)`).
+* **`S1SATComp.s1Bridge`** — the fourth seam's bridge over an ARBITRARY program
+  (axiom-clean), and **`FrontS1Comp.frontBridge`** — C8-5's (axiom-clean).
+* **`S1Witness.s1WitnessOf c hcomputes huses hcost`** — the S1 witness with the
+  program as a parameter; `s1_reductionLang` is its instantiation. Mirrored by
+  `S1SATComp.s1_to_SAT_{seam,witness}Of`, `s1_to_SAT_reducesPolyMO'_of`,
+  `FrontS1Comp.front_to_SAT_{seam,witness}Of`,
+  `front_to_SAT_reducesPolyMO'_of`, **`SAT_NPhard''_of_S1`**.
+* **`S1SATComp.s1_to_SAT_correct`** — the five chain steps' correctness iff,
+  chained once (reuse it; do not re-chain the five `_correct` lemmas).
+* **`S1SATComp.get_nil_of_len_le`** — the wider-right-frame closer.
 
-⚠ **FINDING A (measured: `preludeBlocks` is ~96% of the card register, and the
-card register is >99.8% of the whole output).** `probes/S1CardEmitProbe.lean`
-§3 prints `(five, step, prelude)` cell counts — e.g. `(3708, 1386, 126957)` and
-`(74, 0, 2925)` on the trivial machine. **So `preludeBlocks` alone is the cost
-ladder**, and the five families built this session are rounding error. This
-*reverses* the old build order (which put prelude third): build **prelude
-first**.
+⚠ **FINDING A — compose RIGHT-NESTED.** The endpoint is
+`W_Q ⨾ (S1 ⨾ tail)`, not `(W_Q ⨾ S1) ⨾ tail`. Then every `bridge` is a
+statement about a **plain** witness's `encodeIn`, and neither seam needs the
+stacked-seam unfolding (`heval` + `Cmd.eval_agree` push-through) of
+`Reductions/BinaryCC_to_FSAT_comp.lean`. Cost: the right witness is a
+composite, so the scrub must reach ITS frame (`max 48 57 = 57`), not the
+narrower one. **Do this for any further seam you add at the head of the chain.**
 
-⚠ **FINDING B (all five families here emit IDENTITY cards).** Premise =
-conclusion, cell for cell, which is why one `emitId_run` is their whole
-innermost body. `stepBlocks` is **not** of this shape — its conclusions move
-the head — so it needs a genuine six-value emitter (`emitBlk2` ×6 with six
-different source pairs). Budget for that; do not expect `emitId` to serve.
+⚠ **FINDING B — `omega` is blind to `Var`-typed HYPOTHESES too**, not only
+goals (the old gotcha only mentioned goals). `h : (lo : Var) + 1 ≤ r` is simply
+not seen; `have := h.1` does not help. The fix that scales: **declare register
+parameters as `Nat`, not `Var`** (they are the same type; `Cmd.op (.clear lo)`
+accepts either). `clearRange` and every lemma about it are stated over `Nat`
+binders and no `omega` in them needed retyping.
 
-⚠ **FINDING C (`Cmd.op (.copy r r)` is the layer's no-op).** It leaves every
-register's contents unchanged (`get_set_eq` at `r`, `get_set_ne` elsewhere) yet
-is frame-visible only as a write of `r`. Taking `r := dst` gives an `ifBit`
-else-branch that an emitter's frame clause accepts verbatim. `S1Emit.enop`
-(which clears `EK1`) cannot be used inside stage C — `EK1` is its block counter.
+⚠ **FINDING C — never let `exact` unify a register value against
+`State.get (headEncodeIn (fQ …)) k`.** The unifier starts evaluating
+`flattenTM (MQ …)` — the whole per-`Q` front machine — and burns a 1M-heartbeat
+budget. Rewrite the layout to a literal five-element list first
+(`hfq : fQ … = (…)` by `rfl`, then `headEncodeIn_eq`) and read registers with
+the `rfl` projections `FrontS1Comp.get5_0 … get5_4`. Same rule for any layout
+whose components are large closed constants.
 
-⚠ **FINDING D (`xv` is not incremental; `hv` is).** `xv sig states x` is the
-boundary code at `x = 0` and `x - 1` after, so the `x` loops **rebuild** `CX`
-from their own counter each iteration (`loadX`: `nonEmpty` + `ifBit` + `tail`).
-The head-cell base `CH` is the opposite — carried across `q` iterations and
-advanced by `1^(sig+1)`. Ask which of the two shapes a new value register is.
+⚠ **FINDING D — `by decide` cannot run on a goal that still mentions a
+parameter.** Once a witness is parameterised over the program, its `regBound`
+is a term with free variables, so `CNFOUT < W.regBound` is not `decide`-able.
+State the frame as an **equation** (`S1SATComp.s1_to_SAT_witnessOf_regBound :
+… .regBound = 57`, `rfl`) and `rw` it first.
 
-**Earlier, still binding (2026-07-26-b, the program assembly).**
+⚠ **FINDING E — `variable (…)` blocks do NOT give every declaration the same
+signature.** Lean includes only the variables a declaration mentions, so
+`SAT_NPhard''_of_S1` silently lost its program parameters and started
+auto-binding. For a parameterised family like this, **spell the binders out on
+each declaration.**
 
-* **`S1Program.s1Program`** `= S1Parse.stagePG ;; Cmd.ifBit S1Parse.FLG
-  yesBranch S1Cards.stageMNo`, `yesBranch = stageSig ;; stageInit ;; stageC ;;
-  stageFin ;; stageMYes` (suffix defs `ySuf1/2/3` for peeling);
-  **`s1Program_computes`** (the witness's field) with its halves
-  `noBranch_computes` (axiom-clean, quantified over an ARBITRARY yes branch) and
-  `yesBranch_run`; **`s1Program_usesBelow`**.
-* **`S1Program.stageC_run`** — ⚠ **the contract the next bottom-up session must
-  MEET, not restate.** Changing it re-opens `yesBranch_run`.
-* **`S1Program.EScratch` / `CDirty`** + `ne_of_not_scratch` / `ne_of_not_cdirty`
-  + `stageSig_frame` / `stageInit_frame` / `stageFin_frame` — the coarse frame
-  predicates. **Every new stage should state its frame this way.**
-* ⚠ **A `sorry` in a `def` poisons the STATEMENT of every lemma about it** —
-  `#print axioms` then cannot distinguish "proof incomplete" from "mentions an
-  unbuilt program". Quantify skeleton-phase lemmas over the placeholder.
-* ⚠ **`#eval` refuses ANY expression reaching a `sorry`, even down an untaken
-  branch** — probe the composition the proof reduces to, not the whole program.
-* ⚠ **`CDirty` includes `S1Parse.FLG = 17` deliberately**: `Cmd.ifBit` reads its
-  test register *before* entering the branch, so stage C may clobber the guard
-  flag and treat the whole P/G scratch block `[14,32)` as free.
+**Numeric validation (`probes/SeamS1Probe.lean`, all green).** The two scrubs'
+erase sets are pinned to `s1RegBound`/`headRegBound`; `s1Key C` is
+`FlatTCCFree.encodeIn C`'s registers `1`–`5` as *data*; and the **C8-5 bridge
+is checked end to end over the full 57-register frame** on the toy front
+machine of `probes/C8ProgramProbe.lean`, with the negative control that
+*without* the scrub the bridge is FALSE at 57 (the front program parks scratch
+at `B … B+8`, inside the right frame). The S1 side is not `#eval`-able while
+stage C is a placeholder — `probes/S1ProgramProbe.lean` §2 covers it.
 
-**Earlier, still binding (2026-07-26, the emitter stages).**
+## NEXT TOP-DOWN session
 
-* **`S1Emit.emitBlk cnt src dst`** + `emitBlk_run` / `emitBlk_cost`
-  (`≤ 3 + 5v + v²`) / `emitBlk_usesBelow`. **Every large output is built with
-  this** (or with `S1CardEmit.emitBlk2`).
-* **`S1Emit.loadSg` / `loadSg_run`** — `ESG := 1^(Sg M)`, the program's only
-  multiplication, paid once outside every loop. `Sg M = bv + 1`, so the
-  boundary code is one `tail` away (`S1CardEmit.cPre`).
-* **`stageSig` / `stageInit` / `stageFin`** + `_run` / `_usesBelow`, with the
-  models `initBlocks` + `initBlocks_eq` and `finBlocks` + `finBlocks_eq`.
-* Reusable inside stage C: **`repOne`**, **`iniCellK` / `iniLoopK_run`**,
-  `encNats_singleton`, `encFinal_append`, `encFinal_singleton`,
-  `drop_getElem_cons` / `tail_drop_succ` / `getD_of_le` / `encSyms_len_ge`.
-* ⚠ **A drained-empty `head` reads as *false*, which is exactly
-  `M.halt.getD` out of range** — so no emitter that walks `PHALT` sequentially
-  needs the `|halt| = states` guard conjunct (stage F, and the halt families).
-* ⚠ **Stage I is three consecutive loops, not one branching loop** — `pKindAt`'s
-  positional case split *partitions* the row; the only positional datum left is
-  a first-cell flag.
-* ⚠ **The guard is load-bearing, not a convenience** — `probes/S1EmitProbe.lean`
-  exhibits an off-guard instance (`M.sig = 0`, non-empty input) where stage I and
-  `preludeRow` genuinely disagree. Everything under one `Cmd.ifBit FLG` is
-  required for *correctness*.
+Hardness is done modulo the three S1 contracts, so the top-down critical path
+moves to the **membership half** and the **headline**.
 
-**Earlier, still binding (2026-07-25-c, stage C's model).** `S1Cards.cardBlocks_eq`
-/ `encCards_eq` (stage C's target is seven `List.range` streams with one proven
-equation per family), `normModel_eq` (the `normTrans` dedup is a three-number
-key pass plus one `PHALT` bit lookup), `stageMNo`, and: **never `concat` onto an
-output register** (`Op.cost concat` charges the whole destination; a unary block
-of value `v` costs `Θ(v²)`); and **`cost_bound` is a free polynomial** — raise it
-rather than contort the emitter (it must keep dominating `S1Map.s1Map_size_le`,
-that is its only constraint).
+1. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`, and now
+   the top-down critical path.** The live SAT verifier does not factor verbatim
+   as a Split witness: `assgn` certificates are `List Nat` (sentinel-unary),
+   `InNPWitnessLangFreeSplit.rel` wants `List Bool`, and `encodeState` has 8
+   trailing scratch `[]`s *after* the certificate register (so `encodeIn (x,c)
+   = encX x ++ certState c` fails on the layout, not on the mathematics). The
+   adaptation is a **`DecidesLang.FreePrecomposeData`**: trim the trailing
+   `[]`s and prepend a bits→sentinel decode `Cmd`. Template:
+   `NP/kSAT_to_SAT_free.lean`'s re-encoder. Probe the layout first
+   (`probes/SATSeamProbe.lean` has the decode helpers) — the risk is that
+   `certState`'s width is not a per-witness constant, which would break
+   `xWidth`.
+   With it, `NPcomplete'' SAT = ⟨FrontS1Comp.SAT_NPhard'', that⟩.
+2. **Swap the headline** once (1) lands: state `CookLevin'' : NPcomplete'' SAT`
+   next to the legacy `CookLevin`, and only then delete the legacy `⪯p` front
+   (`GenNP_is_hard.lean`, `L_to_LM`/`LM_to_mTM`/`mTM_to_singleTapeTM`,
+   `Simulators/MultiToSingle.lean` — that IS the S2 collapse, and it retires 4
+   of the 9 sorries). ⚠ Do the deletion as its own commit, after the new
+   headline is green: `CookLevin` is what the README's status table quotes.
+3. **The honesty audit of the composed chain** (standing architecture risk #1,
+   and it has never been done end to end). Six witnesses now compose into one:
+   check each `encodeIn` is the natural layout of its *input* type, each
+   `decodeOut` the inverse of the natural *output* layout, and that no
+   reduction work hides in an `encodeIn`. The two new seams are pure scrubs by
+   construction (`clearRange` only clears), so the audit is really about
+   `WQ.encodeInQ` (does the extra unary size register at `xWidth` count as
+   layout or as work? — it is the verifier's own `encX` plus `1^(size x)`,
+   which the front program *consumes*, so it is layout) and the four older
+   witnesses. Write the verdict into the ROADMAP risk register.
+4. **Cheap, high-value while you are there:** re-run
+   `probes/SeamS1Probe.lean`, `probes/S1CardEmitProbe.lean`,
+   `probes/S1CardModelProbe.lean` after any register-frame or model touch.
 
-**Earlier, still binding (2026-07-25-b, stages P+G).** `stagePG_run` leaves
-`1^sig`, `1^tapes`, `1^states`, `1^start`, `1^|halt|`, the halt **bit list**,
-`1^|trans|` and `encSyms (transFlat M)` in registers `6`–`13` and
-`FLG = if S1Map.s1GuardB M s then [1] else []` in register `17`, register `0`
-empty; plus `stagePG_usesBelow : UsesBelow stagePG 32` and `stagePG_frame`
-(registers `1`–`5` untouched). Its findings that still constrain new work:
+**Do NOT** re-open `s1Key`, `s1RegBound`, the `EScratch`/`CDirty` predicates,
+`stageC_run`, or the two seams' scrub ranges: `yesBranch_run` is proven against
+the first four and `s1Bridge`/`frontBridge` against the last.
 
-1. **P+G are cubic**, so the parse is not the budget driver — do not optimise it.
-2. **The parse never desynchronises, on any machine** (`flattenEntry` writes each
-   list's own length before its payload), so P/G take no validity hypothesis.
-3. **`CliqueRelTM.readNum`/`ltBit` are reused verbatim**, so registers `15`
-   (`HEAD`), `16` (`INBLK`), `22` (`LT_B`), `26` (`SKIPR`) are RESERVED for the
-   whole S1 program — stage C's own registers deliberately avoid them.
-4. **`forBnd` samples its bound register's length ONCE at entry**, so a loop may
-   overwrite its own bound.
-5. **`PHALT` (register 11) is a RAW BIT LIST** `M.halt.map bitOf`.
-6. **The suffix-peel proof shape**: name every command suffix and peel with
-   `rw [Cmd.eval_seq]`, never `rfl`; each register a suffix does not write is
-   then ONE `Cmd.eval_get_of_not_writes` (`by decide` on the write set).
+## NEXT BOTTOM-UP session — stage C's last two families, then the ladder
+
+⚠ **READ FIRST.** `S1Program.stageC_run` is already fixed and *consumed* by
+`yesBranch_run`. **Fill in the `def` and replace the `sorry` in the existing
+theorem — do not restate it.** Likewise `stageC_usesBelow` (`by simp [<every
+def>, Cmd.UsesBelow, Op.UsesBelow, <every register def>]`, the
+`S1CardEmit.cFive_usesBelow` pattern; `by decide` does not work on `UsesBelow`,
+and a sub-`Cmd` whose own defs are `private` needs its `_usesBelow` lemma —
+`unfold` then `refine ⟨lemma, ?_⟩`).
+
+**Everything below is one more `emitLoop_run` nest.** `S1CardEmit` has the
+atoms, the loop principle, the frame plumbing (`CConst`, `HD`/`ID`/`AD`,
+`nmem_sub`, `ne_of_nmem`) and five worked examples. Copy `cHaltCenter` — it is
+the richest (a gate, an incrementally carried value, a rebuilt value, three
+nested loops).
+
+1. **`preludeBlocks` FIRST — it is ~96% of the card register**
+   (`probes/S1CardEmitProbe.lean` §3 prints `(five, step, prelude)`, e.g.
+   `(3708, 1386, 126957)`), so it is both the cost ladder and the piece most
+   likely to force a redesign. Target:
+   `S1Cards.preludeBlocks sig states (min start states)`, a triple loop over the
+   kind indices (`pKindList_flatMap` ⇒ `List.range (2·sig+5)`) whose innermost
+   body filters on `contigB` over three class codes. Shape:
+   * materialise `S1Cards.resOf sig states q0 k` into a register per kind — a
+     `(value, class code)` pair list — and scan it three times;
+   * the premise triple is `Sg M + kᵢ` (`S1Cards.pcellv`), so **one register
+     holding `1^(Sg M)` plus the kind counter** is the whole premise cell
+     (`emitBlk2 EK1 ESG EJk`, the `hv` shape);
+   * the filter is `contigB c1 c2 c3` on three class codes — a small decidable
+     `Bool`, so an `ifBit` over an on-machine three-way comparison; probe the
+     truth table before writing the `Cmd`.
+2. **`stepBlocks`** — first the dedup pass (`S1Cards.normModel` / `normModel_eq`:
+   three-number keys in one "seen" register, `O(T²)` iterations of constant
+   work), then `stepBlocks`'s four sub-nests off the nine parsed numbers
+   (`entryBlocks`). ⚠ **Not identity cards** — the five built families all emit
+   `p₁p₂p₃ p₁p₂p₃`, `stepBlocks` moves the head: use `emitBlk2` ×6 with six
+   distinct source pairs, and note the `mv`-dependent branching
+   (`if mv = 2 … else if mv = 1 … else …`) is an on-machine three-way `ifBit`
+   on the move code.
+3. **Assemble `stageC`.** Emission order **must** be `cardBlocks`' order:
+   `cFive ;; <stepBlocks> ;; <preludeBlocks>` (prelude is LAST in `cardBlocks`
+   even though it should be BUILT first). Then `stageC_run` is `cFive_run` +
+   the two new `_run`s + `S1Cards.cardBlocks_eq`, and the frame obligation is
+   `S1Program.cFive_frame`'s argument widened to the new registers.
+   ⚠ `probes/S1CardEmitProbe.lean` §1 asserts `cFive`'s output is a **prefix**
+   of `encNats (cardBlocks M)`; extend it to the full equality when this lands,
+   and re-point `probes/S1ProgramProbe.lean` §2 at `s1Program` itself (the
+   `#eval`-on-`sorry` block disappears with the last placeholder).
+4. **The cost ladder, LAST — now a standalone named theorem**,
+   `S1Witness.s1Program_cost_le : s1Program.cost (headEncodeIn x) ≤
+   S1Map.s1Bound (encodable.size x)`. Its docstring carries the plan;
+   `emitBlk_cost` (`≤ 3 + 5v + v²`) is the leaf, `Cmd.cost_forBnd_le` sits above
+   each loop, P+G is cubic (`probes/S1ParseProbe.lean`), and `preludeBlocks`
+   dominates.
+   ⚠ **If `S1Map.s1Bound` turns out too tight, raise it — but raise it in ONE
+   place.** `S1Witness.s1WitnessOf` hard-codes `cost_bound := S1Map.s1Bound`
+   and `output_size_le := S1Map.s1Map_size_le`; a bigger bound needs
+   `output_size_le` re-proved as `le_trans S1Map.s1Map_size_le (mono …)` and
+   nothing else (the seams and both composites take `cost_bound` as given).
+   `cost_bound` is a FREE polynomial — its only constraint is dominating
+   `s1Map_size_le`. Never re-engineer the emitter to hit a self-imposed degree.
+
+**Recommendation: run a BOTTOM-UP session next.** Every structural interface in
+the chain is now validated and axiom-clean; the only thing between the project
+and an honest `NPhard'' SAT` is `preludeBlocks` + `stepBlocks` + the ladder.
+The top-down item 1 (`inNPLangFreeSplit SAT`) is fully independent — different
+files, no dependency on stage C — and is the right pick for a parallel agent.
+
+---
 
 ## The S1 register frame — PINNED
 
@@ -211,99 +261,70 @@ s1RegBound = 48
 `32`–`36` persist to stage M; `37`–`47` are scratch every stage reuses. Stage C
 reuses the P/G block `[14,32)` for its constants (it is free once stage G has
 run) and `EE`/`EJ1`–`EK2` for its counters; `S1Program.cFive_frame` proves that
-set sits inside `CDirty`.
+set sits inside `CDirty`. The two seams scrub against `s1RegBound = 48` and the
+tail composite's `57` — **changing `s1RegBound` means changing
+`S1SATComp.scrub4` and re-running `probes/SeamS1Probe.lean` §1.**
 
-## ★ Earlier sessions — only where a finding still binds
+## Composed-chain layouts — PINNED
 
-Everything durable lives in "Proven, reusable", "Locked invariants" and
-"Conventions"; git history has the narration.
-
-- **2026-07-24-c** — both S1 size bounds (`≤ (2·(b+1))^10`) + the reusable
-  `encodable.size` toolkit. ⚠ the enlarged base is **not** optional: a `C·b^d`
-  collapse overshoots a tight `n^10` at small `n` (`guessTableau` of the trivial
-  machine has size `2731 > 1024`), and guess's base **includes `maxSize`**.
-  Numerics: `probes/SizeBoundProbe.lean`.
-- **2026-07-20…-c** — C8-4's three pieces. ⚠ **still binding**: the `tallyCells`
-  monomial argument **cannot** discharge `fQ_correct`'s `hmax`/`hsteps` (the
-  tally only bounds `size x` from *above*), so
-  `W_Q.encodeIn x := encX x ++ [1^(size x)]` carries a unary size register —
-  which is exactly what C8-5's `mfc` must drop. `tallyCells` is UNUSED.
-- **2026-07-17…-d** — the S1 v2 redesign. Two machine-checked defects were found
-  *before* effort was spent: non-local zero-padding jump-writes (⇒ the
-  append-only frontier semantics) and the **phantom head** at the right row edge
-  (⇒ the right boundary marker + `copyRightCards`). Both are locked invariants.
-- **2026-07-02…-16** — the free line (`SeamData`/`comp`,
-  `reducesPolyMO'_of_langFree`), the C8 framework batch, the compiler completion
-  (C2), Part 0.1 (the encodable sweep), and the whole sound tail with its three
-  live seams.
-
-**Final tail exit layout** (2026-07-16; what the ENDPOINT bridge sees from the
-composed `flatTCC_to_SAT_witness`, `regBound = 57`): **reg 1 =
-`replicate |N| 1`, reg 2 = `encodeCnf N`** — the SAT verifier's
-`CLAUSE_TALLY`/`CNF_STREAM` layout, by design (`decodeOut = invFun encodeCnf`
-on reg 2); reg 0 = `serF f` (the intermediate formula, preserved); `buildSAT`
-scratch 3–26 dirty; regs 27–56 hold the LEFT composite's residue (the last
-seam's `scrub3` deliberately does not touch them — outside the right frame 27);
-regs `≥ 57` read `[]`.
+* **chain head** (`Reductions/HeadLayout.lean`, frozen 2026-07-18):
+  `headEncodeIn (M,s,maxSize,steps) = [[], encSyms (flattenTM M), encSyms s,
+  1^maxSize, 1^steps]`, `headRegBound = 5`. C8-5's `mfc` keeps `0`–`4` and
+  erases `[5,57)`.
+* **S1 exit = tail entry**: `FlatTCCFree.encodeIn C = [] :: S1Program.s1Key C`
+  (6 registers). The fourth seam's `mfc` keeps `1`–`5`, erases `0` and
+  `[6,48)`; `[48,57)` closes by `Cmd.eval_length_le`.
+* **tail exit** (`regBound = 57`): reg 1 = `1^|N|`, reg 2 = `encodeCnf N` (the
+  SAT verifier's `CLAUSE_TALLY`/`CNF_STREAM` layout; `decodeOut = invFun
+  encodeCnf` on reg 2), reg 0 = `serF f`, `buildSAT` scratch 3–26 dirty,
+  27–56 hold the left composite's residue, `≥ 57` read `[]`.
 
 ## The free line — the working architecture (use this, and only this)
 
 - **Verifiers**: free `DecidesLang` with bespoke bit-level `encodeIn`
   (numbers UNARY) → `DecidesLang.toDecidesBy`/`toInTimePoly` (live:
   `evalCnfDecidesLang`, `cliqueRelDecidesLang`).
-- **NP witnesses**: `InNPWitnessLangFree`/`inNPLangFree` (+ `inNPLangFree_to_inNP`).
+- **NP witnesses**: `InNPWitnessLangFree`/`inNPLangFree` (+ `inNPLangFree_to_inNP`);
+  hardness is quantified over `InNPWitnessLangFreeSplit` (`NPhard''`).
 - **Reductions**: free `PolyTimeComputableLang` → `toFrameworkWitness'`/
   `reducesPolyMO'_of_langFree`; verifier precomposition via
   `DecidesLang.FreePrecomposeData`/`red_inNP_of_langFree`; **witness-witness
-  composition via `SeamData`/`comp` — LIVE THRICE, stacking on composed
-  witnesses** (`FlatTCCBinComp.flatTCC_to_binaryCC_seam` →
-  `BinaryCCFSATComp.binaryCC_to_FSAT_seam` → `FSATSATComp.fsat_to_SAT_seam`
-  — the models for every next seam, incl. both frame-mismatch variants:
-  wider right frame = length argument; narrower right frame = no scrub
-  above it).
+  composition via `SeamData`/`comp` — LIVE FIVE TIMES**
+  (`FlatTCCBinComp.flatTCC_to_binaryCC_seam` →
+  `BinaryCCFSATComp.binaryCC_to_FSAT_seam` → `FSATSATComp.fsat_to_SAT_seam` →
+  `S1SATComp.s1_to_SAT_seam` → `FrontS1Comp.front_to_SAT_seam`).
+  Four seam shapes exist; pick the one that matches:
+  - **wider right frame** → length argument (`BinaryCC_to_FSAT_comp.lean`);
+  - **narrower right frame** → no scrub above it (`FSAT_to_SAT_comp.lean`);
+  - **left is a composite** → stacked seam, unfold its `.c` with one `heval`
+    and push the previous bridge through with `Cmd.eval_agree`
+    (`BinaryCC_to_FSAT_comp.lean`);
+  - **right is a composite** (preferred at the head of the chain — FINDING A)
+    → nothing to unfold, just scrub to the composite's frame
+    (`Front_to_S1_comp.lean`).
 - **Templates for new reduction witnesses** — copy these, not first principles:
   - `NP/kSAT_to_SAT_free.lean`: re-encoder + reduction sharing one program,
     fold invariants, tight `encodeIn_size`, `FreePrecomposeData`.
-  - `Reductions/FlatTCC_to_FlatCC_free.lean`: the sound-tail unguarded-map
-    pattern (backward validity transfer + unconditional iff), shared-layout
-    registers, `blockMove`/`halfMove` stream re-formatting, `encSList`
-    prefix-free injectivity, multi-field decode via `Function.invFun encKey`.
+  - `Reductions/FlatTCC_to_FlatCC_free.lean`: the unguarded-map pattern
+    (backward validity transfer + unconditional iff), shared-layout registers,
+    `blockMove`/`halfMove` stream re-formatting, `encSList` prefix-free
+    injectivity, multi-field decode via `Function.invFun encKey`.
   - `Reductions/FlatCC_to_BinaryCC_free.lean`: **the guarded-map pattern** —
     on-machine validity flag (`allLtB` reflection ↔ `isValidFlattening` via
     `validB_iff`), guard branch to the no-instance, the item view of sentinel
     streams (`encItems`/`expandItems` — ONE loop lemma for cards+final via a
     shared scratch output `BOUT` + copy-out), unary multiplication
     (`mulLoop_run`), truncated-subtraction compare.
-  - `Reductions/FlatTCC_to_BinaryCC_comp.lean`: **the seam pattern** — scrub
-    `mfc`, `interval_cases`-bridge over the frame, constant seam budget.
-  - `Reductions/BinaryCC_to_FSAT_comp.lean`: **the stacked-seam pattern** —
-    seam on a COMPOSED left witness (unfold its `.c` with one `heval`, push
-    the previous seam's bridge through with `Cmd.eval_agree`), the
-    wider-right-frame close (registers above the left frame via
-    `Cmd.eval_length_le` + `get_nil_of_len_le`), local `binConvert_key`
-    extraction of the predecessor's exit key.
-  - `Reductions/FSAT_to_SAT_comp.lean`: **the narrow-right-frame seam** —
-    when the right witness's frame is NARROWER than the left composite's,
-    the bridge only quantifies below the right frame, so `mfc` scrubs only
-    registers inside it and the left residue above needs NO handling; the
-    right `encodeIn`'s missing registers read `[]` and close by `rfl`.
-    Probe: `probes/SATSeamProbe.lean` (decode the machine's own intermediate
-    stream with `decodeF` instead of cloning noncomputable maps; check
-    bridges — not end-to-end `#eval` — on >1K-bit instances).
   - `Reductions/FSAT_to_SAT_free.lean` + `NP/FSAT_to_SAT_pre.lean`: **the
     tree-traversal pattern** — a TREE-typed *input* consumed by one forward
-    token scan of its Polish serialization: positional fresh variables
-    (`b + token index`, base `b := stream length`), right-child recovery by
-    the arity-budget scan (`subtreeScan`), and a Lean-side positional
-    equivalent (`ptseytin`) proven correct where recursion is free. **The pure
-    scan model (`budgetStep`/`subtreeTok`/`scanClauses`/`mScan`) is PROVEN =
-    the tree map** (`mScan_eq_fsatToSat`, via `subtreeTok_serF` +
-    `scanClauses_serF`) — the template for "prove the machine folds compute a
-    pure model, then close with the model≡tree equivalence" (factors the tree
-    recursion off the machine proof). The core budget-scan invariant
-    (`budgetStep_iterate_subtree`: processing `serF g`'s tokens pays off one
-    budget obligation) + the freeze lemma are reusable for any prefix-parse
-    counter.
+    token scan of its Polish serialization: positional fresh variables, right-
+    child recovery by the arity-budget scan (`subtreeScan`), and a pure scan
+    model proven equal to the tree map (`mScan_eq_fsatToSat`) — the template
+    for "prove the machine folds compute a pure model, then close with the
+    model≡tree equivalence".
+  - `Reductions/S1_to_FlatTCC_comp.lean`: **the scrub-only seam** —
+    `clearRange` + one `_get` clause + a bridge quantified over the left
+    program's contracts. **Start here for any new seam.**
 - **The canonical `LangEncodable` layer stays DEAD** (generic product encoding
   is size-unsound — `probes/UnaryProductSizeProbe.lean`). Do not rebuild it.
 
@@ -313,193 +334,108 @@ regs `≥ 57` read `[]`.
    be the natural layout of the *input* (never of `gmap v`), `decodeOut` the
    inverse of the natural *output* layout, all reduction work in the `Cmd`.
    The trivial dishonest instantiation satisfies every field — review each
-   witness. (Shared-layout registers for identity fields are fine.)
+   witness. **The end-to-end audit is NEXT-TOP-DOWN item 3 and is not done.**
 2. **Seam discipline**: pin each new witness's input layout to its
    predecessor's exit frame and document the exit layout (dirty registers
-   included) for the successor. The chain-head layout is **FROZEN
-   (2026-07-18, `Reductions/HeadLayout.lean`)** — `headEncodeIn`
-   (`headRegBound = 5`) + the `headEncodeIn_bitState` certification; the
-   S1 witness's `encodeIn` MUST be it and C8-5's seam MUST hit it. Do not
-   change it without re-running `probes/C8SeamProbe.lean` and updating both
-   build plans.
+   included) for the successor. See "Composed-chain layouts — PINNED" above;
+   changing any of them re-opens a bridge.
 3. **Guard-or-no-guard is a per-step decision**: probe invalid→invalid ON
    PAPER before coding (counterexample method: pick a tiny invalid instance,
    check whether its image is accidentally wellformed+satisfiable).
-4. **The front instance types are size-MEASURED, not string-encodable**
-   (Part 0.1 finding): `GenNPInput.rel` / `mTMGenNPFixedInput.accepts` /
-   `TMGenNPFixedInput.accepts` are abstract predicates, so their
-   `encodable.size` counts only the data fields (tapes + the two numeric
-   parameters). That is honest for `⪯p` size bounds, but **no TM can consume
-   these types as inputs** — C8 retires the abstract front entirely (scoped
-   2026-07-04: per-`Q` witnesses target corrected `FlatSingleTMGenNP`
-   directly). Never add a size-0 instance to "fix" a missing-instance error;
-   the fallback was deleted deliberately.
+4. **The front instance types are size-MEASURED, not string-encodable**:
+   `GenNPInput.rel` / `mTMGenNPFixedInput.accepts` / `TMGenNPFixedInput.accepts`
+   are abstract predicates, so `encodable.size` counts only the data fields.
+   Honest for `⪯p` size bounds, but **no TM can consume these types as
+   inputs** — C8 retires the abstract front entirely. Never add a size-0
+   instance to "fix" a missing-instance error; the fallback was deleted
+   deliberately.
 5. **`encodable.size` must DOMINATE the register content, not merely count the
-   structure (2026-07-25 S1 finding).** A size that counts a container's
-   *elements* but not their *payloads* is honest for `⪯p` output-size bounds
-   yet makes `encodeIn_size` unsatisfiable for any witness that must spell the
-   value out on tape — exactly what killed `sizeFlatTM` (flat `5` per
-   transition entry) once the S1 witness had to emit `encSyms (flattenTM M)`.
-   For every new type ask: *does some witness have to write this structure out
-   cell by cell?* If yes, the size must be the data-field sum. Same check for
-   any new `encodeIn` against an existing type's size.
-6. **The hypothesis side of hardness is dishonest-capable too (C8 finding
-   F1).** `inTimePoly`/`inNP` are classically TRUE for every predicate (the
-   cheating `DecidesBy.encode`), so any `∀ Q, inNP Q → …` hardness statement
-   is unprovable-honestly by construction. Quantify hardness over free-line
-   verifier witnesses (`NPhard''` over `InNPWitnessLangFreeSplit`, C8-0/C8-1)
-   and never "fix" a hardness obligation by strengthening only the
-   conclusion side.
+   structure.** A size that counts a container's *elements* but not their
+   *payloads* is honest for `⪯p` output-size bounds yet makes `encodeIn_size`
+   unsatisfiable for any witness that must spell the value out on tape — that
+   is what killed `sizeFlatTM`. For every new type ask: *does some witness have
+   to write this structure out cell by cell?* If yes, the size must be the
+   data-field sum.
+6. **The hypothesis side of hardness is dishonest-capable too.**
+   `inTimePoly`/`inNP` are classically TRUE for every predicate (the cheating
+   `DecidesBy.encode`), so any `∀ Q, inNP Q → …` hardness statement is
+   unprovable-honestly by construction. Quantify hardness over free-line
+   verifier witnesses (`NPhard''` over `InNPWitnessLangFreeSplit`) and never
+   "fix" a hardness obligation by strengthening only the conclusion side. Do
+   **not** close `hasDeciderClassical` with the cheating encoder.
+7. **A `sorry` inside a `def` poisons the STATEMENT of every lemma mentioning
+   it**, which blinds `#print axioms` — the project's main soundness
+   instrument. **Quantify skeleton-phase results over the placeholder.** This
+   is why `s1Bridge` takes the program as a parameter and why
+   `SAT_NPhard''_of_S1` exists; it is the single most valuable habit in this
+   codebase and it is what turns "we believe S1 is the only gap" into a
+   machine-checked fact.
 
----
+## C8 — the honest universal front: DONE (C8-0…C8-5)
 
-## C8 — the honest universal front: DONE (C8-0…C8-4), C8-5 waits on S1
+The per-`Q` front and its seam into the chain are built and the front half is
+axiom-clean. Consume as black boxes; do NOT re-derive the machine, the lifting,
+the program or the seam:
 
-The per-`Q` front is built and axiom-clean. What a future session needs:
+* `Complexity.Lang.FrontWitness.front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`,
+  the witness `WQ`, and `FrontLifting.fQ_correct` / `fQ_correct_concrete`;
+* `FrontS1Comp.frontBridge` / `front_to_SAT_seam` / `SAT_NPhard''_of_S1`.
 
-- **The endpoint to consume:** `Complexity.Lang.FrontWitness.front_reducesPolyMO'
-  : Q ⪯p' FlatSingleTMGenNP` for any `W : InNPWitnessLangFreeSplit Q`, together
-  with `WQ` (the `PolyTimeComputableLang` witness) and `fQ_correct`. **Black
-  boxes — do not re-derive the machine, the lifting or the program.** Artefact
-  lists are in "Proven, reusable".
-- **C8-5 (the seam) — the only C8 item left**, and it is now *small*: a fourth
-  `SeamData`/`comp` joining `WQ` to the S1 witness on the frozen
-  `HeadLayout.headEncodeIn` (`headRegBound = 5`). `mfc` drops `W_Q`'s extra
-  unary size register (scratch `≥ headRegBound`) and is otherwise the identity
-  onto `headEncodeIn`. **No longer blocked** — `s1_reductionLang` exists with
-  `usesBelow`/`decode_agree` proven, and the seam's `bridge` is a frame argument
-  that does not care whether stage C is a placeholder. Write it now.
-- **Why hardness is quantified over free-line verifier witnesses (finding F1 —
-  still binding).** `inTimePoly P` is classically TRUE for *every* predicate
-  (the cheating `DecidesBy.encode`), so `∀ Q, inNP Q → …` quantifies over
-  undecidable predicates and can never be honest. Hence `NPhard''` over
-  `InNPWitnessLangFreeSplit` (Cert `= List Bool`, split pair layout, `encX`
-  size bound). Never "fix" a hardness obligation by strengthening only the
-  conclusion side. Do **not** close `hasDeciderClassical` with the cheating
-  encoder — that `sorry` is the honest marker of the open hardness half.
-- **Endgame note (off the critical path).** The live SAT verifier does not
-  factor verbatim as a Split witness: `assgn` certs are `List Nat`
-  (sentinel-unary) and `encodeState` has 8 trailing scratch `[]`s after the cert
-  register. The adaptation (trailing-`[]` trim + a bits→sentinel decode-prefix
-  `Cmd`, as a `DecidesLang.FreePrecomposeData`) is needed for the in-NP half of
-  `NPcomplete'' SAT`, not for hardness.
-- **After S1 + C8-5**: swap the headline to `NPhard''`/`NPcomplete''` over the
-  composed front+tail chain and delete the legacy `⪯p` front (that IS the S2
-  collapse; `Simulators/MultiToSingle.lean` is already dead code).
+## ★ Earlier sessions — only where a finding still binds
 
-## NEXT TOP-DOWN session — the two seams (they are the last unvalidated interface)
+Everything durable lives in "Proven, reusable", "Locked invariants" and
+"Conventions"; git history has the narration.
 
-⚠ These were the previous plan's items 1–2 and are **still open**; the
-2026-07-26-b session did the program assembly instead. Nothing about them
-depends on stage C: their `bridge` fields are frame arguments over
-`s1Program_usesBelow`, which does not care that `stageC` is a placeholder.
-**Do them now** — a seam that turns out to need a different exit layout is a
-change to `s1Key`, and `s1Key` is what the whole yes branch is proven against.
-
-1. **The fourth tail seam — `Reductions/S1_to_FlatTCC_comp.lean` (first).**
-   `SeamData s1_reductionLang FSATSATComp.flatTCC_to_SAT_witness`; `mfc` is a
-   **pure scrub** of register `0` and every S1 scratch register in `[6, 57)`;
-   `bridge` is `AgreeBelow 57`; the right `encodeIn` **is**
-   `FlatTCCFree.encodeIn` (`rfl` — that is the whole point of `s1Key`).
-   Template: `Reductions/FSAT_to_SAT_comp.lean` (narrow-right-frame variant),
-   with `Reductions/FlatTCC_to_BinaryCC_comp.lean`'s `scrub` for the `mfc`.
-   ⚠ The bridge needs registers `≥ 6` of the exit state to read `[]`. Stage M-no
-   leaves the emitter registers `[32,48)` dirty and P/G leaves `[6,31]` dirty, so
-   **the scrub must clear all of `[6,48)` on BOTH branches** — check this against
-   `s1Program_usesBelow` (`48`), not against a per-branch analysis.
-   ⚠ Register `0` ends `[]` on the no-branch (`stagePG_run`) but is *not* claimed
-   empty on the yes-branch — scrub it unconditionally.
-2. **C8-5** — `SeamData WQ s1_reductionLang` on the frozen
-   `HeadLayout.headEncodeIn` (`headRegBound = 5`); `mfc` drops `W_Q`'s extra
-   unary size register (scratch `≥ headRegBound`) and is otherwise the identity.
-   Probe: `probes/C8SeamProbe.lean`.
-3. **Then the endpoint**: with both seams, `Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC
-   ⪯p' SAT` composes to `NPhard'' SAT` — swap the headline over and delete the
-   legacy `⪯p` front (that IS the S2 collapse;
-   `Simulators/MultiToSingle.lean` is already dead code).
-4. **Off the critical path, fully independent** (the right pick for a parallel
-   agent): the SAT-verifier Split adaptation for the in-NP half of
-   `NPcomplete'' SAT` — see the C8 endgame note above.
-5. **A cheap, high-value review while there** (the risk-based habit): stage C's
-   remaining two families are the *only* place where a wrong `S1Cards` model
-   would still be invisible. `probes/S1CardModelProbe.lean` §3–4 has the counts;
-   `probes/S1CardEmitProbe.lean` §1 has the prefix check. Re-run both after any
-   model touch.
-
-**Do NOT** re-open `s1Key`, the `EScratch`/`CDirty` predicates, or `stageC_run`
-from the top-down side: `yesBranch_run` is proven against all three.
-
-## NEXT BOTTOM-UP session — stage C's last two families, then the ladder
-
-⚠ **READ FIRST.** `S1Program.stageC_run` is already fixed and *consumed* by
-`yesBranch_run`. **Fill in the `def` and replace the `sorry` in the existing
-theorem — do not restate it.** Likewise `stageC_usesBelow` (`by simp [<every
-def>, Cmd.UsesBelow, Op.UsesBelow, <every register def>]`, the
-`S1CardEmit.cFive_usesBelow` pattern; `by decide` does not work on `UsesBelow`,
-and a sub-`Cmd` whose own defs are `private` needs its `_usesBelow` lemma —
-`unfold` then `refine ⟨lemma, ?_⟩`).
-
-**Everything below is one more `emitLoop_run` nest.** `S1CardEmit` has the
-atoms, the loop principle, the frame plumbing (`CConst`, `HD`/`ID`/`AD`,
-`nmem_sub`, `ne_of_nmem`) and five worked examples. Copy `cHaltCenter` — it is
-the richest (a gate, an incrementally carried value, a rebuilt value, three
-nested loops).
-
-1. **`preludeBlocks` FIRST — it is ~96% of the card register** (FINDING A;
-   `probes/S1CardEmitProbe.lean` §3). The old plan put it third; the measurement
-   says it is the whole cost ladder, so it is also the piece most likely to
-   force a redesign. Target:
-   `S1Cards.preludeBlocks sig states (min start states)`, a triple loop over the
-   kind indices (`pKindList_flatMap` ⇒ `List.range (2·sig+5)`) whose innermost
-   body filters on `contigB` over three class codes. Shape:
-   * materialise `S1Cards.resOf sig states q0 k` into a register per kind — a
-     `(value, class code)` pair list — and scan it three times;
-   * the premise triple is `Sg M + kᵢ` (`S1Cards.pcellv`), so **one register
-     holding `1^(Sg M)` plus the kind counter** is the whole premise cell
-     (`emitBlk2 EK1 ESG EJk`, the `hv` shape of FINDING D);
-   * the filter is `contigB c1 c2 c3` on three class codes — a small decidable
-     `Bool`, so an `ifBit` over an on-machine three-way comparison; probe the
-     truth table before writing the `Cmd`.
-2. **`stepBlocks`** — first the dedup pass (`S1Cards.normModel` / `normModel_eq`:
-   three-number keys in one "seen" register, `O(T²)` iterations of constant
-   work), then `stepBlocks`'s four sub-nests off the nine parsed numbers
-   (`entryBlocks`). ⚠ **Not identity cards** (FINDING B): use `emitBlk2` ×6 with
-   six distinct source pairs, and note the `mv`-dependent branching
-   (`if mv = 2 … else if mv = 1 … else …`) is an on-machine three-way `ifBit`
-   on the move code.
-3. **Assemble `stageC`.** Emission order **must** be `cardBlocks`' order:
-   `cFive ;; <stepBlocks> ;; <preludeBlocks>` (prelude is LAST in `cardBlocks`
-   even though it should be BUILT first). Then `stageC_run` is `cFive_run` +
-   the two new `_run`s + `S1Cards.cardBlocks_eq`, and the frame obligation is
-   `S1Program.cFive_frame`'s argument widened to the new registers.
-   ⚠ `probes/S1CardEmitProbe.lean` §1 asserts `cFive`'s output is a **prefix**
-   of `encNats (cardBlocks M)`; extend it to the full equality when this lands,
-   and re-point `probes/S1ProgramProbe.lean` §2 at `s1Program` itself (the
-   `#eval`-on-`sorry` block disappears with the last placeholder).
-4. **The cost ladder, LAST** — `S1Witness.s1_reductionLang.cost_le`, the
-   witness's only other open field. Measured cubic for P+G; `emitBlk_cost`
-   (`≤ 3 + 5v + v²`) is the leaf and `Cmd.cost_forBnd_le` sits above each loop.
-   Per FINDING A, budget the whole program as **`preludeBlocks`' cost plus a
-   constant-factor slack**, and remember: **raise `cost_bound` rather than fight
-   for degree 10** (it only has to dominate the cost and `S1Map.s1Map_size_le`).
-
-**Recommendation: run a TOP-DOWN session next**, on the two seams. They are the
-last *structural* interface nobody has validated, they are small, and they do
-not depend on stage C — so a bottom-up session that finishes stage C first would
-leave the same risk unretired for another cycle. A parallel bottom-up agent
-should take item 1 (`preludeBlocks`): different files, no dependency on the
-seams.
-
-**Reusable machinery — do not re-derive**: `Lang/CostFlat.lean`; the witness
-templates (`flatTCC_reductionLang`, `binaryCCFSAT_reductionLang`,
-`fsatSAT_reductionLang`, field for field); the three live seams; the
-2026-07-16 cost-assembly pattern (per-branch `private` lemmas + precomputed
-frame facts + `clear_value` discipline + symbolic `flatK` constants).
+- **2026-07-26-c** — stage M-yes + stage C's five copy/halt families
+  (`S1CardEmit`). Findings that still bind: `preludeBlocks` is ~96% of the card
+  register (build it FIRST); all five built families emit IDENTITY cards and
+  `stepBlocks` will not; `Cmd.op (.copy r r)` is the layer's no-op;
+  `xv` is rebuilt per iteration while `hv` is carried (ask which shape a new
+  value register is).
+- **2026-07-26-b** — the program assembly. `stageC_run` is the contract the
+  bottom-up session must MEET, not restate; `CDirty` deliberately includes
+  `FLG = 17` (`ifBit` reads its test register *before* entering the branch).
+- **2026-07-26** — stages Σ/I/F. Stage F needs no validity hypothesis (a
+  drained-empty `head` reads *false*, which is exactly `M.halt.getD` out of
+  range); stage I is three consecutive loops, not one branching loop; **the
+  guard is load-bearing** (`probes/S1EmitProbe.lean` exhibits an off-guard
+  instance where stage I and `preludeRow` genuinely disagree).
+- **2026-07-25-b** — stages P+G. P+G are cubic (not the budget driver); the
+  parse never desynchronises on any machine, so P/G take no validity
+  hypothesis; `forBnd` samples its bound register's length ONCE at entry;
+  `PHALT` (reg 11) is a RAW BIT LIST; registers `15`/`16`/`22`/`26` are
+  RESERVED for `CliqueRelTM.readNum`/`ltBit`.
+- **2026-07-24-c** — both S1 size bounds (`≤ (2·(b+1))^10`). ⚠ the enlarged
+  base is **not** optional: a `C·b^d` collapse overshoots a tight `n^10` at
+  small `n`, and guess's base **includes `maxSize`**.
+- **2026-07-20…-c** — C8-4. ⚠ the `tallyCells` monomial argument **cannot**
+  discharge `fQ_correct`'s `hmax`/`hsteps`, so `W_Q.encodeIn x := encX x ++
+  [1^(size x)]` carries a unary size register — which is what C8-5's `mfc`
+  drops. `tallyCells` is UNUSED.
+- **2026-07-17…-d** — the S1 v2 redesign. Two machine-checked defects found
+  *before* effort was spent: non-local zero-padding jump-writes (⇒ append-only
+  frontier semantics) and the **phantom head** at the right row edge (⇒ the
+  right boundary marker + `copyRightCards`). Both are locked invariants.
 
 ---
 
 ## Locked invariants — do NOT revisit
 
+- **The chain composes RIGHT-NESTED: `W_Q ⨾ (S1 ⨾ tail)` (2026-07-27).**
+  `S1SATComp.s1_to_SAT_witness` first, `FrontS1Comp.front_to_SAT_witness` on
+  top. Re-associating turns C8-5 into a stacked seam over a composite left
+  witness and re-opens `frontBridge`.
+- **The two new scrub ranges are PINNED to the frames they were derived from
+  (2026-07-27).** `S1SATComp.scrub4` erases `{0} ∪ [6, s1RegBound)`;
+  `FrontS1Comp.headScrub` erases `[headRegBound, 57)`. `probes/SeamS1Probe.lean`
+  §1 asserts both erase sets exactly. Changing `s1RegBound`, `headRegBound` or
+  the tail composite's `57` means changing a scrub and re-running that probe.
+- **The S1 witness is built in TWO steps and stays that way (2026-07-27).**
+  `S1Witness.s1WitnessOf` takes the program + its three contracts;
+  `s1_reductionLang` is the instantiation. Both seams, both composites and
+  `SAT_NPhard''_of_S1` are stated over the parameterised form, which is what
+  keeps them axiom-clean while stage C is a placeholder. Inlining
+  `s1WitnessOf` would silently destroy that (standing risk #7).
 - **The S1 program's SHAPE and `stageC_run` are PINNED (2026-07-26-b/-c,
   `Reductions/S1Program.lean`)**: `s1Program = stagePG ;; ifBit FLG yesBranch
   stageMNo`, `yesBranch = Σ ;; I ;; C ;; F ;; M-yes`, and `stageC_run` states
@@ -596,6 +532,30 @@ frame facts + `clear_value` discipline + symbolic `flatK` constants).
   definition.
 
 ## Proven, reusable — do not re-derive
+
+- **The two head seams and the parameterised endpoint (2026-07-27,
+  `Reductions/S1_to_FlatTCC_comp.lean` + `Reductions/Front_to_S1_comp.lean`,
+  both sorry-free; the `…Of` / `…_of_S1` forms are AXIOM-CLEAN — consume as
+  black boxes, do NOT re-derive a scrub or a bridge)**: the generic scrub
+  gadget **`S1SATComp.clearRange`** + `clearRange_get` / `clearRange_cost`
+  (`≤ 2n+1`) / `clearRange_usesBelow` and the frame closer
+  `get_nil_of_len_le`; **`scrub4`** + `scrub4_get`/`_cost`/`_usesBelow` and
+  **`headScrub`** + `headScrub_get`/`_cost`/`_usesBelow`; the layout facts
+  `headEncodeIn_length` / `flatTCC_encodeIn_length` /
+  `FrontS1Comp.headEncodeIn_eq` and the five `rfl` projections
+  `FrontS1Comp.get5_0`…`get5_4`; the two bridges **`S1SATComp.s1Bridge`**
+  (over an arbitrary S1 program) and **`FrontS1Comp.frontBridge`**; the seams
+  `s1_to_SAT_seamOf`/`s1_to_SAT_seam` and
+  `front_to_SAT_seamOf`/`front_to_SAT_seam`; the composites
+  `s1_to_SAT_witnessOf`/`s1_to_SAT_witness` (+ the frame equation
+  `s1_to_SAT_witnessOf_regBound = 57`) and
+  `front_to_SAT_witnessOf`/`front_to_SAT_witness`; the chained correctness iff
+  **`s1_to_SAT_correct`**; and the endpoints
+  `s1_to_SAT_reducesPolyMO'_of`/`s1_to_SAT_reducesPolyMO'`,
+  `front_to_SAT_reducesPolyMO'_of`/`front_to_SAT_reducesPolyMO'`,
+  **`SAT_NPhard''_of_S1`** (axiom-clean) / `SAT_NPhard''`.
+  In `S1Witness.lean`: **`s1WitnessOf`** and the open cost obligation
+  **`s1Program_cost_le`**. Probe: `probes/SeamS1Probe.lean`.
 
 - **Stage C's copy/halt families and the emitter loop principle (2026-07-26-c,
   `Reductions/S1CardEmit.lean`, sorry-free & axiom-clean — consume as black
@@ -725,10 +685,10 @@ frame facts + `clear_value` discipline + symbolic `flatK` constants).
   (`encodable.size l = sum + length`), **`encSyms_length_le_size`**
   (`≤ 2·encodable.size l` — the generic head-layout size step);
   **`flattenTM_size_le`** (`≤ 3·size M + 3`) and `headEncodeIn_size_le`
-  (`≤ 8·n + 4`); and the witness **`s1_reductionLang`** with `computes`
-  (= `S1Program.s1Program_computes`), `usesBelow`, `decode_agree` and every
-  mechanical field discharged. **OPEN in this file: `cost_le` only.**
-  (`s1Key`/`s1Extract`/`SIGMA`…`STEPS`/`s1RegBound` moved to `S1Program`.)
+  (`≤ 8·n + 4`); the parameterised witness **`s1WitnessOf`** and its
+  instantiation **`s1_reductionLang`**, every mechanical field discharged.
+  **OPEN in this file: `s1Program_cost_le` only.**
+  (`s1Key`/`s1Extract`/`SIGMA`…`STEPS`/`s1RegBound` live in `S1Program`.)
 - **The C8-3 front-piece layer (2026-07-18-b,
   `Reductions/FrontPieces.lean`, all axiom-clean, register-generic —
   C8-4/C8-5 consume these verbatim)**: `appendConst_run` (seed-`Cmd`-glued
@@ -796,13 +756,10 @@ frame facts + `clear_value` discipline + symbolic `flatK` constants).
   **`frontProgram_run`** (regs 0–4 = `headEncodeIn (M_Q, 3::encodeRegs(input),
   cm·(m+1)^km+dm, cs·(m+1)^ks+ds)` for input split as `encX x ++ [1^m]`,
   hyps `5 ≤ B`, `xWidth < B`, `MQconst` bit-level, size reg `= 1^m`, sources
-  bit-level). Probe `probes/C8ProgramProbe.lean`. ⚠ **no cost lemma yet** —
-  the next bottom-up session adds `emitRegs_cost` + `frontProgram`'s cost bound
-  (the `UsesBelow` lemmas were added 2026-07-24 — see below).
+  bit-level). Probe `probes/C8ProgramProbe.lean`; `emitRegs_cost` and
+  `frontProgram_cost_le` landed 2026-07-24-b.
 - **The C8-4 witness `WQ` + endpoint reduction (2026-07-24,
-  `Reductions/FrontWitness.lean`, all axiom-clean EXCEPT the two cost sorries
-  `cQ_cost_le`/`fQ_output_size_le`; consume these verbatim in C8-5 and to close
-  the cost ladder)**: **`front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`** (the
+  `Reductions/FrontWitness.lean`, all axiom-clean; consume verbatim)**: **`front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`** (the
   endpoint) and `WQ` (the `PolyTimeComputableLang (fQ …)` witness);
   `encSyms_injective` + `decodeSyms`/`decodeSyms_encSyms` (genuine left inverse,
   no `Classical`); **`inOPoly_monomial_bound`** (F6 constant extractor,
@@ -1111,6 +1068,27 @@ frame facts + `clear_value` discipline + symbolic `flatK` constants).
   anonymous-constructor proofs need explicit nesting or `unfold <gadget>` first
   (the whnf that reveals the `∧`-structure does not fire through a bare `def`
   name in term mode).
+- **NEW (2026-07-27): `omega` is blind to `Var`-typed HYPOTHESES, not only
+  goals.** `h : (lo : Var) + 1 ≤ r` is simply not collected ("No usable
+  constraints"), and `have := h.1` does not help. Scalable fix: **declare
+  register parameters as `Nat`** — `Var` is an `abbrev` for it, so
+  `Cmd.op (.clear lo)` accepts either, and every `omega` inside then just works
+  (`S1SATComp.clearRange` and all its lemmas are stated this way).
+- **NEW (2026-07-27): never let `exact`/`rfl` unify a value against
+  `State.get <layout applied to a big constant> k`.** The unifier starts
+  *evaluating* the constant (`flattenTM (MQ …)` — a whole compiled machine) and
+  burns a 1M-heartbeat budget. Rewrite the layout to a literal list first
+  (one `rfl` equation on opaque components) and read registers with `rfl`
+  projections (`FrontS1Comp.get5_0`…`get5_4`).
+- **NEW (2026-07-27): `by decide` cannot run on a goal that still mentions a
+  parameter** ("Expected type must not contain free variables"). Once a witness
+  is parameterised over its program, its `regBound` has free variables. State
+  the frame as an **equation** (`… .regBound = 57`, by `rfl`) and `rw` it first.
+- **NEW (2026-07-27): `variable (…)` does NOT give a family of declarations the
+  same signature** — Lean includes only the variables each declaration
+  *mentions*, so a theorem whose statement does not mention the parameters
+  silently loses them and starts auto-binding. Spell the binders out on each
+  declaration of a parameterised family.
 - **Build:** `export PATH="$HOME/.elan/bin:$PATH"; lake build` (lake **not** on
   PATH; LSP/most MCP can't find it). First build slow — kick off in background.
   Iterate one file directly: `env LEAN_PATH=$(lake env printenv LEAN_PATH)

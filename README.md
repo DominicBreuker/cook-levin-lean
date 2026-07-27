@@ -37,7 +37,10 @@ register before working.
 | `#print axioms S1Program.noBranch_computes` | **`[propext, Quot.sound]`** — **the S1 reduction program is ASSEMBLED** (2026-07-26-b, `Reductions/S1Program.lean`): `s1Program = stagePG ;; ifBit FLG yesBranch stageMNo`, and its `computes` obligation is proven — the **guard-false half outright and axiom-clean** (this lemma, stated over an arbitrary yes branch so that the placeholder stages do not pollute its axiom list), the guard-true half (`yesBranch_run`) modulo only `stageC_run` and `stageMYes_run`. `S1Witness.s1_reductionLang` now discharges `computes`, `usesBelow` and `decode_agree` from real program lemmas; **`cost_le` is its only open field.** Probe: `probes/S1ProgramProbe.lean`. |
 | `#print axioms S1CardEmit.cFive_run` | **`[propext, Classical.choice, Quot.sound]`** — **five of stage C's seven card families are BUILT** (2026-07-26-c, `Reductions/S1CardEmit.lean`, sorry-free): `copyBlocks`, `copyRightBlocks` and the three halt families as real `Cmd`s, plus the preamble `cPre` and the assembly `cFive`. Landed with them: the reusable emitter loop principle `emitLoop_run` (dirty set as a register **list**), the two-source block `emitBlk2`, the identity-card atom `emitId`, `loadX` and the shared gated `q` loop `haltFam`. Probe: `probes/S1CardEmitProbe.lean`. |
 | `#print axioms S1Program.stageMYes_run` | **`[propext, Classical.choice, Quot.sound]`** — **stage M-yes is CLOSED** (2026-07-26-c): `EOUT_T := 1^(steps+1)` off register `4` *before* the five copies overwrite it, and `s1Extract (stageMYes.eval s) = s1Key (guessTableau …)`. `yesBranch_run` is now modulo `stageC_run` alone. Also proven there: `cFive_frame` / `cFive_preserves` — the built families' dirty set really does sit inside stage C's stated licence `CDirty`, and they preserve registers `1`–`5`, `PSIG`/`PSTATES`/`PHALT`/`PNTRANS`/`PTRANS` and `EOUT_S`/`EOUT_I`. |
-| Genuine `sorry`s in built code | **9** (Group C — completion; `Reductions/S1Parse.lean`, `S1Cards.lean`, `S1Emit.lean` and `S1CardEmit.lean` are sorry-free). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). Three S1 stage markers in `Reductions/S1Program.lean` (`stageC` and its `_run` / `_usesBelow` contract — only the `def` is a real gap). One cost obligation: `S1Witness.s1_reductionLang.cost_le`. **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
+| `#print axioms FrontS1Comp.SAT_NPhard''_of_S1` | **`[propext, Classical.choice, Quot.sound]`** — **the whole HARDNESS half of Cook–Levin, `sorry`-free, modulo ONE program meeting THREE contracts** (2026-07-27). Give a `Cmd` that (1) lays `S1Program.s1Key (s1Map x)` on registers `1`–`5` of the frozen head layout, (2) stays inside `s1RegBound = 48`, and (3) costs at most `S1Map.s1Bound` — and `NPhard'' SAT` follows. Front, both new seams, the S1 reduction and the entire sound tail are inside this theorem, and it does **not** route through `hasDeciderClassical`: the legacy hardness `sorry` is bypassed, not inherited. |
+| `#print axioms S1SATComp.s1Bridge` / `FrontS1Comp.frontBridge` | **`[propext, (Classical.choice,) Quot.sound]`** — **the last two structural interfaces of the chain are VALIDATED** (2026-07-27): the fourth seam (S1 → the composed sound tail, `Reductions/S1_to_FlatTCC_comp.lean`) and C8-5 (the per-`Q` front → S1, `Reductions/Front_to_S1_comp.lean`). Both `mfc`s are pure scrubs built from the new reusable `clearRange` gadget; both bridges are stated over an *arbitrary* program meeting the S1 contracts, so stage C's placeholder cannot pollute them. Probe: `probes/SeamS1Probe.lean` (erase sets pinned to `s1RegBound`/`headRegBound`; the C8-5 bridge checked end to end over the full 57-register frame, with a negative control). |
+| `#print axioms FrontS1Comp.SAT_NPhard''` / `S1SATComp.s1_to_SAT_reducesPolyMO'` | `[propext, sorryAx, Classical.choice, Quot.sound]` — `NPhard'' SAT` and `FlatSingleTMGenNP ⪯p' SAT` at the *real* S1 program; the `sorryAx` is exactly `S1Program.stageC` (a `def`+`sorry`) and `S1Witness.s1Program_cost_le`. |
+| Genuine `sorry`s in built code | **9** (Group C — completion; `Reductions/S1Parse.lean`, `S1Cards.lean`, `S1Emit.lean` and `S1CardEmit.lean` are sorry-free). Five pre-existing: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). Three S1 stage markers in `Reductions/S1Program.lean` (`stageC` and its `_run` / `_usesBelow` contract — only the `def` is a real gap). One cost obligation: `S1Witness.s1Program_cost_le` (the whole-program cost ladder, now a standalone named theorem rather than a witness field). **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
 | Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
@@ -57,6 +60,20 @@ of `⪯p` (poly-time many-one) reductions:
 GenNP ⪯p … ⪯p FlatSingleTMGenNP ⪯p FlatTCC ⪯p FlatCC ⪯p BinaryCC ⪯p FSAT ⪯p SAT
 └──────────── front: NOT sound ────────────┘└──────────── tail: SOUND ───────────┘
 ```
+
+That is the **legacy** chain, which the headline `CookLevin` still quotes. The
+honest replacement is built and composed end to end (2026-07-27):
+
+```
+Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT ⪯p' SAT
+└─ C8 front ─┘└─ S1 ─┘└──────────────── the sound tail ───────────────────┘
+        = ONE composed free-layer witness = `NPhard'' SAT`
+```
+
+for every NP problem `Q` presented with a split free-line verifier witness —
+`sorry`-free except for the S1 program's stage C and its cost ladder (see
+`FrontS1Comp.SAT_NPhard''_of_S1` in the table above). The legacy front is
+retired only after `NPcomplete'' SAT` is stated; see `CookLevin/HANDOFF.md`.
 
 **Sound (genuine mathematics, ~3K LOC, `sorry`-free, do not touch):** the tail
 `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` (window/cover equivalence, unary
@@ -193,6 +210,19 @@ TM run is encoded as a `FlatTCC` is essentially in place.
   ⚠ Landing this required correcting `encodable FlatTM`, whose old measure
   (`sizeFlatTM`, a flat `5` per transition entry) made the witness's
   `encodeIn_size` obligation *unsatisfiable* (`probes/S1SizeGapProbe.lean`).
+  **The two remaining seams landed 2026-07-27** (`Reductions/S1_to_FlatTCC_comp.lean`,
+  `Reductions/Front_to_S1_comp.lean`, both sorry-free): the fourth seam joins
+  the S1 witness to the whole composed sound tail (`mfc` = erase register `0`
+  and the S1 scratch block `[6,48)`; registers `[48,57)` close by the
+  `Cmd.eval_length_le` length argument), and C8-5 joins the per-`Q` front to
+  that composite on the frozen head layout (`mfc` = erase `[5,57)`). Both
+  bridges are stated over an **arbitrary** program meeting the S1 contracts and
+  are axiom-clean, and the S1 witness itself is now built in two steps
+  (`S1Witness.s1WitnessOf` + its instantiation) so that the whole chain can be.
+  The payoff is `FrontS1Comp.SAT_NPhard''_of_S1` in the table above: **the
+  hardness half of Cook–Levin, `sorry`-free, modulo one program meeting three
+  contracts.** What is left of S1 is `preludeBlocks`, `stepBlocks`, the `stageC`
+  assembly and `S1Witness.s1Program_cost_le` — nothing structural.
 - **S2 (bridges).** `LM_to_mTM` / `mTM_to_singleTapeTM` use a 1-state
   `bridgeMachine` with empty transitions that **accepts everything**; the
   TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
