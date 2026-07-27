@@ -12,7 +12,7 @@ reasonably provable).
 **reference index**, not narration: consult it before building anything, do not
 read it front to back.
 
-## Where the proof stands (2026-07-27-b)
+## Where the proof stands (2026-07-27-c)
 
 **The hardness half of Cook–Levin is proven modulo ONE program meeting THREE
 contracts — and that statement is `sorry`-free.**
@@ -38,9 +38,10 @@ left of the program is `S1Program.stageC` (`def`+`sorry`) and the cost ladder
 | S1 program stages **P G Σ I F M-no M-yes** | ✅ |
 | both head seams + **`NPhard'' SAT` modulo the three contracts** | ✅ |
 | stage C families 1–5 (`S1CardEmit.cFive`) | ✅ |
-| **stage C's prelude family: model + preamble** (`S1Prelude`) | ✅ **NEW** |
-| **the prelude family's `Cmd`** (resolution nest + kind segments) | ❌ open — THE critical path |
-| **`stepBlocks`** + the `stageC` assembly | ❌ open |
+| **stage C's prelude family — the `Cmd`** (`S1Prelude.cPrelude`) | ✅ **NEW** |
+| **`stepBlocks`'s emitter-shaped model** (`S1Step.stepBlocks_seg`) | ✅ **NEW** |
+| **the `stepBlocks` `Cmd`** (dedup + entry loop + 4 sub-nests) | ❌ open — THE critical path |
+| **the `stageC` assembly** (`cFive ;; step ;; prelude`) | ❌ open, small |
 | **the cost ladder** `S1Witness.s1Program_cost_le` | ❌ open, LAST |
 | `inNPLangFreeSplit SAT` (⇒ `NPcomplete'' SAT`) | ❌ open, top-down, independent |
 
@@ -52,163 +53,145 @@ in `S1Program.lean` (`stageC` / `stageC_run` / `stageC_usesBelow` — only the
 
 ## ★ Latest session
 
-**2026-07-27-b (bottom-up) — stage C's prelude family: the model is
-emitter-shaped and the preamble is built.** New:
-`Reductions/S1Prelude.lean` (sorry-free, axiom-clean),
-`probes/S1PreludeProbe.lean`. `Reductions/S1Program.lean` now imports it (a new
-module nothing imports is invisible to `lake build`).
+**2026-07-27-c (bottom-up) — the prelude family is BUILT and `stepBlocks` is
+de-risked.** New: `Reductions/S1PreludeEmit.lean` and
+`Reductions/S1StepModel.lean` (both sorry-free & axiom-clean),
+`probes/S1PreludeEmitProbe.lean`, `probes/S1StepModelProbe.lean`.
+`Reductions/S1Program.lean` now imports `S1StepModel` (a module nothing imports
+is invisible to `lake build`).
 
 **Endpoints to consume — do NOT re-derive:**
 
-* **`S1Prelude.preludeBlocks_seg : preludeBlocks σ st q0 = preludeSeg σ st q0`**
-  — the target in exactly the nesting the emitter implements, assembled from
-  `range_seg` / `resOf_special` / `resOf_tapeBand` / `resOf_headBand` /
-  `pBody_gate` / `pGate_resShape`. **Build the `Cmd` against `preludeSeg`, not
-  against `preludeBlocks`.**
-* **`S1Prelude.emitList` + `emitList_run`** — a run of `emitBlk2`s over a *list*
-  of source pairs, `val : Var → Nat` giving each register's value. Replaces
-  `S1CardEmit.emitId` for every family that emits six *different* values (the
-  prelude and `stepBlocks` both do).
-* **`S1Prelude.minReg` + `minReg_run`** — `dst := 1^(min a b)` by draining one
-  unary register inside a loop bounded by the other. No comparison gadget: the
-  `nonEmpty` on the drain *is* the test. Needed for `min M.start M.states`
-  (prelude) and for `entryBlocks`' two state clamps (`stepBlocks`).
-* **`S1Prelude.pPre` + `pPre_run` + `pPre_usesBelow`** — the prelude preamble,
-  establishing `PConst`: `ESG = 1^sgv`, `PBV = 1^bv`, `PZ = []`, `PB5 = 1^5`,
-  and `PHB = 1^(hv σ q0 0)`. The multiplication is one `unaryMulLoop`, hoisted.
-* **`S1Prelude.PBV … PFL`** — the pinned register table (see below), and
-  `prelude_regs_cdirty` proving it sits inside stage C's licence.
+* **`S1Prelude.cPrelude` + `cPrelude_run` + `cPrelude_usesBelow` +
+  `PDirty_cdirty`** — stage C's prelude family, done. `cPrelude_run` says
+  `EOUT_C ++= encNats (preludeBlocks σ st (min start states))` off nothing but
+  `PSIG`/`PSTATES`/`PSTART`, with a frame outside `PDirty`.
+* **`S1Prelude.Emits` / `EmitsFr` + `.seq` / `.mono` / `.here` / `.nop`** — the
+  emitter contract, indexed by a *dirty register list*. **Use this for
+  `stepBlocks` too.** It is what makes a deep register-generic nest tractable:
+  `Emits D c l w` = "`c` appends `encNats l` to `EOUT_C` and touches nothing
+  outside `D ∪ {EOUT_C}`", `EmitsFr` = the same from *any* state agreeing with
+  `w` outside `D`, which removes all intermediate-state bookkeeping when
+  chaining seven segments.
+* **`S1Prelude.pRes`/`pRes_run`, `pKindCmd`/`pKindCmd_run`, `pSeg`/`pSeg_run`**
+  — register-generic gadgets, proven once and applied three times each.
+  `pSeg_run` is the template for "publish some unary values into registers,
+  then run the continuation".
+* **`S1Prelude.setLit` / `loadSum` / `loadVal` / `setFlag` / `flagRep`** — the
+  value gadgets. `loadVal cnt dst n srcs` sets `dst := 1^(n + Σ|srcs|)`, which
+  is the shape of *every* constant the kind level publishes and of most of what
+  `stepBlocks`'s entry preamble needs.
+* **`S1Step.stepBlocks_seg` / `entryBlocks_seg` / `stepSummand_seg`** — the
+  emitter-shaped target for the last family, plus `range_last` /
+  `range_first_last`, the two splits that remove its counter comparisons.
 
-⚠ **FINDING A — the three KIND loops are all OUTSIDE the three RESOLUTION
-loops.** `preludeBlocks` nests `k1,k2,k3` and only then `r1,r2,r3`. An emitter
-that interleaves them (`k1,r1,k2,r2,…`) emits a **permutation** of the target;
-`encCardsIn` is order-sensitive, so `stageC_run` would be unmeetable. The kind
-levels must publish a *description* of each kind into registers and let a
-separate resolution nest read it. **Check emission order against the model
-before writing any multi-loop emitter.**
+⚠ **FINDING G — `PJᵢ` cannot carry both the kind level's `add` and the
+resolution level's counter** (a real defect in the previously pinned register
+table, now fixed). The resolution nest sits *inside* all three kind levels, so
+it re-runs `49×` under level 1 and `7×` under level 2, clobbering `PJ1`/`PJ2`
+between the kind level's write and the emit body's read. The fix: fold `add`
+into the base — a kind level publishes `PPAᵢ := 1^pav` (`pav = base` for a star
+kind, `base + add` otherwise) and the resolution level owns `PJᵢ` outright.
+`pResLevel'`/`pKindSeg`/`preludeSeg'` are the re-coordinatised model and
+`preludeBlocks_seg'` proves it faithful. **General lesson: before pinning a
+register to two roles, check whether the two writers are separated by a loop.**
 
-⚠ **FINDING B — `resOf` needs no pair-list register.** The old plan
-(materialise `resOf k` as a `(value, class)` list and scan it three times) is
-unnecessary: every kind is one of two shapes — *star* (`k ∈ {2,3}`:
-`base, base+1, …, base+σ`, the first `σ` *live* and the last *cut*) or
-*non-star* (the single value `base + add`, class *other*). A kind is therefore
-**four numbers** `(1^k, star?, 1^base, 1^add)`.
+⚠ **FINDING H — a deep nest needs NESTED dirty lists, not one global one.**
+Both the three kind levels (`DK3 ⊆ DK2 ⊆ DK1`) and the three resolution levels
+(`DR3 ⊆ DR2 ⊆ DR1`) do. Level `i`'s frame must not claim level `i-1`'s
+registers as dirty, because the innermost body reads them. `Emits.mono` moves
+between the levels.
 
-⚠ **FINDING C — the contiguity filter is ONE carried bit.** `contigB`'s three
-class codes collapse to "a cut has been seen to the left" propagated
-left-to-right (`pBody_gate`). The skip becomes one `ifBit` around a whole loop
-instead of a test in the innermost body — one flag register, not three.
+⚠ **FINDING M — `stepBlocks` needs no on-machine comparison either.** Every
+branch reading a loop counter is a *last-iteration* test (`x = σ+1`, `y = σ`,
+`i = 1`) or the *first-iteration* test `x = 0` that `S1CardEmit.loadX` already
+does with `nonEmpty`. `S1Step.range_last` / `range_first_last` turn them into
+compile-time constants of a segment. **Stage C as a whole needs no unary
+comparison gadget.**
 
-⚠ **FINDING D — the kind loop needs NO on-machine comparison.** `range_seg`
-splits `range (2σ+5)` into the five special kinds and two `σ`-long bands; inside
-each of the seven segments the kind's shape is *constant*. Seven straight-line
-segments replace a seven-way branch, so **stage C needs no unary comparison
-gadget at all** (and the `k = 2` / `k < 5+σ` tests never have to be built).
+⚠ **FINDING N/O/P — the entry body is fully hoistable.** An entry contributes
+exactly three symbol constants (`rOf`, `wOf …false`, `wOf …true`, all `≤ σ`,
+probe-checked on out-of-range `mVal`/`wVal`); `mv` is entry-constant so ONE
+three-way `ifBit` chain wraps the body; and every `hv` cell is
+`emitBlk2 (base, counter)` off two hoisted `unaryMulLoop`s.
 
-⚠ **FINDING E — stage C's register licence is EXACTLY FULL.** `S1Program.CDirty`
-licenses 30 registers (`[14,32) ∪ [37,48) ∪ {EOUT_C}`) and the prelude family
-uses all 30 (`probes/S1PreludeProbe.lean` §3 prints the licensed-but-unused set:
-it is empty; the one repeat is the deliberate `PCS3 = EA`, `loadSg`'s dead
-scratch). **`stepBlocks` has no fresh register to claim** — it runs *before* the
-prelude and must reuse the same pool, or `CDirty` must be widened, which
-re-opens `stageC_run` and `S1Program.cFive_frame`.
+⚠ **FINDING E is WEAKER than recorded.** `cardBlocks` order is
+`cFive ;; stepBlocks ;; prelude`, and the prelude's own preamble `pPre`
+*rebuilds* every constant its nest reads (`ESG`, `PBV`, `PZ`, `PB5`, `PHB`)
+from the parse frame. So `stepBlocks` runs before anything the prelude needs
+exists and may claim the **whole** 30-register licence
+(`probes/S1PreludeEmitProbe.lean` §4 prints it). Nothing has to survive
+`stepBlocks` except registers *outside* `CDirty`.
 
-⚠ **FINDING F — the cost ladder has enormous slack, so do not engineer for
-degree.** Everything built so far (P/G, Σ, I, `cFive`, `pPre`) costs `6.3e4`
-against `S1Map.s1Bound = 9.8e16` on the probe's smallest instance, `3.2e5`
-against `6.4e18` on the largest (`probes/S1PreludeProbe.lean` §4). The prelude
-family multiplies the block count by ~13 and the per-block value by ~σ; the
-budget is degree 10. **The ladder is a slack argument.**
+⚠ **FINDING F confirmed on the dominant family.** The real `cPrelude.cost` is
+`2.8e5 … 1.2e7` on the four instances small enough to interpret, against an
+`S1Map.s1Bound` of `1.0e13` at `n = 7` — seven orders of magnitude. The ladder
+is a slack argument.
 
-## NEXT BOTTOM-UP session — finish the prelude `Cmd`, then `stepBlocks`
+⚠ **Probe gotcha that cost a full cycle**: `State` is an `abbrev` for
+`List (List Nat)`, so **`s.set v x` resolves to `List.set`**, a silent no-op
+past the end of a short list. Write `State.set s v x` explicitly in probes;
+the first draft of `S1PreludeEmitProbe` reported a uniform "σ = states = 0" run
+for every instance and the emitter was innocent.
 
-Everything below is `emitLoop_run` / `emitList_run` nests plus `ifBit`. Build
-against **`S1Prelude.preludeSeg`**, structure for structure. The design is
-fixed; the registers are pinned (table below); no unknown remains.
+## NEXT BOTTOM-UP session — `stepBlocks`, then the assembly, then the ladder
 
-1. **The resolution nest (innermost, do this first).** One
-   register-generic gadget used three times, mirroring `S1Prelude.pResLevel`:
+Three items, in order. Nothing structural is unknown; item 1 is the only large
+one.
 
-   ```
-   pRes i (next : Cmd) :=
-     ifBit PSTᵢ
-       ( ifBit CSinᵢ  <nop>  (forBnd PJᵢ PSIG (clear CSoutᵢ ;; next))   -- live
-         ;; copy PJᵢ PSIG ;; setOne CSoutᵢ ;; next )                     -- cut
-       ( copy CSoutᵢ CSinᵢ ;; next )                                     -- other
-   ```
-
-   `CSin₁ = PZ` (permanently `[]`, so the level-1 gate is always false),
-   `CSout₁ = CSin₂ = PCS2`, `CSout₂ = CSin₃ = PCS3`; level 3's `CSout` is dead
-   (reuse `PCS3`). The innermost body is
-   `emitList EK1 EOUT_C [(ESG,PKV1),(ESG,PKV2),(ESG,PKV3),(PPA1,PJ1),(PPA2,PJ2),(PPA3,PJ3)]`
-   — the premise cells are `sgv + kᵢ = |ESG| + |PKVᵢ|` and the conclusions
-   `|PPAᵢ| + |PJᵢ|`.
-   ⚠ **`clear CSoutᵢ` at the *start* of every live iteration is load-bearing**:
-   a deeper level's *cut* branch sets the flag, and without the reset the next
-   iteration of this loop would inherit it. It is sound precisely because the
-   live branch only runs when `CSinᵢ` is false.
-   `<nop>` is `Cmd.op (.copy EOUT_C EOUT_C)` (`S1CardEmit.copy_self_get`).
-
-2. **The kind levels.** One gadget of seven segments, used three times, each
-   segment setting `(PKVᵢ, PSTᵢ, PPAᵢ, PJᵢ)` then calling `next` — so `next`
-   occurs 7× per level in the `Cmd` but the `_run` lemma is applied 7×, not
-   343×. Flags: true is `clear r ;; appendOne r`, false is `clear r`.
-
-   | segment | `PKVᵢ` | `PSTᵢ` | `PPAᵢ` | `PJᵢ` |
-   |---|---|---|---|---|
-   | `k=0` | `[]` | false | `PBV` | `[]` |
-   | `k=1` | `1^1` | false | `[]` | `PSIG` |
-   | `k=2` | `1^2` | **true** | `[]` | — |
-   | `k=3` | `1^3` | **true** | `PHB` | — |
-   | `k=4` | `1^4` | false | `PHB` | `PSIG` |
-   | tape band | `PB5 ++ PKCᵢ` | false | `[]` | `PKCᵢ` |
-   | head band | `PB5 ++ PSIG ++ PKCᵢ` | false | `PHB` | `PKCᵢ` |
-
-   Both bands are `forBnd PKCᵢ PSIG (…)`. Build `PKVᵢ` with `tallyReg` into a
-   cleared register (never `concat` — locked invariant).
-
-3. **Assemble** `cPrelude := pPre ;; <kind level 1>` and prove
-   `cPrelude_run : EOUT_C ++= encNats (preludeBlocks σ st (min start states))`
-   via `preludeBlocks_seg`. Frame clause: `r ≠ EOUT_C → r ∉ PAll`.
-
-4. **`stepBlocks`** — the last family. First the dedup (`S1Cards.normModel` /
-   `normModel_eq`: three-number keys in one "seen" register, `O(T²)`
-   iterations), then `stepBlocks`'s four sub-nests off the nine parsed numbers
-   (`entryBlocks`). Use **`minReg`** for `min e.src_state M.states` and
-   `min e.dst_state M.states`, and **`emitList`** for the six blocks (these are
-   **not** identity cards). The `mv`-dependent three-way branch is an on-machine
-   `ifBit` chain on the move code. ⚠ FINDING E: reuse the prelude's registers.
-
-5. **Assemble `stageC`.** Emission order **must** be `cardBlocks`' order:
-   `cFive ;; <stepBlocks> ;; <prelude>` — prelude is LAST in `cardBlocks` even
-   though it is BUILT first. Then `stageC_run` is `cFive_run` + the two new
-   `_run`s + `S1Cards.cardBlocks_eq`, and `stageC_usesBelow` is
-   `by simp [<every def>, Cmd.UsesBelow, Op.UsesBelow, <every register def>]`
-   (`by decide` does not work on `UsesBelow`; a sub-`Cmd` with `private` defs
-   needs its own `_usesBelow` lemma). ⚠ `probes/S1CardEmitProbe.lean` §1 asserts
-   `cFive`'s output is a **prefix** of `encNats (cardBlocks M)`; extend it to
-   full equality, and re-point `probes/S1ProgramProbe.lean` §2 at `s1Program`.
-
-6. **The cost ladder, LAST** — `S1Witness.s1Program_cost_le`; its docstring
-   carries the plan. `emitBlk_cost` (`≤ 3 + 5v + v²`) is the leaf,
+1. **The `stepBlocks` `Cmd`.** Build against **`S1Step.stepSeg`**, structure for
+   structure, in the `Emits`/`EmitsFr` style. Suggested order:
+   1. **The entry preamble** (per entry, outside every loop): the nine numbers
+      off `PTRANS`, the two clamped states via `S1Prelude.minReg`, the three
+      symbol constants (finding N — a tag test plus `minReg`), and the two
+      head-cell bases `1^((σ+1)(q+1))` / `1^((σ+1)(q'+1))` via
+      `BinaryCCFSATFree.unaryMulLoop` (see `S1Prelude.pMulBlk` for the shape).
+   2. **The four sub-families**, each one `EmitsFr` chain of segments
+      (`S1Step.stepCenterSeg` = 3 segments, `stepLeftSeg` = 2, `stepRightSeg` =
+      an `x` loop whose body is 2 segments, `stepInBlocks` = the `mv` arms).
+      `S1CardEmit.emitLoop_run` for every loop, `S1Prelude.emitList` for the
+      six-cell card (these are **not** identity cards), `S1CardEmit.loadX` for
+      `xv`.
+   3. **The `mv` chain** (finding O) around the whole entry body, then
+   4. **the dedup + entry loop**: `S1Cards.normModel`/`normModel_eq` is the
+      spec — the "seen" register holds three-number keys, so the pass is
+      `O(T²)` `eqBit`s. ⚠ Reading the *nine numbers of entry `i`* out of
+      `PTRANS` is a `readItem`-style cursor walk; `S1Parse.readItem`/
+      `entryLoop_run` already do exactly this walk for the parse and are the
+      template.
+   ⚠ Registers: the whole `CDirty` pool is yours (finding E, weakened) — but
+   whatever you use, `pPre` must still be able to rebuild the prelude's
+   constants from `PSIG`/`PSTATES`/`PSTART`/`PHALT`, which are outside `CDirty`
+   and must stay untouched.
+2. **Assemble `stageC`.** Emission order **must** be `cardBlocks`' order:
+   `cFive ;; <stepBlocks> ;; cPrelude` — the prelude is LAST in `cardBlocks`
+   even though it was BUILT first. Then `stageC_run` is `cFive_run` + the two
+   new `_run`s + `S1Cards.cardBlocks_eq`, with the frames closed by
+   `S1Program.cFive_frame`, the new family's frame and
+   `S1Prelude.PDirty_cdirty`. `stageC_usesBelow` is `⟨cFive_usesBelow, _,
+   cPrelude_usesBelow⟩`. **Fill in the `def` and replace the `sorry` in the two
+   existing theorems — do not restate them.**
+   ⚠ `probes/S1CardEmitProbe.lean` §1 asserts `cFive`'s output is a **prefix**
+   of `encNats (cardBlocks M)`; extend it to full equality once `stageC` is
+   concrete, and re-point `probes/S1ProgramProbe.lean` §2 at `s1Program`.
+3. **The cost ladder, LAST** — `S1Witness.s1Program_cost_le`; its docstring
+   carries the plan. `S1Emit.emitBlk_cost` (`≤ 3 + 5v + v²`) is the leaf,
    `Cmd.cost_forBnd_le` sits above each loop, the prelude dominates.
-   ⚠ FINDING F: use slack. If `S1Map.s1Bound` is still too tight, raise it in
-   ONE place — `S1Witness.s1WitnessOf` hard-codes `cost_bound := S1Map.s1Bound`
-   and `output_size_le := S1Map.s1Map_size_le`; a bigger bound needs only
-   `output_size_le` re-proved as `le_trans s1Map_size_le (mono …)`. **Never
-   re-engineer the emitter to hit a self-imposed degree.**
+   ⚠ FINDING F: use slack, do not engineer for degree. If `S1Map.s1Bound` is
+   still too tight, raise it in ONE place — `S1Witness.s1WitnessOf` hard-codes
+   `cost_bound := S1Map.s1Bound` and `output_size_le := S1Map.s1Map_size_le`; a
+   bigger bound needs only `output_size_le` re-proved as
+   `le_trans s1Map_size_le (mono …)`.
 
 **Do NOT** re-open `s1Key`, `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`, or
 the two seams' scrub ranges: `yesBranch_run` is proven against the first four
-and `s1Bridge`/`frontBridge` against the last. **Fill in the `stageC` `def` and
-replace the `sorry` in the existing theorems — do not restate them.**
+and `s1Bridge`/`frontBridge` against the last.
 
 ## NEXT TOP-DOWN session — the membership half, then the headline
 
 Hardness is done modulo the three S1 contracts, so the top-down critical path is
-the other half of `NPcomplete'' SAT`. All three items below are independent of
-stage C (different files), so a top-down agent can run in parallel with a
-bottom-up one.
+the other half of `NPcomplete'' SAT`. All items below are independent of stage C
+(different files), so a top-down agent can run in parallel with a bottom-up one.
 
 1. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`, and the
    top-down critical path.** The live SAT verifier does not factor verbatim as
@@ -237,17 +220,27 @@ bottom-up one.
    extra unary size register at `xWidth` is the verifier's own `encX` plus
    `1^(size x)`, which the front program *consumes* — layout, not work) and the
    four older witnesses. Write the verdict into the ROADMAP risk register.
-4. **Cheap while you are there:** re-run `probes/SeamS1Probe.lean`,
-   `probes/S1PreludeProbe.lean`, `probes/S1CardEmitProbe.lean`,
-   `probes/S1CardModelProbe.lean` after any register-frame or model touch.
+4. **Independent and cheap, pick one if (1) stalls:**
+   * re-run `probes/SeamS1Probe.lean`, `probes/S1PreludeProbe.lean`,
+     `probes/S1PreludeEmitProbe.lean`, `probes/S1StepModelProbe.lean`,
+     `probes/S1CardEmitProbe.lean`, `probes/S1CardModelProbe.lean` after any
+     register-frame or model touch (⚠ `S1PreludeEmitProbe` takes ~6 min: the
+     emitter appends cell by cell, so interpreting it is quadratic);
+   * **S3 retirement bookkeeping**: the honest `⪯p'`/`NPhard''` line is now
+     end-to-end, so the ROADMAP's S3 entry can be re-scoped from "must be
+     built" to "must be *switched to*, then the old one deleted" — write down
+     exactly which declarations still mention `reducesPolyMO`/`NPhard` on the
+     proof path;
+   * **a `#print axioms` regression list**: there is no single place that
+     asserts which theorems are expected axiom-clean. A `probes/AxiomProbe.lean`
+     listing the ~20 endpoint names would catch an accidental `sorryAx`
+     inheritance (standing risk #7) in one run.
 
-**Recommendation: run a BOTTOM-UP session next.** The only thing between the
-project and an honest `NPhard'' SAT` is the prelude `Cmd`, `stepBlocks`, the
-`stageC` assembly and the ladder — and the prelude's design is now fixed, so
-that session is execution rather than discovery. Top-down item 1 is the right
-pick for a parallel agent.
-
----
+**Recommendation: run a BOTTOM-UP session next.** `stepBlocks` is the only
+large piece left before an honest `NPhard'' SAT`, its model is now fixed
+(`S1Step.stepSeg`) and its emitter style is fixed (`Emits`/`EmitsFr` +
+`pSeg_run`), so that session is execution rather than discovery. Top-down item
+1 is the right pick for a parallel agent.
 
 ## The S1 register frame — PINNED
 
@@ -279,23 +272,29 @@ set sits inside `CDirty`. The two seams scrub against `s1RegBound = 48` and the
 tail composite's `57` — **changing `s1RegBound` means changing
 `S1SATComp.scrub4` and re-running `probes/SeamS1Probe.lean` §1.**
 
-**Stage C's prelude family (`Reductions/S1Prelude.lean`) — PINNED, and it uses
-EVERY register `CDirty` licenses (finding E):**
+**Stage C's prelude family (`S1Prelude.lean` + `S1PreludeEmit.lean`) — PINNED
+and BUILT. `PPAᵢ` holds `1^pav` (`pav = base` for a star kind, `base + add`
+otherwise) and `PJᵢ` is owned by the resolution level alone — see FINDING G:**
 
 ```
-14 PBV  1^(bv σ st)      19 PKV2 1^k₂    23 PKV3 1^k₃    28 PJ1 level 1's add/j
-15 PKV1 1^k₁             20 PST2 star?   24 PST3 star?   29 PJ2 level 2's add/j
-16 PST1 star?            21 PPA2 1^base  25 PPA3 1^base  30 PJ3 level 3's add/j
-17 PPA1 1^base           22 PKC2 band    26 PKC3 band    31 PCS2 cut-seen → 2
+14 PBV  1^(bv σ st)      19 PKV2 1^k₂    23 PKV3 1^k₃    28 PJ1 res level 1's j
+15 PKV1 1^k₁             20 PST2 star?   24 PST3 star?   29 PJ2 res level 2's j
+16 PST1 star?            21 PPA2 1^pav   25 PPA3 1^pav   30 PJ3 res level 3's j
+17 PPA1 1^pav            22 PKC2 band    26 PKC3 band    31 PCS2 cut-seen → 2
 18 PKC1 band counter     27 PZ   []                      38 PCS3 cut-seen → 3
 37 ESG 1^(Sg M)=1^sgv   39 PHB 1^(hv σ q0 0)   41 PQ0 1^q0    43 PCN preamble cnt
 40 PB5 1^5              42 PDR the min drain   44 PA1 1^(q0+1) 45 PA2 1^(σ+1)
-46 EK1 the block tally  47 PFL preamble flag   34 EOUT_C the output
+46 EK1 tally + block cnt 47 PFL preamble flag  34 EOUT_C the output
 ```
 `PCS3 = S1Emit.EA` is a deliberate reuse of `loadSg`'s scratch, dead once the
-preamble has finished. `S1Prelude.PAll` is the list, `prelude_regs_cdirty` the
-proof it is inside the licence, `probes/S1PreludeProbe.lean` §3 the numeric
-check that nothing collides and nothing is spare.
+preamble has finished. `S1Prelude.PDirty` is the list, `PDirty_cdirty` the proof
+it is inside the licence, `probes/S1PreludeEmitProbe.lean` §3 the numeric check.
+
+⚠ **`stepBlocks` is NOT constrained by this table** (FINDING E, weakened): it
+emits *before* the prelude, and `pPre` rebuilds every constant the nest reads,
+so it may use the whole `CDirty` pool. What it must NOT touch is anything
+outside `CDirty` — the input layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/
+`PNTRANS`/`PTRANS`, and `EOUT_S`/`EOUT_I`.
 
 ## Composed-chain layouts — PINNED
 
@@ -413,54 +412,63 @@ the program or the seam:
   the witness `WQ`, and `FrontLifting.fQ_correct` / `fQ_correct_concrete`;
 * `FrontS1Comp.frontBridge` / `front_to_SAT_seam` / `SAT_NPhard''_of_S1`.
 
-## ★ Earlier sessions — only where a finding still binds
+## ★ Earlier findings that still bind
 
-Everything durable lives in "Proven, reusable", "Locked invariants" and
-"Conventions"; git history has the narration.
+Narration lives in git history; the durable results are in "Proven, reusable",
+"Locked invariants" and "Conventions". These are the *findings* a new gadget
+still has to respect:
 
-- **2026-07-26-c** — stage M-yes + stage C's five copy/halt families
-  (`S1CardEmit`). Findings that still bind: `preludeBlocks` is ~96% of the card
-  register; all five built families emit IDENTITY cards and `stepBlocks` will
-  not; `Cmd.op (.copy r r)` is the layer's no-op; `xv` is rebuilt per iteration
-  while `hv` is carried (ask which shape a new value register is).
-- **2026-07-26-b** — the program assembly. `stageC_run` is the contract the
-  bottom-up session must MEET, not restate; `CDirty` deliberately includes
-  `FLG = 17` (`ifBit` reads its test register *before* entering the branch).
-- **2026-07-26** — stages Σ/I/F. Stage F needs no validity hypothesis (a
-  drained-empty `head` reads *false*, which is exactly `M.halt.getD` out of
-  range); stage I is three consecutive loops, not one branching loop; **the
-  guard is load-bearing** (`probes/S1EmitProbe.lean` exhibits an off-guard
-  instance where stage I and `preludeRow` genuinely disagree).
-- **2026-07-25-b** — stages P+G. P+G are cubic (not the budget driver); the
-  parse never desynchronises on any machine, so P/G take no validity
-  hypothesis; `forBnd` samples its bound register's length ONCE at entry;
-  `PHALT` (reg 11) is a RAW BIT LIST; registers `15`/`16`/`22`/`26` are
+- `preludeBlocks` is ~96% of the card register, so the prelude is stage C's
+  cost driver; `cFive`'s five families all emit IDENTITY cards and `stepBlocks`
+  does **not** (use `S1Prelude.emitList`, not `S1CardEmit.emitId`).
+- `Cmd.op (.copy r r)` is the layer's no-op (`S1CardEmit.copy_self_get`);
+  `forBnd` samples its bound register's length ONCE at entry; `ifBit` reads its
+  test register *before* entering the branch (which is why `CDirty` includes
+  `FLG = 17`).
+- `xv` is rebuilt per iteration while `hv` is carried — ask which shape a new
+  value register is.
+- Stages P/G/F take **no** validity hypothesis (the parse never desynchronises;
+  a drained-empty `head` reads *false*, exactly `M.halt.getD` out of range) —
+  but **the guard is load-bearing** for stage I (`probes/S1EmitProbe.lean`
+  exhibits an off-guard instance where stage I and `preludeRow` disagree).
+- `PHALT` (reg 11) is a RAW BIT LIST; registers `15`/`16`/`22`/`26` are
   RESERVED for `CliqueRelTM.readNum`/`ltBit`.
-- **2026-07-24-c** — both S1 size bounds (`≤ (2·(b+1))^10`). ⚠ the enlarged
-  base is **not** optional: a `C·b^d` collapse overshoots a tight `n^10` at
-  small `n`, and guess's base **includes `maxSize`**.
-- **2026-07-20…-c** — C8-4. ⚠ the `tallyCells` monomial argument **cannot**
-  discharge `fQ_correct`'s `hmax`/`hsteps`, so `W_Q.encodeIn x := encX x ++
-  [1^(size x)]` carries a unary size register — which is what C8-5's `mfc`
-  drops. `tallyCells` is UNUSED.
-- **2026-07-17…-d** — the S1 v2 redesign. Two machine-checked defects found
-  *before* effort was spent: non-local zero-padding jump-writes (⇒ append-only
-  frontier semantics) and the **phantom head** at the right row edge (⇒ the
-  right boundary marker + `copyRightCards`). Both are locked invariants.
+- Both S1 size bounds are `≤ (2·(b+1))^10` and the **enlarged base is not
+  optional**: a `C·b^d` collapse overshoots a tight `n^10` at small `n`, and
+  guess's base includes `maxSize`.
+- `W_Q.encodeIn x := encX x ++ [1^(size x)]` carries a unary size register
+  because the `tallyCells` monomial argument cannot discharge `fQ_correct`'s
+  `hmax`/`hsteps`; C8-5's `mfc` drops it. `tallyCells` is UNUSED.
+- The S1 v2 redesign's two machine-checked defects — non-local zero-padding
+  jump-writes and the **phantom head** at the right row edge — are why the tape
+  is append-only at the frontier and why `confRow` carries a right boundary
+  marker. Both are locked invariants below.
 
 ---
 
 ## Locked invariants — do NOT revisit
 
-- **The prelude family's emission order and register table are PINNED
-  (2026-07-27-b).** `S1Prelude.preludeSeg` fixes the nesting (kind loops
-  outside resolution loops — finding A), and the register table above is
-  exactly stage C's whole licence (finding E). Changing either re-opens
-  `preludeBlocks_seg`, `pPre_run` and `S1Program.cFive_frame`.
-- **Stage C needs NO unary comparison gadget (2026-07-27-b).** The seven-segment
-  split (`S1Prelude.range_seg`) makes every kind's shape a compile-time
-  constant, and `minReg` does the two `min`s by draining. Do not build a
-  `<`/`=`-on-unary gadget for stage C.
+- **The prelude family is BUILT; its emission order and register table are
+  PINNED (2026-07-27-b/-c).** `S1Prelude.preludeSeg`/`preludeSeg'` fix the
+  nesting (kind loops outside resolution loops — finding A) and `cPrelude` is
+  the emitter. Changing either re-opens `preludeBlocks_seg`,
+  `preludeBlocks_seg'`, `pPre_run`, `cPrelude_run` and `S1Program.cFive_frame`.
+- **Stage C needs NO unary comparison gadget — BOTH families (2026-07-27-b/-c).**
+  The seven-segment split (`S1Prelude.range_seg`) makes every prelude kind's
+  shape a compile-time constant; `S1Step.range_last`/`range_first_last` do the
+  same for `stepBlocks`' three last-iteration tests; `S1Prelude.minReg` does
+  every `min` by draining and `S1CardEmit.loadX` does every "is the counter
+  zero?" with `nonEmpty`. Do not build a `<`/`=`-on-unary gadget for stage C.
+- **A register may not be shared by two writers separated by a loop
+  (2026-07-27-c, FINDING G).** The pinned table gave `PJᵢ` to both the kind
+  level and the resolution level; because the resolution nest runs inside the
+  kind levels, the kind level's value never survived to the emit body. Fold the
+  extra value into an existing register (`PPAᵢ := 1^pav`) instead of making the
+  frame conditional. Applies to every future multi-level emitter.
+- **A deep register-generic nest needs NESTED dirty lists (2026-07-27-c,
+  FINDING H).** `DK3 ⊆ DK2 ⊆ DK1` and `DR3 ⊆ DR2 ⊆ DR1`: level `i`'s frame must
+  not claim level `i-1`'s registers, because the innermost body reads them. One
+  global dirty list does not work. `S1Prelude.Emits.mono` is the bridge.
 - **The chain composes RIGHT-NESTED: `W_Q ⨾ (S1 ⨾ tail)` (2026-07-27).**
   `S1SATComp.s1_to_SAT_witness` first, `FrontS1Comp.front_to_SAT_witness` on
   top. Re-associating turns C8-5 into a stacked seam over a composite left
@@ -572,6 +580,38 @@ Everything durable lives in "Proven, reusable", "Locked invariants" and
   definition.
 
 ## Proven, reusable — do not re-derive
+
+- **Stage C's prelude family — THE `Cmd` (2026-07-27-c,
+  `Reductions/S1PreludeEmit.lean`, sorry-free & axiom-clean — consume as black
+  boxes; do NOT re-derive an emitter nest)**: the family
+  **`cPrelude`/`cPrelude_run`/`cPrelude_usesBelow`** and `PDirty`/
+  **`PDirty_cdirty`**; the emitter contract **`Emits`** (dirty-list-indexed
+  "appends `encNats l` to `EOUT_C`") + `Emits.seq`/`.mono`/`.nop`/`.congr_l`
+  and **`EmitsFr`** (the same from any state agreeing outside `D`) +
+  `EmitsFr.seq`/`.here` — **use these for `stepBlocks` too**; the
+  register-generic gadgets **`pRes`/`pRes_run`** (one resolution level),
+  **`pSeg`/`pSeg_run`** (publish unary values, then continue) and
+  **`pKindCmd`/`pKindCmd_run`** (one kind level = seven segments), each proven
+  once and applied three times; the assemblies `resNest`/`resNest_run`,
+  `kindNest`/`kindNest_run`, `pEmit`/`pEmit_run` and every `_usesBelow`; the
+  value gadgets **`setLit`/`loadSum`/`loadVal`/`setFlag`** + `sumLen`/
+  `sumLen_congr` and the flag codec **`flagRep`**/`setTrue`; and the
+  re-coordinatised model `pResLevel'`/`pKindSeg`/`pKindSeg_of`/`pKindSeg_eq`/
+  `preludeSeg'` + **`preludeBlocks_seg'`**.
+  Probe: `probes/S1PreludeEmitProbe.lean` (⚠ ~6 min).
+- **`stepBlocks`'s emitter-shaped model (2026-07-27-c,
+  `Reductions/S1StepModel.lean`, sorry-free & axiom-clean — build the `Cmd`
+  against these, do NOT re-derive a segment split)**: the range splits
+  **`range_last`** (`range (n+1) = range n ++ [n]`) and **`range_first_last`**
+  (`range (σ+2) = [0] ++ (range σ).map (·+1) ++ [σ+1]`); the per-card cells
+  `cCard`/`lCard`/`rCard` (each keeps `mv` as a parameter so one `_run` lemma
+  serves all three `mv` arms); the four family reformulations
+  `stepCenterSeg`/`stepLeftSeg`/`stepRightSeg` + `stepCenterBlocks_seg`/
+  `stepLeftBlocks_seg`/`stepRightBlocks_seg`; and the endpoints **`stepSeg`** +
+  **`stepBlocks_seg`**, `entrySeg` + `entryBlocks_seg`, and
+  **`stepSummand_seg`** (`(normTrans M).flatMap (entryBlocks M) =
+  (normModel M).flatMap (entrySeg M)`, the target the entry loop must meet).
+  Probe: `probes/S1StepModelProbe.lean`.
 
 - **Stage C's prelude family — model + preamble + two general atoms
   (2026-07-27-b, `Reductions/S1Prelude.lean`, sorry-free & axiom-clean —
