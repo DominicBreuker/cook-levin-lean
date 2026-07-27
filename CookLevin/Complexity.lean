@@ -34,5 +34,7 @@ import Complexity.NP.SAT.CookLevin.Reductions.S1Parse
 import Complexity.NP.SAT.CookLevin.Reductions.S1Cards
 import Complexity.NP.SAT.CookLevin.Reductions.S1Emit
 import Complexity.NP.SAT.CookLevin.Reductions.S1CardEmit
+import Complexity.NP.SAT.CookLevin.Reductions.S1_to_FlatTCC_comp
+import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
 
 set_option autoImplicit false
