@@ -1,4 +1,4 @@
-import Complexity.NP.SAT.CookLevin.Reductions.S1CardEmit
+import Complexity.NP.SAT.CookLevin.Reductions.S1Prelude
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
