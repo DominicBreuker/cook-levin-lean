@@ -1384,4 +1384,274 @@ theorem entryPre_run (M : flatTM) (e : FlatTMTransEntry) (rest : List Nat)
     cases haltBit (M.halt.map S1Parse.bitOf) e.src_state <;>
       cases seenHit (e.src_state, oTag o, oVal o) seen <;> rfl
 
+/-! ## The entry loop
+
+`emitFold_run` at `α = List key × List entry`, `nxt = stepSt`, `out = stepOut M`,
+`a0 = ([], M.trans)`, `n = |M.trans|`; `stepSummand_fold` turns the resulting
+`(range n).flatMap (fun i => stepOut M (stepSt^[i] a0))` into the `stepBlocks`
+summand. -/
+
+/-- Prefix an `Emits` with one op that writes inside `LD`. -/
+theorem Emits.pre_op {c : Cmd} {l : List Nat} {t : State} (o : Op)
+    (hw : o.writesTo ∈ LD) (h : Emits LD c l ((Cmd.op o).eval t)) :
+    Emits LD (Cmd.op o ;; c) l t := by
+  obtain ⟨hO, hF⟩ := h
+  have hop : ∀ r : Var, r ≠ o.writesTo → State.get ((Cmd.op o).eval t) r = State.get t r :=
+    fun r hr => Op.eval_get_ne_writesTo o t r hr
+  refine ⟨?_, fun r a b => ?_⟩
+  · rw [Cmd.eval_seq, hO, hop EOUT_C (ne_of_nmem (by decide : (EOUT_C : Var) ∉ LD) hw)]
+  · rw [Cmd.eval_seq, hF r a b, hop r (ne_of_nmem b hw)]
+
+/-- **The entry loop's body**, guarded on its own cursor (FINDING T). -/
+def entryBody : Cmd :=
+  Cmd.op (.nonEmpty SAX SCUR) ;;
+  Cmd.ifBit SAX (entryPre ;; Cmd.ifBit SKP stepEmit snop) snop
+
+/-- The loop's carried invariant: the cursor holds the remaining entries'
+stream, the seen register holds the seen keys, and the machine constants and
+the two read-only parse outputs are standing. -/
+def LInv (M : flatTM) (a : List (Nat × Nat × Nat) × List FlatTMTransEntry)
+    (t : State) : Prop :=
+  State.get t SCUR = encSyms (a.2.flatMap flattenEntry)
+  ∧ State.get t SSEEN = encSyms (keyFlat a.1)
+  ∧ SConst M.sig M.states t
+  ∧ State.get t S1Parse.PSTATES = List.replicate M.states 1
+  ∧ State.get t S1Parse.PHALT = M.halt.map S1Parse.bitOf
+  ∧ (∀ e ∈ a.2, e.src_tape_vals.length = 1 ∧ e.dst_write_vals.length = 1
+      ∧ e.move_dirs.length = 1)
+
+theorem LInv_set (M : flatTM) (a : List (Nat × Nat × Nat) × List FlatTMTransEntry)
+    (t : State) (i : Nat) (h : LInv M a t) :
+    LInv M a (State.set t SCNT (List.replicate i 1)) := by
+  obtain ⟨hC, hS, ⟨c1, c2, c3, c4, c5⟩, hst, hph, har⟩ := h
+  refine ⟨?_, ?_, ⟨?_, ?_, ?_, ?_, ?_⟩, ?_, ?_, har⟩ <;>
+    rw [State.get_set_ne _ _ _ _ (by decide)] <;>
+    first
+      | exact hC | exact hS | exact c1 | exact c2 | exact c3 | exact c4 | exact c5
+      | exact hst | exact hph
+
+/-- `encSyms` of a non-empty entry stream is non-empty — what makes the cursor
+guard decide "is there another entry?". -/
+private theorem entryStream_ne_nil (e : FlatTMTransEntry) (l : List Nat) :
+    encSyms (flattenEntry e ++ l) ≠ [] := by
+  rw [show flattenEntry e ++ l
+      = e.src_state :: (((flattenEntry e).tail) ++ l) from by
+    rw [show flattenEntry e = e.src_state :: (flattenEntry e).tail from rfl]
+    rfl, S1Parse.encSyms_cons]
+  simp [S1Parse.itemOf]
+
+theorem entryBody_step (M : flatTM) (a : List (Nat × Nat × Nat) × List FlatTMTransEntry)
+    (t : State) (h : LInv M a t) :
+    Emits LD entryBody (stepOut M a) t ∧ LInv M (stepSt a) (entryBody.eval t) := by
+  obtain ⟨hC, hS, hconst, hst, hph, har⟩ := h
+  set u := (Cmd.op (.nonEmpty SAX SCUR)).eval t with hud
+  have uFr : ∀ r : Var, r ≠ SAX → State.get u r = State.get t r := by
+    intro r hr; rw [hud, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  have uA : State.get u SAX
+      = if (encSyms (a.2.flatMap flattenEntry)).isEmpty then [0] else [1] := by
+    rw [hud, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq, hC]
+  clear_value u
+  have hev : entryBody.eval t
+      = (Cmd.ifBit SAX (entryPre ;; Cmd.ifBit SKP stepEmit snop) snop).eval u := by
+    rw [hud]; unfold entryBody; rw [Cmd.eval_seq]
+  obtain ⟨seen, es⟩ := a
+  cases es with
+  | nil =>
+      have hx : State.get u SAX ≠ [1] := by rw [uA]; simp [encSyms]
+      have hE : Emits LD entryBody [] t := by
+        refine Emits.pre_op (.nonEmpty SAX SCUR) (by decide) ?_
+        rw [← hud]
+        refine Emits.congr_l ?_ rfl
+        show Emits LD (Cmd.ifBit SAX (entryPre ;; Cmd.ifBit SKP stepEmit snop) snop) [] u
+        refine ⟨?_, fun r _ _ => ?_⟩
+        · rw [Cmd.eval_ifBit_false _ _ _ _ hx, snop_get, encNats_nil, List.append_nil]
+        · rw [Cmd.eval_ifBit_false _ _ _ _ hx, snop_get]
+      refine ⟨hE, ?_⟩
+      have heq : entryBody.eval t = snop.eval u := by
+        rw [hev, Cmd.eval_ifBit_false _ _ _ _ hx]
+      have hall : ∀ r : Var, r ≠ SAX → State.get (entryBody.eval t) r = State.get t r := by
+        intro r hr; rw [heq, snop_get]; exact uFr r hr
+      obtain ⟨c1, c2, c3, c4, c5⟩ := hconst
+      exact ⟨by rw [hall SCUR (by decide)]; exact hC,
+        by rw [hall SSEEN (by decide)]; exact hS,
+        ⟨by rw [hall CBV (by decide)]; exact c1, by rw [hall CS1 (by decide)]; exact c2,
+         by rw [hall CS2 (by decide)]; exact c3, by rw [hall CZ (by decide)]; exact c4,
+         by rw [hall S1Parse.PSIG (by decide)]; exact c5⟩,
+        by rw [hall S1Parse.PSTATES (by decide)]; exact hst,
+        by rw [hall S1Parse.PHALT (by decide)]; exact hph,
+        har⟩
+  | cons e es =>
+      obtain ⟨ha1, ha2, ha3⟩ := har e (by simp)
+      have hcur : State.get u SCUR
+          = encSyms (flattenEntry e ++ es.flatMap flattenEntry) := by
+        rw [uFr SCUR (by decide), hC, List.flatMap_cons]
+      have hx : State.get u SAX = [1] := by
+        rw [uA, List.flatMap_cons]
+        rw [if_neg (by
+          intro hc
+          exact entryStream_ne_nil e (es.flatMap flattenEntry) (List.isEmpty_iff.mp hc))]
+      have hseen : State.get u SSEEN = encSyms (keyFlat seen) := by
+        rw [uFr SSEEN (by decide)]; exact hS
+      have hconstU : SConst M.sig M.states u := by
+        obtain ⟨c1, c2, c3, c4, c5⟩ := hconst
+        exact ⟨by rw [uFr CBV (by decide)]; exact c1, by rw [uFr CS1 (by decide)]; exact c2,
+          by rw [uFr CS2 (by decide)]; exact c3, by rw [uFr CZ (by decide)]; exact c4,
+          by rw [uFr S1Parse.PSIG (by decide)]; exact c5⟩
+      have hstU : State.get u S1Parse.PSTATES = List.replicate M.states 1 := by
+        rw [uFr S1Parse.PSTATES (by decide)]; exact hst
+      have hphU : State.get u S1Parse.PHALT = M.halt.map S1Parse.bitOf := by
+        rw [uFr S1Parse.PHALT (by decide)]; exact hph
+      obtain ⟨pE, pC, pS, pP⟩ := entryPre_run M e (es.flatMap flattenEntry) seen u
+        ha1 ha2 ha3 hcur hseen hconstU hstU hphU
+      set v := entryPre.eval u with hvd
+      have vKeeps : ∀ r : Var, r ∉ LD → State.get v r = State.get u r := by
+        intro r hr; rw [hvd]; exact keeps_of_writes (by decide) u r hr
+      have vconst : SConst M.sig M.states v := by
+        obtain ⟨c1, c2, c3, c4, c5⟩ := hconstU
+        exact ⟨by rw [vKeeps CBV (by decide)]; exact c1,
+          by rw [vKeeps CS1 (by decide)]; exact c2,
+          by rw [vKeeps CS2 (by decide)]; exact c3,
+          by rw [vKeeps CZ (by decide)]; exact c4,
+          by rw [vKeeps S1Parse.PSIG (by decide)]; exact c5⟩
+      have vst : State.get v S1Parse.PSTATES = List.replicate M.states 1 := by
+        rw [vKeeps S1Parse.PSTATES (by decide)]; exact hstU
+      have vph : State.get v S1Parse.PHALT = M.halt.map S1Parse.bitOf := by
+        rw [vKeeps S1Parse.PHALT (by decide)]; exact hphU
+      have vO : State.get v EOUT_C = State.get u EOUT_C :=
+        vKeeps EOUT_C (by decide)
+      clear_value v
+      -- the two branches of the emit gate
+      have hout : stepOut M (seen, e :: es)
+          = (if (seen.any fun k => decide (k = keyOf e))
+              || haltBit (M.halt.map S1Parse.bitOf) e.src_state
+            then [] else entrySeg M e) := rfl
+      have hhit : seenHit (keyOf e) seen = seen.any fun k => decide (k = keyOf e) := rfl
+      have hbranch : Emits LD (Cmd.ifBit SKP stepEmit snop) (stepOut M (seen, e :: es)) v
+          ∧ (∀ r : Var, r ≠ EOUT_C → r ∉ LD →
+              State.get ((Cmd.ifBit SKP stepEmit snop).eval v) r = State.get v r) := by
+        by_cases hc : (seen.any fun k => decide (k = keyOf e))
+            || haltBit (M.halt.map S1Parse.bitOf) e.src_state
+        · have hp : State.get v SKP ≠ [1] := by
+            rw [pP, hhit, hc]; exact fun hh => by cases hh
+          have hE : Emits LD (Cmd.ifBit SKP stepEmit snop) [] v := by
+            refine ⟨?_, fun r _ _ => ?_⟩
+            · rw [Cmd.eval_ifBit_false _ _ _ _ hp, snop_get, encNats_nil, List.append_nil]
+            · rw [Cmd.eval_ifBit_false _ _ _ _ hp, snop_get]
+          rw [hout, if_pos hc]
+          exact ⟨hE, fun r a b => by
+            rw [Cmd.eval_ifBit_false _ _ _ _ hp, snop_get]⟩
+        · have hp : State.get v SKP = [1] := by
+            rw [pP, hhit]
+            simp only [hc, Bool.not_false]
+            rfl
+          have hmv : encMoveN (e.move_dirs.headD TMMove.Nmove) = 0
+              ∨ encMoveN (e.move_dirs.headD TMMove.Nmove) = 1
+              ∨ encMoveN (e.move_dirs.headD TMMove.Nmove) = 2 := by
+            cases e.move_dirs.headD TMMove.Nmove <;> simp [encMoveN]
+          have hSE := (stepEmit_run M.sig M.states _ _ _ _ _ _ _ v hmv vconst pE).here
+          have hE : Emits LD (Cmd.ifBit SKP stepEmit snop) (entrySeg M e) v := by
+            refine Emits_of_eval (Emits.mono SD1_LD hSE) ?_
+            rw [Cmd.eval_ifBit_true _ _ _ _ hp]
+          rw [hout, if_neg hc]
+          exact ⟨hE, fun r a b => by
+            rw [Cmd.eval_ifBit_true _ _ _ _ hp]
+            exact (Emits.mono SD1_LD hSE).2 r a b⟩
+      obtain ⟨hEb, hFb⟩ := hbranch
+      -- the emission
+      have hEmit : Emits LD entryBody (stepOut M (seen, e :: es)) t := by
+        refine Emits.pre_op (.nonEmpty SAX SCUR) (by decide) ?_
+        rw [← hud]
+        show Emits LD (Cmd.ifBit SAX (entryPre ;; Cmd.ifBit SKP stepEmit snop) snop)
+          (stepOut M (seen, e :: es)) u
+        refine ⟨?_, fun r a b => ?_⟩
+        · rw [Cmd.eval_ifBit_true _ _ _ _ hx, Cmd.eval_seq, ← hvd, hEb.1, vO]
+        · rw [Cmd.eval_ifBit_true _ _ _ _ hx, Cmd.eval_seq, ← hvd, hFb r a b]
+          exact vKeeps r b
+      refine ⟨hEmit, ?_⟩
+      -- the carried state
+      have heq : entryBody.eval t = (Cmd.ifBit SKP stepEmit snop).eval v := by
+        rw [hev, Cmd.eval_ifBit_true _ _ _ _ hx, Cmd.eval_seq, ← hvd]
+      have hkeep : ∀ r : Var, r ≠ EOUT_C → r ∉ SD1 →
+          State.get (entryBody.eval t) r = State.get v r := by
+        intro r a b
+        rw [heq]
+        by_cases hp : State.get v SKP = [1]
+        · rw [Cmd.eval_ifBit_true _ _ _ _ hp]
+          exact ((stepEmit_run M.sig M.states _ _ _ _ _ _ _ v
+            (by cases e.move_dirs.headD TMMove.Nmove <;> simp [encMoveN])
+            vconst pE).here).2 r a b
+        · rw [Cmd.eval_ifBit_false _ _ _ _ hp, snop_get]
+      obtain ⟨c1, c2, c3, c4, c5⟩ := vconst
+      exact ⟨by rw [hkeep SCUR (by decide) (by decide)]; exact pC,
+        by rw [hkeep SSEEN (by decide) (by decide)]; exact pS,
+        ⟨by rw [hkeep CBV (by decide) (by decide)]; exact c1,
+         by rw [hkeep CS1 (by decide) (by decide)]; exact c2,
+         by rw [hkeep CS2 (by decide) (by decide)]; exact c3,
+         by rw [hkeep CZ (by decide) (by decide)]; exact c4,
+         by rw [hkeep S1Parse.PSIG (by decide) (by decide)]; exact c5⟩,
+        by rw [hkeep S1Parse.PSTATES (by decide) (by decide)]; exact vst,
+        by rw [hkeep S1Parse.PHALT (by decide) (by decide)]; exact vph,
+        fun x hx' => har x (by simp [hx'])⟩
+
+/-! ### The family -/
+
+/-- **Stage C's `stepBlocks` family.** -/
+def stepFam : Cmd :=
+  Cmd.op (.copy SCUR S1Parse.PTRANS) ;; Cmd.op (.clear SSEEN) ;;
+  Cmd.forBnd SCNT S1Parse.PNTRANS entryBody
+
+/-- **The last card family is BUILT.** -/
+theorem stepFam_run (M : flatTM) (s : State) (hV : validFlatTM M) (hT : M.tapes = 1)
+    (hconst : SConst M.sig M.states s)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
+    (hnt : State.get s S1Parse.PNTRANS = List.replicate M.trans.length 1)
+    (htr : State.get s S1Parse.PTRANS = encSyms (S1Parse.transFlat M)) :
+    Emits LD stepFam ((normTrans M).flatMap (entryBlocks M)) s := by
+  have har : ∀ e ∈ M.trans, e.src_tape_vals.length = 1 ∧ e.dst_write_vals.length = 1
+      ∧ e.move_dirs.length = 1 := by
+    intro e he
+    obtain ⟨-, -, hall⟩ := hV
+    obtain ⟨-, -, a3, a4, a5, -, -⟩ := hall e he
+    exact ⟨by rw [a3, hT], by rw [a4, hT], by rw [a5, hT]⟩
+  refine Emits.pre_op (.copy SCUR S1Parse.PTRANS) (by decide) ?_
+  set u1 := (Cmd.op (.copy SCUR S1Parse.PTRANS)).eval s with hu1
+  have u1C : State.get u1 SCUR = encSyms (S1Parse.transFlat M) := by
+    rw [hu1, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]; exact htr
+  have u1Fr : ∀ r : Var, r ≠ SCUR → State.get u1 r = State.get s r := by
+    intro r hr; rw [hu1, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value u1
+  refine Emits.pre_op (.clear SSEEN) (by decide) ?_
+  set u2 := (Cmd.op (.clear SSEEN)).eval u1 with hu2
+  have u2S : State.get u2 SSEEN = [] := by
+    rw [hu2, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
+  have u2Fr : ∀ r : Var, r ≠ SSEEN → State.get u2 r = State.get u1 r := by
+    intro r hr; rw [hu2, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
+  clear_value u2
+  have hInv0 : LInv M ([], M.trans) u2 := by
+    obtain ⟨c1, c2, c3, c4, c5⟩ := hconst
+    refine ⟨?_, ?_, ⟨?_, ?_, ?_, ?_, ?_⟩, ?_, ?_, har⟩
+    · rw [u2Fr SCUR (by decide)]; exact u1C
+    · rw [u2S]; rfl
+    · rw [u2Fr CBV (by decide), u1Fr CBV (by decide)]; exact c1
+    · rw [u2Fr CS1 (by decide), u1Fr CS1 (by decide)]; exact c2
+    · rw [u2Fr CS2 (by decide), u1Fr CS2 (by decide)]; exact c3
+    · rw [u2Fr CZ (by decide), u1Fr CZ (by decide)]; exact c4
+    · rw [u2Fr S1Parse.PSIG (by decide), u1Fr S1Parse.PSIG (by decide)]; exact c5
+    · rw [u2Fr S1Parse.PSTATES (by decide), u1Fr S1Parse.PSTATES (by decide)]; exact hst
+    · rw [u2Fr S1Parse.PHALT (by decide), u1Fr S1Parse.PHALT (by decide)]; exact hph
+  have hbnd : State.get u2 S1Parse.PNTRANS = List.replicate M.trans.length 1 := by
+    rw [u2Fr S1Parse.PNTRANS (by decide), u1Fr S1Parse.PNTRANS (by decide)]; exact hnt
+  have key := emitFold_run SCNT S1Parse.PNTRANS entryBody LD (LInv M) stepSt
+    (stepOut M) M.trans.length ([], M.trans) u2 hbnd (by decide) (by decide) hInv0
+    (fun a t i hI => LInv_set M a t i hI)
+    (fun a t _ hI _ => entryBody_step M a t hI)
+  exact Emits.congr_l key (stepSummand_fold M hV hT)
+
+theorem stepFam_usesBelow : Cmd.UsesBelow stepFam 48 := by
+  refine ⟨by decide, by decide, by decide, ?_⟩
+  refine ⟨by decide, ?_, ?_⟩
+  · exact ⟨by decide, by decide, by decide, by decide⟩
+  · exact ⟨stepEmit_usesBelow, by decide⟩
+
 end S1Step
