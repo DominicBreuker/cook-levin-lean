@@ -443,8 +443,8 @@ theorem optMin_run (dst zsrc : Var) (sg tg vl z : Nat) (w : State)
     (hV : State.get w SKV = List.replicate vl 1)
     (hsig : State.get w S1Parse.PSIG = List.replicate sg 1)
     (hz : State.get w zsrc = List.replicate z 1)
-    (h1 : dst ≠ TJ1) (h2 : dst ≠ TJ2) (h3 : dst ≠ TJ3) (h4 : zsrc ≠ dst)
-    (h5 : dst ≠ SKV) (h6 : zsrc ≠ SAX) :
+    (h1 : dst ≠ TJ1) (h2 : dst ≠ TJ2) (h3 : dst ≠ TJ3) (h5 : dst ≠ SKV)
+    (h6 : zsrc ≠ SAX) :
     State.get ((optMin dst zsrc).eval w) dst
       = List.replicate (if tg = 0 then z else min vl sg) 1 := by
   set u1 := (Cmd.op (.nonEmpty SAX SKT)).eval w with hu1
@@ -514,7 +514,7 @@ theorem wBlk1_run (sg mt vl z : Nat) (mz : Bool) (w : State)
   | zero =>
       have hfa : State.get u1 SAX ≠ [1] := by rw [u1A]; decide
       rw [hev, Cmd.eval_ifBit_false _ _ _ _ hfa, Cmd.eval_op]
-      simp only [Op.eval, State.get_set_eq, if_pos rfl]
+      simp only [Op.eval, State.get_set_eq]
       rw [u1Fr TR (by decide)]; exact hz
   | succ n =>
       have htr : State.get u1 SAX = [1] := by rw [u1A]; simp
@@ -523,7 +523,7 @@ theorem wBlk1_run (sg mt vl z : Nat) (mz : Bool) (w : State)
       | true =>
           have hq : State.get u1 SKQ = [1] := by rw [u1Fr SKQ (by decide), hQ]; rfl
           rw [Cmd.eval_ifBit_true _ _ _ _ hq, Cmd.eval_op]
-          simp only [Op.eval, State.get_set_eq, if_pos rfl]
+          simp only [Op.eval, State.get_set_eq]
           rw [u1Fr S1Parse.PSIG (by decide)]; exact hsig
       | false =>
           have hq : State.get u1 SKQ ≠ [1] := by
@@ -663,7 +663,7 @@ theorem mvBlk_run (mv : Nat) (w : State) (hmv : mv = 0 ∨ mv = 1 ∨ mv = 2)
     clear_value v1
     rw [Cmd.eval_ifBit_true _ _ _ _ v1X, Cmd.eval_op]
     refine ⟨?_, ?_⟩
-    · simp only [Cmd.eval_op, Op.eval,
+    · simp only [Op.eval,
         State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ TFR)]
       exact v1N
     · simp only [Op.eval, State.get_set_eq]; rfl
@@ -1132,7 +1132,7 @@ theorem preKey_run (sg q ar : Nat) (o : Option Nat) (b0 : Bool) (tl : List Nat)
   clear_value s4
   -- `TR`
   have hTR := optMin_run TR S1Parse.PSIG sg (oTag o) (oVal o) sg s4 s4T s4V s4G s4G
-    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide)
   set s5 := (optMin TR S1Parse.PSIG).eval s4 with hs5d
   have s5T : State.get s5 SKT = List.replicate (oTag o) 1 := by
     rw [hs5d, Cmd.eval_get_of_not_writes _ _ SKT (by decide)]; exact s4T
@@ -1227,7 +1227,7 @@ theorem preDst_run (sg st q' ar rv : Nat) (mz : Bool) (o : Option Nat)
     rw [hs4d, Cmd.eval_get_of_not_writes _ _ TQ2 (by decide)]; exact s3T2
   clear_value s4
   have hTW0 := optMin_run TW0 TR sg (oTag o) (oVal o) rv s4 hT4 hV4 s4G s4R
-    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide)
   set s5 := (optMin TW0 TR).eval s4 with hs5d
   have s5G : State.get s5 S1Parse.PSIG = List.replicate sg 1 := by
     rw [hs5d, Cmd.eval_get_of_not_writes _ _ S1Parse.PSIG (by decide)]; exact s4G
@@ -1667,9 +1667,9 @@ theorem entryPre_usesBelow : Cmd.UsesBelow entryPre 48 := by
     optMin, wBlk1, mzBlk, mvBlk, scanSeen, scanBody, pushKey, lnop, minReg,
     S1Prelude.minBody, setTrue, S1Parse.readItem, CliqueRelTM.readNum, CliqueRelTM.cSkip,
     Cmd.UsesBelow, Op.UsesBelow,
-    SCUR, SSEEN, SCNT, SKP, SKQ, SKT, SKV, SAX, SIX, TQ, TQ2, TR, TW0, TW1, TFN, TFR,
-    CX, EE, TJ1, TJ2, TJ3, EK1, EOUT_C, CBV, CS1, CS2, CZ,
-    S1Parse.PSIG, S1Parse.PSTATES, S1Parse.PHALT, S1Parse.PTRANS, S1Parse.PNTRANS,
+    SCUR, SSEEN, SKP, SKQ, SKT, SKV, SAX, SIX, TQ, TQ2, TR, TW0, TW1, TFN, TFR,
+    CX, EE, TJ1, TJ2, TJ3, EK1, CS1,
+    S1Parse.PSIG, S1Parse.PSTATES, S1Parse.PHALT,
     CliqueRelTM.HEAD, CliqueRelTM.INBLK, CliqueRelTM.SKIPR]
 
 theorem entryBody_usesBelow : Cmd.UsesBelow entryBody 48 := by
