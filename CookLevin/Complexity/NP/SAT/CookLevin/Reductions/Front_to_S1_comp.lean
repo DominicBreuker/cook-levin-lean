@@ -152,8 +152,7 @@ noncomputable def front_to_SAT_seamOf (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+    (hcost : S1Witness.S1CostBound c)
     (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
     (WQ W cm km dm cs ks ds).SeamData
       (S1SATComp.s1_to_SAT_witnessOf c hcomputes huses hcost) where
@@ -181,8 +180,7 @@ noncomputable def front_to_SAT_witnessOf (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+    (hcost : S1Witness.S1CostBound c)
     (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
     PolyTimeComputableLang
       (((FSATSATFree.fsatToSat
@@ -200,8 +198,7 @@ theorem front_to_SAT_reducesPolyMO'_of (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+    (hcost : S1Witness.S1CostBound c)
     (W : InNPWitnessLangFreeSplit Q) :
     Q ⪯p' SAT := by
   obtain ⟨cm, km, dm, hmB⟩ := inOPoly_monomial_bound (maxSizeOf_poly W)
@@ -233,8 +230,7 @@ theorem SAT_NPhard''_of_S1 (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (hcost : S1Witness.S1CostBound c) :
     NPhard'' SAT :=
   fun _Y _eY _Q hQ => by
     obtain ⟨W⟩ := hQ
@@ -247,7 +243,7 @@ noncomputable def front_to_SAT_seam (W : InNPWitnessLangFreeSplit Q)
     (cm km dm cs ks ds : Nat) :
     (WQ W cm km dm cs ks ds).SeamData S1SATComp.s1_to_SAT_witness :=
   front_to_SAT_seamOf S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le W cm km dm cs ks ds
+    S1Program.s1Program_usesBelow S1Witness.s1Program_costBound W cm km dm cs ks ds
 
 /-- **The whole honest chain as ONE free layer witness**: `Q → SAT`. -/
 noncomputable def front_to_SAT_witness (W : InNPWitnessLangFreeSplit Q)
@@ -258,20 +254,20 @@ noncomputable def front_to_SAT_witness (W : InNPWitnessLangFreeSplit Q)
             ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map)
         ∘ (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x))) :=
   front_to_SAT_witnessOf S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le W cm km dm cs ks ds
+    S1Program.s1Program_usesBelow S1Witness.s1Program_costBound W cm km dm cs ks ds
 
 /-- **`Q ⪯p' SAT`** for every NP problem presented with a split free-line
 verifier witness. -/
 theorem front_to_SAT_reducesPolyMO' (W : InNPWitnessLangFreeSplit Q) :
     Q ⪯p' SAT :=
   front_to_SAT_reducesPolyMO'_of S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le W
+    S1Program.s1Program_usesBelow S1Witness.s1Program_costBound W
 
 /-- **`NPhard'' SAT`** — the honest migrated hardness statement, over NP
 problems presented with a split free-line verifier witness. Conditional only
 on the three S1 contracts (see `SAT_NPhard''_of_S1`). -/
 theorem SAT_NPhard'' : NPhard'' SAT :=
   SAT_NPhard''_of_S1 S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le
+    S1Program.s1Program_usesBelow S1Witness.s1Program_costBound
 
 end FrontS1Comp
