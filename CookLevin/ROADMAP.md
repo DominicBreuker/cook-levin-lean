@@ -14,7 +14,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 
 ---
 
-## Status snapshot (verified 2026-07-27)
+## Status snapshot (verified 2026-07-28-b)
 
 | | |
 |---|---|
@@ -46,7 +46,8 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms S1Prelude.cPrelude_run` | `[propext, Classical.choice, Quot.sound]` — **stage C's prelude family is BUILT** (2026-07-27-c, `Reductions/S1PreludeEmit.lean`, sorry-free): `cPrelude` is a real `Cmd` laying `encNats (preludeBlocks σ states (min start states))` onto `EOUT_C`, with `cPrelude_usesBelow` (48) and `PDirty_cdirty`. Reusable: the dirty-list-indexed emitter contract `Emits`/`EmitsFr` (+`seq`/`mono`), the register-generic gadgets `pRes`/`pSeg`/`pKindCmd` (each proven once, applied three times) and the value gadgets `setLit`/`loadSum`/`loadVal`/`setFlag`. ⚠ two findings: `PJᵢ` could **not** carry both the kind level's `add` and the resolution level's counter (the nest re-runs `49×` between write and read) — fixed by folding `add` into `PPAᵢ` (`preludeBlocks_seg'`); and a deep nest needs **nested** dirty lists, not one global one. Measured: `cPrelude.cost` is `2.8e5 … 1.2e7` against `S1Map.s1Bound = 1.0e13` at `n = 7`. Probe: `probes/S1PreludeEmitProbe.lean` |
 | `#print axioms S1Step.stepBlocks_seg` | `[propext, Classical.choice, Quot.sound]` — **`stepBlocks` is DE-RISKED** (2026-07-27-c, `Reductions/S1StepModel.lean`, sorry-free): `stepSeg`/`stepBlocks_seg`/`entryBlocks_seg`/`stepSummand_seg` re-state the last family in the emitter's own nesting. Findings: every counter-reading branch is a *last-iteration* test, killed by `range_last`/`range_first_last`, so **stage C needs no unary comparison gadget at all**; an entry contributes exactly three symbol constants, all hoistable; `mv` is entry-constant so one three-way `ifBit` chain wraps the body. Probe: `probes/S1StepModelProbe.lean` (196 tuples incl. `σ = 0`, all `mv`, out-of-range `mVal`/`wVal`) |
 | `#print axioms S1Step.stepEmit_run` | `[propext, Classical.choice, Quot.sound]` — **`stepBlocks`'s ENTRY BODY is BUILT** (2026-07-28, `Reductions/S1StepEmit.lean`, sorry-free): `stepEmit` emits one normalised entry's cards off `SConst` (free from `cFive` — `S1CardEmit.cFive_const`) + `SEntry` (the entry's nine numbers), touching nothing outside `SD1`; plus `stepEmit_usesBelow` (48), the card atom `emitCard`/`card6_run` and the four `mv`-independent loop nests. ⚠ two findings: parameterise a family gadget by its innermost **body**, not by its branch condition (3 × 4 emitters → 4 loop lemmas + 11 cards); and **`emitLoop_run` does not fit a cursor-driven loop** (it pins the output to the iteration index) — hence the new **`emitFold_run`**, a stateful loop principle, with the entry loop's pure model `stepGo` and its target `stepSummand_fold`. Probe: `probes/S1StepEmitProbe.lean` |
-| Genuine `sorry`s (Group C) | **9 in built code**: 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), 3 S1 stage markers (`S1Program.lean`: `stageC` plus its `_run` / `_usesBelow` contract — only the `def` is a real gap), and 1 cost obligation (`S1Witness.s1Program_cost_le`, now a standalone named theorem with the build plan in its docstring). **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
+| `#print axioms S1Program.s1Program_computes` / `s1Program_usesBelow` | `[propext, Classical.choice, Quot.sound]` — **the S1 reduction PROGRAM IS FINISHED** (2026-07-28-b, `Reductions/S1StepLoop.lean` + `S1Program.stageC`, both sorry-free): the per-entry preamble `entryPre` (entry parse off a `PTRANS` cursor, both head-cell bases, the three symbol constants, the two move flags, the halt lookup, the dedup scan, the key push), the entry loop `stepFam` (`emitFold_run` at `(seen, remaining entries)`), and `stageC = cFive ;; stepFam ;; cPrelude`. **Two of the three contracts of `SAT_NPhard''_of_S1` are now discharged at the real program**; only `S1Witness.s1Program_cost_le` is open. Three findings: a cursor loop's body must be **total** (`emitFold_run`'s `hstep` is quantified over every index → guard it with one `nonEmpty` on its own cursor; a guarded loop then needs only an *upper* bound on its iteration count); the machine accumulator must match its model's **cons order** (`concat SSEEN item SSEEN` prepends); and `stageC_run`'s pinned contract had been **missing its `PSTART` hypothesis** since 2026-07-26-b — nothing noticed until the prelude family had to be wired in. Stage C's 30-register licence is now exactly full. Probe: `probes/S1StepLoopProbe.lean` (the first end-to-end `#eval` of `s1Program`; cost `3.6e5` vs a budget of `1.1e15`, floor `> 6·10^8`) |
+| Genuine `sorry`s (Group C) | **6 in built code** (was 9): 2 on the live path (`red_inNP`'s `inTimePoly` half, `hasDeciderClassical`), 3 in dead code (`MultiToSingle`), and 1 cost obligation (`S1Witness.s1Program_cost_le`) — **the only `sorry` between the current state and an axiom-clean `NPhard'' SAT`**. **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | several (S1, S2, size-0 hardness reduction) — invisible to `#print axioms` |
 | Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
 | Remaining to a real proof | **~12–20K LOC** (breakdown below) |
@@ -197,9 +198,12 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   sorry-free & axiom-clean) together with `stepBlocks`' emitter-shaped model
   (`Reductions/S1StepModel.lean`).
   **`stepBlocks`'s entry body landed 2026-07-28** (`Reductions/S1StepEmit.lean`),
-  with the entry loop's pure model and the stateful loop principle it needs.
-  Remaining: the per-entry preamble, the entry loop, the `stageC` assembly, then the
-  cost ladder.**
+  with the entry loop's pure model and the stateful loop principle it needs, and
+  **the per-entry preamble, the entry loop and the `stageC` assembly landed
+  2026-07-28-b** (`Reductions/S1StepLoop.lean`). **The S1 program is COMPLETE;
+  `s1Program_computes` and `s1Program_usesBelow` are axiom-clean, and the
+  whole-program cost ladder `S1Witness.s1Program_cost_le` is the only S1
+  obligation left.**
   No piece's *shape* is unknown any more, and the two open stages now have
   *stated contracts the assembly already consumes* — build to them, do not
   restate them. Alphabet `|Σ|=(M.sig+1)(M.states+2)+1`; the card list is
