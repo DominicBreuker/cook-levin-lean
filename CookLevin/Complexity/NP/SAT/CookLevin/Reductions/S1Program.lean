@@ -1,4 +1,4 @@
-import Complexity.NP.SAT.CookLevin.Reductions.S1StepEmit
+import Complexity.NP.SAT.CookLevin.Reductions.S1StepLoop
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
@@ -231,14 +231,30 @@ theorem cFive_preserves (M : flatTM) (s : State)
   rcases hr with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
     exact by decide
 
-/-- **OPEN (the S1 critical path).** The card emitter. -/
-def stageC : Cmd := sorry
+/-- Every register the entry loop may write is inside stage C's licence. -/
+theorem LD_cdirty {r : Var} (hr : r ∈ S1Step.LD) : CDirty r := by
+  have hall : ∀ v ∈ S1Step.LD, (14 ≤ v ∧ v < 32) ∨ (37 ≤ v ∧ v < 48) := by decide
+  rcases hall r hr with h | h
+  · exact Or.inr (Or.inr h)
+  · exact Or.inl (Or.inl h)
 
-/-- **OPEN.** Stage C's contract. Every input register it names is a stage-P
-output; `CDirty` is its dirty licence (see the module docstring). -/
+/-- **The card emitter.** Emission order is `S1Cards.cardBlocks`' order: the
+five copy/halt families, then `stepBlocks`, then the prelude (a locked
+invariant — build order is free, emission order is not). -/
+def stageC : Cmd := S1CardEmit.cFive ;; S1Step.stepFam ;; S1Prelude.cPrelude
+
+/-- **Stage C is correct.** Every input register it names is a stage-P output;
+`CDirty` is its dirty licence (see the module docstring).
+
+⚠ `hstart` was **missing** from this contract until the prelude family was
+wired in: `S1Cards.preludeBlocks` is indexed by `min M.start M.states`, so the
+emitter needs register `PSTART`. Stage P produces it and stages Σ / I preserve
+it, so the addition is free — but it is a reminder that a stated contract is
+only as good as the first consumer that has to meet it. -/
 theorem stageC_run (M : flatTM) (s : State)
     (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
     (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hstart : State.get s S1Parse.PSTART = List.replicate M.start 1)
     (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
     (hnt : State.get s S1Parse.PNTRANS = List.replicate M.trans.length 1)
     (htr : State.get s S1Parse.PTRANS = encSyms (S1Parse.transFlat M))
@@ -246,11 +262,53 @@ theorem stageC_run (M : flatTM) (s : State)
     State.get (stageC.eval s) S1Emit.EOUT_C
         = FlatTCCFree.encNats (S1Cards.cardBlocks M)
     ∧ (∀ r : Var, ¬ CDirty r → State.get (stageC.eval s) r = State.get s r) := by
-  sorry
+  -- the five built families
+  obtain ⟨c5O, -⟩ := S1CardEmit.cFive_run M s hsig hst hph
+  have c5Fr := cFive_frame M s hsig hst hph
+  have s1const : S1Step.SConst M.sig M.states (S1CardEmit.cFive.eval s) :=
+    S1Step.SConst_of_cFive M s hsig hst hph
+  set s1 := S1CardEmit.cFive.eval s with hs1
+  have s1sig : State.get s1 S1Parse.PSIG = List.replicate M.sig 1 := by
+    rw [hs1, c5Fr S1Parse.PSIG (by decide)]; exact hsig
+  have s1st : State.get s1 S1Parse.PSTATES = List.replicate M.states 1 := by
+    rw [hs1, c5Fr S1Parse.PSTATES (by decide)]; exact hst
+  have s1start : State.get s1 S1Parse.PSTART = List.replicate M.start 1 := by
+    rw [hs1, c5Fr S1Parse.PSTART (by decide)]; exact hstart
+  have s1ph : State.get s1 S1Parse.PHALT = M.halt.map S1Parse.bitOf := by
+    rw [hs1, c5Fr S1Parse.PHALT (by decide)]; exact hph
+  have s1nt : State.get s1 S1Parse.PNTRANS = List.replicate M.trans.length 1 := by
+    rw [hs1, c5Fr S1Parse.PNTRANS (by decide)]; exact hnt
+  have s1tr : State.get s1 S1Parse.PTRANS = encSyms (S1Parse.transFlat M) := by
+    rw [hs1, c5Fr S1Parse.PTRANS (by decide)]; exact htr
+  clear_value s1
+  -- the entry loop
+  obtain ⟨stO, stF⟩ := S1Step.stepFam_run M s1 hV hT s1const s1st s1ph s1nt s1tr
+  set s2 := S1Step.stepFam.eval s1 with hs2
+  have s2sig : State.get s2 S1Parse.PSIG = List.replicate M.sig 1 := by
+    rw [hs2, stF S1Parse.PSIG (by decide) (by decide)]; exact s1sig
+  have s2st : State.get s2 S1Parse.PSTATES = List.replicate M.states 1 := by
+    rw [hs2, stF S1Parse.PSTATES (by decide) (by decide)]; exact s1st
+  have s2start : State.get s2 S1Parse.PSTART = List.replicate M.start 1 := by
+    rw [hs2, stF S1Parse.PSTART (by decide) (by decide)]; exact s1start
+  clear_value s2
+  -- the prelude family
+  obtain ⟨pO, pF⟩ := S1Prelude.cPrelude_run M s2 s2sig s2st s2start
+  have hev : stageC.eval s = S1Prelude.cPrelude.eval s2 := by
+    rw [hs2, hs1]; unfold stageC; rw [Cmd.eval_seq, Cmd.eval_seq]
+  refine ⟨?_, fun r hd => ?_⟩
+  · rw [hev, pO, stO, c5O, S1Cards.cardBlocks]
+    simp only [S1Cards.encNats_append, List.append_assoc]
+  · rw [hev, pF r (fun he => hd (by rw [he]; exact Or.inr (Or.inl rfl)))
+        (fun hm => hd (by
+          rcases S1Prelude.PDirty_cdirty hm with h | h
+          · exact Or.inr (Or.inr h)
+          · exact Or.inl (Or.inl h))),
+      stF r (fun he => hd (by rw [he]; exact Or.inr (Or.inl rfl)))
+        (fun hm => hd (LD_cdirty hm))]
+    exact c5Fr r hd
 
-/-- **OPEN.** `decide`-able once `stageC` is a concrete `Cmd`. -/
-theorem stageC_usesBelow : Cmd.UsesBelow stageC 48 := by
-  sorry
+theorem stageC_usesBelow : Cmd.UsesBelow stageC 48 :=
+  ⟨S1CardEmit.cFive_usesBelow, S1Step.stepFam_usesBelow, S1Prelude.cPrelude_usesBelow⟩
 
 /-! ## Stage M-yes — the output multiplex (OPEN)
 
@@ -375,6 +433,7 @@ that says no stage clobbers a later one's input) is real. -/
 theorem yesBranch_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : State)
     (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
     (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hstart : State.get s S1Parse.PSTART = List.replicate M.start 1)
     (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf)
     (hnt : State.get s S1Parse.PNTRANS = List.replicate M.trans.length 1)
     (htr : State.get s S1Parse.PTRANS = encSyms (S1Parse.transFlat M))
@@ -391,6 +450,8 @@ theorem yesBranch_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : S
     rw [hs1, aFr S1Parse.PSIG (by decide) (by decide)]; exact hsig
   have a_st : State.get s1 S1Parse.PSTATES = List.replicate M.states 1 := by
     rw [hs1, aFr S1Parse.PSTATES (by decide) (by decide)]; exact hst
+  have a_start : State.get s1 S1Parse.PSTART = List.replicate M.start 1 := by
+    rw [hs1, aFr S1Parse.PSTART (by decide) (by decide)]; exact hstart
   have a_ph : State.get s1 S1Parse.PHALT = M.halt.map S1Parse.bitOf := by
     rw [hs1, aFr S1Parse.PHALT (by decide) (by decide)]; exact hph
   have a_nt : State.get s1 S1Parse.PNTRANS = List.replicate M.trans.length 1 := by
@@ -414,6 +475,8 @@ theorem yesBranch_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : S
     rw [hs2, bFr S1Parse.PSIG (by decide) (by decide)]; exact a_sig
   have b_st : State.get s2 S1Parse.PSTATES = List.replicate M.states 1 := by
     rw [hs2, bFr S1Parse.PSTATES (by decide) (by decide)]; exact a_st
+  have b_start : State.get s2 S1Parse.PSTART = List.replicate M.start 1 := by
+    rw [hs2, bFr S1Parse.PSTART (by decide) (by decide)]; exact a_start
   have b_ph : State.get s2 S1Parse.PHALT = M.halt.map S1Parse.bitOf := by
     rw [hs2, bFr S1Parse.PHALT (by decide) (by decide)]; exact a_ph
   have b_nt : State.get s2 S1Parse.PNTRANS = List.replicate M.trans.length 1 := by
@@ -424,7 +487,7 @@ theorem yesBranch_run (M : flatTM) (str : List Nat) (maxSize steps : Nat) (s : S
     rw [hs2, bFr S1Emit.HSTP (by decide) (by decide)]; exact a_sp
   clear_value s2
   -- C
-  obtain ⟨cC, cFr⟩ := stageC_run M s2 b_sig b_st b_ph b_nt b_tr hV hT
+  obtain ⟨cC, cFr⟩ := stageC_run M s2 b_sig b_st b_start b_ph b_nt b_tr hV hT
   set s3 := stageC.eval s2 with hs3
   have c_S : State.get s3 S1Emit.EOUT_S = List.replicate (PSg M) 1 := by
     rw [hs3, cFr S1Emit.EOUT_S (by decide)]; exact b_S
@@ -526,7 +589,7 @@ theorem s1Program_computes_pos (M : flatTM) (str : List Nat) (maxSize steps : Na
     (hsp : State.get s S1Emit.HSTP = List.replicate steps 1)
     (hg : S1Map.s1GuardB M str = true) :
     s1Extract (s1Program.eval s) = s1Key (S1Map.s1Map (M, str, maxSize, steps)) := by
-  obtain ⟨hF, -, hsig, -, hst, -, -, hph, hnt, htr⟩ := S1Parse.stagePG_run M str s hM hS
+  obtain ⟨hF, -, hsig, -, hst, hstart, -, hph, hnt, htr⟩ := S1Parse.stagePG_run M str s hM hS
   have hFlag : State.get (S1Parse.stagePG.eval s) S1Parse.FLG = [1] := by
     rw [hF, if_pos hg]
   have hev : s1Program.eval s = yesBranch.eval (S1Parse.stagePG.eval s) := by
@@ -541,7 +604,7 @@ theorem s1Program_computes_pos (M : flatTM) (str : List Nat) (maxSize steps : Na
   have hsp' : State.get (S1Parse.stagePG.eval s) S1Emit.HSTP = List.replicate steps 1 := by
     rw [S1Parse.stagePG_frame s S1Emit.HSTP (by decide)]; exact hsp
   rw [S1Map.s1Map_pos M str maxSize steps hg, hev]
-  exact yesBranch_run M str maxSize steps _ hsig hst hph hnt htr hS' hmx' hsp' hV hT hb
+  exact yesBranch_run M str maxSize steps _ hsig hst hstart hph hnt htr hS' hmx' hsp' hV hT hb
 
 /-- **The `computes` obligation of `S1Witness.s1_reductionLang`**, on the frozen
 head layout. -/

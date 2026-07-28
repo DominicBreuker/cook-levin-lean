@@ -230,7 +230,7 @@ theorem haltBlk_run (hb : List Nat) (q : Nat) (w : State)
   set u3 := (Cmd.op (.head CX EE)).eval u2 with hu3
   have u3X : State.get u3 CX
       = (match State.get u2 EE with | [] => ([] : List Nat) | x :: _ => [x]) := by
-    rw [hu3, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
+    rw [hu3, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]; rfl
   have u3Fr : ∀ r : Var, r ≠ CX → State.get u3 r = State.get u2 r := by
     intro r hr; rw [hu3, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
   clear_value u3
@@ -238,10 +238,10 @@ theorem haltBlk_run (hb : List Nat) (q : Nat) (w : State)
   have u4J : State.get u4 TJ2 = [1] := by
     rw [hu4, Cmd.eval_op, Cmd.eval_op]
     simp only [Op.eval, State.get_set_eq]
+    rfl
   have u4Fr : ∀ r : Var, r ≠ TJ2 → State.get u4 r = State.get u3 r := by
     intro r hr
-    rw [hu4, Cmd.eval_op, Cmd.eval_op, State.get_set_ne _ _ _ _ hr,
-      State.get_set_ne _ _ _ _ hr]
+    simp only [hu4, Cmd.eval_op, Op.eval, State.get_set_ne _ _ _ _ hr]
   clear_value u4
   set u5 := (Cmd.op (.eqBit TJ3 CX TJ2)).eval u4 with hu5
   have u5J : State.get u5 TJ3 = if State.get u4 CX = State.get u4 TJ2 then [1] else [0] := by
@@ -272,7 +272,8 @@ theorem haltBlk_run (hb : List Nat) (q : Nat) (w : State)
     · rw [hev, Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op]
       simp only [Op.eval, State.get_set_eq, hh]
       rfl
-    · rw [hev, Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op,
+    · rw [hev, Cmd.eval_ifBit_true _ _ _ _ ht]
+      simp only [Cmd.eval_op, Op.eval,
         State.get_set_ne _ _ _ _ (ne_of_nmem hr (by decide : SKP ∈ LD))]
       exact baseFr r hr
   · have ht : State.get u5 TJ3 ≠ [1] := by
@@ -321,13 +322,13 @@ theorem optRead_run (o : Option Nat) (rest : List Nat) (w : State)
       have u2Fr : ∀ r : Var, r ≠ SAX → State.get u2 r = State.get u1 r := by
         intro r hr; rw [hu2, Cmd.eval_op]; exact State.get_set_ne _ _ _ _ hr
       clear_value u2
-      rw [hev, ← hu1, ← hu2, Cmd.eval_ifBit_false _ _ _ _ u2A, Cmd.eval_op]
+      rw [hev, Cmd.eval_ifBit_false _ _ _ _ u2A, Cmd.eval_op]
       refine ⟨?_, ?_, ?_⟩
-      · rw [State.get_set_ne _ _ _ _ (by decide : (SKT : Var) ≠ SKV),
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (SKT : Var) ≠ SKV),
           u2Fr SKT (by decide)]
         exact hT
       · simp only [Op.eval, State.get_set_eq]; rfl
-      · rw [State.get_set_ne _ _ _ _ (by decide : (SCUR : Var) ≠ SKV),
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ (by decide : (SCUR : Var) ≠ SKV),
           u2Fr SCUR (by decide)]
         exact hC
   | some v =>
@@ -346,7 +347,7 @@ theorem optRead_run (o : Option Nat) (rest : List Nat) (w : State)
       have u2C : State.get u2 SCUR = encSyms (v :: rest) := by
         rw [u2Fr SCUR (by decide)]; exact hC
       obtain ⟨hV2, hC2⟩ := S1Parse.readItem_run u2 v rest SKV SCUR SIX (by decide) u2C
-      rw [hev, ← hu1, ← hu2, Cmd.eval_ifBit_true _ _ _ _ u2A]
+      rw [hev, Cmd.eval_ifBit_true _ _ _ _ u2A]
       refine ⟨?_, hV2, hC2⟩
       rw [Cmd.eval_get_of_not_writes _ _ SKT (by decide), u2Fr SKT (by decide)]
       exact hT
@@ -368,7 +369,7 @@ theorem hvBlk_run (src dst : Var) (sg st v : Nat) (w : State)
     (hsrc : State.get w src = List.replicate v 1)
     (hs1 : State.get w CS1 = List.replicate (sg + 1) 1)
     (hst : State.get w S1Parse.PSTATES = List.replicate st 1)
-    (h1 : src ≠ TJ3) (h2 : src ≠ EE) (h3 : dst ≠ TJ1) (h4 : dst ≠ CX) :
+    (h1 : src ≠ TJ3) (h2 : src ≠ EE) (h3 : dst ≠ TJ1) (h4 : dst ≠ CX) (h5 : dst ≠ EE) :
     State.get ((hvBlk src dst).eval w) dst = List.replicate (hv sg (min v st) 0) 1 := by
   -- the drain
   set u1 := (Cmd.op (.copy TJ3 S1Parse.PSTATES)).eval w with hu1
@@ -380,7 +381,7 @@ theorem hvBlk_run (src dst : Var) (sg st v : Nat) (w : State)
   -- the min
   obtain ⟨u2E, u2Fr⟩ := minReg_run TJ1 TJ2 src TJ3 EE v st u1
     (by decide) (by decide) (by decide) (by decide) (by decide)
-    (by rw [u1Fr src h1]; exact hsrc) u1D (Ne.symm h2)
+    (by rw [u1Fr src h1]; exact hsrc) u1D h2
   set u2 := (minReg TJ1 TJ2 src TJ3 EE).eval u1 with hu2
   clear_value u2
   -- `+1`, then the chunk
@@ -411,20 +412,19 @@ theorem hvBlk_run (src dst : Var) (sg st v : Nat) (w : State)
   have h5X : State.get u5 CX = List.replicate (sg + 1) 1 := by
     rw [u5Fr CX (Ne.symm h4)]; exact u4X
   have h5E : (State.get u5 EE).length = min v st + 1 := by
-    rw [u5Fr EE (by
-        intro he; exact h4 (by rw [he] at *; exact absurd rfl (by decide : (EE : Var) ≠ CX))),
-      u4Fr EE (by decide), u3E, List.length_replicate]
+    rw [u5Fr EE (Ne.symm h5), u4Fr EE (by decide), u3E, List.length_replicate]
   obtain ⟨mO, -⟩ := BinaryCCFSATFree.unaryMulLoop_run TJ1 EE CX dst u5
-    (sg + 1) (min v st + 1) (Ne.symm h4) (Ne.symm h3) (by decide) h5X h5E u5D
+    (sg + 1) (min v st + 1) h4 h3 (by decide) h5X h5E u5D
   have hev : (hvBlk src dst).eval w
       = (Cmd.forBnd TJ1 EE (Cmd.op (.concat dst dst CX))).eval u5 := by
     rw [hu5, hu4, hu3, hu2, hu1]
     unfold hvBlk
     rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
-  rw [hev, mO]
-  congr 1
-  show (min v st + 1) * (sg + 1) = (sg + 1) * (min v st + 1) + 0
-  omega
+  have harith : (min v st + 1) * (sg + 1) = hv sg (min v st) 0 := by
+    show _ = (sg + 1) * (min v st + 1) + 0
+    rw [Nat.add_zero]
+    exact Nat.mul_comm _ _
+  rw [hev, mO, harith]
 
 /-! ## The three symbol constants
 
@@ -443,7 +443,8 @@ theorem optMin_run (dst zsrc : Var) (sg tg vl z : Nat) (w : State)
     (hV : State.get w SKV = List.replicate vl 1)
     (hsig : State.get w S1Parse.PSIG = List.replicate sg 1)
     (hz : State.get w zsrc = List.replicate z 1)
-    (h1 : dst ≠ TJ1) (h2 : dst ≠ TJ2) (h3 : dst ≠ TJ3) (h4 : zsrc ≠ dst) :
+    (h1 : dst ≠ TJ1) (h2 : dst ≠ TJ2) (h3 : dst ≠ TJ3) (h4 : zsrc ≠ dst)
+    (h5 : dst ≠ SKV) (h6 : zsrc ≠ SAX) :
     State.get ((optMin dst zsrc).eval w) dst
       = List.replicate (if tg = 0 then z else min vl sg) 1 := by
   set u1 := (Cmd.op (.nonEmpty SAX SKT)).eval w with hu1
@@ -460,9 +461,9 @@ theorem optMin_run (dst zsrc : Var) (sg tg vl z : Nat) (w : State)
   | zero =>
       have hfa : State.get u1 SAX ≠ [1] := by rw [u1A]; decide
       rw [hev, Cmd.eval_ifBit_false _ _ _ _ hfa, Cmd.eval_op]
-      simp only [Op.eval, State.get_set_eq, if_pos rfl]
-      rw [State.get_set_ne _ _ _ _ h4, u1Fr zsrc (by
-        intro he; rw [he] at hz; rw [u1A] at hfa; exact hfa (by simp)), hz]
+      simp only [Op.eval, State.get_set_eq]
+      rw [u1Fr zsrc h6, hz]
+      simp
   | succ n =>
       have htr : State.get u1 SAX = [1] := by rw [u1A]; simp
       rw [hev, Cmd.eval_ifBit_true _ _ _ _ htr, Cmd.eval_seq]
@@ -472,12 +473,12 @@ theorem optMin_run (dst zsrc : Var) (sg tg vl z : Nat) (w : State)
         simp only [Op.eval, State.get_set_eq]
         rw [u1Fr S1Parse.PSIG (by decide)]; exact hsig
       have u2V : State.get u2 SKV = List.replicate vl 1 := by
-        rw [hu2, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (SKV : Var) ≠ TJ3),
-          u1Fr SKV (by decide)]
+        simp only [hu2, Cmd.eval_op, Op.eval,
+          State.get_set_ne _ _ _ _ (by decide : (SKV : Var) ≠ TJ3), u1Fr SKV (by decide)]
         exact hV
       clear_value u2
       obtain ⟨mO, -⟩ := minReg_run TJ1 TJ2 SKV TJ3 dst vl sg u2
-        h1 h2 h3 (by decide) (by decide) u2V u2D (by decide)
+        h1 h2 h3 (by decide) (by decide) u2V u2D (Ne.symm h5)
       rw [mO, if_neg (Nat.succ_ne_zero n)]
 
 /-- `TW1` — `wOf`'s beyond-the-frontier case. `SKQ` carries "the read option's
@@ -534,8 +535,8 @@ theorem wBlk1_run (sg mt vl z : Nat) (mz : Bool) (w : State)
             simp only [Op.eval, State.get_set_eq]
             rw [u1Fr S1Parse.PSIG (by decide)]; exact hsig
           have u2V : State.get u2 SKV = List.replicate vl 1 := by
-            rw [hu2, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (SKV : Var) ≠ TJ3),
-              u1Fr SKV (by decide)]
+            simp only [hu2, Cmd.eval_op, Op.eval,
+              State.get_set_ne _ _ _ _ (by decide : (SKV : Var) ≠ TJ3), u1Fr SKV (by decide)]
             exact hV
           clear_value u2
           obtain ⟨mO, -⟩ := minReg_run TJ1 TJ2 SKV TJ3 TW1 vl sg u2
@@ -568,8 +569,7 @@ theorem mzBlk_run (tg : Nat) (w : State)
       have htr : State.get u1 SAX = [1] := by rw [u1A]; simp
       rw [hev, Cmd.eval_ifBit_true _ _ _ _ htr, Cmd.eval_op]
       simp only [Op.eval, State.get_set_eq]
-      rw [if_neg (Nat.succ_ne_zero n)]
-      rfl
+      simp [flagRep]
 
 /-- The two move flags off `SAX = 1^mv`. `mv ≥ 2` is one `tail` + `nonEmpty`;
 `mv = 1` is `mv ≥ 1` under `¬ (mv ≥ 2)`. -/
@@ -590,7 +590,8 @@ theorem mvBlk_run (mv : Nat) (w : State) (hmv : mv = 0 ∨ mv = 1 ∨ mv = 2)
     rw [hu1, Cmd.eval_op, Cmd.eval_op]
     simp only [Op.eval, State.get_set_eq, hA]
   have u1A : State.get u1 SAX = List.replicate mv 1 := by
-    rw [hu1, Cmd.eval_op, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ CX),
+    simp only [hu1, Cmd.eval_op, Op.eval,
+      State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ CX),
       State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ EE)]
     exact hA
   clear_value u1
@@ -604,9 +605,12 @@ theorem mvBlk_run (mv : Nat) (w : State) (hmv : mv = 0 ∨ mv = 1 ∨ mv = 2)
     have hx : State.get u1 CX ≠ [1] := by rw [u1X]; decide
     set v1 := (Cmd.op (.clear TFN)).eval u1 with hv1
     have v1X : State.get v1 CX ≠ [1] := by
-      rw [hv1, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (CX : Var) ≠ TFN)]; exact hx
+      simp only [hv1, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (CX : Var) ≠ TFN)]
+      exact hx
     have v1A : State.get v1 SAX = [] := by
-      rw [hv1, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ TFN)]
+      simp only [hv1, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ TFN)]
       exact u1A
     clear_value v1
     rw [hev, Cmd.eval_ifBit_false _ _ _ _ hx, ← hv1, Cmd.eval_ifBit_false _ _ _ _ v1X,
@@ -617,18 +621,21 @@ theorem mvBlk_run (mv : Nat) (w : State) (hmv : mv = 0 ∨ mv = 1 ∨ mv = 2)
     clear_value v2
     rw [Cmd.eval_ifBit_false _ _ _ _ v2X, Cmd.eval_op]
     refine ⟨?_, ?_⟩
-    · rw [State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ TFR), hv2, Cmd.eval_op,
-        State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ CX), hv1, Cmd.eval_op]
-      simp only [Op.eval, State.get_set_eq]
+    · simp only [Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ TFR), hv2,
+        State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ CX), hv1, State.get_set_eq]
       rfl
     · simp only [Op.eval, State.get_set_eq]; rfl
   · -- mv = 1
     have hx : State.get u1 CX ≠ [1] := by rw [u1X]; decide
     set v1 := (Cmd.op (.clear TFN)).eval u1 with hv1
     have v1X : State.get v1 CX ≠ [1] := by
-      rw [hv1, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (CX : Var) ≠ TFN)]; exact hx
+      simp only [hv1, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (CX : Var) ≠ TFN)]
+      exact hx
     have v1A : State.get v1 SAX = [1] := by
-      rw [hv1, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ TFN)]
+      simp only [hv1, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (SAX : Var) ≠ TFN)]
       exact u1A
     have v1N : State.get v1 TFN = [] := by
       rw [hv1, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq]
@@ -639,7 +646,8 @@ theorem mvBlk_run (mv : Nat) (w : State) (hmv : mv = 0 ∨ mv = 1 ∨ mv = 2)
     have v2X : State.get v2 CX = [1] := by
       rw [hv2, Cmd.eval_op]; simp only [Op.eval, State.get_set_eq, v1A]; rfl
     have v2N : State.get v2 TFN = [] := by
-      rw [hv2, Cmd.eval_op, State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ CX)]
+      simp only [hv2, Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ CX)]
       exact v1N
     clear_value v2
     rw [Cmd.eval_ifBit_true _ _ _ _ v2X]
@@ -655,7 +663,9 @@ theorem mvBlk_run (mv : Nat) (w : State) (hmv : mv = 0 ∨ mv = 1 ∨ mv = 2)
     clear_value v1
     rw [Cmd.eval_ifBit_true _ _ _ _ v1X, Cmd.eval_op]
     refine ⟨?_, ?_⟩
-    · rw [State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ TFR)]; exact v1N
+    · simp only [Cmd.eval_op, Op.eval,
+        State.get_set_ne _ _ _ _ (by decide : (TFN : Var) ≠ TFR)]
+      exact v1N
     · simp only [Op.eval, State.get_set_eq]; rfl
 
 /-! ## The membership scan
@@ -903,19 +913,19 @@ private theorem scanBody_step (key : Nat × Nat × Nat) (seen : List (Nat × Nat
     by_cases hc : k = key
     · have ht : State.get b3 CX = [1] := by rw [b3X, if_pos hc]
       refine ⟨?_, ?_, ?_, ?_, ?_⟩
-      · rw [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op,
+      · simp only [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op, Op.eval,
           State.get_set_ne _ _ _ _ (by decide : (EE : Var) ≠ SKP), hdrop]
         exact b3E
       · rw [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op]
         simp only [Op.eval, State.get_set_eq, htake, seenHit_snoc, hc]
         simp [flagRep]
-      · rw [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op,
+      · simp only [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op, Op.eval,
           State.get_set_ne _ _ _ _ (by decide : (SKQ : Var) ≠ SKP)]
         exact b3Q
-      · rw [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op,
+      · simp only [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op, Op.eval,
           State.get_set_ne _ _ _ _ (by decide : (SKT : Var) ≠ SKP)]
         exact b3T
-      · rw [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op,
+      · simp only [Cmd.eval_ifBit_true _ _ _ _ ht, Cmd.eval_op, Op.eval,
           State.get_set_ne _ _ _ _ (by decide : (SKV : Var) ≠ SKP)]
         exact b3V
     · have ht : State.get b3 CX ≠ [1] := by
@@ -1026,7 +1036,7 @@ theorem preSrc_run (sg st q : Nat) (hb : List Nat) (tl : List Nat) (w : State)
     rw [hs1d, Cmd.eval_get_of_not_writes _ _ S1Parse.PHALT (by decide)]; exact hph
   clear_value s1
   have hTQ := hvBlk_run SKQ TQ sg st q s1 hQ s1C s1S (by decide) (by decide)
-    (by decide) (by decide)
+    (by decide) (by decide) (by decide)
   set s2 := (hvBlk SKQ TQ).eval s1 with hs2d
   have s2Q : State.get s2 SKQ = List.replicate q 1 := by
     rw [hs2d, Cmd.eval_get_of_not_writes _ _ SKQ (by decide)]; exact hQ
@@ -1122,7 +1132,7 @@ theorem preKey_run (sg q ar : Nat) (o : Option Nat) (b0 : Bool) (tl : List Nat)
   clear_value s4
   -- `TR`
   have hTR := optMin_run TR S1Parse.PSIG sg (oTag o) (oVal o) sg s4 s4T s4V s4G s4G
-    (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
   set s5 := (optMin TR S1Parse.PSIG).eval s4 with hs5d
   have s5T : State.get s5 SKT = List.replicate (oTag o) 1 := by
     rw [hs5d, Cmd.eval_get_of_not_writes _ _ SKT (by decide)]; exact s4T
@@ -1182,7 +1192,7 @@ theorem preDst_run (sg st q' ar rv : Nat) (mz : Bool) (o : Option Nat)
     rw [hs1d, Cmd.eval_get_of_not_writes _ _ TR (by decide)]; exact hTR
   clear_value s1
   have hTQ2 := hvBlk_run SAX TQ2 sg st q' s1 hA1 s1C1 s1St (by decide) (by decide)
-    (by decide) (by decide)
+    (by decide) (by decide) (by decide)
   set s2 := (hvBlk SAX TQ2).eval s1 with hs2d
   have s2C : State.get s2 SCUR = encSyms (ar :: (encOptN o ++ tl)) := by
     rw [hs2d, Cmd.eval_get_of_not_writes _ _ SCUR (by decide)]; exact hC1
@@ -1217,7 +1227,7 @@ theorem preDst_run (sg st q' ar rv : Nat) (mz : Bool) (o : Option Nat)
     rw [hs4d, Cmd.eval_get_of_not_writes _ _ TQ2 (by decide)]; exact s3T2
   clear_value s4
   have hTW0 := optMin_run TW0 TR sg (oTag o) (oVal o) rv s4 hT4 hV4 s4G s4R
-    (by decide) (by decide) (by decide) (by decide)
+    (by decide) (by decide) (by decide) (by decide) (by decide) (by decide)
   set s5 := (optMin TW0 TR).eval s4 with hs5d
   have s5G : State.get s5 S1Parse.PSIG = List.replicate sg 1 := by
     rw [hs5d, Cmd.eval_get_of_not_writes _ _ S1Parse.PSIG (by decide)]; exact s4G
@@ -1239,10 +1249,10 @@ theorem preDst_run (sg st q' ar rv : Nat) (mz : Bool) (o : Option Nat)
     rw [hs5d, hs4d, hs3d, hs2d, hs1d]
     unfold preDst
     rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
-  refine ⟨?_, ?_, ?_, hev ▸ hTW1⟩
-  · rw [hev, Cmd.eval_get_of_not_writes _ _ SCUR (by decide)]; exact s5C
-  · rw [hev, Cmd.eval_get_of_not_writes _ _ TQ2 (by decide)]; exact s5T2
-  · rw [hev, Cmd.eval_get_of_not_writes _ _ TW0 (by decide)]; exact hTW0
+  refine ⟨?_, ?_, ?_, by rw [hev]; exact hTW1⟩
+  · rw [hev, Cmd.eval_get_of_not_writes wBlk1 _ SCUR (by decide)]; exact s5C
+  · rw [hev, Cmd.eval_get_of_not_writes wBlk1 _ TQ2 (by decide)]; exact s5T2
+  · rw [hev, Cmd.eval_get_of_not_writes wBlk1 _ TW0 (by decide)]; exact hTW0
 
 /-- Phase 4 — the move code. -/
 def preMv : Cmd :=
@@ -1263,10 +1273,14 @@ theorem preMv_run (ar mv : Nat) (tl : List Nat) (w : State)
   obtain ⟨hN, hR⟩ := mvBlk_run mv s2 hmv hA2
   have hev : preMv.eval w = mvBlk.eval s2 := by
     rw [hs2d, hs1d]; unfold preMv; rw [Cmd.eval_seq, Cmd.eval_seq]
-  exact ⟨by rw [hev, Cmd.eval_get_of_not_writes _ _ SCUR (by decide)]; exact hC2,
-    hev ▸ hN, hev ▸ hR⟩
+  exact ⟨by rw [hev, Cmd.eval_get_of_not_writes mvBlk _ SCUR (by decide)]; exact hC2,
+    by rw [hev]; exact hN, by rw [hev]; exact hR⟩
 
 /-! ### The preamble -/
+
+/-- "not halting and not already seen" is "not (seen or halting)". -/
+theorem keep_and (a b : Bool) : ((!a) && !b) = !(b || a) := by
+  cases a <;> cases b <;> rfl
 
 /-- One entry's stream, under the guard's three arity facts. -/
 theorem flattenEntry_shape (e : FlatTMTransEntry) (rest : List Nat)
@@ -1371,7 +1385,8 @@ theorem entryPre_run (M : flatTM) (e : FlatTMTransEntry) (rest : List Nat)
   have hev : entryPre.eval w = preMv.eval s3 := by
     rw [hs3d, hs2d, hs1d]; unfold entryPre; rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
   have hkey : keyOf e = (e.src_state, oTag o, oVal o) := rfl
-  refine ⟨⟨?_, ?_, ?_, ?_, ?_, hev ▸ p4N, hev ▸ p4R⟩, ?_, ?_, ?_⟩
+  refine ⟨⟨?_, ?_, ?_, ?_, ?_, by rw [hev]; exact p4N, by rw [hev]; exact p4R⟩,
+    ?_, ?_, ?_⟩
   · rw [hev, Cmd.eval_get_of_not_writes _ _ TQ (by decide)]; exact s3TQ
   · rw [hev, Cmd.eval_get_of_not_writes _ _ TQ2 (by decide)]; exact p3TQ2
   · rw [hev, Cmd.eval_get_of_not_writes _ _ TR (by decide)]; exact s3R
@@ -1379,10 +1394,9 @@ theorem entryPre_run (M : flatTM) (e : FlatTMTransEntry) (rest : List Nat)
   · rw [hev, Cmd.eval_get_of_not_writes _ _ TW1 (by decide), p3W1, wOf_true_eq]
   · rw [hev]; exact p4C
   · rw [hev, Cmd.eval_get_of_not_writes _ _ SSEEN (by decide), hkey]; exact s3S
-  · rw [hev, Cmd.eval_get_of_not_writes _ _ SKP (by decide), s3P, hkey]
-    congr 1
-    cases haltBit (M.halt.map S1Parse.bitOf) e.src_state <;>
-      cases seenHit (e.src_state, oTag o, oVal o) seen <;> rfl
+  · rw [hev, Cmd.eval_get_of_not_writes _ _ SKP (by decide), s3P, hkey,
+      keep_and (haltBit (M.halt.map S1Parse.bitOf) e.src_state)
+        (seenHit (e.src_state, oTag o, oVal o) seen)]
 
 /-! ## The entry loop
 
@@ -1591,7 +1605,7 @@ theorem entryBody_step (M : flatTM) (a : List (Nat × Nat × Nat) × List FlatTM
          by rw [hkeep S1Parse.PSIG (by decide) (by decide)]; exact c5⟩,
         by rw [hkeep S1Parse.PSTATES (by decide) (by decide)]; exact vst,
         by rw [hkeep S1Parse.PHALT (by decide) (by decide)]; exact vph,
-        fun x hx' => har x (by simp [hx'])⟩
+        fun x hx' => har x (List.mem_cons_of_mem e hx')⟩
 
 /-! ### The family -/
 
@@ -1648,10 +1662,29 @@ theorem stepFam_run (M : flatTM) (s : State) (hV : validFlatTM M) (hT : M.tapes 
     (fun a t _ hI _ => entryBody_step M a t hI)
   exact Emits.congr_l key (stepSummand_fold M hV hT)
 
+theorem entryPre_usesBelow : Cmd.UsesBelow entryPre 48 := by
+  simp [entryPre, preSrc, preKey, preDst, preMv, hvBlk, haltBlk, dropLoop, optRead,
+    optMin, wBlk1, mzBlk, mvBlk, scanSeen, scanBody, pushKey, lnop, minReg,
+    S1Prelude.minBody, setTrue, S1Parse.readItem, CliqueRelTM.readNum, CliqueRelTM.cSkip,
+    Cmd.UsesBelow, Op.UsesBelow,
+    SCUR, SSEEN, SCNT, SKP, SKQ, SKT, SKV, SAX, SIX, TQ, TQ2, TR, TW0, TW1, TFN, TFR,
+    CX, EE, TJ1, TJ2, TJ3, EK1, EOUT_C, CBV, CS1, CS2, CZ,
+    S1Parse.PSIG, S1Parse.PSTATES, S1Parse.PHALT, S1Parse.PTRANS, S1Parse.PNTRANS,
+    CliqueRelTM.HEAD, CliqueRelTM.INBLK, CliqueRelTM.SKIPR]
+
+theorem entryBody_usesBelow : Cmd.UsesBelow entryBody 48 := by
+  show (Op.UsesBelow (.nonEmpty SAX SCUR) 48)
+    ∧ (SAX < 48 ∧ Cmd.UsesBelow (entryPre ;; Cmd.ifBit SKP stepEmit snop) 48
+        ∧ Cmd.UsesBelow snop 48)
+  refine ⟨⟨by decide, by decide⟩, by decide, ⟨entryPre_usesBelow, ?_⟩, ?_⟩
+  · exact ⟨by decide, stepEmit_usesBelow, by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+
 theorem stepFam_usesBelow : Cmd.UsesBelow stepFam 48 := by
-  refine ⟨by decide, by decide, by decide, ?_⟩
-  refine ⟨by decide, ?_, ?_⟩
-  · exact ⟨by decide, by decide, by decide, by decide⟩
-  · exact ⟨stepEmit_usesBelow, by decide⟩
+  show (Op.UsesBelow (.copy SCUR S1Parse.PTRANS) 48)
+    ∧ (Op.UsesBelow (.clear SSEEN) 48
+        ∧ (SCNT < 48 ∧ S1Parse.PNTRANS < 48 ∧ Cmd.UsesBelow entryBody 48))
+  exact ⟨⟨by decide, by decide⟩, (by decide : SSEEN < 48), by decide, by decide,
+    entryBody_usesBelow⟩
 
 end S1Step
