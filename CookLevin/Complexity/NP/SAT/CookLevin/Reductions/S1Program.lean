@@ -1,4 +1,4 @@
-import Complexity.NP.SAT.CookLevin.Reductions.S1StepModel
+import Complexity.NP.SAT.CookLevin.Reductions.S1StepEmit
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
