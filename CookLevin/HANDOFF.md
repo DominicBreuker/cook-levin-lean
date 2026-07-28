@@ -101,6 +101,10 @@ nodes, of which **4683 (4.0%)** are not cost-safe, in exactly three shapes:
 (2) unary products `concat dst dst src` — `polyCost_mulLoop` closes them;
 (3) per-iteration value rebuilds (`CX` via `loadX`, `CH`, `CD`/`CE`) plus
 `EOUT_C` — these need `polyCost_forBnd_grow`.
+The 4683 instances are only **52 distinct shapes** (`cCopy` 2, `stagePG` 11,
+`stageSig` 1) — the emitters are instantiated over and over. **52 is the
+worst-case count of bespoke `PolyCost` proofs**, and they cluster a couple per
+family.
 
 ## NEXT BOTTOM-UP session — close `s1Program_polyCost`, and nothing else
 
@@ -132,7 +136,7 @@ Two routes. **Do them in this order** — step 1 is cheap and re-measures.
      nothing is accumulating, and `Cmd.forBnd_counter_le` (new, in `CostPoly`)
      is exactly the fact that says so. **Estimate: one `PolyCost` proof per
      card FAMILY (~7 for stage C, plus the prelude and step nests), not one
-     per loop.**
+     per loop; 52 distinct offender shapes program-wide is the hard ceiling.**
    * **(b) structural `Cmd.GrowSafe` — one `decide` for the whole program, but
      it is a real dataflow analysis.** ⚠ **Probe this on paper first.** The
      design is: mark `U := body.writes`; an op is growth-safe if every source

@@ -59,11 +59,25 @@ def offenders : Cmd → List (Nat × Nat × List Nat)
 /-! ## §1 — the whole program (2026-07-28-c measurement)
 
 ```
-loops       S1Program.s1Program = 116825
-unsafeLoops S1Program.s1Program =   4683      (4.0%)
+loops        S1Program.s1Program = 116825
+unsafeLoops  S1Program.s1Program =   4683      (4.0%)
+|offenders eraseDups|             =     52     ← DISTINCT shapes
 ```
 96% of the program's loops are cost-safe: every emitter loop appends with
-`appendOne`, whose `Op.costReads` is `[]`. -/
+`appendOne`, whose `Op.costReads` is `[]`. And the 4683 instances are only **52
+distinct `(bnd, cnt, offending registers)` shapes**, because the emitters are
+instantiated over and over. Per stage:
+
+```
+S1CardEmit.cCopy   15 loops,  2 shapes:  (18,44,[45])  (19,43,[21,44,45])
+S1Emit.stageSig     3 loops,  1 shape
+S1Parse.stagePG    30 loops, 11 shapes
+```
+
+`cCopy`'s two shapes are exactly the two levels §5 walks — `copyLoopB` (the
+inner counter `EJ3`) and `cCopy` itself (`CX` rebuilt by `loadX`, plus both
+inner counters). **That is the sizing argument for route (a): 52 bespoke
+`PolyCost` proofs at worst, clustered a couple per family.** -/
 
 -- #eval loops S1Program.s1Program
 -- #eval unsafeLoops S1Program.s1Program
