@@ -1248,4 +1248,17 @@ theorem stepEmit_usesBelow : Cmd.UsesBelow stepEmit 48 :=
 
 end Bounds
 
+/-- **The entry body's constants come for free.** `cFive` runs before
+`stepBlocks` in `cardBlocks` order and leaves `S1CardEmit.CConst` standing, and
+`PSIG` is outside `S1CardEmit.AD` — so the per-entry preamble has to publish
+`SEntry` only. -/
+theorem SConst_of_cFive (M : flatTM) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf) :
+    SConst M.sig M.states (cFive.eval s) := by
+  obtain ⟨h1, h2, -, h4, h5⟩ := cFive_const M s hsig hst hph
+  obtain ⟨-, hfr⟩ := cFive_run M s hsig hst hph
+  exact ⟨h4, h1, h2, h5, by rw [hfr S1Parse.PSIG (by decide) (by decide)]; exact hsig⟩
+
 end S1Step

@@ -1273,6 +1273,53 @@ theorem cFive_run (M : flatTM) (s : State)
       f1 r a1 (nmem_sub (by decide) a2)]
     exact f0 r a1 (nmem_sub (by decide) a2)
 
+/-- **The five families leave stage C's constants standing.** `cPre` establishes
+`CConst` and none of the five writes any of its registers, so the `stepBlocks`
+family — which runs after `cFive` — needs **no preamble of its own** for
+`CS1`/`CS2`/`CQ1`/`CBV`/`CZ`. -/
+theorem cFive_const (M : flatTM) (s : State)
+    (hsig : State.get s S1Parse.PSIG = List.replicate M.sig 1)
+    (hst : State.get s S1Parse.PSTATES = List.replicate M.states 1)
+    (hph : State.get s S1Parse.PHALT = M.halt.map S1Parse.bitOf) :
+    CConst M.sig M.states (cFive.eval s) := by
+  set hb := M.halt.map S1Parse.bitOf with hhb
+  obtain ⟨c0, -, f0⟩ := cPre_run M s hsig hst
+  set s0 := cPre.eval s with hs0
+  have p0 : State.get s0 S1Parse.PHALT = hb := by
+    rw [f0 S1Parse.PHALT (by decide) (by decide)]; exact hph
+  clear_value s0
+  obtain ⟨-, f1⟩ := cCopy_run M.sig M.states s0 c0
+  set s1 := cCopy.eval s0 with hs1
+  have c1 : CConst M.sig M.states s1 := CConst_frame c0 f1
+  have p1 : State.get s1 S1Parse.PHALT = hb := by
+    rw [f1 S1Parse.PHALT (by decide) (by decide)]; exact p0
+  clear_value s1
+  obtain ⟨-, f2⟩ := cRight_run M.sig M.states s1 c1
+  set s2 := cRight.eval s1 with hs2
+  have c2 : CConst M.sig M.states s2 := CConst_frame c1 f2
+  have p2 : State.get s2 S1Parse.PHALT = hb := by
+    rw [f2 S1Parse.PHALT (by decide) (by decide)]; exact p1
+  clear_value s2
+  obtain ⟨-, f3⟩ := cHaltLeft_run M.sig M.states hb s2 c2 p2
+  set s3 := cHaltLeft.eval s2 with hs3
+  have c3 : CConst M.sig M.states s3 := CConst_frame c2 f3
+  have p3 : State.get s3 S1Parse.PHALT = hb := by
+    rw [f3 S1Parse.PHALT (by decide) (by decide)]; exact p2
+  clear_value s3
+  obtain ⟨-, f4⟩ := cHaltCenter_run M.sig M.states hb s3 c3 p3
+  set s4 := cHaltCenter.eval s3 with hs4
+  have c4 : CConst M.sig M.states s4 := CConst_frame c3 f4
+  have p4 : State.get s4 S1Parse.PHALT = hb := by
+    rw [f4 S1Parse.PHALT (by decide) (by decide)]; exact p3
+  clear_value s4
+  obtain ⟨-, f5⟩ := cHaltRight_run M.sig M.states hb s4 c4 p4
+  have hev : cFive.eval s = cHaltRight.eval s4 := by
+    rw [hs4, hs3, hs2, hs1, hs0]
+    unfold cFive
+    rw [Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq, Cmd.eval_seq]
+  rw [hev]
+  exact CConst_frame c4 f5
+
 /-- The preamble stays inside the S1 register bound. -/
 theorem cPre_usesBelow : Cmd.UsesBelow cPre 48 := by
   unfold cPre
