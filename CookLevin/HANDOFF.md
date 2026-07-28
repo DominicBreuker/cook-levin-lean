@@ -12,165 +12,174 @@ reasonably provable).
 **reference index**, not narration: consult it before building anything, do not
 read it front to back.
 
-## Where the proof stands (2026-07-28-b)
+## Where the proof stands (2026-07-28-c)
 
 **The hardness half of Cook–Levin is proven modulo ONE `sorry`: the S1 program's
-cost ladder.** The program itself is finished and axiom-clean.
+cost ladder.** The program itself is finished and axiom-clean; the ladder is now
+a **purely structural** obligation.
 
 ```
 FrontS1Comp.SAT_NPhard''_of_S1 (c : Cmd)
   (hcomputes : ∀ x, s1Extract (c.eval (headEncodeIn x)) = s1Key (S1Map.s1Map x))
   (huses     : Cmd.UsesBelow c S1Program.s1RegBound)
-  (hcost     : ∀ x, c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x))
+  (hcost     : S1Witness.S1CostBound c)                  -- ⚠ NEW SHAPE
   : NPhard'' SAT
 depends on axioms: [propext, Classical.choice, Quot.sound]
-```
-
-Two of those three contracts are now **discharged at the real program**:
-
-```
-S1Program.s1Program_computes  : [propext, Classical.choice, Quot.sound]
-S1Program.s1Program_usesBelow : [propext, Classical.choice, Quot.sound]
 ```
 
 | piece | status |
 |---|---|
 | sound tail, front (C8-0…C8-5), tableau maths + both size bounds | ✅ axiom-clean |
 | S1 map + guard + correctness iff + output bound | ✅ |
-| S1 program stages **P G Σ I C F M-no M-yes** | ✅ **ALL BUILT** |
-| stage C = `cFive ;; stepFam ;; cPrelude` (`S1Program.stageC`) | ✅ **NEW** |
-| `s1Program_computes` / `s1Program_usesBelow` | ✅ **NEW — axiom-clean** |
-| **the cost ladder** `S1Witness.s1Program_cost_le` | ❌ **the only open S1 item** |
+| S1 program, all stages, `stageC = cFive ;; stepFam ;; cPrelude` | ✅ **ALL BUILT** |
+| `s1Program_computes` / `s1Program_usesBelow` | ✅ axiom-clean |
+| `Cmd.PolyCost` — the generic cost layer (`Lang/CostPoly.lean`) | ✅ **NEW, sorry-free** |
+| **the cost ladder** `S1Witness.s1Program_polyCost` | ❌ **the only open S1 item** |
 | `inNPLangFreeSplit SAT` (⇒ `NPcomplete'' SAT`) | ❌ open, top-down, independent |
 
-**Sorries in built code: 6** (was 9) — five pre-existing (`red_inNP`'s
+**Sorries in built code: 6** (unchanged) — five pre-existing (`red_inNP`'s
 `inTimePoly` half; `hasDeciderClassical`; 3× `MultiToSingle`, dead code) and
-`S1Witness.s1Program_cost_le`. **`Reductions/S1Program.lean` is now sorry-free.**
+`S1Witness.s1Program_polyCost`.
 
 ## ★ Latest session
 
-**2026-07-28-b (bottom-up) — stage C is BUILT and the S1 program is finished.**
-New: `Reductions/S1StepLoop.lean` (the per-entry preamble + the entry loop,
-sorry-free & axiom-clean) and `probes/S1StepLoopProbe.lean`.
-`Reductions/S1Program.lean`'s three `sorry`s are gone.
+**2026-07-28-c (bottom-up) — the cost ladder got an architecture, and the
+contract that can consume it.**
+
+New: `Complexity/Lang/CostPoly.lean` (sorry-free) and
+`probes/S1CostSafeProbe.lean`. `S1Witness.s1Program_cost_le` is **gone**,
+replaced by `s1Program_polyCost : Cmd.PolyCost S1Program.s1Program`.
 
 **Endpoints to consume — do NOT re-derive:**
 
-* **`S1Step.stepFam` / `stepFam_run` / `stepFam_usesBelow`** — the whole
-  `stepBlocks` family as one `Cmd`: `Emits LD stepFam ((normTrans M).flatMap
-  (entryBlocks M)) s` off `SConst` + the parse outputs.
-* **`S1Step.entryPre` / `entryPre_run`** — the per-entry preamble: pops one
-  entry off the `SCUR` cursor, publishes `SEntry`, decides "emit?" into `SKP`
-  and pushes the key onto `SSEEN`. Its phases `preSrc`/`preKey`/`preDst`/`preMv`
-  each have their own `_run`.
-* **`S1Step.hvBlk` / `optMin` / `wBlk1` / `mzBlk` / `mvBlk` / `optRead` /
-  `haltBlk` / `dropLoop` / `scanSeen` / `pushKey`** — the reusable gadgets
-  (`hvBlk` = `minReg` + one hoisted `unaryMulLoop`; `dropLoop` = random access
-  into a raw bit list; `scanSeen` = a guarded cursor scan).
-* **`S1Program.stageC` / `stageC_run` / `stageC_usesBelow`** — real, sorry-free.
-  ⚠ `stageC_run` gained an `hstart` hypothesis (see FINDING W).
-* **`S1Step.LD` / `Keeps` / `keeps_of_writes`** — the entry loop's dirty list and
-  the frame workhorse; `S1Program.LD_cdirty` puts `LD` inside stage C's licence.
+* **`Cmd.PolyCost c := ∃ K D, ∀ s M, (∀ r ∈ c.costReads, |s @ r| ≤ M) →
+  c.cost s ≤ K·(M+1)^(D+1)`** — closed under `PolyCost.seq`, `PolyCost.ifBit`,
+  `polyCost_op`, and `polyCost_forBnd` (the cost-safe loop rule).
+* **`Cmd.CostSafe`** — the `decide`-able check "no `forBnd` body writes a
+  register its own cost reads"; `Cmd.polyCost_of_costSafe (by decide)` closes a
+  whole gadget in ONE line. Measured: `decide` on a real closed stage-C family
+  runs in seconds — scaling is **not** the problem.
+* **`Cmd.polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`** —
+  the self-referential loops. `polyCost_forBnd_grow` asks only for a
+  per-iteration *growth* budget driven by the loop's **stable** registers.
+* **`Cmd.get_length_eval_le : |c.eval s @ r| ≤ |s @ r| + c.cost s`** — the
+  composable strengthening of `Cmd.size_eval_le`. This is the whole trick: it
+  re-establishes the cap after a `seq` knowing **nothing** about the left
+  factor's semantics.
+* **`S1Witness.S1CostBound c`** — *some* polynomial dominates both
+  `c.cost (headEncodeIn x)` and `size (s1Map x)`. `s1CostBound_of_polyCost` is
+  the bridge; `s1CostBound_of_s1Bound` keeps the old degree-10 shape available.
 
-⚠ **FINDING T — a cursor loop's body must be TOTAL, not just correct in range.**
-`emitFold_run`'s `hstep` is quantified over *every* iteration index, not just
-`i < n`: the loop principle never learns the cursor is non-empty. So the body
-cannot be "correct for a real entry" only — it must emit `[]` and preserve the
-carried state on an exhausted cursor. Both loops here are wrapped in a
-`nonEmpty`-guard on their own cursor (one `Op`), which also removes any need to
-relate the loop bound to the carried list. **Every future cursor loop wants
-this guard.**
+⚠ **FINDING Y — a `cost_bound` field stated as a FIXED polynomial cannot
+consume a generic cost lemma.** Any semantics-free cost argument produces an
+*existential* `K·(M+1)^D`; the old contract `c.cost ≤ S1Map.s1Bound` (degree 10,
+fixed) could never have accepted it, no matter how much measured slack there
+was. The fix was free — `cost_bound` is a free field whose only constraint is
+that it keeps dominating `output_size_le`, so `S1CostBound` bundles the two onto
+one anonymous polynomial. **Ask of every "free polynomial" field: free for whom,
+the prover or the consumer?**
 
-⚠ **FINDING U — the seen-set is a PREPEND register.** `S1Step.stepSt` conses
-(`keyOf e :: seen`), so the machine must too: `Cmd.op (.concat SSEEN item SSEEN)`
-writes `get item ++ get SSEEN`. Prepending is free and keeps the invariant a
-literal `encSyms (keyFlat seen)` instead of a `reverse`.
+⚠ **FINDING X — `Cmd.op (.copy r r)` is a semantic no-op but NOT a cost no-op,
+and it is used on the OUTPUT register.** `Op.cost (copy dst src) = |src| + 1`,
+so the else-branch no-op (`S1CardEmit.copy_self_get`, `S1Prelude.pKindCmd`'s
+`[]` case, `S1PreludeEmit`) re-reads the whole emitted stream once per
+iteration: the emitters are `O(output²)` and `EOUT_C` is a genuine `costRead`,
+against the spirit of the "output is built by unit-cost appends" invariant.
+**Do NOT re-open the pinned `_run` lemmas to swap the no-op** — the program is
+still polynomial and the measured head-room is `> 6·10^8`. The consequence for
+the ladder is that `EOUT_C` is an accumulator, so `polyCost_forBnd_grow` is
+*required*, not optional.
 
-⚠ **FINDING V — a guarded cursor loop only needs an UPPER bound.** The
-membership scan must run `≥ |seen|` times and no register holds `1^|seen|` (the
-licence is exactly full). With FINDING T's guard the extra iterations are
-no-ops, so `Cmd.forBnd EK1 SSEEN scanBody` — `|encSyms (keyFlat seen)| ≥ |seen|`
-— is legitimate. **Do not spend a register on an exact loop count.**
+⚠ **The generic lemma has a genuine side condition and it is not cosmetic.**
+`forBnd cnt bnd (concat dst dst dst)` squares `dst` every iteration, so no
+unconditional polynomial cost bound exists for this language. Every relaxation
+of `CostSafe` must keep excluding that.
 
-⚠ **FINDING W — a stated contract is only as good as its first consumer.**
-`stageC_run` had been pinned since 2026-07-26-b *without* the `PSTART`
-hypothesis, and nothing noticed until `cPrelude` (indexed by
-`min M.start M.states`) had to be wired in. Stage P produces `PSTART` and
-Σ / I preserve it, so the fix was free — but **when you pin a contract for an
-unwritten `Cmd`, list the inputs of every model it will consume, not the ones
-the assembly happens to have in scope.**
+**Measured** (`probes/S1CostSafeProbe.lean`): `s1Program` has **116825** loop
+nodes, of which **4683 (4.0%)** are not cost-safe, in exactly three shapes:
+(1) unary drains `forBnd cnt r (tail r r)` — `polyCost_tailLoop` closes them;
+(2) unary products `concat dst dst src` — `polyCost_mulLoop` closes them;
+(3) per-iteration value rebuilds (`CX` via `loadX`, `CH`, `CD`/`CE`) plus
+`EOUT_C` — these need `polyCost_forBnd_grow`.
 
-⚠ **Two tactic gotchas that cost real time this session** (both are `whnf`
-timeouts that look like logic errors): `congr 1` on
-`List.replicate a 1 = List.replicate b 1` and `h ▸ x` where `h` rewrites a
-`Cmd.eval` of a long `;;` chain. Use an explicit arithmetic `have` and
-`by rw [h]; exact x`. Also: `rw [Cmd.eval_op, State.get_set_ne …]` fails —
-`rw` will not unfold `Op.eval`, so `simp only [Cmd.eval_op, Op.eval, …]` is the
-form that works.
+## NEXT BOTTOM-UP session — close `s1Program_polyCost`, and nothing else
 
-**Measured** (`probes/S1StepLoopProbe.lean`, all green): stage C's output is
-**exactly** `encNats (cardBlocks M)` (not just a prefix); `s1Program` computes
-`s1Key (s1Map x)` end to end on the frozen head layout, on and off the guard —
-the first time the whole program could be `#eval`-ed at all. Cost: `3.6e5`
-against a budget of `1.1e15`; head-room `3.1e9` at `σ = 0` and still `6.2e8` at
-`σ = 11`, with the decay flattening (per-step factor `0.78 → 0.92` across
-`σ = 6 … 11`) — degree 10 beats the card register's degree ~4, so it turns
-around in the teens. **The floor is `> 6·10^8`: the ladder is a slack
-argument.**
+Everything numeric is gone: there is no constant to compute, no degree to hit,
+no register table to consult, and **no `_run` lemma is needed**. The obligation
+is `Cmd.PolyCost S1Program.s1Program` and it decomposes syntactically.
 
-## NEXT BOTTOM-UP session — the cost ladder, and nothing else
+Two routes. **Do them in this order** — step 1 is cheap and re-measures.
 
-`S1Witness.s1Program_cost_le` is the **last** S1 obligation. Everything below it
-is built and axiom-clean, so this session is a pure accounting exercise. Its
-docstring carries the plan; this is the concrete decomposition.
+1. **Relax `CostSafe` with a non-growing check (half a session, closes shape 1).**
+   Add `Cmd.NoGrow (r : Var) : Cmd → Bool` — every op writing `r` is `clear`,
+   `head`, `nonEmpty`, `eqBit` (result `≤ 1`) or `tail r r` (shrinks) — and
+   weaken `polyCost_forBnd`'s side condition to
+   `r ∉ body.writes ∨ body.NoGrow r`. Then **re-run
+   `probes/S1CostSafeProbe.lean` §1** and write the new percentage into this
+   file. Drains are the most numerous shape, so expect a big drop.
+2. **Then pick ONE of:**
+   * **(a) semantic, per-gadget — guaranteed to work.** For each remaining
+     unsafe loop, prove `PolyCost` for that gadget by hand with
+     `Cmd.cost_forBnd_le` (or `polyCost_forBnd_grow`), and glue upward with
+     `PolyCost.seq` / `.ifBit` / `polyCost_of_costSafe (by decide)` for
+     everything in between. The unsafe loops **cluster at family level**, and
+     each needs a *length* bound only — far weaker than the corresponding
+     `_run` lemma, which already exists and pins the exact contents.
+     **`probes/S1CostSafeProbe.lean` §5 walks `S1CardEmit.cCopy` outwards and
+     is the template.** Machine-checked there: `copyInner` and `copyLoopC`
+     close with a single `decide`; the break is at `copyLoopB`, because the
+     inner loop writes its counter `EJ3` and the emitter cost-reads it —
+     nothing is accumulating, and `Cmd.forBnd_counter_le` (new, in `CostPoly`)
+     is exactly the fact that says so. **Estimate: one `PolyCost` proof per
+     card FAMILY (~7 for stage C, plus the prelude and step nests), not one
+     per loop.**
+   * **(b) structural `Cmd.GrowSafe` — one `decide` for the whole program, but
+     it is a real dataflow analysis.** ⚠ **Probe this on paper first.** The
+     design is: mark `U := body.writes`; an op is growth-safe if every source
+     feeding a write is either outside `U` (capped by the loop's entry cap) or
+     the write's own target (additive). That alone is **not enough**: an inner
+     loop whose *bound register* is in `U` (e.g. `emitBlk2` bounded by `CX`,
+     which `loadX` rebuilt) reintroduces compounding. You need a **must-def
+     (kill) analysis** separating registers the body *overwrites from stable
+     sources* (`CX`, `CD`) from true accumulators (`EOUT_C`, `CH`). Budget a
+     full session for the analysis plus its soundness proof, and only start it
+     if step 1's re-measure leaves shape 3 dominant.
 
-```
-s1Program.cost s ≤ (P+G) + max (yes branch) (stageMNo)
-yes branch      = Σ + I + C + F + M-yes,   C = cFive + stepFam + cPrelude
-```
+⚠ Whichever route: `PolyCost` is a statement about a `Cmd`'s **syntax**. Prove
+it per top-level `def`, bottom-up, in the same order the `_run` lemmas were
+built — `S1Emit` leaves first (see `S1CostSafeProbe.emitBlk_polyCost`, which
+needs **no** register-disequality hypotheses at all), then `S1CardEmit`,
+`S1Prelude`/`S1PreludeEmit`, `S1StepEmit`/`S1StepLoop`, then `S1Parse`, then
+`S1Program.s1Program` in three lines.
 
-1. **Bound each stage by a polynomial in `State.size` at ITS OWN entry**, then
-   chain with **`Cmd.size_eval_le`** (`State.size (c.eval s) ≤ State.size s +
-   c.cost s`) — that is the only lemma that lets a size-aware cost model
-   compose. Do **not** try to bound every stage in terms of the *input* size
-   directly; each stage's entry state is bigger than the last.
-2. **Leaves already proven**: `S1Emit.emitBlk_cost` (`≤ 3 + 5v + v²`),
-   `FrontPieces.tallyReg_run`'s third component (`≤ 1 + 5L + L²`),
-   `S1SATComp.clearRange_cost` (`≤ 2n+1`). Above each loop sits
-   **`Cmd.cost_forBnd_le`** (⚠ it adds `iters*iters` for the loop counter —
-   that term is charged deliberately, do not try to remove it).
-3. ⚠ **The two genuinely new cost shapes this session added**, both inside the
-   entry loop, both `Θ(n²)`-ish and both harmless against the measured slack:
-   `Cmd.op (.concat …)` in `hvBlk`'s `unaryMulLoop` (cost `2(|a|+|b|)+1`, run
-   `min q states + 1` times per entry) and `pushKey`'s
-   `concat SSEEN item SSEEN`, which re-reads the whole seen register once per
-   entry (`O(|trans|²)` overall). The membership scan is `O(|trans|²)` for the
-   same reason. All are dominated by the card register by orders of magnitude.
-4. ⚠ **FINDING F still governs: use slack, do not engineer for degree.**
-   Measured head-room is `10^8`…`10^12` (`probes/S1StepLoopProbe.lean` §4/§5), so
-   a very lossy bound is fine. If `S1Map.s1Bound` still refuses, raise it in
-   **ONE** place — `S1Witness.s1WitnessOf` hard-codes
-   `cost_bound := S1Map.s1Bound` and `output_size_le := S1Map.s1Map_size_le`; a
-   bigger bound needs only `output_size_le` re-proved as
-   `le_trans s1Map_size_le (mono …)`.
-5. When it lands, `S1Witness.s1_reductionLang`, `s1_reducesPolyMO'`,
-   `S1SATComp.s1_to_SAT_reducesPolyMO'` and **`FrontS1Comp.SAT_NPhard''`** all
-   become axiom-clean in one step. Check them with a scratch `#print axioms`
-   file and update the README/ROADMAP status tables.
+When it lands, `S1Witness.s1_reductionLang`, `s1_reducesPolyMO'`,
+`S1SATComp.s1_to_SAT_reducesPolyMO'` and **`FrontS1Comp.SAT_NPhard''`** all
+become axiom-clean in one step. Check with a scratch `#print axioms` file (or
+top-down item 1 below) and update the README/ROADMAP status tables.
 
 **Do NOT** re-open `s1Key`, `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s
 statement, the two seams' scrub ranges, `S1Step.stepSeg`/`stepEmit`'s contract,
-or the entry loop's register table — `yesBranch_run`, `s1Bridge`/`frontBridge`
-and `stepFam_run` are all proven against them, and stage C's 30-register
-licence is now **exactly** exhausted (see "The S1 register frame — PINNED").
+or the entry loop's register table — and do **not** swap the `copy r r` no-op
+(FINDING X). Stage C's 30-register licence is **exactly** exhausted.
 
 ## NEXT TOP-DOWN session — the membership half, then the headline
 
-Hardness is one cost lemma away, so the top-down critical path is the other half
-of `NPcomplete'' SAT`. All items below are independent of the cost ladder
-(different files), so a top-down agent can run in parallel with a bottom-up one.
+Hardness is one structural lemma away, so the top-down critical path is the
+other half of `NPcomplete'' SAT`. All items below are independent of the cost
+ladder (different files), so a top-down agent can run in parallel with a
+bottom-up one.
 
-1. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`, and the
+1. **A `#print axioms` regression list — do this one first, it is cheap, and it
+   is now also the tripwire for the cost ladder.** `probes/AxiomProbe.lean`
+   listing the ~30 endpoint names (`S1Program.stageC_run`,
+   `s1Program_computes`, `s1Program_usesBelow`, `S1Step.stepFam_run`,
+   `entryPre_run`, and now `Cmd.polyCost_of_costSafe`,
+   `Cmd.get_length_eval_le`, `S1Witness.s1CostBound_of_polyCost`) would catch
+   an accidental `sorryAx` inheritance in one run — exactly what the
+   placeholder-quantification discipline protects and nothing currently
+   verifies (standing risk #7). **It also tells you the moment the ladder
+   lands.**
+2. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`, and the
    top-down critical path.** The live SAT verifier does not factor verbatim as
    a Split witness: `assgn` certificates are `List Nat` (sentinel-unary),
    `InNPWitnessLangFreeSplit.rel` wants `List Bool`, and `encodeState` has 8
@@ -182,17 +191,7 @@ of `NPcomplete'' SAT`. All items below are independent of the cost ladder
    (`probes/SATSeamProbe.lean` has the decode helpers) — the risk is that
    `certState`'s width is not a per-witness constant, which would break
    `xWidth`. With it, `NPcomplete'' SAT = ⟨FrontS1Comp.SAT_NPhard'', that⟩.
-2. **A `#print axioms` regression list — do this one first, it is cheap and it
-   is the only unguarded standing risk (#7).** There is no single place
-   asserting which theorems are expected axiom-clean, and this session doubled
-   the number of endpoints that are. `probes/AxiomProbe.lean` listing the ~30
-   endpoint names (now including `S1Program.stageC_run`,
-   `S1Program.s1Program_computes`, `S1Program.s1Program_usesBelow`,
-   `S1Step.stepFam_run`, `S1Step.entryPre_run`) would catch an accidental
-   `sorryAx` inheritance in one run — exactly what the placeholder-quantification
-   discipline protects and nothing currently verifies. **It also becomes the
-   check that tells you the moment the cost ladder lands.**
-3. **Swap the headline** once (1) lands: state `CookLevin'' : NPcomplete'' SAT`
+3. **Swap the headline** once (2) lands: state `CookLevin'' : NPcomplete'' SAT`
    next to the legacy `CookLevin`, and only then delete the legacy `⪯p` front
    (`GenNP_is_hard.lean`, `L_to_LM`/`LM_to_mTM`/`mTM_to_singleTapeTM`,
    `Simulators/MultiToSingle.lean` — that IS the S2 collapse, and it retires 4
@@ -206,7 +205,11 @@ of `NPcomplete'' SAT`. All items below are independent of the cost ladder
    (`clearRange` only clears), so the audit is really about `WQ.encodeInQ` (the
    extra unary size register at `xWidth` is the verifier's own `encX` plus
    `1^(size x)`, which the front program *consumes* — layout, not work) and the
-   four older witnesses. Write the verdict into the ROADMAP risk register.
+   four older witnesses. ⚠ **Add one item**: `S1CostBound`'s `cost_bound` is now
+   an anonymous `Exists.choose`, so confirm nothing downstream depended on
+   `s1_reductionLang.cost_bound` being *definitionally* `S1Map.s1Bound` (the
+   whole project builds, so nothing does — record the verdict). Write the
+   verdict into the ROADMAP risk register.
 5. **Also independent and cheap:**
    * re-run `probes/SeamS1Probe.lean`, `probes/S1PreludeProbe.lean`,
      `probes/S1PreludeEmitProbe.lean`, `probes/S1StepModelProbe.lean`,
@@ -225,11 +228,14 @@ of `NPcomplete'' SAT`. All items below are independent of the cost ladder
      asserts the full equality for `stageC`, so the older section can be
      retired or re-pointed.
 
-**Recommendation: run a BOTTOM-UP session next.** The cost ladder is the single
-`sorry` between the current state and an axiom-clean `NPhard'' SAT`, it has
-`10^8`-plus of measured slack, and every lemma it needs already exists. Top-down
-item 2 is a 30-minute warm-up for either stream; top-down item 1 is the right
-pick for a parallel agent.
+**Recommendation: run a BOTTOM-UP session next.** `s1Program_polyCost` is the
+single `sorry` between the current state and an axiom-clean `NPhard'' SAT`, the
+architecture is built and validated, and step 1 above (the `NoGrow` relaxation
+plus a re-measure) is a self-contained half-session that tells the session after
+it exactly which of route (a)/(b) to take. Top-down item 1 is a 30-minute
+warm-up for either stream; top-down item 2 is the right pick for a parallel
+agent.
+
 ## The S1 register frame — PINNED
 
 ```
@@ -461,6 +467,28 @@ still has to respect:
 
 ## Locked invariants — do NOT revisit
 
+- **A `cost_bound` field must be an EXISTENTIAL polynomial, not a fixed one
+  (2026-07-28-c, FINDING Y).** `S1Witness.S1CostBound c` = "some `cb` is
+  `inOPoly`, `monotonic`, and dominates both `c.cost (headEncodeIn x)` and
+  `size (s1Map x)`". The old `c.cost ≤ S1Map.s1Bound` (degree 10, fixed) could
+  not consume any generic cost lemma, whose output is always `∃ K D, K·(M+1)^D`.
+  `output_size_le` is the *only* real constraint on `cost_bound`, which is why
+  bundling the two obligations makes the bound free. Do not re-specialise it.
+- **`Cmd.op (.copy r r)` is a semantic no-op but costs `|r| + 1`
+  (2026-07-28-c, FINDING X).** It is used as the `ifBit` else-branch with
+  `r := EOUT_C` in `S1CardEmit`, `S1Prelude` and `S1PreludeEmit`, so the
+  emitters are `O(output²)` and `EOUT_C` is a genuine `Cmd.costReads` member.
+  The program stays polynomial and the pinned `_run` lemmas depend on that exact
+  else-branch — **do not swap it**. For a NEW gadget, prefer a `clear` on a
+  scratch register already in the frame's dirty list.
+- **No unconditional polynomial cost bound exists for `Cmd`
+  (2026-07-28-c).** `forBnd cnt bnd (concat dst dst dst)` squares `dst` every
+  iteration. Every cost lemma therefore carries a side condition; `CostSafe`'s
+  is "no loop body writes a register its own cost reads". Relax it, never drop
+  it — and remember the loop *bound* register is sampled once at entry, so it
+  may be written by the body without harm, but an inner loop bounded by a
+  register the outer body rebuilds is exactly where compounding sneaks back in.
+
 - **A cursor loop's body must be TOTAL (2026-07-28-b, FINDING T).**
   `S1Step.emitFold_run`'s `hstep` is quantified over every iteration index, so
   the body has to emit `[]` and preserve the carried state on an exhausted
@@ -636,6 +664,16 @@ still has to respect:
   definition.
 
 ## Proven, reusable — do not re-derive
+
+- **`Complexity/Lang/CostPoly.lean` — the cost-ladder toolkit (2026-07-28-c).**
+  `Cmd.PolyCost` (+ `.seq`, `.ifBit`, `polyCost_op`, `polyCost_forBnd`),
+  `Cmd.CostSafe` + `polyCost_of_costSafe` (one `decide` per gadget),
+  `polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`,
+  `Cmd.get_length_eval_le` (per-register growth ≤ cost) and
+  `PolyCost.cost_le_size`. Sits on top of `Lang/CostFlat.lean`
+  (`cost_le_flat`, `cost_forBnd_flat_le`, `cost_mulLoop_le`,
+  `cost_tailLoop_le`, `Cmd.writes`, `Cmd.costReads`). **Start every new
+  `cost_le` obligation here, not with `Cmd.cost_seq` chains.**
 
 - **Stage C's `stepBlocks` family — THE PREAMBLE AND THE LOOP (2026-07-28-b,
   `Reductions/S1StepLoop.lean`, sorry-free & axiom-clean — consume as black

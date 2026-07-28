@@ -348,6 +348,25 @@ theorem Cmd.polyCost_forBnd (cnt bnd : Var) (body : Cmd)
       = K * (M + 1) ^ (D + 1 + 1) + (M + 1) ^ (D + 1 + 1) + (M + 1) ^ (D + 1 + 1) := by ring
   omega
 
+/-- **A loop leaves its counter no longer than its bound register.** The small
+fact every *outer* loop needs: an inner loop's counter is one of the outer
+body's cost reads (the emitters emit the counter's value), so the outer rule's
+growth invariant has to know the inner counter stays small. Needs only that the
+body does not write the counter itself. -/
+theorem Cmd.forBnd_counter_le (cnt bnd : Var) (body : Cmd) (s : State)
+    (h : cnt ∉ body.writes) :
+    (State.get ((Cmd.forBnd cnt bnd body).eval s) cnt).length
+      ≤ max (State.get s cnt).length (State.get s bnd).length := by
+  rw [Cmd.eval_forBnd]
+  refine Cmd.foldlState_range_induct body cnt (State.get s bnd).length s
+    (fun _ st => (State.get st cnt).length
+      ≤ max (State.get s cnt).length (State.get s bnd).length)
+    (Nat.le_max_left _ _) (fun i st hi _ => ?_)
+  show (State.get (body.eval (st.set cnt (List.replicate i 1))) cnt).length ≤ _
+  rw [Cmd.eval_get_of_not_writes body _ cnt h, State.get_set_eq,
+    List.length_replicate]
+  exact le_trans (Nat.le_of_lt hi) (Nat.le_max_right _ _)
+
 /-! ### The syntactic check and its one-line entry point -/
 
 /-- **Every loop in `c` is cost-safe**: no loop body writes a register its own

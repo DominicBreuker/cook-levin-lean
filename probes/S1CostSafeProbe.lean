@@ -135,4 +135,39 @@ example : Cmd.PolyCost (Cmd.forBnd S1Emit.EJ1 S1CardEmit.CD
     (Cmd.op (.tail S1CardEmit.CD S1CardEmit.CD))) :=
   Cmd.polyCost_tailLoop _ _ _ (by decide)
 
+/-! ## §5 — a worked walk of one real family: `S1CardEmit.cCopy`
+
+This is the template for route (a) of the NEXT-BOTTOM-UP plan. `cCopy` is
+`forBnd EJ1 CS2 (loadX EJ1 ;; copyLoopB)`, three loop levels over
+`emitId EK1 CX CZ EJ2 CZ EJ3 CZ EOUT_C`. Walking it outwards:
+
+* `copyInner` reads `{CX, CZ, EJ2, EJ3}` and writes `{EK1, EOUT_C}` — disjoint,
+  so it is cost-safe.
+* `copyLoopC = forBnd EJ3 CS1 copyInner` — still disjoint (`EJ3` is the loop's
+  own counter, written by `forBnd` itself and **not** by the body). **Cost-safe,
+  and it closes with one `decide`** (checked below).
+* `copyLoopB = forBnd EJ2 CS1 copyLoopC` — **this is where it breaks**:
+  `EJ3 ∈ copyLoopC.writes` (the inner loop writes its counter) and
+  `EJ3 ∈ copyLoopC.costReads` (the emitter emits the counter's value). Nothing
+  is accumulating; `EJ3` is simply re-set each inner run. `Cmd.forBnd_counter_le`
+  is the lemma that says so: after `copyLoopC`, `|EJ3| ≤ max |EJ3| |CS1|`.
+* `cCopy` then wraps `loadX EJ1 ;; copyLoopB`, where `loadX` rebuilds `CX` from
+  the stable `CBV` — the same pattern one level up.
+
+So a *per-family* `PolyCost` proof is: `polyCost_of_costSafe (by decide)` for
+the inner nest, then `polyCost_forBnd_grow` at each level whose body re-sets a
+register the level below reads, with `Cmd.forBnd_counter_le` (and the analogous
+"rebuilt from a stable register" fact for `CX`) supplying the growth budget.
+**Estimate: one such proof per card family, not one per loop** — seven for
+stage C, plus the prelude and step nests. -/
+
+/-- The inner two levels really are cost-safe: no invariant, no register table. -/
+example : S1CardEmit.copyLoopC.CostSafe = true := by decide
+
+example : Cmd.PolyCost S1CardEmit.copyLoopC := Cmd.polyCost_of_costSafe _ (by decide)
+
+/-- …and the third level is not — the inner counter `EJ3` is both written and
+cost-read. This is shape 3 in the small. -/
+example : S1CardEmit.copyLoopB.CostSafe = false := by decide
+
 end S1CostSafeProbe
