@@ -47,7 +47,8 @@ depends on axioms: [propext, Classical.choice, Quot.sound]
 now TWO loops in ONE gadget.**
 
 New: `Complexity/Lang/CostGrow.lean` (sorry-free, axiom-clean) and
-`probes/S1GrowSafeProbe.lean`. `S1Witness.s1Program_polyCost` is **gone**,
+`probes/S1GrowSafeProbe.lean`. `S1Witness.s1Program_polyCost` is **gone**
+(renamed, not weakened),
 replaced by `s1Program_costLeSize` (same content, stated in the shape the new
 layer produces); `s1CostBound_of_costLeSize` is the new bridge and
 `s1CostBound_of_polyCost` / `s1CostBound_of_capChk` both route through it.
@@ -717,15 +718,25 @@ still has to respect:
 
 ## Proven, reusable — do not re-derive
 
-- **`Complexity/Lang/CostPoly.lean` — the cost-ladder toolkit (2026-07-28-c).**
-  `Cmd.PolyCost` (+ `.seq`, `.ifBit`, `polyCost_op`, `polyCost_forBnd`),
-  `Cmd.CostSafe` + `polyCost_of_costSafe` (one `decide` per gadget),
+- **`Complexity/Lang/CostGrow.lean` — the cost-ladder toolkit (2026-07-29).
+  START HERE for every new `cost_le` obligation** (not with `Cmd.cost_seq`
+  chains, and not with `CostPoly` — see FINDING Z). `Cmd.CapCost` (+ `.seq`,
+  `.ifBit`, `.mono`, `capCost_op`, **`capCost_forBnd`**), `Cmd.NoGrow` /
+  `noGrow_sound`, `Cmd.GrowOk` / `growOk_sound` / `growOk_sound_list`,
+  `Cmd.freezeFor`, `Cmd.promote`, the decidable `Cmd.capChk` /
+  `capCost_of_capChk`, and the entry points `CapCost.cost_le_size` /
+  **`costLeSize_of_capChk`**.
+- **`Complexity/Lang/CostPoly.lean` — the earlier one-cap layer (2026-07-28-c),
+  still live and sorry-free**, but it cannot survive a loop whose body writes
+  its own cost reads (FINDING Z). `Cmd.PolyCost` (+ `.seq`, `.ifBit`,
+  `polyCost_op`, `polyCost_forBnd`), `Cmd.CostSafe` + `polyCost_of_costSafe`,
   `polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`,
-  `Cmd.get_length_eval_le` (per-register growth ≤ cost) and
-  `PolyCost.cost_le_size`. Sits on top of `Lang/CostFlat.lean`
-  (`cost_le_flat`, `cost_forBnd_flat_le`, `cost_mulLoop_le`,
-  `cost_tailLoop_le`, `Cmd.writes`, `Cmd.costReads`). **Start every new
-  `cost_le` obligation here, not with `Cmd.cost_seq` chains.**
+  `Cmd.get_length_eval_le` (per-register growth ≤ cost — used by BOTH layers)
+  and `PolyCost.cost_le_size`. Use it for a gadget that is genuinely cost-safe;
+  reach for `CostGrow` the moment a loop body touches what it reads.
+- Both sit on top of `Lang/CostFlat.lean` (`cost_le_flat`,
+  `cost_forBnd_flat_le`, `cost_mulLoop_le`, `cost_tailLoop_le`, `Cmd.writes`,
+  `Cmd.costReads`).
 
 - **Stage C's `stepBlocks` family — THE PREAMBLE AND THE LOOP (2026-07-28-b,
   `Reductions/S1StepLoop.lean`, sorry-free & axiom-clean — consume as black

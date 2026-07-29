@@ -187,7 +187,7 @@ giving `CookLevin : NPcomplete SAT`. The in-NP half is **done**: the layer's
   stagePG ;; ifBit FLG yesBranch stageMNo`, `computes` proven — the guard-false
   half outright and axiom-clean, the guard-true half modulo only the two stage
   contracts `stageC_run` / `stageMYes_run` — and `usesBelow` / `decode_agree`
-  closed, so `s1_reductionLang` is down to `s1Program_polyCost`. **Both head
+  closed, so `s1_reductionLang` is down to `s1Program_costLeSize`. **Both head
   seams landed 2026-07-27**, so `NPhard'' SAT` now follows from the three S1
   contracts alone (`FrontS1Comp.SAT_NPhard''_of_S1`, axiom-clean).
   **Stage M-yes is CLOSED and five of stage C's seven card families are built
