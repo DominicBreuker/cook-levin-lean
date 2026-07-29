@@ -12,239 +12,186 @@ reasonably provable).
 **reference index**, not narration: consult it before building anything, do not
 read it front to back.
 
-## Where the proof stands (2026-07-29)
+## Where the proof stands (2026-07-29-b)
 
-**The hardness half of Cook–Levin is proven modulo ONE `sorry`: the S1 program's
-cost ladder.** The program is finished and axiom-clean; the ladder is a
-**purely structural** obligation and is now down to **one gadget**.
+**The hardness half of Cook–Levin is PROVEN, `sorry`-free and axiom-clean.**
 
 ```
-FrontS1Comp.SAT_NPhard''_of_S1 (c : Cmd)
-  (hcomputes : ∀ x, s1Extract (c.eval (headEncodeIn x)) = s1Key (S1Map.s1Map x))
-  (huses     : Cmd.UsesBelow c S1Program.s1RegBound)
-  (hcost     : S1Witness.S1CostBound c)
-  : NPhard'' SAT
+FrontS1Comp.SAT_NPhard'' : NPhard'' SAT
 depends on axioms: [propext, Classical.choice, Quot.sound]
 ```
+
+S1 is finished. There is no remaining obligation on the hardness path — no
+placeholder, no contract to discharge, no `sorry`. Verify in 3 s with
+`probes/AxiomProbe.lean` (~33 endpoints; **run it after any change to the S1
+program, the cost layer or a seam**).
 
 | piece | status |
 |---|---|
 | sound tail, front (C8-0…C8-5), tableau maths + both size bounds | ✅ axiom-clean |
 | S1 map + guard + correctness iff + output bound | ✅ |
-| S1 program, all stages, `stageC = cFive ;; stepFam ;; cPrelude` | ✅ **ALL BUILT** |
-| `s1Program_computes` / `s1Program_usesBelow` | ✅ axiom-clean |
-| `Cmd.PolyCost` (`Lang/CostPoly.lean`), `Cmd.CapCost` (`Lang/CostGrow.lean`) | ✅ **both sorry-free** |
-| **the cost ladder** `S1Witness.s1Program_costLeSize` | ❌ **the only open S1 item — 2 loops** |
-| `inNPLangFreeSplit SAT` (⇒ `NPcomplete'' SAT`) | ❌ open, top-down, independent |
+| S1 program, all stages, `stageC = cFive ;; stepFam ;; cPrelude` | ✅ |
+| `s1Program_computes` / `s1Program_usesBelow` / **`s1Program_costLeSize`** | ✅ **all three** |
+| `Cmd.CapCost` + `Cmd.chk` (`Lang/CostGrow.lean`) | ✅ sorry-free, accepts the whole program |
+| **`FrontS1Comp.SAT_NPhard''`** | ✅ **axiom-clean** |
+| `inNPLangFreeSplit SAT` (⇒ `NPcomplete'' SAT`) | ❌ **open — the only thing between here and the headline** |
 
-**Sorries in built code: 6** (unchanged) — five pre-existing (`red_inNP`'s
-`inTimePoly` half; `hasDeciderClassical`; 3× `MultiToSingle`, dead code) and
-`S1Witness.s1Program_costLeSize`.
+**Sorries in built code: 5** (was 6), all pre-existing and **none on the
+`NPhard''` path**: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, and
+3× `MultiToSingle` (dead code). All five die with the S2/S3 retirement.
+
+⚠ `#print axioms CookLevin` still shows `sorryAx`. That is the **legacy** `⪯p`
+headline quoting the legacy front, not a gap in the mathematics — see NEXT
+TOP-DOWN items 2–3.
 
 ## ★ Latest session
 
-**2026-07-29 (bottom-up) — a cost layer that survives a loop; the residual is
-now TWO loops in ONE gadget.**
+**2026-07-29-b (bottom-up) — the cost ladder is CLOSED; `NPhard'' SAT` is
+axiom-clean.**
 
-New: `Complexity/Lang/CostGrow.lean` (sorry-free, axiom-clean) and
-`probes/S1GrowSafeProbe.lean`. `S1Witness.s1Program_polyCost` is **gone**
-(renamed, not weakened),
-replaced by `s1Program_costLeSize` (same content, stated in the shape the new
-layer produces); `s1CostBound_of_costLeSize` is the new bridge and
-`s1CostBound_of_polyCost` / `s1CostBound_of_capChk` both route through it.
+`S1Witness.s1Program_costLeSize` is proven by
 
-⚠ **FINDING Z — a ONE-cap cost predicate cannot survive a loop, and that is why
-`Cmd.PolyCost` stalled at 96%.** `PolyCost`'s cap is a single `M` over
-`c.costReads`. After one loop iteration the body's outputs are bounded by
-`poly(M)`, so the next iteration's cap is `poly(poly(M))` and `m` iterations
-give a **tower**. `Cmd.polyCost_forBnd` avoids this only by *forbidding* the
-body to write what it cost-reads — which is exactly the 4% residual. The fix is
-to split the cap in two, and it is not cosmetic: it is what makes the loop rule
-non-compounding.
+```lean
+Cmd.costLeSize_of_chk S1Program.s1Program costRegs (by decide +kernel)
+```
+
+— one decidable syntactic pass over the whole 5.4·10^5-node program. No register
+table, no invariant, no `_run` lemma.
+
+`Lang/CostGrow.lean` was rebuilt around it. **Gone:** `Cmd.GrowOk`,
+`Cmd.freezeFor`, `Cmd.promote`, the old `Cmd.capChk` (all subsumed).
+**Kept, re-based on bitmasks:** `Cmd.CapCost` + `seq`/`ifBit`/`mono`/
+`capCost_op`/`capCost_forBnd`. **New:** `Cmd.ngm`, `Op.cap`, `Cmd.loopStep`,
+`Cmd.chk`, `Cmd.chk_sound`, `Cmd.costLeSize_of_chk`.
+
+**What actually closed the last two loops** (`(43,46)` and `(42,22)`, both in
+`S1StepLoop.scanSeen`) — two things together, neither sufficient alone:
+
+* **flow sensitivity.** `Cmd.op (.concat SSEEN SAX SSEEN)` is fine because `SAX`
+  is capped by the straight-line prefix of the very body that appends it. No
+  flow-*insensitive* check (the old `GrowOk`) can ever see that.
+* **the `NoGrow`-widened frozen set.** `SCUR` is capped by an *idempotent* bound
+  (`≤ max |r| 1`), so it needs no trip count and no growth constant. That is
+  what makes the 4-deep chain `SCUR → SKQ/SKT/SKV → SAX → SSEEN` walkable in
+  **one** pass — the previous plan's "iterated promotion" was circular exactly
+  because each round's growth constant fed the next round's cap.
+
+⚠ **Three findings, each measured before it was believed. Do not re-discover
+them.**
+
+* **FINDING AA — the checker's cost was the REPRESENTATION, not the algorithm.**
+  `Cmd.writes` of `S1Prelude.cPrelude` is a **327411-element list**; the old
+  frozen-set computation ran `List.contains` on it once per candidate register
+  (61) per enclosing loop. Register sets are now `Nat` bitmasks
+  (`bitOf` / `mdiff` / `Nat.testBit`), all GMP-accelerated in the kernel. **Do
+  not put the lists back.** And **do not use `Nat.ldiff`**: it goes through
+  `Nat.bitwise`, which the kernel cannot reduce, so `decide` silently gets
+  stuck. `mdiff a b := a ^^^ (a &&& b)` is the usable form.
+* **FINDING AB — the kernel's wall is MEMORY, not time.** A
+  two-traversals-per-loop version of this analysis was **OOM-killed at 15 GB**
+  on `cPrelude` alone. The rule that visits each body **once** (paying for a
+  second pass only where the first is rejected) is what makes a whole-program
+  `decide` fit at all: ~2 s by `#eval`, ~3 min in the kernel. If you make the
+  analysis more precise, **re-measure memory**, not just time.
+* **FINDING AC — a growth analysis must not degrade after a rejected
+  sub-command.** `Cmd.chk C c = (ok, C', B)` returns a capped set `C'` and a
+  growth mask `B` that are sound *whether or not* `ok` holds. This is not
+  fussiness: an enclosing loop reads exactly `B` to decide what to promote, and
+  that promotion is what makes the rejected sub-command acceptable on the second
+  pass. Dropping it was measured to put `S1CardEmit`'s `CH`-bounded loop
+  `(23,46)` and both `scanSeen` loops straight back.
 
 **Endpoints to consume — do NOT re-derive:**
 
-* **`Cmd.CapCost c F F'` := `∃ K D, ∀ s MF N, (F-registers ≤ MF) → (all ≤ N) →
-  cost ≤ K·(MF+1)^D·(N+1) ∧ (∀ r, |eval@r| ≤ N + K·(MF+1)^D) ∧
-  (∀ r ∈ F', |eval@r| ≤ MF + K·(MF+1)^D)`.** Closed under `CapCost.seq`,
-  `.ifBit`, `.mono`, `capCost_op` and **`capCost_forBnd`**.
-  * the **cost** may be linear in `N` — that is what pays for FINDING X, the
-    `copy EOUT_C EOUT_C` no-op, for free, with no pinned `_run` lemma re-opened;
-  * the **growth** may not depend on `N` — that is what stops compounding;
-  * with `bnd ∈ F` the trip count is `≤ MF`, so `N_m ≤ N + MF·poly(MF)`.
-* **`Cmd.NoGrow c r`** — `|c.eval s @ r| ≤ max |s@r| 1`, an **idempotent** bound,
-  so a `NoGrow` body may be iterated *any* number of times. This is what covers
-  the drained cursor `forBnd idx SCAN (… tail SCAN SCAN …)`, whose own bound
-  register is the one being consumed.
-* **`Cmd.GrowOk c r F`** — `|c.eval s @ r| ≤ |s@r| + poly(MF)`, per register,
-  against a set `F` the command never writes. Deliberately **flow-insensitive**
-  and **total**: a loop contributes nothing to `r`'s growth unless it writes `r`,
-  so a register can be certified *before* the loops around it are analysable.
-  That independence is the whole point of `Cmd.promote` — and, see below, also
-  its limit.
-* **`Cmd.promote F cnt body`** — the registers a loop body writes but still
-  leaves capped. A written register cannot join the frozen set naively (its cap
-  would have to satisfy `MF' ≥ MF + m·P(MF')`, which has no polynomial
-  solution); `GrowOk` buys the invariant against the *strictly* frozen set, and
-  the body's own `CapCost` then spends it. Round 0 buys, round 1 spends; both
-  runs are over the same body and the same states, so nothing is circular. This
-  is what lets `S1CardEmit.CH` and `S1Emit.EC` — advanced by `tallyReg` inside
-  the very loop that then uses them as an inner trip bound — work at all.
-* **`Cmd.capChk : List Var → Cmd → Option (List Var)`** — the decidable forward
-  pass; `Cmd.capCost_of_capChk` is its soundness and
-  **`Cmd.costLeSize_of_capChk c F (by decide)`** is the one-liner.
-* **`S1Witness.costRegs = List.range 60`** — the seed set. At program entry every
-  register is bounded by the input size, which is what
-  `Cmd.CapCost.cost_le_size` needs.
+* **`Cmd.CapCost c F F'`** (`F`, `F'` are `Nat` bitmasks) := `∃ K D, ∀ s MF N,
+  (F ≤ MF) → (all ≤ N) → cost ≤ K·(MF+1)^D·(N+1) ∧ (∀ r, |eval@r| ≤ N +
+  K·(MF+1)^D) ∧ (∀ r ∈ F', |eval@r| ≤ MF + K·(MF+1)^D)`. Closed under `.seq`,
+  `.ifBit`, `.mono`, `capCost_op`, `capCost_forBnd`.
+* **`Cmd.chk : Nat → Cmd → Bool × Nat × Nat`** and **`Cmd.chk_sound`** — the
+  decidable pass and its three-conclusion soundness, in one induction.
+* **`Cmd.costLeSize_of_chk c F (by decide +kernel)`** — the one-liner.
+* **`Cmd.NoGrow` / `Cmd.ngm`** — the idempotent bound and its mask.
+* **`Cmd.loopStep`** — the loop's cap-and-growth rule, independent of the cost
+  analysis. That independence is the point.
+* **`S1Witness.costRegs = 2^60 - 1`** — the seed mask.
 
-**Measured (`probes/S1GrowSafeProbe.lean`):** `capChk costRegs` accepts
-`stagePG` (30 loops), `stageSig`, `stageInit`, `stageFin`, `stageMYes`,
-`stageMNo` and **`S1CardEmit.cFive`** (81 loops, three levels — the family that
-exercises all three shapes the 2026-07-28-c probe found unsafe). It rejects
-**exactly two loops**, both in `S1StepLoop.scanSeen`:
+## NEXT BOTTOM-UP session — S1 is done; here is what is actually left
 
-```
-(43, 46) = forBnd EK1 SSEEN scanBody          -- the dedup scan
-(42, 22) = forBnd SIX  EE   … (inside readItem TJ1 EE SIX in scanBody)
-```
+There is **no bottom-up work on the hardness path.** Pick from these, in order:
 
-`badLoops` over the **whole** `s1Program` returns exactly those two, so no other
-loop in the program is rejected.
-
-⚠ **TWO PERFORMANCE FACTS, and do not confuse them.**
-* The kernel `decide`s `capChk` on the whole `s1Program` in **19 s** — but that
-  run **short-circuits**: `Option.bind` hits `stepFam`'s failure before reaching
-  `cPrelude`. It is *not* evidence that a successful whole-program run is fast.
-* `S1Prelude.cPrelude` alone did **not** finish in 10 minutes, by `#eval` or by
-  `decide`. `capChk` recomputes `Cmd.writes` over the whole subtree at every
-  loop level and runs `Cmd.GrowOk` once per candidate register per loop, so it
-  is superlinear in nesting depth, and `cPrelude` is the deepest nest in the
-  program.
-
-**Budget a slot for this**: represent register sets as a `Nat` bitmask
-(`Nat.testBit` / `|||` / `&&&` are GMP-accelerated in the kernel; every register
-is `< 64`) and hoist `Cmd.writes` so it is computed once per node rather than
-once per enclosing loop. Do it *before* the merged pass, not after — the merged
-pass will make the analysis heavier still.
-
-## NEXT BOTTOM-UP session — close the last two loops, and nothing else
-
-Both rejections have one cause. `SSEEN` (the dedup seen-set) is genuinely
-`≤ poly`: the entry loop runs `≤ |PNTRANS|` times and each iteration appends one
-capped key via `Cmd.op (.concat SSEEN SAX SSEEN)`. `Cmd.promote` cannot certify
-it because `Cmd.GrowOk` is flow-**insensitive** and `SAX` is *built earlier in
-the same body* (`pushKey`: `clear SAX ;; appendOne SAX ;; concat SAX SAX SKQ ;;
-…`), so `SAX ∉ freezeFor F cnt body`. Cap `SSEEN` and both loops close.
-
-**The fix: a flow-sensitive growth pass, merged with `capChk`.**
-
-Replace `GrowOk`'s role in `Cmd.promote` by a single forward analysis returning
-**a pair**: the capped set (as `capChk` already does) *and* the set of registers
-whose growth so far is certified additive. Threading the capped set is what lets
-`concat SSEEN SAX SSEEN` be accepted once `SAX` has been capped by the
-straight-line prefix.
-
-⚠ **Three traps, all found on paper this session — do not re-discover them:**
-
-1. **The merged pass must not hard-fail on a loop with an uncapped bound.** It is
-   used *inside* `promote`, so it runs before the loop bounds are known good. At
-   such a loop it must return a conservative result (capped-after `= ∅`, growth
-   `=` the `NoGrow` set) rather than `none`. Sound, because it claims less.
-2. **`Cmd.growOk_sound` requires `F` to be UNWRITTEN by the command** (`hfr`) —
-   the `seq` case re-establishes the cap with `Cmd.eval_get_of_not_writes`. So
-   you cannot simply feed promoted (hence written) registers back into `GrowOk`.
-   The one safe relaxation is `NoGrow` members: `|c.eval s@v| ≤ max |s@v| 1`
-   survives a `seq`, so `Cmd.freezeFor` may be widened to
-   `(cnt :: F).filter (fun v => !body.writes.contains v || body.NoGrow v)` with
-   the cap becoming `MF + 1`. That alone gets `SCUR` frozen (it is drained by
-   `tail SCUR SCUR`) — **but it does not close `SSEEN`**, because `SAX` is not
-   `NoGrow`. Do it anyway: it is cheap and strictly widens the analysis.
-3. **Iterated promotion (`promote` run to a fixpoint) does NOT work**, for
-   exactly reason 2: rounds 2+ would need `GrowOk` over a frozen set containing
-   written registers (`SKQ`, `SAX`). The chain here is 4 deep — `SCUR` →
-   `SKQ`/`SKT`/`SKV` → `SAX` → `SSEEN` — so this is not a corner case. Only the
-   merged flow-sensitive pass reaches it.
-
-**Order of work.** (a) make the checker fast (bitmask register sets, hoisted
-`Cmd.writes`) and re-run `probes/S1GrowSafeProbe.lean` §1 — without this you
-cannot even *measure* `cPrelude`; (b) widen `freezeFor` per trap 2; (c) build the
-merged pass and prove its
-soundness by the same shape as `Cmd.capCost_forBnd` (one
-`Cmd.foldlState_range_induct` whose motive carries the frame equality, the
-per-stratum caps and the global cap — that proof is already written and is the
-template); (d) `s1Program_costLeSize := Cmd.costLeSize_of_capChk _ costRegs (by
-decide)` and delete the `sorry`.
-
-⚠ **Never `sorry` the Boolean `(s1Program.capChk costRegs).isSome = true`** — it
-currently evaluates to `false`, so that would be asserting a falsehood. The
-`sorry` lives on `s1Program_costLeSize`, which is *true*.
-
-**Fallback if the merged pass stalls (est. half a session):** prove
-`Cmd.CapCost S1Step.scanSeen F F'` by hand — `scanSeen` reads `SSEEN`, writes
-`EE`/`SKP`/`CX`/`TJ1`–`TJ3`, and its `_run` lemma (`scanSeen_run`) already pins
-everything. Then glue with `CapCost.seq`/`.ifBit`/`capCost_forBnd` up through
-`entryPre` → `entryBody` → `stepFam`, and `capChk (by decide)` for the rest. The
-gluing needs the intermediate `F` sets named; get them from
-`#eval Cmd.capChk costRegs <gadget>`.
-
-When it lands, `S1Witness.s1_reductionLang`, `s1_reducesPolyMO'`,
-`S1SATComp.s1_to_SAT_reducesPolyMO'` and **`FrontS1Comp.SAT_NPhard''`** all
-become axiom-clean in one step. Check with a scratch `#print axioms` file (or
-top-down item 1) and update the README/ROADMAP status tables.
-
-**Do NOT** re-open `s1Key`, `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s
-statement, the two seams' scrub ranges, `S1Step.stepSeg`/`stepEmit`'s contract,
-or the entry loop's register table — and do **not** swap the `copy r r` no-op
-(FINDING X; `CapCost` makes it free). Stage C's 30-register licence is
-**exactly** exhausted.
+1. **Build the `Cmd` for the SAT membership re-encoder** (top-down item 1's
+   gadget half). The top-down agent will specify a
+   `DecidesLang.FreePrecomposeData` for `inNPLangFreeSplit SAT`; its two pieces
+   are a *layout trim* (drop `encodeState`'s 8 trailing scratch `[]`s) and a
+   **bits→sentinel-unary decoder** `Cmd` (`List Bool` certificate →
+   `List Nat` in the verifier's encoding). The decoder is an ordinary
+   `forBnd`-over-the-certificate emitter; template
+   `NP/kSAT_to_SAT_free.lean`'s re-encoder, atoms `S1Emit.emitBlk` and
+   `S1Parse.readItem`. **Its cost obligation is now free**: state it as
+   `Cmd.CapCost` and close it with `Cmd.chk` (`by decide`). This is the highest-
+   value bottom-up slot because it is on the critical path to
+   `NPcomplete'' SAT`.
+2. **Retire `Lang/CostPoly.lean` (`Cmd.PolyCost`) — or say why not.**
+   `Cmd.CapCost` strictly subsumes it (FINDING Z), `S1Witness` no longer routes
+   through it, and `s1CostBound_of_polyCost` is now dead weight. Check for other
+   consumers, then delete in its own commit. ~1 hour, and it removes a layer a
+   future reader would otherwise have to understand and reject.
+3. **Give `Cmd.chk` a `Bool`-level completeness probe.** Right now a rejection
+   is diagnosed by hand (`probes/S1GrowSafeProbe.lean`'s `bad`). A tiny library
+   of hand-built rejected/accepted `Cmd`s — the squaring loop
+   `forBnd cnt bnd (concat d d d)`, the `concat` with two uncapped sources, a
+   `NoGrow` cursor, an accumulator — would pin the analysis's *intent* so a
+   future widening cannot silently weaken it. Cheap; do it before touching
+   `CostGrow.lean` again.
+4. **Do NOT** re-open: `s1Key`, `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s
+   statement, the two seams' scrub ranges, `S1Step.stepSeg`/`stepEmit`'s
+   contract, the entry loop's register table, or the `copy r r` no-op
+   (FINDING X; `CapCost` makes it free). Stage C's 30-register licence is
+   **exactly** exhausted. Every one of these is now load-bearing for an
+   axiom-clean theorem.
 
 ## NEXT TOP-DOWN session — the membership half, then the headline
 
-Hardness is one gadget away, so the top-down critical path is the other half of
-`NPcomplete'' SAT`. All items below are independent of the cost ladder
-(different files), so a top-down agent can run in parallel with a bottom-up one.
+This is now **the critical path**, and it is the whole remaining path.
 
-1. **A `#print axioms` regression list — do this one first, it is cheap, and it
-   is the tripwire for the cost ladder.** `probes/AxiomProbe.lean` listing the
-   ~30 endpoint names (`S1Program.stageC_run`, `s1Program_computes`,
-   `s1Program_usesBelow`, `S1Step.stepFam_run`, `entryPre_run`, and now
-   `Cmd.capCost_of_capChk`, `Cmd.capCost_forBnd`, `Cmd.growOk_sound`,
-   `Cmd.get_length_eval_le`, `S1Witness.s1CostBound_of_costLeSize`) would catch
-   an accidental `sorryAx` inheritance in one run — exactly what the
-   placeholder-quantification discipline protects and nothing currently verifies
-   (standing risk #7). **It also tells you the moment the ladder lands.**
-2. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`, and the
-   top-down critical path.** The live SAT verifier does not factor verbatim as
-   a Split witness: `assgn` certificates are `List Nat` (sentinel-unary),
-   `InNPWitnessLangFreeSplit.rel` wants `List Bool`, and `encodeState` has 8
-   trailing scratch `[]`s *after* the certificate register (so
-   `encodeIn (x,c) = encX x ++ certState c` fails on the layout, not on the
-   mathematics). The adaptation is a **`DecidesLang.FreePrecomposeData`**: trim
-   the trailing `[]`s and prepend a bits→sentinel decode `Cmd`. Template:
-   `NP/kSAT_to_SAT_free.lean`'s re-encoder. Probe the layout first
-   (`probes/SATSeamProbe.lean` has the decode helpers) — the risk is that
-   `certState`'s width is not a per-witness constant, which would break
-   `xWidth`. With it, `NPcomplete'' SAT = ⟨FrontS1Comp.SAT_NPhard'', that⟩.
-3. **Swap the headline** once (2) lands: state `CookLevin'' : NPcomplete'' SAT`
-   next to the legacy `CookLevin`, and only then delete the legacy `⪯p` front
-   (`GenNP_is_hard.lean`, `L_to_LM`/`LM_to_mTM`/`mTM_to_singleTapeTM`,
-   `Simulators/MultiToSingle.lean` — that IS the S2 collapse, and it retires 4
-   of the 6 remaining sorries). ⚠ Do the deletion as its own commit, after the
-   new headline is green: `CookLevin` is what the README's status table quotes.
+1. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`.** The live
+   SAT verifier does not factor verbatim as a Split witness: `assgn`
+   certificates are `List Nat` (sentinel-unary), `InNPWitnessLangFreeSplit.rel`
+   wants `List Bool`, and `encodeState` has 8 trailing scratch `[]`s *after* the
+   certificate register (so `encodeIn (x,c) = encX x ++ certState c` fails on
+   the layout, not on the mathematics). The adaptation is a
+   **`DecidesLang.FreePrecomposeData`**: trim the trailing `[]`s and prepend a
+   bits→sentinel decode `Cmd`. Template: `NP/kSAT_to_SAT_free.lean`'s
+   re-encoder. **Probe the layout first** (`probes/SATSeamProbe.lean` has the
+   decode helpers) — the risk is that `certState`'s width is not a per-witness
+   constant, which would break `xWidth`. With it,
+   `NPcomplete'' SAT = ⟨FrontS1Comp.SAT_NPhard'', that⟩.
+2. **Swap the headline** once (1) lands: state `CookLevin'' : NPcomplete'' SAT`
+   next to the legacy `CookLevin`. ⚠ Its own commit, after the new headline is
+   green: `CookLevin` is what the README's status table quotes.
+3. **Then delete the legacy `⪯p` front** — `GenNP_is_hard.lean`,
+   `L_to_LM`/`LM_to_mTM`/`mTM_to_singleTapeTM`, `Simulators/MultiToSingle.lean`.
+   That IS the S2 collapse, and it retires **all 5** remaining sorries and the
+   last `sorryAx`. ⚠ Its own commit, after (2).
 4. **The honesty audit of the composed chain** (standing architecture risk #1;
-   never done end to end). Six witnesses now compose into one: check each
-   `encodeIn` is the natural layout of its *input* type, each `decodeOut` the
-   inverse of the natural *output* layout, and that no reduction work hides in
-   an `encodeIn`. The two head seams are pure scrubs by construction
-   (`clearRange` only clears), so the audit is really about `WQ.encodeInQ` (the
-   extra unary size register at `xWidth` is the verifier's own `encX` plus
-   `1^(size x)`, which the front program *consumes* — layout, not work) and the
-   four older witnesses. ⚠ **Add one item**: `S1CostBound`'s `cost_bound` is now
-   an anonymous `Exists.choose`, so confirm nothing downstream depended on
+   never done end to end, and it is now the *only* soundness question left on
+   the hardness side). Six witnesses compose into one: check each `encodeIn` is
+   the natural layout of its *input* type, each `decodeOut` the inverse of the
+   natural *output* layout, and that no reduction work hides in an `encodeIn`.
+   The two head seams are pure scrubs by construction (`clearRange` only
+   clears), so the audit is really about `WQ.encodeInQ` (the extra unary size
+   register at `xWidth` is the verifier's own `encX` plus `1^(size x)`, which the
+   front program *consumes* — layout, not work) and the four older witnesses.
+   ⚠ **Add one item**: `S1CostBound`'s `cost_bound` is an anonymous
+   `Exists.choose`, so confirm nothing downstream depended on
    `s1_reductionLang.cost_bound` being *definitionally* `S1Map.s1Bound` (the
    whole project builds, so nothing does — record the verdict). Write the
    verdict into the ROADMAP risk register.
 5. **Also independent and cheap:**
+   * **`probes/AxiomProbe.lean` is the tripwire** — 3 s, ~33 endpoints. Run it
+     first thing in any session and after any change to the S1 program, the cost
+     layer or a seam. It is what turns "we believe the hardness half is clean"
+     into a machine-checked fact.
    * re-run `probes/SeamS1Probe.lean`, `probes/S1PreludeProbe.lean`,
      `probes/S1PreludeEmitProbe.lean`, `probes/S1StepModelProbe.lean`,
      `probes/S1StepEmitProbe.lean`, `probes/S1StepLoopProbe.lean`,
@@ -253,20 +200,21 @@ Hardness is one gadget away, so the top-down critical path is the other half of
      `S1StepLoopProbe` ~3 min: the emitter appends cell by cell, so interpreting
      it is quadratic — keep every new probe instance at `σ ≤ 1`);
    * **S3 retirement bookkeeping**: the honest `⪯p'`/`NPhard''` line is now
-     end-to-end, so the ROADMAP's S3 entry can be re-scoped from "must be
-     built" to "must be *switched to*, then the old one deleted" — write down
-     exactly which declarations still mention `reducesPolyMO`/`NPhard` on the
-     proof path.
+     end-to-end **and axiom-clean**, so the ROADMAP's S3 entry can be re-scoped
+     from "must be built" to "must be *switched to*, then the old one deleted" —
+     write down exactly which declarations still mention
+     `reducesPolyMO`/`NPhard` on the proof path.
    * `probes/S1CardEmitProbe.lean` §1 still asserts `cFive`'s output is a
      *prefix* of `encNats (cardBlocks M)`; `probes/S1StepLoopProbe.lean` §1 now
      asserts the full equality for `stageC`, so the older section can be
      retired or re-pointed.
 
-**Recommendation: run a BOTTOM-UP session next.** The cost ladder is two loops
-from done, the residual has a single named cause and a designed fix, and the
-whole-program `decide` is already fast enough. Top-down item 1 is a 30-minute
-warm-up for either stream; top-down item 2 is the right pick for a parallel
-agent.
+**Recommendation: run a TOP-DOWN session next.** Bottom-up has nothing left on
+the critical path — item 1 above is the entire remaining route to
+`NPcomplete'' SAT`, and it is a *design* question (does the SAT verifier's
+layout factor as a Split witness?) before it is a gadget question. Probe the
+layout first; if it factors, the bottom-up agent can then build the decoder
+`Cmd` against a pinned contract, in parallel.
 
 ## The S1 register frame — PINNED
 
@@ -506,13 +454,33 @@ still has to respect:
   cost-reads. `Cmd.CapCost` splits the cap into a frozen `MF` and a global `N`,
   lets the **cost** be linear in `N` and forbids the **growth** from depending
   on it. Do not "simplify" it back to one cap.
-- **`Cmd.GrowOk`'s frozen set must be UNWRITTEN by the command (2026-07-29).**
-  `Cmd.growOk_sound`'s `seq` case re-establishes the cap with
-  `Cmd.eval_get_of_not_writes`. So promoted (hence written) registers may **not**
-  be fed back into `GrowOk`, and iterating `Cmd.promote` to a fixpoint is
-  unsound. The one safe widening is `NoGrow` members, whose bound
-  (`≤ max |r| 1`) survives a `seq`. Reaching `SSEEN` needs a *merged*
-  flow-sensitive pass, not more rounds.
+- **A loop's frozen set may contain WRITTEN registers only via `NoGrow`
+  (2026-07-29 / -b).** Promotion buys a register's cap with a *growth constant*
+  `G`, so a frozen set that already contains promoted registers would need `G`
+  computed at a cap that depends on `G` — circular, which is why iterating
+  promotion to a fixpoint does not work and why the deleted `Cmd.GrowOk`
+  required its frozen set to be unwritten. The escape is `Cmd.NoGrow`, whose
+  bound `≤ max |r| 1` is **idempotent**: no trip count, no growth constant, so
+  it stratifies for free. `Cmd.chk`'s `Fz = {cnt} ∪ (C \ ngm body)` is exactly
+  that, and one flow-sensitive pass over it reaches `SSEEN` — the four rounds
+  the old design would have needed are not required and would not have been
+  sound.
+- **A rejected sub-command must not blind the analysis (2026-07-29-b,
+  FINDING AC).** `Cmd.chk C c = (ok, C', B)`: `C'` and `B` are sound **whether
+  or not `ok` holds**, because an enclosing loop's promotion is read from `B`
+  and is what makes the rejected sub-command acceptable on the second pass.
+  Measured: degrade them and `S1CardEmit`'s `CH` loop and both `scanSeen` loops
+  come back.
+- **Register sets in the cost checker are `Nat` BITMASKS, and the kernel's wall
+  is MEMORY (2026-07-29-b, FINDINGS AA/AB).** `Cmd.writes` of
+  `S1Prelude.cPrelude` is a 327411-element list; the `List Var` checker was
+  quadratic in program size and never terminated. `Nat.ldiff` is **unusable** —
+  it goes through `Nat.bitwise`, which the kernel cannot reduce, so `decide`
+  gets stuck; use `mdiff a b := a ^^^ (a &&& b)`. And a
+  two-traversals-per-loop analysis was **OOM-killed at 15 GB** on `cPrelude`
+  alone, so `Cmd.chk` visits each body once and pays for a second pass only
+  where the first is rejected. Re-measure **memory** before making the analysis
+  more precise.
 - **`Cmd.op (.copy r r)` costs `|r| + 1` and that is now FREE (2026-07-29).**
   FINDING X (2026-07-28-c) still describes the program correctly — the `ifBit`
   else-branch no-op on `EOUT_C` makes the emitters `O(output²)` — but
@@ -718,22 +686,26 @@ still has to respect:
 
 ## Proven, reusable — do not re-derive
 
-- **`Complexity/Lang/CostGrow.lean` — the cost-ladder toolkit (2026-07-29).
-  START HERE for every new `cost_le` obligation** (not with `Cmd.cost_seq`
-  chains, and not with `CostPoly` — see FINDING Z). `Cmd.CapCost` (+ `.seq`,
-  `.ifBit`, `.mono`, `capCost_op`, **`capCost_forBnd`**), `Cmd.NoGrow` /
-  `noGrow_sound`, `Cmd.GrowOk` / `growOk_sound` / `growOk_sound_list`,
-  `Cmd.freezeFor`, `Cmd.promote`, the decidable `Cmd.capChk` /
-  `capCost_of_capChk`, and the entry points `CapCost.cost_le_size` /
-  **`costLeSize_of_capChk`**.
+- **`Complexity/Lang/CostGrow.lean` — the cost-ladder toolkit (2026-07-29/-b).
+  START HERE for every new `cost_le` obligation** — not with `Cmd.cost_seq`
+  chains, and not with `CostPoly` (see FINDING Z). In the overwhelming majority
+  of cases the whole obligation is **one line**:
+  `Cmd.costLeSize_of_chk c (2^k - 1) (by decide)`. Contents: the bitmask
+  helpers `bitOf` / `mdiff` / `MaskSub`; `Cmd.NoGrow` / `noGrow_sound` and its
+  mask `Cmd.ngm` / `noGrow_of_ngm`; `Cmd.CapCost` (+ `.seq`, `.ifBit`, `.mono`,
+  `capCost_op`, **`capCost_forBnd`**); `Op.chk` / `Op.cap`; the loop
+  cap-and-growth rule **`Cmd.loopStep`**; and the decidable pass **`Cmd.chk`** /
+  **`Cmd.chk_sound`** with the entry points `CapCost.cost_le_size` /
+  **`costLeSize_of_chk`**. ⚠ `Cmd.GrowOk`, `Cmd.freezeFor`, `Cmd.promote` and
+  the old `Cmd.capChk` are **deleted** — subsumed by `Cmd.chk`.
 - **`Complexity/Lang/CostPoly.lean` — the earlier one-cap layer (2026-07-28-c),
-  still live and sorry-free**, but it cannot survive a loop whose body writes
-  its own cost reads (FINDING Z). `Cmd.PolyCost` (+ `.seq`, `.ifBit`,
-  `polyCost_op`, `polyCost_forBnd`), `Cmd.CostSafe` + `polyCost_of_costSafe`,
+  still live and sorry-free but now DEAD on the proof path.** It cannot survive
+  a loop whose body writes its own cost reads (FINDING Z), and `CostGrow`
+  strictly subsumes it. `Cmd.PolyCost` (+ `.seq`, `.ifBit`, `polyCost_op`,
+  `polyCost_forBnd`), `Cmd.CostSafe` + `polyCost_of_costSafe`,
   `polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`,
   `Cmd.get_length_eval_le` (per-register growth ≤ cost — used by BOTH layers)
-  and `PolyCost.cost_le_size`. Use it for a gadget that is genuinely cost-safe;
-  reach for `CostGrow` the moment a loop body touches what it reads.
+  and `PolyCost.cost_le_size`. **Slated for deletion — NEXT BOTTOM-UP item 2.**
 - Both sit on top of `Lang/CostFlat.lean` (`cost_le_flat`,
   `cost_forBnd_flat_le`, `cost_mulLoop_le`, `cost_tailLoop_le`, `Cmd.writes`,
   `Cmd.costReads`).
