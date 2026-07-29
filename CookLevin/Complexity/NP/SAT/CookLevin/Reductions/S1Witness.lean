@@ -3,6 +3,8 @@ import Complexity.Lang.CostPoly
 import Complexity.Lang.CostGrow
 
 set_option autoImplicit false
+set_option maxRecDepth 4000000
+set_option maxHeartbeats 4000000
 
 /-! # S1, part 2 — the free witness SKELETON (`FlatSingleTMGenNP ⪯p' FlatTCC`)
 
@@ -529,10 +531,10 @@ theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c :
   s1CostBound_of_costLeSize c h.cost_le_size
 
 /-- The `Cmd.CapCost` route (`Lang/CostGrow.lean`) — the one the real program
-takes. -/
-theorem s1CostBound_of_capChk (c : Cmd) (F : List Var)
-    (h : (c.capChk F).isSome = true) : S1CostBound c :=
-  s1CostBound_of_costLeSize c (Cmd.costLeSize_of_capChk c F h)
+takes. `F` is a register **bitmask**. -/
+theorem s1CostBound_of_chk (c : Cmd) (F : Nat) (h : (c.chk F).1 = true) :
+    S1CostBound c :=
+  s1CostBound_of_costLeSize c (Cmd.costLeSize_of_chk c F h)
 
 /-- **The S1 free reduction witness, over an arbitrary program meeting the
 three S1 contracts.** Every other field is discharged from a proven lemma of
@@ -580,39 +582,30 @@ noncomputable def s1WitnessOf (c : Cmd)
     rw [h SIGMA (by decide), h INIT (by decide), h CARDS (by decide),
       h FINAL (by decide), h STEPS (by decide)]
 
-/-- The register set the analysis starts from: every register of the S1 frame
-(`s1RegBound = 48`, with head-room to the tail composite's `57`). At the
-program's entry all of them are bounded by the input size, which is exactly the
-hypothesis `Cmd.CapCost.cost_le_size` discharges. -/
-def costRegs : List Var := List.range 60
+/-- The register set the analysis starts from, as a bitmask: every register of
+the S1 frame (`s1RegBound = 48`, with head-room to the tail composite's `57`).
+At the program's entry all of them are bounded by the input size, which is
+exactly the hypothesis `Cmd.CapCost.cost_le_size` discharges. -/
+def costRegs : Nat := 2 ^ 60 - 1
 
-/-- **OPEN — the S1 cost ladder, down to ONE gadget.**
+/-- **The S1 cost ladder — CLOSED.**
 
-`Cmd.capChk` (`Lang/CostGrow.lean`) is a decidable forward analysis whose
+`Cmd.chk` (`Lang/CostGrow.lean`) is a single decidable forward pass whose
 success certifies `Cmd.CapCost`, the two-cap polynomial cost bound: a frozen set
 capped by `MF`, everything capped by `N`, cost `≤ K·(MF+1)^D·(N+1)` and growth
 `≤ N + K·(MF+1)^D`. It needs no `_run` lemma, no register table and no
-invariant — only the program's syntax — and `Cmd.costLeSize_of_capChk` turns its
-success into exactly the shape below.
+invariant — only the program's syntax.
 
-**Measured (`probes/S1GrowSafeProbe.lean`, 2026-07-29):**
-`Cmd.capChk costRegs` accepts `stagePG`, `stageSig`, `stageInit`, `stageFin`,
-`stageMYes`, `stageMNo`, `S1CardEmit.cFive` and `S1Prelude.cPrelude`, and
-`decide`s the **whole** program in 19 s. It rejects exactly **two loops**, both
-in `S1StepLoop.scanSeen` (the `stepBlocks` dedup scan) and both for the same
-reason: the seen-set accumulator `SSEEN` bounds them, and `Cmd.GrowOk` — which
-is deliberately flow-*insensitive*, so that it can certify a register before the
-loops around it are analysable — cannot see that `SAX` is capped at the point of
-`Cmd.op (.concat SSEEN SAX SSEEN)`. `SSEEN` is genuinely `≤ poly`: the entry loop
-runs `≤ |PNTRANS|` times and each iteration appends one capped key.
-
-**The fix is a merged, flow-sensitive growth pass** — see `CookLevin/HANDOFF.md`,
-NEXT BOTTOM-UP. Do *not* attempt to `sorry` the Boolean
-`(s1Program.capChk costRegs).isSome = true`: it currently evaluates to `false`,
-so that would be asserting a falsehood. -/
+⚠ **The kernel spends ~3 minutes on the `decide` below** (the unfolded
+`s1Program` is ~5.4·10^5 `Cmd` nodes, nested 7 loops deep). That is the price of
+a whole-program syntactic certificate and it is paid once, here. Do not "speed
+it up" by weakening the analysis: the two facts that make it fit at all are that
+register sets are `Nat` bitmasks (a `List Var` write-set made the checker
+quadratic in program size and it did not terminate at all) and that
+`Cmd.chk` visits each loop body **once** unless the first pass is rejected. -/
 theorem s1Program_costLeSize : ∃ K D : Nat, ∀ (s : State) (n : Nat),
-    State.size s ≤ n → S1Program.s1Program.cost s ≤ K * (n + 1) ^ (D + 1) := by
-  sorry
+    State.size s ≤ n → S1Program.s1Program.cost s ≤ K * (n + 1) ^ (D + 1) :=
+  Cmd.costLeSize_of_chk S1Program.s1Program costRegs (by decide +kernel)
 
 /-- The cost contract at the real program. -/
 theorem s1Program_costBound : S1CostBound S1Program.s1Program :=
