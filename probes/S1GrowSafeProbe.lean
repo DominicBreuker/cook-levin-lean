@@ -2,72 +2,79 @@ import Complexity.Lang.CostGrow
 import Complexity.NP.SAT.CookLevin.Reductions.S1Program
 
 set_option autoImplicit false
-set_option maxRecDepth 1000000
+set_option maxRecDepth 4000000
 
-/-! # Probe — `Cmd.capChk` on the real S1 program
+/-! # Probe — `Cmd.chk` on the real S1 program
 
 `Lang/CostGrow.lean` replaces `Cmd.PolyCost`'s single cap by two (`MF` over a
-frozen set `F`, `N` over everything) and ships `Cmd.capChk`, a decidable forward
-analysis whose success certifies `Cmd.CapCost`. This probe measures where that
-analysis stands on the real program, stage by stage, and localises whatever it
-still rejects.
+frozen set `F`, `N` over everything) and ships `Cmd.chk`, a decidable forward
+analysis whose success certifies `Cmd.CapCost`. **It now accepts the whole
+program**, which is what closes `S1Witness.s1Program_costLeSize`.
 
-**Run each `#eval` on its own** — the big families take minutes.
-
-## §1 measurement (2026-07-29, the session that built `CostGrow.lean`)
+## §1 measurement (2026-07-29-b, the session that closed the ladder)
 
 ```
-stageSig     3 loops   ok     stageMYes    0 loops  ok
-stageInit   12 loops   ok     stageMNo     0 loops  ok
-stageFin     5 loops   ok     cFive       81 loops  ok
-stagePG     30 loops   ok     cPrelude       —      TIMES OUT (see §3)
-stepFam    359 loops   ✗  bad = [(43,46), (42,22)]
-s1Program           ✗  bad = [(43,46), (42,22)]
+stageSig  ok    stageInit ok    stageFin  ok    stagePG   ok
+stageMYes ok    stageMNo  ok    cFive     ok    cPrelude  ok
+stepFam   ok    s1Program ok
 ```
 
-Everything passes **except two loops**, and both are in `S1StepLoop.scanSeen`:
+`#eval` over the whole program: **~2 s**. Kernel `decide +kernel`: **~3 min**.
 
-* `(43, 46)` = `Cmd.forBnd EK1 SSEEN scanBody` — the dedup scan, bounded by the
-  seen-set accumulator;
-* `(42, 22)` = `Cmd.forBnd SIX EE …` inside `readItem TJ1 EE SIX` in `scanBody`,
-  where `EE` is `copy EE SSEEN`.
+## §2 what each feature buys — turn one off and re-run §3
 
-Both would close if `SSEEN` were promoted, and `SSEEN` genuinely is
-`≤ poly`: the entry loop runs `≤ |PNTRANS|` times and each iteration appends one
-capped key. What blocks it is that `Cmd.GrowOk` is **flow-insensitive** — it
-cannot see that `SAX` is capped at the point of `concat SSEEN SAX SSEEN`, because
-`SAX` is *built* earlier in the same body. See the HANDOFF for the fix.
+* **the `(N+1)` factor in `Cmd.CapCost`'s cost clause** — `copy EOUT_C EOUT_C`
+  (FINDING X), for free, with no pinned `_run` lemma re-opened;
+* **`Cmd.NoGrow`, widened into the frozen set `Fz`** — every drained cursor
+  (`forBnd idx SCAN (… tail SCAN SCAN …)`), whose own bound register is the one
+  being consumed. Its bound is *idempotent*, so it needs no trip count and no
+  growth constant: that is what makes the two-level stratification (`Fz` first,
+  then the promoted set) free of circularity. Without it `stagePG` and
+  `stageInit` fail — and, less obviously, so does `SSEEN`, because `SCUR` has to
+  be capped before the flow can reach `SKQ` → `SAX` → `SSEEN`.
+* **flow sensitivity** — `Cmd.op (.concat SSEEN SAX SSEEN)` in
+  `S1StepLoop.pushKey`. `SAX` is built by the straight-line prefix of the very
+  body that then appends it, so a flow-*insensitive* growth check (the old
+  `Cmd.GrowOk`) can never see that it is capped. This is what closed the last
+  two rejected loops, `(43, 46)` and `(42, 22)`, both in `S1StepLoop.scanSeen`.
+* **the always-sound capped set** — `Cmd.chk` returns `(ok, C', B)` with `C'`
+  and `B` valid *even when `ok` is false*. Without that the analysis degrades
+  after the first rejected sub-command, and the promotion an enclosing loop
+  reads is exactly what would have made that sub-command acceptable: dropping it
+  puts `(23, 46)` (`S1CardEmit`'s `CH`-bounded loop) and both `scanSeen` loops
+  back. Measured, not guessed.
+* **the second pass** — `S1CardEmit.CH` and `S1Emit.EC` (a register advanced by
+  `tallyReg` inside the very loop that then uses it as an inner trip bound). It
+  is taken only where the first pass is rejected, which on this program is
+  inside `cFive` and `stepFam` and **never** inside `cPrelude`.
 
-`S1CardEmit.cFive` passing is the measurement that matters for the design: it is
-a real, closed stage-C family with three loop levels over `emitId`, and it
-exercises all three shapes the 2026-07-28-c probe found unsafe (`loadX`'s
-per-iteration `CX` rebuild, the `EJ2`/`EJ3` inner counters used as emitter
-bounds, and `EOUT_C` as a genuine `costRead` — FINDING X).
+## §3 the numbers that fix the representation
 
-## What each feature buys
+`Cmd.writes` of `S1Prelude.cPrelude` is a **327411-element list**, and the old
+`List Var` checker ran `List.contains` on it once per candidate register (61)
+per enclosing loop. `cPrelude` could not be checked at all — neither by `#eval`
+nor by `decide`, in 10 minutes. With register sets as `Nat` bitmasks the same
+work is a handful of GMP word operations.
 
-Turning a feature off and re-running §2 shows what it covers:
+```
+S1Prelude.cPrelude   538486 Cmd nodes, 7 loops deep
+S1Program.s1Program  541378 Cmd nodes, 7 loops deep
+```
 
-* **the `(N+1)` factor in the cost clause** — `copy EOUT_C EOUT_C` (FINDING X);
-* **`Cmd.promote`** — `S1CardEmit.CH` and `S1Emit.EC` (a register advanced by
-  `tallyReg` inside the very loop that then uses it as an inner trip bound), and
-  `loadSg`'s `ESG`;
-* **`Cmd.NoGrow`'s escape inside `GrowOk`** — every drained cursor
-  (`forBnd idx SCAN (… tail SCAN SCAN …)`), where the loop's own bound register
-  is the one being consumed. Without it `stagePG` and `stageInit` fail.
-
-Each was found by measurement, in that order; none is decorative.
+⚠ **The kernel's wall is MEMORY, not time.** An earlier, two-traversals-per-loop
+version of this analysis was **OOM-killed** at 15 GB on `cPrelude` alone. The
+single-traversal rule is what makes the whole-program `decide` fit. If you make
+the analysis more precise, re-measure §4 before relying on it.
 -/
 
 open Complexity.Lang
 
 namespace S1GrowSafeProbe
 
-/-- The whole S1 frame. `S1Program.s1RegBound = 48`; the tail composite reaches
-`57`. At program entry every register is bounded by the input size, so handing
-the analysis all of them is sound (`Cmd.CapCost`'s `MF` and `N` are both taken
-to be `State.size s` by `Cmd.CapCost.cost_le_size`). -/
-def allRegs : List Var := List.range 60
+/-- The whole S1 frame as a bitmask. `S1Program.s1RegBound = 48`; the tail
+composite reaches `57`. At program entry every register is bounded by the input
+size, so handing the analysis all of them is sound. -/
+def allC : Nat := 2 ^ 60 - 1
 
 def loops : Cmd → Nat
   | .op _ => 0
@@ -75,28 +82,38 @@ def loops : Cmd → Nat
   | .ifBit _ a b => loops a + loops b
   | .forBnd _ _ body => 1 + loops body
 
-/-- The loops `capChk` rejects, as `(bound register, counter)`. A rejected loop
-is one whose bound register the analysis cannot certify capped at that point;
-that is the only way `capChk` fails on a `forBnd` (the only failing `op` is a
-`concat` with two uncapped sources, which does not occur in this program). -/
-def badLoops : List Var → Cmd → List (Nat × Nat)
-  | _, .op _ => []
-  | F, .seq a b =>
-      match Cmd.capChk F a with
-      | some F1 => badLoops F a ++ badLoops F1 b
-      | none => badLoops F a
-  | F, .ifBit _ a b => badLoops F a ++ badLoops F b
-  | F, .forBnd cnt bnd body =>
-      (if F.contains bnd then [] else [(bnd, cnt)])
-        ++ badLoops (Cmd.freezeFor F cnt body ++ Cmd.promote F cnt body) body
+def nodes : Cmd → Nat
+  | .op _ => 1
+  | .seq a b => 1 + nodes a + nodes b
+  | .ifBit _ a b => 1 + nodes a + nodes b
+  | .forBnd _ _ body => 1 + nodes body
+
+def depth : Cmd → Nat
+  | .op _ => 0
+  | .seq a b => max (depth a) (depth b)
+  | .ifBit _ a b => max (depth a) (depth b)
+  | .forBnd _ _ body => 1 + depth body
+
+/-- Where the analysis still rejects, as `(bound register, counter)` for a loop
+and `(dst, 999)` for a `concat` with two uncapped sources. Empty on every
+gadget below — keep it that way. -/
+def bad : Nat → Cmd → List (Nat × Nat)
+  | C, .op o =>
+      match o with
+      | .concat d a b => if C.testBit a || C.testBit b then [] else [(d, 999)]
+      | _ => []
+  | C, .seq a b => bad C a ++ bad (Cmd.chk C a).2.1 b
+  | C, .ifBit _ a b => bad C a ++ bad C b
+  | C, .forBnd cnt bnd body =>
+      let Fz := bitOf cnt ||| mdiff C body.ngm
+      let r0 := Cmd.chk Fz body
+      let F1 := if r0.1 then Fz else Fz ||| mdiff C r0.2.2
+      (if C.testBit bnd then [] else [(bnd, cnt)]) ++ bad F1 body
 
 def verdict (name : String) (c : Cmd) : String :=
-  s!"{name}: loops={loops c} ok={(Cmd.capChk allRegs c).isSome}" ++
-  s!" bad={(badLoops allRegs c).eraseDups}"
+  s!"{name}: loops={loops c} ok={(c.chk allC).1} bad={(bad allC c).eraseDups}"
 
-/-! ## §2 — per-stage verdicts
-
-Uncomment one at a time. -/
+/-! ## §4 — per-stage verdicts.  Run each `#eval` on its own. -/
 
 -- #eval verdict "stageSig  " S1Emit.stageSig
 -- #eval verdict "stageInit " S1Emit.stageInit
@@ -109,40 +126,19 @@ Uncomment one at a time. -/
 -- #eval verdict "stepFam   " S1Step.stepFam
 -- #eval verdict "s1Program " S1Program.s1Program
 
-/-! ## §3 — cost of running the checker
+-- #eval (nodes S1Prelude.cPrelude, depth S1Prelude.cPrelude)
+-- #eval (nodes S1Program.s1Program, depth S1Program.s1Program)
+-- #eval S1Prelude.cPrelude.writes.length   -- 327411: why the lists had to go
 
-`Cmd.costLeSize_of_capChk c allRegs (by decide)` is the intended call, and the
-kernel has to *evaluate* `capChk` on the closed term. Measured:
+/-! ## §5 — kernel checks
 
-```
-S1Emit.emitBlk        1 loop        < 1 s
-S1CardEmit.cCopy     15 loops       ~ 1 s
-S1CardEmit.cFive     81 loops       ~ 8 s
-S1Program.s1Program  116825 loops    19 s   ← SHORT-CIRCUITS, see below
-S1Prelude.cPrelude    (the deep nest)  > 10 min, both `#eval` and `decide`
-```
+The whole-program one is `S1Witness.s1Program_costLeSize` itself; these are the
+cheap regression guards. -/
 
-⚠ **The 19 s figure is not what it looks like.** `Option.bind` in `capChk`'s
-`seq` case stops at the first `none`, and `stepFam` — which sits *before*
-`cPrelude` in `stageC` — is where the analysis fails. So the whole-program run
-never reaches the expensive family. A *successful* whole-program run has not
-been timed and, on the `cPrelude` evidence, will not be fast as the checker
-stands.
+example : (Cmd.chk allC (S1Emit.emitBlk 43 37 34)).1 = true := by decide
 
-**The remedy is mechanical**, and should be done before the analysis is made
-more precise: `capChk` recomputes `Cmd.writes` over the whole subtree at every
-enclosing loop, and runs `Cmd.GrowOk` once per candidate register (up to 60) per
-loop. Represent register sets as a `Nat` bitmask — `Nat.testBit` / `|||` /
-`&&&` are GMP-accelerated in the kernel and every register is `< 64` — and hoist
-`Cmd.writes` to one computation per node. -/
+example : (Cmd.chk allC S1CardEmit.cFive).1 = true := by decide
 
-example : (Cmd.capChk allRegs (S1Emit.emitBlk 43 37 34)).isSome = true := by decide
-
-example : (Cmd.capChk allRegs S1CardEmit.cFive).isSome = true := by decide
-
-/-- The residual, machine-checked: the analysis as it stands rejects `stepFam`.
-When the merged flow-sensitive pass lands (HANDOFF, NEXT BOTTOM-UP) this example
-must be deleted, not flipped. -/
-example : (Cmd.capChk allRegs S1Step.stepFam).isSome = false := by decide
+example : (Cmd.chk allC S1Step.stepFam).1 = true := by decide
 
 end S1GrowSafeProbe
