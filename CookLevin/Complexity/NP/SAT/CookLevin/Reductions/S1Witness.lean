@@ -1,5 +1,6 @@
 import Complexity.NP.SAT.CookLevin.Reductions.S1Program
 import Complexity.Lang.CostPoly
+import Complexity.Lang.CostGrow
 
 set_option autoImplicit false
 
@@ -494,7 +495,9 @@ constants, no register table, no stage-by-stage accounting — plus the already
 proven `headEncodeIn_size_le` discharges the whole cost contract. The witness's
 `cost_bound` becomes `S1Map.s1Bound + K·8^(D+1)·(n+1)^(D+1)`, which still
 dominates `S1Map.s1Map_size_le` by construction. -/
-theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c := by
+theorem s1CostBound_of_costLeSize (c : Cmd)
+    (h : ∃ K D : Nat, ∀ (s : State) (n : Nat),
+      State.size s ≤ n → c.cost s ≤ K * (n + 1) ^ (D + 1)) : S1CostBound c := by
   obtain ⟨K, D, hb⟩ := h
   refine ⟨fun n => S1Map.s1Bound n + K * 8 ^ (D + 1) * (n + 1) ^ (D + 1),
     inOPoly_add S1Map.s1Bound_poly
@@ -502,11 +505,8 @@ theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c :
     fun a b hab => Nat.add_le_add (S1Map.s1Bound_mono a b hab)
       (Nat.mul_le_mul_left _ (Nat.pow_le_pow_left (by omega) _)),
     fun x => ?_, fun x => Nat.le_add_right_of_le (S1Map.s1Map_size_le x)⟩
-  have hcap : ∀ r : Var, (State.get (HeadLayout.headEncodeIn x) r).length
-      ≤ 8 * encodable.size x + 4 :=
-    fun r => le_trans (State.get_length_le_size _ r) (headEncodeIn_size_le x)
   have hcost := hb (HeadLayout.headEncodeIn x) (8 * encodable.size x + 4)
-    (fun r _ => hcap r)
+    (headEncodeIn_size_le x)
   have hpow : (8 * encodable.size x + 4 + 1) ^ (D + 1)
       ≤ 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by
     calc (8 * encodable.size x + 4 + 1) ^ (D + 1)
@@ -523,6 +523,16 @@ theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c :
           Nat.mul_le_mul_left _ hpow
       _ = K * 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by ring
   omega
+
+/-- The `Cmd.PolyCost` route (`Lang/CostPoly.lean`) still lands here. -/
+theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c :=
+  s1CostBound_of_costLeSize c h.cost_le_size
+
+/-- The `Cmd.CapCost` route (`Lang/CostGrow.lean`) — the one the real program
+takes. -/
+theorem s1CostBound_of_capChk (c : Cmd) (F : List Var)
+    (h : (c.capChk F).isSome = true) : S1CostBound c :=
+  s1CostBound_of_costLeSize c (Cmd.costLeSize_of_capChk c F h)
 
 /-- **The S1 free reduction witness, over an arbitrary program meeting the
 three S1 contracts.** Every other field is discharged from a proven lemma of
@@ -570,28 +580,43 @@ noncomputable def s1WitnessOf (c : Cmd)
     rw [h SIGMA (by decide), h INIT (by decide), h CARDS (by decide),
       h FINAL (by decide), h STEPS (by decide)]
 
-/-- **OPEN — the S1 cost ladder, now a purely structural obligation.**
+/-- The register set the analysis starts from: every register of the S1 frame
+(`s1RegBound = 48`, with head-room to the tail composite's `57`). At the
+program's entry all of them are bounded by the input size, which is exactly the
+hypothesis `Cmd.CapCost.cost_le_size` discharges. -/
+def costRegs : List Var := List.range 60
 
-Everything numeric has been factored out: `S1CostBound` accepts *any*
-polynomial, `s1CostBound_of_polyCost` builds it from `Cmd.PolyCost`, and
-`Cmd.PolyCost` is closed under `seq` / `ifBit` / cost-safe `forBnd`
-(`Lang/CostPoly.lean`). What is left is exactly:
+/-- **OPEN — the S1 cost ladder, down to ONE gadget.**
 
-> every `forBnd` in `s1Program` either never writes a register its own cost
-> reads (`Cmd.polyCost_of_costSafe`, one `decide`), or has a per-iteration
-> growth budget driven by its stable registers (`Cmd.polyCost_forBnd_grow`,
-> with `Cmd.polyCost_tailLoop` / `Cmd.polyCost_mulLoop` ready-made).
+`Cmd.capChk` (`Lang/CostGrow.lean`) is a decidable forward analysis whose
+success certifies `Cmd.CapCost`, the two-cap polynomial cost bound: a frozen set
+capped by `MF`, everything capped by `N`, cost `≤ K·(MF+1)^D·(N+1)` and growth
+`≤ N + K·(MF+1)^D`. It needs no `_run` lemma, no register table and no
+invariant — only the program's syntax — and `Cmd.costLeSize_of_capChk` turns its
+success into exactly the shape below.
 
-`probes/S1CostSafeProbe.lean` measures the split on the real program. Build the
-`PolyCost` proofs bottom-up, one per gadget `def`, mirroring the `_run` lemmas —
-they need no register table, no invariants and no `_run` lemma, only the
-gadget's own syntax. -/
-theorem s1Program_polyCost : Cmd.PolyCost S1Program.s1Program := by
+**Measured (`probes/S1GrowSafeProbe.lean`, 2026-07-29):**
+`Cmd.capChk costRegs` accepts `stagePG`, `stageSig`, `stageInit`, `stageFin`,
+`stageMYes`, `stageMNo`, `S1CardEmit.cFive` and `S1Prelude.cPrelude`, and
+`decide`s the **whole** program in 19 s. It rejects exactly **two loops**, both
+in `S1StepLoop.scanSeen` (the `stepBlocks` dedup scan) and both for the same
+reason: the seen-set accumulator `SSEEN` bounds them, and `Cmd.GrowOk` — which
+is deliberately flow-*insensitive*, so that it can certify a register before the
+loops around it are analysable — cannot see that `SAX` is capped at the point of
+`Cmd.op (.concat SSEEN SAX SSEEN)`. `SSEEN` is genuinely `≤ poly`: the entry loop
+runs `≤ |PNTRANS|` times and each iteration appends one capped key.
+
+**The fix is a merged, flow-sensitive growth pass** — see `CookLevin/HANDOFF.md`,
+NEXT BOTTOM-UP. Do *not* attempt to `sorry` the Boolean
+`(s1Program.capChk costRegs).isSome = true`: it currently evaluates to `false`,
+so that would be asserting a falsehood. -/
+theorem s1Program_costLeSize : ∃ K D : Nat, ∀ (s : State) (n : Nat),
+    State.size s ≤ n → S1Program.s1Program.cost s ≤ K * (n + 1) ^ (D + 1) := by
   sorry
 
 /-- The cost contract at the real program. -/
 theorem s1Program_costBound : S1CostBound S1Program.s1Program :=
-  s1CostBound_of_polyCost _ s1Program_polyCost
+  s1CostBound_of_costLeSize _ s1Program_costLeSize
 
 /-- **The S1 free reduction witness** — `s1WitnessOf` at the real program.
 Its `computes`/`usesBelow` are conditional only on stage C, its `cost_le`
