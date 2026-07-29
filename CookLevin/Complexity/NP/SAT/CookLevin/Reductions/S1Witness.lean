@@ -1,4 +1,5 @@
 import Complexity.NP.SAT.CookLevin.Reductions.S1Program
+import Complexity.Lang.CostPoly
 
 set_option autoImplicit false
 
@@ -446,10 +447,82 @@ The three contracts are exactly the remaining S1 obligations:
    `stageC_run`);
 2. `huses` — `S1Program.s1Program_usesBelow` (open only through
    `stageC_usesBelow`);
-3. `hcost` — `s1Program_cost_le` below, the cost ladder, **still open**.
+3. `hcost` — `S1CostBound`, discharged by `s1Program_polyCost` below (the cost
+   ladder), **still open**.
 -/
 
 private instance : Nonempty FlatTCC := ⟨S1Map.s1No⟩
+
+/-! ### The cost contract — stated as "SOME polynomial works"
+
+⚠ **2026-07-28-c.** The contract used to be `c.cost ≤ S1Map.s1Bound`, i.e. a
+*fixed* degree-10 polynomial. That is not the shape a cost ladder can deliver:
+`Cmd.PolyCost` (`Lang/CostPoly.lean`) produces an **existential** `K·(M+1)^(D+1)`
+whose constants nobody wants to compute, and `cost_bound` is a *free* field
+whose only real constraint is that it keeps dominating `output_size_le`
+(locked invariant, 2026-07-25-c). `S1CostBound` bundles both obligations onto
+one anonymous polynomial, so raising the bound is no longer a change to any
+contract. `s1CostBound_of_s1Bound` recovers the old shape if a future ladder
+does land inside degree 10. -/
+
+/-- **The S1 cost contract**: some polynomial dominates *both* the program's
+cost on the frozen head layout *and* the image's size. Bundling the two is what
+makes the bound free — `PolyTimeComputableLang.output_size_le` is the only thing
+that stops `cost_bound` from being raised at will. -/
+def S1CostBound (c : Cmd) : Prop :=
+  ∃ cb : Nat → Nat, inOPoly cb ∧ monotonic cb
+    ∧ (∀ x : flatTM × List Nat × Nat × Nat,
+        c.cost (HeadLayout.headEncodeIn x) ≤ cb (encodable.size x))
+    ∧ (∀ x : flatTM × List Nat × Nat × Nat,
+        encodable.size (S1Map.s1Map x) ≤ cb (encodable.size x))
+
+/-- The old, tighter shape still implies the contract. -/
+theorem s1CostBound_of_s1Bound (c : Cmd)
+    (h : ∀ x : flatTM × List Nat × Nat × Nat,
+      c.cost (HeadLayout.headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    S1CostBound c :=
+  ⟨S1Map.s1Bound, S1Map.s1Bound_poly, S1Map.s1Bound_mono, h, S1Map.s1Map_size_le⟩
+
+private theorem inOPoly_pow_succ' (k : Nat) : inOPoly (fun n => (n + 1) ^ k) := by
+  refine ⟨k, 2 ^ k, 1, ?_⟩
+  intro n hn
+  calc (n + 1) ^ k ≤ (2 * n) ^ k := Nat.pow_le_pow_left (by omega) k
+    _ = 2 ^ k * n ^ k := by rw [Nat.mul_pow]
+
+/-- **The cost ladder's entry point.** A structural `Cmd.PolyCost` — no
+constants, no register table, no stage-by-stage accounting — plus the already
+proven `headEncodeIn_size_le` discharges the whole cost contract. The witness's
+`cost_bound` becomes `S1Map.s1Bound + K·8^(D+1)·(n+1)^(D+1)`, which still
+dominates `S1Map.s1Map_size_le` by construction. -/
+theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c := by
+  obtain ⟨K, D, hb⟩ := h
+  refine ⟨fun n => S1Map.s1Bound n + K * 8 ^ (D + 1) * (n + 1) ^ (D + 1),
+    inOPoly_add S1Map.s1Bound_poly
+      (inOPoly_mul (inOPoly_const (K * 8 ^ (D + 1))) (inOPoly_pow_succ' (D + 1))),
+    fun a b hab => Nat.add_le_add (S1Map.s1Bound_mono a b hab)
+      (Nat.mul_le_mul_left _ (Nat.pow_le_pow_left (by omega) _)),
+    fun x => ?_, fun x => Nat.le_add_right_of_le (S1Map.s1Map_size_le x)⟩
+  have hcap : ∀ r : Var, (State.get (HeadLayout.headEncodeIn x) r).length
+      ≤ 8 * encodable.size x + 4 :=
+    fun r => le_trans (State.get_length_le_size _ r) (headEncodeIn_size_le x)
+  have hcost := hb (HeadLayout.headEncodeIn x) (8 * encodable.size x + 4)
+    (fun r _ => hcap r)
+  have hpow : (8 * encodable.size x + 4 + 1) ^ (D + 1)
+      ≤ 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by
+    calc (8 * encodable.size x + 4 + 1) ^ (D + 1)
+        ≤ (8 * (encodable.size x + 1)) ^ (D + 1) := Nat.pow_le_pow_left (by omega) _
+      _ = 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by rw [Nat.mul_pow]
+  refine le_trans hcost ?_
+  show K * (8 * encodable.size x + 4 + 1) ^ (D + 1)
+      ≤ S1Map.s1Bound (encodable.size x)
+        + K * 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1)
+  have hstep : K * (8 * encodable.size x + 4 + 1) ^ (D + 1)
+      ≤ K * 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by
+    calc K * (8 * encodable.size x + 4 + 1) ^ (D + 1)
+        ≤ K * (8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1)) :=
+          Nat.mul_le_mul_left _ hpow
+      _ = K * 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by ring
+  omega
 
 /-- **The S1 free reduction witness, over an arbitrary program meeting the
 three S1 contracts.** Every other field is discharged from a proven lemma of
@@ -458,8 +531,7 @@ noncomputable def s1WitnessOf (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       s1Extract (c.eval (HeadLayout.headEncodeIn x)) = s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (HeadLayout.headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (hcost : S1CostBound c) :
     PolyTimeComputableLang S1Map.s1Map where
   c := c
   encodeIn := HeadLayout.headEncodeIn
@@ -468,9 +540,9 @@ noncomputable def s1WitnessOf (c : Cmd)
   -- unary cells, each emitted by a quadratic-in-its-length loop. Degree 10
   -- matches `S1Map.s1Bound` (the output-size ceiling) with room to spare;
   -- tighten only if the built program refuses it.
-  cost_bound := fun n => S1Map.s1Bound n
-  cost_bound_poly := S1Map.s1Bound_poly
-  cost_bound_mono := S1Map.s1Bound_mono
+  cost_bound := hcost.choose
+  cost_bound_poly := hcost.choose_spec.1
+  cost_bound_mono := hcost.choose_spec.2.1
   encBound := fun n => 8 * n + 4
   encBound_poly :=
     inOPoly_add (inOPoly_mul (inOPoly_const 8) inOPoly_id) (inOPoly_const 4)
@@ -479,8 +551,8 @@ noncomputable def s1WitnessOf (c : Cmd)
   computes := fun x => by
     rw [hcomputes x]
     exact Function.leftInverse_invFun s1Key_injective _
-  cost_le := hcost
-  output_size_le := S1Map.s1Map_size_le
+  cost_le := hcost.choose_spec.2.2.1
+  output_size_le := hcost.choose_spec.2.2.2
   enc_bit := HeadLayout.headEncodeIn_bitState
   regBound := s1RegBound
   usesBelow := huses
@@ -498,30 +570,35 @@ noncomputable def s1WitnessOf (c : Cmd)
     rw [h SIGMA (by decide), h INIT (by decide), h CARDS (by decide),
       h FINAL (by decide), h STEPS (by decide)]
 
-/-- **OPEN — the whole-program cost ladder**, the LAST item of the S1 build
-plan and the only S1 obligation that is not a program contract.
+/-- **OPEN — the S1 cost ladder, now a purely structural obligation.**
 
-Everything a bottom-up session needs is here in the statement: bound the seven
-stages' `Cmd.cost` on the frozen head layout by `S1Map.s1Bound` (the *same*
-free polynomial that already carries `output_size_le`, degree 10 — raise it
-rather than fight for a degree, its only constraint is that it keeps
-dominating `S1Map.s1Map_size_le`). Measured leaves: P+G is cubic
-(`probes/S1ParseProbe.lean`), `S1Emit.emitBlk_cost ≤ 3 + 5v + v²` is the
-emitter leaf, `Cmd.cost_forBnd_le` sits above each loop, and
-`preludeBlocks` is ~96% of the emitted output
-(`probes/S1CardEmitProbe.lean` §3), so budget the program as that family's
-cost plus a constant factor. -/
-theorem s1Program_cost_le (x : flatTM × List Nat × Nat × Nat) :
-    S1Program.s1Program.cost (HeadLayout.headEncodeIn x)
-      ≤ S1Map.s1Bound (encodable.size x) := by
+Everything numeric has been factored out: `S1CostBound` accepts *any*
+polynomial, `s1CostBound_of_polyCost` builds it from `Cmd.PolyCost`, and
+`Cmd.PolyCost` is closed under `seq` / `ifBit` / cost-safe `forBnd`
+(`Lang/CostPoly.lean`). What is left is exactly:
+
+> every `forBnd` in `s1Program` either never writes a register its own cost
+> reads (`Cmd.polyCost_of_costSafe`, one `decide`), or has a per-iteration
+> growth budget driven by its stable registers (`Cmd.polyCost_forBnd_grow`,
+> with `Cmd.polyCost_tailLoop` / `Cmd.polyCost_mulLoop` ready-made).
+
+`probes/S1CostSafeProbe.lean` measures the split on the real program. Build the
+`PolyCost` proofs bottom-up, one per gadget `def`, mirroring the `_run` lemmas —
+they need no register table, no invariants and no `_run` lemma, only the
+gadget's own syntax. -/
+theorem s1Program_polyCost : Cmd.PolyCost S1Program.s1Program := by
   sorry
+
+/-- The cost contract at the real program. -/
+theorem s1Program_costBound : S1CostBound S1Program.s1Program :=
+  s1CostBound_of_polyCost _ s1Program_polyCost
 
 /-- **The S1 free reduction witness** — `s1WitnessOf` at the real program.
 Its `computes`/`usesBelow` are conditional only on stage C, its `cost_le`
-only on `s1Program_cost_le`. -/
+only on `s1Program_polyCost`. -/
 noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map :=
   s1WitnessOf S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow s1Program_cost_le
+    S1Program.s1Program_usesBelow s1Program_costBound
 
 /-- **The honest chain head — SKELETON (`sorry`-backed via `s1Program`).**
 Once `s1Program` lands this is the real `FlatSingleTMGenNP ⪯p' FlatTCC`, and

@@ -259,8 +259,7 @@ noncomputable def s1_to_SAT_seamOf (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (hcost : S1Witness.S1CostBound c) :
     (S1Witness.s1WitnessOf c hcomputes huses hcost).SeamData
       FSATSATComp.flatTCC_to_SAT_witness where
   mfc := scrub4
@@ -285,8 +284,7 @@ noncomputable def s1_to_SAT_witnessOf (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (hcost : S1Witness.S1CostBound c) :
     PolyTimeComputableLang
       ((FSATSATFree.fsatToSat
         ∘ (BinaryCC_to_FSAT_instance
@@ -301,15 +299,14 @@ theorem s1_to_SAT_witnessOf_regBound (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (hcost : S1Witness.S1CostBound c) :
     (s1_to_SAT_witnessOf c hcomputes huses hcost).regBound = 57 := rfl
 
 /-- **The fourth live seam** at the real program. -/
 noncomputable def s1_to_SAT_seam :
     S1Witness.s1_reductionLang.SeamData FSATSATComp.flatTCC_to_SAT_witness :=
   s1_to_SAT_seamOf S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le
+    S1Program.s1Program_usesBelow S1Witness.s1Program_costBound
 
 /-- **The composed witness for `FlatSingleTMGenNP → SAT`** at the real
 program. -/
@@ -319,7 +316,7 @@ noncomputable def s1_to_SAT_witness :
         ∘ (BinaryCC_to_FSAT_instance
           ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map) :=
   s1_to_SAT_witnessOf S1Program.s1Program S1Program.s1Program_computes
-    S1Program.s1Program_usesBelow S1Witness.s1Program_cost_le
+    S1Program.s1Program_usesBelow S1Witness.s1Program_costBound
 
 /-- The composed map's pointwise correctness — the five chain steps chained
 once. Extracted so C8-5 can reuse it (its own correctness obligation is this
@@ -349,8 +346,7 @@ theorem s1_to_SAT_reducesPolyMO'_of (c : Cmd)
     (hcomputes : ∀ x : flatTM × List Nat × Nat × Nat,
       S1Program.s1Extract (c.eval (headEncodeIn x)) = S1Program.s1Key (S1Map.s1Map x))
     (huses : Cmd.UsesBelow c S1Program.s1RegBound)
-    (hcost : ∀ x : flatTM × List Nat × Nat × Nat,
-      c.cost (headEncodeIn x) ≤ S1Map.s1Bound (encodable.size x)) :
+    (hcost : S1Witness.S1CostBound c) :
     FlatSingleTMGenNP ⪯p' SAT :=
   reducesPolyMO'_of_langFree (s1_to_SAT_witnessOf c hcomputes huses hcost)
     s1_to_SAT_correct
