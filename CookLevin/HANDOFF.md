@@ -12,17 +12,17 @@ reasonably provable).
 **reference index**, not narration: consult it before building anything, do not
 read it front to back.
 
-## Where the proof stands (2026-07-28-c)
+## Where the proof stands (2026-07-29)
 
 **The hardness half of Cook–Levin is proven modulo ONE `sorry`: the S1 program's
-cost ladder.** The program itself is finished and axiom-clean; the ladder is now
-a **purely structural** obligation.
+cost ladder.** The program is finished and axiom-clean; the ladder is a
+**purely structural** obligation and is now down to **one gadget**.
 
 ```
 FrontS1Comp.SAT_NPhard''_of_S1 (c : Cmd)
   (hcomputes : ∀ x, s1Extract (c.eval (headEncodeIn x)) = s1Key (S1Map.s1Map x))
   (huses     : Cmd.UsesBelow c S1Program.s1RegBound)
-  (hcost     : S1Witness.S1CostBound c)                  -- ⚠ NEW SHAPE
+  (hcost     : S1Witness.S1CostBound c)
   : NPhard'' SAT
 depends on axioms: [propext, Classical.choice, Quot.sound]
 ```
@@ -33,156 +33,186 @@ depends on axioms: [propext, Classical.choice, Quot.sound]
 | S1 map + guard + correctness iff + output bound | ✅ |
 | S1 program, all stages, `stageC = cFive ;; stepFam ;; cPrelude` | ✅ **ALL BUILT** |
 | `s1Program_computes` / `s1Program_usesBelow` | ✅ axiom-clean |
-| `Cmd.PolyCost` — the generic cost layer (`Lang/CostPoly.lean`) | ✅ **NEW, sorry-free** |
-| **the cost ladder** `S1Witness.s1Program_polyCost` | ❌ **the only open S1 item** |
+| `Cmd.PolyCost` (`Lang/CostPoly.lean`), `Cmd.CapCost` (`Lang/CostGrow.lean`) | ✅ **both sorry-free** |
+| **the cost ladder** `S1Witness.s1Program_costLeSize` | ❌ **the only open S1 item — 2 loops** |
 | `inNPLangFreeSplit SAT` (⇒ `NPcomplete'' SAT`) | ❌ open, top-down, independent |
 
 **Sorries in built code: 6** (unchanged) — five pre-existing (`red_inNP`'s
 `inTimePoly` half; `hasDeciderClassical`; 3× `MultiToSingle`, dead code) and
-`S1Witness.s1Program_polyCost`.
+`S1Witness.s1Program_costLeSize`.
 
 ## ★ Latest session
 
-**2026-07-28-c (bottom-up) — the cost ladder got an architecture, and the
-contract that can consume it.**
+**2026-07-29 (bottom-up) — a cost layer that survives a loop; the residual is
+now TWO loops in ONE gadget.**
 
-New: `Complexity/Lang/CostPoly.lean` (sorry-free) and
-`probes/S1CostSafeProbe.lean`. `S1Witness.s1Program_cost_le` is **gone**,
-replaced by `s1Program_polyCost : Cmd.PolyCost S1Program.s1Program`.
+New: `Complexity/Lang/CostGrow.lean` (sorry-free, axiom-clean) and
+`probes/S1GrowSafeProbe.lean`. `S1Witness.s1Program_polyCost` is **gone**
+(renamed, not weakened),
+replaced by `s1Program_costLeSize` (same content, stated in the shape the new
+layer produces); `s1CostBound_of_costLeSize` is the new bridge and
+`s1CostBound_of_polyCost` / `s1CostBound_of_capChk` both route through it.
+
+⚠ **FINDING Z — a ONE-cap cost predicate cannot survive a loop, and that is why
+`Cmd.PolyCost` stalled at 96%.** `PolyCost`'s cap is a single `M` over
+`c.costReads`. After one loop iteration the body's outputs are bounded by
+`poly(M)`, so the next iteration's cap is `poly(poly(M))` and `m` iterations
+give a **tower**. `Cmd.polyCost_forBnd` avoids this only by *forbidding* the
+body to write what it cost-reads — which is exactly the 4% residual. The fix is
+to split the cap in two, and it is not cosmetic: it is what makes the loop rule
+non-compounding.
 
 **Endpoints to consume — do NOT re-derive:**
 
-* **`Cmd.PolyCost c := ∃ K D, ∀ s M, (∀ r ∈ c.costReads, |s @ r| ≤ M) →
-  c.cost s ≤ K·(M+1)^(D+1)`** — closed under `PolyCost.seq`, `PolyCost.ifBit`,
-  `polyCost_op`, and `polyCost_forBnd` (the cost-safe loop rule).
-* **`Cmd.CostSafe`** — the `decide`-able check "no `forBnd` body writes a
-  register its own cost reads"; `Cmd.polyCost_of_costSafe (by decide)` closes a
-  whole gadget in ONE line. Measured: `decide` on a real closed stage-C family
-  runs in seconds — scaling is **not** the problem.
-* **`Cmd.polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`** —
-  the self-referential loops. `polyCost_forBnd_grow` asks only for a
-  per-iteration *growth* budget driven by the loop's **stable** registers.
-* **`Cmd.get_length_eval_le : |c.eval s @ r| ≤ |s @ r| + c.cost s`** — the
-  composable strengthening of `Cmd.size_eval_le`. This is the whole trick: it
-  re-establishes the cap after a `seq` knowing **nothing** about the left
-  factor's semantics.
-* **`S1Witness.S1CostBound c`** — *some* polynomial dominates both
-  `c.cost (headEncodeIn x)` and `size (s1Map x)`. `s1CostBound_of_polyCost` is
-  the bridge; `s1CostBound_of_s1Bound` keeps the old degree-10 shape available.
+* **`Cmd.CapCost c F F'` := `∃ K D, ∀ s MF N, (F-registers ≤ MF) → (all ≤ N) →
+  cost ≤ K·(MF+1)^D·(N+1) ∧ (∀ r, |eval@r| ≤ N + K·(MF+1)^D) ∧
+  (∀ r ∈ F', |eval@r| ≤ MF + K·(MF+1)^D)`.** Closed under `CapCost.seq`,
+  `.ifBit`, `.mono`, `capCost_op` and **`capCost_forBnd`**.
+  * the **cost** may be linear in `N` — that is what pays for FINDING X, the
+    `copy EOUT_C EOUT_C` no-op, for free, with no pinned `_run` lemma re-opened;
+  * the **growth** may not depend on `N` — that is what stops compounding;
+  * with `bnd ∈ F` the trip count is `≤ MF`, so `N_m ≤ N + MF·poly(MF)`.
+* **`Cmd.NoGrow c r`** — `|c.eval s @ r| ≤ max |s@r| 1`, an **idempotent** bound,
+  so a `NoGrow` body may be iterated *any* number of times. This is what covers
+  the drained cursor `forBnd idx SCAN (… tail SCAN SCAN …)`, whose own bound
+  register is the one being consumed.
+* **`Cmd.GrowOk c r F`** — `|c.eval s @ r| ≤ |s@r| + poly(MF)`, per register,
+  against a set `F` the command never writes. Deliberately **flow-insensitive**
+  and **total**: a loop contributes nothing to `r`'s growth unless it writes `r`,
+  so a register can be certified *before* the loops around it are analysable.
+  That independence is the whole point of `Cmd.promote` — and, see below, also
+  its limit.
+* **`Cmd.promote F cnt body`** — the registers a loop body writes but still
+  leaves capped. A written register cannot join the frozen set naively (its cap
+  would have to satisfy `MF' ≥ MF + m·P(MF')`, which has no polynomial
+  solution); `GrowOk` buys the invariant against the *strictly* frozen set, and
+  the body's own `CapCost` then spends it. Round 0 buys, round 1 spends; both
+  runs are over the same body and the same states, so nothing is circular. This
+  is what lets `S1CardEmit.CH` and `S1Emit.EC` — advanced by `tallyReg` inside
+  the very loop that then uses them as an inner trip bound — work at all.
+* **`Cmd.capChk : List Var → Cmd → Option (List Var)`** — the decidable forward
+  pass; `Cmd.capCost_of_capChk` is its soundness and
+  **`Cmd.costLeSize_of_capChk c F (by decide)`** is the one-liner.
+* **`S1Witness.costRegs = List.range 60`** — the seed set. At program entry every
+  register is bounded by the input size, which is what
+  `Cmd.CapCost.cost_le_size` needs.
 
-⚠ **FINDING Y — a `cost_bound` field stated as a FIXED polynomial cannot
-consume a generic cost lemma.** Any semantics-free cost argument produces an
-*existential* `K·(M+1)^D`; the old contract `c.cost ≤ S1Map.s1Bound` (degree 10,
-fixed) could never have accepted it, no matter how much measured slack there
-was. The fix was free — `cost_bound` is a free field whose only constraint is
-that it keeps dominating `output_size_le`, so `S1CostBound` bundles the two onto
-one anonymous polynomial. **Ask of every "free polynomial" field: free for whom,
-the prover or the consumer?**
+**Measured (`probes/S1GrowSafeProbe.lean`):** `capChk costRegs` accepts
+`stagePG` (30 loops), `stageSig`, `stageInit`, `stageFin`, `stageMYes`,
+`stageMNo` and **`S1CardEmit.cFive`** (81 loops, three levels — the family that
+exercises all three shapes the 2026-07-28-c probe found unsafe). It rejects
+**exactly two loops**, both in `S1StepLoop.scanSeen`:
 
-⚠ **FINDING X — `Cmd.op (.copy r r)` is a semantic no-op but NOT a cost no-op,
-and it is used on the OUTPUT register.** `Op.cost (copy dst src) = |src| + 1`,
-so the else-branch no-op (`S1CardEmit.copy_self_get`, `S1Prelude.pKindCmd`'s
-`[]` case, `S1PreludeEmit`) re-reads the whole emitted stream once per
-iteration: the emitters are `O(output²)` and `EOUT_C` is a genuine `costRead`,
-against the spirit of the "output is built by unit-cost appends" invariant.
-**Do NOT re-open the pinned `_run` lemmas to swap the no-op** — the program is
-still polynomial and the measured head-room is `> 6·10^8`. The consequence for
-the ladder is that `EOUT_C` is an accumulator, so `polyCost_forBnd_grow` is
-*required*, not optional.
+```
+(43, 46) = forBnd EK1 SSEEN scanBody          -- the dedup scan
+(42, 22) = forBnd SIX  EE   … (inside readItem TJ1 EE SIX in scanBody)
+```
 
-⚠ **The generic lemma has a genuine side condition and it is not cosmetic.**
-`forBnd cnt bnd (concat dst dst dst)` squares `dst` every iteration, so no
-unconditional polynomial cost bound exists for this language. Every relaxation
-of `CostSafe` must keep excluding that.
+`badLoops` over the **whole** `s1Program` returns exactly those two, so no other
+loop in the program is rejected.
 
-**Measured** (`probes/S1CostSafeProbe.lean`): `s1Program` has **116825** loop
-nodes, of which **4683 (4.0%)** are not cost-safe, in exactly three shapes:
-(1) unary drains `forBnd cnt r (tail r r)` — `polyCost_tailLoop` closes them;
-(2) unary products `concat dst dst src` — `polyCost_mulLoop` closes them;
-(3) per-iteration value rebuilds (`CX` via `loadX`, `CH`, `CD`/`CE`) plus
-`EOUT_C` — these need `polyCost_forBnd_grow`.
-The 4683 instances are only **52 distinct shapes** (`cCopy` 2, `stagePG` 11,
-`stageSig` 1) — the emitters are instantiated over and over. **52 is the
-worst-case count of bespoke `PolyCost` proofs**, and they cluster a couple per
-family.
+⚠ **TWO PERFORMANCE FACTS, and do not confuse them.**
+* The kernel `decide`s `capChk` on the whole `s1Program` in **19 s** — but that
+  run **short-circuits**: `Option.bind` hits `stepFam`'s failure before reaching
+  `cPrelude`. It is *not* evidence that a successful whole-program run is fast.
+* `S1Prelude.cPrelude` alone did **not** finish in 10 minutes, by `#eval` or by
+  `decide`. `capChk` recomputes `Cmd.writes` over the whole subtree at every
+  loop level and runs `Cmd.GrowOk` once per candidate register per loop, so it
+  is superlinear in nesting depth, and `cPrelude` is the deepest nest in the
+  program.
 
-## NEXT BOTTOM-UP session — close `s1Program_polyCost`, and nothing else
+**Budget a slot for this**: represent register sets as a `Nat` bitmask
+(`Nat.testBit` / `|||` / `&&&` are GMP-accelerated in the kernel; every register
+is `< 64`) and hoist `Cmd.writes` so it is computed once per node rather than
+once per enclosing loop. Do it *before* the merged pass, not after — the merged
+pass will make the analysis heavier still.
 
-Everything numeric is gone: there is no constant to compute, no degree to hit,
-no register table to consult, and **no `_run` lemma is needed**. The obligation
-is `Cmd.PolyCost S1Program.s1Program` and it decomposes syntactically.
+## NEXT BOTTOM-UP session — close the last two loops, and nothing else
 
-Two routes. **Do them in this order** — step 1 is cheap and re-measures.
+Both rejections have one cause. `SSEEN` (the dedup seen-set) is genuinely
+`≤ poly`: the entry loop runs `≤ |PNTRANS|` times and each iteration appends one
+capped key via `Cmd.op (.concat SSEEN SAX SSEEN)`. `Cmd.promote` cannot certify
+it because `Cmd.GrowOk` is flow-**insensitive** and `SAX` is *built earlier in
+the same body* (`pushKey`: `clear SAX ;; appendOne SAX ;; concat SAX SAX SKQ ;;
+…`), so `SAX ∉ freezeFor F cnt body`. Cap `SSEEN` and both loops close.
 
-1. **Relax `CostSafe` with a non-growing check (half a session, closes shape 1).**
-   Add `Cmd.NoGrow (r : Var) : Cmd → Bool` — every op writing `r` is `clear`,
-   `head`, `nonEmpty`, `eqBit` (result `≤ 1`) or `tail r r` (shrinks) — and
-   weaken `polyCost_forBnd`'s side condition to
-   `r ∉ body.writes ∨ body.NoGrow r`. Then **re-run
-   `probes/S1CostSafeProbe.lean` §1** and write the new percentage into this
-   file. Drains are the most numerous shape, so expect a big drop.
-2. **Then pick ONE of:**
-   * **(a) semantic, per-gadget — guaranteed to work.** For each remaining
-     unsafe loop, prove `PolyCost` for that gadget by hand with
-     `Cmd.cost_forBnd_le` (or `polyCost_forBnd_grow`), and glue upward with
-     `PolyCost.seq` / `.ifBit` / `polyCost_of_costSafe (by decide)` for
-     everything in between. The unsafe loops **cluster at family level**, and
-     each needs a *length* bound only — far weaker than the corresponding
-     `_run` lemma, which already exists and pins the exact contents.
-     **`probes/S1CostSafeProbe.lean` §5 walks `S1CardEmit.cCopy` outwards and
-     is the template.** Machine-checked there: `copyInner` and `copyLoopC`
-     close with a single `decide`; the break is at `copyLoopB`, because the
-     inner loop writes its counter `EJ3` and the emitter cost-reads it —
-     nothing is accumulating, and `Cmd.forBnd_counter_le` (new, in `CostPoly`)
-     is exactly the fact that says so. **Estimate: one `PolyCost` proof per
-     card FAMILY (~7 for stage C, plus the prelude and step nests), not one
-     per loop; 52 distinct offender shapes program-wide is the hard ceiling.**
-   * **(b) structural `Cmd.GrowSafe` — one `decide` for the whole program, but
-     it is a real dataflow analysis.** ⚠ **Probe this on paper first.** The
-     design is: mark `U := body.writes`; an op is growth-safe if every source
-     feeding a write is either outside `U` (capped by the loop's entry cap) or
-     the write's own target (additive). That alone is **not enough**: an inner
-     loop whose *bound register* is in `U` (e.g. `emitBlk2` bounded by `CX`,
-     which `loadX` rebuilt) reintroduces compounding. You need a **must-def
-     (kill) analysis** separating registers the body *overwrites from stable
-     sources* (`CX`, `CD`) from true accumulators (`EOUT_C`, `CH`). Budget a
-     full session for the analysis plus its soundness proof, and only start it
-     if step 1's re-measure leaves shape 3 dominant.
+**The fix: a flow-sensitive growth pass, merged with `capChk`.**
 
-⚠ Whichever route: `PolyCost` is a statement about a `Cmd`'s **syntax**. Prove
-it per top-level `def`, bottom-up, in the same order the `_run` lemmas were
-built — `S1Emit` leaves first (see `S1CostSafeProbe.emitBlk_polyCost`, which
-needs **no** register-disequality hypotheses at all), then `S1CardEmit`,
-`S1Prelude`/`S1PreludeEmit`, `S1StepEmit`/`S1StepLoop`, then `S1Parse`, then
-`S1Program.s1Program` in three lines.
+Replace `GrowOk`'s role in `Cmd.promote` by a single forward analysis returning
+**a pair**: the capped set (as `capChk` already does) *and* the set of registers
+whose growth so far is certified additive. Threading the capped set is what lets
+`concat SSEEN SAX SSEEN` be accepted once `SAX` has been capped by the
+straight-line prefix.
+
+⚠ **Three traps, all found on paper this session — do not re-discover them:**
+
+1. **The merged pass must not hard-fail on a loop with an uncapped bound.** It is
+   used *inside* `promote`, so it runs before the loop bounds are known good. At
+   such a loop it must return a conservative result (capped-after `= ∅`, growth
+   `=` the `NoGrow` set) rather than `none`. Sound, because it claims less.
+2. **`Cmd.growOk_sound` requires `F` to be UNWRITTEN by the command** (`hfr`) —
+   the `seq` case re-establishes the cap with `Cmd.eval_get_of_not_writes`. So
+   you cannot simply feed promoted (hence written) registers back into `GrowOk`.
+   The one safe relaxation is `NoGrow` members: `|c.eval s@v| ≤ max |s@v| 1`
+   survives a `seq`, so `Cmd.freezeFor` may be widened to
+   `(cnt :: F).filter (fun v => !body.writes.contains v || body.NoGrow v)` with
+   the cap becoming `MF + 1`. That alone gets `SCUR` frozen (it is drained by
+   `tail SCUR SCUR`) — **but it does not close `SSEEN`**, because `SAX` is not
+   `NoGrow`. Do it anyway: it is cheap and strictly widens the analysis.
+3. **Iterated promotion (`promote` run to a fixpoint) does NOT work**, for
+   exactly reason 2: rounds 2+ would need `GrowOk` over a frozen set containing
+   written registers (`SKQ`, `SAX`). The chain here is 4 deep — `SCUR` →
+   `SKQ`/`SKT`/`SKV` → `SAX` → `SSEEN` — so this is not a corner case. Only the
+   merged flow-sensitive pass reaches it.
+
+**Order of work.** (a) make the checker fast (bitmask register sets, hoisted
+`Cmd.writes`) and re-run `probes/S1GrowSafeProbe.lean` §1 — without this you
+cannot even *measure* `cPrelude`; (b) widen `freezeFor` per trap 2; (c) build the
+merged pass and prove its
+soundness by the same shape as `Cmd.capCost_forBnd` (one
+`Cmd.foldlState_range_induct` whose motive carries the frame equality, the
+per-stratum caps and the global cap — that proof is already written and is the
+template); (d) `s1Program_costLeSize := Cmd.costLeSize_of_capChk _ costRegs (by
+decide)` and delete the `sorry`.
+
+⚠ **Never `sorry` the Boolean `(s1Program.capChk costRegs).isSome = true`** — it
+currently evaluates to `false`, so that would be asserting a falsehood. The
+`sorry` lives on `s1Program_costLeSize`, which is *true*.
+
+**Fallback if the merged pass stalls (est. half a session):** prove
+`Cmd.CapCost S1Step.scanSeen F F'` by hand — `scanSeen` reads `SSEEN`, writes
+`EE`/`SKP`/`CX`/`TJ1`–`TJ3`, and its `_run` lemma (`scanSeen_run`) already pins
+everything. Then glue with `CapCost.seq`/`.ifBit`/`capCost_forBnd` up through
+`entryPre` → `entryBody` → `stepFam`, and `capChk (by decide)` for the rest. The
+gluing needs the intermediate `F` sets named; get them from
+`#eval Cmd.capChk costRegs <gadget>`.
 
 When it lands, `S1Witness.s1_reductionLang`, `s1_reducesPolyMO'`,
 `S1SATComp.s1_to_SAT_reducesPolyMO'` and **`FrontS1Comp.SAT_NPhard''`** all
 become axiom-clean in one step. Check with a scratch `#print axioms` file (or
-top-down item 1 below) and update the README/ROADMAP status tables.
+top-down item 1) and update the README/ROADMAP status tables.
 
 **Do NOT** re-open `s1Key`, `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s
 statement, the two seams' scrub ranges, `S1Step.stepSeg`/`stepEmit`'s contract,
 or the entry loop's register table — and do **not** swap the `copy r r` no-op
-(FINDING X). Stage C's 30-register licence is **exactly** exhausted.
+(FINDING X; `CapCost` makes it free). Stage C's 30-register licence is
+**exactly** exhausted.
 
 ## NEXT TOP-DOWN session — the membership half, then the headline
 
-Hardness is one structural lemma away, so the top-down critical path is the
-other half of `NPcomplete'' SAT`. All items below are independent of the cost
-ladder (different files), so a top-down agent can run in parallel with a
-bottom-up one.
+Hardness is one gadget away, so the top-down critical path is the other half of
+`NPcomplete'' SAT`. All items below are independent of the cost ladder
+(different files), so a top-down agent can run in parallel with a bottom-up one.
 
 1. **A `#print axioms` regression list — do this one first, it is cheap, and it
-   is now also the tripwire for the cost ladder.** `probes/AxiomProbe.lean`
-   listing the ~30 endpoint names (`S1Program.stageC_run`,
-   `s1Program_computes`, `s1Program_usesBelow`, `S1Step.stepFam_run`,
-   `entryPre_run`, and now `Cmd.polyCost_of_costSafe`,
-   `Cmd.get_length_eval_le`, `S1Witness.s1CostBound_of_polyCost`) would catch
+   is the tripwire for the cost ladder.** `probes/AxiomProbe.lean` listing the
+   ~30 endpoint names (`S1Program.stageC_run`, `s1Program_computes`,
+   `s1Program_usesBelow`, `S1Step.stepFam_run`, `entryPre_run`, and now
+   `Cmd.capCost_of_capChk`, `Cmd.capCost_forBnd`, `Cmd.growOk_sound`,
+   `Cmd.get_length_eval_le`, `S1Witness.s1CostBound_of_costLeSize`) would catch
    an accidental `sorryAx` inheritance in one run — exactly what the
-   placeholder-quantification discipline protects and nothing currently
-   verifies (standing risk #7). **It also tells you the moment the ladder
-   lands.**
+   placeholder-quantification discipline protects and nothing currently verifies
+   (standing risk #7). **It also tells you the moment the ladder lands.**
 2. **`inNPLangFreeSplit SAT` — the last piece of `NPcomplete'' SAT`, and the
    top-down critical path.** The live SAT verifier does not factor verbatim as
    a Split witness: `assgn` certificates are `List Nat` (sentinel-unary),
@@ -232,11 +262,9 @@ bottom-up one.
      asserts the full equality for `stageC`, so the older section can be
      retired or re-pointed.
 
-**Recommendation: run a BOTTOM-UP session next.** `s1Program_polyCost` is the
-single `sorry` between the current state and an axiom-clean `NPhard'' SAT`, the
-architecture is built and validated, and step 1 above (the `NoGrow` relaxation
-plus a re-measure) is a self-contained half-session that tells the session after
-it exactly which of route (a)/(b) to take. Top-down item 1 is a 30-minute
+**Recommendation: run a BOTTOM-UP session next.** The cost ladder is two loops
+from done, the residual has a single named cause and a designed fix, and the
+whole-program `decide` is already fast enough. Top-down item 1 is a 30-minute
 warm-up for either stream; top-down item 2 is the right pick for a parallel
 agent.
 
@@ -471,6 +499,27 @@ still has to respect:
 
 ## Locked invariants — do NOT revisit
 
+- **A cost predicate with ONE cap cannot survive a loop (2026-07-29,
+  FINDING Z).** `Cmd.PolyCost`'s single `M` over `costReads` re-caps the body's
+  outputs at `poly(M)` each iteration, so `m` iterations give a tower; that is
+  why `Cmd.polyCost_forBnd` has to forbid the body from writing what it
+  cost-reads. `Cmd.CapCost` splits the cap into a frozen `MF` and a global `N`,
+  lets the **cost** be linear in `N` and forbids the **growth** from depending
+  on it. Do not "simplify" it back to one cap.
+- **`Cmd.GrowOk`'s frozen set must be UNWRITTEN by the command (2026-07-29).**
+  `Cmd.growOk_sound`'s `seq` case re-establishes the cap with
+  `Cmd.eval_get_of_not_writes`. So promoted (hence written) registers may **not**
+  be fed back into `GrowOk`, and iterating `Cmd.promote` to a fixpoint is
+  unsound. The one safe widening is `NoGrow` members, whose bound
+  (`≤ max |r| 1`) survives a `seq`. Reaching `SSEEN` needs a *merged*
+  flow-sensitive pass, not more rounds.
+- **`Cmd.op (.copy r r)` costs `|r| + 1` and that is now FREE (2026-07-29).**
+  FINDING X (2026-07-28-c) still describes the program correctly — the `ifBit`
+  else-branch no-op on `EOUT_C` makes the emitters `O(output²)` — but
+  `Cmd.CapCost`'s `(N+1)` factor pays for it. **Do not swap the no-op**; the
+  pinned `_run` lemmas depend on that exact else-branch and there is no longer
+  any cost reason to touch it.
+
 - **A `cost_bound` field must be an EXISTENTIAL polynomial, not a fixed one
   (2026-07-28-c, FINDING Y).** `S1Witness.S1CostBound c` = "some `cb` is
   `inOPoly`, `monotonic`, and dominates both `c.cost (headEncodeIn x)` and
@@ -669,15 +718,25 @@ still has to respect:
 
 ## Proven, reusable — do not re-derive
 
-- **`Complexity/Lang/CostPoly.lean` — the cost-ladder toolkit (2026-07-28-c).**
-  `Cmd.PolyCost` (+ `.seq`, `.ifBit`, `polyCost_op`, `polyCost_forBnd`),
-  `Cmd.CostSafe` + `polyCost_of_costSafe` (one `decide` per gadget),
+- **`Complexity/Lang/CostGrow.lean` — the cost-ladder toolkit (2026-07-29).
+  START HERE for every new `cost_le` obligation** (not with `Cmd.cost_seq`
+  chains, and not with `CostPoly` — see FINDING Z). `Cmd.CapCost` (+ `.seq`,
+  `.ifBit`, `.mono`, `capCost_op`, **`capCost_forBnd`**), `Cmd.NoGrow` /
+  `noGrow_sound`, `Cmd.GrowOk` / `growOk_sound` / `growOk_sound_list`,
+  `Cmd.freezeFor`, `Cmd.promote`, the decidable `Cmd.capChk` /
+  `capCost_of_capChk`, and the entry points `CapCost.cost_le_size` /
+  **`costLeSize_of_capChk`**.
+- **`Complexity/Lang/CostPoly.lean` — the earlier one-cap layer (2026-07-28-c),
+  still live and sorry-free**, but it cannot survive a loop whose body writes
+  its own cost reads (FINDING Z). `Cmd.PolyCost` (+ `.seq`, `.ifBit`,
+  `polyCost_op`, `polyCost_forBnd`), `Cmd.CostSafe` + `polyCost_of_costSafe`,
   `polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`,
-  `Cmd.get_length_eval_le` (per-register growth ≤ cost) and
-  `PolyCost.cost_le_size`. Sits on top of `Lang/CostFlat.lean`
-  (`cost_le_flat`, `cost_forBnd_flat_le`, `cost_mulLoop_le`,
-  `cost_tailLoop_le`, `Cmd.writes`, `Cmd.costReads`). **Start every new
-  `cost_le` obligation here, not with `Cmd.cost_seq` chains.**
+  `Cmd.get_length_eval_le` (per-register growth ≤ cost — used by BOTH layers)
+  and `PolyCost.cost_le_size`. Use it for a gadget that is genuinely cost-safe;
+  reach for `CostGrow` the moment a loop body touches what it reads.
+- Both sit on top of `Lang/CostFlat.lean` (`cost_le_flat`,
+  `cost_forBnd_flat_le`, `cost_mulLoop_le`, `cost_tailLoop_le`, `Cmd.writes`,
+  `Cmd.costReads`).
 
 - **Stage C's `stepBlocks` family — THE PREAMBLE AND THE LOOP (2026-07-28-b,
   `Reductions/S1StepLoop.lean`, sorry-free & axiom-clean — consume as black
