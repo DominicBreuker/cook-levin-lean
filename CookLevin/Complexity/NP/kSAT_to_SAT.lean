@@ -52,5 +52,9 @@ theorem kSAT_to_SAT (k : Nat) : kSAT k ⪯p SAT :=
           omega⟩⟩,
     kSAT_to_SAT_correct k⟩⟩
 
-theorem inNP_kSAT (k : Nat) : inNP (kSAT k) :=
-  red_inNP (kSAT k) SAT (kSAT_to_SAT k) SAT_inNP.sat_NP
+/-! **`inNP_kSAT` was DELETED (2026-07-30-c)** with `red_inNP`, the `sorry`-backed
+`⪯p`-based composition it routed through. The honest, live replacement is
+`KSat3Free.inNP_kSAT3_free` (`NP/kSAT_to_SAT_free.lean`) — same statement for
+`k = 3`, produced by `Lang.red_inNP_of_langFree` from a real re-encoder `Cmd`,
+axiom-clean. The map and correctness proof above are untouched and are what the
+free witness consumes. -/
