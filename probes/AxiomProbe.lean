@@ -1,4 +1,5 @@
 import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
+import Complexity.NP.SAT.CookLevin.CookLevinHonest
 
 set_option autoImplicit false
 
@@ -84,3 +85,29 @@ section Chain
 #print axioms FrontS1Comp.SAT_NPhard''_of_S1
 #print axioms FrontS1Comp.SAT_NPhard''
 end Chain
+
+section SATMembership
+-- The membership half (2026-07-30, top-down): the split layout, the certificate
+-- relation, the composite verifier and the honest headline, all quantified over
+-- the ONE remaining machine obligation (`EvalCnfSplit.DecodesAssgn certDecode`).
+-- If any of these ever prints `sorryAx`, a placeholder has leaked into a
+-- statement.
+#print axioms EvalCnfSplit.satRel_correct
+#print axioms EvalCnfSplit.satRel_satCert
+#print axioms EvalCnfSplit.varsOfCnf_lt_size
+#print axioms EvalCnfSplit.satEIn_bit
+#print axioms EvalCnfSplit.satEIn_size_le
+#print axioms EvalCnfSplit.size_decodeBits_le
+#print axioms EvalCnfSplit.certDecode_chk
+#print axioms EvalCnfSplit.certDecode_costBound
+#print axioms EvalCnfSplit.certDecode_usesBelow
+#print axioms EvalCnfSplit.certBridge_of_decodesAssgn
+#print axioms EvalCnfSplit.decodeBits_take_succ
+#print axioms EvalCnfSplit.satPrecomposeData
+#print axioms EvalCnfSplit.satSplitVerifier
+#print axioms EvalCnfSplit.satSplitWitnessOf
+#print axioms EvalCnfSplit.SAT_inNPLangFreeSplit_of
+#print axioms EvalCnfSplit.SAT_inNPLangFreeSplit_of_decodesAssgn
+#print axioms CookLevinHonest.CookLevin''_of_decoder
+#print axioms CookLevinHonest.CookLevin''_of_decodesAssgn
+end SATMembership
