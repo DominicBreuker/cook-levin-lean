@@ -412,4 +412,166 @@ theorem cost_constLoop_le (cnt bnd : Var) (body : Cmd)
   rw [hm] at h
   exact h
 
+
+/-! ## Per-register growth, and a loop's counter
+
+Two semantics-level facts that no cost *predicate* owns — they are properties of
+`Cmd.eval`/`Cmd.cost` alone. They were built for the retired `Cmd.PolyCost`
+ladder (FINDING Z) and kept when it was deleted, because they are primitives, not
+a superseded design: `Cmd.get_length_eval_le` is the composable strengthening of
+`Cmd.size_eval_le`, and `Cmd.forBnd_counter_le` is what an outer loop needs to
+know about an inner loop's counter.
+
+`Cmd.size_eval_le` bounds the *total* state size by `size + cost`; that is too
+coarse to re-establish a per-register cap after a `seq`, because the entry size
+of a program that has already emitted a large output is not bounded by the cap.
+The per-register form below is what composes. -/
+
+/-- The cost-carrying loop fold (state × running cost); `Cmd.run`'s `forBnd`
+branch is definitionally this fold. -/
+private def costFoldP (body : Cmd) (counter : Var) :
+    State × Nat → Nat → State × Nat :=
+  fun acc i => (body.eval (acc.1.set counter (List.replicate i 1)),
+    acc.2 + body.cost (acc.1.set counter (List.replicate i 1)))
+
+private theorem eval_forBnd_foldP (cnt bnd : Var) (body : Cmd) (s : State) :
+    (Cmd.forBnd cnt bnd body).eval s
+      = ((List.range (State.get s bnd).length).foldl (costFoldP body cnt) (s, 0)).1 := rfl
+
+private theorem cost_forBnd_foldP (cnt bnd : Var) (body : Cmd) (s : State) :
+    (Cmd.forBnd cnt bnd body).cost s
+      = 1 + ((List.range (State.get s bnd).length).foldl (costFoldP body cnt) (s, 0)).2
+        + (State.get s bnd).length * (State.get s bnd).length := rfl
+
+private theorem Op.get_length_eval_le (o : Op) (s : State) (r : Var) :
+    (State.get (Op.eval o s) r).length ≤ (State.get s r).length + Op.cost o s := by
+  cases o with
+  | clear dst =>
+      by_cases hr : r = dst
+      · subst hr; simp only [Op.eval, State.get_set_eq]; simp
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | appendOne dst =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, List.length_append, List.length_cons,
+          List.length_nil, Op.cost]
+        omega
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | appendZero dst =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, List.length_append, List.length_cons,
+          List.length_nil, Op.cost]
+        omega
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | copy dst src =>
+      by_cases hr : r = dst
+      · subst hr; simp only [Op.eval, State.get_set_eq, Op.cost]; omega
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | tail dst src =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, List.length_tail, Op.cost]
+        omega
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | head dst src =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, Op.cost]
+        rcases State.get s src with _ | ⟨x, xs⟩
+        · simp
+        · simp
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | eqBit dst src1 src2 =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, Op.cost]
+        by_cases hh : State.get s src1 = State.get s src2 <;> simp [hh] <;> omega
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | nonEmpty dst src =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, Op.cost]
+        by_cases hh : (State.get s src).isEmpty <;> simp [hh]
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+  | concat dst src1 src2 =>
+      by_cases hr : r = dst
+      · subst hr
+        simp only [Op.eval, State.get_set_eq, List.length_append, Op.cost]
+        omega
+      · simp only [Op.eval, State.get_set_ne _ _ _ _ hr]; omega
+
+/-- **Per-register growth is bounded by cost.** The size-aware cost model pays
+for every cell it writes, register by register — the composable strengthening of
+`Cmd.size_eval_le`: it re-establishes a per-register cap after a `seq` with no
+knowledge of the left factor's semantics. -/
+theorem Cmd.get_length_eval_le (c : Cmd) (s : State) (r : Var) :
+    (State.get (c.eval s) r).length ≤ (State.get s r).length + c.cost s := by
+  induction c generalizing s with
+  | op o => rw [Cmd.eval_op, Cmd.cost_op]; exact Op.get_length_eval_le o s r
+  | seq c1 c2 ih1 ih2 =>
+      rw [Cmd.eval_seq, Cmd.cost_seq]
+      have h2 := ih2 (c1.eval s)
+      have h1 := ih1 s
+      omega
+  | ifBit t cT cE ihT ihE =>
+      by_cases hb : State.get s t = [1]
+      · rw [Cmd.eval_ifBit_true _ _ _ _ hb, Cmd.cost_ifBit_true _ _ _ _ hb]
+        have := ihT s; omega
+      · rw [Cmd.eval_ifBit_false _ _ _ _ hb, Cmd.cost_ifBit_false _ _ _ _ hb]
+        have := ihE s; omega
+  | forBnd cnt bnd body ih =>
+      have key : ∀ i, i ≤ (State.get s bnd).length →
+          (State.get ((List.range i).foldl (costFoldP body cnt) (s, 0)).1 r).length
+            ≤ (State.get s r).length
+              + ((List.range i).foldl (costFoldP body cnt) (s, 0)).2
+              + i * (State.get s bnd).length := by
+        intro i
+        induction i with
+        | zero => intro _; simp
+        | succ i ihi =>
+            intro hi
+            have hle := ihi (Nat.le_of_succ_le hi)
+            rw [List.range_succ, List.foldl_append]
+            simp only [List.foldl_cons, List.foldl_nil]
+            set F := (List.range i).foldl (costFoldP body cnt) (s, 0) with hF
+            show (State.get (body.eval (F.1.set cnt (List.replicate i 1))) r).length
+                ≤ (State.get s r).length
+                  + (F.2 + body.cost (F.1.set cnt (List.replicate i 1)))
+                  + (i + 1) * (State.get s bnd).length
+            have hset : (State.get (F.1.set cnt (List.replicate i 1)) r).length
+                ≤ (State.get F.1 r).length + (State.get s bnd).length := by
+              by_cases hr : r = cnt
+              · subst hr
+                rw [State.get_set_eq, List.length_replicate]
+                have : i ≤ (State.get s bnd).length := Nat.le_of_succ_le hi
+                omega
+              · rw [State.get_set_ne _ _ _ _ hr]; omega
+            have hbody := ih (F.1.set cnt (List.replicate i 1))
+            have harith : (i + 1) * (State.get s bnd).length
+                = i * (State.get s bnd).length + (State.get s bnd).length := by ring
+            omega
+      have hkey := key (State.get s bnd).length (Nat.le_refl _)
+      rw [eval_forBnd_foldP, cost_forBnd_foldP]
+      omega
+
+/-- **A loop leaves its counter no longer than its bound register.** The small
+fact every *outer* loop needs: an inner loop's counter is one of the outer
+body's cost reads (the emitters emit the counter's value), so the outer rule's
+growth invariant has to know the inner counter stays small. Needs only that the
+body does not write the counter itself. -/
+theorem Cmd.forBnd_counter_le (cnt bnd : Var) (body : Cmd) (s : State)
+    (h : cnt ∉ body.writes) :
+    (State.get ((Cmd.forBnd cnt bnd body).eval s) cnt).length
+      ≤ max (State.get s cnt).length (State.get s bnd).length := by
+  rw [Cmd.eval_forBnd]
+  refine Cmd.foldlState_range_induct body cnt (State.get s bnd).length s
+    (fun _ st => (State.get st cnt).length
+      ≤ max (State.get s cnt).length (State.get s bnd).length)
+    (Nat.le_max_left _ _) (fun i st hi _ => ?_)
+  show (State.get (body.eval (st.set cnt (List.replicate i 1))) cnt).length ≤ _
+  rw [Cmd.eval_get_of_not_writes body _ cnt h, State.get_set_eq,
+    List.length_replicate]
+  exact le_trans (Nat.le_of_lt hi) (Nat.le_max_right _ _)
+
 end Complexity.Lang

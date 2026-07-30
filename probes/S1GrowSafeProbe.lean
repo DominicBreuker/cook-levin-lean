@@ -6,7 +6,7 @@ set_option maxRecDepth 4000000
 
 /-! # Probe — `Cmd.chk` on the real S1 program
 
-`Lang/CostGrow.lean` replaces `Cmd.PolyCost`'s single cap by two (`MF` over a
+`Lang/CostGrow.lean` replaces the naive single cap by two (`MF` over a
 frozen set `F`, `N` over everything) and ships `Cmd.chk`, a decidable forward
 analysis whose success certifies `Cmd.CapCost`. **It now accepts the whole
 program**, which is what closes `S1Witness.s1Program_costLeSize`.
