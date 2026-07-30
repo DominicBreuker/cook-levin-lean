@@ -8,247 +8,210 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 reasonably provable).
 
 **Read in this order.** "Where the proof stands" → "★ Latest session" → the
-**NEXT** section for your stream. Everything from "Locked invariants" down is a
-**reference index**, not narration: consult it before building anything, do not
-read it front to back.
+**NEXT** section for your stream → "Probe regression list". Everything from
+"The S1 register frame" down is a **reference index**, not narration: consult it
+before building anything, do not read it front to back.
 
-## Where the proof stands (2026-07-30)
+## Where the proof stands (2026-07-30-b)
 
-**The hardness half is PROVEN, `sorry`-free and axiom-clean. The membership half
-is now ONE register equation.** Both halves of `NPcomplete'' SAT` are stated and
-composed; what is missing is a single `_run` lemma about an 11-op program.
+**COOK–LEVIN IS PROVEN, on the honest statement, unconditionally.**
 
 ```
-CookLevinHonest.CookLevin''_of_decodesAssgn
-  : EvalCnfSplit.DecodesAssgn EvalCnfSplit.certDecode → NPcomplete'' SAT
+CookLevinHonest.CookLevin'' : NPcomplete'' SAT
 depends on axioms: [propext, Classical.choice, Quot.sound]
 ```
 
-and the hypothesis is, in full,
-
-```lean
-∀ (N : cnf) (c : List Bool),
-  State.get (certDecode.eval (satEIn (N, c))) ASSGN = encodeAssgn (decodeBits c)
-```
-
-That is the whole remaining Cook–Levin obligation. Verify in 4 s with
-`probes/AxiomProbe.lean` (~51 endpoints; **run it after any change to the S1
-program, the cost layer, a seam or the membership half**).
+Both halves are closed and axiom-clean: hardness `FrontS1Comp.SAT_NPhard''`
+(2026-07-29-b) and membership `EvalCnfSplit.SAT_inNPLangFreeSplit`
+(2026-07-30-b). There is **no open mathematical obligation on the `NPcomplete''`
+path.** Verify in 4 s with `probes/AxiomProbe.lean` (~60 endpoints).
 
 | piece | status |
 |---|---|
-| sound tail, front (C8-0…C8-5), tableau maths + both size bounds | ✅ axiom-clean |
-| S1 map + guard + correctness iff + output bound + program (all stages) | ✅ |
-| `s1Program_computes` / `_usesBelow` / `_costLeSize`; `Cmd.chk` | ✅ |
-| **`FrontS1Comp.SAT_NPhard''`** | ✅ **axiom-clean** |
-| membership: split layout, `xWidth`, `polyCertRel SAT satRel`, all 4 composite bounds | ✅ **axiom-clean** |
-| membership: the decoder's cost + frame (`certDecode_costBound`/`_usesBelow`) | ✅ `by decide` |
-| membership: the decoder's frame half of the bridge | ✅ free (`Cmd.writes`) |
-| **`EvalCnfSplit.DecodesAssgn certDecode`** | ❌ **open — the only thing left** |
-| **`CookLevin'' : NPcomplete'' SAT`** (unconditional) | ❌ follows from the above |
+| sound tail, C8 front, tableau maths + both size bounds | ✅ axiom-clean |
+| S1 map + guard + program (all stages) + cost ladder | ✅ axiom-clean |
+| **`FrontS1Comp.SAT_NPhard''`** (hardness) | ✅ axiom-clean |
+| **`EvalCnfSplit.SAT_inNPLangFreeSplit`** (membership) | ✅ axiom-clean |
+| **`CookLevinHonest.CookLevin'' : NPcomplete'' SAT`** | ✅ **axiom-clean** |
+| the end-to-end honesty audit (standing risk #1) | ❌ **never done — now the ONLY soundness question** |
+| the legacy `⪯p` front (5 sorries, the last `sorryAx`) | ❌ to be **deleted**, not proved |
 
-**Sorries in built code: 5**, all pre-existing and **none on the `NPcomplete''`
-path**: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, and 3×
-`MultiToSingle` (dead code). All five die with the S2/S3 retirement.
+**Sorries in built code: 5**, all pre-existing, all on the *legacy* path and
+**none reachable from `CookLevin''`**: `Complexity/NP.lean:268` (`red_inNP`'s
+`inTimePoly` half), `GenNP_is_hard.lean:28` (`hasDeciderClassical`), and
+`Simulators/MultiToSingle.lean:57/62/69` (dead code). All five die with the
+demolition below — none of them is to be *proved* (standing risk #6:
+`hasDeciderClassical` is the cheat, closing it would be the dishonest move).
 
 ⚠ `#print axioms CookLevin` still shows `sorryAx`. That is the **legacy** `⪯p`
-headline quoting the legacy front, not a gap in the mathematics — see NEXT
-TOP-DOWN items 1–2.
+headline quoting the legacy front. **Quote `CookLevin''`.**
 
 ## ★ Latest session
 
-**2026-07-30 (top-down) — the membership half is DESIGNED; the remaining gap is
-one register equation.**
+**2026-07-30-b (bottom-up) — the membership half CLOSED; `NPcomplete'' SAT` is
+unconditional.**
 
-New: `Complexity/Complexity/Deciders/EvalCnfSplit.lean` (the split membership
-witness) and `NP/SAT/CookLevin/CookLevinHonest.lean` (the honest headline,
-conditional). Both sorry-free and axiom-clean. Probe:
-`probes/SATSplitProbe.lean` (9 checks, all green — it imports the pinned
-definitions, it does **not** re-declare them).
+`EvalCnfSplit.certDecode_decodesAssgn` is proven, and with it
+`SAT_inNPLangFreeSplit` and `CookLevinHonest.CookLevin''`. Also landed:
+`Lang/CostPoly.lean` retired (bottom-up backlog item 2) and
+`probes/CostChkIntentProbe.lean` (item 3). Three findings worth keeping:
 
-⚠ **Four findings, each measured before it was believed. Do not re-discover
-them.**
+* **FINDING AH — frame facts belong in the write-set lemma, not the loop
+  invariant.** The decode loop's motive carries *only* `ASSGN` and `DCUR`.
+  Registers `0`–`2` and `4`–`15` are discharged once, at the end, by
+  `Cmd.eval_get_of_not_writes` inside `certBridge_of_decodesAssgn`. Every extra
+  conjunct in a loop invariant must be re-established in **every branch of the
+  body**; `Cmd.writes` is syntactic and costs nothing. The probe checked the
+  frame per-iteration (right for validation), and copying that into the proof
+  would have roughly doubled it for no gain.
+* **FINDING AI — write the loop invariant as a `Bool` function checked at EVERY
+  index, before the proof.** `probes/SATSplitProbe.lean` §5 did that, and the
+  proof consumed it verbatim: the `c.take i` / `c.drop i` split, the trip count,
+  and the drained-cursor postcondition all transferred with **zero redesign**.
+  The whole `_run` ladder is ~110 lines for an 11-op program — use that to
+  calibrate estimates, and always probe the invariant first.
+* **FINDING AJ — the retired one-cap ladder left two facts worth keeping.**
+  `Cmd.get_length_eval_le` (per-register growth ≤ cost) and
+  `Cmd.forBnd_counter_le` moved to `Lang/CostFlat.lean`; the rest of
+  `Cmd.PolyCost`/`Cmd.CostSafe` is **deleted** — one cap cannot survive a loop
+  (FINDING Z), so it was a rejected design a reader would have had to
+  re-reject. Measured before deleting: `CostGrow` used nothing from it. **Do not
+  rebuild it.**
 
-* **FINDING AD — the layout worry was a NON-ISSUE; the eight trailing scratch
-  `[]`s are invisible.** `InNPWitnessLangFreeSplit` demands
-  `verifier.encodeIn (N,c) = encX N ++ certState c`, and `EvalCnfCmd.encodeState`
-  is a 12-register literal with 8 trailing `[]`s *after* the certificate register
-  `ASSGN = 3` — so it does not factor **as a list**. But the obligation is on the
-  *composite* verifier, and `DecidesLang.precomposeFree` sets that `encodeIn` to
-  whatever `FreePrecomposeData.eIn` we choose. Choosing
-  `satEIn (N,c) = satEncX N ++ certState c` with
-  `satEncX N = [[], 1^|N|, encodeCnf N]` makes the split law hold **by `rfl`**,
-  `xWidth = 3` by construction, and — because `State.get` reads an unset register
-  as `[]` — registers `4`–`15` agree with `encodeState`'s explicit `[]`s for free.
-  **The entire gap is the single register `ASSGN`.** There was no `xWidth` risk
-  and no re-layout to build: do not "trim the trailing `[]`s" of anything.
-* **FINDING AE — the frame half of a re-encoder's bridge is FREE when its scratch
-  sits above the verifier's frame.** `certDecode` writes only
-  `{ASSGN, DCUR=16, DIDX=17, DHD=18}`; the last three are `≥ 16`, i.e. outside
-  `evalCnfDecidesLang.regBound`, so `AgreeBelow 16` never looks at them and
-  `Cmd.eval_get_of_not_writes` (`Lang/CostFlat.lean`) discharges registers
-  `0`–`2` and `4`–`15` in one line each. That is what collapses `CertBridge` to
-  `DecodesAssgn`. **Put a new re-encoder's scratch above the target verifier's
-  `regBound` and you never write a scrub.**
-* **FINDING AF — the decoder's cost obligation is already closed.**
-  `(certDecode.chk decRegs).1 = true` by `decide` (`decRegs = 2^19 - 1`, 11
-  writes, instant), and `certCostBound_of_chk` turns it into the existential
-  polynomial the composite needs. The `Cmd.chk` pass accepts the accumulator
-  `concat ASSGN ASSGN DIDX` inside the loop without any promotion work by hand.
-  So do **not** budget time for the membership half's cost ladder.
-* **FINDING AG — the certificate decode must be TOTAL, and the characteristic
-  vector is the shape that is total for free.** `satRel N c :=
-  satisfiesCnf (decodeBits c) N` with `decodeBits c` = the indices where `c` is
-  `true`. Every bit string decodes (no "garbage certificate" gap — exactly the
-  property `InNPWitnessLangFreeSplit` was designed around), the machine side is
-  one left-to-right pass whose `forBnd` counter **is** the variable index in
-  unary (no separate index register), and completeness needs no `maxVar` gadget:
-  every variable `N` mentions is `< encodable.size N`
-  (`EvalCnfSplit.varsOfCnf_lt_size`), so `List.range (encodable.size N)` is a
-  uniform certificate length and the cert bound is linear (`2n`). A
-  sentinel-unary certificate format would have needed a partial parse and a
-  normaliser for malformed blocks — do not go back to it.
+## NEXT TOP-DOWN session — the audit, then the demolition
 
-**Endpoints to consume — do NOT re-derive:**
+This is the critical path. Items 1 and 2 are independent; do **1 first** — it is
+the only remaining soundness question, and it reads better before the legacy
+code is deleted (the contrast with the vacuous witnesses is the point).
 
-* **`EvalCnfSplit.DecodesAssgn dec`** — the one open obligation (above).
-* **`EvalCnfSplit.certBridge_of_decodesAssgn`** → `CertBridge certDecode`;
-  **`SAT_inNPLangFreeSplit_of_decodesAssgn`** → `inNPLangFreeSplit SAT`;
-  **`CookLevinHonest.CookLevin''_of_decodesAssgn`** → `NPcomplete'' SAT`.
-* **`EvalCnfSplit.satSplitWitnessOf dec rb hrb hbridge hcost huses`** — the
-  program-generic witness. `CertBridge` / `CertCostBound` / `Cmd.UsesBelow` are
-  the three contracts; a *different* decoder program plugs in here without
-  touching anything downstream.
-* **`certCostBound_of_chk`** — cost from one `Cmd.chk` pass, the
-  `s1CostBound_of_chk` pattern.
-* **Model atoms for the bridge proof, all proven**: `bitsToAssgn_append`,
-  **`decodeBits_take_succ`** (the loop's step: `decodeBits (c.take (i+1)) =
-  decodeBits (c.take i) ++ (if c[i] then [i] else [])`), `encodeAssgn_append`,
-  `encodeAssgn_singleton`.
-* **Pure NP content, proven**: `satRel_correct : polyCertRel SAT satRel`,
-  `satRel_satCert`, `varsOfCnf_lt_size`, `satisfiesCnf_congr_vars`,
-  `size_decodeBits_le`, `satEIn_bit`, `satEIn_size_le`, `satEncX_size_le`.
+1. **THE HONESTY AUDIT of the composed chain** (standing risk #1). Never done
+   end to end. `NPcomplete''` is machine-checked, so this is now the *only* way
+   the theorem could still fail to mean what it says. The structures do not
+   enforce honesty: `eIn`/`encodeIn` must be the natural layout of the **input**
+   (never of `gmap v`), `decodeOut` the inverse of the natural **output**
+   layout, and all reduction work must live in the `Cmd`. Audit these, in order,
+   and write a one-line verdict per witness into the ROADMAP risk register:
+   * `FrontWitness.WQ` (`Q ⪯p' FlatSingleTMGenNP`) — ⚠ `encodeInQ x = encX x ++
+     [1^(size x)]`: the extra unary size register is the verifier's own `encX`
+     plus a *derived* tally the front program **consumes**. Layout, not work —
+     but say so explicitly, it is the least obvious one.
+   * `S1Witness.s1_reductionLang` (`⪯p' FlatTCC`) — input layout is the frozen
+     `Reductions/HeadLayout.lean`; output is `FlatTCCFree.encodeIn` verbatim.
+     Also confirm nothing depended on `S1CostBound`'s `cost_bound` being
+     *definitionally* `S1Map.s1Bound` — it is an anonymous `Exists.choose` (the
+     whole project builds, so nothing does; record the verdict).
+   * `FlatTCCFree` (`⪯p' FlatCC`), `FlatCCBinFree` (`⪯p' BinaryCC`),
+     `BinaryCCFSATFree` (`⪯p' FSAT`), `FSATSATFree` (`⪯p' SAT`) — the four older
+     witnesses, never audited. For each: is `encodeIn` a mechanical serialisation
+     of the input type, and does the guard test a decidable property of the
+     *input* (legitimate) rather than the answer (S1's original sin)?
+   * the five seams' `mfc`s — pure scrubs by construction (`clearRange` only
+     clears), so this is a spot check, not a study.
+   * **the membership half** (new, 2026-07-30): `satRel`'s honesty is
+     *machine-checked* — `satRel_correct : polyCertRel SAT satRel` is soundness +
+     completeness + a linear bound, which is exactly non-vacuity; do not
+     re-derive it. Two things still want a written verdict: `satEncX`'s register
+     1 is `1^|N|`, a **derived** quantity (the clause count), honest because the
+     live `evalCnfDecidesLang` already demands it in its own `encodeIn`
+     (`CLAUSE_TALLY` is the outer loop's bound) — inherited, not introduced; and
+     `InNPWitnessLangFreeSplit.encX_size` is enormously **slack** (measured `23`
+     vs `≥ 200000`), so that field constrains nothing and is **not** an honesty
+     check.
+2. **Demolish the legacy `⪯p` front.** Mechanical, well-scoped, retires **all 5**
+   sorries and the last `sorryAx`. Delete, in this order, each its own commit:
+   * `Complexity/GenNP_is_hard.lean` (`hasDeciderClassical`) — its only importer
+     is `NP/SAT/CookLevin.lean`;
+   * `NP/SAT/CookLevin.lean`'s legacy chain (`FlatSingleTMGenNP_to_FlatTCC` …
+     `CookLevin0`/`CookLevin`/`Clique_complete`, 88 LOC total) — decide whether
+     to keep the file as a pointer to `CookLevinHonest` or delete it;
+   * `L_to_LM.lean` / `LM_to_mTM.lean` / `mTM_to_singleTapeTM.lean` (importer:
+     `NP/TM/IntermediateProblems.lean`, 23 LOC);
+   * `Simulators/MultiToSingle.lean` (importer: `Simulators.lean`);
+   * `Complexity/NP.lean:268` — `red_inNP`'s `inTimePoly` half. Check who still
+     needs `red_inNP` at all (`NP/kSAT_to_SAT.lean:56` does) before cutting.
+   Deliverable: `lake build` emits **zero** `declaration uses 'sorry'`, and no
+   endpoint anywhere prints `sorryAx`. Re-run `probes/AxiomProbe.lean`.
+3. **Finish the documentation pass that (2) invalidates.** The README and
+   ROADMAP already lead with `CookLevin''` and already mark S0/S2/S3 as
+   superseded (2026-07-30-b). What (2) makes stale: every row and paragraph that
+   *describes* the legacy chain, the `sorryAx` row, the "5 sorries" counts, and
+   the `## What is sound vs. what is not` section — which after the deletion
+   should simply describe the one chain that exists. Also record, once, which
+   declarations still mention `reducesPolyMO`/`NPhard` on any live path (today:
+   `NP/kSAT_to_SAT.lean`, `Complexity/NP.lean`, and doc comments elsewhere).
+4. **Decide the fate of `parked/`** (~15K LOC, not built). It was the
+   hand-rolled `FlatTM` approach the `Cmd` layer replaced. Either delete it or
+   write one paragraph in `parked/README.md` saying it is permanently retired.
 
-## NEXT BOTTOM-UP session — one lemma, and it is THE critical path
+## NEXT BOTTOM-UP session
 
-1. **Prove `EvalCnfSplit.DecodesAssgn EvalCnfSplit.certDecode`.** This is the
-   entire remaining Cook–Levin obligation. It is a small, fully de-risked
-   `_run` proof — everything around it is already closed. The recipe:
-   * `certDecode = copy DCUR ASSGN ;; clear ASSGN ;; forBnd DIDX DCUR decodeBody`.
-     Unfold the loop with **`Cmd.eval_forBnd`** and drive
-     **`Cmd.foldlState_range_induct`** with the motive
-     ```
-     ASSGN = encodeAssgn (decodeBits (c.take i))
-     DCUR  = (c.drop i).map (fun b => if b then 1 else 0)
-     ```
-     (plus "registers `0`–`2` untouched, `4`–`15` still `[]`" if convenient —
-     `Cmd.eval_get_of_not_writes` gives those for free at the end instead).
-   * ⚠ **The motive is `#eval`-validated at EVERY prefix length**:
-     `probes/SATSplitProbe.lean` §5 (`checkInv`/`checkInvAll`) checks it for
-     `i = 0 … |c|` on 50 `(N,c)` pairs, and also checks that the trip count
-     really is `|c|` and that `prefState N c c.length` *is* the final state. If
-     your invariant differs from §5's, §5 is right.
-   * The step is `decodeBits_take_succ` + `encodeAssgn_append` +
-     `encodeAssgn_singleton`; `foldlState_range_induct` hands you
-     `DIDX = 1^i` before the body, which is exactly what
-     `concat ASSGN ASSGN DIDX` appends.
-   * `decodeBody` is guarded by `nonEmpty DHD DCUR` (FINDING T — total body).
-     The guard is never *taken* here because the trip count is exactly `|c|`, but
-     it must still be discharged: `i < |c|` gives `c.drop i ≠ []`.
-   * Then `CookLevinHonest.CookLevin''_of_decodesAssgn` closes
-     `NPcomplete'' SAT` and the top-down stream takes over.
-2. **Retire `Lang/CostPoly.lean` (`Cmd.PolyCost`) — or say why not.**
-   `Cmd.CapCost` strictly subsumes it (FINDING Z), nothing on the proof path
-   routes through it, and `s1CostBound_of_polyCost` is dead weight. Check for
-   other consumers, then delete in its own commit. ~1 hour, and it removes a
-   layer a future reader would otherwise have to understand and reject.
-3. **Give `Cmd.chk` a `Bool`-level completeness probe.** Right now a rejection is
-   diagnosed by hand (`probes/S1GrowSafeProbe.lean`'s `bad`). A tiny library of
-   hand-built rejected/accepted `Cmd`s — the squaring loop
-   `forBnd cnt bnd (concat d d d)`, a `concat` with two uncapped sources, a
-   `NoGrow` cursor, an accumulator (`certDecode`'s loop is now a good *positive*
-   specimen) — would pin the analysis's *intent* so a future widening cannot
-   silently weaken it. Cheap; do it before touching `CostGrow.lean` again.
-4. **Do NOT** re-open: `s1Key`, `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s
-   statement, the two seams' scrub ranges, `S1Step.stepSeg`/`stepEmit`'s
-   contract, the entry loop's register table, the `copy r r` no-op (FINDING X),
-   **`EvalCnfCmd.encodeState`/`evalCnfCmd`/`regBound = 16`** (the membership
-   design is built on that exact frame), or **`satEncX`/`satEIn`/`xWidth = 3`**
-   (FINDING AD). Stage C's 30-register licence is **exactly** exhausted. Every
-   one of these is load-bearing for an axiom-clean theorem.
+**Read this first: the stated goal is met.** `SAT` is NP-complete on the honest
+statement, unconditionally. There is no gadget the critical path is waiting on.
+Bottom-up work is therefore either (a) *reactive* to the audit, or (b) *scope
+extension*. Pick with the owner; do not start (b) while (a) is open.
 
-## NEXT TOP-DOWN session — the headline swap, then the legacy demolition
+1. **Whatever the audit surfaces (item 1 above).** If an `encodeIn` is found to
+   be doing reduction work, the fix is a program change plus a re-proof of that
+   witness's `computes`, and it is bottom-up. This is the only item that can
+   change the theorem's meaning — treat it as the highest priority the moment it
+   exists.
+2. **Scope extension: honest NP-completeness for `kSAT 3` and `FlatClique`.**
+   Today those are proven only in the *vacuous* legacy sense
+   (`CookLevin0`, `Clique_complete`, both `⪯p`-licensed). Honest versions are a
+   well-templated multi-session programme, and both halves have a worked model:
+   * *membership* — repeat this session's `Deciders/EvalCnfSplit.lean` verbatim.
+     For `FlatClique` the verifier already exists and is axiom-clean
+     (`cliqueRelDecidesLang`), so the work is: a total `List Bool` certificate
+     relation (FINDING AG — characteristic vector, never a sentinel format), a
+     split `encX`/`eIn` literal, a one-register re-encoder `Cmd` with its scratch
+     **above** the verifier's `regBound` (FINDING AE), cost by `Cmd.chk`
+     (`by decide`), and the `_run` lemma. Budget ~1 session per problem.
+     ⚠ Do **not** pre-factor `satPrecomposeData`/`satSplitWitnessOf` into a
+     generic combinator before the second instance exists — copy first, factor
+     when a third consumer appears (that is how `emitFold_run` was found).
+   * *hardness* — `SAT ⪯p' kSAT 3` and `kSAT 3 ⪯p' FlatClique` as free-line
+     witnesses (template: `NP/kSAT_to_SAT_free.lean`, which already does the
+     mirror-image `kSAT 3 ⪯p' SAT`), then one `SeamData`/`comp` each onto
+     `FrontS1Comp.front_to_SAT_witness`, then `NPhard''` transports for free.
+3. **Do NOT** re-open, on pain of re-proving an axiom-clean theorem: `s1Key`,
+   `s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s statement, the two seams'
+   scrub ranges, `S1Step.stepSeg`/`stepEmit`'s contract, the entry loop's
+   register table, the `copy r r` no-op (FINDING X),
+   **`EvalCnfCmd.encodeState`/`evalCnfCmd`/`regBound = 16`**,
+   **`satEncX`/`satEIn`/`xWidth = 3`** (FINDING AD), or **`certDecode`/
+   `decodeBody`/`DCUR`=16/`DIDX`=17/`DHD`=18** (the `_run` lemma is pinned to
+   that exact program). Stage C's 30-register licence is **exactly** exhausted.
+   And do not rebuild `Cmd.PolyCost` (FINDING AJ) or the `LangEncodable` layer.
 
-If bottom-up item 1 has landed, items 1–2 below are the session. If it has not,
-item 3 (the honesty audit) is the highest-value top-down work available and is
-fully independent.
+## Probe regression list — run these, they are cheap
 
-1. **Swap the headline.** State `CookLevin'' : NPcomplete'' SAT` (unconditional)
-   in `CookLevinHonest.lean` next to the legacy `CookLevin`, and move the
-   README's status table to quote it. ⚠ Its own commit, after the new headline is
-   green: `CookLevin` is what the README currently quotes.
-2. **Then delete the legacy `⪯p` front** — `GenNP_is_hard.lean`,
-   `L_to_LM`/`LM_to_mTM`/`mTM_to_singleTapeTM`,
-   `Simulators/MultiToSingle.lean`. That IS the S2 collapse, and it retires
-   **all 5** remaining sorries and the last `sorryAx`. ⚠ Its own commit, after
-   (1). Deliverable: `#print axioms` on the headline is clean and the "genuine
-   sorries" row of the README reads **0**.
-3. **The honesty audit of the composed chain** (standing architecture risk #1;
-   never done end to end, and it is now the *only* soundness question left).
-   Six reduction witnesses plus two verifiers compose into one theorem: check
-   each `encodeIn`/`eIn` is the natural layout of its *input* type, each
-   `decodeOut` the inverse of the natural *output* layout, and that no reduction
-   work hides in an `encodeIn`. The two head seams are pure scrubs by
-   construction (`clearRange` only clears), so the audit is really about the four
-   older witnesses plus these three items:
-   * `WQ.encodeInQ` — the extra unary size register at `xWidth` is the verifier's
-     own `encX` plus `1^(size x)`, which the front program *consumes* (layout,
-     not work).
-   * **NEW — `EvalCnfSplit.satEncX`'s register 1 is `1^|N|`**, a *derived*
-     quantity (the clause count), not raw input data. It is honest because the
-     live `evalCnfDecidesLang` already requires it in its own `encodeIn`
-     (`CLAUSE_TALLY` is the outer loop's bound), so the membership half inherits
-     rather than introduces it — but write the verdict down, because it is the
-     one place in the new file where `encX` is not literally the input.
-   * **NEW — `encX_size`'s slack.** `InNPWitnessLangFreeSplit.encX_size` bounds
-     `State.size (encX N)` by `dBound`, and our `dBound` is degree ≈ 8, so the
-     bound is enormously slack (measured: `23` vs `≥ 200000`). That is sound
-     (`dBound` feeds the C8 front's `encBound`, everything stays polynomial) but
-     it means the field constrains nothing — do not treat it as an honesty check.
-   * `S1CostBound`'s `cost_bound` is an anonymous `Exists.choose`, so confirm
-     nothing downstream depended on `s1_reductionLang.cost_bound` being
-     *definitionally* `S1Map.s1Bound` (the whole project builds, so nothing does
-     — record the verdict).
-   Write the verdicts into the ROADMAP risk register.
-4. **S3 retirement bookkeeping**: the honest `⪯p'`/`NPhard''` line is end-to-end
-   and axiom-clean, so the ROADMAP's S3 entry can be re-scoped from "must be
-   built" to "must be *switched to*, then the old one deleted" — write down
-   exactly which declarations still mention `reducesPolyMO`/`NPhard` on the proof
-   path.
-5. **Also independent and cheap:**
-   * **`probes/AxiomProbe.lean` is the tripwire** — 4 s, ~51 endpoints. Run it
-     first thing in any session and after any change to the S1 program, the cost
-     layer, a seam or the membership half.
-   * re-run `probes/SATSplitProbe.lean` (4 s) after any change to
-     `EvalCnfSplit`, `EvalCnfCmd.encodeState` or `evalCnfCmd`'s frame;
-   * re-run `probes/SeamS1Probe.lean`, `probes/S1PreludeProbe.lean`,
-     `probes/S1PreludeEmitProbe.lean`, `probes/S1StepModelProbe.lean`,
-     `probes/S1StepEmitProbe.lean`, `probes/S1StepLoopProbe.lean`,
-     `probes/S1CardEmitProbe.lean`, `probes/S1CardModelProbe.lean` after any
-     register-frame or model touch (⚠ `S1PreludeEmitProbe` takes ~6 min and
-     `S1StepLoopProbe` ~3 min: the emitter appends cell by cell, so interpreting
-     it is quadratic — keep every new probe instance at `σ ≤ 1`);
-   * `probes/S1CardEmitProbe.lean` §1 still asserts `cFive`'s output is a
-     *prefix* of `encNats (cardBlocks M)`; `probes/S1StepLoopProbe.lean` §1 now
-     asserts the full equality for `stageC`, so the older section can be retired
-     or re-pointed.
+* **`probes/AxiomProbe.lean` — 4 s, ~60 endpoints. Run it first thing in every
+  session and after any change to the S1 program, the cost layer, a seam or the
+  membership half.** A `sorryAx` in that list is a regression.
+* `probes/CostChkIntentProbe.lean` (5 s) — after **any** change to
+  `Lang/CostGrow.lean`. It pins the shapes `Cmd.chk` must reject (the squaring
+  loop) and must accept (drained cursor, counter accumulator, flow-sensitive
+  `concat`, `certDecode` itself).
+* `probes/SATSplitProbe.lean` (4 s) — after any change to `EvalCnfSplit`,
+  `EvalCnfCmd.encodeState` or `evalCnfCmd`'s frame. §5 shares `loopStart`/`cbits`
+  with the proof, so it cannot drift.
+* `probes/SeamS1Probe.lean`, `probes/S1PreludeProbe.lean`,
+  `probes/S1StepModelProbe.lean`, `probes/S1StepEmitProbe.lean`,
+  `probes/S1CardEmitProbe.lean`, `probes/S1CardModelProbe.lean`,
+  `probes/S1GrowSafeProbe.lean` — after any register-frame, model or cost touch.
+  ⚠ `probes/S1PreludeEmitProbe.lean` takes ~6 min and `probes/S1StepLoopProbe.lean`
+  ~3 min (the emitter appends cell by cell, so interpreting it is quadratic —
+  keep every new probe instance at `σ ≤ 1`).
+* `probes/S1CardEmitProbe.lean` §1 still asserts `cFive`'s output is a *prefix*
+  of `encNats (cardBlocks M)`; `probes/S1StepLoopProbe.lean` §1 now asserts the
+  full equality for `stageC`, so the older section can be retired or re-pointed.
 
-**Recommendation: run a BOTTOM-UP session next.** For the first time in the
-project the critical path is a single, small, fully-specified `_run` lemma with
-its invariant already `#eval`-validated at every index (bottom-up item 1). There
-is no design question left in front of it. Top-down has real work (items 1–4
-above) but items 1–2 are *blocked* on that lemma, and item 3 is an audit that
-reads better once the headline is unconditional.
+**Recommendation: run a TOP-DOWN session next.** The critical path is finished,
+so the value is no longer in building — it is in (a) checking that what is built
+means what it claims (the audit, item 1) and (b) removing the legacy code that
+makes the repository's headline read worse than the mathematics it contains
+(item 2). Bottom-up has nothing blocking and should wait for the audit's
+verdicts.
 
 ## The S1 register frame — PINNED
 
@@ -480,6 +443,26 @@ still has to respect:
 ---
 
 ## Locked invariants — do NOT revisit
+
+- **Frame facts belong in the write-set lemma, NOT in the loop invariant
+  (2026-07-30-b, FINDING AH).** A loop invariant conjunct must be re-established
+  in *every* branch of the body; `Cmd.eval_get_of_not_writes` is syntactic, costs
+  one line per register and runs once, at the end. `EvalCnfSplit.decodeBody_run`
+  carries only the two registers the loop actually changes. Probe the frame
+  per-iteration if you like (`SATSplitProbe` §5 does) — do not *prove* it there.
+- **Write a loop's invariant as a `Bool` function and `#eval` it at EVERY index
+  before proving anything (2026-07-30-b, FINDING AI).** `SATSplitProbe` §5 fixed
+  the `c.take i` / `c.drop i` split, the trip count and the postcondition before
+  a line of proof existed, and the proof consumed it verbatim — zero redesign,
+  ~110 lines for an 11-op program. This is the cheapest de-risking move in the
+  codebase; it is what "probe before committing engineering" means for a `_run`
+  lemma.
+- **`Cmd.PolyCost` is DELETED and must not come back (2026-07-30-b, FINDING
+  AJ).** One cap cannot survive a `forBnd` (FINDING Z below); `Cmd.CapCost`
+  strictly subsumes it. The two facts worth keeping — `Cmd.get_length_eval_le`
+  (per-register growth ≤ cost) and `Cmd.forBnd_counter_le` — now live in
+  `Lang/CostFlat.lean`. `probes/CostChkIntentProbe.lean` pins what `Cmd.chk`
+  must accept and reject.
 
 - **A free precomposition may CHOOSE the composite's `encodeIn` — so a layout
   mismatch with the target verifier's own `encodeIn` is not a layout problem
@@ -741,8 +724,9 @@ still has to respect:
 ## Proven, reusable — do not re-derive
 
 - **`Complexity/Complexity/Deciders/EvalCnfSplit.lean` — the SPLIT membership
-  witness for SAT (2026-07-30, sorry-free & axiom-clean).** START HERE for
-  `inNPLangFreeSplit SAT` and for any future `InNPWitnessLangFreeSplit`.
+  witness for SAT (2026-07-30, COMPLETE and axiom-clean 2026-07-30-b).**
+  START HERE for any future `InNPWitnessLangFreeSplit` — it is the worked
+  template, end to end, for "verifier + certificate decoder ⇒ split witness".
   Contents: the certificate semantics `bitsToAssgn`/`decodeBits`/`satRel` and the
   canonical certificate `satCert`; the pure NP content
   **`satRel_correct : polyCertRel SAT satRel`** with `satRel_satCert`,
@@ -757,14 +741,18 @@ still has to respect:
   `certDecode_usesBelow`; **`DecodesAssgn`** and
   **`certBridge_of_decodesAssgn`** (the frame half, free); the model atoms
   `bitsToAssgn_append`/**`decodeBits_take_succ`**/`encodeAssgn_append`/
-  `encodeAssgn_singleton`; and the assembly `gDecode`/`satPrecomposeData`/
-  `satSplitVerifier`/**`satSplitWitnessOf`**/`SAT_inNPLangFreeSplit_of`/
-  **`SAT_inNPLangFreeSplit_of_decodesAssgn`**. Headline consumers in
-  `NP/SAT/CookLevin/CookLevinHonest.lean`. Probe: `probes/SATSplitProbe.lean`.
+  `encodeAssgn_singleton`; the decoder's `_run` ladder `cbits`/`cbits_drop_succ`/
+  **`decodeBody_run`**/`loopStart`/`certDecode_eval_eq`/
+  **`certDecode_decodesAssgn`**/`certDecode_bridge`; and the assembly
+  `gDecode`/`satPrecomposeData`/`satSplitVerifier`/**`satSplitWitnessOf`**/
+  `SAT_inNPLangFreeSplit_of`/`SAT_inNPLangFreeSplit_of_decodesAssgn`/
+  **`SAT_inNPLangFreeSplit`** (unconditional). Headline consumers in
+  `NP/SAT/CookLevin/CookLevinHonest.lean` (**`CookLevin''`**). Probe:
+  `probes/SATSplitProbe.lean`.
 
 - **`Complexity/Lang/CostGrow.lean` — the cost-ladder toolkit (2026-07-29/-b).
   START HERE for every new `cost_le` obligation** — not with `Cmd.cost_seq`
-  chains, and not with `CostPoly` (see FINDING Z). In the overwhelming majority
+  chains, and not with a one-cap predicate (FINDING Z). In the overwhelming majority
   of cases the whole obligation is **one line**:
   `Cmd.costLeSize_of_chk c (2^k - 1) (by decide)`. Contents: the bitmask
   helpers `bitOf` / `mdiff` / `MaskSub`; `Cmd.NoGrow` / `noGrow_sound` and its
@@ -774,17 +762,13 @@ still has to respect:
   **`Cmd.chk_sound`** with the entry points `CapCost.cost_le_size` /
   **`costLeSize_of_chk`**. ⚠ `Cmd.GrowOk`, `Cmd.freezeFor`, `Cmd.promote` and
   the old `Cmd.capChk` are **deleted** — subsumed by `Cmd.chk`.
-- **`Complexity/Lang/CostPoly.lean` — the earlier one-cap layer (2026-07-28-c),
-  still live and sorry-free but now DEAD on the proof path.** It cannot survive
-  a loop whose body writes its own cost reads (FINDING Z), and `CostGrow`
-  strictly subsumes it. `Cmd.PolyCost` (+ `.seq`, `.ifBit`, `polyCost_op`,
-  `polyCost_forBnd`), `Cmd.CostSafe` + `polyCost_of_costSafe`,
-  `polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop`,
-  `Cmd.get_length_eval_le` (per-register growth ≤ cost — used by BOTH layers)
-  and `PolyCost.cost_le_size`. **Slated for deletion — NEXT BOTTOM-UP item 2.**
-- Both sit on top of `Lang/CostFlat.lean` (`cost_le_flat`,
-  `cost_forBnd_flat_le`, `cost_mulLoop_le`, `cost_tailLoop_le`, `Cmd.writes`,
-  `Cmd.costReads`).
+- It sits on top of `Lang/CostFlat.lean` (`cost_le_flat`, `cost_forBnd_flat_le`,
+  `cost_mulLoop_le`, `cost_tailLoop_le`, `Cmd.writes`,
+  **`Cmd.eval_get_of_not_writes`**, `Cmd.costReads`,
+  **`Cmd.get_length_eval_le`**, `Cmd.forBnd_counter_le`). The earlier one-cap
+  layer `Lang/CostPoly.lean` (`Cmd.PolyCost`/`Cmd.CostSafe`) was **deleted**
+  2026-07-30-b — FINDING AJ; its two keepers moved into `CostFlat`.
+  `probes/CostChkIntentProbe.lean` pins `Cmd.chk`'s accept/reject intent.
 
 - **Stage C's `stepBlocks` family — THE PREAMBLE AND THE LOOP (2026-07-28-b,
   `Reductions/S1StepLoop.lean`, sorry-free & axiom-clean — consume as black

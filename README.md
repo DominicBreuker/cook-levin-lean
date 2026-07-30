@@ -4,19 +4,47 @@ A Lean 4 formalisation targeting the **Cook–Levin theorem** (SAT is
 NP-complete), structured as a port of the Coq development by Forster, Kunze,
 Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
 
-**Work in progress — the theorem typechecks but is NOT yet a faithful proof.**
-`CookLevin/Complexity/NP/SAT/CookLevin.lean` declares `theorem CookLevin :
-NPcomplete SAT` and `lake build` accepts it, but the term is **conditional** on
-both `sorry`-backed gaps and `sorry`-free *vacuous* definitions. Read
-[`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the plan and the full risk
-register before working.
+**The theorem is proven, on the honest statement, unconditionally
+(2026-07-30-b).**
 
-## Honest status (verified 2026-07-30)
+```
+CookLevinHonest.CookLevin'' : NPcomplete'' SAT
+depends on axioms: [propext, Classical.choice, Quot.sound]
+```
+
+`NPcomplete'' SAT = NPhard'' SAT ∧ inNPLangFreeSplit SAT`: every NP problem
+*presented with a real split verifier program* reduces to SAT by a real
+`Cmd`-backed poly-time reduction, and SAT itself is verified by a real `Cmd`
+program against a `List Bool` certificate inside a real polynomial cost bound.
+Both halves are `sorry`-free and axiom-clean.
+
+⚠ **Two caveats, and they are the remaining work.**
+
+1. The **legacy** headline `CookLevin : NPcomplete SAT`
+   (`CookLevin/Complexity/NP/SAT/CookLevin.lean`) still exists and still depends
+   on `sorryAx`, via the legacy `⪯p` front. `⪯p` (`reducesPolyMO`) bounds only
+   *output size*, so `NPcomplete` is a vacuous notion in the first place — that
+   is why the honest statement `NPcomplete''` was built, and why there is
+   deliberately **no** `NPcomplete'' → NPcomplete` bridge. The legacy chain is
+   slated for **deletion**, not for proof.
+2. **Honesty is per-witness discipline, not enforced by the structures.** Each
+   reduction witness's `encodeIn` must be the natural layout of its *input* and
+   all the work must live in its `Cmd`; the trivial dishonest instantiation
+   satisfies every field. The end-to-end audit of the six composed witnesses has
+   **not** been done — it is the only remaining way `CookLevin''` could fail to
+   mean what it says. See ROADMAP risk #1 and `CookLevin/HANDOFF.md`.
+
+Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
+and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
+working.
+
+## Honest status (verified 2026-07-30-b)
 
 | | |
 |---|---|
 | `lake build` | ✅ green |
-| `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the **legacy** headline still depends on `sorryAx`, via the **legacy** hardness front (`NPhard_GenNP` → `hasDeciderClassical`). ⚠ This is no longer a statement about the mathematics: the **honest** hardness line `FrontS1Comp.SAT_NPhard''` is axiom-clean (2026-07-29-b). Retiring the legacy front and stating `CookLevin'' : NPcomplete'' SAT` is top-down work, not a gap. |
+| **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
+| `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the **legacy** headline still depends on `sorryAx`, via the **legacy** hardness front (`NPhard_GenNP` → `hasDeciderClassical`). This is not a statement about the mathematics; the legacy front is slated for deletion. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
 | `#print axioms KSat3Free.inNP_kSAT3_free` | **`[propext, Classical.choice, Quot.sound]`** — the **first live `red_inNP` routed through the free layer engine** (`red_inNP_of_langFree` + a concrete re-encoder & reduction program, 2026-07-02). |
@@ -45,19 +73,21 @@ register before working.
 | `#print axioms S1SATComp.s1Bridge` / `FrontS1Comp.frontBridge` | **`[propext, (Classical.choice,) Quot.sound]`** — **the last two structural interfaces of the chain are VALIDATED** (2026-07-27): the fourth seam (S1 → the composed sound tail, `Reductions/S1_to_FlatTCC_comp.lean`) and C8-5 (the per-`Q` front → S1, `Reductions/Front_to_S1_comp.lean`). Both `mfc`s are pure scrubs built from the new reusable `clearRange` gadget; both bridges are stated over an *arbitrary* program meeting the S1 contracts, so stage C's placeholder cannot pollute them. Probe: `probes/SeamS1Probe.lean` (erase sets pinned to `s1RegBound`/`headRegBound`; the C8-5 bridge checked end to end over the full 57-register frame, with a negative control). |
 | `#print axioms S1Program.s1Program_computes` / `s1Program_usesBelow` | **`[propext, Classical.choice, Quot.sound]`** — **the S1 reduction PROGRAM IS FINISHED** (2026-07-28-b): stage C is a real `Cmd` (`Reductions/S1StepLoop.lean` + `S1Program.stageC = cFive ;; stepFam ;; cPrelude`, all sorry-free), so **two of the three contracts of `SAT_NPhard''_of_S1` are discharged at the real program**. Landed with it: `S1Step.stepFam`/`stepFam_run` (the `stepBlocks` family: the per-entry preamble `entryPre` off a `PTRANS` cursor, the `O(|trans|²)` dedup scan, the halt lookup and the `emitFold_run` loop), plus the reusable gadgets `dropLoop`/`haltBlk`/`optRead`/`hvBlk`/`optMin`/`scanSeen`/`pushKey` and the frame workhorse `keeps_of_writes`. Three findings: **a cursor loop's body must be TOTAL** (`emitFold_run`'s `hstep` is quantified over every index, so the body needs a `nonEmpty` guard on its own cursor — which also means a guarded loop needs only an *upper* bound on its iteration count); **the accumulator must match its model's cons order** (`concat SSEEN item SSEEN` prepends, matching `stepSt`); and **a contract pinned for an unwritten `Cmd` is only as good as its first consumer** — `stageC_run` had been missing its `PSTART` hypothesis for three sessions. Probe: `probes/S1StepLoopProbe.lean` (the first end-to-end `#eval` of `s1Program`; stage C's output is *exactly* `encNats (cardBlocks M)`). |
 | `#print axioms FrontS1Comp.SAT_NPhard''` / `S1SATComp.s1_to_SAT_reducesPolyMO'` | **`[propext, Classical.choice, Quot.sound]`** — **the whole HARDNESS half of Cook–Levin is `sorry`-FREE and axiom-clean** (2026-07-29-b). `NPhard'' SAT` and `FlatSingleTMGenNP ⪯p' SAT` at the *real* S1 program: the last obligation, the whole-program cost ladder `S1Witness.s1Program_costLeSize`, is proven by one decidable syntactic pass (`Cmd.chk`, `Lang/CostGrow.lean`) over the 5.4·10^5-node program. Regression list: `probes/AxiomProbe.lean` (~33 endpoints, all clean). |
-| `#print axioms Complexity.Lang.Cmd.polyCost_of_costSafe` | **`[propext, Classical.choice, Quot.sound]`** — **the cost ladder is now a compositional, semantics-free predicate** (2026-07-28-c, `Lang/CostPoly.lean`, sorry-free). `Cmd.PolyCost c := ∃ K D, ∀ s M, (c's cost READS are ≤ M at entry) → c.cost s ≤ K·(M+1)^(D+1)` is closed under `seq` / `ifBit` / cost-safe `forBnd`; `Cmd.CostSafe` is a `decide`-able syntactic check ("no loop body writes a register its own cost reads") and `Cmd.polyCost_of_costSafe (by decide)` closes a whole gadget in one line, with `polyCost_forBnd_grow` / `polyCost_tailLoop` / `polyCost_mulLoop` for the self-referential loops. The load-bearing new lemma is **`Cmd.get_length_eval_le`** (per-register growth ≤ cost) — the composable strengthening of `Cmd.size_eval_le`, and what lets the cap survive a `seq` with **no** knowledge of the left factor's semantics. Paired with it, `S1Witness.S1CostBound` replaces the old fixed degree-10 cost contract by *some* polynomial dominating both cost and image size, because a `PolyCost` bound is existential and the old shape could never have consumed it. Measured (`probes/S1CostSafeProbe.lean`): **116825 loops in `s1Program`, 4683 (4.0%) not cost-safe**, in three shapes — plus **FINDING X**, that the `copy r r` no-op costs `\|r\|+1` and is used on the output register, so `EOUT_C` is a genuine cost read and the emitters are `O(output²)`. |
+| the one-cap cost ladder (`Lang/CostPoly.lean`, `Cmd.PolyCost`/`Cmd.CostSafe`) | **DELETED 2026-07-30-b.** It was built 2026-07-28-c and superseded three days later by `Cmd.CapCost`: a *single* cap cannot survive a `forBnd` at all (FINDING Z), so it was a design the project had already rejected and every future reader would have had to re-reject. Measured before deleting: `CostGrow` imported it but used nothing from it, and its only other references were one never-called lemma and a probe of the superseded design. Kept and moved into `Lang/CostFlat.lean`: **`Cmd.get_length_eval_le`** (per-register growth ≤ cost — the composable strengthening of `Cmd.size_eval_le`) and `Cmd.forBnd_counter_le`; those are facts about `Cmd.eval`/`Cmd.cost`, not part of the retired predicate. Its measurements survive in the row above and in `S1Witness.S1CostBound`'s design note. |
 | `#print axioms Complexity.Lang.Cmd.chk_sound` | **`[propext, Classical.choice, Quot.sound]`** — **the cost ladder, as ONE decidable forward pass** (`Lang/CostGrow.lean`, sorry-free; 2026-07-29 designed, 2026-07-29-b closed). ⚠ **FINDING Z**: a cost predicate with ONE cap cannot survive a `forBnd` — the body's outputs are re-capped at `poly(M)` each iteration, so `m` iterations give a **tower**. `Cmd.CapCost c F F'` uses **two** caps (a frozen `MF`, a global `N`): `cost ≤ K·(MF+1)^D·(N+1)`, growth `≤ N + K·(MF+1)^D`, `F'` still `≤ MF + K·(MF+1)^D`. Cost linear in `N` pays for **FINDING X** (`copy EOUT_C EOUT_C`) for free; growth independent of `N` is what stops compounding. `Cmd.chk C c = (ok, C', B)` is the checker: `ok` certifies `CapCost`, and **`C'`/`B` are sound even when `ok` is false** (FINDING AC — an enclosing loop reads them to decide what to promote, and that promotion is what makes the rejected sub-command acceptable on a second pass). Three measured facts fixed the design: register sets must be `Nat` **bitmasks** (FINDING AA — `cPrelude.writes` is a 327411-element list, which made the old `List Var` checker quadratic in program size and non-terminating); `Nat.ldiff` is unusable because the kernel cannot reduce `Nat.bitwise`; and the kernel's wall is **memory** (FINDING AB — a two-traversals-per-loop version was OOM-killed at 15 GB), which is why each body is visited once. Measured (`probes/S1GrowSafeProbe.lean`): accepts **the whole program** — ~2 s by `#eval`, ~3 min by `decide +kernel`. |
-| `#print axioms CookLevinHonest.CookLevin''_of_decodesAssgn` | **`[propext, Classical.choice, Quot.sound]`** — **the WHOLE of Cook–Levin, on the honest statement, reduced to ONE register equation** (2026-07-30). `NPcomplete'' SAT` follows from `∀ N c, State.get (certDecode.eval (satEIn (N,c))) ASSGN = encodeAssgn (decodeBits c)` — a `_run` lemma about an 11-op program. The hardness half (`FrontS1Comp.SAT_NPhard''`) is already unconditional; the membership half (`Complexity/Complexity/Deciders/EvalCnfSplit.lean`, sorry-free) supplies the split layout (`satEncX`/`satEIn`, `xWidth = 3`), the certificate relation and its polynomial bound (`satRel_correct : polyCertRel SAT satRel`), the decoder's cost (`by decide` through `Cmd.chk`) and frame, the frame half of the bridge (free, from `Cmd.writes`), and all four composite `DecidesLang` bounds. Three findings: the `InNPWitnessLangFreeSplit` split law is **not** a layout obstruction (`precomposeFree` chooses the composite's `encodeIn`, and `State.get` reads unset registers as `[]`, so the eight trailing scratch `[]`s of `EvalCnfCmd.encodeState` are invisible and the entire gap is one register); a re-encoder whose scratch sits **above** the target verifier's `regBound` owes no scrub; and the certificate must be the **characteristic vector** (total on every bit string — `InNPWitnessLangFreeSplit` puts certificates in `certState`, so a sentinel-unary format would need a partial parse and a normaliser). Probe: `probes/SATSplitProbe.lean` (9 checks incl. the loop invariant at every prefix length, garbage/short/over-long certificates, and end-to-end acceptance). |
+| `#print axioms EvalCnfSplit.SAT_inNPLangFreeSplit` | **`[propext, Classical.choice, Quot.sound]`** — **the MEMBERSHIP half, unconditional** (2026-07-30-b). The last obligation was the register equation below; `EvalCnfSplit.certDecode_decodesAssgn` closes it by `Cmd.eval_forBnd` + `Cmd.foldlState_range_induct` at the invariant `ASSGN = encodeAssgn (decodeBits (c.take i))`, `DCUR = cbits (c.drop i)` — the invariant `probes/SATSplitProbe.lean` §5 had already `#eval`-validated at every prefix length, consumed verbatim with zero redesign (~110 lines for an 11-op program). Two findings: **frame facts belong in the write-set lemma, not the loop invariant** (the motive carries only the two registers the loop changes; `Cmd.eval_get_of_not_writes` does registers `0`–`2`/`4`–`15` once, at the end), and **a `Bool`-valued invariant `#eval`ed at every index before the proof is the cheapest de-risking move in the codebase.** |
+| `#print axioms CookLevinHonest.CookLevin''_of_decodesAssgn` | **`[propext, Classical.choice, Quot.sound]`** — **the WHOLE of Cook–Levin, on the honest statement, reduced to ONE register equation** (2026-07-30; the equation was discharged 2026-07-30-b, and this program-generic form is kept as the interface a different decoder plugs into). `NPcomplete'' SAT` follows from `∀ N c, State.get (certDecode.eval (satEIn (N,c))) ASSGN = encodeAssgn (decodeBits c)` — a `_run` lemma about an 11-op program. The hardness half (`FrontS1Comp.SAT_NPhard''`) is already unconditional; the membership half (`Complexity/Complexity/Deciders/EvalCnfSplit.lean`, sorry-free) supplies the split layout (`satEncX`/`satEIn`, `xWidth = 3`), the certificate relation and its polynomial bound (`satRel_correct : polyCertRel SAT satRel`), the decoder's cost (`by decide` through `Cmd.chk`) and frame, the frame half of the bridge (free, from `Cmd.writes`), and all four composite `DecidesLang` bounds. Three findings: the `InNPWitnessLangFreeSplit` split law is **not** a layout obstruction (`precomposeFree` chooses the composite's `encodeIn`, and `State.get` reads unset registers as `[]`, so the eight trailing scratch `[]`s of `EvalCnfCmd.encodeState` are invisible and the entire gap is one register); a re-encoder whose scratch sits **above** the target verifier's `regBound` owes no scrub; and the certificate must be the **characteristic vector** (total on every bit string — `InNPWitnessLangFreeSplit` puts certificates in `certState`, so a sentinel-unary format would need a partial parse and a normaliser). Probe: `probes/SATSplitProbe.lean` (9 checks incl. the loop invariant at every prefix length, garbage/short/over-long certificates, and end-to-end acceptance). |
 | Genuine `sorry`s in built code | **5** (was 6; Group C — completion; **every `Reductions/S1*.lean` file is now sorry-free, `S1Witness.lean` included**). All five pre-existing and **none on the `NPhard''` path**: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). The S1 cost ladder `S1Witness.s1Program_costLeSize` — the last one that was — **closed 2026-07-29-b**. **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
 | `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
 | Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
-| Estimated work remaining to a real, unconditional proof | **~12–20K LOC** (see ROADMAP) |
+| Estimated work remaining | **the proof is done.** What is left is the end-to-end honesty audit (ROADMAP risk #1) and the deletion of the legacy `⪯p` front — ~2–3 sessions, mostly reading and `git rm`. |
 
 > **The `sorry` count is not the soundness metric.** The deepest unsoundness
 > (S1/S2, and the size-only `⪯p`) is `sorry`-free and invisible to
-> `#print axioms`. Closing every `sorry` would **not** by itself make
-> `CookLevin` faithful. Track **Group S** (soundness) and **Group C**
-> (completion) separately.
+> `#print axioms`. Closing every `sorry` would **not** by itself make the
+> *legacy* `CookLevin` faithful — which is why the honest line `⪯p'` /
+> `NPhard''` / `NPcomplete''` was built alongside it instead, and why the last
+> five `sorry`s are to be deleted with the legacy front rather than proved.
 
 ## What is sound vs. what is not
 
@@ -81,9 +111,11 @@ Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT �
 for every NP problem `Q` presented with a split free-line verifier witness —
 **`sorry`-free and axiom-clean end to end** (2026-07-29-b) — see
 `FrontS1Comp.SAT_NPhard''` in the table above. The *membership* half
-(`inNPLangFreeSplit SAT`) is designed and assembled (2026-07-30) and now hangs on
-a single `_run` lemma; once that lands, `NPcomplete'' SAT` can be stated
-unconditionally and the legacy front retired. See `CookLevin/HANDOFF.md`.
+(`inNPLangFreeSplit SAT`) is **also closed** (2026-07-30-b,
+`Complexity/Complexity/Deciders/EvalCnfSplit.lean`), so
+`CookLevinHonest.CookLevin'' : NPcomplete'' SAT` is unconditional. What remains
+is to **delete** the legacy chain above and to **audit** the six honest
+witnesses for encoding honesty — see `CookLevin/HANDOFF.md`.
 
 **Sound (genuine mathematics, ~3K LOC, `sorry`-free, do not touch):** the tail
 `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` (window/cover equivalence, unary
