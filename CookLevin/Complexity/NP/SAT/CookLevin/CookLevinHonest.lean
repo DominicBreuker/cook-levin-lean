@@ -11,28 +11,29 @@ with a real verifier program* (`InNPWitnessLangFreeSplit`, so it cannot be
 satisfied by the cheating encoder — standing risk #6), and membership *by* such
 a witness.
 
-Its two halves are in very different states:
+**Both halves are DONE.** `CookLevin''` below is `sorry`-free and axiom-clean
+(`[propext, Classical.choice, Quot.sound]`):
 
-* **hardness — DONE.** `FrontS1Comp.SAT_NPhard''` is proven, `sorry`-free and
-  axiom-clean (`[propext, Classical.choice, Quot.sound]`).
-* **membership — one machine obligation left.**
-  `EvalCnfSplit.SAT_inNPLangFreeSplit_of_bridge` reduces `inNPLangFreeSplit SAT`
-  to a single `EvalCnfSplit.CertBridge EvalCnfSplit.certDecode`: the `_run` lemma
-  of an 11-op program that re-encodes the raw certificate bits at register
-  `ASSGN` into the live verifier's `encodeAssgn` layout. Everything else — the
-  split layout, `xWidth`, the certificate relation and its polynomial bound, the
-  decoder's cost (`by decide` through `Cmd.chk`), its frame, and all four
-  composite bounds — is discharged.
+* **hardness** — `FrontS1Comp.SAT_NPhard''` (2026-07-29-b): the C8 per-`Q`
+  front, the S1 reduction program and the whole sound tail, composed by five
+  live seams.
+* **membership** — `EvalCnfSplit.SAT_inNPLangFreeSplit` (2026-07-30-b): the
+  split layout, `xWidth = 3`, the characteristic-vector certificate relation
+  and its linear bound, and the decoder `certDecode` with all three of its
+  contracts proven (`CertBridge` from the `_run` lemma
+  `EvalCnfSplit.certDecode_decodesAssgn`; cost and frame by `decide`).
 
-So `CookLevin''_of_bridge` below is the **whole** remaining Cook–Levin
-obligation, on the honest statement, in one lemma. It is axiom-clean, which is
-what makes that claim machine-checked rather than believed (standing risk #7 —
-the theorem quantifies over the missing proof instead of mentioning a
-`sorry`-backed placeholder).
+The `_of_*` lemmas below are kept: they are the *program-generic* entry points
+(a different certificate decoder plugs into `CookLevin''_of_decoder` without
+touching anything else), and they are what made the endgame's remaining gap a
+machine-checked statement rather than a believed one while it was still open
+(standing risk #7).
 
-⚠ The legacy `CookLevin : NPcomplete SAT` in `CookLevin.lean` stays as it is
-until the decoder lands; there is deliberately no `NPcomplete'' → NPcomplete`
-bridge (the honest statement does not imply the vacuous one). -/
+⚠ The legacy `CookLevin : NPcomplete SAT` in `CookLevin.lean` still depends on
+`sorryAx` through the legacy hardness front. That is a *legacy* fact, not a gap
+in the mathematics — there is deliberately no `NPcomplete'' → NPcomplete` bridge
+(the honest statement does not imply the vacuous one), and retiring the legacy
+front is top-down demolition work. **Quote `CookLevin''`, not `CookLevin`.** -/
 
 namespace CookLevinHonest
 
@@ -71,7 +72,25 @@ theorem CookLevin''_of_decodesAssgn
   ⟨FrontS1Comp.SAT_NPhard'',
     EvalCnfSplit.SAT_inNPLangFreeSplit_of_decodesAssgn h⟩
 
-/-- The same, unbundled: `NPhard'' SAT` is already unconditional. -/
+/-- **COOK–LEVIN, honest and unconditional: `SAT` is NP-complete.**
+
+`NPcomplete'' SAT = NPhard'' SAT ∧ inNPLangFreeSplit SAT`:
+
+* every NP problem *presented with a real split verifier program* reduces to
+  SAT by a real `Cmd`-backed poly-time reduction (`⪯p'`), and
+* SAT itself is verified by a real `Cmd` program against a `List Bool`
+  certificate inside a real polynomial cost bound.
+
+`sorry`-free and axiom-clean. This — not the legacy `CookLevin` — is the
+theorem this development proves. -/
+theorem CookLevin'' : NPcomplete'' SAT :=
+  ⟨FrontS1Comp.SAT_NPhard'', EvalCnfSplit.SAT_inNPLangFreeSplit⟩
+
+/-- The hardness half, unbundled. -/
 theorem SAT_NPhard'' : NPhard'' SAT := FrontS1Comp.SAT_NPhard''
+
+/-- The membership half, unbundled. -/
+theorem SAT_inNPLangFreeSplit : inNPLangFreeSplit SAT :=
+  EvalCnfSplit.SAT_inNPLangFreeSplit
 
 end CookLevinHonest

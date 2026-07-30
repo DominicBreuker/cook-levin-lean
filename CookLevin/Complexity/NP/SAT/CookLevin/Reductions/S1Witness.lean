@@ -1,5 +1,4 @@
 import Complexity.NP.SAT.CookLevin.Reductions.S1Program
-import Complexity.Lang.CostPoly
 import Complexity.Lang.CostGrow
 
 set_option autoImplicit false
@@ -450,8 +449,8 @@ The three contracts are exactly the remaining S1 obligations:
    `stageC_run`);
 2. `huses` — `S1Program.s1Program_usesBelow` (open only through
    `stageC_usesBelow`);
-3. `hcost` — `S1CostBound`, discharged by `s1Program_polyCost` below (the cost
-   ladder), **still open**.
+3. `hcost` — `S1CostBound`, discharged by `s1Program_costBound` below (the cost
+   ladder, closed 2026-07-29-b through `Cmd.chk`).
 -/
 
 private instance : Nonempty FlatTCC := ⟨S1Map.s1No⟩
@@ -460,8 +459,8 @@ private instance : Nonempty FlatTCC := ⟨S1Map.s1No⟩
 
 ⚠ **2026-07-28-c.** The contract used to be `c.cost ≤ S1Map.s1Bound`, i.e. a
 *fixed* degree-10 polynomial. That is not the shape a cost ladder can deliver:
-`Cmd.PolyCost` (`Lang/CostPoly.lean`) produces an **existential** `K·(M+1)^(D+1)`
-whose constants nobody wants to compute, and `cost_bound` is a *free* field
+every cost ladder produces an **existential** `K·(M+1)^(D+1)` whose constants
+nobody wants to compute, and `cost_bound` is a *free* field
 whose only real constraint is that it keeps dominating `output_size_le`
 (locked invariant, 2026-07-25-c). `S1CostBound` bundles both obligations onto
 one anonymous polynomial, so raising the bound is no longer a change to any
@@ -492,7 +491,7 @@ private theorem inOPoly_pow_succ' (k : Nat) : inOPoly (fun n => (n + 1) ^ k) := 
   calc (n + 1) ^ k ≤ (2 * n) ^ k := Nat.pow_le_pow_left (by omega) k
     _ = 2 ^ k * n ^ k := by rw [Nat.mul_pow]
 
-/-- **The cost ladder's entry point.** A structural `Cmd.PolyCost` — no
+/-- **The cost ladder's entry point.** A structural cost bound — no
 constants, no register table, no stage-by-stage accounting — plus the already
 proven `headEncodeIn_size_le` discharges the whole cost contract. The witness's
 `cost_bound` becomes `S1Map.s1Bound + K·8^(D+1)·(n+1)^(D+1)`, which still
@@ -525,10 +524,6 @@ theorem s1CostBound_of_costLeSize (c : Cmd)
           Nat.mul_le_mul_left _ hpow
       _ = K * 8 ^ (D + 1) * (encodable.size x + 1) ^ (D + 1) := by ring
   omega
-
-/-- The `Cmd.PolyCost` route (`Lang/CostPoly.lean`) still lands here. -/
-theorem s1CostBound_of_polyCost (c : Cmd) (h : Cmd.PolyCost c) : S1CostBound c :=
-  s1CostBound_of_costLeSize c h.cost_le_size
 
 /-- The `Cmd.CapCost` route (`Lang/CostGrow.lean`) — the one the real program
 takes. `F` is a register **bitmask**. -/
@@ -612,8 +607,7 @@ theorem s1Program_costBound : S1CostBound S1Program.s1Program :=
   s1CostBound_of_costLeSize _ s1Program_costLeSize
 
 /-- **The S1 free reduction witness** — `s1WitnessOf` at the real program.
-Its `computes`/`usesBelow` are conditional only on stage C, its `cost_le`
-only on `s1Program_polyCost`. -/
+Every field is discharged from a proven lemma of the real program. -/
 noncomputable def s1_reductionLang : PolyTimeComputableLang S1Map.s1Map :=
   s1WitnessOf S1Program.s1Program S1Program.s1Program_computes
     S1Program.s1Program_usesBelow s1Program_costBound

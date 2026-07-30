@@ -1,16 +1,18 @@
-import Complexity.Lang.CostPoly
+import Complexity.Lang.CostFlat
 import Mathlib.Tactic
 
 set_option autoImplicit false
 
 /-! # `Cmd.CapCost` — a two-cap polynomial cost bound that survives a loop
 
-`Lang/CostPoly.lean` gives `Cmd.PolyCost`, whose cap is a single `M` over
-`c.costReads`. That cap **cannot survive a loop**: after one iteration the
+The obvious cost predicate — a single cap `M` over `c.costReads`, concluding
+`cost ≤ K·(M+1)^(D+1)` — **cannot survive a loop**: after one iteration the
 body's outputs are bounded by `poly(M)`, so the next iteration's cap is
-`poly(poly(M))`, and `m` iterations give a tower (FINDING Z).
+`poly(poly(M))`, and `m` iterations give a tower (FINDING Z). It was built
+(`Lang/CostPoly.lean`, `Cmd.PolyCost`) and deleted 2026-07-30-b; do not rebuild
+it.
 
-This file replaces the single cap by **two**:
+This file uses **two** caps instead:
 
 * `MF` bounds a set `F` of registers **frozen for the whole loop**;
 * `N` bounds *every* register.
