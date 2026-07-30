@@ -5,7 +5,8 @@ NP-complete), structured as a port of the Coq development by Forster, Kunze,
 Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
 
 **The theorem is proven, on the honest statement, unconditionally
-(2026-07-30-b).**
+(2026-07-30-b), audited (2026-07-30-c), and there are no `sorry`s left in the
+build.**
 
 ```
 CookLevinHonest.CookLevin'' : NPcomplete'' SAT
@@ -18,33 +19,53 @@ depends on axioms: [propext, Classical.choice, Quot.sound]
 program against a `List Bool` certificate inside a real polynomial cost bound.
 Both halves are `sorry`-free and axiom-clean.
 
-⚠ **Two caveats, and they are the remaining work.**
+**What changed on 2026-07-30-c** (the top-down audit-and-demolition session):
 
-1. The **legacy** headline `CookLevin : NPcomplete SAT`
-   (`CookLevin/Complexity/NP/SAT/CookLevin.lean`) still exists and still depends
-   on `sorryAx`, via the legacy `⪯p` front. `⪯p` (`reducesPolyMO`) bounds only
-   *output size*, so `NPcomplete` is a vacuous notion in the first place — that
-   is why the honest statement `NPcomplete''` was built, and why there is
-   deliberately **no** `NPcomplete'' → NPcomplete` bridge. The legacy chain is
-   slated for **deletion**, not for proof.
-2. **Honesty is per-witness discipline, not enforced by the structures.** Each
-   reduction witness's `encodeIn` must be the natural layout of its *input* and
-   all the work must live in its `Cmd`; the trivial dishonest instantiation
-   satisfies every field. The end-to-end audit of the six composed witnesses has
-   **not** been done — it is the only remaining way `CookLevin''` could fail to
-   mean what it says. See ROADMAP risk #1 and `CookLevin/HANDOFF.md`.
+* **The encoding-honesty audit was done end to end** — the last thing that could
+  have made the theorem mean less than it says. Verdict: **it means what it
+  says.** Per-witness verdicts are in the ROADMAP risk register (**S5**);
+  the evidence is `probes/HonestyAuditProbe.lean`. The audit's structural
+  result is what made it finite: for a witness built by
+  `PolyTimeComputableLang.comp`, the honesty surface is **two functions** — the
+  leftmost `encodeIn` and the rightmost `decodeOut` — because every intermediate
+  layout appears only on the *right* of a seam's bridge obligation, i.e. the
+  composed program is *required to produce it*.
+* **The legacy `⪯p` front was deleted, not proved.** `CookLevin : NPcomplete SAT`,
+  `NPhard_GenNP`/`hasDeciderClassical`, the two dummy S2 bridges, the
+  if-on-the-answer S1 reduction, `MultiToSingle` and `red_inNP` are all gone.
+  That removed the development's **last five `sorry`s**; `⪯p` bounds only
+  *output size*, so `NPcomplete` was a vacuous notion and there is deliberately
+  **no** `NPcomplete'' → NPcomplete` bridge. See
+  `CookLevin/Complexity/NP/SAT/CookLevin.lean` for the demolition table.
+
+⚠ **The one standing caveat.** Encoding honesty is per-witness *discipline*, and
+the structures do not enforce it: `probes/HonestyAuditProbe.lean` §6 exhibits a
+complete, `sorry`-free `PolyTimeComputableLang` whose program is a no-op and
+whose `encodeIn` lays the answer on the tape. The audit above covers every
+witness that exists **today**; every witness added tomorrow needs its own
+one-line verdict in the register. See ROADMAP risk **S5**.
+
+The **structural fix is scoped and is the next top-down item**: the whole hole is
+two free fields (`encode`/`decode`) on `ComputesBy`, and by the audit's own
+result they only matter at the two ends of the chain, where the types are
+concrete. Replacing them with a canonical `Serialize` class makes the dishonest
+witness *unwriteable* — the textbook definition, enforced by the typechecker —
+and takes the audit from O(witnesses, forever) to O(1), read once at the
+statement. Three-step go/no-go probe and a fallback in
+[`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) item 1.
 
 Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
 and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
 working.
 
-## Honest status (verified 2026-07-30-b)
+## Honest status (verified 2026-07-30-c)
 
 | | |
 |---|---|
 | `lake build` | ✅ green |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
-| `#print axioms CookLevin` | **`[propext, sorryAx, Classical.choice, Quot.sound]`** — the **legacy** headline still depends on `sorryAx`, via the **legacy** hardness front (`NPhard_GenNP` → `hasDeciderClassical`). This is not a statement about the mathematics; the legacy front is slated for deletion. |
+| **the encoding-honesty audit (ROADMAP risk S5)** | ✅ **DONE 2026-07-30-c** — end-to-end verdict: **the theorem means what it says.** Evidence `probes/HonestyAuditProbe.lean`, per-witness verdicts in the ROADMAP register. Key structural result: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. |
+| ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
 | `#print axioms KSat3Free.inNP_kSAT3_free` | **`[propext, Classical.choice, Quot.sound]`** — the **first live `red_inNP` routed through the free layer engine** (`red_inNP_of_langFree` + a concrete re-encoder & reduction program, 2026-07-02). |
@@ -77,30 +98,25 @@ working.
 | `#print axioms Complexity.Lang.Cmd.chk_sound` | **`[propext, Classical.choice, Quot.sound]`** — **the cost ladder, as ONE decidable forward pass** (`Lang/CostGrow.lean`, sorry-free; 2026-07-29 designed, 2026-07-29-b closed). ⚠ **FINDING Z**: a cost predicate with ONE cap cannot survive a `forBnd` — the body's outputs are re-capped at `poly(M)` each iteration, so `m` iterations give a **tower**. `Cmd.CapCost c F F'` uses **two** caps (a frozen `MF`, a global `N`): `cost ≤ K·(MF+1)^D·(N+1)`, growth `≤ N + K·(MF+1)^D`, `F'` still `≤ MF + K·(MF+1)^D`. Cost linear in `N` pays for **FINDING X** (`copy EOUT_C EOUT_C`) for free; growth independent of `N` is what stops compounding. `Cmd.chk C c = (ok, C', B)` is the checker: `ok` certifies `CapCost`, and **`C'`/`B` are sound even when `ok` is false** (FINDING AC — an enclosing loop reads them to decide what to promote, and that promotion is what makes the rejected sub-command acceptable on a second pass). Three measured facts fixed the design: register sets must be `Nat` **bitmasks** (FINDING AA — `cPrelude.writes` is a 327411-element list, which made the old `List Var` checker quadratic in program size and non-terminating); `Nat.ldiff` is unusable because the kernel cannot reduce `Nat.bitwise`; and the kernel's wall is **memory** (FINDING AB — a two-traversals-per-loop version was OOM-killed at 15 GB), which is why each body is visited once. Measured (`probes/S1GrowSafeProbe.lean`): accepts **the whole program** — ~2 s by `#eval`, ~3 min by `decide +kernel`. |
 | `#print axioms EvalCnfSplit.SAT_inNPLangFreeSplit` | **`[propext, Classical.choice, Quot.sound]`** — **the MEMBERSHIP half, unconditional** (2026-07-30-b). The last obligation was the register equation below; `EvalCnfSplit.certDecode_decodesAssgn` closes it by `Cmd.eval_forBnd` + `Cmd.foldlState_range_induct` at the invariant `ASSGN = encodeAssgn (decodeBits (c.take i))`, `DCUR = cbits (c.drop i)` — the invariant `probes/SATSplitProbe.lean` §5 had already `#eval`-validated at every prefix length, consumed verbatim with zero redesign (~110 lines for an 11-op program). Two findings: **frame facts belong in the write-set lemma, not the loop invariant** (the motive carries only the two registers the loop changes; `Cmd.eval_get_of_not_writes` does registers `0`–`2`/`4`–`15` once, at the end), and **a `Bool`-valued invariant `#eval`ed at every index before the proof is the cheapest de-risking move in the codebase.** |
 | `#print axioms CookLevinHonest.CookLevin''_of_decodesAssgn` | **`[propext, Classical.choice, Quot.sound]`** — **the WHOLE of Cook–Levin, on the honest statement, reduced to ONE register equation** (2026-07-30; the equation was discharged 2026-07-30-b, and this program-generic form is kept as the interface a different decoder plugs into). `NPcomplete'' SAT` follows from `∀ N c, State.get (certDecode.eval (satEIn (N,c))) ASSGN = encodeAssgn (decodeBits c)` — a `_run` lemma about an 11-op program. The hardness half (`FrontS1Comp.SAT_NPhard''`) is already unconditional; the membership half (`Complexity/Complexity/Deciders/EvalCnfSplit.lean`, sorry-free) supplies the split layout (`satEncX`/`satEIn`, `xWidth = 3`), the certificate relation and its polynomial bound (`satRel_correct : polyCertRel SAT satRel`), the decoder's cost (`by decide` through `Cmd.chk`) and frame, the frame half of the bridge (free, from `Cmd.writes`), and all four composite `DecidesLang` bounds. Three findings: the `InNPWitnessLangFreeSplit` split law is **not** a layout obstruction (`precomposeFree` chooses the composite's `encodeIn`, and `State.get` reads unset registers as `[]`, so the eight trailing scratch `[]`s of `EvalCnfCmd.encodeState` are invisible and the entire gap is one register); a re-encoder whose scratch sits **above** the target verifier's `regBound` owes no scrub; and the certificate must be the **characteristic vector** (total on every bit string — `InNPWitnessLangFreeSplit` puts certificates in `certState`, so a sentinel-unary format would need a partial parse and a normaliser). Probe: `probes/SATSplitProbe.lean` (9 checks incl. the loop invariant at every prefix length, garbage/short/over-long certificates, and end-to-end acceptance). |
-| Genuine `sorry`s in built code | **5** (was 6; Group C — completion; **every `Reductions/S1*.lean` file is now sorry-free, `S1Witness.lean` included**). All five pre-existing and **none on the `NPhard''` path**: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, 3× MultiToSingle (dead code). The S1 cost ladder `S1Witness.s1Program_costLeSize` — the last one that was — **closed 2026-07-29-b**. **`Simulators/CookTableau.lean` and `Simulators/GuessTableau.lean` are fully `sorry`-free** — the S1 bijection `cookTableau_correct`, the cert-guess `guessTableau_correct`, and **both size bounds** are sorry-free & axiom-clean (2026-07-18…-24). |
-| `sorry`-**free** but **vacuous** defs on the proof path | S1, S2 (Group S — soundness) — invisible to `#print axioms`. The third member, the size-0 hardness reduction, was **closed by Part 0.1** (2026-07-04: real `encodable.size` everywhere, size-0 default deleted, honest `NPhard_GenNP` bound) |
-| Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked, not built) |
-| Estimated work remaining | **the proof is done.** What is left is the end-to-end honesty audit (ROADMAP risk #1) and the deletion of the legacy `⪯p` front — ~2–3 sessions, mostly reading and `git rm`. |
+| Genuine `sorry`s in built code | **0** (2026-07-30-c). The last five were all on the legacy `⪯p` path and were **deleted with it**, not proved: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, and 3× `MultiToSingle` (dead code). None was ever on the `NPhard''` path. `lake build` emits no `declaration uses 'sorry'`, and no endpoint in `probes/AxiomProbe.lean` (59 of them) prints `sorryAx`. |
+| `sorry`-**free** but **vacuous** defs on the proof path | **none.** S1 (the if-on-the-answer tableau map) and S2 (the dummy `bridgeMachine` bridges) were the two that were invisible to `#print axioms`; both files are **deleted** (2026-07-30-c). The third member, the size-0 hardness reduction, was closed by Part 0.1 (2026-07-04). |
+| Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked and **permanently retired** — see `parked/README.md`) |
+| Estimated work remaining | **none on the stated goal.** The theorem is proven, unconditional, audited and `sorry`-free. Further work is *scope extension* (honest NP-completeness for `kSAT 3` / `FlatClique`) or *hygiene* — see [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md). |
 
-> **The `sorry` count is not the soundness metric.** The deepest unsoundness
-> (S1/S2, and the size-only `⪯p`) is `sorry`-free and invisible to
-> `#print axioms`. Closing every `sorry` would **not** by itself make the
-> *legacy* `CookLevin` faithful — which is why the honest line `⪯p'` /
-> `NPhard''` / `NPcomplete''` was built alongside it instead, and why the last
-> five `sorry`s are to be deleted with the legacy front rather than proved.
+> **The `sorry` count is not the soundness metric — and this project is the
+> proof.** For most of its life the deepest unsoundness here (S1's
+> if-on-the-answer reduction, S2's dummy bridges, the size-only `⪯p`) was
+> `sorry`-free and completely invisible to `#print axioms`. Closing every
+> `sorry` would not have made the legacy `CookLevin` faithful; that is why the
+> honest line `⪯p'` / `NPhard''` / `NPcomplete''` was built alongside it, and why
+> the last five `sorry`s were **deleted with the legacy front rather than
+> proved**. The count is `0` today, but what makes the theorem trustworthy is the
+> `NPcomplete''` *statement* plus the S5 audit — not the count.
 
-## What is sound vs. what is not
+## What the theorem says, and what stands behind it
 
-NP-hardness is transported from a universal NP source down to SAT along a chain
-of `⪯p` (poly-time many-one) reductions:
-
-```
-GenNP ⪯p … ⪯p FlatSingleTMGenNP ⪯p FlatTCC ⪯p FlatCC ⪯p BinaryCC ⪯p FSAT ⪯p SAT
-└──────────── front: NOT sound ────────────┘└──────────── tail: SOUND ───────────┘
-```
-
-That is the **legacy** chain, which the headline `CookLevin` still quotes. The
-honest replacement is built and composed end to end (2026-07-27):
+There is now exactly **one** chain, and every arrow in it is a real `Cmd`
+program with a proven polynomial cost bound:
 
 ```
 Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT ⪯p' SAT
@@ -108,205 +124,57 @@ Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT �
         = ONE composed free-layer witness = `NPhard'' SAT`
 ```
 
-for every NP problem `Q` presented with a split free-line verifier witness —
-**`sorry`-free and axiom-clean end to end** (2026-07-29-b) — see
-`FrontS1Comp.SAT_NPhard''` in the table above. The *membership* half
-(`inNPLangFreeSplit SAT`) is **also closed** (2026-07-30-b,
-`Complexity/Complexity/Deciders/EvalCnfSplit.lean`), so
-`CookLevinHonest.CookLevin'' : NPcomplete'' SAT` is unconditional. What remains
-is to **delete** the legacy chain above and to **audit** the six honest
-witnesses for encoding honesty — see `CookLevin/HANDOFF.md`.
+for every NP problem `Q` **presented with a split free-line verifier witness**
+(`InNPWitnessLangFreeSplit`: a real `Cmd` verifier over a bit-level layout, with
+`List Bool` certificates in a canonical one-register format). Composition is at
+the `Cmd` level, through five `SeamData`/`comp` seams; hardness is proven at the
+chain endpoint only. Together with `EvalCnfSplit.SAT_inNPLangFreeSplit`
+(membership), that is `CookLevinHonest.CookLevin'' : NPcomplete'' SAT`.
+
+**Why the hypothesis is a verifier witness and not `inNP Q`.** `inNP`/`inTimePoly`
+are *classically true for every predicate* — the framework's `DecidesBy` lets the
+`encode` field do the deciding, so a hardness statement quantified over `inNP Q`
+is unprovable-honestly by construction (ROADMAP risk **S0/S6**). `NPhard''`
+quantifies over problems that arrive with a real verifier program. That is the
+textbook verifier definition of NP, and it is the same role the L-computable
+verifiers play in the Coq original.
+
+**Why there is no `NPcomplete'' → NPcomplete` bridge.** `⪯p` (`reducesPolyMO`)
+bounds only the reduction's *output size*, never its runtime — the reduction
+function may even be noncomputable. So `NPhard`/`NPcomplete` as *defined* are too
+weak to be faithful, and the honest statement does not imply the vacuous one. The
+legacy headline that quoted it was **deleted** (2026-07-30-c), along with the
+`sorry`-backed and vacuous machinery that fed it. `⪯p` itself survives in
+`NP.lean` as the weaker notion `⪯p'` is defined to strengthen
+(`reducesPolyMO'_to_reducesPolyMO`), with no live consumer.
+
+### What was deleted on 2026-07-30-c, and why it was deleted rather than proved
+
+| removed | it was |
+|---|---|
+| `CookLevin : NPcomplete SAT`, `CookLevin0`, `Clique_complete`, `GenNP ⪯p … ⪯p SAT` | the legacy headline over the vacuous `⪯p` |
+| `GenNP_is_hard.lean` (`NPhard_GenNP`, `hasDeciderClassical`) | a flat `sorry` asserting a `DecidesBy` for *any* predicate — the last `sorryAx`, and **unclosable honestly**: closing it is exactly the cheat above |
+| `L_to_LM.lean`, `LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `NP/TM/IntermediateProblems.lean`, `Simulators/MultiToSingle.lean` | the S2 bridges: a 1-state `bridgeMachine` with no transitions that accepts everything, so the TM-acceptance conjuncts carried no information |
+| `Reductions/FlatSingleTMGenNP_to_FlatTCC.lean` | the S1 original sin — literally `if (source is a yes-instance) then yesInst else noInst`, with an all-zeros tableau that never simulates `M`. `sorry`-free and **vacuous**; licensed by `⪯p` |
+| `NP.lean`'s `red_inNP`, `kSAT_to_SAT.lean`'s `inNP_kSAT` | `⪯p` gives no program for the reduction, so the composed verifier cannot be built; the `inTimePoly` half was a `sorry` closable only by the same cheat. Live replacement: `Lang.red_inNP_of_langFree` |
+
+None of it was ever reachable from `CookLevin''`. Deleting it took the
+development from 5 `sorry`s to **0**.
 
 **Sound (genuine mathematics, ~3K LOC, `sorry`-free, do not touch):** the tail
 `FlatTCC → FlatCC → BinaryCC → FSAT → SAT` (window/cover equivalence, unary
-block encoding, tableau CNF, a full Tseytin transform), plus `kSAT_to_SAT` and
-`kSAT_to_FlatClique`. These reductions are real constructions; their
-input-guarded `if isValidFlattening …` branches test a *decidable property of
-the input* (legitimate), not the answer. The `FlatTM` model, the
-`encodable`/`inOPoly` machinery, the `DecidesBy`/`inTimePoly` interface, and the
-`composeFlatTM`/`loopTM` combinator family are also sound. Cook–Levin *after* a
-TM run is encoded as a `FlatTCC` is essentially in place.
+block encoding, tableau CNF, a full Tseytin transform), the S1 tableau
+(`Simulators/CookTableau.lean` + `GuessTableau.lean`: the bijection, the
+cert-guess layer and both size bounds), plus `kSAT_to_SAT` and
+`kSAT_to_FlatClique`. Their input-guarded `if isValidFlattening …` branches test
+a *decidable property of the input* — audited 2026-07-30-c, see ROADMAP **S5**
+verdict 6. The `FlatTM` model, the `encodable`/`inOPoly` machinery, the
+`DecidesBy`/`inTimePoly` interface, and the `composeFlatTM`/`loopTM` combinator
+family are also sound.
 
-**Not sound — three independent reasons the theorem is currently vacuous:**
+**The one thing that is not enforced:** encoding honesty. See the caveat at the
+top of this file and ROADMAP risk **S5**.
 
-- **S3 (the enabling weakness, definitional).** `⪯p` (`reducesPolyMO`) is
-  licensed only by `polyTimeComputable`, which bounds **output size**, not
-  runtime (`NP.lean`, `PolyTimeComputableWitness.bound_valid`). The reduction
-  function may even be noncomputable. So `NPhard`/`NPcomplete` as currently
-  *defined* are too weak: the headline statement, even with every `sorry`
-  closed, would assert a vacuous notion of NP-completeness. The honest target
-  `polyTimeComputable'` (`Lang/PolyTime.lean`, `ComputesBy`: a real TM halting
-  within a polynomial *time* bound) **is faithful** — confirmed — and extends
-  the old witness, so retiring S3 is a strengthening, not a rewrite. But it
-  forces every reduction to carry a real program (S1/S2 then *stop
-  typechecking*).
-- **S1 (front reduction).** `FlatSingleTMGenNP ⪯p FlatTCC`
-  (`Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`) is literally
-  `if (source is yes-instance) then yesInst else noInst`, where `yesInst` is an
-  all-zeros 1-symbol tableau that **never simulates the source machine `M`**.
-  Sorry-free but vacuous; licensed by S3. Real fix = the Cook 2D tableau —
-  **v2 landed 2026-07-17** (`Simulators/CookTableau.lean`): a 2026-07-17 risk
-  review found the v1 bijection *false as stated* (the flat tape's
-  zero-padding jump-writes were non-local — **semantics fixed**, the tape is
-  now append-only at the frontier — plus three card-family defects); the v2
-  construction (boundary marker, normalised transition table, the full
-  3-position + incoming-head + halt-freeze card algebra) is landed with the
-  corrected statement decomposed, the assembly proven, and card/step
-  agreement `#eval`-probed green (`probes/S1TableauProbe.lean`).
-  **Direction (1a) — machine step/halt ⟹ card-covered row transition — is
-  PROVEN (2026-07-18)** together with its gates (`stepFlatTM_normM`,
-  `ConfFits_step`, `satFinal_of_halt`), **`halt_of_satFinal` — the
-  backward final-pattern bridge — is PROVEN (2026-07-18-b)** on the
-  cell-code disjointness algebra, and **direction (2) `cover_of_run`
-  (axiom-clean) plus the direction (3) assembly `run_of_cover` are PROVEN
-  (2026-07-18-c)**. A third top-down risk review (2026-07-18-c) found the
-  v2 completeness direction **false at the right row edge** (a
-  machine-checked *phantom head* at the row's last cell — the one cell
-  with no second refuting window; `probes/S1TableauProbe.lean` §5) and
-  **fixed it with a right boundary marker** + the `copyRightCards` family.
-  **The (1b) inversion `step_of_validStep` is PROVEN (2026-07-18-d)**, so
-  **the whole bijection `cookTableau_correct` is sorry-free & axiom-clean**
-  (`[propext, Classical.choice, Quot.sound]`). **The prelude/cert-guess layer
-  is COMPLETE (2026-07-19-b, `Simulators/GuessTableau.lean`)**: a band-disjoint
-  prelude alphabet turns the instance's `∃ cert` into row-0 tableau
-  nondeterminism while reusing the deterministic core unchanged; the headline
-  `guessTableau_correct` is sorry-free & axiom-clean (P1/P2 + Γ-band transfers
-  all proven; probe `probes/S1TableauProbe.lean` §6). **Both size bounds
-  `cookTableau_size_bound`/`guessTableau_size_bound` are PROVEN (2026-07-24,
-  `≤ (2·(n+1))^10`; see the HANDOFF risk finding on the base), so
-  `CookTableau.lean`/`GuessTableau.lean` are now fully `sorry`-free.** The S1
-  *reduction* is now half-built: the **map is DONE & axiom-clean**
-  (2026-07-25, `Reductions/S1Map.lean`) — the decidable guard `s1GuardB`, the
-  map `s1Map`, the correctness iff `s1Map_correct`, and the output-size bound
-  `s1Map_size_le` — and the witness skeleton (`Reductions/S1Witness.lean`)
-  pins both layouts (input = the frozen `Reductions/HeadLayout.lean`; output =
-  `FlatTCCFree.encodeIn` verbatim, making the next seam a pure scrub) and
-  proves the output key injective plus every mechanical field. **What remains
-  is the program `s1Program` and its three fields** — the whole critical path.
-  **Two of the program's seven stages have landed (2026-07-25-b,
-  `Reductions/S1Parse.lean`, sorry-free & axiom-clean):** stage **P** (parse)
-  drains `encSyms (flattenTM M)` into a pinned scratch frame and stage **G**
-  (guard) decides `S1Map.s1GuardB` on-machine (`stagePG_run`), fixing the
-  register frame every later stage lives in (`stagePG_usesBelow : UsesBelow 32`;
-  `s1RegBound = 48`). Two findings: the parse's cost is **cubic**, so it is not
-  the budget driver; and because `flattenEntry` writes each list's own length
-  before its payload, **the parse never desynchronises even on invalid
-  machines**, so neither stage needs a validity hypothesis.
-  **Stage C — the card emitter, the largest remaining piece — is now
-  DE-RISKED (2026-07-25-c, `Reductions/S1Cards.lean`, sorry-free &
-  axiom-clean):** `cardBlocks_eq` proves the `Fin`-typed, `finRange`/
-  `filterMap`-driven `guessCards M` equal to `cardBlocks M`, seven nested
-  `List.range` streams whose every cell code is arithmetic in the numbers
-  stage P already parses — with one equation per card family, so the emitter
-  can be built and proven a family at a time. It also specifies the one
-  non-loop gadget (`normModel_eq`: the `normTrans` dedup is a three-number key
-  pass plus one halt-bit lookup) and closes the multiplex's guard-false branch
-  (`stageMNo`). Two measured findings: the prelude family is `Θ(σ³)`, not
-  `Θ(σ⁶)`; and the emitter must append cell by cell, never `concat`, since
-  `Op.cost concat` charges the whole destination register. The `Cmd`s for
-  stages Σ / I / C / F / M-yes and the cost ladder are what is left; no
-  remaining piece's shape is unknown.
-  **Three more stages landed 2026-07-26 (`Reductions/S1Emit.lean`, sorry-free &
-  axiom-clean):** the emitter atom `emitBlk` (a bare unary block appended cell
-  by cell) and stages **Σ**, **I** and **F**, each with a pure `List.range`
-  model proven equal to the `Fin`-typed definition. Findings: stage F needs no
-  validity hypothesis at all (draining `PHALT` reproduces `M.halt.getD` out of
-  range too); the head-cell code is maintained *incrementally*, with the inner
-  loop counter supplying its low digit — the template stage C repeats seven
-  times; the prelude row is three consecutive segment loops plus one first-cell
-  flag, not one branching loop; and the guard is **load-bearing**, not a
-  convenience — the probe exhibits an off-guard instance where stage I and
-  `preludeRow` genuinely disagree. The same session closed `flattenTM_size_le`
-  after finding its previous statement false (see the table above).
-  **The program is now ASSEMBLED (2026-07-26-b, `Reductions/S1Program.lean`):**
-  `s1Program = stagePG ;; ifBit FLG yesBranch stageMNo`; the guard-false half of
-  `computes` is proven outright and axiom-clean (`noBranch_computes`), the
-  guard-true half (`yesBranch_run`) modulo only the two open stage contracts
-  `stageC_run` / `stageMYes_run`, and `S1Witness.s1_reductionLang` discharges
-  `computes` / `usesBelow` / `decode_agree` — **`cost_le` is its only open
-  field. Stage C, stage M-yes and the cost ladder are all that is left.**
-  Three findings: a `sorry` inside a `def` puts `sorryAx` in the axiom list of
-  every lemma *mentioning* it, so skeleton-phase lemmas must quantify over the
-  placeholder to stay honest-checkable; `#eval` refuses any expression reaching a
-  `sorry` even down an untaken branch, so a skeleton program cannot be probed end
-  to end; and a sorried `_run` contract is an unchecked assumption —
-  `probes/S1ProgramProbe.lean` checks both contracts numerically against
-  `s1Key (guessTableau …)` on the real frozen head layout. Measured there: the
-  card register is `>99.8%` of the emitted output, so **stage C alone is the cost
-  ladder.**
-  **Stage M-yes and five of stage C's seven card families landed 2026-07-26-c**
-  (`Reductions/S1Program.lean`, `Reductions/S1CardEmit.lean`, both sorry-free &
-  axiom-clean): the output multiplex is closed, and `copyBlocks`,
-  `copyRightBlocks` and the three halt families are real `Cmd`s assembled as
-  `cFive`, whose output is machine-checked to be a genuine **prefix** of
-  `encNats (cardBlocks M)`. Reusable: `emitLoop_run` (the generic `forBnd`
-  emitter invariant, dirty set as a register *list* so `r ∉ D` is `by decide`),
-  the two-source block `emitBlk2`, the identity-card atom `emitId` (all five
-  families emit identity cards — `stepBlocks` will not), `loadX`, and the gated
-  `q` loop `haltFam`. ⚠ **Measured finding that reverses the build order**:
-  `preludeBlocks` is **~96%** of the card register (`(five, step, prelude)` =
-  `(3708, 1386, 126957)` on the probe's smallest non-trivial instance,
-  `probes/S1CardEmitProbe.lean` §3), so the *prelude* family — not `stepBlocks`,
-  and certainly not the five just built — is the cost ladder. **Stage C's last
-  two families and the cost ladder are all that is left of the program.**
-  ⚠ Landing this required correcting `encodable FlatTM`, whose old measure
-  (`sizeFlatTM`, a flat `5` per transition entry) made the witness's
-  `encodeIn_size` obligation *unsatisfiable* (`probes/S1SizeGapProbe.lean`).
-  **The two remaining seams landed 2026-07-27** (`Reductions/S1_to_FlatTCC_comp.lean`,
-  `Reductions/Front_to_S1_comp.lean`, both sorry-free): the fourth seam joins
-  the S1 witness to the whole composed sound tail (`mfc` = erase register `0`
-  and the S1 scratch block `[6,48)`; registers `[48,57)` close by the
-  `Cmd.eval_length_le` length argument), and C8-5 joins the per-`Q` front to
-  that composite on the frozen head layout (`mfc` = erase `[5,57)`). Both
-  bridges are stated over an **arbitrary** program meeting the S1 contracts and
-  are axiom-clean, and the S1 witness itself is now built in two steps
-  (`S1Witness.s1WitnessOf` + its instantiation) so that the whole chain can be.
-  The payoff is `FrontS1Comp.SAT_NPhard''_of_S1` in the table above: **the
-  hardness half of Cook–Levin, `sorry`-free, modulo one program meeting three
-  contracts.** What is left of S1 is `preludeBlocks`, `stepBlocks`, the `stageC`
-  assembly and `S1Witness.s1Program_costLeSize` — nothing structural.
-  **The prelude family — `~96%` of the card register and stage C's cost driver
-  — was made emitter-shaped 2026-07-27-b** (`Reductions/S1Prelude.lean`,
-  sorry-free & axiom-clean): `preludeBlocks_seg` re-states the target in the
-  exact nesting the `Cmd` implements, and the four findings behind it removed
-  the two design unknowns that remained (no pair-list register per kind, no
-  on-machine comparison gadget). The preamble `pPre` supplies the two values no
-  earlier stage computes — `min M.start M.states` (via the new `minReg`) and
-  the head band's base `(σ+1)(q0+1)` — and the reusable `emitList` replaces
-  `emitId` for the two families that do not emit identity cards. ⚠ It also
-  found that the cost budget has ~12 orders of magnitude of slack, which fixes
-  how the last two pieces must be built.
-  **The prelude family's `Cmd` landed 2026-07-27-c**
-  (`Reductions/S1PreludeEmit.lean`) together with the emitter-shaped model of
-  `stepBlocks` (`Reductions/S1StepModel.lean`) — see the two rows in the table
-  above. The earlier reading that stage C's register licence is "exactly full"
-  was too pessimistic: `stepBlocks` emits *before* the prelude and the prelude's
-  preamble rebuilds every constant its nest reads, so the whole 30-register
-  licence is available to it.
-  **`stepBlocks`'s entry body landed 2026-07-28** (`Reductions/S1StepEmit.lean`
-  — see the row in the table above), together with the entry loop's pure model
-  and the stateful loop principle it needs, and **the per-entry preamble, the
-  entry loop and the `stageC` assembly landed 2026-07-28-b**
-  (`Reductions/S1StepLoop.lean`). **The S1 reduction program is now COMPLETE and
-  its `computes`/`usesBelow` contracts are axiom-clean; the whole-program cost
-  ladder `S1Witness.s1Program_costLeSize` is the only S1 obligation left**, and it
-  is a slack argument — measured head-room `> 6·10^8` at every `σ ≤ 11`
-  (`probes/S1StepLoopProbe.lean`).
-- **S2 (bridges).** `LM_to_mTM` / `mTM_to_singleTapeTM` use a 1-state
-  `bridgeMachine` with empty transitions that **accepts everything**; the
-  TM-acceptance conjuncts carry no information. Sorry-free but vacuous.
-- **Hardness foundation also reaches a `sorry`.** `NPhard_GenNP`
-  (`GenNP_is_hard.lean`) relies on `hasDeciderClassical`, a flat `sorry`
-  asserting a `DecidesBy` for *any* predicate. (Its former second defect — the
-  vacuous `fun _ => 0` output-size bound over the size-0
-  `instEncodableDefault` — is **fixed**: Part 0.1 done 2026-07-04, real
-  `encodable.size` everywhere, the size-0 fallback deleted, and the bound is
-  now an honest polynomial.) **This is now the *only* `sorry` reaching the
-  headline `CookLevin`**:
-  the in-NP half (`SAT_inNP.sat_NP`, routed through the layer verifier
-  `evalCnfCmd`) is **sorry-free & axiom-clean** (all 9 compiler ops are proven,
-  and the stub trio + its isolation walls were deleted 2026-07-04). So `sorryAx`
-  on `CookLevin` is now wholly a *hardness*-side fact.
 
 ## The strategy: a higher-level computable layer
 
@@ -396,20 +264,22 @@ CookLevin/
 │   ├── Complexity/
 │   │   ├── Definitions.lean         -- encodable (real sizes, no size-0 fallback), inOPoly, monotonic
 │   │   ├── MachineSemantics.lean    -- FlatTM, stepFlatTM, runFlatTM
-│   │   ├── NP.lean                  -- DecidesBy, inTimePoly, ⪯p, NPhard, red_inNP (S3 lives here)
+│   │   ├── NP.lean                  -- DecidesBy, inTimePoly, inNP; the legacy ⪯p/NPhard (no live consumer)
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
-│   │   └── Deciders/                -- SAT / FlatClique verifier interfaces (C7, sorry bodies)
-│   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6),
-│   │   │                               Frame, PolyTime (S3/C4 bridges), gadgets (sound)
+│   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half)
+│   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
+│   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one), CostGrow/CostFlat, gadgets
 │   │   └── …
-│   ├── Simulators/                  -- CookTableau + GuessTableau (S1, sorry-free); MultiToSingle (dead code)
-│   ├── GenNP_is_hard.lean           -- NPhard_GenNP via hasDeciderClassical (C8 sorry)
-│   ├── L_to_LM / LM_to_mTM / mTM_to_singleTapeTM.lean  -- bridges (S2, vacuous)
+│   ├── Simulators/                  -- CookTableau + GuessTableau (the S1 tableau, sorry-free)
 │   └── NP/
 │       ├── SAT.lean / kSAT.lean / FSAT.lean / FlatClique.lean
 │       ├── FSAT_to_SAT.lean         -- Tseytin (~700 LOC, sound)
-│       └── SAT/CookLevin.lean + CookLevin/Reductions/ + Subproblems/
-parked/                              -- paused hand-rolled work (~15K LOC, not built)
+│       └── SAT/CookLevin/
+│           ├── CookLevinHonest.lean -- ★ the theorem
+│           ├── Reductions/          -- the free-line witnesses, the S1 program, the five seams
+│           └── Subproblems/         -- FlatTCC / FlatCC / BinaryCC / SingleTMGenNP
+probes/                              -- #eval/decide risk checks (AxiomProbe, HonestyAuditProbe, …)
+parked/                              -- hand-rolled pre-pivot work (~15K LOC, PERMANENTLY RETIRED, not built)
 coqdoc/                              -- local mirror of the Coq port
 ```
 
@@ -432,13 +302,17 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 
 ## Where to look first
 
-- **The plan and risks:** [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+- **The theorem:** `NP/SAT/CookLevin/CookLevinHonest.lean`, and the statement it
+  proves — `NPcomplete''`/`NPhard''`/`InNPWitnessLangFreeSplit` in
+  `Complexity/Lang/PolyTime.lean`. Read the statement before the proof.
+- **The working plan:** [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md); the risk
+  register: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
+- **Is it honest?** `probes/HonestyAuditProbe.lean` (including §6, a witness that
+  satisfies every field while computing nothing) and ROADMAP risk **S5**.
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
-  `NP/FSAT_to_SAT.lean`.
-- **The framework:** `Complexity/NP.lean` (`⪯p`, `DecidesBy`, `red_inNP`).
+  `NP/FSAT_to_SAT.lean`; the tableau in `Simulators/CookTableau.lean`.
 - **The layer:** `Complexity/Lang/Compile.lean`, `Complexity/Lang/PolyTime.lean`.
-- **What must be replaced:** the S1/S2/S3 entries in the ROADMAP Risk register.
 
 ## References
 

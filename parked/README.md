@@ -1,5 +1,23 @@
 # Parked — work no longer on the proof path
 
+> ## ⛔ PERMANENTLY RETIRED (decision 2026-07-30-c)
+>
+> **Nothing here will be revived, and nothing here should be mined.** The pivot
+> it was a hedge against is over: the `Cmd` layer route reached the goal —
+> `CookLevinHonest.CookLevin'' : NPcomplete'' SAT` is proven, unconditional and
+> axiom-clean, with **zero `sorry`s in built code**. This subtree is kept for one
+> reason only: it is the *evidence* for the methodology argument in
+> `../CookLevin/ROADMAP.md` ("Why the layer, and why not hand-rolled TMs") —
+> ~15K LOC that got a fraction of the way, against ~16K LOC that finished the
+> whole theorem.
+>
+> Treat it as a museum exhibit. Do **not** import it, do **not** port lemmas out
+> of it (the `FlatTM` semantics it targets changed in 2026-07-17 — the tape is
+> now append-only at the frontier — so its run lemmas are not merely stale,
+> several are *false* against today's `writeCurrentTapeSymbol`), and do not
+> spend a session tidying it. If it ever becomes a nuisance, delete it wholesale;
+> git history keeps it.
+
 This directory holds work that was on the proof path *before* the May
 2026 strategic pivot (see [`../README.md`](../README.md) and the
 "Status update — May 2026" section of [`../CookLevin/ROADMAP.md`](../CookLevin/ROADMAP.md)).

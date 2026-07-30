@@ -12,19 +12,21 @@ architecture risk #7). The discipline that protects against this is to quantify
 skeleton-phase results over the placeholder; this file is the check that the
 discipline held.
 
-**Run it after any change to the S1 program, the cost layer, or a seam.** Every
-line below must print exactly
+**Run it first thing in every session, and after any change to the S1 program,
+the cost layer, a seam or the membership half.** Every line below must print
+exactly
 
 ```
 [propext, Classical.choice, Quot.sound]
 ```
 
 (some print the shorter `[propext, Quot.sound]`; that is also clean). A
-`sorryAx` anywhere in this list is a regression.
+`sorryAx` anywhere in this list is a regression — **CI greps for it**
+(`.github/workflows/lake-build.yml`) and fails the build.
 
-## §1 measurement (2026-07-30-b)
+## §1 measurement (2026-07-30-c)
 
-All clean, including the headline:
+All 59 endpoints clean, including the headline:
 
 ```
 FrontS1Comp.SAT_NPhard''              clean   ← hardness   (2026-07-29-b)
@@ -33,9 +35,13 @@ EvalCnfSplit.SAT_inNPLangFreeSplit    clean   ← membership (2026-07-30-b)
 CookLevinHonest.CookLevin''           clean   ← ★ NPcomplete'' SAT, UNCONDITIONAL
 ```
 
-⚠ `CookLevin` itself still depends on `sorryAx`, and that is **correct**: it
-quotes the *legacy* `⪯p` front (`NPhard_GenNP` → `hasDeciderClassical`). Retiring
-it is the top-down job, not a regression here. -/
+There is no longer any endpoint anywhere that prints `sorryAx`: the legacy `⪯p`
+front, which was the only one, was **deleted** 2026-07-30-c.
+
+⚠ **This probe cannot see an encoding-honesty defect** — that is the whole
+point of standing risk S5, and the deepest historical unsoundness in this project
+(S1's if-on-the-answer map, S2's dummy bridges) was `sorry`-free and invisible
+here. Its companion is `probes/HonestyAuditProbe.lean`; run both. -/
 
 open Complexity Complexity.Lang
 

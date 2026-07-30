@@ -265,43 +265,17 @@ theorem reducesPolyMO_transitive {X Y Z : Type}
   · simpa using Iff.trans (@hf_correct x) (@hg_correct (f x))
 
 
-theorem red_inNP {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop) :
-    P ⪯p Q → inNP Q → inNP P := by
-  intros hPQ hQinNP
-  rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
-  rcases hf_poly with ⟨⟨bound_f, hbound_poly_f, hbound_mono_f, hbound_valid_f⟩⟩
-  rcases hQinNP with ⟨Y_cert, _, ⟨⟨R, _hR_poly, hR_cert⟩⟩⟩
-  rcases hR_cert with ⟨⟨cert_bound, hsound_R, hcomplete_R, hcert_poly_R, hcert_mono_R⟩⟩
-  refine ⟨Y_cert, inferInstance, ?_⟩
-  refine ⟨⟨fun x cert => R (f x) cert, ?_, ?_⟩⟩
-  · -- inTimePoly (fun (x, cert) => R (f x) cert)
-    -- TODO(Part4:red_inNP_TMcompose): after the May 2026 pivot, the
-    -- proof routes through the Lang layer. The shape is:
-    --   1. The framework's `PolyTimeComputableWitness` gains a
-    --      `lang : Lang.PolyTimeComputableLang f` field (Part 4.1),
-    --      providing a real Lang program for the reduction `f`.
-    --   2. Destructure `_hR_poly` into a `Lang.DecidesLang` for R.
-    --   3. Compose them via `Lang.Cmd.seq`: a Lang program that runs
-    --      `f` on `x` (placing `f x` in a designated output slot)
-    --      then runs R on `(f x, cert)`.
-    --   4. The composed cost is `cost(f) + cost(R)` ≤ polynomial.
-    --   5. Bridge to `inTimePoly` via `Lang.inTimePolyLang_to_inTimePoly`.
-    -- Until Part 4.1 upgrades the framework, this remains a gap.
-    sorry
-  · -- polyCertRel: certificate-bound composition is purely predicate-level
-    -- and does not need any TM machinery — it carries over verbatim
-    -- from the pre-Step-4 proof.
-    refine ⟨⟨cert_bound ∘ bound_f, ?_, ?_, inOPoly_comp hbound_poly_f hcert_poly_R,
-        monotonic_comp hbound_mono_f hcert_mono_R⟩⟩
-    · intro x cert hrel
-      exact hf_correct.mpr (hsound_R hrel)
-    · intro x hx
-      rcases hcomplete_R (hf_correct.mp hx) with ⟨cert, hcert, hsize⟩
-      refine ⟨cert, hcert, ?_⟩
-      calc
-        encodable.size cert ≤ cert_bound (encodable.size (f x)) := hsize
-        _ ≤ cert_bound (bound_f (encodable.size x)) := hcert_mono_R _ _ (hbound_valid_f x)
+/-! **`red_inNP` was DELETED (2026-07-30-c).** It claimed `P ⪯p Q → inNP Q →
+inNP P`, and its `polyCertRel` half really is free (certificate-bound
+composition is predicate-level). Its `inTimePoly` half was a `sorry`, and it is
+**unclosable honestly**: `⪯p` gives no program for `f`, so the composed verifier
+"run `f`, then run `Q`'s verifier" cannot be built — the only way to produce the
+`DecidesBy` is `hasDeciderClassical`'s cheat, which is true for *every*
+predicate (standing risk #6). The honest, live replacement is
+`Lang.red_inNP_of_langFree`: it takes a **free layer reduction witness** (a real
+`Cmd` computing `f`) plus a per-seam re-encoder bundle, and composes the two
+programs at the `Cmd` level. First live instance:
+`KSat3Free.inNP_kSAT3_free`. -/
 
 def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P

@@ -1,4 +1,3 @@
-import Complexity.Simulators.MultiToSingle
 import Complexity.Simulators.CookTableau
 import Complexity.Simulators.GuessTableau
 

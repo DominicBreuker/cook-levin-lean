@@ -7,6 +7,7 @@ import Complexity.Simulators
 import Complexity.Complexity.Deciders.EvalCnfCmd
 import Complexity.Complexity.Deciders.EvalCnfTM
 import Complexity.Complexity.Deciders.CliqueRelTM
+import Complexity.NP.kSAT_to_FlatClique
 import Complexity.NP.SAT.CookLevin
 import Complexity.NP.kSAT_to_SAT_free
 import Complexity.NP.SAT.CookLevin.Reductions.FlatTCC_to_FlatCC_free
