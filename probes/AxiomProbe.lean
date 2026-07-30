@@ -22,17 +22,15 @@ line below must print exactly
 (some print the shorter `[propext, Quot.sound]`; that is also clean). A
 `sorryAx` anywhere in this list is a regression.
 
-## §1 measurement (2026-07-29-b)
+## §1 measurement (2026-07-30-b)
 
-All clean, including — for the first time — the four endpoints that used to
-inherit `sorryAx` from the cost ladder:
+All clean, including the headline:
 
 ```
-S1Witness.s1Program_costLeSize        clean   ← the ladder, closed this session
-S1Witness.s1_reductionLang            clean
-S1Witness.s1_reducesPolyMO'           clean
-S1SATComp.s1_to_SAT_reducesPolyMO'    clean
-FrontS1Comp.SAT_NPhard''              clean   ← NPhard'' SAT is axiom-clean
+FrontS1Comp.SAT_NPhard''              clean   ← hardness   (2026-07-29-b)
+EvalCnfSplit.certDecode_decodesAssgn  clean   ← the decoder `_run` lemma
+EvalCnfSplit.SAT_inNPLangFreeSplit    clean   ← membership (2026-07-30-b)
+CookLevinHonest.CookLevin''           clean   ← ★ NPcomplete'' SAT, UNCONDITIONAL
 ```
 
 ⚠ `CookLevin` itself still depends on `sorryAx`, and that is **correct**: it
@@ -87,11 +85,11 @@ section Chain
 end Chain
 
 section SATMembership
--- The membership half (2026-07-30, top-down): the split layout, the certificate
--- relation, the composite verifier and the honest headline, all quantified over
--- the ONE remaining machine obligation (`EvalCnfSplit.DecodesAssgn certDecode`).
--- If any of these ever prints `sorryAx`, a placeholder has leaked into a
--- statement.
+-- The membership half: the split layout, the certificate relation, the decoder's
+-- `_run` ladder, the composite verifier and the honest headline. The `_of_*`
+-- entries are still quantified over the decoder contracts (that is the
+-- program-generic interface, standing risk #7); the unconditional endpoints are
+-- at the bottom of the section.
 #print axioms EvalCnfSplit.satRel_correct
 #print axioms EvalCnfSplit.satRel_satCert
 #print axioms EvalCnfSplit.varsOfCnf_lt_size
@@ -110,4 +108,14 @@ section SATMembership
 #print axioms EvalCnfSplit.SAT_inNPLangFreeSplit_of_decodesAssgn
 #print axioms CookLevinHonest.CookLevin''_of_decoder
 #print axioms CookLevinHonest.CookLevin''_of_decodesAssgn
+-- The decoder's `_run` ladder (2026-07-30-b) and the UNCONDITIONAL endpoints.
+#print axioms EvalCnfSplit.decodeBody_run
+#print axioms EvalCnfSplit.certDecode_eval_eq
+#print axioms EvalCnfSplit.certDecode_decodesAssgn
+#print axioms EvalCnfSplit.certDecode_bridge
+#print axioms EvalCnfSplit.SAT_inNPLangFreeSplit
+#print axioms CookLevinHonest.SAT_NPhard''
+#print axioms CookLevinHonest.SAT_inNPLangFreeSplit
+-- ★ THE HEADLINE. `NPcomplete'' SAT`, unconditional.
+#print axioms CookLevinHonest.CookLevin''
 end SATMembership

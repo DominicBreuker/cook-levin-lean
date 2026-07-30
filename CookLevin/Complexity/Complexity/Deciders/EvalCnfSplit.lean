@@ -5,14 +5,19 @@ set_option autoImplicit false
 
 /-! # `inNPLangFreeSplit SAT` — the membership half of `NPcomplete'' SAT`
 
-This file supplies the **design** and all the **pure** content of
-`InNPWitnessLangFreeSplit SAT`, the last piece between the axiom-clean
-`FrontS1Comp.SAT_NPhard''` and the honest headline `NPcomplete'' SAT`.
-Everything except **one register equation** is discharged here; that equation is
-`DecodesAssgn certDecode` (below) and every result is quantified over it — so
-`satSplitWitnessOf` / `SAT_inNPLangFreeSplit_of_decodesAssgn` are axiom-clean
-statements of exactly what is left (standing risk #7: never let a `sorry`-backed
-`def` into a statement).
+This file supplies `InNPWitnessLangFreeSplit SAT`, the last piece between the
+axiom-clean `FrontS1Comp.SAT_NPhard''` and the honest headline
+`NPcomplete'' SAT`. **It is complete**: `SAT_inNPLangFreeSplit` is
+unconditional and axiom-clean, so `NPcomplete'' SAT` is too
+(`CookLevinHonest.CookLevin''`).
+
+The file is still written *program-generically*: `satSplitWitnessOf` takes an
+arbitrary decoder meeting three contracts (`CertBridge` / `CertCostBound` /
+`Cmd.UsesBelow`), and the pinned candidate `certDecode` discharges all three.
+That is deliberate — a future decoder swaps in without touching anything
+downstream, and it keeps the "what is still missing" statement machine-checked
+rather than believed (standing risk #7: never let a `sorry`-backed `def` into a
+statement).
 
 ## The design, and why the layout worry was a non-issue
 
@@ -59,23 +64,31 @@ wants: one left-to-right pass over the certificate emitting the sentinel-unary
 block `[1] ++ 1^i ++ [0]` at each `true`, with the loop's own `forBnd` counter
 serving as `1^i`.
 
-## What is left: ONE register equation
+## The decoder, and how it is verified
 
 A decoder owes three contracts — `CertBridge`, `CertCostBound` and
 `Cmd.UsesBelow` — and at the pinned candidate `certDecode` the last two are
-already proven (`by decide` through `Cmd.chk`). `CertBridge` in turn splits: the
-scratch sits *above* the verifier's frame and the untouched registers are handled
-by `Cmd.eval_get_of_not_writes`, so `certBridge_of_decodesAssgn` reduces it to
+`by decide` (through `Cmd.chk`). `CertBridge` in turn splits: the scratch sits
+*above* the verifier's frame and the untouched registers are handled by
+`Cmd.eval_get_of_not_writes`, so `certBridge_of_decodesAssgn` reduces it to the
+single register equation
 
 ```lean
 ∀ N c, State.get (certDecode.eval (satEIn (N, c))) ASSGN = encodeAssgn (decodeBits c)
 ```
 
+which is `certDecode_decodesAssgn`, proven below by `Cmd.eval_forBnd` +
+`Cmd.foldlState_range_induct` at the invariant
+
+```
+ASSGN = encodeAssgn (decodeBits (c.take i))    DCUR = cbits (c.drop i)
+```
+
 `probes/SATSplitProbe.lean` `#eval`-validates that equation (§2), the end-to-end
 decision on satisfying / falsifying / short / over-long / all-garbage
-certificates (§3), and the loop invariant a proof would use, at **every** prefix
-length (§5). Proving it is ordinary bottom-up loop work with nothing left to
-design.
+certificates (§3), and the very invariant the proof uses, at **every** prefix
+length (§5) — it was written before the proof and is what made the proof
+mechanical.
 -/
 
 namespace EvalCnfSplit
@@ -579,6 +592,164 @@ theorem encodeAssgn_singleton (v : Nat) :
   show (1 :: (List.replicate v 1 ++ [0])) ++ encodeAssgn ([] : assgn) = _
   simp [encodeAssgn]
 
+/-! ### The decoder's `_run` lemma
+
+Three steps, in the `S1Step.emitFold_run` shape:
+
+* `decodeBody_run` — one iteration, at `i < |c|`, moves the invariant from `i` to
+  `i + 1`. Both arms of the inner `ifBit` are needed: a `true` bit appends
+  `encodeAssgn [i]` (the machine's `appendOne` / `concat … DIDX` / `appendZero`
+  is *exactly* `encodeAssgn_singleton`, with the loop counter supplying `1^i`),
+  a `false` bit runs the `copy ASSGN ASSGN` no-op and the model's
+  `decodeBits_take_succ` contributes `[]`. The outer `nonEmpty DHD DCUR` guard
+  (FINDING T — a cursor body must be total) is *discharged*, never taken: at
+  `i < |c|` the cursor is a cons.
+* `certDecode_eval_eq` — the two prologue ops and `Cmd.eval_forBnd`, with the
+  trip count pinned at `|c|` (`forBnd` samples `DCUR` once, at entry).
+* `certDecode_decodesAssgn` — `Cmd.foldlState_range_induct` at the invariant,
+  read off at `i = |c|` via `List.take_length`. -/
+
+/-- The machine's view of a certificate: one `0`/`1` cell per bit. This is the
+content of `certState c`'s only register, and what `DCUR` carries. -/
+def cbits (c : List Bool) : List Nat := c.map (fun b => if b then 1 else 0)
+
+/-- The cursor, one iteration in: the cell the body pops, then the rest. -/
+theorem cbits_drop_succ (c : List Bool) (i : Nat) (h : i < c.length) :
+    cbits (c.drop i) = (if c[i] then 1 else 0) :: cbits (c.drop (i + 1)) := by
+  rw [cbits, cbits, List.drop_eq_getElem_cons h, List.map_cons]
+
+/-- **One iteration of the decode loop.** Given the invariant at `i` (and the
+loop counter at `1^i`, which `forBnd` supplies), `decodeBody` establishes it at
+`i + 1`. Only `ASSGN` and `DCUR` are constrained: the frame is
+`Cmd.eval_get_of_not_writes`'s job, not the loop's. -/
+theorem decodeBody_run (c : List Bool) (i : Nat) (hi : i < c.length) (s : State)
+    (hA : State.get s ASSGN = encodeAssgn (decodeBits (c.take i)))
+    (hC : State.get s DCUR = cbits (c.drop i))
+    (hI : State.get s DIDX = List.replicate i 1) :
+    State.get (decodeBody.eval s) ASSGN = encodeAssgn (decodeBits (c.take (i + 1)))
+      ∧ State.get (decodeBody.eval s) DCUR = cbits (c.drop (i + 1)) := by
+  have hne : State.get s DCUR = (if c[i] then 1 else 0) :: cbits (c.drop (i + 1)) := by
+    rw [hC, cbits_drop_succ c i hi]
+  -- the totality guard: the cursor is non-empty, so the body takes its true arm
+  have e1 : (Cmd.op (Op.nonEmpty DHD DCUR)).eval s = s.set DHD [1] := by
+    show s.set DHD (if (State.get s DCUR).isEmpty then [0] else [1]) = _
+    rw [hne]; rfl
+  rw [decodeBody, Cmd.eval_seq, e1,
+    Cmd.eval_ifBit_true _ _ _ _ (State.get_set_eq s DHD [1])]
+  -- pop the leading cell into `DHD`, advance the cursor
+  have hDCUR1 : State.get (s.set DHD [1]) DCUR
+      = (if c[i] then 1 else 0) :: cbits (c.drop (i + 1)) := by
+    rw [State.get_set_ne s DHD [1] DCUR (by decide)]; exact hne
+  have e2 : (Cmd.op (Op.head DHD DCUR)).eval (s.set DHD [1])
+      = s.set DHD [if c[i] then 1 else 0] := by
+    simp only [Cmd.eval_op, Op.eval, hDCUR1, State.set_set]
+  have hDCUR2 : State.get (s.set DHD [if c[i] then 1 else 0]) DCUR
+      = (if c[i] then 1 else 0) :: cbits (c.drop (i + 1)) := by
+    rw [State.get_set_ne s DHD _ DCUR (by decide)]; exact hne
+  have e3 : (Cmd.op (Op.tail DCUR DCUR)).eval (s.set DHD [if c[i] then 1 else 0])
+      = (s.set DHD [if c[i] then 1 else 0]).set DCUR (cbits (c.drop (i + 1))) := by
+    simp only [Cmd.eval_op, Op.eval, hDCUR2, List.tail_cons]
+  rw [Cmd.eval_seq, e2, Cmd.eval_seq, e3]
+  -- `t`: the state the inner `ifBit` branches on
+  set t : State :=
+    (s.set DHD [if c[i] then 1 else 0]).set DCUR (cbits (c.drop (i + 1))) with ht
+  have hT_DCUR : State.get t DCUR = cbits (c.drop (i + 1)) := State.get_set_eq _ _ _
+  have hT_ASSGN : State.get t ASSGN = encodeAssgn (decodeBits (c.take i)) := by
+    rw [ht, State.get_set_ne _ DCUR _ ASSGN (by decide),
+      State.get_set_ne _ DHD _ ASSGN (by decide)]
+    exact hA
+  have hT_DIDX : State.get t DIDX = List.replicate i 1 := by
+    rw [ht, State.get_set_ne _ DCUR _ DIDX (by decide),
+      State.get_set_ne _ DHD _ DIDX (by decide)]
+    exact hI
+  have hT_DHD : State.get t DHD = [if c[i] then 1 else 0] := by
+    rw [ht, State.get_set_ne _ DCUR _ DHD (by decide)]
+    exact State.get_set_eq _ _ _
+  by_cases hbi : c[i] = true
+  · -- a `true` bit: append the block `[1] ++ 1^i ++ [0]`, i.e. `encodeAssgn [i]`
+    rw [Cmd.eval_ifBit_true _ _ _ _ (by rw [hT_DHD, if_pos hbi])]
+    have a1 : (Cmd.op (Op.appendOne ASSGN)).eval t
+        = t.set ASSGN (encodeAssgn (decodeBits (c.take i)) ++ [1]) := by
+      simp only [Cmd.eval_op, Op.eval, hT_ASSGN]
+    have hI2 : State.get (t.set ASSGN (encodeAssgn (decodeBits (c.take i)) ++ [1])) DIDX
+        = List.replicate i 1 := by
+      rw [State.get_set_ne _ ASSGN _ DIDX (by decide)]; exact hT_DIDX
+    have a2 : (Cmd.op (Op.concat ASSGN ASSGN DIDX)).eval
+          (t.set ASSGN (encodeAssgn (decodeBits (c.take i)) ++ [1]))
+        = t.set ASSGN ((encodeAssgn (decodeBits (c.take i)) ++ [1]) ++ List.replicate i 1) := by
+      simp only [Cmd.eval_op, Op.eval, hI2, State.get_set_eq, State.set_set]
+    have a3 : (Cmd.op (Op.appendZero ASSGN)).eval
+          (t.set ASSGN ((encodeAssgn (decodeBits (c.take i)) ++ [1]) ++ List.replicate i 1))
+        = t.set ASSGN
+            (((encodeAssgn (decodeBits (c.take i)) ++ [1]) ++ List.replicate i 1) ++ [0]) := by
+      simp only [Cmd.eval_op, Op.eval, State.get_set_eq, State.set_set]
+    rw [Cmd.eval_seq, a1, Cmd.eval_seq, a2, a3]
+    refine ⟨?_, ?_⟩
+    · rw [State.get_set_eq, decodeBits_take_succ c i hi, if_pos hbi,
+        encodeAssgn_append, encodeAssgn_singleton]
+      simp
+    · rw [State.get_set_ne _ ASSGN _ DCUR (by decide)]; exact hT_DCUR
+  · -- a `false` bit: the `copy ASSGN ASSGN` no-op (FINDING X)
+    rw [Cmd.eval_ifBit_false _ _ _ _ (by rw [hT_DHD, if_neg hbi]; simp)]
+    have a1 : (Cmd.op (Op.copy ASSGN ASSGN)).eval t
+        = t.set ASSGN (encodeAssgn (decodeBits (c.take i))) := by
+      simp only [Cmd.eval_op, Op.eval, hT_ASSGN]
+    rw [a1]
+    refine ⟨?_, ?_⟩
+    · rw [State.get_set_eq, decodeBits_take_succ c i hi, if_neg hbi]
+      simp
+    · rw [State.get_set_ne _ ASSGN _ DCUR (by decide)]; exact hT_DCUR
+
+/-- The state `certDecode`'s loop starts from: the bits moved out to the cursor,
+`ASSGN` emptied. (`probes/SATSplitProbe.lean` §5 builds the same state.) -/
+def loopStart (N : cnf) (c : List Bool) : State :=
+  ((satEIn (N, c)).set DCUR (cbits c)).set ASSGN []
+
+/-- **The prologue and the trip count.** `forBnd` samples `DCUR` once at entry,
+and at entry `DCUR` holds the whole certificate — so the loop runs exactly `|c|`
+times. -/
+theorem certDecode_eval_eq (N : cnf) (c : List Bool) :
+    certDecode.eval (satEIn (N, c))
+      = Cmd.foldlState decodeBody DIDX (List.range c.length) (loopStart N c) := by
+  have h0 : State.get (satEIn (N, c)) ASSGN = cbits c := rfl
+  have e1 : (Cmd.op (Op.copy DCUR ASSGN)).eval (satEIn (N, c))
+      = (satEIn (N, c)).set DCUR (cbits c) := by
+    simp only [Cmd.eval_op, Op.eval, h0]
+  have hd : State.get (loopStart N c) DCUR = cbits c := by
+    rw [loopStart, State.get_set_ne _ ASSGN _ DCUR (by decide), State.get_set_eq]
+  rw [certDecode, Cmd.eval_seq, e1, Cmd.eval_seq]
+  show (Cmd.forBnd DIDX DCUR decodeBody).eval (loopStart N c) = _
+  rw [Cmd.eval_forBnd, hd]
+  simp [cbits]
+
+/-- **THE remaining Cook–Levin obligation, discharged.** `certDecode` re-encodes
+the raw certificate bits at `ASSGN` into the live verifier's `encodeAssgn`
+layout. With `certBridge_of_decodesAssgn` this closes `CertBridge certDecode`,
+hence `inNPLangFreeSplit SAT`, hence `NPcomplete'' SAT`. -/
+theorem certDecode_decodesAssgn : DecodesAssgn certDecode := by
+  intro N c
+  have hA0 : State.get (loopStart N c) ASSGN = encodeAssgn (decodeBits (c.take 0)) := by
+    rw [loopStart, State.get_set_eq]; rfl
+  have hC0 : State.get (loopStart N c) DCUR = cbits (c.drop 0) := by
+    rw [loopStart, State.get_set_ne _ ASSGN _ DCUR (by decide), State.get_set_eq]
+    simp
+  have key := Cmd.foldlState_range_induct decodeBody DIDX c.length (loopStart N c)
+    (fun i st => State.get st ASSGN = encodeAssgn (decodeBits (c.take i))
+      ∧ State.get st DCUR = cbits (c.drop i))
+    ⟨hA0, hC0⟩
+    (by
+      rintro i st hi ⟨hA, hC⟩
+      refine decodeBody_run c i hi _ ?_ ?_ (State.get_set_eq _ _ _)
+      · rw [State.get_set_ne _ DIDX _ ASSGN (by decide)]; exact hA
+      · rw [State.get_set_ne _ DIDX _ DCUR (by decide)]; exact hC)
+  rw [certDecode_eval_eq]
+  have hfin := key.1
+  rwa [List.take_length] at hfin
+
+/-- The bridge at the pinned candidate — unconditional. -/
+theorem certDecode_bridge : CertBridge certDecode :=
+  certBridge_of_decodesAssgn certDecode_decodesAssgn
+
 /-! ## The composite's polynomial -/
 
 /-- The verifier's input size after decoding, as a function of the pair size:
@@ -740,10 +911,16 @@ theorem SAT_inNPLangFreeSplit_of_bridge (hbridge : CertBridge certDecode) :
   SAT_inNPLangFreeSplit_of certDecode 19 (by omega) hbridge certDecode_costBound
     certDecode_usesBelow
 
-/-- **`inNPLangFreeSplit SAT` from ONE register equation.** This is the whole
-remaining membership half of Cook–Levin. -/
+/-- **`inNPLangFreeSplit SAT` from ONE register equation.** Kept as the
+program-generic entry point: a different decoder plugs in here. -/
 theorem SAT_inNPLangFreeSplit_of_decodesAssgn (h : DecodesAssgn certDecode) :
     inNPLangFreeSplit SAT :=
   SAT_inNPLangFreeSplit_of_bridge (certBridge_of_decodesAssgn h)
+
+/-- **`inNPLangFreeSplit SAT` — the membership half of Cook–Levin, on the honest
+statement, UNCONDITIONAL.** SAT is verified by a real `Cmd` program against a
+`List Bool` certificate, within a real polynomial cost bound. -/
+theorem SAT_inNPLangFreeSplit : inNPLangFreeSplit SAT :=
+  SAT_inNPLangFreeSplit_of_decodesAssgn certDecode_decodesAssgn
 
 end EvalCnfSplit

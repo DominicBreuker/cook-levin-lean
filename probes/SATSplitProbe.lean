@@ -54,7 +54,7 @@ proof depends on.
 -/
 
 open EvalCnfSplit (bitsToAssgn decodeBits satCert satEncX satEIn
-  DCUR DIDX DHD decodeBody certDecode decRegs)
+  DCUR DIDX DHD decodeBody certDecode decRegs cbits loopStart)
 
 /-! ## §1 — the layout gap is exactly one register -/
 
@@ -109,22 +109,20 @@ def checkCertSize (N : cnf) (a : assgn) : Bool :=
 
 /-! ## §5 — the loop invariant, prefix by prefix
 
-This is the shape the bottom-up `_run` proof should feed to
-`Cmd.foldlState_range_induct` (motive `DecodeInv i`), checked at EVERY `i ≤ |c|`
-so an off-by-one in the invariant shows up here rather than in a stuck proof:
+This is the invariant `EvalCnfSplit.certDecode_decodesAssgn` feeds to
+`Cmd.foldlState_range_induct`, checked at EVERY `i ≤ |c|`. It was written
+*before* the proof and is what made the proof mechanical; it is kept as a
+regression on `decodeBody`, on `certDecode`'s prologue and on the trip count.
 
 ```
-ASSGN = encodeAssgn (decodeBits (c.take i))     DCUR = mapped (c.drop i)
+ASSGN = encodeAssgn (decodeBits (c.take i))     DCUR = cbits (c.drop i)
 registers 0-2 untouched                        registers 4-15 still []
 ```
 
 `prefState i` is `certDecode`'s state after the loop's first `i` iterations,
-built exactly as `Cmd.eval_forBnd` unfolds it. -/
-
-/-- The state `certDecode`'s loop starts from. -/
-def loopStart (N : cnf) (c : List Bool) : State :=
-  (Cmd.op (.clear EvalCnfCmd.ASSGN)).eval
-    ((Cmd.op (.copy DCUR EvalCnfCmd.ASSGN)).eval (satEIn (N, c)))
+built exactly as `Cmd.eval_forBnd` unfolds it. ⚠ `loopStart` and `cbits` are the
+**library's** (`EvalCnfSplit.loopStart` / `.cbits`, opened above) — a drifted
+copy here would validate nothing. -/
 
 /-- The state after the loop's first `i` iterations. -/
 def prefState (N : cnf) (c : List Bool) (i : Nat) : State :=
@@ -134,7 +132,7 @@ def checkInv (N : cnf) (c : List Bool) (i : Nat) : Bool :=
   let s := prefState N c i
   (State.get s EvalCnfCmd.ASSGN
       == EvalCnfCmd.encodeAssgn (decodeBits (c.take i)))
-    && (State.get s DCUR == (c.drop i).map (fun b => if b then 1 else 0))
+    && (State.get s DCUR == cbits (c.drop i))
     && (List.range 3).all (fun r => State.get s r == State.get (satEIn (N, c)) r)
     && ((List.range 16).drop 4).all (fun r => State.get s r == [])
 
