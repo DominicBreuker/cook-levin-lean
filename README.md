@@ -45,6 +45,15 @@ whose `encodeIn` lays the answer on the tape. The audit above covers every
 witness that exists **today**; every witness added tomorrow needs its own
 one-line verdict in the register. See ROADMAP risk **S5**.
 
+The **structural fix is scoped and is the next top-down item**: the whole hole is
+two free fields (`encode`/`decode`) on `ComputesBy`, and by the audit's own
+result they only matter at the two ends of the chain, where the types are
+concrete. Replacing them with a canonical `Serialize` class makes the dishonest
+witness *unwriteable* — the textbook definition, enforced by the typechecker —
+and takes the audit from O(witnesses, forever) to O(1), read once at the
+statement. Three-step go/no-go probe and a fallback in
+[`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) item 1.
+
 Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
 and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
 working.

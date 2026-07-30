@@ -77,11 +77,133 @@ Three findings worth keeping:
 
 ## NEXT TOP-DOWN session
 
-Nothing here is blocking; pick in order. Item 1 is the only one that can affect
-what the theorem means.
+Nothing here is *blocked*, but the order matters. Items 1 and 2 are the only
+ones that touch what the theorem means: item 1 is a **design programme** to make
+the honesty guarantee come from the typechecker instead of from a reading, and
+item 2 is the reading obligation that stands until it lands. **Item 1 has a
+sequencing consequence for the bottom-up stream** — see the recommendation at the
+end of this section. Items 3–7 are hygiene and can be taken in any order.
 
-1. **Audit whatever the bottom-up stream lands (risk S5 is STANDING).** The
-   recipe, which is now short thanks to FINDING AK:
+### 1. ★ RISK S5, STRUCTURALLY — canonical `Serialize` at the two chain ends
+
+**Goal: make `probes/HonestyAuditProbe.lean` §6 UNWRITEABLE, so that S5 stops
+being a standing per-witness obligation.** This is the highest-value top-down
+work left. **Probe first — do not start building.**
+
+**The hole, precisely.** `⪯p'` bottoms out in `ComputesBy`, which carries two
+free functions on either side of a real machine:
+
+```lean
+-- Lang/PolyTime.lean, abbreviated (`M_valid`/`M_tapes_pos` elided)
+structure ComputesBy (f : X → Y) (timeBound : Nat → Nat) where
+  encode : X → List Nat        -- ← arbitrary, may even be noncomputable
+  M      : FlatTM
+  decode : FlatTMConfig → Y    -- ← arbitrary
+  computes : ∀ x, ∃ cfg,
+    runFlatTM (timeBound (encodable.size x)) M
+        (initFlatConfig M (initialTapes M (encode x))) = some cfg
+      ∧ haltingStateReached M cfg = true ∧ decode cfg = f x
+```
+
+Set `encode x := ⟨serialized f x⟩`, `M := id`, `decode := read it back`, and
+every field is discharged. **Honesty is not diffuse — it is these two fields.**
+Everything else in the stack (the `Cmd` semantics, the cost model, the seams,
+`computes`, `cost_le`) is already enforced.
+
+**The fix.** Stop making them fields:
+
+```lean
+class Serialize (X : Type) where
+  enc     : X → List Bool
+  dec     : List Bool → Option X
+  dec_enc : ∀ x, dec (enc x) = some x
+```
+
+and let `ComputesBy [Serialize X] [Serialize Y] f timeBound` say only: *a real
+machine turns `Serialize.enc x` into something `Serialize.dec`s to `f x`, inside
+`timeBound`*. That is the textbook definition and no audit survives it.
+
+**Why this is NOT the retired `LangEncodable` (read this before objecting).**
+`LangEncodable` died because its **generic, nestable product** instance is
+size-unsound: `enc (x,y) = 1^|enc x| ++ [0] ++ enc x ++ enc y` doubles the first
+component per nesting level, so no polynomial `enc_size` exists
+(`probes/UnaryProductSizeProbe.lean`). That finding is correct and still binds.
+Two things dissolve it here:
+
+* **FINDING AK** — only the composite's *leftmost* `encodeIn` and *rightmost*
+  `decodeOut` are honesty-relevant. So `Serialize` is needed for exactly `cnf`
+  (concrete; `encodeCnf` already is one, and `encodeCnf_injective` is proven) and
+  for the abstract `Y` of `NPhard''` (supplied as an instance by the hypothesis).
+  **No generic product instance, no nesting, no blowup.** The middle of the chain
+  keeps its bespoke bit-level layouts; every `_run` lemma and the whole
+  `SeamData`/`comp` machinery are untouched.
+* **`encodable.size x := (Serialize.enc x).length`** — the size-unsoundness was a
+  mismatch between an *abstract* measure and an *encoding length*. Collapse them
+  and the obligation is not hard to satisfy, it is **gone**. This also retires
+  standing risk #5 (`sizeFlatTM` was killed by exactly that mismatch), which is
+  otherwise a permanent trap for every new type.
+
+**Probe it in this order — each step is a go/no-go, cheapest and most
+informative first.** Budget one session for all three; write the verdict into
+this file whatever it is.
+
+1. **Tail (cheapest, highest information).** Define `Serialize` and the `cnf`
+   instance from `EvalCnfCmd.encodeCnf`, write a real `dec` and prove `dec_enc`,
+   and restate `FSATSATFree.decodeOut` as `Serialize.dec ∘ get CNFOUT`. Check
+   `fsatSAT_reductionLang` still typechecks. ⚠ This is strictly better than the
+   status quo regardless of the rest: it replaces `Function.invFun` (classical,
+   junk off-image) with a real parser.
+2. **Head (the one that could turn expensive).** `FrontWitness.encodeInQ =
+   W.encX x ++ [1^(size x)]` must become a layout of `Serialize.enc x` with the
+   size register **computed by the program** rather than handed over — one
+   `forBnd` over the input register emitting `appendOne` (`forBnd` samples its
+   bound register's length once at entry, so this is the right shape). Cheap to
+   write; the risk is that it re-opens `frontProgram`'s cost ladder. **Verdict
+   question: does the whole S1+front program still pass `Cmd.chk` by `decide`?**
+   Measure it (`probes/S1GrowSafeProbe.lean` is the pattern) before committing.
+3. **Hypothesis side — THE REAL RISK.** `InNPWitnessLangFreeSplit` would gain
+   `[Serialize Y]` and require `verifier.encodeIn (x,c) = layout (Serialize.enc x) c`.
+   That **strengthens the hypothesis**, so strictly fewer `Q` qualify and
+   `NPhard''` gets weaker. Substantively it should lose nothing — any honest
+   verifier on a weird encoding has one on the canonical encoding — but *that
+   transfer is a lemma someone must prove*. SAT is its own test case: check that
+   `EvalCnfSplit`'s own witness satisfies the strengthened structure. **If this
+   step is awkward, stop and take the fallback below rather than narrowing the
+   headline.**
+
+**Fallback if (3) is awkward — a layout DSL.** Keep `encodeIn` a field but
+restrict it to a small inductive grammar `Layout X` (constants · field
+projections through per-type `Serialize` · length/count tallies · register
+placement) with `encodeIn := Layout.eval L`. Not quite bulletproof — the
+question becomes "is the DSL expressive enough to be dishonest?" — but it turns
+a *reading* obligation into a *proof* obligation, which is most of the win at a
+fraction of the cost. Every `encodeIn` audited in 2026-07-30-c is already
+expressible in it (`[[], 1^|N|, encodeCnf N]`, `[[], encSyms (flattenTM M),
+encSyms s, 1^maxSize, 1^steps]`, `encX x ++ [1^size x]`). ⚠ The DSL must bottom
+out in per-type `Serialize`, or the dishonesty simply relocates into the
+serializer.
+
+**Estimated cost:** 1 probe session + ~2–3 build sessions. Blast radius is
+`frontProgram`, `ComputesBy`/`toFrameworkWitness'`, and two structure
+definitions — **not** a rewrite of the 16K LOC of `_run` lemmas.
+
+**What this does NOT buy — say so plainly in the docs when it lands.** It
+converts a *per-witness* reading obligation into a *one-time* one; it does not
+reach zero, and no prover does. Still definitional, read once, at the statement:
+is `FlatTM`/`stepFlatTM` a faithful Turing machine; is `Op.cost` a faithful
+proxy for time (this project has already found one real bug of that kind — unit
+cost was unfaithful because `concat`/`copy` grow the state multiplicatively); is
+`Serialize cnf` a faithful encoding of CNFs beyond `dec_enc`; does `SAT` mean
+satisfiability. **The win is real and worth stating exactly: the audit goes from
+O(witnesses, forever) to O(1), read once, at the theorem statement — which is
+where every formalization's irreducible trust lives.**
+
+### 2. Audit whatever the bottom-up stream lands (S5 is STANDING until item 1 lands)
+
+The recipe, short thanks to FINDING AK. **This is the interim discipline** — it
+is what item 1 exists to make unnecessary, so if item 1's probe comes back GO,
+prefer landing item 1 over accumulating verdicts here.
+
    * if the new witness **extends the chain at the head**, its `encodeIn` is the
      composite's — audit it against the criterion: every register is a fixed
      constant, a mechanical serialization of an input field, or a *metric* of
@@ -97,8 +219,9 @@ what the theorem means.
      `polyCertRel` (which is machine-checked non-vacuity — do not re-derive it);
    * add a numbered verdict row to ROADMAP **S5** and, if it is `rfl`-checkable,
      a section to `probes/HonestyAuditProbe.lean`.
-2. **⚠ OWNER ACTION — gate the soundness instruments in CI (5 minutes, high
-   value).** `lake build` alone does **not** notice a `sorry`, and nothing runs
+### 3. ⚠ OWNER ACTION — gate the soundness instruments in CI (5 min, high value)
+
+   `lake build` alone does **not** notice a `sorry`, and nothing runs
    the axiom sweep; "0 sorries" is a snapshot, not an invariant. This was
    written and verified locally in the 2026-07-30-c session but **could not be
    pushed** — the agent's token has no `workflow` scope, so GitHub rejects any
@@ -131,26 +254,34 @@ what the theorem means.
    All three probes are ~5 s each after the build. Verified green locally
    2026-07-30-c. Until this lands, the "CI-gated (4)" note in the probe
    regression list below is **aspirational** — run them by hand.
-3. **Probe-suite consolidation + `probes/README.md`.** 47 probe files, no index,
+### 4. Probe-suite consolidation + `probes/README.md`
+
+   47 probe files, no index,
    runtimes from 4 s to ~6 min, and a reader cannot tell which are regression
    gates and which were one-shot go/no-go scoping. Concretely: write the index
    (what each pins · runtime · "re-run after changing X"), mark the four
    CI-gated ones, and retire `probes/S1CardEmitProbe.lean` §1 (superseded —
    `S1StepLoopProbe` §1 asserts the full equality where §1 asserts a prefix).
    Cheap, and it is what makes the regression list below maintainable.
-4. **Decide the residual `⪯p` API.** The exact list of retained-but-unused
+### 5. Decide the residual `⪯p` API
+
+   The exact list of retained-but-unused
    declarations is recorded in ROADMAP (under the S5 verdicts) with the reason
    they were kept: `⪯p` is not wrong, it is weak, and `⪯p'` is defined as a
    strengthening of it. If the owner wants them gone it is **one self-contained
    commit** (nine wrapper theorems → the `NP.lean` block → the three bridges) and
    a full rebuild. **Do not mix it with anything else, and do not re-litigate it
    without an owner decision.**
-5. **Repo hygiene, ~1 hour total.** `.mcp.json.bak` is checked in; `Basic.lean`
+### 6. Repo hygiene (~1 hour total)
+
+   `.mcp.json.bak` is checked in; `Basic.lean`
    (`one_plus_one_is_two`) and `Main.lean` ("Hello, World!") are lakefile
    scaffolding with no role; `coqdoc/` is a 36K-file mirror of the Coq port whose
    only consumer is a human reading it — decide keep-as-reference vs. trim to the
    files actually cited.
-6. **Owner question worth asking once:** is `NPcomplete''` the statement to
+### 7. Owner question worth asking once
+
+   is `NPcomplete''` the statement to
    publish as-is, or do we also want the result restated in more standard
    vocabulary (a `NPhard''`-based corollary)? This is a presentation decision,
    not a proof one, and it is the last thing between the repo and a reader who
@@ -162,6 +293,13 @@ what the theorem means.
 single defect.** There is no gadget the critical path is waiting on, and nothing
 in item 1 of the top-down list is currently open. Bottom-up work is therefore
 **scope extension**, and it is a well-templated multi-session programme.
+
+⚠ **Check the top-down stream before you start.** Top-down item 1 (canonical
+`Serialize` at the two chain ends) would change `ComputesBy`, `NPhard''`'s
+hypothesis and the front witness. If its probe has not run yet, **run that probe
+first** — building two more witnesses against a structure that is about to change
+means migrating them afterwards. If the probe came back NO-GO, or item 1 has
+already landed, proceed here without further thought.
 
 **Honest NP-completeness for `kSAT 3` and `FlatClique`.** Both were previously
 "proven" only in the vacuous legacy sense, and those theorems are now *deleted* —
@@ -234,12 +372,22 @@ with `workflow` push scope. Until then, **run all four by hand before pushing.**
   ~3 min (the emitter appends cell by cell, so interpreting it is quadratic —
   keep every new probe instance at `σ ≤ 1`).
 
-**Recommendation: run a BOTTOM-UP session next.** The critical path is finished,
-the audit found nothing, and the legacy code is gone — so top-down has no
-soundness question left to answer and its remaining items are hygiene. The only
-work that adds *result* is the scope extension above, and item 1 (FlatClique
-membership) is the cheapest well-templated win in the repository. Come back
-top-down when it lands, to audit the new tail and refresh the docs.
+**Recommendation: run a TOP-DOWN session next, and spend it on the item 1
+PROBE — nothing else.** The reasoning is build-order, not value: the honest
+theorem is proven and audited, so neither stream is blocked, but item 1 would
+change `ComputesBy`, `NPhard''`'s hypothesis and the front witness. Building the
+two new bottom-up witnesses first means migrating them afterwards; running the
+probe first costs one session and its verdict tells both streams which structure
+to build against. That is exactly "probe before committing engineering".
+
+Then:
+* **probe GO** → land item 1 (~2–3 sessions), then bottom-up against the new
+  structure, and S5 stops being a standing obligation;
+* **probe NO-GO on step 3** (the hypothesis-side strengthening narrows
+  `NPhard''`) → take the layout-DSL fallback, or park item 1 with a written
+  verdict and go bottom-up — do **not** narrow the headline to buy tidiness;
+* **either way** → the cheapest well-templated win in the repository is still
+  bottom-up item 1, FlatClique membership.
 
 ## The S1 register frame — PINNED
 
