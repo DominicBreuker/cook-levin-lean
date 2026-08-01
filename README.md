@@ -2,7 +2,7 @@
 
 A Lean 4 formalisation targeting the **Cook–Levin theorem** (SAT is
 NP-complete), structured as a port of the Coq development by Forster, Kunze,
-Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
+Roth et al. (<https://github.com/uds-psl/cook-levin>).
 
 **The theorem is proven, on the honest statement, unconditionally
 (2026-07-30-b), audited (2026-07-30-c), stated in a form with no dishonest
@@ -199,7 +199,7 @@ working.
 | `#print axioms CookLevinHonest.CookLevin''_of_decodesAssgn` | **`[propext, Classical.choice, Quot.sound]`** — **the WHOLE of Cook–Levin, on the honest statement, reduced to ONE register equation** (2026-07-30; the equation was discharged 2026-07-30-b, and this program-generic form is kept as the interface a different decoder plugs into). `NPcomplete'' SAT` follows from `∀ N c, State.get (certDecode.eval (satEIn (N,c))) ASSGN = encodeAssgn (decodeBits c)` — a `_run` lemma about an 11-op program. The hardness half (`FrontS1Comp.SAT_NPhard''`) is already unconditional; the membership half (`Complexity/Complexity/Deciders/EvalCnfSplit.lean`, sorry-free) supplies the split layout (`satEncX`/`satEIn`, `xWidth = 3`), the certificate relation and its polynomial bound (`satRel_correct : polyCertRel SAT satRel`), the decoder's cost (`by decide` through `Cmd.chk`) and frame, the frame half of the bridge (free, from `Cmd.writes`), and all four composite `DecidesLang` bounds. Three findings: the `InNPWitnessLangFreeSplit` split law is **not** a layout obstruction (`precomposeFree` chooses the composite's `encodeIn`, and `State.get` reads unset registers as `[]`, so the eight trailing scratch `[]`s of `EvalCnfCmd.encodeState` are invisible and the entire gap is one register); a re-encoder whose scratch sits **above** the target verifier's `regBound` owes no scrub; and the certificate must be the **characteristic vector** (total on every bit string — `InNPWitnessLangFreeSplit` puts certificates in `certState`, so a sentinel-unary format would need a partial parse and a normaliser). Probe: `probes/SATSplitProbe.lean` (9 checks incl. the loop invariant at every prefix length, garbage/short/over-long certificates, and end-to-end acceptance). |
 | Genuine `sorry`s in built code | **0** (2026-07-30-c). The last five were all on the legacy `⪯p` path and were **deleted with it**, not proved: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, and 3× `MultiToSingle` (dead code). None was ever on the `NPhard''` path. `lake build` emits no `declaration uses 'sorry'`, and no endpoint in `probes/AxiomProbe.lean` (59 of them) prints `sorryAx`. |
 | `sorry`-**free** but **vacuous** defs on the proof path | **none.** S1 (the if-on-the-answer tableau map) and S2 (the dummy `bridgeMachine` bridges) were the two that were invisible to `#print axioms`; both files are **deleted** (2026-07-30-c). The third member, the size-0 hardness reduction, was closed by Part 0.1 (2026-07-04). |
-| Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked and **permanently retired** — see `parked/README.md`) |
+| Proof-path size | ~16K LOC under `CookLevin/`. A further ~15K LOC of hand-rolled pre-pivot `FlatTM` work was parked in July, permanently retired on 2026-07-30-c and **deleted on 2026-08-03** — it is in git history, and the methodology argument it was evidence for is in the ROADMAP |
 | Estimated work remaining | **none on the stated goal.** The theorem is proven, unconditional, audited and `sorry`-free. Further work is *scope extension* (honest NP-completeness for `kSAT 3` / `FlatClique`) or *hygiene* — see [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md). |
 
 > **The `sorry` count is not the soundness metric — and this project is the
@@ -302,7 +302,7 @@ witnesses. The two chain ends are pinned (tail: `Serialize cnf`; head: the
 ## The strategy: a higher-level computable layer
 
 Building verifiers/reductions directly as `FlatTM`s overran budget ~10× and was
-abandoned (parked under `parked/`, ~15K LOC). The pivot: a small structured
+abandoned (~15K LOC, deleted 2026-08-03; see git history). The pivot: a small structured
 while-language `Cmd`/`Op` with explicit **cost** semantics, compiled **once** to
 `FlatTM` (`Compile`). Every downstream verifier/reduction is then a short DSL
 program. This is the Lean analogue of the L-calculus the Coq port uses — and,
@@ -408,9 +408,12 @@ CookLevin/
 │           ├── Reductions/          -- the free-line witnesses, the S1 program, the five seams
 │           └── Subproblems/         -- FlatTCC / FlatCC / BinaryCC / SingleTMGenNP
 probes/                              -- #eval/decide risk checks (AxiomProbe, HonestyAuditProbe, …)
-parked/                              -- hand-rolled pre-pivot work (~15K LOC, PERMANENTLY RETIRED, not built)
-coqdoc/                              -- local mirror of the Coq port
 ```
+
+`CookLevin/` is the whole build. There is no second `lean_lib` root and no
+executable target: `Complexity` transitively imports every module, which is what
+makes the whole-library axiom sweep at the bottom of `Complexity.lean` a sweep of
+the *whole library*.
 
 ## Building
 
@@ -421,9 +424,10 @@ export PATH="$HOME/.elan/bin:$PATH"
 lake build
 ```
 
-First build from a clean checkout is slow (mathlib cache). Lake's `lean_lib`
-root is `CookLevin/`, so `parked/` is not built. Axiom check (lean-lsp's LSP
-cannot find `lake`, so use a scratch file):
+First build from a clean checkout is slow (mathlib cache; a cold build is
+~15 min, `Reductions/S1Witness.lean` alone ~11 min). Axiom check — the build
+already gates this, so use it only to *inspect* a name (lean-lsp's LSP cannot
+find `lake`, so use a scratch file):
 
 ```
 env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axioms <name>`
@@ -457,6 +461,6 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 
 ## References
 
-- Coq source: <https://github.com/uds-psl/cook-levin>; mirror `coqdoc/`.
+- Coq source: <https://github.com/uds-psl/cook-levin>.
 - Roadmap / plan / Risk register: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
-- Parked work: [`parked/README.md`](parked/README.md).
+- Working plan for the next session: [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md).

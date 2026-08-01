@@ -58,7 +58,7 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 | `#print axioms Complexity.Lang.Cmd.chk_sound` | `[propext, Classical.choice, Quot.sound]` — **the cost ladder is CLOSED** (2026-07-29 designed, 2026-07-29-b landed; `Lang/CostGrow.lean`, sorry-free). ⚠ **FINDING Z**: a cost predicate with ONE cap cannot survive a `forBnd` (the body's outputs are re-capped at `poly(M)` each iteration → a **tower**). `Cmd.CapCost c F F'` uses **two** caps (frozen `MF`, global `N`): cost `≤ K·(MF+1)^D·(N+1)`, growth `≤ N + K·(MF+1)^D`, `F'` still `≤ MF + K·(MF+1)^D`. Cost linear in `N` pays for **FINDING X** for free; growth independent of `N` stops compounding. `Cmd.chk C c = (ok, C', B)` is ONE decidable forward pass; `Cmd.costLeSize_of_chk c F (by decide +kernel)` is the one-liner that closes `S1Witness.s1Program_costLeSize`. Three measured design constraints: **FINDING AA** register sets must be `Nat` bitmasks (`cPrelude.writes` is a 327411-element list; the `List Var` checker was quadratic in program size and never terminated) and `Nat.ldiff` is unusable in the kernel; **FINDING AB** the kernel's wall is *memory* — a two-traversals-per-loop version was OOM-killed at 15 GB, so each body is visited once and a second pass is paid only where the first is rejected; **FINDING AC** `C'`/`B` must be sound even when `ok` is false, because an enclosing loop's promotion is read from them and is what makes the rejected sub-command acceptable. What closed the last two loops (both in `S1StepLoop.scanSeen`) is flow sensitivity (`concat SSEEN SAX SSEEN` — `SAX` is capped by the straight-line prefix of the same body) plus the `NoGrow`-widened frozen set (`SCUR`'s bound is *idempotent*, so the 4-deep chain `SCUR → SKQ/SKT/SKV → SAX → SSEEN` is walked in ONE pass instead of four circular rounds of promotion). Measured: accepts the whole program, ~2 s `#eval` / ~3 min `decide +kernel` (`probes/S1GrowSafeProbe.lean`). |
 | Genuine `sorry`s (Group C) | **0** (2026-07-30-c). The last five were `red_inNP`'s `inTimePoly` half, `hasDeciderClassical` and 3× `MultiToSingle`; all were on the legacy `⪯p` path and were **deleted with it, not proved**. None was ever on the `NPhard''` path — the S1 cost obligation `S1Witness.s1Program_costLeSize` was the last one there and closed 2026-07-29-b. CI now fails on any new `declaration uses 'sorry'`. **`Simulators/CookTableau.lean`/`GuessTableau.lean` are fully `sorry`-free** — `cookTableau_correct`, `guessTableau_correct`, and **both size bounds** (`≤ (2·(n+1))^10`, 2026-07-24) all sorry-free & axiom-clean |
 | `sorry`-free **vacuous** defs (Group S) | **none** (2026-07-30-c). All three are gone: S1's if-on-the-answer map and S2's dummy bridges were deleted with the legacy front, and the size-0 hardness reduction was closed by Part 0.1. ⚠ This group existed *because* `#print axioms` cannot see it — the successor risk of the same kind is **S5** (encoding honesty), which is audited but standing. |
-| Proof-path size | ~16K LOC under `CookLevin/`; ~15K parked |
+| Proof-path size | ~16K LOC under `CookLevin/`. The ~15K LOC of parked hand-rolled `FlatTM` work (retired 2026-07-30-c) was **deleted 2026-08-03**; git history keeps it, and the methodology argument it was evidence for is below. |
 | Remaining to a real proof | **none.** The honest theorem is proven, audited and `sorry`-free. Remaining work is scope extension and hygiene — see [`HANDOFF.md`](HANDOFF.md). |
 
 > **The `sorry` count is not the soundness metric.** Closing every `sorry`
@@ -541,8 +541,8 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
      O(n⁸)`), witness `fsatSAT_reductionLang`, and the third live seam
      (`Reductions/FSAT_to_SAT_comp.lean`) — **the whole sound tail is ONE
      live chain `flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT`**.
-     `map`-over-lists gates parts (near-complete draft at
-     `parked/MapNatList_WIP.lean`).
+     `map`-over-lists gates parts (a near-complete draft existed in the
+     parked subtree, deleted 2026-08-03 — git history).
    - **✅ SETTLED (2026-07-02): the migrated `NPhard'` transport.** There is
      deliberately **no generic `⪯p'`-transitivity**; the answer is
      `PolyTimeComputableLang.SeamData`/`comp` (fully proven, `PolyTime.lean`):
@@ -727,12 +727,16 @@ continuing projected Parts 2–6 at ~100–150K LOC. The lessons:
 
 The Coq port avoids the blow-up by extracting TMs from the L-calculus; the layer
 is the Lean analogue (a total structured while-language vs a general
-λ-calculus). Parked hand-rolled work (~15K LOC) lives under `parked/`.
+λ-calculus). The measured evidence: ~15K LOC of hand-rolled `FlatTM` work got a
+fraction of the way, against ~16K LOC on the layer that finished the whole
+theorem. That subtree was retired 2026-07-30-c and deleted 2026-08-03 — it is in
+git history, and its `FlatTM` run lemmas were in any case stale (several *false*)
+against the append-only-at-the-frontier tape of 2026-07-17.
 
 ---
 
 ## References
 
-- Coq source: <https://github.com/uds-psl/cook-levin>; local mirror `coqdoc/`.
+- Coq source: <https://github.com/uds-psl/cook-levin>.
 - Status / orientation: root [`README.md`](../README.md).
-- Parked work: `parked/README.md`, `parked/PART2.md`.
+- Working plan for the next session: [`HANDOFF.md`](HANDOFF.md).
