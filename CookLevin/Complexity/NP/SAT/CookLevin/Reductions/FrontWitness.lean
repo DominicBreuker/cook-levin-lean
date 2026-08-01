@@ -16,19 +16,25 @@ consumes them as black boxes and produces the honest reduction witness
 and, wrapping it with `fQ_correct`, the endpoint reduction
 `Q ⪯p' FlatSingleTMGenNP`.
 
-## The settled design (HANDOFF C8-4, finding 2026-07-20-c — Option A)
+## The settled design (2026-08-02 — the input encoding is `encX`, full stop)
 
-The budget registers must dominate `size x`-bounds, so the F6 monomial argument
-must be `encodable.size x`, materialized from a **unary size register** in the
-input:
-
-* **`encodeIn x := W.encX x ++ [1^(encodable.size x)]`** (size register at index
-  `W.xWidth`). This is honest — a poly-time reduction may read its own input's
-  size — and local to `W_Q` (the frozen C8-0 interface is untouched).
-* **`Mmax`/`Mstep`** are the F6 overshoot monomials as functions of
-  `encodable.size x`, with constants extracted classically from
-  `maxSizeOf_poly`/`stepsOf_poly` via the global monomial bound
-  `inOPoly_monomial_bound`.
+* **`encodeIn x := W.encX x`.** Nothing appended, nothing rearranged. This is
+  the whole point of the top-down honesty programme at the head of the chain:
+  by FINDING AK the composite's `ComputesBy.encode` *is* this function, so
+  after this change there is no head-side encoding to audit at all — and under
+  `NPhardStr` it is literally `certState`, the raw input string.
+  ⚠ Until 2026-08-02 it was `W.encX x ++ [1^(encodable.size x)]`: the reduction
+  was **handed** its input's size because the 2026-07-20-c finding showed the
+  on-machine tally had no provable lower bound to `encodable.size x`. The
+  `sizeLB` field of `InNPWitnessLangFreeSplit` supplies that bound, so the
+  register is gone and `FrontPieces.tallyCells` counts the cells instead.
+* **`Mmax`/`Mstep`** are F6 overshoot monomials in the **tally**
+  `State.size (W.encX x)`, not in `encodable.size x`. Their constants come from
+  `inOPoly_monomial_bound` applied **twice**: once to `maxSizeOf`/`stepsOf`
+  (monomials in `size x`), then to that monomial composed with `W.sizeLB`
+  (monomials in the tally). `inOPoly_comp` needs no monotonicity, and the
+  intermediate monomial is monotone, which is what makes the two-step chain go
+  through — see `front_reducesPolyMO'`.
 * **`decodeOut`** reads the machine as the per-`Q` CONSTANT `M_Q` (honest: reg 1
   genuinely holds `encSyms (flattenTM M_Q)`), reg 2 through the `encSyms` inverse
   `decodeSyms` (a genuine left inverse — no `Classical`), and regs 3/4 by length.
@@ -78,6 +84,24 @@ theorem map_range_get (l : State) :
 /-- `State.size (w :: s) = |w| + State.size s`. -/
 private theorem size_cons (w : List Nat) (s : State) :
     State.size (w :: s) = w.length + State.size s := rfl
+
+/-- `State.size` is the sum of the register lengths. -/
+theorem size_eq_sum_lengths (l : State) : State.size l = (l.map List.length).sum := by
+  induction l with
+  | nil => rfl
+  | cons a t ih => rw [size_cons, ih, List.map_cons, List.sum_cons]
+
+/-- **What `tallyCells` computes on a state of exactly `l.length` registers**:
+summing the lengths of registers `0 … l.length-1` gives `State.size l`. This is
+the arithmetic that lets the front program count its own input's cells instead
+of being handed the count. -/
+theorem sum_range_get_length (l : State) :
+    ((List.range l.length).map (fun i => (State.get l i).length)).sum = State.size l :=
+  calc ((List.range l.length).map (fun i => (State.get l i).length)).sum
+      = (((List.range l.length).map (State.get l)).map List.length).sum := by
+        rw [List.map_map]; rfl
+    _ = (l.map List.length).sum := by rw [map_range_get l]
+    _ = State.size l := (size_eq_sum_lengths l).symm
 
 /-- `State.size` of an appended single register. -/
 theorem size_append_one (l : State) (v : List Nat) :
@@ -244,14 +268,38 @@ theorem unaryMonomial_usesBelow {c K d : Nat} {cnt base tmp src dst k : Var}
   refine appendConst_usesBelow ⟨⟨hb, hsr⟩, hb, emitConst_usesBelow hd,
     powLoop_usesBelow K hc hb ht hd⟩ hd
 
-/-- **`frontProgram` touches only registers `< B + 9`** (the witness's
-`regBound`). -/
+theorem tallyReg_usesBelow {cnt src dst : Var} {k : Nat}
+    (hc : cnt < k) (hs : src < k) (hd : dst < k) :
+    Cmd.UsesBelow (tallyReg cnt src dst) k := ⟨hc, hs, hd⟩
+
+theorem tallyCells_usesBelow {cnt dst : Var} {srcs : List Var} {k : Nat}
+    (hc : cnt < k) (hd : dst < k) (hsrcs : ∀ src ∈ srcs, src < k) :
+    Cmd.UsesBelow (tallyCells cnt dst srcs) k := by
+  unfold tallyCells
+  suffices h : ∀ (l : List Var) (c0 : Cmd), Cmd.UsesBelow c0 k → (∀ src ∈ l, src < k) →
+      Cmd.UsesBelow (l.foldl (fun c src => c ;; tallyReg cnt src dst) c0) k by
+    exact h srcs _ hd hsrcs
+  intro l
+  induction l with
+  | nil => intro c0 hc0 _; exact hc0
+  | cons src rest ih =>
+      intro c0 hc0 hmem
+      exact ih _ ⟨hc0, tallyReg_usesBelow hc (hmem src (List.mem_cons_self ..)) hd⟩
+        (fun s hs' => hmem s (List.mem_cons_of_mem _ hs'))
+
+/-- **`frontProgram` touches only registers `< B + 10`** (the witness's
+`regBound`; `B+9` is the on-machine tally added 2026-08-02). -/
 theorem frontProgram_usesBelow (MQconst : List Nat) (xWidth B : Nat)
     (cm km dm cs ks ds : Nat) (hB : 5 ≤ B) (hxW : xWidth < B) :
-    Cmd.UsesBelow (frontProgram MQconst xWidth B cm km dm cs ks ds) (B + 9) := by
+    Cmd.UsesBelow (frontProgram MQconst xWidth B cm km dm cs ks ds) (B + 10) := by
   -- ⚠ `Var` is an `abbrev` for `Nat` that `omega` does NOT see through; every
   -- register goal `x < k` must be `change (_ : Nat) < _`-retyped before `omega`.
-  have he : Cmd.UsesBelow (emitRegs (B + 4) (B + 5) (B + 6) B (List.range xWidth)) (B + 9) := by
+  have ht : Cmd.UsesBelow (tallyCells (B + 4) (B + 9) (List.range xWidth)) (B + 10) := by
+    refine tallyCells_usesBelow ?_ ?_ ?_
+    · change (_ : Nat) < _; omega
+    · change (_ : Nat) < _; omega
+    · intro src hsrc; have := List.mem_range.mp hsrc; change (_ : Nat) < _; omega
+  have he : Cmd.UsesBelow (emitRegs (B + 4) (B + 5) (B + 6) B (List.range xWidth)) (B + 10) := by
     refine emitRegs_usesBelow ?_ ?_ ?_ ?_ ?_
     · change (_ : Nat) < _; omega
     · change (_ : Nat) < _; omega
@@ -259,15 +307,15 @@ theorem frontProgram_usesBelow (MQconst : List Nat) (xWidth B : Nat)
     · change (_ : Nat) < _; omega
     · intro src hsrc; have := List.mem_range.mp hsrc; change (_ : Nat) < _; omega
   have hm1 : Cmd.UsesBelow
-      (unaryMonomial cm km dm (B + 4) (B + 7) (B + 8) xWidth (B + 1)) (B + 9) := by
+      (unaryMonomial cm km dm (B + 4) (B + 7) (B + 8) (B + 9) (B + 1)) (B + 10) := by
     refine unaryMonomial_usesBelow ?_ ?_ ?_ ?_ ?_ <;> · change (_ : Nat) < _; omega
   have hm2 : Cmd.UsesBelow
-      (unaryMonomial cs ks ds (B + 4) (B + 7) (B + 8) xWidth (B + 2)) (B + 9) := by
+      (unaryMonomial cs ks ds (B + 4) (B + 7) (B + 8) (B + 9) (B + 2)) (B + 10) := by
     refine unaryMonomial_usesBelow ?_ ?_ ?_ ?_ ?_ <;> · change (_ : Nat) < _; omega
-  have hec : Cmd.UsesBelow (emitConst (B + 3) MQconst) (B + 9) := by
+  have hec : Cmd.UsesBelow (emitConst (B + 3) MQconst) (B + 10) := by
     refine emitConst_usesBelow ?_; change (_ : Nat) < _; omega
   unfold frontProgram
-  refine ⟨he, hm1, hm2, hec, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ⟨?_, ?_⟩⟩ <;>
+  refine ⟨ht, he, hm1, hm2, hec, ?_, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ⟨?_, ?_⟩, ⟨?_, ?_⟩⟩ <;>
     · change (_ : Nat) < _; omega
 
 /-! ## The per-`Q` reduction witness `W_Q`
@@ -284,10 +332,13 @@ theorem get_mem {l : State} {i : Nat} (h : i < l.length) : State.get l i ∈ l :
   rw [List.getElem?_eq_getElem h]
   exact List.getElem_mem h
 
-/-- **The reduction's input layout** (Option A): the honest input part `encX x`
-followed by the unary size register `1^(size x)` at index `xWidth`. -/
-def encodeInQ (W : InNPWitnessLangFreeSplit Q) (x : X) : State :=
-  W.encX x ++ [List.replicate (encodable.size x) 1]
+/-- **The reduction's input layout: `encX`, and nothing else** (2026-08-02).
+By FINDING AK this function *is* the composite reduction's `ComputesBy.encode`,
+so keeping it equal to the hypothesis's own input layout is the entire head-side
+honesty story — under `NPhardStr` it is `certState`, the raw input string.
+The unary size register this used to append is now computed on-machine by
+`FrontPieces.tallyCells` (see `FrontProgram`). -/
+def encodeInQ (W : InNPWitnessLangFreeSplit Q) (x : X) : State := W.encX x
 
 /-- The per-`Q` front machine (a constant). -/
 def MmachineQ (W : InNPWitnessLangFreeSplit Q) : flatTM :=
@@ -300,9 +351,13 @@ def MconstQ (W : InNPWitnessLangFreeSplit Q) : List Nat :=
 /-- The scratch base: high enough for both the head layout and the input. -/
 def BwidthQ (W : InNPWitnessLangFreeSplit Q) : Nat := max headRegBound (W.xWidth + 1)
 
-/-- The F6 overshoot monomials as functions of `encodable.size x`. -/
-def MmaxF (cm km dm : Nat) (x : X) : Nat := cm * (encodable.size x + 1) ^ km + dm
-def MstepF (cs ks ds : Nat) (x : X) : Nat := cs * (encodable.size x + 1) ^ ks + ds
+/-- The F6 overshoot monomials, as functions of the **on-machine tally**
+`State.size (W.encX x)` — the quantity the program can actually count. Their
+constants are extracted through `W.sizeLB` in `front_reducesPolyMO'`. -/
+def MmaxF (W : InNPWitnessLangFreeSplit Q) (cm km dm : Nat) (x : X) : Nat :=
+  cm * (State.size (W.encX x) + 1) ^ km + dm
+def MstepF (W : InNPWitnessLangFreeSplit Q) (cs ks ds : Nat) (x : X) : Nat :=
+  cs * (State.size (W.encX x) + 1) ^ ks + ds
 
 /-- **The reduction's output decoder.** The machine is the per-`Q` constant
 `M_Q` (honest: reg 1 genuinely holds `encSyms (flattenTM M_Q)`); reg 2 through the
@@ -323,23 +378,19 @@ theorem BwidthQ_ge5 (W : InNPWitnessLangFreeSplit Q) : 5 ≤ BwidthQ W := by
 theorem xWidth_lt_BwidthQ (W : InNPWitnessLangFreeSplit Q) : W.xWidth < BwidthQ W :=
   Nat.lt_of_lt_of_le (Nat.lt_succ_self _) (le_max_right _ _)
 
-/-- The size register reads `1^(size x)` at index `xWidth`. -/
-theorem encodeInQ_size_reg (W : InNPWitnessLangFreeSplit Q) (x : X) :
-    State.get (encodeInQ W x) W.xWidth = List.replicate (encodable.size x) 1 := by
-  unfold encodeInQ
+/-- **What the on-machine tally computes**: summing the lengths of the input
+registers gives `State.size (encX x)` — the monomial argument. This is the
+`frontProgram_run` hypothesis that replaced the handed-over size register. -/
+theorem encodeInQ_tally (W : InNPWitnessLangFreeSplit Q) (x : X) :
+    ((List.range W.xWidth).map (fun src => (State.get (encodeInQ W x) src).length)).sum
+      = State.size (W.encX x) := by
+  show ((List.range W.xWidth).map (fun src => (State.get (W.encX x) src).length)).sum = _
   rw [← W.encX_width x]
-  exact get_append_last (W.encX x) _
+  exact sum_range_get_length (W.encX x)
 
 /-- The input encoding is bit-level. -/
 theorem encodeInQ_bit (W : InNPWitnessLangFreeSplit Q) (x : X) :
-    Compile.BitState (encodeInQ W x) := by
-  intro reg hreg y hy
-  unfold encodeInQ at hreg
-  rw [List.mem_append] at hreg
-  rcases hreg with h | h
-  · exact encX_bit W x reg h y hy
-  · rw [List.mem_singleton] at h; subst h
-    have := List.eq_of_mem_replicate hy; omega
+    Compile.BitState (encodeInQ W x) := encX_bit W x
 
 /-- The `frontProgram_run` bit hypothesis for the input registers. -/
 theorem encodeInQ_bits (W : InNPWitnessLangFreeSplit Q) (x : X) :
@@ -347,9 +398,6 @@ theorem encodeInQ_bits (W : InNPWitnessLangFreeSplit Q) (x : X) :
   intro src hsrc y hy
   have hlt : src < W.xWidth := List.mem_range.mp hsrc
   have hsrc' : src < (W.encX x).length := by rw [W.encX_width x]; exact hlt
-  have heq : State.get (encodeInQ W x) src = State.get (W.encX x) src := by
-    unfold encodeInQ; exact get_append_lt hsrc'
-  rw [heq] at hy
   exact encX_bit W x _ (get_mem hsrc') y hy
 
 /-- **`computes`** — the decoded output is `fQ x`. Consumes `frontProgram_run`
@@ -357,39 +405,29 @@ theorem encodeInQ_bits (W : InNPWitnessLangFreeSplit Q) (x : X) :
 enumeration `map_range_get`. -/
 theorem computesQ (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) (x : X) :
     decodeOutQ W ((cQ W cm km dm cs ks ds).eval (encodeInQ W x))
-      = fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x := by
+      = fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x := by
   obtain ⟨_h0, _h1, h2, h3, h4⟩ :=
     FrontProgram.frontProgram_run (MconstQ W) W.xWidth (BwidthQ W) cm km dm cs ks ds
-      (encodeInQ W x) (encodable.size x) (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
-      (fun v hv => encSyms_bit _ v hv) (encodeInQ_size_reg W x) (encodeInQ_bits W x)
+      (encodeInQ W x) (State.size (W.encX x)) (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
+      (fun v hv => encSyms_bit _ v hv) (encodeInQ_tally W x) (encodeInQ_bits W x)
   -- reg 2's source enumeration recovers `encX x`
   have hmap : (List.range W.xWidth).map (State.get (encodeInQ W x)) = W.encX x := by
-    have hcong : (List.range W.xWidth).map (State.get (encodeInQ W x))
-        = (List.range W.xWidth).map (State.get (W.encX x)) := by
-      apply List.map_congr_left
-      intro i hi
-      have hlt : i < (W.encX x).length := by rw [W.encX_width x]; exact List.mem_range.mp hi
-      unfold encodeInQ; exact get_append_lt hlt
-    rw [hcong, ← W.encX_width x, map_range_get]
+    show (List.range W.xWidth).map (State.get (W.encX x)) = _
+    rw [← W.encX_width x, map_range_get]
   unfold decodeOutQ fQ MmaxF MstepF cQ MmachineQ
   rw [h2, h3, h4, hmap, decodeSyms_encSyms, List.length_replicate, List.length_replicate]
 
-/-- **`encodeIn_size`** — the input layout size is `≤ dBound n + n` (the input
-part plus the unary size register). -/
+/-- **`encodeIn_size`** — the input layout is the hypothesis's own, so its size
+bound is the hypothesis's own (`encX_size`), with nothing added. -/
 theorem encodeInQ_size_le (W : InNPWitnessLangFreeSplit Q) (x : X) :
-    State.size (encodeInQ W x) ≤ W.dBound (encodable.size x) + encodable.size x := by
-  unfold encodeInQ
-  rw [size_append_one, List.length_replicate]
-  have := W.encX_size x
-  omega
+    State.size (encodeInQ W x) ≤ W.dBound (encodable.size x) := W.encX_size x
 
-/-- **`width_le`** — the input occupies `xWidth + 1` registers, within the frame. -/
+/-- **`width_le`** — the input occupies `xWidth` registers, within the frame. -/
 theorem encodeInQ_width (W : InNPWitnessLangFreeSplit Q) (x : X) :
-    (encodeInQ W x).length ≤ BwidthQ W + 9 := by
-  unfold encodeInQ
-  rw [List.length_append, W.encX_width x]
+    (encodeInQ W x).length ≤ BwidthQ W + 10 := by
+  show (W.encX x).length ≤ _
+  rw [W.encX_width x]
   have := xWidth_lt_BwidthQ W
-  simp only [List.length_cons, List.length_nil]
   omega
 
 /-- **`decode_agree`** — padding the input by empty registers past the frame
@@ -400,11 +438,11 @@ theorem decodeOutQ_agree (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : N
       = decodeOutQ W ((cQ W cm km dm cs ks ds).eval (encodeInQ W x)) := by
   have hub := frontProgram_usesBelow (MconstQ W) W.xWidth (BwidthQ W) cm km dm cs ks ds
     (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
-  have hagree : AgreeBelow (BwidthQ W + 9) (encodeInQ W x ++ List.replicate m []) (encodeInQ W x) :=
+  have hagree : AgreeBelow (BwidthQ W + 10) (encodeInQ W x ++ List.replicate m []) (encodeInQ W x) :=
     fun r _ => State.get_append_replicate_nil (encodeInQ W x) m r
-  have hR := fun r (hr : r < BwidthQ W + 9) =>
+  have hR := fun r (hr : r < BwidthQ W + 10) =>
     Cmd.eval_agree (frontProgram (MconstQ W) W.xWidth (BwidthQ W) cm km dm cs ks ds)
-      (BwidthQ W + 9) hub hagree r hr
+      (BwidthQ W + 10) hub hagree r hr
   unfold decodeOutQ cQ
   rw [hR 2 (by omega), hR 3 (by omega), hR 4 (by omega)]
 
@@ -465,6 +503,17 @@ theorem emitRegCost_comp_poly {g : Nat → Nat} (hg : inOPoly g) :
   exact inOPoly_add (inOPoly_add (inOPoly_const 8) (inOPoly_mul (inOPoly_const 13) hg))
     (inOPoly_mul (inOPoly_const 2) (inOPoly_mul hg hg))
 
+/-- `tallyRegCost` is monotonic in the register length. -/
+theorem tallyRegCost_mono {a b : Nat} (h : a ≤ b) : tallyRegCost a ≤ tallyRegCost b := by
+  unfold tallyRegCost; gcongr
+
+/-- `fun n => tallyRegCost (g n)` is `inOPoly` when `g` is. -/
+theorem tallyRegCost_comp_poly {g : Nat → Nat} (hg : inOPoly g) :
+    inOPoly (fun n => tallyRegCost (g n)) := by
+  unfold tallyRegCost
+  exact inOPoly_add (inOPoly_add (inOPoly_const 2) (inOPoly_mul hg (inOPoly_const 5)))
+    (inOPoly_mul hg hg)
+
 /-- `encodable.size` of a `List Nat` with cells `≤ c` is `≤ (c+1)·|l|`. -/
 theorem list_nat_size_le (l : List Nat) (c : Nat) (h : ∀ v ∈ l, v ≤ c) :
     encodable.size l ≤ (c + 1) * l.length := by
@@ -512,13 +561,8 @@ theorem encodeRegs_cells_le {s : State} (h : Compile.BitState s) :
 /-- The reg-2 source enumeration recovers `encX x` (also used inside `computesQ`). -/
 theorem map_range_encX (W : InNPWitnessLangFreeSplit Q) (x : X) :
     (List.range W.xWidth).map (State.get (encodeInQ W x)) = W.encX x := by
-  have hcong : (List.range W.xWidth).map (State.get (encodeInQ W x))
-      = (List.range W.xWidth).map (State.get (W.encX x)) := by
-    apply List.map_congr_left
-    intro i hi
-    have hlt : i < (W.encX x).length := by rw [W.encX_width x]; exact List.mem_range.mp hi
-    unfold encodeInQ; exact get_append_lt hlt
-  rw [hcong, ← W.encX_width x, map_range_get]
+  show (List.range W.xWidth).map (State.get (W.encX x)) = _
+  rw [← W.encX_width x, map_range_get]
 
 /-! #### The closed-form monomial bounds `monoUB` / `monoLin` -/
 
@@ -561,27 +605,35 @@ theorem monoLin_mono (c k d : Nat) : monotonic (monoLin c k d) := by
 /-! #### The bound `costBoundQ` -/
 
 /-- **The per-`Q` cost/output bound.** A single polynomial dominating both the
-reduction program's cost and the front instance's output size. The `2·monoLin`
-terms cover the two copy costs *and* the two output budget monomials; the
-`10·(dBound n + n)` term covers the `s_x`/`encodeRegs` register lengths; the
-constant absorbs the machine constant, `|MQconst|`, and the additive slack. -/
+reduction program's cost and the front instance's output size. ⚠ Since
+2026-08-02 every monomial term is evaluated at `W.dBound n`, not at `n`: the
+budget registers are monomials in the **on-machine tally**
+`State.size (encX x) ≤ dBound n`, so the bound must be a polynomial in `n`
+*through* `dBound`. The `2·monoLin` terms cover the two copy costs *and* the two
+output budget monomials; the `tallyRegCost`/`emitRegCost` terms cover the two
+per-input-register loops; `10·dBound n` covers the `s_x`/`encodeRegs` register
+lengths; the constant absorbs the machine constant, `|MQconst|`, and slack. -/
 noncomputable def costBoundQ (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
     Nat → Nat := fun n =>
-    monoUB cm km dm n + monoUB cs ks ds n
-  + 2 * monoLin cm km dm n + 2 * monoLin cs ks ds n
-  + W.xWidth * emitRegCost (W.dBound n + n)
-  + 10 * (W.dBound n + n)
+    monoUB cm km dm (W.dBound n) + monoUB cs ks ds (W.dBound n)
+  + 2 * monoLin cm km dm (W.dBound n) + 2 * monoLin cs ks ds (W.dBound n)
+  + W.xWidth * emitRegCost (W.dBound n)
+  + W.xWidth * tallyRegCost (W.dBound n)
+  + 10 * W.dBound n
   + (encodable.size (MmachineQ W) + 3 * (MconstQ W).length + 5 * W.xWidth + 100)
 
 theorem costBoundQ_poly (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
     inOPoly (costBoundQ W cm km dm cs ks ds) := by
-  have hDn : inOPoly (fun n => W.dBound n + n) := inOPoly_add W.dBound_poly inOPoly_id
+  have hDn : inOPoly W.dBound := W.dBound_poly
+  have comp : ∀ {g : Nat → Nat}, inOPoly g → inOPoly (fun n => g (W.dBound n)) :=
+    fun hg => inOPoly_comp hDn hg
   unfold costBoundQ
   exact inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_add (inOPoly_add
-    (monoUB_poly cm km dm) (monoUB_poly cs ks ds))
-    (inOPoly_mul (inOPoly_const 2) (monoLin_poly cm km dm)))
-    (inOPoly_mul (inOPoly_const 2) (monoLin_poly cs ks ds)))
+    (inOPoly_add (comp (monoUB_poly cm km dm)) (comp (monoUB_poly cs ks ds)))
+    (inOPoly_mul (inOPoly_const 2) (comp (monoLin_poly cm km dm))))
+    (inOPoly_mul (inOPoly_const 2) (comp (monoLin_poly cs ks ds))))
     (inOPoly_mul (inOPoly_const W.xWidth) (emitRegCost_comp_poly hDn)))
+    (inOPoly_mul (inOPoly_const W.xWidth) (tallyRegCost_comp_poly hDn)))
     (inOPoly_mul (inOPoly_const 10) hDn))
     (inOPoly_const _)
 
@@ -589,12 +641,12 @@ theorem costBoundQ_mono (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Na
     monotonic (costBoundQ W cm km dm cs ks ds) := by
   intro x y h
   have hD : W.dBound x ≤ W.dBound y := W.dBound_mono x y h
-  have hm1 := monoUB_mono cm km dm x y h
-  have hm2 := monoUB_mono cs ks ds x y h
-  have hl1 := monoLin_mono cm km dm x y h
-  have hl2 := monoLin_mono cs ks ds x y h
-  have he : emitRegCost (W.dBound x + x) ≤ emitRegCost (W.dBound y + y) :=
-    emitRegCost_mono (by omega)
+  have hm1 := monoUB_mono cm km dm _ _ hD
+  have hm2 := monoUB_mono cs ks ds _ _ hD
+  have hl1 := monoLin_mono cm km dm _ _ hD
+  have hl2 := monoLin_mono cs ks ds _ _ hD
+  have he : emitRegCost (W.dBound x) ≤ emitRegCost (W.dBound y) := emitRegCost_mono hD
+  have ht : tallyRegCost (W.dBound x) ≤ tallyRegCost (W.dBound y) := tallyRegCost_mono hD
   unfold costBoundQ
   gcongr
 
@@ -604,45 +656,41 @@ theorem cQ_cost_le (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) (x
     (cQ W cm km dm cs ks ds).cost (encodeInQ W x)
       ≤ costBoundQ W cm km dm cs ks ds (encodable.size x) := by
   set n := encodable.size x with hn
-  -- distinctness facts for the emitRegs cost application
-  have hdist : ∀ src ∈ List.range W.xWidth,
-      (src : Var) ≠ BwidthQ W ∧ src ≠ BwidthQ W + 5 ∧ src ≠ BwidthQ W + 6 ∧ src ≠ BwidthQ W + 4 := by
-    intro src hsrc
-    have h1 : src < W.xWidth := List.mem_range.mp hsrc
-    have h2 : W.xWidth < BwidthQ W := xWidth_lt_BwidthQ W
-    exact ⟨by omega, by omega, by omega, by omega⟩
+  -- the tally value, and its bound by `dBound n`
+  set t := State.size (W.encX x) with ht
+  have htn : t ≤ W.dBound n := by rw [ht, hn]; exact W.encX_size x
   -- 1. the whole program cost, via frontProgram_cost_le
   have hfp := FrontProgram.frontProgram_cost_le (MconstQ W) W.xWidth (BwidthQ W) cm km dm cs ks ds
-    (encodeInQ W x) n (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
-    (fun y hy => encSyms_bit _ y hy) (encodeInQ_size_reg W x) (encodeInQ_bits W x)
-  -- 2. the emitRegs cost
-  have hemit := emitRegs_cost (BwidthQ W + 4) (BwidthQ W + 5) (BwidthQ W + 6) (BwidthQ W)
-    (List.range W.xWidth) (encodeInQ W x)
-    (by omega : (BwidthQ W + 5 : Var) ≠ BwidthQ W + 4) (by omega : (BwidthQ W + 5 : Var) ≠ BwidthQ W)
-    (by omega : (BwidthQ W + 5 : Var) ≠ BwidthQ W + 6) (by omega : (BwidthQ W : Var) ≠ BwidthQ W + 4)
-    (by omega : (BwidthQ W : Var) ≠ BwidthQ W + 6) hdist (encodeInQ_bits W x)
-  -- 3. bound the emitRegs sum: each term ≤ emitRegCost (State.size s), sum ≤ xWidth · that
-  have hsum : ((List.range W.xWidth).map
+    (encodeInQ W x) t (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
+    (fun y hy => encSyms_bit _ y hy) (encodeInQ_tally W x) (encodeInQ_bits W x)
+  -- 2. each per-register sum is ≤ xWidth · (the cost at the whole state size)
+  have hssize : State.size (encodeInQ W x) ≤ W.dBound n := encodeInQ_size_le W x
+  have hsumE : ((List.range W.xWidth).map
         (fun src => emitRegCost (State.get (encodeInQ W x) src).length)).sum
-      ≤ W.xWidth * emitRegCost (State.size (encodeInQ W x)) := by
+      ≤ W.xWidth * emitRegCost (W.dBound n) := by
     have hbd : ∀ y ∈ (List.range W.xWidth).map
           (fun src => emitRegCost (State.get (encodeInQ W x) src).length),
-        y ≤ emitRegCost (State.size (encodeInQ W x)) := by
+        y ≤ emitRegCost (W.dBound n) := by
       intro y hy
       rw [List.mem_map] at hy
       obtain ⟨src, _, rfl⟩ := hy
-      exact emitRegCost_mono (get_length_le_size _ _)
+      exact emitRegCost_mono (le_trans (get_length_le_size _ _) hssize)
     have := List.sum_le_card_nsmul _ _ hbd
     rw [List.length_map, List.length_range, smul_eq_mul] at this
     exact this
-  -- State.size of the input, bounded by dBound n + n
-  have hssize : State.size (encodeInQ W x) ≤ W.dBound n + n := encodeInQ_size_le W x
-  -- emitRegs cost ≤ 11 + xWidth · emitRegCost (dBound n + n)
-  have hemit' : (emitRegs (BwidthQ W + 4) (BwidthQ W + 5) (BwidthQ W + 6) (BwidthQ W)
-        (List.range W.xWidth)).cost (encodeInQ W x)
-      ≤ 11 + W.xWidth * emitRegCost (W.dBound n + n) := by
-    refine le_trans hemit (Nat.add_le_add_left (le_trans hsum ?_) 11)
-    exact Nat.mul_le_mul_left _ (emitRegCost_mono hssize)
+  have hsumT : ((List.range W.xWidth).map
+        (fun src => tallyRegCost (State.get (encodeInQ W x) src).length)).sum
+      ≤ W.xWidth * tallyRegCost (W.dBound n) := by
+    have hbd : ∀ y ∈ (List.range W.xWidth).map
+          (fun src => tallyRegCost (State.get (encodeInQ W x) src).length),
+        y ≤ tallyRegCost (W.dBound n) := by
+      intro y hy
+      rw [List.mem_map] at hy
+      obtain ⟨src, _, rfl⟩ := hy
+      exact tallyRegCost_mono (le_trans (get_length_le_size _ _) hssize)
+    have := List.sum_le_card_nsmul _ _ hbd
+    rw [List.length_map, List.length_range, smul_eq_mul] at this
+    exact this
   -- the s_x register-length bound
   have hsx : (encSyms (3 :: Compile.encodeRegs ((List.range W.xWidth).map (State.get (encodeInQ W x))))).length
       ≤ 5 * W.dBound n + 5 * W.xWidth + 5 := by
@@ -655,33 +703,35 @@ theorem cQ_cost_le (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) (x
       · have := encodeRegs_cells_le (encX_bit W x) v hv; omega
     have hlen := encSyms_length_le _ 3 hcells
     rw [List.length_cons, Compile.encodeRegs_length] at hlen
-    have hsz : State.size (W.encX x) ≤ W.dBound n := by rw [hn]; exact W.encX_size x
     have hw : (W.encX x).length = W.xWidth := W.encX_width x
     rw [hw] at hlen
-    -- hlen : (encSyms (3 :: encodeRegs (encX x))).length ≤ (3+2)*(State.size (encX x) + xWidth + 1)
     calc (encSyms (3 :: Compile.encodeRegs (W.encX x))).length
         ≤ (3 + 2) * (State.size (W.encX x) + W.xWidth + 1) := hlen
-      _ ≤ 5 * W.dBound n + 5 * W.xWidth + 5 := by rw [Nat.mul_add, Nat.mul_add, Nat.mul_one]; omega
-  -- monomialCost bounds and the monoLin identities
-  have hmc1 : monomialCost cm km dm n ≤ monoUB cm km dm n := monomialCost_le_monoUB _ _ _ _
-  have hmc2 : monomialCost cs ks ds n ≤ monoUB cs ks ds n := monomialCost_le_monoUB _ _ _ _
-  have hml1 : monoLin cm km dm n = cm * (n + 1) ^ km + dm := rfl
-  have hml2 : monoLin cs ks ds n = cs * (n + 1) ^ ks + ds := rfl
+      _ ≤ 5 * W.dBound n + 5 * W.xWidth + 5 := by
+          rw [Nat.mul_add, Nat.mul_add, Nat.mul_one, ← ht]; omega
+  -- monomialCost bounds, monotone in the argument, evaluated at `t ≤ dBound n`
+  have hmc1 : monomialCost cm km dm t ≤ monoUB cm km dm (W.dBound n) :=
+    le_trans (monomialCost_le_monoUB _ _ _ _) (monoUB_mono cm km dm _ _ htn)
+  have hmc2 : monomialCost cs ks ds t ≤ monoUB cs ks ds (W.dBound n) :=
+    le_trans (monomialCost_le_monoUB _ _ _ _) (monoUB_mono cs ks ds _ _ htn)
+  have hml1 : cm * (t + 1) ^ km + dm ≤ monoLin cm km dm (W.dBound n) :=
+    monoLin_mono cm km dm _ _ htn
+  have hml2 : cs * (t + 1) ^ ks + ds ≤ monoLin cs ks ds (W.dBound n) :=
+    monoLin_mono cs ks ds _ _ htn
   -- assemble
   unfold cQ costBoundQ
-  rw [hml1, hml2] at *
   omega
 
 /-! #### `fQ_output_size_le` -/
 
 theorem fQ_output_size_le (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) (x : X) :
-    encodable.size (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x)
+    encodable.size (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x)
       ≤ costBoundQ W cm km dm cs ks ds (encodable.size x) := by
   -- the product/list size decomposition (all defeq)
-  have hfq : encodable.size (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x)
+  have hfq : encodable.size (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x)
       = encodable.size (MmachineQ W)
         + (encodable.size ((3 : Nat) :: Compile.encodeRegs (W.encX x))
-          + (MmaxF cm km dm x + MstepF cs ks ds x + 1) + 1) + 1 := rfl
+          + (MmaxF W cm km dm x + MstepF W cs ks ds x + 1) + 1) + 1 := rfl
   -- the encodeRegs register size bound
   have hreg : encodable.size ((3 : Nat) :: Compile.encodeRegs (W.encX x))
       ≤ 4 * W.dBound (encodable.size x) + 4 * W.xWidth + 4 := by
@@ -698,54 +748,90 @@ theorem fQ_output_size_le (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : 
         ≤ (3 + 1) * (State.size (W.encX x) + W.xWidth + 1) := hsize
       _ ≤ 4 * W.dBound (encodable.size x) + 4 * W.xWidth + 4 := by
           rw [Nat.mul_add, Nat.mul_add, Nat.mul_one]; omega
-  -- the budget monomials are `monoLin`
-  have hmx : MmaxF cm km dm x = monoLin cm km dm (encodable.size x) := rfl
-  have hms : MstepF cs ks ds x = monoLin cs ks ds (encodable.size x) := rfl
+  -- the budget monomials are `monoLin` at the tally, itself ≤ `dBound n`
+  have htn : State.size (W.encX x) ≤ W.dBound (encodable.size x) := W.encX_size x
+  have hmx : MmaxF W cm km dm x ≤ monoLin cm km dm (W.dBound (encodable.size x)) :=
+    monoLin_mono cm km dm _ _ htn
+  have hms : MstepF W cs ks ds x ≤ monoLin cs ks ds (W.dBound (encodable.size x)) :=
+    monoLin_mono cs ks ds _ _ htn
   unfold costBoundQ
-  rw [hfq, hmx, hms]
+  rw [hfq]
   omega
 
 /-! ### The witness `W_Q` and the reduction -/
 
 /-- **The per-`Q` front reduction witness** `W_Q : PolyTimeComputableLang (fQ …)`. -/
 noncomputable def WQ (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
-    PolyTimeComputableLang
-      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x)) where
+    PolyTimeComputableLang (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds)) where
   c := cQ W cm km dm cs ks ds
   encodeIn := encodeInQ W
   decodeOut := decodeOutQ W
   cost_bound := costBoundQ W cm km dm cs ks ds
   cost_bound_poly := costBoundQ_poly W cm km dm cs ks ds
   cost_bound_mono := costBoundQ_mono W cm km dm cs ks ds
-  encBound := fun n => W.dBound n + n
-  encBound_poly := inOPoly_add W.dBound_poly inOPoly_id
-  encBound_mono := fun a b h => Nat.add_le_add (W.dBound_mono a b h) h
+  encBound := W.dBound
+  encBound_poly := W.dBound_poly
+  encBound_mono := W.dBound_mono
   encodeIn_size := encodeInQ_size_le W
   computes := computesQ W cm km dm cs ks ds
   cost_le := cQ_cost_le W cm km dm cs ks ds
   output_size_le := fQ_output_size_le W cm km dm cs ks ds
   enc_bit := encodeInQ_bit W
-  regBound := BwidthQ W + 9
+  regBound := BwidthQ W + 10
   usesBelow := frontProgram_usesBelow (MconstQ W) W.xWidth (BwidthQ W) cm km dm cs ks ds
     (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
   width_le := encodeInQ_width W
   decode_agree := decodeOutQ_agree W cm km dm cs ks ds
 
+/-- **The F6 constants, extracted through `sizeLB`.** The budget registers the
+program emits are monomials in the *on-machine tally* `State.size (encX x)`;
+`fQ_correct` needs them to dominate budgets in `encodable.size x`. Two
+applications of `inOPoly_monomial_bound` bridge the two:
+
+1. `maxSizeOf`/`stepsOf` are `inOPoly`, so they are below `a·(size x + 1)^b + e`;
+2. `encX_sizeLB` replaces `size x` by `sizeLB (tally)` inside that monomial
+   (legitimate — the monomial is monotone), and the result is again `inOPoly`
+   in the tally (`inOPoly_comp`, which needs no monotonicity of the outer
+   function), so it is below `c·(tally + 1)^k + d`.
+
+⚠ Step 2 is exactly what the 2026-07-20-c finding said was impossible without a
+lower bound on the tally, and it is the whole reason the `sizeLB` field exists. -/
+theorem exists_front_constants (W : InNPWitnessLangFreeSplit Q) :
+    ∃ cm km dm cs ks ds : Nat,
+      (∀ x, certBoundOf W (encodable.size x) + 2 ≤ MmaxF W cm km dm x)
+      ∧ (∀ x c, W.rel x c → encodable.size c ≤ certBoundOf W (encodable.size x) →
+          MQbudget W.verifier.c W.verifier.regBound (W.encX x ++ [certReg c])
+            ≤ MstepF W cs ks ds x) := by
+  obtain ⟨am, bm, em, hmB0⟩ := inOPoly_monomial_bound (maxSizeOf_poly W)
+  obtain ⟨as, bs, es, hsB0⟩ := inOPoly_monomial_bound (stepsOf_poly W)
+  have hpm : ∀ (a b e : Nat), inOPoly (fun t => a * (W.sizeLB t + 1) ^ b + e) := by
+    intro a b e
+    have hcomp : inOPoly (fun t => (W.sizeLB t + 1) ^ b) :=
+      inOPoly_comp W.sizeLB_poly (inOPoly_pow_succ b)
+    exact inOPoly_add (inOPoly_mul (inOPoly_const a) hcomp) (inOPoly_const e)
+  obtain ⟨cm, km, dm, hmB⟩ := inOPoly_monomial_bound (hpm am bm em)
+  obtain ⟨cs, ks, ds, hsB⟩ := inOPoly_monomial_bound (hpm as bs es)
+  have chain : ∀ (a b e c k d : Nat), (∀ t, a * (W.sizeLB t + 1) ^ b + e ≤ c * (t + 1) ^ k + d) →
+      ∀ (n : Nat) (x : X), n ≤ a * (encodable.size x + 1) ^ b + e →
+        n ≤ c * (State.size (W.encX x) + 1) ^ k + d := by
+    intro a b e c k d hlast n x hfirst
+    refine le_trans hfirst (le_trans ?_ (hlast (State.size (W.encX x))))
+    have := W.encX_sizeLB x
+    gcongr
+  exact ⟨cm, km, dm, cs, ks, ds,
+    fun x => chain am bm em cm km dm hmB _ x (hmB0 (encodable.size x)),
+    fun x c _hrel hsize => chain as bs es cs ks ds hsB _ x
+      (le_trans (MQbudget_le W x c hsize) (hsB0 (encodable.size x)))⟩
+
 /-- **C8-4 — the endpoint reduction `Q ⪯p' FlatSingleTMGenNP`.** For any NP
 problem `Q` with an honest split free-line verifier witness, the per-`Q` front
 construction is an honest TM-backed reduction into the corrected universal
-front problem. The F6 monomial constants are extracted from the witness's own
-polynomial budgets (`inOPoly_monomial_bound`); correctness is `fQ_correct`. -/
+front problem. The F6 monomial constants come from `exists_front_constants`;
+correctness is `fQ_correct`. -/
 theorem front_reducesPolyMO' (W : InNPWitnessLangFreeSplit Q) :
     Q ⪯p' FlatSingleTMGenNP := by
-  obtain ⟨cm, km, dm, hmB⟩ := inOPoly_monomial_bound (maxSizeOf_poly W)
-  obtain ⟨cs, ks, ds, hsB⟩ := inOPoly_monomial_bound (stepsOf_poly W)
-  refine reducesPolyMO'_of_langFree (WQ W cm km dm cs ks ds) (fun x => ?_)
-  refine (fQ_correct W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x)
-    (fun x => ?_) (fun x c hrel hsize => ?_) x).symm
-  · -- hmax: certBoundOf + 2 = maxSizeOf ≤ the monomial
-    exact hmB (encodable.size x)
-  · -- hsteps: MQbudget ≤ stepsOf ≤ the monomial
-    exact le_trans (MQbudget_le W x c hsize) (hsB (encodable.size x))
+  obtain ⟨cm, km, dm, cs, ks, ds, hmax, hsteps⟩ := exists_front_constants W
+  exact reducesPolyMO'_of_langFree (WQ W cm km dm cs ks ds)
+    (fun x => (fQ_correct W (MmaxF W cm km dm) (MstepF W cs ks ds) hmax hsteps x).symm)
 
 end Complexity.Lang.FrontWitness

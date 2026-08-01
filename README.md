@@ -6,13 +6,52 @@ Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
 
 **The theorem is proven, on the honest statement, unconditionally
 (2026-07-30-b), audited (2026-07-30-c), stated in a form with no dishonest
-instantiation (2026-08-01), and there are no `sorry`s left in the build.**
+instantiation (2026-08-01), and — since 2026-08-02 — `lake build` itself
+*proves* there are no `sorry`s and no bespoke axioms anywhere in the library.**
 
 ```
 CookLevinHonest.CookLevinStr : NPcompleteStr SAT   -- ★ the statement to quote
 CookLevinHonest.CookLevin''  : NPcomplete''  SAT   -- the general form it comes from
 both depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
+
+### What a reviewer actually has to do
+
+1. **`lake build`.** If it is green then two things are machine-checked, both
+   at elaboration time, with no CI step and no `grep` involved:
+   * every one of the ~12 350 declarations under `Complexity` is `sorry`-free
+     and uses only `propext`, `Classical.choice` and `Quot.sound`
+     (`#assert_library_axiom_clean` in `Complexity/Meta/AxiomGate.lean`, swept
+     from `Complexity.lean`; endpoint-by-endpoint in
+     `Complexity/SoundnessGate.lean`). `sorry` is only a *warning* in Lean, so a
+     green build did not use to mean this;
+   * the composite reduction's `encodeIn` and `decodeOut` — the **only two
+     functions** encoding honesty depends on (FINDING AK) — are the ones the
+     audit says they are, including `encodeIn x = certState x` under `NPhardStr`
+     (`Complexity/HonestyGate.lean`).
+2. **Read three definitions**, and nothing else, to know the theorem is about
+   Cook–Levin and not about something else:
+   * `NPcompleteStr` / `NPhardStr` / `InNPWitnessStr` (`Complexity/Lang/HardnessStr.lean`)
+     — what is being claimed, and over which hypothesis;
+   * `SAT` (`Complexity/NP/SAT.lean`) — that it means satisfiability;
+   * `FlatTM` / `stepFlatTM` (`Complexity/Complexity/MachineSemantics.lean`) —
+     that the machine model is a Turing machine.
+   * `Serialize cnf` (`Complexity/Complexity/Deciders/CnfSerialize.lean`) — the
+     one encoding at a chain end that is ours to choose.
+
+   Two things have come *off* that list. The head-side encoding
+   (2026-08-02): the composite reduction's `ComputesBy.encode` is now literally
+   `certState x`, the raw input string, pinned by the honesty gate. And
+   **`Op.cost`**: every "polynomial time" claim here is a bound on the *layer's*
+   cost, not on `stepFlatTM` steps, so a reviewer used to have to trust that the
+   cost model does not undercharge — but that is proven, and
+   `Complexity/CostFaithfulness.lean` now says it in one gated theorem
+   (`Compile.cost_is_time_proxy`): **one** fixed polynomial bounds the running
+   time of **both** compiled machines — the reduction machine and the decider
+   machine — in `State.size s + c.cost s + regBound + loopDepth`, and in both
+   cases the machine really halts, on the program's real output. (The converse —
+   that the cost model does not *overcharge* — is deliberately not proven; it
+   could only make our own obligations harder, never a proven bound weaker.)
 
 `NPcompleteStr SAT = NPhardStr SAT ∧ inNPLangFreeSplit SAT`: every NP **string
 language** — a `Q : List Bool → Prop` presented with a real `Cmd` verifier
@@ -25,6 +64,37 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-02** (top-down; enforcement):
+
+* **The honesty pins are a typechecking obligation.**
+  `Complexity/HonestyGate.lean` states, as gated `rfl` theorems inside the
+  library, what the composite's two audited functions are — so a refactor of
+  `PolyTimeComputableLang.comp`, of `toFrameworkWitness'`, or of a chain end's
+  layout breaks the build instead of silently falsifying this file. The
+  *negative* controls stay in `probes/HonestyAuditProbe.lean`, deliberately:
+  they are constructions that are supposed to typecheck.
+* **Axiom hygiene is a typechecking obligation.** `#assert_axioms_clean` and
+  `#assert_library_axiom_clean` (`Complexity/Meta/AxiomGate.lean`) fail
+  elaboration on any dependence outside `{propext, Classical.choice,
+  Quot.sound}`. `Lean.collectAxioms` walks a constant's *statement* as well as
+  its proof, so this also catches a `sorry` hidden inside a `def` — the failure
+  mode `#print axioms` exists here to detect and that no `grep` sees through an
+  import. `probes/AxiomProbe.lean` stays as the *reporting* instrument.
+* **The reduction's input encoding is the input.** `W_Q.encodeIn x` was
+  `W.encX x ++ [1^(encodable.size x)]`; it is now `W.encX x`. The front program
+  counts its own input's cells (`FrontPieces.tallyCells`, built in July and
+  unused until now), licensed by a new **no-compression** field on the
+  hypothesis: `sizeLB` with `encodable.size x ≤ sizeLB (State.size (encX x))`.
+* **That field killed the §7 cheat, and the probe proves it.**
+  `HonestyAuditProbe` §7 — a complete, `sorry`-free split witness presenting an
+  *arbitrary* predicate with the answer planted in its input — no longer
+  typechecks. §7 now carries `badSplitWitnessOf` (every other field still
+  discharged, so the obstruction is exactly `sizeLB`) and `badEncX_no_sizeLB`
+  (no such `sizeLB` exists over `Nat`). ⚠ §7b still typechecks, as FINDING AO
+  predicted: it satisfies `sizeLB` by writing the input out and *appending* the
+  answer. **No law about `encX` closes the hypothesis side — only `NPhardStr`
+  does.**
 
 **What changed on 2026-08-01** (top-down; the honesty layer):
 
@@ -72,12 +142,15 @@ the caveat below), which is why the headline is the string form.
 remains per-witness discipline (`HonestyAuditProbe` §6 is the counterexample) —
 though by the audit's structural result those layouts cannot license a cheat,
 only make a seam bridge harder. The chain's two *ends* are now pinned: the tail
-by `Serialize cnf`, the head by the `NPhardStr` statement. What no formalisation
+by `Serialize cnf`, the head by the `NPhardStr` statement **and** by
+`encodeIn = encX` (2026-08-02). What no formalisation
 removes is the definitional trust at the statement: is `FlatTM`/`stepFlatTM` a
-faithful Turing machine, is `Op.cost` a faithful proxy for time (this project
-found one real bug of that kind), is `Serialize cnf` a faithful CNF encoding
-beyond `dec_enc`, does `SAT` mean satisfiability. See ROADMAP risk **S5**,
-verdicts 1–13.
+faithful Turing machine, is `Serialize cnf` a faithful CNF encoding beyond
+`dec_enc`, does `SAT` mean satisfiability. (⚠ "is `Op.cost` a faithful proxy for
+time" used to be on this list — this project found one real bug of that kind —
+and came **off** it on 2026-08-02: `Compile.cost_is_time_proxy`,
+`Complexity/CostFaithfulness.lean`, gated.) See ROADMAP risk **S5**,
+verdicts 1–14.
 
 Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
 and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
@@ -87,10 +160,10 @@ working.
 
 | | |
 |---|---|
-| `lake build` | ✅ green |
+| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12354 declarations in all 97 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, and `Complexity/HonestyGate.lean` pins the two audited functions. Runs in ~2 s. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
-| **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01.** The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–13 in the ROADMAP register. |
+| **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01; head side CLOSED 2026-08-02** — the composite's `encodeIn` is now `W.encX` verbatim, i.e. `certState x` under `NPhardStr`, so there is no head-side encoding of ours left to read.<br> The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–14 in the ROADMAP register. |
 | ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
@@ -171,11 +244,13 @@ verifiers play in the Coq original.
 (2026-08-01).** A verifier witness still supplies its *own* input layout `encX`,
 and the composite reduction's encoding is built from it. That is enough freedom
 to present an **arbitrary** predicate — even an undecidable one — with the answer
-planted in its input and a no-op verifier, which makes `NPhard'' SAT` yield
-`Q ⪯p' SAT` for that `Q` (machine-checked, `probes/HonestyAuditProbe.lean` §7;
-§7b shows no side-condition on `encX` can prevent it). Fixing the input type to
-`List Bool` and the layout to the canonical `certState` removes the field
-entirely:
+planted in its input and a no-op verifier, which made `NPhard'' SAT` yield
+`Q ⪯p' SAT` for that `Q`. ⚠ *That particular* cheat was killed on 2026-08-02 by
+the `sizeLB` no-compression field (`probes/HonestyAuditProbe.lean` §7 now proves
+it unbuildable) — but **§7b survives and always will**: write the honest
+encoding out and *append* the answer in a second register, and every law about
+`encX` still holds. Fixing the input type to `List Bool` and the layout to the
+canonical `certState` removes the field entirely:
 
 ```
 NPhardStr SAT : ∀ Q : List Bool → Prop, inNPStr Q → Q ⪯p' SAT
@@ -315,6 +390,10 @@ CookLevin/
 │   │   ├── NP.lean                  -- DecidesBy, inTimePoly, inNP; the legacy ⪯p/NPhard (no live consumer)
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
 │   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize
+│   ├── SoundnessGate.lean          -- the axiom sweep, run BY `lake build`
+│   ├── HonestyGate.lean            -- risk S5's two audited functions, pinned BY `lake build`
+│   ├── CostFaithfulness.lean       -- `Op.cost` is a polynomial proxy for real TM time
+│   ├── Meta/AxiomGate.lean          -- `#assert_axioms_clean` / `#assert_library_axiom_clean`
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
 │   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one),
 │   │   │                               HardnessStr (NPhardStr — read this one too),
@@ -360,9 +439,17 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 - **The working plan:** [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md); the risk
   register: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
 - **Is it honest?** `probes/HonestyAuditProbe.lean` — §6 is a witness that
-  satisfies every field while computing nothing, §7/§7b present an *arbitrary*
-  predicate with the answer planted in its input, and §8 is the restriction that
-  removes the field they exploit. Then ROADMAP risk **S5**, verdicts 1–13.
+  satisfies every field while computing nothing; §7 is the hypothesis-side cheat
+  that **died** on 2026-08-02 (with the proof that it did); §7b is the one that
+  survives every law about `encX`; §8 is the restriction that removes the field
+  they exploit, and pins the composite's encode to `certState x` by `rfl`. Then
+  ROADMAP risk **S5**, verdicts 1–14.
+- **Is it enforced?** `Complexity/Meta/AxiomGate.lean`,
+  `Complexity/SoundnessGate.lean` and `Complexity/HonestyGate.lean` — what a
+  green `lake build` proves, and what it does not.
+- **Is "polynomial time" real time?** `Complexity/CostFaithfulness.lean` —
+  `Compile.cost_is_time_proxy`, and the module docstring on the one direction it
+  deliberately does not prove.
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
   `NP/FSAT_to_SAT.lean`; the tableau in `Simulators/CookTableau.lean`.

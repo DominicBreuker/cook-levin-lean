@@ -1213,7 +1213,30 @@ The residual freedom is `encX` (an arbitrary function — unavoidable for an
 abstract `Y`; whether a *user's* instantiation is honest is the usual
 per-witness discipline, standing risk #1). The verification content is a
 real machine, which is exactly what the C8 per-`Q` front embeds in the
-produced `FlatSingleTMGenNP` instance. -/
+produced `FlatSingleTMGenNP` instance.
+
+## ⚠ 2026-08-02 — `encX` may not COMPRESS (the `sizeLB` field)
+
+`encX_size` bounds the layout from above (`State.size (encX x) ≤ dBound n`).
+Nothing bounded it from *below*, so a layout was free to throw the input away:
+`probes/HonestyAuditProbe.lean` §7 presented an **arbitrary** predicate — an
+undecidable one included — as `encX x = [[if Q x then 1 else 0]]`, one register
+of one cell, with the layer's no-op as its verifier, and got `Q ⪯p' SAT` out of
+`NPhard'' SAT`, `sorry`-free and axiom-clean (FINDING AN).
+
+`sizeLB` is the missing direction: the input's `encodable.size` must be
+recoverable, up to a polynomial, from the *register content* of its own layout.
+A verifier that reads a one-cell register cannot then be presented as verifying
+an infinite type — the §7 cheat stops typechecking. It also earns something
+concrete: the front reduction no longer needs the size of `x` handed to it in
+the input, it can **count the input cells on-machine** (`FrontPieces.tallyCells`),
+so the composite's `ComputesBy.encode` is `encX` itself with nothing appended.
+
+⚠ This does **not** close the hypothesis-side hole on its own, and no field
+can — `HonestyAuditProbe` §7b writes the whole raw input out (so every
+`sizeLB`/injectivity/`Serialize` law holds of it) and merely *appends* the
+answer in a second register (FINDING AO). The statement to quote is
+`NPhardStr` (`Lang/HardnessStr.lean`), which removes `encX` altogether. -/
 
 /-- The canonical certificate layout: ONE register holding the bits
 (`true ↦ 1`, `false ↦ 0`). Every bit-register content is in its image. -/
@@ -1245,6 +1268,13 @@ structure InNPWitnessLangFreeSplit {X : Type} [encodable X] (P : X → Prop) whe
   /-- Size bound for the input part alone (this becomes the per-`Q` front
   witness's `encBound`). -/
   encX_size : ∀ x, State.size (encX x) ≤ dBound (encodable.size x)
+  /-- **No compression** — a polynomial recovering `encodable.size x` from the
+  layout's own cell count. See the `sizeLB` note above the structure: without
+  it a layout may discard the input entirely (`HonestyAuditProbe` §7). For any
+  layout that spells the input out this is `id` or a small multiple. -/
+  sizeLB : Nat → Nat
+  sizeLB_poly : inOPoly sizeLB
+  encX_sizeLB : ∀ x, encodable.size x ≤ sizeLB (State.size (encX x))
 
 /-- `P` is in NP with a split free-line verifier witness. -/
 def inNPLangFreeSplit {X : Type} [encodable X] (P : X → Prop) : Prop :=

@@ -108,16 +108,16 @@ theorem frontBridge (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat)
     AgreeBelow 57
       (headScrub.eval ((cQ W cm km dm cs ks ds).eval (encodeInQ W x)))
       (headEncodeIn
-        (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x)) := by
+        (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x)) := by
   obtain ⟨h0, h1, h2, h3, h4⟩ :=
     FrontProgram.frontProgram_run (MconstQ W) W.xWidth (BwidthQ W) cm km dm cs ks ds
-      (encodeInQ W x) (encodable.size x) (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
-      (fun v hv => encSyms_bit _ v hv) (encodeInQ_size_reg W x) (encodeInQ_bits W x)
+      (encodeInQ W x) (State.size (W.encX x)) (BwidthQ_ge5 W) (xWidth_lt_BwidthQ W)
+      (fun v hv => encSyms_bit _ v hv) (encodeInQ_tally W x) (encodeInQ_bits W x)
   rw [map_range_encX W x] at h2
   -- keep every big constant behind its own name
-  have hfq : fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x
+  have hfq : fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x
       = (MmachineQ W, 3 :: Compile.encodeRegs (W.encX x),
-         MmaxF cm km dm x, MstepF cs ks ds x) := rfl
+         MmaxF W cm km dm x, MstepF W cs ks ds x) := rfl
   have hM : MconstQ W = encSyms (flattenTM (MmachineQ W)) := rfl
   rw [hM] at h1
   intro r hr
@@ -173,7 +173,7 @@ noncomputable def front_to_SAT_seamOf (c : Cmd)
   mfc_usesBelow := by
     refine Cmd.UsesBelow_mono ?_ headScrub_usesBelow
     exact le_trans (Nat.le_max_right S1Program.s1RegBound 57)
-      (Nat.le_max_right (BwidthQ W + 9) _)
+      (Nat.le_max_right (BwidthQ W + 10) _)
 
 /-- **The whole honest chain as ONE free layer witness**: `Q → SAT`. -/
 noncomputable def front_to_SAT_witnessOf (c : Cmd)
@@ -186,7 +186,7 @@ noncomputable def front_to_SAT_witnessOf (c : Cmd)
       (((FSATSATFree.fsatToSat
           ∘ (BinaryCCToFSAT.BinaryCC_to_FSAT_instance
             ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map)
-        ∘ (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x))) :=
+        ∘ (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds))) :=
   PolyTimeComputableLang.comp (WQ W cm km dm cs ks ds)
     (S1SATComp.s1_to_SAT_witnessOf c hcomputes huses hcost)
     (front_to_SAT_seamOf c hcomputes huses hcost W cm km dm cs ks ds)
@@ -201,21 +201,16 @@ theorem front_to_SAT_reducesPolyMO'_of (c : Cmd)
     (hcost : S1Witness.S1CostBound c)
     (W : InNPWitnessLangFreeSplit Q) :
     Q ⪯p' SAT := by
-  obtain ⟨cm, km, dm, hmB⟩ := inOPoly_monomial_bound (maxSizeOf_poly W)
-  obtain ⟨cs, ks, ds, hsB⟩ := inOPoly_monomial_bound (stepsOf_poly W)
+  obtain ⟨cm, km, dm, cs, ks, ds, hmax, hsteps⟩ := exists_front_constants W
   refine reducesPolyMO'_of_langFree
     (front_to_SAT_witnessOf c hcomputes huses hcost W cm km dm cs ks ds)
     (fun x => ?_)
   have hfront : FlatSingleTMGenNP
-      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x) ↔ Q x :=
-    fQ_correct W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x)
-      (fun x => hmB (encodable.size x))
-      (fun x cert _hrel hsize =>
-        le_trans (MQbudget_le W x cert hsize) (hsB (encodable.size x)))
-      x
+      (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x) ↔ Q x :=
+    fQ_correct W (MmaxF W cm km dm) (MstepF W cs ks ds) hmax hsteps x
   exact hfront.symm.trans
     (S1SATComp.s1_to_SAT_correct
-      (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x) x))
+      (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds) x))
 
 /-- **`NPhard'' SAT` from the three S1 contracts alone — AXIOM-CLEAN.**
 
@@ -252,7 +247,7 @@ noncomputable def front_to_SAT_witness (W : InNPWitnessLangFreeSplit Q)
       (((FSATSATFree.fsatToSat
           ∘ (BinaryCCToFSAT.BinaryCC_to_FSAT_instance
             ∘ (FlatCC_to_BinaryCC_instance ∘ flatTCC_to_flatCC))) ∘ S1Map.s1Map)
-        ∘ (fQ W (fun x => MmaxF cm km dm x) (fun x => MstepF cs ks ds x))) :=
+        ∘ (fQ W (MmaxF W cm km dm) (MstepF W cs ks ds))) :=
   front_to_SAT_witnessOf S1Program.s1Program S1Program.s1Program_computes
     S1Program.s1Program_usesBelow S1Witness.s1Program_costBound W cm km dm cs ks ds
 
