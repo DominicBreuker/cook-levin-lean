@@ -184,10 +184,21 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 
 ### 4. ⚠ OWNER ACTION — gate the soundness instruments in CI (5 min, high value)
 
-Still open (this session could not push `.github/workflows/` either — the
-agent token has no `workflow` scope). `lake build` alone does not notice a
-`sorry`, and nothing runs the axiom sweep. Change the `Build project` step's
-`run` to `lake build 2>&1 | tee /tmp/lake-build.log` and paste after it:
+Still open (this session wrote it, verified it locally, and had the push
+**rejected**: agent tokens have no `workflow` scope). `lake build` alone does not
+notice a `sorry`, and nothing runs the axiom sweep. Replace the `Build project`
+step with
+
+```yaml
+      - name: Build project
+        run: |
+          set -euo pipefail   # without this, `tee` would mask a failed build
+          lake build 2>&1 | tee /tmp/lake-build.log
+```
+
+⚠ the `set -euo pipefail` is load-bearing — GitHub's default shell is `bash -e`,
+**not** `-o pipefail`, so `lake build | tee` would exit `0` on a broken build.
+Then paste after it:
 
 ```yaml
       - name: No `sorry` in built code
