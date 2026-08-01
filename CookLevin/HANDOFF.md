@@ -34,19 +34,21 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 | the head encoder `FrontWitness.encodeInQ` | ✅ **NEW 2026-08-02** — literally `W.encX`, i.e. `certState x` under `NPhardStr` |
 | axiom/`sorry` hygiene | ✅ **NEW 2026-08-02** — a *build-time* obligation, not a probe |
 | the two audited functions (risk S5) | ✅ **NEW 2026-08-02** — pinned by `Complexity/HonestyGate.lean`, also at build time |
+| `Op.cost` as a proxy for real TM time | ✅ **NEW 2026-08-02** — `Compile.cost_is_time_proxy`, gated; off the reviewer's trust list |
 
-**The honesty surface that remains** is exactly: the *statement* (`NPcompleteStr`,
-`NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the faithfulness of
-`FlatTM`/`stepFlatTM` and of `Op.cost` as a time proxy, and `Serialize cnf`.
-Everything else is machine-checked. Read the README's "What a reviewer actually
-has to do".
+**The honesty surface that remains** is exactly: the *statement*
+(`NPcompleteStr`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the
+faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine, and `Serialize cnf`.
+Four definitions, read once. `Op.cost`'s faithfulness came off this list on
+2026-08-02 and the head-side encoding came off it the same day. Everything else
+is machine-checked. Read the README's "What a reviewer actually has to do".
 
 ## ★ Latest session
 
 **2026-08-02 (top-down) — enforcement: the build is the gate, and the head
 encoding is the input.**
 
-**Landed (three independent pieces).**
+**Landed (four independent pieces).**
 
 1. **`Complexity/Meta/AxiomGate.lean` + `Complexity/SoundnessGate.lean`.** Two
    commands over `Lean.collectAxioms`: `#assert_axioms_clean f g h` and
@@ -66,7 +68,17 @@ encoding is the input.**
    `probes/` on purpose: they are constructions that are *supposed* to
    typecheck, and a reader who found them in the library would rightly read them
    as claims of it.
-3. **The last handed-over register is gone.** `InNPWitnessLangFreeSplit` gained
+3. **`Complexity/CostFaithfulness.lean`.** `Compile.cost_is_time_proxy`: ONE
+   fixed polynomial bounds the running time of **both** compiled machines —
+   `paddedComputeTM` (reductions) and `paddedBitDeciderTM` (verifiers) — in
+   `State.size s + c.cost s + regBound + loopDepth`, with the machine really
+   halting on the program's real output. The content was already proven
+   (`paddedCompute_run` + `padBudget_le` + `physStepBudget_poly`); what was
+   missing was a readable statement, which is why "is `Op.cost` faithful?" was
+   still on the reviewer's trust list. It is off it now. ⚠ Do **not** add the
+   converse (no over-charging): it could only make our own `cost_le` obligations
+   harder, never a proven bound weaker.
+4. **The last handed-over register is gone.** `InNPWitnessLangFreeSplit` gained
    `sizeLB`/`sizeLB_poly`/`encX_sizeLB` (`encodable.size x ≤ sizeLB (State.size
    (encX x))`, the *no-compression* law). With it `FrontPieces.tallyCells` —
    built in July, proven, parked UNUSED — counts the input's cells on-machine,
@@ -98,36 +110,20 @@ inside it. Reuse this shape if you ever need to move a budget between measures.
 
 ## NEXT TOP-DOWN session
 
-The proof is done, both chain ends are pinned, and both gates run inside
-`lake build`. Top-down work is now **turning the remaining reading obligations
-into typechecking obligations**, in descending value. Item 1 removes a line from
-the reviewer's trust list; item 2 is the last big *statement* question; 3–5 are
-maintenance.
+The proof is done, both chain ends are pinned, and three gates run inside
+`lake build` (axioms, the honesty pins, cost-as-time). Top-down work is now
+**turning the remaining reading obligations into typechecking obligations**.
+Item 1 is the last big *statement* question and the only one that is real work;
+2–4 are maintenance.
 
-### 1. ★ `Op.cost` is a faithful time proxy — say so in ONE named theorem
+⚠ **What is left on the reviewer's trust list**, after this session — do not
+let it grow: is `FlatTM`/`stepFlatTM` a faithful Turing machine, is
+`Serialize cnf` a faithful CNF encoding beyond `dec_enc`, does `SAT` mean
+satisfiability, and is `NPcompleteStr` the statement it looks like. Every one is
+a *definition* a human reads once. If you find yourself adding a fourth kind of
+thing to trust, that is the finding — write it down.
 
-**Goal: remove one entry from the irreducible-trust list by promoting a fact
-that is already proven but unreadable.** The README tells a reviewer to trust
-that `Op.cost` is a faithful proxy for TM time. It need not be *trusted*:
-`Compile.Compile_run_physical_residue` (`Lang/Compile/Assembly.lean:2596`)
-already proves that the compiled `FlatTM` halts at the exit state after
-`t ≤ Compile.physStepBudget (State.size s + s.length + c.cost s + 2) (c.cost s)`
-steps with the tape equal to `encodeTape (c.eval s)` (+ terminator-free residue).
-That *is* "cost is a polynomial proxy for real time".
-
-* State a corollary with a reader-facing name, e.g.
-  `Compile.cost_is_time_proxy`, in the shape "∃ a polynomial `p`, for every
-  `c`/`s` meeting the frame hypotheses the compiled machine halts within
-  `p (State.size s + c.cost s)` steps and its tape decodes to `c.eval s`", with
-  `Compile.physStepBudget_poly` supplying the `inOPoly`.
-* Gate it, cite it from the README's reviewer checklist, and **delete the
-  corresponding line from the trust list** — that is the deliverable, not the
-  proof.
-* ⚠ Check first whether the frame hypotheses (`hk`, `huses`, `hscratch`) are
-  discharged anywhere generically; if they are only ever discharged per-witness,
-  state the corollary over them and say so plainly rather than hiding them.
-
-### 2. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
+### 1. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
 
 The natural next question is "does `inNPStr Q` have content, i.e. does it force
 `Q` to be decidable?". ⚠ **"Q is decidable" is not statable in Lean**:
@@ -139,7 +135,7 @@ and an exponential cost bound. Worth doing eventually as the ultimate
 non-vacuity certificate; **do not start it as a side quest**, and do not "prove"
 the trivial version and claim the result. Budget: a whole session, probably two.
 
-### 3. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
+### 2. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
 
 By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 `decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
@@ -162,7 +158,7 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
   `rfl`-checkable — prefer `Complexity/HonestyGate.lean` for a positive pin, the
   probe for a negative control.
 
-### 4. Probe-suite consolidation + `probes/README.md`
+### 3. Probe-suite consolidation + `probes/README.md`
 
 48 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
 which are regression gates and which were one-shot go/no-go scoping. Write the
@@ -171,7 +167,7 @@ are still gates now that the build covers axioms *and* the honesty pins (should
 be just `HonestyAuditProbe`'s negative controls and `CostChkIntentProbe`), and retire `probes/S1CardEmitProbe.lean` §1
 (superseded by `S1StepLoopProbe` §1, which asserts the full equality).
 
-### 5. Repo hygiene (~1 hour) + the CI question
+### 4. Repo hygiene (~1 hour) + the CI question
 
 * `.mcp.json.bak` is checked in; `Basic.lean` (`one_plus_one_is_two`) and
   `Main.lean` ("Hello, World!") are lakefile scaffolding with no role — note
@@ -228,7 +224,7 @@ so **reduction** witnesses are unaffected.
    `decodeOut` becomes the new last witness's — **so the new output type owes a
    `Serialize` instance** (`FlatClique`'s output is a graph + a `k`; write the
    parser, do not use `Function.invFun`). One verdict row, not a study; see
-   top-down item 3.
+   top-down item 2.
 4. **Then, and only then, a `NPcompleteStr` for the new problem.** The transport
    is `NPcomplete''_to_NPcompleteStr` plus the membership half; do not restate
    hardness from scratch.
@@ -305,9 +301,9 @@ subtree below your edit first.
 Reasoning: the top-down stream has just finished the item that was blocking it
 (the `InNPWitnessLangFreeSplit` field change is *in*, so a verifier witness built
 now pays it once instead of being migrated later), and every remaining top-down
-item is independent of what bottom-up lands. Top-down item 1 is the
-highest-value one for a reader and is a corollary-plus-doc job, not new
-mathematics — take it whenever a short top-down slot appears.
+item is independent of what bottom-up lands. The top-down stream has no cheap
+high-value item left: item 1 (non-vacuity) is a real multi-session build, and
+2–4 are maintenance.
 
 ## The S1 register frame — PINNED
 
@@ -474,7 +470,7 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    audit at all. **Both current ends are now pinned**: the *tail* by
    `Serialize cnf` (give a new output type an instance and take
    `decodeOut := Serialize.decodeD`), the *head* by `encodeIn = encX` plus the
-   `NPhardStr` statement. See NEXT-TOP-DOWN item 3 for the recipe.
+   `NPhardStr` statement. See NEXT-TOP-DOWN item 2 for the recipe.
 2. **Seam discipline**: pin each new witness's input layout to its
    predecessor's exit frame and document the exit layout (dirty registers
    included) for the successor. See "Composed-chain layouts — PINNED" above;

@@ -29,20 +29,29 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
      functions** encoding honesty depends on (FINDING AK) — are the ones the
      audit says they are, including `encodeIn x = certState x` under `NPhardStr`
      (`Complexity/HonestyGate.lean`).
-2. **Read four definitions**, and nothing else, to know the theorem is about
+2. **Read three definitions**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else:
    * `NPcompleteStr` / `NPhardStr` / `InNPWitnessStr` (`Complexity/Lang/HardnessStr.lean`)
      — what is being claimed, and over which hypothesis;
    * `SAT` (`Complexity/NP/SAT.lean`) — that it means satisfiability;
-   * `FlatTM` / `stepFlatTM` (`Complexity/Complexity/MachineSemantics.lean`) and
-     `Op.cost` (`Complexity/Lang/Semantics.lean`) — that the machine model and
-     its time proxy are faithful;
+   * `FlatTM` / `stepFlatTM` (`Complexity/Complexity/MachineSemantics.lean`) —
+     that the machine model is a Turing machine.
    * `Serialize cnf` (`Complexity/Complexity/Deciders/CnfSerialize.lean`) — the
      one encoding at a chain end that is ours to choose.
 
-   The head-side encoding used to be on that list. It no longer is: the
-   composite reduction's `ComputesBy.encode` is now literally `certState x`,
-   the raw input string (2026-08-02, `probes/HonestyAuditProbe.lean` §8).
+   Two things have come *off* that list. The head-side encoding
+   (2026-08-02): the composite reduction's `ComputesBy.encode` is now literally
+   `certState x`, the raw input string, pinned by the honesty gate. And
+   **`Op.cost`**: every "polynomial time" claim here is a bound on the *layer's*
+   cost, not on `stepFlatTM` steps, so a reviewer used to have to trust that the
+   cost model does not undercharge — but that is proven, and
+   `Complexity/CostFaithfulness.lean` now says it in one gated theorem
+   (`Compile.cost_is_time_proxy`): **one** fixed polynomial bounds the running
+   time of **both** compiled machines — the reduction machine and the decider
+   machine — in `State.size s + c.cost s + regBound + loopDepth`, and in both
+   cases the machine really halts, on the program's real output. (The converse —
+   that the cost model does not *overcharge* — is deliberately not proven; it
+   could only make our own obligations harder, never a proven bound weaker.)
 
 `NPcompleteStr SAT = NPhardStr SAT ∧ inNPLangFreeSplit SAT`: every NP **string
 language** — a `Q : List Bool → Prop` presented with a real `Cmd` verifier
@@ -136,9 +145,11 @@ only make a seam bridge harder. The chain's two *ends* are now pinned: the tail
 by `Serialize cnf`, the head by the `NPhardStr` statement **and** by
 `encodeIn = encX` (2026-08-02). What no formalisation
 removes is the definitional trust at the statement: is `FlatTM`/`stepFlatTM` a
-faithful Turing machine, is `Op.cost` a faithful proxy for time (this project
-found one real bug of that kind), is `Serialize cnf` a faithful CNF encoding
-beyond `dec_enc`, does `SAT` mean satisfiability. See ROADMAP risk **S5**,
+faithful Turing machine, is `Serialize cnf` a faithful CNF encoding beyond
+`dec_enc`, does `SAT` mean satisfiability. (⚠ "is `Op.cost` a faithful proxy for
+time" used to be on this list — this project found one real bug of that kind —
+and came **off** it on 2026-08-02: `Compile.cost_is_time_proxy`,
+`Complexity/CostFaithfulness.lean`, gated.) See ROADMAP risk **S5**,
 verdicts 1–14.
 
 Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
@@ -381,6 +392,7 @@ CookLevin/
 │   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize
 │   ├── SoundnessGate.lean          -- the axiom sweep, run BY `lake build`
 │   ├── HonestyGate.lean            -- risk S5's two audited functions, pinned BY `lake build`
+│   ├── CostFaithfulness.lean       -- `Op.cost` is a polynomial proxy for real TM time
 │   ├── Meta/AxiomGate.lean          -- `#assert_axioms_clean` / `#assert_library_axiom_clean`
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
 │   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one),
@@ -435,6 +447,9 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 - **Is it enforced?** `Complexity/Meta/AxiomGate.lean`,
   `Complexity/SoundnessGate.lean` and `Complexity/HonestyGate.lean` — what a
   green `lake build` proves, and what it does not.
+- **Is "polynomial time" real time?** `Complexity/CostFaithfulness.lean` —
+  `Compile.cost_is_time_proxy`, and the module docstring on the one direction it
+  deliberately does not prove.
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
   `NP/FSAT_to_SAT.lean`; the tableau in `Simulators/CookTableau.lean`.

@@ -139,6 +139,9 @@ the string-language headline. See `probes/HonestyAuditProbe.lean` §§3/7/8 for
 what these buy. -/
 
 section Honesty
+#print axioms Complexity.Lang.Compile.cost_is_time_proxy
+#print axioms Complexity.Lang.Compile.time_le_timeProxyBound
+#print axioms Complexity.Lang.Compile.deciderTime_le_timeProxyBound
 #print axioms Complexity.Lang.InNPWitnessStr.canonical_sizeLB
 #print axioms FrontProgram.tallyStage_run
 #print axioms Complexity.Lang.FrontWitness.encodeInQ_tally

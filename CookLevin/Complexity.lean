@@ -44,6 +44,7 @@ import Complexity.Complexity.Deciders.EvalCnfSplit
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
 import Complexity.HonestyGate
+import Complexity.CostFaithfulness
 
 set_option autoImplicit false
 
@@ -53,7 +54,10 @@ Two gates are part of the default build target and run on every `lake build`:
 
 * `Complexity/SoundnessGate.lean` — the axiom sweep, endpoint by endpoint;
 * `Complexity/HonestyGate.lean` — what the composite reduction's `encodeIn` and
-  `decodeOut` actually *are* (risk S5's two audited functions).
+  `decodeOut` actually *are* (risk S5's two audited functions);
+* `Complexity/CostFaithfulness.lean` — that `Op.cost`, the number every
+  "polynomial time" claim in this development is a bound on, is a polynomial
+  proxy for real `stepFlatTM` time.
 
 This file is the only module that transitively imports **every** other, so it is
 where the whole-library sweep belongs: the line below asserts that no declaration
