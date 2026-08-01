@@ -21,8 +21,14 @@ exactly
 ```
 
 (some print the shorter `[propext, Quot.sound]`; that is also clean). A
-`sorryAx` anywhere in this list is a regression — **CI greps for it**
-(`.github/workflows/lake-build.yml`) and fails the build.
+`sorryAx` anywhere in this list is a regression.
+
+⚠ **This probe is the REPORTING instrument, not the gate.** Since 2026-08-02 the
+gate is `CookLevin/Complexity/SoundnessGate.lean` plus the whole-library sweep at
+the bottom of `CookLevin/Complexity.lean`: `#assert_axioms_clean` /
+`#assert_library_axiom_clean` fail *elaboration*, so `lake build` itself goes red
+on a `sorryAx` — no CI step, no `grep`, nothing to remember. Use this file when
+you want to *see* an endpoint's axiom list; keep the two lists in sync.
 
 ## §1 measurement (2026-07-30-c)
 
@@ -133,6 +139,11 @@ the string-language headline. See `probes/HonestyAuditProbe.lean` §§3/7/8 for
 what these buy. -/
 
 section Honesty
+#print axioms Complexity.Lang.InNPWitnessStr.canonical_sizeLB
+#print axioms FrontProgram.tallyStage_run
+#print axioms Complexity.Lang.FrontWitness.encodeInQ_tally
+#print axioms Complexity.Lang.FrontWitness.exists_front_constants
+#print axioms Complexity.Lang.FrontWitness.front_reducesPolyMO'
 #print axioms CnfSerialize.decCnf_encodeCnf
 #print axioms CnfSerialize.size_le_encodeCnf_length
 #print axioms CnfSerialize.instSerializeCnf

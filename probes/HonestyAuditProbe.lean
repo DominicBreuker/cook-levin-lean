@@ -29,25 +29,34 @@ The audit's structural result (§1) is what makes the audit finite:
 machine-checked form of standing risk #1 — the reason the audit is a *reading*
 obligation that no typechecker can discharge.
 
-**2026-08-01 (top-down) added four things:**
+**The state of the two ends of the chain (read this):**
 
-* **§3** — the tail decoder is now a real **parser** (`Serialize cnf` /
-  `CnfSerialize.decCnf`, `dec_enc` proven) instead of `Function.invFun`. One of
-  the two audited functions is therefore pinned by a typeclass law, not a
-  reading.
-* **§7** — the negative control on the **hypothesis** side: a complete,
-  `sorry`-free `InNPWitnessLangFreeSplit Q` for an *arbitrary* predicate `Q`,
-  whose `encX` lays the answer. It yields `Q ⪯p' SAT` for arbitrary `Q`. This is
-  the bigger mouth of the S5 hole, and it is not on any witness we build — it is
-  in the *statement* of `NPhard''`.
-* **§7b** — why the fix cannot be another *field*: a second cheat whose layout
-  writes the whole raw input out (size-faithful, injective, `Serialize`-able)
-  and merely *appends* the answer in a second register. Every "no compression"
-  or "canonical encoding" law holds of it.
-* **§8** — the fix: `NPhardStr` (`Lang/HardnessStr.lean`) quantifies over
+* **§3** — the tail decoder is a real **parser** (`Serialize cnf` /
+  `CnfSerialize.decCnf`, `dec_enc` proven) instead of `Function.invFun`
+  (2026-08-01). One of the two audited functions is pinned by a typeclass law,
+  not a reading.
+* **§2/§8** — the head encoder is the hypothesis's own layout, verbatim
+  (2026-08-02): `encodeIn = W.encX`, and under `NPhardStr` that is `certState`,
+  the raw input string. The size register the reduction used to be handed is
+  computed on-machine. The other audited function is now a `rfl`.
+* **§6** — the standing negative control on the **conclusion** side: a witness
+  satisfying every field of `PolyTimeComputableLang` while doing all its work in
+  `encodeIn`. Still typechecks; still the reason honesty is a reading obligation
+  at any chain end we do not pin.
+* **§7** — ★ the negative control on the **hypothesis** side that **died**
+  (2026-08-02). It was a complete `InNPWitnessLangFreeSplit Q` for an *arbitrary*
+  predicate with the answer planted in `encX`; the new `sizeLB` field makes it
+  unbuildable, and §7 now *proves* that (`badEncX_no_sizeLB`,
+  `no_badEncX_witness`) while keeping the rest of the construction to show the
+  obstruction is that field and nothing else.
+* **§7b** — the cheat that **survives**, and why no further *field* can help: a
+  layout that writes the whole raw input out (size-faithful, injective,
+  `Serialize`-able, `sizeLB`-able — all discharged here) and merely *appends*
+  the answer in a second register.
+* **§8** — the actual fix: `NPhardStr` (`Lang/HardnessStr.lean`) quantifies over
   **string languages** with the canonical layout, where `encX` is not a field at
-  all. Under it the composite's encode is a closed formula, checked here by
-  `rfl`, and `NPcompleteStr SAT` follows from `CookLevin''` in one line.
+  all. `NPcompleteStr SAT` follows from `CookLevin''` in one line. **Quote
+  `CookLevinStr`.**
 
 Run: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean probes/HonestyAuditProbe.lean`
 -/
@@ -85,23 +94,25 @@ example : S1SATComp.s1_to_SAT_witness.decodeOut = FSATSATFree.decodeOut := rfl
 
 end Composite
 
-/-! ## §2 — the head layout: `encodeInQ` is the input, plus a size tally
+/-! ## §2 — the head layout is the hypothesis's own layout, FULL STOP
 
-`encodeIn x = W.encX x ++ [1^(size x)]`. `W.encX` is the *hypothesis witness's
-own* input layout — the layout `Q`'s verifier already reads — and the extra
-register is `encodable.size x` in unary, a metric of the input. Neither
-component mentions `fQ`, `s1Map`, satisfiability, or `Q x`.
+⚠ **Changed 2026-08-02 (top-down).** `encodeIn x` used to be
+`W.encX x ++ [1^(encodable.size x)]` — honest (the extra register was a *metric*
+of the input, not an answer), but still one thing an auditor had to read and
+judge. It is now `W.encX x`: the reduction counts its own input's cells
+on-machine (`FrontPieces.tallyCells`, licensed by the new `sizeLB` field) and
+the handed-over register is gone.
 
-The verdict this pins: the only non-`encX` register is a **tally**, and the
-front program consumes it (`FrontProgram.unaryMonomial`) to build `maxSize`
-and `steps` on-machine. -/
+The verdict this pins: the composite reduction's `ComputesBy.encode` is
+**equal to the hypothesis witness's own input layout**, the very layout `Q`'s
+verifier already reads. There is no head-side encoding of *ours* left to audit
+— see §8 for what that means under `NPhardStr`. -/
 
 section Head
 variable {X : Type} [encodable X] {Q : X → Prop}
 
 example (W : InNPWitnessLangFreeSplit Q) (x : X) :
-    FrontWitness.encodeInQ W x
-      = W.encX x ++ [List.replicate (encodable.size x) 1] := rfl
+    FrontWitness.encodeInQ W x = W.encX x := rfl
 
 /-- The front instance the reduction actually emits: the machine is built from
 `Q`'s **verifier program** (`W.verifier.c`), the string is a mechanical
@@ -255,34 +266,35 @@ theorem bad_polyTimeComputable' : polyTimeComputable' (fun n : Nat => n * n) :=
 
 end Dishonest
 
-/-! ## §7 — NEGATIVE CONTROL, HYPOTHESIS SIDE (NEW 2026-08-01)
+/-! ## §7 — ★ THE CHEAT THAT DIED (2026-08-02) — read this section first
 
-§6 shows the *conclusion* side is not enforced. This section shows the
-**hypothesis** side of `NPhard''` is not either, and that is the sharper fact:
+This section used to be the sharpest finding in the file: a complete,
+`sorry`-free `InNPWitnessLangFreeSplit Q` for an **arbitrary** predicate `Q` on
+an **arbitrary** encodable type — `encX x = [[if Q x then 1 else 0]]`, verifier
+= the layer's no-op `copy 0 0` reading the planted answer — which made
+`CookLevinHonest.SAT_NPhard''` yield `Q ⪯p' SAT` for undecidable `Q`.
 
-> `NPhard'' P = ∀ Y, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNPLangFreeSplit Q → Q ⪯p' P`
->
-> and `InNPWitnessLangFreeSplit` lets the *instantiator* choose `encX`, the
-> input layout the whole composite reduction is built on
-> (`FrontWitness.encodeInQ W x = W.encX x ++ [1^(size x)]`).
+**It no longer typechecks.** `InNPWitnessLangFreeSplit` gained a `sizeLB` field
+on 2026-08-02 (`Lang/PolyTime.lean`): `encodable.size x ≤ sizeLB (State.size
+(encX x))` for some polynomial `sizeLB` — the input's size must be recoverable
+from its own layout. What is kept below is *precisely* how it died, machine-
+checked, and it is worth more than the cheat was:
 
-Below is a complete, `sorry`-free `InNPWitnessLangFreeSplit Q` for an
-**arbitrary** predicate `Q` on an **arbitrary** encodable type: `encX x` is the
-single register `[if Q x then 1 else 0]` and the verifier is the layer's no-op
-`copy 0 0`, which "decides" `rel x c := Q x` by reading the planted answer.
-Every field is discharged — the certificate relation is sound, complete and
-polynomially bounded (certificates are ignored), the cost bound is `2`, the
-layout is bit-level, the frame is respected.
+* **`badVerifier` still exists** and every other field is still dischargeable —
+  `badSplitWitnessOf` builds the whole witness from a `sizeLB` and its proof,
+  so the obstruction is *exactly* that field and nothing else;
+* **`badEncX_no_sizeLB`** proves no such `sizeLB` exists over `Y = Nat`: the
+  layout is one cell wide for every input, so a bound would make `encodable.size`
+  bounded on an unbounded type.
 
-Consequently `CookLevinHonest.SAT_NPhard''` yields `Q ⪯p' SAT` for an arbitrary
-`Q`, including undecidable ones (`cheat_reduction`). That is not an
-inconsistency — the produced `⪯p'` is a real machine on an answer-bearing
-encoding, exactly as in §6 — but it means **`NPhard''` cannot be read as "every
-NP problem reduces to SAT" without also reading the presentation's `encX`**.
-The audit obligation was on the *consumer*, where no discipline of ours could
-discharge it.
+Together: the answer-planting layout survives only on types of bounded size,
+i.e. it can no longer present an infinite problem. That is the whole content of
+the `sizeLB` field, and it is the reason the front reduction may now count its
+own input's cells instead of being handed the count (§2).
 
-§8 is the fix. -/
+⚠ This did **not** close the hypothesis-side hole — §7b is the cheat that
+survives every law *about* `encX`, and §8 is the actual fix. Do not read §7's
+death as "`NPhard''` is now safe to quote"; quote `NPhardStr`. -/
 
 namespace HypothesisCheat
 
@@ -361,9 +373,14 @@ noncomputable def badVerifier :
     show (badEncX Q xc.1 ++ certState xc.2).length ≤ 2
     simp [badEncX, certState]
 
-/-- **THE HYPOTHESIS-SIDE NEGATIVE CONTROL.** Every predicate on every encodable
-type has a complete, `sorry`-free split verifier witness. -/
-noncomputable def badSplitWitness : InNPWitnessLangFreeSplit Q where
+/-- **The cheat, modulo exactly one field.** Every field of
+`InNPWitnessLangFreeSplit` is dischargeable for the answer-planting layout
+*except* `sizeLB`, which is taken as a parameter here. So this def is the
+machine-checked statement "the `sizeLB` field, and nothing else, is what stops
+the §7 cheat". -/
+noncomputable def badSplitWitnessOf (sizeLB : Nat → Nat) (hpoly : inOPoly sizeLB)
+    (hLB : ∀ x : Y, encodable.size x ≤ sizeLB (State.size (badEncX Q x))) :
+    InNPWitnessLangFreeSplit Q where
   rel := fun x _ => Q x
   dBound := fun n => n + 2
   dBound_poly := inOPoly_add inOPoly_id (inOPoly_const 2)
@@ -383,13 +400,31 @@ noncomputable def badSplitWitness : InNPWitnessLangFreeSplit Q where
     intro x
     show (1 : Nat) + 0 ≤ encodable.size x + 2
     omega
+  sizeLB := sizeLB
+  sizeLB_poly := hpoly
+  encX_sizeLB := hLB
 
-theorem every_predicate_presentable : inNPLangFreeSplit Q := ⟨badSplitWitness Q⟩
+/-- **…and no such `sizeLB` exists.** The answer-planting layout is ONE cell
+wide for every input, so a `sizeLB` would bound `encodable.size` on all of `Y`.
+Over `Y = Nat` (where `encodable.size = id`) that is false, and the §7 cheat is
+dead. ⚠ Note what this does *not* say: on a type of bounded size the cheat is
+still constructible — and harmlessly so, since a finite problem is decidable
+anyway. The freedom `sizeLB` removes is exactly the freedom to present an
+unbounded problem in a bounded layout. -/
+theorem badEncX_no_sizeLB (P : Nat → Prop) (sizeLB : Nat → Nat) :
+    ¬ (∀ n : Nat, encodable.size n ≤ sizeLB (State.size (badEncX P n))) := by
+  intro h
+  have hone : ∀ n : Nat, State.size (badEncX P n) = 1 := fun _ => rfl
+  have hbig := h (sizeLB 1 + 1)
+  rw [hone] at hbig
+  have : encodable.size (sizeLB 1 + 1) = sizeLB 1 + 1 := rfl
+  omega
 
-/-- …so the current hardness statement yields a real `⪯p'` into SAT for an
-**arbitrary** predicate — including undecidable ones. Axiom-clean, no `sorry`. -/
-theorem cheat_reduction : Q ⪯p' SAT :=
-  CookLevinHonest.SAT_NPhard'' Y inferInstance Q (every_predicate_presentable Q)
+/-- The cheat is not presentable at all over `Nat`: no `InNPWitnessLangFreeSplit`
+whose input layout is `badEncX` exists. -/
+theorem no_badEncX_witness (P : Nat → Prop)
+    (W : InNPWitnessLangFreeSplit P) (hW : W.encX = badEncX P) : False :=
+  badEncX_no_sizeLB P W.sizeLB (fun n => by rw [← hW]; exact W.encX_sizeLB n)
 
 end HypothesisCheat
 
@@ -512,6 +547,16 @@ noncomputable def badSplitWitness : InNPWitnessLangFreeSplit Q where
     have h1 : x.length ≤ encodable.size x := length_le_size x
     rw [List.length_map]
     omega
+  -- ⚠ THE POINT OF §7b: the `sizeLB` field that killed §7 is satisfied here
+  -- without effort, because this layout really does write the whole input out.
+  sizeLB := fun n => 2 * n
+  sizeLB_poly := inOPoly_mul (inOPoly_const 2) inOPoly_id
+  encX_sizeLB := by
+    intro x
+    show encodable.size x ≤ 2 * ((x.map (fun b => if b then 1 else 0)).length + (1 + 0))
+    have h := size_le_two_mul_length x
+    rw [List.length_map]
+    omega
 
 /-- **The layout is size-faithful** — it writes the input out in full — and the
 witness is still a cheat. No `encX` law can separate these two facts. -/
@@ -531,27 +576,28 @@ end HypothesisCheat2
 
 `Complexity.Lang.InNPWitnessStr` pins the hypothesis to a **string language**
 with the canonical one-register layout `certState`. Then the composite
-reduction's input encoding is not a free function of the witness — it is a
-closed formula in `x`: the raw string, plus a unary tally of `x`'s own size.
-Reading *that one formula* is the whole head-side audit, once, forever. -/
+reduction's input encoding is not a free function of the witness — and since
+2026-08-02 it is not even a formula with a tally bolted on. It is
+
+    encodeIn x = certState x
+
+the raw input string, one register, one cell per bit. **That is the entire
+head-side audit**, and it is now a `rfl` rather than a reading. -/
 
 example (Q : List Bool → Prop) (W : InNPWitnessStr Q) (cm km dm cs ks ds : Nat)
     (x : List Bool) :
     (FrontS1Comp.front_to_SAT_witness W.toInNPWitnessLangFreeSplit cm km dm cs ks ds).encodeIn x
-      = certState x ++ [List.replicate (encodable.size x) 1] := by
-  show FrontWitness.encodeInQ W.toInNPWitnessLangFreeSplit x = _
-  show W.encX x ++ [List.replicate (encodable.size x) 1] = _
-  rw [W.encX_canonical x]
+      = certState x := W.encX_canonical x
 
 /-- The canonical layout is one register holding one cell per bit … -/
 example (x : List Bool) : State.size (certState x) = x.length :=
   State.size_certState x
 
-/-- … and it is size-faithful in **both** directions, so the handed-over tally
-register is now *provably* computable on-machine (`FrontPieces.tallyCells`
-already emits `1^(State.size (encX x))`, proven, with a cost lemma). This is the
-lower bound the C8-4 finding of 2026-07-20-c said could not exist for an
-abstract `encX`. -/
+/-- … and it is size-faithful in **both** directions. The lower bound is the one
+the C8-4 finding of 2026-07-20-c said could not exist for an abstract `encX`; it
+is what `InNPWitnessLangFreeSplit.sizeLB` now demands in general, and it is why
+`FrontPieces.tallyCells` — built 2026-07 and parked unused — is finally wired
+into `FrontProgram.frontProgram`, retiring the handed-over register. -/
 example (x : List Bool) : x.length ≤ encodable.size x ∧ encodable.size x ≤ 2 * x.length :=
   ⟨length_le_size x, size_le_two_mul_length x⟩
 

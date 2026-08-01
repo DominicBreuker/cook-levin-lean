@@ -1,4 +1,5 @@
 import Complexity.Complexity.Deciders.EvalCnfTM
+import Complexity.Complexity.Deciders.CnfSerialize
 import Complexity.Lang.CostGrow
 
 set_option autoImplicit false
@@ -896,6 +897,16 @@ noncomputable def satSplitWitnessOf (dec : Cmd) (rb : Nat) (hrb : 16 ≤ rb)
     have h1 := satEncX_size_le N
     have h2 := six_le_timeBound (encodable.size N)
     show _ ≤ hcost.choose _ + EvalCnfTM.timeBound (_ * _) + 1
+    omega
+  -- **No compression** (2026-08-02): the CNF stream register alone is at least
+  -- `encodable.size N` long — `CnfSerialize.size_le_encodeCnf_length`, the
+  -- lower half of the `Serialize cnf` sandwich — so `sizeLB` is the identity.
+  sizeLB := id
+  sizeLB_poly := inOPoly_id
+  encX_sizeLB := fun N => by
+    have h := CnfSerialize.size_le_encodeCnf_length N
+    show encodable.size N ≤ State.size (satEncX N)
+    rw [satEncX_size]
     omega
 
 /-- **`inNPLangFreeSplit SAT` from the decoder contracts alone** — the membership

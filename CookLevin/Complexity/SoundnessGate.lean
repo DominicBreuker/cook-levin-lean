@@ -51,6 +51,17 @@ namespace Complexity.SoundnessGate
   Complexity.Lang.NPcomplete''_to_NPcompleteStr
   Complexity.Lang.size_le_two_mul_length
   Complexity.Lang.length_le_size
+  Complexity.Lang.InNPWitnessStr.canonical_sizeLB
+
+/-! ## The chain head — the input encoding and the on-machine size tally -/
+
+#assert_axioms_clean
+  FrontProgram.tallyStage_run
+  FrontProgram.frontProgram_run
+  FrontProgram.frontProgram_cost_le
+  Complexity.Lang.FrontWitness.encodeInQ_tally
+  Complexity.Lang.FrontWitness.exists_front_constants
+  Complexity.Lang.FrontWitness.front_reducesPolyMO'
 
 /-! ## The cost layer -/
 

@@ -33,10 +33,11 @@ The textbook statement is about languages `L ⊆ Σ*`. Take `Y := List Bool` and
 `certState` — the same layout the certificate side already uses. Then:
 
 * there is no `encX` to audit: it is `certState`, fixed by the statement;
-* the composite reduction's encode is the fixed formula
-  `certState x ++ [1^(encodable.size x)]` — a raw string plus a unary tally of
-  its own size, which is the audit criterion's "a metric of the input", not a
-  free function (`probes/HonestyAuditProbe.lean` §8 pins it as `rfl`);
+* the composite reduction's encode is **`certState x` itself** — the raw input
+  string, one register, one cell per bit (`probes/HonestyAuditProbe.lean` §8
+  pins it). ⚠ Until 2026-08-02 a unary tally `1^(encodable.size x)` was appended;
+  the reduction now counts its own input's cells on-machine, so there is no
+  formula left to read at all;
 * the hypothesis has real content: the verifier is a `Cmd` that must decide
   `rel x c` **from the raw string**, so it can no longer be a no-op reading a
   planted answer.
@@ -51,11 +52,9 @@ hardness claim of this development whose meaning survives an adversarial reader.
 * The reduction's *output* decoder is still a free field of the witness; at the
   chain's tail it is pinned to the canonical CNF parser by hand
   (`FSATSATFree.decodeOut = Serialize.dec ∘ get CNFOUT`, 2026-08-01).
-* The size register `1^(encodable.size x)` is still handed over by `encodeIn`
-  rather than computed on-machine. Under this restriction it is now *provably*
-  computable (`encodable.size x ≤ 2 * State.size (certState x)` — the front's
-  `tallyCells` gadget is already built and proven), so this is tidiness, not a
-  hole. See `CookLevin/HANDOFF.md`.
+* ~~The size register is handed over by `encodeIn`~~ — **closed 2026-08-02.**
+  `InNPWitnessLangFreeSplit.sizeLB` supplies the lower bound the front needed,
+  `FrontPieces.tallyCells` counts the cells, and `encodeIn` is `encX` verbatim.
 * The definitional trust at the statement is untouched and irreducible: is
   `FlatTM`/`stepFlatTM` a faithful Turing machine, is `Op.cost` a faithful proxy
   for time, does `SAT` mean satisfiability.
@@ -162,5 +161,15 @@ theorem length_le_size (x : List Bool) : x.length ≤ encodable.size x := by
         omega
   have := key x 0
   omega
+
+/-- **The `sizeLB` field is not a choice for a string language.** The general
+hypothesis (`InNPWitnessLangFreeSplit`, 2026-08-02) asks the instantiator for a
+polynomial recovering `encodable.size x` from the layout's own cell count. Under
+`encX_canonical` the layout is `certState`, so `fun n => 2 * n` always works and
+is always *correct* — the field adds an obligation, never a freedom. -/
+theorem InNPWitnessStr.canonical_sizeLB {Q : List Bool → Prop} (W : InNPWitnessStr Q)
+    (x : List Bool) : encodable.size x ≤ 2 * State.size (W.encX x) := by
+  rw [W.encX_canonical x, State.size_certState]
+  exact size_le_two_mul_length x
 
 end Complexity.Lang
