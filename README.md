@@ -2,12 +2,15 @@
 
 A Lean 4 formalisation targeting the **Cook–Levin theorem** (SAT is
 NP-complete), structured as a port of the Coq development by Forster, Kunze,
-Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
+Roth et al. (<https://github.com/uds-psl/cook-levin>).
 
 **The theorem is proven, on the honest statement, unconditionally
 (2026-07-30-b), audited (2026-07-30-c), stated in a form with no dishonest
-instantiation (2026-08-01), and — since 2026-08-02 — `lake build` itself
-*proves* there are no `sorry`s and no bespoke axioms anywhere in the library.**
+instantiation (2026-08-01), gated by `lake build` itself — which *proves* there
+are no `sorry`s and no bespoke axioms anywhere in the library (2026-08-02) — and,
+since 2026-08-03, machine-checked to be **non-vacuous**: the class it quantifies
+over is inhabited by a concrete problem, and every inhabitant of that class is
+decidable.**
 
 ```
 CookLevinHonest.CookLevinStr : NPcompleteStr SAT   -- ★ the statement to quote
@@ -17,9 +20,9 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 
 ### What a reviewer actually has to do
 
-1. **`lake build`.** If it is green then two things are machine-checked, both
+1. **`lake build`.** If it is green then three things are machine-checked, all
    at elaboration time, with no CI step and no `grep` involved:
-   * every one of the ~12 350 declarations under `Complexity` is `sorry`-free
+   * every one of the ~12 400 declarations under `Complexity` is `sorry`-free
      and uses only `propext`, `Classical.choice` and `Quot.sound`
      (`#assert_library_axiom_clean` in `Complexity/Meta/AxiomGate.lean`, swept
      from `Complexity.lean`; endpoint-by-endpoint in
@@ -28,7 +31,12 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
    * the composite reduction's `encodeIn` and `decodeOut` — the **only two
      functions** encoding honesty depends on (FINDING AK) — are the ones the
      audit says they are, including `encodeIn x = certState x` under `NPhardStr`
-     (`Complexity/HonestyGate.lean`).
+     (`Complexity/HonestyGate.lean`);
+   * the hypothesis class of the hardness half is **inhabited** by a concrete
+     language with a real verifier `Cmd`, and **every** inhabitant of it is
+     decidable by brute-force search over its own verifier
+     (`Complexity/NonVacuity.lean`) — so the theorem is neither vacuously true
+     for want of an instance, nor true of arbitrary predicates.
 2. **Read three definitions**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else:
    * `NPcompleteStr` / `NPhardStr` / `InNPWitnessStr` (`Complexity/Lang/HardnessStr.lean`)
@@ -64,6 +72,38 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-03** (top-down; non-vacuity, and demolition):
+
+* **The hypothesis of the headline is inhabited, and the inhabitant is real.**
+  `Complexity/NonVacuity.lean` exhibits a complete `InNPWitnessStr` for
+  `SquareStr x := ∃ c, x = c ++ c` — a two-op verifier `Cmd` on the canonical
+  layout, exact cost accounting, a certificate that is load-bearing (same input,
+  two certificates, two answers), and §4's separation lemmas showing the language
+  is neither empty nor total. Until then the library contained **no**
+  `InNPWitnessStr` at all: every session since 2026-07-30 had made the class
+  *harder* to inhabit and none had checked that anything still did.
+  `squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT` is `CookLevinStr` applied
+  to it — the whole chain, running on a concrete problem.
+* **…and it is not inhabited by everything.** `searchDecide` is a running Lean
+  function that enumerates every certificate of length `≤ bound (size x)` and
+  executes the witness's own verifier `Cmd`; `searchDecide_correct` proves
+  `Q x ↔ searchDecide … x = true`. So **no undecidable `Q` satisfies
+  `inNPStr Q`** — the freedom `HonestyAuditProbe` §7/§7b exploits against
+  `NPhard''` is not available against `NPhardStr`. ⚠ Scope, stated in the file:
+  this is a Lean function, not a `FlatTM`. The `Cmd`-level search (which would
+  give `Nonempty (DecidesBy Q f)` for exponential `f` inside this development's
+  own computability model) is the next rung and is scoped in `HANDOFF.md`.
+* **The `⪯p` API is gone.** `reducesPolyMO`, `ReductionWitness`,
+  `PolyTimeComputableWitness`, `NPhard`, `NPcomplete`, the nine wrapper theorems
+  producing `⪯p` facts, and the three bridges down from `⪯p'`/`NPhard'` were
+  deleted. It had no live consumer and was one bridge away from the real
+  statement — see "Why there is no `NPcomplete'' → NPcomplete` bridge" below.
+* **Repo hygiene.** `parked/` (~15K LOC, permanently retired 2026-07-30-c),
+  `coqdoc/` (the local Coq mirror), `.mcp.json.bak`, and the `Basic.lean` /
+  `Main.lean` lakefile scaffolding are deleted. `Complexity` is now the only
+  `lean_lib` root, so "the axiom sweep covers the library" no longer carries a
+  footnote.
 
 **What changed on 2026-08-02** (top-down; enforcement):
 
@@ -156,13 +196,14 @@ Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
 and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
 working.
 
-## Honest status (verified 2026-07-30-c)
+## Honest status (verified 2026-08-03)
 
 | | |
 |---|---|
-| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12354 declarations in all 97 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, and `Complexity/HonestyGate.lean` pins the two audited functions. Runs in ~2 s. |
+| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12466 declarations in all 99 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, and `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis. Runs in ~2 s. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
+| **non-vacuity of the `NPhardStr` hypothesis** | ✅ **NEW 2026-08-03**, both directions, gated (`Complexity/NonVacuity.lean`). **Inhabited**: `inNPStr_squareStr` — a complete `InNPWitnessStr` for `SquareStr`, and `squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT` is `CookLevinStr` applied to it. **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM`; that rung is open. Probe: `probes/NonVacuityProbe.lean`. |
 | **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01; head side CLOSED 2026-08-02** — the composite's `encodeIn` is now `W.encX` verbatim, i.e. `certState x` under `NPhardStr`, so there is no head-side encoding of ours left to read.<br> The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–14 in the ROADMAP register. |
 | ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
@@ -199,7 +240,7 @@ working.
 | `#print axioms CookLevinHonest.CookLevin''_of_decodesAssgn` | **`[propext, Classical.choice, Quot.sound]`** — **the WHOLE of Cook–Levin, on the honest statement, reduced to ONE register equation** (2026-07-30; the equation was discharged 2026-07-30-b, and this program-generic form is kept as the interface a different decoder plugs into). `NPcomplete'' SAT` follows from `∀ N c, State.get (certDecode.eval (satEIn (N,c))) ASSGN = encodeAssgn (decodeBits c)` — a `_run` lemma about an 11-op program. The hardness half (`FrontS1Comp.SAT_NPhard''`) is already unconditional; the membership half (`Complexity/Complexity/Deciders/EvalCnfSplit.lean`, sorry-free) supplies the split layout (`satEncX`/`satEIn`, `xWidth = 3`), the certificate relation and its polynomial bound (`satRel_correct : polyCertRel SAT satRel`), the decoder's cost (`by decide` through `Cmd.chk`) and frame, the frame half of the bridge (free, from `Cmd.writes`), and all four composite `DecidesLang` bounds. Three findings: the `InNPWitnessLangFreeSplit` split law is **not** a layout obstruction (`precomposeFree` chooses the composite's `encodeIn`, and `State.get` reads unset registers as `[]`, so the eight trailing scratch `[]`s of `EvalCnfCmd.encodeState` are invisible and the entire gap is one register); a re-encoder whose scratch sits **above** the target verifier's `regBound` owes no scrub; and the certificate must be the **characteristic vector** (total on every bit string — `InNPWitnessLangFreeSplit` puts certificates in `certState`, so a sentinel-unary format would need a partial parse and a normaliser). Probe: `probes/SATSplitProbe.lean` (9 checks incl. the loop invariant at every prefix length, garbage/short/over-long certificates, and end-to-end acceptance). |
 | Genuine `sorry`s in built code | **0** (2026-07-30-c). The last five were all on the legacy `⪯p` path and were **deleted with it**, not proved: `red_inNP`'s `inTimePoly` half, `hasDeciderClassical`, and 3× `MultiToSingle` (dead code). None was ever on the `NPhard''` path. `lake build` emits no `declaration uses 'sorry'`, and no endpoint in `probes/AxiomProbe.lean` (59 of them) prints `sorryAx`. |
 | `sorry`-**free** but **vacuous** defs on the proof path | **none.** S1 (the if-on-the-answer tableau map) and S2 (the dummy `bridgeMachine` bridges) were the two that were invisible to `#print axioms`; both files are **deleted** (2026-07-30-c). The third member, the size-0 hardness reduction, was closed by Part 0.1 (2026-07-04). |
-| Proof-path size | ~16K LOC under `CookLevin/` (a further ~15K parked and **permanently retired** — see `parked/README.md`) |
+| Proof-path size | ~16K LOC under `CookLevin/`. A further ~15K LOC of hand-rolled pre-pivot `FlatTM` work was parked in July, permanently retired on 2026-07-30-c and **deleted on 2026-08-03** — it is in git history, and the methodology argument it was evidence for is in the ROADMAP |
 | Estimated work remaining | **none on the stated goal.** The theorem is proven, unconditional, audited and `sorry`-free. Further work is *scope extension* (honest NP-completeness for `kSAT 3` / `FlatClique`) or *hygiene* — see [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md). |
 
 > **The `sorry` count is not the soundness metric — and this project is the
@@ -260,14 +301,20 @@ is `NPhard'' SAT` restricted along `NPhard''_to_NPhardStr`, and under it the
 reduction's input encoding is a closed formula in `x` rather than a choice of
 the reader's. `CookLevinHonest.CookLevinStr` is the corresponding headline.
 
-**Why there is no `NPcomplete'' → NPcomplete` bridge.** `⪯p` (`reducesPolyMO`)
-bounds only the reduction's *output size*, never its runtime — the reduction
-function may even be noncomputable. So `NPhard`/`NPcomplete` as *defined* are too
-weak to be faithful, and the honest statement does not imply the vacuous one. The
-legacy headline that quoted it was **deleted** (2026-07-30-c), along with the
-`sorry`-backed and vacuous machinery that fed it. `⪯p` itself survives in
-`NP.lean` as the weaker notion `⪯p'` is defined to strengthen
-(`reducesPolyMO'_to_reducesPolyMO`), with no live consumer.
+**Why there is no `NPcomplete'' → NPcomplete` bridge — and, since 2026-08-03, no
+`NPcomplete` either.** `⪯p` (`reducesPolyMO`) bounded only the reduction's
+*output size*, never its runtime; the reduction function need not even be
+computable. So `NPhard`/`NPcomplete` as *defined* were too weak to be faithful,
+and the honest statement does not imply the vacuous one. The legacy headline that
+quoted it was deleted on 2026-07-30-c along with the `sorry`-backed machinery
+that fed it, and the **notion itself** — `⪯p`, `ReductionWitness`,
+`PolyTimeComputableWitness`, `NPhard`, `NPcomplete`, the nine wrapper theorems
+that produced `⪯p` facts, and the three bridges down from `⪯p'`/`NPhard'` — was
+deleted on 2026-08-03. A weaker, vacuous notion with no live consumer, sitting
+one bridge away from the real one, is a way for a reader to come away with the
+wrong theorem; there is now nothing to come away with. The size-bound fields it
+carried are inlined into `Lang.PolyTimeComputableWitness'`, where they belong:
+an output-size bound **plus** a real machine.
 
 ### What was deleted on 2026-07-30-c, and why it was deleted rather than proved
 
@@ -302,7 +349,7 @@ witnesses. The two chain ends are pinned (tail: `Serialize cnf`; head: the
 ## The strategy: a higher-level computable layer
 
 Building verifiers/reductions directly as `FlatTM`s overran budget ~10× and was
-abandoned (parked under `parked/`, ~15K LOC). The pivot: a small structured
+abandoned (~15K LOC, deleted 2026-08-03; see git history). The pivot: a small structured
 while-language `Cmd`/`Op` with explicit **cost** semantics, compiled **once** to
 `FlatTM` (`Compile`). Every downstream verifier/reduction is then a short DSL
 program. This is the Lean analogue of the L-calculus the Coq port uses — and,
@@ -387,12 +434,13 @@ CookLevin/
 │   ├── Complexity/
 │   │   ├── Definitions.lean         -- encodable (real sizes, no size-0 fallback), inOPoly, monotonic
 │   │   ├── MachineSemantics.lean    -- FlatTM, stepFlatTM, runFlatTM
-│   │   ├── NP.lean                  -- DecidesBy, inTimePoly, inNP; the legacy ⪯p/NPhard (no live consumer)
+│   │   ├── NP.lean                  -- DecidesBy, inTimePoly, inNP, polyCertRel (the ⪯p API was deleted 2026-08-03)
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
 │   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize
 │   ├── SoundnessGate.lean          -- the axiom sweep, run BY `lake build`
 │   ├── HonestyGate.lean            -- risk S5's two audited functions, pinned BY `lake build`
 │   ├── CostFaithfulness.lean       -- `Op.cost` is a polynomial proxy for real TM time
+│   ├── NonVacuity.lean             -- the NPhardStr hypothesis is neither empty nor free (gated)
 │   ├── Meta/AxiomGate.lean          -- `#assert_axioms_clean` / `#assert_library_axiom_clean`
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
 │   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one),
@@ -408,9 +456,12 @@ CookLevin/
 │           ├── Reductions/          -- the free-line witnesses, the S1 program, the five seams
 │           └── Subproblems/         -- FlatTCC / FlatCC / BinaryCC / SingleTMGenNP
 probes/                              -- #eval/decide risk checks (AxiomProbe, HonestyAuditProbe, …)
-parked/                              -- hand-rolled pre-pivot work (~15K LOC, PERMANENTLY RETIRED, not built)
-coqdoc/                              -- local mirror of the Coq port
 ```
+
+`CookLevin/` is the whole build. There is no second `lean_lib` root and no
+executable target: `Complexity` transitively imports every module, which is what
+makes the whole-library axiom sweep at the bottom of `Complexity.lean` a sweep of
+the *whole library*.
 
 ## Building
 
@@ -421,9 +472,10 @@ export PATH="$HOME/.elan/bin:$PATH"
 lake build
 ```
 
-First build from a clean checkout is slow (mathlib cache). Lake's `lean_lib`
-root is `CookLevin/`, so `parked/` is not built. Axiom check (lean-lsp's LSP
-cannot find `lake`, so use a scratch file):
+First build from a clean checkout is slow (mathlib cache; a cold build is
+~15 min, `Reductions/S1Witness.lean` alone ~11 min). Axiom check — the build
+already gates this, so use it only to *inspect* a name (lean-lsp's LSP cannot
+find `lake`, so use a scratch file):
 
 ```
 env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axioms <name>`
@@ -457,6 +509,6 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 
 ## References
 
-- Coq source: <https://github.com/uds-psl/cook-levin>; mirror `coqdoc/`.
+- Coq source: <https://github.com/uds-psl/cook-levin>.
 - Roadmap / plan / Risk register: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
-- Parked work: [`parked/README.md`](parked/README.md).
+- Working plan for the next session: [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md).

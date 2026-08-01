@@ -35,22 +35,11 @@ theorem kSAT_to_SAT_correct (k : Nat) (N : cnf) :
     · intro ⟨hk, hcnf, _⟩; exact absurd ⟨hk, hcnf⟩ h
     · intro hsat; exact absurd hsat emptyClauseCnf_unsat
 
-/-- kSAT k polynomial-time reduces to SAT. -/
-theorem kSAT_to_SAT (k : Nat) : kSAT k ⪯p SAT :=
-  ⟨⟨kSAT_to_SAT_reduction k,
-    ⟨⟨fun n => n + 2,
-      ⟨1, ⟨3, 2, by intro n hn; simp only [pow_one]; omega⟩⟩,
-      fun a b h => by simp only; omega,
-      fun N => by
-        unfold kSAT_to_SAT_reduction emptyClauseCnf
-        split_ifs with h
-        · simp
-        · -- size of [[]] = 1 ≤ encodable.size N + 2
-          have h2 : encodable.size ([[]] : cnf) = 1 := by
-            simp [encodable_size_list_cons, encodable_size_list_nil]
-          show encodable.size ([[]] : cnf) ≤ encodable.size N + 2
-          omega⟩⟩,
-    kSAT_to_SAT_correct k⟩⟩
+/-! **`kSAT_to_SAT` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/
 
 /-! **`inNP_kSAT` was DELETED (2026-07-30-c)** with `red_inNP`, the `sorry`-backed
 `⪯p`-based composition it routed through. The honest, live replacement is

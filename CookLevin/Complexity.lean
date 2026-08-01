@@ -45,6 +45,7 @@ import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
 import Complexity.HonestyGate
 import Complexity.CostFaithfulness
+import Complexity.NonVacuity
 
 set_option autoImplicit false
 
@@ -57,7 +58,11 @@ Two gates are part of the default build target and run on every `lake build`:
   `decodeOut` actually *are* (risk S5's two audited functions);
 * `Complexity/CostFaithfulness.lean` — that `Op.cost`, the number every
   "polynomial time" claim in this development is a bound on, is a polynomial
-  proxy for real `stepFlatTM` time.
+  proxy for real `stepFlatTM` time;
+* `Complexity/NonVacuity.lean` — that the hypothesis of the published hardness
+  statement is neither empty (a complete `InNPWitnessStr` is exhibited) nor
+  satisfiable by an arbitrary predicate (every inhabitant is decidable by a
+  brute-force search over its own verifier program).
 
 This file is the only module that transitively imports **every** other, so it is
 where the whole-library sweep belongs: the line below asserts that no declaration

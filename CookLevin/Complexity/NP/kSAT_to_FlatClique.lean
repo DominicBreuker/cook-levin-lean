@@ -818,12 +818,8 @@ private theorem kSAT_to_FlatClique_f_size_bound (k : Nat) (N : cnf) :
 -- §18  Main polynomial-time reduction theorem
 ------------------------------------------------------------------------
 
-theorem kSAT_to_FlatClique_poly (k : Nat) : kSAT k ⪯p FlatClique :=
-  ⟨⟨kSAT_to_FlatClique_f k,
-    ⟨⟨fun n => 10 * n ^ 4 + 10,
-      by apply inOPoly_add
-         · exact ⟨4, ⟨10, 1, fun n hn => by nlinarith [Nat.one_le_pow 4 n (by omega)]⟩⟩
-         · exact inOPoly_const 10,
-      by intro a b hab; nlinarith [Nat.pow_le_pow_left hab 4],
-      kSAT_to_FlatClique_f_size_bound k⟩⟩,
-    fun {N} => kSAT_to_FlatClique_f_correct k N⟩⟩
+/-! **`kSAT_to_FlatClique_poly` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/

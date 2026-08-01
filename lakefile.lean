@@ -10,10 +10,11 @@ package «cook-levin-lean» where
 require mathlib from git
   "https://github.com/leanprover-community/mathlib4.git"
 
+-- `Complexity` is the ONLY root, deliberately: it transitively imports every
+-- module, which is what makes the whole-library axiom sweep at the bottom of
+-- `Complexity.lean` cover the whole library. A second root would be a module
+-- the gate does not check — do not add one without extending the sweep.
 @[default_target]
 lean_lib CookLevin where
   srcDir := "CookLevin"
-  roots := #[`Basic, `Complexity]
-
-lean_exe «cook-levin-lean» where
-  root := `Main
+  roots := #[`Complexity]

@@ -1,22 +1,22 @@
 # Handoff — the working plan for both streams
 
 Authoritative status & the full risk register live in [`../README.md`](../README.md)
-and [`ROADMAP.md`](ROADMAP.md). This file is the forward-looking working plan; we
-work **multi-session in two alternating streams** — at the start of each session
+and [`ROADMAP.md`](ROADMAP.md). **This file is the forward-looking working plan.**
+We work multi-session in two alternating streams — at the start of each session
 the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 **`top-down`** (work the final assembly, surface gaps early, `sorry` what is
 reasonably provable).
 
 **Read in this order.** "Where the proof stands" → "★ Latest session" → the
-**NEXT** section for your stream → "Before you push". Everything from
-"The S1 register frame" down is a **reference index**, not narration: consult it
-before building anything, do not read it front to back.
+**NEXT** section for your stream → "Before you push". Everything from "Standing
+architecture risks" down is a **reference index**: consult it before building
+anything, do not read it front to back.
 
-## Where the proof stands (2026-08-02)
+## Where the proof stands (2026-08-03)
 
-**COOK–LEVIN IS PROVEN, on the honest statement, unconditionally — audited, and
-stated in a form with no dishonest instantiation. Since this session, `lake
-build` itself proves the library is `sorry`-free.**
+**COOK–LEVIN IS PROVEN, on the honest statement, unconditionally — audited,
+stated in a form with no dishonest instantiation, and non-vacuous. `lake build`
+itself proves the library is `sorry`-free and axiom-clean.**
 
 ```
 CookLevinHonest.CookLevinStr : NPcompleteStr SAT      -- ★ the one to quote
@@ -31,111 +31,172 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 | `FrontS1Comp.SAT_NPhard''` (hardness) / `EvalCnfSplit.SAT_inNPLangFreeSplit` (membership) | ✅ axiom-clean |
 | **`CookLevinHonest.CookLevinStr : NPcompleteStr SAT`** | ✅ the headline |
 | the tail decoder `FSATSATFree.decodeOut` | ✅ a real parser (`Serialize cnf`) |
-| the head encoder `FrontWitness.encodeInQ` | ✅ **NEW 2026-08-02** — literally `W.encX`, i.e. `certState x` under `NPhardStr` |
-| axiom/`sorry` hygiene | ✅ **NEW 2026-08-02** — a *build-time* obligation, not a probe |
-| the two audited functions (risk S5) | ✅ **NEW 2026-08-02** — pinned by `Complexity/HonestyGate.lean`, also at build time |
-| `Op.cost` as a proxy for real TM time | ✅ **NEW 2026-08-02** — `Compile.cost_is_time_proxy`, gated; off the reviewer's trust list |
+| the head encoder `FrontWitness.encodeInQ` | ✅ literally `W.encX`, i.e. `certState x` under `NPhardStr` |
+| axiom/`sorry` hygiene · the two audited functions · `Op.cost` as a time proxy | ✅ *build-time* obligations, not probes |
+| **non-vacuity of the `NPhardStr` hypothesis** | ✅ **NEW 2026-08-03** — inhabited *and* not satisfiable by arbitrary predicates (`Complexity/NonVacuity.lean`, gated) |
 
 **The honesty surface that remains** is exactly: the *statement*
 (`NPcompleteStr`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the
 faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine, and `Serialize cnf`.
-Four definitions, read once. `Op.cost`'s faithfulness came off this list on
-2026-08-02 and the head-side encoding came off it the same day. Everything else
-is machine-checked. Read the README's "What a reviewer actually has to do".
+Four definitions, read once. Everything else is machine-checked. Read the
+README's "What a reviewer actually has to do".
+
+⚠ **Do not let that list grow.** If you find yourself adding a fourth kind of
+thing a reviewer must trust, *that is the finding* — write it down before you
+write any Lean.
 
 ## ★ Latest session
 
-**2026-08-02 (top-down) — enforcement: the build is the gate, and the head
-encoding is the input.**
+**2026-08-03 (top-down) — non-vacuity, and demolition.**
 
-**Landed (four independent pieces).**
+**FINDING AR — a hardness statement has TWO ways to be vacuous, and four
+sessions had worked on only one of them.** `NPhardStr SAT` is
+`∀ Q, inNPStr Q → Q ⪯p' SAT`. Every session from 2026-07-30 to 2026-08-02 made
+`inNPStr` *harder* to satisfy (the split layout laws, then `sizeLB`, then
+pinning the layout outright in `InNPWitnessStr`) — each time correctly, each
+time to close a dishonest-instantiation hole. **None checked that anything still
+satisfied it.** Until this session the library contained **no `InNPWitnessStr`
+at all**: for anything a reader could check, the headline was an implication
+with an empty hypothesis class. The generalisable lesson: *every time you
+strengthen a hypothesis, the very next obligation is to re-exhibit an
+inhabitant* — otherwise the strengthening that makes a statement honest is the
+same edit that makes it empty.
 
-1. **`Complexity/Meta/AxiomGate.lean` + `Complexity/SoundnessGate.lean`.** Two
-   commands over `Lean.collectAxioms`: `#assert_axioms_clean f g h` and
-   `#assert_library_axiom_clean Complexity`. They **fail elaboration** — so
-   `lake build` goes red — if anything depends on an axiom outside
-   `{propext, Classical.choice, Quot.sound}`. The library sweep sits at the
-   bottom of `Complexity.lean` (the only module that transitively imports
-   everything) and covers 12344 declarations in 96 modules in ~2 s; imported
-   axiom sets are precomputed by `Lean.exportedAxiomsExt`, so it is a lookup per
-   declaration. Negative-tested: it rejects a `sorry` reachable only through a
-   theorem's *statement* (standing risk #7 — what no `grep` can see), and a
-   bespoke `axiom`.
-2. **`Complexity/HonestyGate.lean`.** The `rfl`-checkable honesty pins — what
-   the composite's `encodeIn` and `decodeOut` *are*, at both nesting levels, and
-   that under `NPhardStr` the encode is `certState x` — moved out of the probe
-   and into the build, as gated `theorem`s. The negative controls stayed in
-   `probes/` on purpose: they are constructions that are *supposed* to
-   typecheck, and a reader who found them in the library would rightly read them
-   as claims of it.
-3. **`Complexity/CostFaithfulness.lean`.** `Compile.cost_is_time_proxy`: ONE
-   fixed polynomial bounds the running time of **both** compiled machines —
-   `paddedComputeTM` (reductions) and `paddedBitDeciderTM` (verifiers) — in
-   `State.size s + c.cost s + regBound + loopDepth`, with the machine really
-   halting on the program's real output. The content was already proven
-   (`paddedCompute_run` + `padBudget_le` + `physStepBudget_poly`); what was
-   missing was a readable statement, which is why "is `Op.cost` faithful?" was
-   still on the reviewer's trust list. It is off it now. ⚠ Do **not** add the
-   converse (no over-charging): it could only make our own `cost_le` obligations
-   harder, never a proven bound weaker.
-4. **The last handed-over register is gone.** `InNPWitnessLangFreeSplit` gained
-   `sizeLB`/`sizeLB_poly`/`encX_sizeLB` (`encodable.size x ≤ sizeLB (State.size
-   (encX x))`, the *no-compression* law). With it `FrontPieces.tallyCells` —
-   built in July, proven, parked UNUSED — counts the input's cells on-machine,
-   and `FrontWitness.encodeInQ W x` is now `W.encX x` with nothing appended.
+**Landed: `Complexity/NonVacuity.lean`** (gated, in the default build target),
+closing both directions.
 
-**FINDING AQ — the §7 cheat is dead, and the probe now proves it rather than
-exhibits it.** `probes/HonestyAuditProbe.lean` §7 was a complete, `sorry`-free
-`InNPWitnessLangFreeSplit Q` for an *arbitrary* predicate (answer planted in a
-one-cell `encX`, verifier = the layer's no-op) yielding `Q ⪯p' SAT` for
-undecidable `Q`. It no longer typechecks. §7 keeps the construction as
-`badSplitWitnessOf`, parameterised by the missing field, so it is machine-checked
-that **`sizeLB` and nothing else** is the obstruction, and adds
-`badEncX_no_sizeLB` / `no_badEncX_witness`, which *prove* no `sizeLB` exists over
-`Nat`. The freedom removed is precisely the freedom to present an *unbounded*
-problem in a *bounded* layout.
+1. **Not everything.** `searchDecide W bound` is a **running `def`**: it
+   enumerates every certificate of length `≤ bound (size x)` (`bitStringsUpTo`,
+   with `mem_bitStringsUpTo` proving the enumeration exact) and *executes the
+   witness's own verifier `Cmd`* on the canonical layout
+   `certState x ++ certState c`. `searchDecide_correct` proves
+   `Q x ↔ searchDecide W R.bound x = true` for any `W : InNPWitnessStr Q` and
+   any `R : PolyCertRelWitness Q W.rel`. **So no undecidable `Q` inhabits
+   `inNPStr`** — the freedom `probes/HonestyAuditProbe.lean` §7/§7b exploits
+   against `NPhard''` is not available against `NPhardStr`.
+   `searchDecide_calls` states the price: `2^(bound+1) - 1` verifier runs.
+2. **Not nothing.** `SquareStr x := ∃ c, x = c ++ c` with a complete
+   `InNPWitnessStr` — a two-op verifier `Cmd` (`concat 2 1 1 ;; eqBit 0 0 2`) on
+   the canonical two-register layout, exact cost accounting
+   (`squareCmd_cost : |x| + 6|c| + 3`), and a certificate that is *load-bearing*
+   (`verifier_reads_certificate`: same input, two certificates, two answers).
+   §4 separates strings, so the inhabitant is a real language and not
+   `fun _ => True` in disguise.
+3. **The payoff.** `squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT` is
+   `CookLevinStr.1` applied to that witness — the whole chain, C8 front through
+   the sound tail, running on a concrete problem.
 
-⚠ **FINDING AO still stands and always will.** §7b — the honest encoding with the
-answer *appended* in a second register — satisfies `sizeLB` without effort (it is
-discharged there now). **No law about `encX` closes the hypothesis side.** Quote
-`CookLevinStr`.
+**Also measured, for the next session's benefit (top-down item 1).** The
+go/no-go for the `Cmd`-level search is **GREEN**: `DecidesLang.toDecidesBy`'s
+`inOPoly costBound`/`monotonic costBound` hypotheses are consumed at *exactly
+two field sites* (`encodeBound_poly`/`encodeBound_mono`), i.e. for the encoding
+bound, not the time bound. A variant with a separate polynomial `encBound` and a
+completely free `costBound` was written and **typechecked** this session, then
+reverted rather than landed — unused API is what this session spent a commit
+deleting. ⚠ It must live *inside* `Lang/PolyTime.lean`: `padTimeBound` and
+`budget_ge` are `private` there.
 
-**How the budget monomials survived the move** (the thing 2026-07-20-c said was
-impossible): `FrontWitness.exists_front_constants` applies
-`inOPoly_monomial_bound` **twice** — once to `maxSizeOf`/`stepsOf` (monomials in
-`encodable.size x`), then to that monomial composed with `sizeLB` (monomials in
-the tally). `inOPoly_comp` needs no monotonicity of the outer function, and the
-intermediate monomial *is* monotone, which is what lets `encX_sizeLB` be applied
-inside it. Reuse this shape if you ever need to move a budget between measures.
+⚠ **Two rungs are deliberately NOT claimed, and the file says so.**
+`searchDecide` is a **Lean function, not a `Cmd` and not a `FlatTM`** — see
+top-down item 1. And `SquareStr` is in **P** — an NP-complete inhabitant needs
+bottom-up work, see bottom-up item 2. `inNPStr_exists_decider` (the classically
+trivial `∃ f : List Bool → Bool, …`) is stated in the file *only* so that nobody
+re-derives it and mistakes it for the result.
+
+**Also landed: the `⪯p` API is gone, and so is the dead weight.**
+`reducesPolyMO`/`⪯p`, `ReductionWitness`, `PolyTimeComputableWitness`,
+`polyTimeComputable`, `NPUniversal`, `NPhard`, `NPcomplete`, `red_NPhard`,
+`NPhard_subtype_proj`, the nine wrapper theorems, and the four bridges down from
+`⪯p'`/`NPhard'` were deleted. The 2026-07-30-c decision had been to *retain*
+them unused; that was reversed. A vacuous notion with no live consumer, one
+bridge away from the real statement, lets a reader derive `NPcomplete SAT` from
+`NPcompleteStr SAT` and come away with the wrong theorem — and reading is the
+only thing between this development and its claim.
+`PolyTimeComputableWitness`'s four size-bound fields are **inlined into
+`Lang.PolyTimeComputableWitness'`**, where they belong (an output-size bound
+*plus* a real machine). Every reduction map, correctness lemma and output-size
+bound survives untouched. Deleted with it: `parked/` (~15K LOC, retired
+2026-07-30-c), `coqdoc/`, `.mcp.json.bak`, `Basic.lean`, `Main.lean`;
+`Complexity` is now the lakefile's only root, so "the axiom sweep covers the
+library" no longer carries a footnote.
 
 ## NEXT TOP-DOWN session
 
-The proof is done, both chain ends are pinned, and three gates run inside
-`lake build` (axioms, the honesty pins, cost-as-time). Top-down work is now
-**turning the remaining reading obligations into typechecking obligations**.
-Item 1 is the last big *statement* question and the only one that is real work;
-2–4 are maintenance.
+The proof is done and five gates run inside `lake build` (axioms, the honesty
+pins, cost-as-time, and now non-vacuity). Top-down work is still **turning
+reading obligations into typechecking obligations**. Item 1 is the only real
+build; 2 is blocked on bottom-up; 3–4 are maintenance.
 
-⚠ **What is left on the reviewer's trust list**, after this session — do not
-let it grow: is `FlatTM`/`stepFlatTM` a faithful Turing machine, is
-`Serialize cnf` a faithful CNF encoding beyond `dec_enc`, does `SAT` mean
-satisfiability, and is `NPcompleteStr` the statement it looks like. Every one is
-a *definition* a human reads once. If you find yourself adding a fourth kind of
-thing to trust, that is the finding — write it down.
+### 1. The `Cmd`-level certificate search — the last rung of non-vacuity
 
-### 1. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
+**Target.** `inNPStr Q → ∃ f, Nonempty (DecidesBy Q f)` with `f` exponential:
+`Q` is decided by a real `FlatTM` in *this development's own computability
+model*, not merely by a Lean function. `Complexity/NonVacuity.lean` already
+pins the statement this must reach (`searchDecide_correct` is the pure-model
+half), so this is a program-and-cost job, not a design job.
 
-The natural next question is "does `inNPStr Q` have content, i.e. does it force
-`Q` to be decidable?". ⚠ **"Q is decidable" is not statable in Lean**:
-`∃ f : List Bool → Bool, ∀ x, Q x ↔ f x` and `Nonempty (DecidablePred Q)` are
-both classically trivial. The only meaningful statement is in this project's own
-computability model — *exhibit a `Cmd` (or `FlatTM`) that decides `Q` by brute
-force over certificates of length `≤ bound`*, which costs a real search program
-and an exponential cost bound. Worth doing eventually as the ultimate
-non-vacuity certificate; **do not start it as a side quest**, and do not "prove"
-the trivial version and claim the result. Budget: a whole session, probably two.
+✅ **The go/no-go is DONE (2026-08-03) and the answer is GREEN — do not redo
+it, but do read the caveat.** The question was whether the bridge to a real
+machine forces the *time* bound to be polynomial. It does not.
+`DecidesLang.toDecidesBy` demands `inOPoly costBound` / `monotonic costBound`,
+but those two hypotheses are used at **exactly two field sites**,
+`encodeBound_poly` and `encodeBound_mono` — i.e. for the *encoding* bound, not
+the time bound. `DecidesBy.encode_size`, `budget_ge`, `decides_pos` and
+`decides_neg` need no polynomiality at all.
 
-### 2. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
+So the bridge you need is a variant taking a **separate** polynomial `encBound`
+with `∀ x, State.size (D.encodeIn x) ≤ encBound (size x)`, leaving `costBound`
+completely free. **It was written and typechecked this session** (a copy of
+`toDecidesBy` with those three fields retargeted, ~85 lines, no other change)
+and then reverted rather than landed, because unused API is exactly what this
+session spent a commit deleting. Re-create it when you have a consumer.
+
+⚠ **Caveat that decides where it lives:** `DecidesLang.padTimeBound` and
+`DecidesLang.budget_ge` are **`private` to `Lang/PolyTime.lean`**. The variant
+therefore has to be added *inside that file*, next to `toDecidesBy` — it cannot
+live in a new module, and it cannot live in a probe. Budget it as an edit to
+`PolyTime.lean` (≈15 min cold rebuild, everything above it in the import graph
+pays).
+
+**The program, if it is green.** Registers **above** `W.verifier.regBound`
+(FINDING AE: `usesBelow` means the verifier cannot touch them), so the
+enumerator owes no scrub of its own state:
+
+* `1^(2^(B+1))` as the outer loop's bound register — `B` doubling steps
+  `forBnd cnt Breg (concat r r r)`. ⚠ This is exactly the shape
+  `probes/CostChkIntentProbe.lean` pins `Cmd.chk` as **rejecting**; that is
+  correct and expected — no polynomial bound is being claimed here, so the cost
+  ladder of `Lang/CostGrow.lean` is **not** the tool. The bound must be built by
+  hand from `Cmd.cost_seq`/`cost_forBnd_flat_le` (`Lang/CostFlat.lean`).
+* the candidate as a `B`-bit register with a ripple-carry increment
+  (`head`/`tail`/`concat`/`eqBit`, carry in one register);
+* per iteration: restore register `0` from a saved copy, write the candidate to
+  register `1`, `S1SATComp.clearRange 2 W.verifier.regBound` (reuse it — do not
+  write a second scrub gadget), run `W.verifier.c`, OR the verdict into a found
+  flag.
+* the `_run` lemma is a stateful loop: use **`S1Step.emitFold_run`**, invariant
+  "`FOUND = 1` ↔ `∃ j < i`, the verifier accepts candidate `j`" ∧ "`CAND` is the
+  binary representation of `i`". ⚠ **Write that invariant as a `Bool` function
+  and `#eval` it at every index before proving anything** (FINDING AI — this is
+  the cheapest de-risking move in the codebase and it is what made
+  `EvalCnfSplit.decodeBody_run` ~110 lines with zero redesign).
+
+Budget: one session for the program + `_run` (the go/no-go is already spent), a
+second for the cost bound. **Do not start it as a side quest**, and do not
+weaken the target to the classically trivial existential
+(`NonVacuity.inNPStr_exists_decider` is already there, labelled).
+
+### 2. An NP-complete inhabitant — blocked on bottom-up item 2
+
+`SquareStr` proves the class is non-empty; it does not prove the class contains
+anything *hard*. The statement worth having is `inNPStr SATStr` for a bit-level
+string encoding of SAT — then `CookLevinStr` applied to it is a genuine
+self-reduction and the hypothesis class demonstrably contains an NP-complete
+language. The verifier work is bottom-up (item 2 below). When it lands, top-down
+owes three short things: the `InNPWitnessStr` assembly, the corollary
+`SATStr ⪯p' SAT`, and a verdict row under ROADMAP risk **S7**.
+
+### 3. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
 
 By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 `decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
@@ -143,7 +204,7 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 * head extension → nothing to do if the chain is entered through `NPhardStr`;
   otherwise audit `encX` against the criterion: every register is a constant, a
   mechanical serialization of an input field, or a *metric* of the input — never
-  the reduction's output. (And it must now supply `sizeLB`, which for any layout
+  the reduction's output. (And it must supply `sizeLB`, which for any layout
   that spells the input out is `id` or a small multiple.)
 * **tail extension → give the new output type a `Serialize` instance and define
   `decodeOut := Serialize.decodeD default ∘ get OUTREG`.** Do not hand-write an
@@ -154,48 +215,47 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 * a new **verifier** owes the `DecidesLang` version of the same check plus a
   `polyCertRel` (machine-checked non-vacuity — do not re-derive it).
 * add a numbered verdict row to ROADMAP **S5**, a `#assert_axioms_clean` line to
-  `SoundnessGate`, and a section to `probes/HonestyAuditProbe.lean` if it is
-  `rfl`-checkable — prefer `Complexity/HonestyGate.lean` for a positive pin, the
-  probe for a negative control.
+  `Complexity/SoundnessGate.lean`, and a section to
+  `probes/HonestyAuditProbe.lean` if it is `rfl`-checkable — prefer
+  `Complexity/HonestyGate.lean` for a positive pin, the probe for a negative
+  control.
 
-### 3. Probe-suite consolidation + `probes/README.md`
+### 4. Probe-suite consolidation + `probes/README.md`
 
-48 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
+49 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
 which are regression gates and which were one-shot go/no-go scoping. Write the
 index (what each pins · runtime · "re-run after changing X"), mark the ones that
-are still gates now that the build covers axioms *and* the honesty pins (should
-be just `HonestyAuditProbe`'s negative controls and `CostChkIntentProbe`), and retire `probes/S1CardEmitProbe.lean` §1
-(superseded by `S1StepLoopProbe` §1, which asserts the full equality).
+are still gates now that the build covers axioms, the honesty pins, cost-as-time
+*and* non-vacuity (should be just `HonestyAuditProbe`'s negative controls,
+`CostChkIntentProbe`, and `NonVacuityProbe`'s `#eval`s), and retire
+`probes/S1CardEmitProbe.lean` §1 (superseded by `S1StepLoopProbe` §1, which
+asserts the full equality).
 
-### 4. Repo hygiene (~1 hour) + the CI question
+### 5. The `.github/` residue — owner decision, not ours
 
-* `.mcp.json.bak` is checked in; `Basic.lean` (`one_plus_one_is_two`) and
-  `Main.lean` ("Hello, World!") are lakefile scaffolding with no role — note
-  that they are the only modules the library axiom sweep does **not** cover
-  (it sweeps the `Complexity` root), so deleting them also removes that
-  footnote; `coqdoc/` is a 36K-file mirror whose only consumer is a human
-  reading it — decide keep-as-reference vs. trim to the files actually cited.
-* Separately, the residual `⪯p` API (nine wrapper theorems → the `NP.lean`
-  block → three bridges) is retained-but-unused; deleting it is **one
-  self-contained commit** and needs an owner decision. Do not mix the two.
-* **CI is no longer load-bearing for `sorry`/axioms** — the build gate covers
-  it, and agent tokens have no `workflow` scope anyway. If the owner adds a
-  workflow, `lake build` alone is now sufficient; add
-  `lean probes/HonestyAuditProbe.lean` and `lean probes/CostChkIntentProbe.lean`
-  only for `CostChkIntentProbe` and the negative controls — the positive honesty
-  pins are already in the build (`Complexity/HonestyGate.lean`).
+`.github/workflows/lake-build.yml` **already exists and already runs
+`lake build`**, so the "CI question" of earlier handoffs is answered: CI is
+green-gated on the axiom sweep today, and `lake build` alone is sufficient for
+`sorry`/axioms. If the owner wants the *negative* controls covered too, add
+`lean probes/HonestyAuditProbe.lean`, `lean probes/CostChkIntentProbe.lean` and
+`lean probes/NonVacuityProbe.lean` — the positive pins are already in the build.
+
+⚠ Stale after 2026-08-03, **not fixed here**: `.github/scripts/researcher.py`
+still names the deleted `coqdoc/` folder as "the blueprint", and
+`.github/prompts/step*.md` still cite files under it. Agent sessions have no
+workflow permission and that subtree is the owner's legacy porting harness.
+Flag it, do not quietly edit it.
 
 ## NEXT BOTTOM-UP session
 
 **Nothing on the critical path is waiting on a gadget.** Bottom-up work is scope
-extension, and it is a well-templated multi-session programme.
+extension plus one new item that now has a top-down consumer.
 
-⚠ **Interface change you must know about (2026-08-02).**
-`InNPWitnessLangFreeSplit` now has three extra fields — `sizeLB`,
-`sizeLB_poly`, `encX_sizeLB`. Every **verifier/membership** witness must supply
-them; for any layout that writes the input out it is one line (`sizeLB := id`,
-plus the "the stream is at least `size x` long" lemma — see
-`EvalCnfSplit.satSplitWitnessOf`, which uses
+⚠ **Interface note.** `InNPWitnessLangFreeSplit` carries `sizeLB` /
+`sizeLB_poly` / `encX_sizeLB` (since 2026-08-02). Every **verifier/membership**
+witness must supply them; for any layout that writes the input out it is one
+line (`sizeLB := id`, plus the "the stream is at least `size x` long" lemma —
+see `EvalCnfSplit.satSplitWitnessOf`, which uses
 `CnfSerialize.size_le_encodeCnf_length`). `PolyTimeComputableLang` is untouched,
 so **reduction** witnesses are unaffected.
 
@@ -210,13 +270,28 @@ so **reduction** witnesses are unaffected.
    * a one-register re-encoder `Cmd` with its scratch **above** the verifier's
      `regBound` (FINDING AE — then it owes no scrub);
    * cost by `Cmd.chk` (`by decide`), frame by `Cmd.writes`;
-   * `sizeLB` (new — see above);
+   * `sizeLB`;
    * the `_run` lemma — and **write its loop invariant as a `Bool` function and
-     `#eval` it at every index first** (FINDING AI; that is what made the SAT one
-     ~110 lines with zero redesign).
-2. **Membership for `kSAT 3`** (~1 session) — same shape; `KSat3Free` already
-   has the re-encoder pattern.
-3. **Hardness** — `SAT ⪯p' kSAT 3` and `kSAT 3 ⪯p' FlatClique` as free-line
+     `#eval` it at every index first** (FINDING AI).
+2. **`SATStr` — SAT as a *string* language** (~1 session; **new, and it is what
+   makes top-down item 2 possible**). Target: an `InNPWitnessStr` whose `Q` is
+   "the bits of `x` decode to a satisfiable CNF".
+   * The obstruction is real and worth probing before coding: the canonical
+     layout is **one register of raw bits**, while `EvalCnfCmd`'s verifier wants
+     a twelve-register layout with `CLAUSE_TALLY`/`CNF_STREAM`. So this needs an
+     **on-machine parser** `Cmd` from a self-delimiting bit format into that
+     layout — the `DecidesLang.FreePrecomposeData`/`precomposeFree` pattern
+     (FINDING AD/AE apply verbatim).
+   * ⚠ **Pin the bit format on paper and `#eval` a Lean model of the parse at
+     every prefix length before writing the `Cmd`** (FINDING AI). Reuse
+     `Deciders/CnfSerialize.lean`'s grammar if it fits — a format whose Lean
+     parser already has `dec_enc` is a format whose `Cmd` you can state a
+     `_run` lemma for.
+   * `sizeLB` is free here (`Lang/HardnessStr.lean`'s
+     `InNPWitnessStr.canonical_sizeLB`, `fun n => 2*n`).
+3. **Membership for `kSAT 3`** (~1 session) — same shape as item 1;
+   `KSat3Free` already has the re-encoder pattern.
+4. **Hardness** — `SAT ⪯p' kSAT 3` and `kSAT 3 ⪯p' FlatClique` as free-line
    witnesses (template: `NP/kSAT_to_SAT_free.lean`, which already does the
    mirror-image `kSAT 3 ⪯p' SAT`), then one `SeamData`/`comp` each onto
    `FrontS1Comp.front_to_SAT_witness`, and `NPhard''`/`NPhardStr` transport for
@@ -224,10 +299,10 @@ so **reduction** witnesses are unaffected.
    `decodeOut` becomes the new last witness's — **so the new output type owes a
    `Serialize` instance** (`FlatClique`'s output is a graph + a `k`; write the
    parser, do not use `Function.invFun`). One verdict row, not a study; see
-   top-down item 2.
-4. **Then, and only then, a `NPcompleteStr` for the new problem.** The transport
-   is `NPcomplete''_to_NPcompleteStr` plus the membership half; do not restate
-   hardness from scratch.
+   top-down item 3.
+5. **Then, and only then, an `NPcompleteStr` for the new problem.** The
+   transport is `NPcomplete''_to_NPcompleteStr` plus the membership half; do not
+   restate hardness from scratch.
 
 ⚠ Do **not** pre-factor `satPrecomposeData`/`satSplitWitnessOf` into a generic
 combinator before the second instance exists — copy first, factor when a third
@@ -245,13 +320,16 @@ not rebuild `Cmd.PolyCost` (FINDING AJ) or the `LangEncodable` layer.
 
 ## Before you push
 
-**`lake build` is now the gate for `sorry`s and axioms.** If it is green, every
-declaration under `Complexity` is `sorry`-free and uses only Lean's three
-axioms — `#assert_library_axiom_clean` asserts it at elaboration time. You do
+**`lake build` is the gate.** If it is green, every declaration under
+`Complexity` is `sorry`-free and uses only Lean's three axioms
+(`#assert_library_axiom_clean` asserts it at elaboration time), the two audited
+functions are what the audit says they are (`Complexity/HonestyGate.lean`),
+`Op.cost` is a proven time proxy (`Complexity/CostFaithfulness.lean`), and the
+hypothesis of the headline is non-vacuous (`Complexity/NonVacuity.lean`). You do
 not need to run `AxiomProbe`, and you must not "fix" a gate failure by deleting
 the assertion.
 
-Two things the build still does **not** check; run them by hand:
+Three things the build does **not** check; run them by hand:
 
 ```
 export PATH="$HOME/.elan/bin:$PATH"
@@ -259,37 +337,43 @@ lake build                                   # the sorry/axiom gate
 export LEAN_PATH=$(lake env printenv LEAN_PATH)
 lean probes/HonestyAuditProbe.lean           # ~5 s — the S5 evidence file
 lean probes/CostChkIntentProbe.lean          # ~4 s — what `Cmd.chk` must accept/reject
+lean probes/NonVacuityProbe.lean             # ~5 s — the decider actually runs
 ```
 
 ⚠ **Build-time gotcha:** a cold `lake build` is ~15 min and
 `Reductions/S1Witness.lean` alone is **11 min** (the cost ladder's
 `decide +kernel`). Anything at or above `Lang/PolyTime.lean` in the import graph
 pays it; `Reductions/FrontWitness.lean`, the sound tail and the probes do not.
-For iteration use
-`env LEAN_PATH=$(lake env printenv LEAN_PATH) lean <file>` on the single file —
-seconds instead of minutes — and `lake build` only at the end. ⚠ `lean <file>`
-needs the *dependencies'* oleans to be current, so do one `lake build` of the
-subtree below your edit first.
+For iteration use `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean <file>` on
+the single file — seconds instead of minutes — and `lake build` only at the end.
+⚠ `lean <file>` needs the *dependencies'* oleans to be current, so do one
+`lake build` of the subtree below your edit first. **Start the first `lake build`
+of a session as a background job**; the warm-cache case is ~10 s but you cannot
+tell in advance.
 
 ### Probe regression list — cheap, and still worth running
 
 * **`probes/HonestyAuditProbe.lean`** — after any change to a witness's
-  `encodeIn`/`decodeOut`, to `comp`/`SeamData`, or to `toFrameworkWitness'`. It
-  is the S5 evidence file; §6 and §7b are negative controls and are *supposed*
-  to typecheck. §7 is a negative control that **died** — if you ever make §7
-  build again you have re-opened the hole, so read its comment before touching
+  `encodeIn`/`decodeOut`, to `comp`/`SeamData`, or to `toFrameworkWitness'`. §6
+  and §7b are negative controls and are *supposed* to typecheck. §7 is a
+  negative control that **died** — if you ever make §7 build again you have
+  re-opened the hole, so read its comment before touching
   `InNPWitnessLangFreeSplit`.
+* **`probes/NonVacuityProbe.lean`** — after any change to
+  `Complexity/NonVacuity.lean`, to `certState`, to `Cmd.eval`/`Op.eval`, or to
+  `InNPWitnessStr`. Keep every `#eval` there at inputs of length `≤ 6`: the
+  search is exponential on purpose.
 * `probes/CostChkIntentProbe.lean` — after **any** change to `Lang/CostGrow.lean`.
   It pins the shapes `Cmd.chk` must reject (the squaring loop) and must accept
   (drained cursor, counter accumulator, flow-sensitive `concat`, `certDecode`).
-* `probes/AxiomProbe.lean` — now the *reporting* instrument, not a gate: use it
-  when you want to see an endpoint's axiom list. Keep it in sync with
+* `probes/AxiomProbe.lean` — the *reporting* instrument, not a gate: use it when
+  you want to see an endpoint's axiom list. Keep it in sync with
   `Complexity/SoundnessGate.lean`.
 * `probes/SATSplitProbe.lean` (4 s) — after any change to `EvalCnfSplit`,
   `EvalCnfCmd.encodeState` or `evalCnfCmd`'s frame.
 * `probes/C8FrontProbe.lean`, `probes/SeamS1Probe.lean` — after any change to
   the front program or a seam. `C8FrontProbe` §6 `#eval`s `tallyCells`, which is
-  live in `frontProgram` since 2026-08-02.
+  live in `frontProgram`.
 * `probes/S1PreludeProbe.lean`, `probes/S1StepModelProbe.lean`,
   `probes/S1StepEmitProbe.lean`, `probes/S1CardModelProbe.lean`,
   `probes/S1GrowSafeProbe.lean` — after any register-frame, model or cost touch.
@@ -297,13 +381,14 @@ subtree below your edit first.
   ~3 min (the emitter appends cell by cell, so interpreting it is quadratic —
   keep every new probe instance at `σ ≤ 1`).
 
-**Recommendation: run a BOTTOM-UP session next**, on `FlatClique` membership.
-Reasoning: the top-down stream has just finished the item that was blocking it
-(the `InNPWitnessLangFreeSplit` field change is *in*, so a verifier witness built
-now pays it once instead of being migrated later), and every remaining top-down
-item is independent of what bottom-up lands. The top-down stream has no cheap
-high-value item left: item 1 (non-vacuity) is a real multi-session build, and
-2–4 are maintenance.
+**Recommendation: run a BOTTOM-UP session next**, on `SATStr` (bottom-up item 2)
+rather than `FlatClique`. Reasoning: it is the only bottom-up item with a *live
+top-down consumer* — it converts the weakest part of this session's result
+("the class is inhabited, by a language in P") into the strongest form available
+("the class contains an NP-complete language, and the headline reduces it to
+SAT"). `FlatClique` membership is well-templated and will still be there;
+top-down item 1 is a two-session build that nothing else is waiting on.
+
 
 ## The S1 register frame — PINNED
 
@@ -507,7 +592,10 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    `certState` layout — no `encX` field, nothing to choose. Quote
    `CookLevinStr`. Never "fix" a hardness obligation by strengthening only the
    conclusion side, and never reintroduce anything shaped like
-   `hasDeciderClassical` (deleted 2026-07-30-c).
+   `hasDeciderClassical` (deleted 2026-07-30-c). **Since 2026-08-03 this is
+   machine-checked, not argued**: `NonVacuity.searchDecide_correct` shows every
+   inhabitant of `inNPStr` is decidable, so a §7b-style planted answer cannot be
+   presented through `NPhardStr` at all.
 7. **A `sorry` inside a `def` poisons the STATEMENT of every lemma mentioning
    it**, which blinds `#print axioms` — the project's main soundness
    instrument. **Quantify skeleton-phase results over the placeholder.** This
@@ -515,6 +603,16 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    `SAT_NPhard''_of_S1` exists; it is the single most valuable habit in this
    codebase and it is what turns "we believe S1 is the only gap" into a
    machine-checked fact.
+8. **A hypothesis you strengthen is a hypothesis you must re-inhabit
+   (2026-08-03, FINDING AR).** The three previous sessions each tightened
+   `InNPWitnessLangFreeSplit`/`InNPWitnessStr` to kill a dishonest
+   instantiation, and none re-checked that an *honest* instantiation still
+   existed — the library ended up with zero `InNPWitnessStr`, i.e. a headline
+   whose hardness half was vacuously true for anything a reader could verify.
+   **Every future field you add to a hypothesis structure owes, in the same
+   commit, a discharged instance** (`NonVacuity.squareWitness` is the one to
+   copy) — and, if it is cheap, a proof that the class still has computational
+   content.
 
 ## C8 — the honest universal front: DONE (C8-0…C8-5)
 
@@ -528,8 +626,8 @@ the program or the seam:
 
 ## ★ Earlier findings that still bind
 
-Narration lives in git history; the durable results are in "Proven, reusable",
-"Locked invariants" and "Conventions". These are the *findings* a new gadget
+Narration lives in git history; the durable results are in "Locked invariants",
+"Proven, reusable" and "Conventions". These are the *findings* a new gadget
 still has to respect:
 
 - `preludeBlocks` is ~96% of the card register, so the prelude is stage C's
@@ -551,19 +649,16 @@ still has to respect:
 - Both S1 size bounds are `≤ (2·(b+1))^10` and the **enlarged base is not
   optional**: a `C·b^d` collapse overshoots a tight `n^10` at small `n`, and
   guess's base includes `maxSize`.
-- ~~`W_Q.encodeIn x := encX x ++ [1^(size x)]`~~ — **RESOLVED 2026-08-02.**
-  The unary size register existed because `encX` need not be injective, so
-  `State.size (encX x)` had no *lower* bound to `encodable.size x` and no
-  monomial in it could discharge `fQ_correct`'s `hmax`/`hsteps`. The
-  `sizeLB` field of `InNPWitnessLangFreeSplit` supplies that bound as a
-  hypothesis; `FrontPieces.tallyCells` is now live in `FrontProgram` and
-  `encodeIn = encX`. The reusable shape is
-  `FrontWitness.exists_front_constants`: `inOPoly_monomial_bound` applied twice,
-  the second time to the monomial composed with `sizeLB`.
 - The S1 v2 redesign's two machine-checked defects — non-local zero-padding
   jump-writes and the **phantom head** at the right row edge — are why the tape
   is append-only at the frontier and why `confRow` carries a right boundary
   marker. Both are locked invariants below.
+- **`FrontWitness.exists_front_constants` is the shape to reuse if you ever need
+  to move a budget between measures**: `inOPoly_monomial_bound` applied twice —
+  once to `maxSizeOf`/`stepsOf` (monomials in `encodable.size x`), then to that
+  monomial composed with `sizeLB`. `inOPoly_comp` needs no monotonicity of the
+  outer function, and the intermediate monomial *is* monotone, which is what
+  lets `encX_sizeLB` be applied inside it.
 
 ---
 
@@ -846,631 +941,53 @@ still has to respect:
   design. Give every new type a real data-field-sum size next to its
   definition.
 
-## Proven, reusable — do not re-derive
+## Proven, reusable — do NOT re-derive (index by file)
 
-- **`Complexity/Complexity/Deciders/EvalCnfSplit.lean` — the SPLIT membership
-  witness for SAT (2026-07-30, COMPLETE and axiom-clean 2026-07-30-b).**
-  START HERE for any future `InNPWitnessLangFreeSplit` — it is the worked
-  template, end to end, for "verifier + certificate decoder ⇒ split witness".
-  Contents: the certificate semantics `bitsToAssgn`/`decodeBits`/`satRel` and the
-  canonical certificate `satCert`; the pure NP content
-  **`satRel_correct : polyCertRel SAT satRel`** with `satRel_satCert`,
-  `varsOfCnf_lt_size`, `satisfiesCnf_congr_vars`, `size_satCert_le`,
-  `size_decodeBits_le`; the split layout `satEncX`/`satEIn` with `satEIn_eq`
-  (`rfl`), `satEncX_length` (`xWidth = 3`), `satEIn_lit`, `satEIn_bit`,
-  `satEncX_size_le`, `satEIn_size_le`; the three contracts
-  **`CertBridge`/`CertCostBound`/`Cmd.UsesBelow`** and
-  **`certCostBound_of_chk`**; the pinned candidate decoder
-  **`decodeBody`/`certDecode`** (registers `DCUR`/`DIDX`/`DHD` = `16`/`17`/`18`)
-  with `certDecode_chk` (`by decide`), `certDecode_costBound`,
-  `certDecode_usesBelow`; **`DecodesAssgn`** and
-  **`certBridge_of_decodesAssgn`** (the frame half, free); the model atoms
-  `bitsToAssgn_append`/**`decodeBits_take_succ`**/`encodeAssgn_append`/
-  `encodeAssgn_singleton`; the decoder's `_run` ladder `cbits`/`cbits_drop_succ`/
-  **`decodeBody_run`**/`loopStart`/`certDecode_eval_eq`/
-  **`certDecode_decodesAssgn`**/`certDecode_bridge`; and the assembly
-  `gDecode`/`satPrecomposeData`/`satSplitVerifier`/**`satSplitWitnessOf`**/
-  `SAT_inNPLangFreeSplit_of`/`SAT_inNPLangFreeSplit_of_decodesAssgn`/
-  **`SAT_inNPLangFreeSplit`** (unconditional). Headline consumers in
-  `NP/SAT/CookLevin/CookLevinHonest.lean` (**`CookLevin''`**). Probe:
-  `probes/SATSplitProbe.lean`.
+Everything below is **sorry-free and axiom-clean**. Consume it as a black box.
+Re-deriving any of it costs a session and gains nothing; the whole point of this
+index is that you can find the file, open it, and read its own doc comment —
+each file states its endpoints at the top.
 
-- **`Complexity/Lang/CostGrow.lean` — the cost-ladder toolkit (2026-07-29/-b).
-  START HERE for every new `cost_le` obligation** — not with `Cmd.cost_seq`
-  chains, and not with a one-cap predicate (FINDING Z). In the overwhelming majority
-  of cases the whole obligation is **one line**:
-  `Cmd.costLeSize_of_chk c (2^k - 1) (by decide)`. Contents: the bitmask
-  helpers `bitOf` / `mdiff` / `MaskSub`; `Cmd.NoGrow` / `noGrow_sound` and its
-  mask `Cmd.ngm` / `noGrow_of_ngm`; `Cmd.CapCost` (+ `.seq`, `.ifBit`, `.mono`,
-  `capCost_op`, **`capCost_forBnd`**); `Op.chk` / `Op.cap`; the loop
-  cap-and-growth rule **`Cmd.loopStep`**; and the decidable pass **`Cmd.chk`** /
-  **`Cmd.chk_sound`** with the entry points `CapCost.cost_le_size` /
-  **`costLeSize_of_chk`**. ⚠ `Cmd.GrowOk`, `Cmd.freezeFor`, `Cmd.promote` and
-  the old `Cmd.capChk` are **deleted** — subsumed by `Cmd.chk`.
-- It sits on top of `Lang/CostFlat.lean` (`cost_le_flat`, `cost_forBnd_flat_le`,
-  `cost_mulLoop_le`, `cost_tailLoop_le`, `Cmd.writes`,
-  **`Cmd.eval_get_of_not_writes`**, `Cmd.costReads`,
-  **`Cmd.get_length_eval_le`**, `Cmd.forBnd_counter_le`). The earlier one-cap
-  layer `Lang/CostPoly.lean` (`Cmd.PolyCost`/`Cmd.CostSafe`) was **deleted**
-  2026-07-30-b — FINDING AJ; its two keepers moved into `CostFlat`.
-  `probes/CostChkIntentProbe.lean` pins `Cmd.chk`'s accept/reject intent.
+⚠ The exhaustive per-lemma catalogue that used to live here (~620 lines, every
+endpoint named) was compressed on 2026-08-03 to keep this document a *plan*.
+It is in git history: `git show 25323e1:CookLevin/HANDOFF.md`. Go there if you
+need to know whether a specific lemma already exists before writing it — and
+prefer `rg` over both.
 
-- **Stage C's `stepBlocks` family — THE PREAMBLE AND THE LOOP (2026-07-28-b,
-  `Reductions/S1StepLoop.lean`, sorry-free & axiom-clean — consume as black
-  boxes; do NOT re-derive a cursor walk, a scan or the loop's invariant)**: the
-  endpoints **`stepFam`/`stepFam_run`/`stepFam_usesBelow`** (the whole family:
-  `Emits LD stepFam ((normTrans M).flatMap (entryBlocks M)) s`) and
-  **`entryPre`/`entryPre_run`/`entryPre_usesBelow`** with its four phases
-  `preSrc`/`preKey`/`preDst`/`preMv` (+ `_run`); the loop layer
-  **`entryBody`/`entryBody_run`… (`entryBody_step`, `LInv`, `LInv_set`,
-  `entryBody_usesBelow`)** and **`Emits.pre_op`**; the register frame
-  `SCUR`/`SSEEN`/`SCNT`/`SKP`/`SKQ`/`SKT`/`SKV`/`SAX`/`SIX`, the dirty list
-  **`LD`** (+ `SD1_LD`, `S1Program.LD_cdirty`) and the frame workhorse
-  **`Keeps`/`Keeps.seq`/`keeps_of_writes`** (a command whose syntactic write set
-  is inside `LD` preserves everything outside it — `by decide` at every use);
-  the seen-set model **`keyFlat`/`keyFlat_cons`/`keyFlat_len_le`** and
-  **`seenHit`/`seenHit_snoc`**; and the **general-purpose gadgets**:
-  **`dropLoop`/`dropLoop_run`** (random access into a raw list),
-  **`haltBlk`/`haltBlk_run`** + `head_drop_iff` (the `PHALT` lookup),
-  **`optRead`/`optRead_run`** (one `encOptN` group off a cursor),
-  **`hvBlk`/`hvBlk_run`** (`1^(hv σ (min q states) 0)` = `minReg` + one hoisted
-  `unaryMulLoop`), **`optMin`/`optMin_run`** (`rOf`/`wOf`'s shared shape),
-  **`wBlk1`/`wBlk1_run`**, **`mzBlk`/`mvBlk`** (+ `_run`),
-  **`scanSeen`/`scanSeen_run`** (+ `scanBody`, `SInv`) and
-  **`pushKey`/`pushKey_run`**; plus `lnop`/`lnop_get` (the no-op *inside* `LD`;
-  `snop` writes `EOUT_C`), `snop`/`snop_get`, `keep_and`, `flattenEntry_shape`,
-  `wOf_false_eq`/`wOf_true_eq`.
-  In `S1Program.lean`: **`stageC`/`stageC_run`/`stageC_usesBelow`** (closed) and
-  `LD_cdirty`. Probe: `probes/S1StepLoopProbe.lean`.
+### The statement, the gates, and non-vacuity
 
-- **Stage C's `stepBlocks` family — THE ENTRY BODY (2026-07-28,
-  `Reductions/S1StepEmit.lean`, sorry-free & axiom-clean — consume as black
-  boxes; do NOT re-derive a card, a loop nest or the `mv` split)**: the endpoint
-  **`stepEmit`/`stepEmit_run`/`stepEmit_usesBelow`** and the frames
-  `SConst`/`SEntry`/`SConst_frame`/`SEntry_frame`/`SFr`/`SD1`/`SD2`/`SD3`;
-  **`SConst_of_cFive`** (+ `S1CardEmit.cFive_const`, also new — the machine
-  constants survive `cFive`, so the preamble owes only `SEntry`); the card atom
-  **`emitCard`** + `card_run` + **`card6_run`** and the eleven card lists
-  `cardCN`/`cardCR`/`cardCL`/`cardLN`/`cardLR`/`cardLL`/`cardRN`/`cardRR`/
-  `cardRL`/`cardIR`/`cardIL` (+ `_run`, `_usesBelow`); the four loop nests
-  **`cenFam`/`lefFam`/`rigFam`/`inFamR`/`inFamL`** (+ `_run`, `_usesBelow`),
-  register-generic in their card `Cmd`s; the three arms `bodyN`/`bodyR`/`bodyL`
-  (+ `_run`, `_usesBelow`); **`loopFr`** (`emitLoop_run` in `Emits` shape),
-  `loadX_emits`, `EmitsFr_congr`, `Emits_of_eval`, `hv_split`.
-  **The entry loop's layer**: **`emitFold_run`** (the stateful loop principle —
-  project-wide utility), `dedupK_congr`, **`stepGo`** + `stepGo_eq` +
-  **`stepSummand_go`**, and `stepSt`/`stepOut`/`stepGo_iter`/
-  **`stepSummand_fold`** (the loop's target in `emitFold_run`'s shape).
-  Probe: `probes/S1StepEmitProbe.lean`.
-- **Stage C's prelude family — THE `Cmd` (2026-07-27-c,
-  `Reductions/S1PreludeEmit.lean`, sorry-free & axiom-clean — consume as black
-  boxes; do NOT re-derive an emitter nest)**: the family
-  **`cPrelude`/`cPrelude_run`/`cPrelude_usesBelow`** and `PDirty`/
-  **`PDirty_cdirty`**; the emitter contract **`Emits`** (dirty-list-indexed
-  "appends `encNats l` to `EOUT_C`") + `Emits.seq`/`.mono`/`.nop`/`.congr_l`
-  and **`EmitsFr`** (the same from any state agreeing outside `D`) +
-  `EmitsFr.seq`/`.here` — **use these for `stepBlocks` too**; the
-  register-generic gadgets **`pRes`/`pRes_run`** (one resolution level),
-  **`pSeg`/`pSeg_run`** (publish unary values, then continue) and
-  **`pKindCmd`/`pKindCmd_run`** (one kind level = seven segments), each proven
-  once and applied three times; the assemblies `resNest`/`resNest_run`,
-  `kindNest`/`kindNest_run`, `pEmit`/`pEmit_run` and every `_usesBelow`; the
-  value gadgets **`setLit`/`loadSum`/`loadVal`/`setFlag`** + `sumLen`/
-  `sumLen_congr` and the flag codec **`flagRep`**/`setTrue`; and the
-  re-coordinatised model `pResLevel'`/`pKindSeg`/`pKindSeg_of`/`pKindSeg_eq`/
-  `preludeSeg'` + **`preludeBlocks_seg'`**.
-  Probe: `probes/S1PreludeEmitProbe.lean` (⚠ ~6 min).
-- **`stepBlocks`'s emitter-shaped model (2026-07-27-c,
-  `Reductions/S1StepModel.lean`, sorry-free & axiom-clean — build the `Cmd`
-  against these, do NOT re-derive a segment split)**: the range splits
-  **`range_last`** (`range (n+1) = range n ++ [n]`) and **`range_first_last`**
-  (`range (σ+2) = [0] ++ (range σ).map (·+1) ++ [σ+1]`); the per-card cells
-  `cCard`/`lCard`/`rCard` (each keeps `mv` as a parameter so one `_run` lemma
-  serves all three `mv` arms); the four family reformulations
-  `stepCenterSeg`/`stepLeftSeg`/`stepRightSeg` + `stepCenterBlocks_seg`/
-  `stepLeftBlocks_seg`/`stepRightBlocks_seg`; and the endpoints **`stepSeg`** +
-  **`stepBlocks_seg`**, `entrySeg` + `entryBlocks_seg`, and
-  **`stepSummand_seg`** (`(normTrans M).flatMap (entryBlocks M) =
-  (normModel M).flatMap (entrySeg M)`, the target the entry loop must meet).
-  Probe: `probes/S1StepModelProbe.lean`.
+| file | what it gives you |
+|---|---|
+| `Lang/PolyTime.lean` | the whole free line: `DecidesLang`, `PolyTimeComputableLang`, `⪯p'`, `InNPWitnessLangFreeSplit`, `NPhard''`, `SeamData`/`comp`, `FreePrecomposeData`/`precomposeFree`, `toFrameworkWitness'`. **Read this one.** |
+| `Lang/HardnessStr.lean` | `InNPWitnessStr` / `inNPStr` / `NPhardStr` / `NPcompleteStr`, the two bridges from `NPhard''`, and the canonical-layout size sandwich (`State.size_certState`, `size_le_two_mul_length`, `length_le_size`, `canonical_sizeLB`). **Read this one too.** |
+| `Complexity/NonVacuity.lean` | non-vacuity, both directions (2026-08-03): `bitStringsUpTo` + `mem_bitStringsUpTo` + `bitStringsUpTo_length`; `searchDecide`/`searchDecide_correct`/`searchDecide_calls`; the `SquareStr` inhabitant (`squareCmd`, `squareVerifier`, `squareCertRel`, `squareWitness`, `inNPStr_squareStr`) and `squareStr_reducesPolyMO'_SAT`. |
+| `Meta/AxiomGate.lean`, `SoundnessGate.lean`, `HonestyGate.lean`, `CostFaithfulness.lean` | the four build-time gates. Add to them; never delete an assertion to make a build pass. |
+| `Lang/Serialize.lean` + `Deciders/CnfSerialize.lean` | the chain-end serialization discipline and the one live instance (`Serialize cnf`, fuel-based parser, `dec_enc`, both size laws). A new chain end owes an **instance**, not a hand-written inverse. |
 
-- **Stage C's prelude family — model + preamble + two general atoms
-  (2026-07-27-b, `Reductions/S1Prelude.lean`, sorry-free & axiom-clean —
-  consume as black boxes)**: the emitter-shaped target
-  **`preludeSeg`** + **`preludeBlocks_seg`**, built from `range_seg`,
-  `resShape`/`resOf_special`/`resOf_tapeBand`/`resOf_headBand`, `pGate` +
-  `contigB_prop` + **`pBody_gate`**, and `pResLevel` + `pGate_resShape` +
-  `pKindLevel` + `pKindLevel_eq`; the two general atoms **`emitList`** +
-  `emitList_run` (a run of `emitBlk2`s over a list of source pairs — use this,
-  not `emitId`, for any family emitting six different values) and **`minReg`** +
-  `minReg_run` (`1^(min a b)` by draining, no comparison gadget); and the
-  preamble **`pPre`** + `pPre_run` + `pPre_usesBelow` establishing `PConst`
-  (`ESG`, `PBV`, `PZ`, `PB5`, `PHB = 1^(hv σ q0 0)`). Register table `PBV`…`PFL`
-  + `PD`/`PAll` + `prelude_regs_cdirty`. Probe: `probes/S1PreludeProbe.lean`.
-- **The two head seams and the parameterised endpoint (2026-07-27,
-  `Reductions/S1_to_FlatTCC_comp.lean` + `Reductions/Front_to_S1_comp.lean`,
-  both sorry-free; the `…Of` / `…_of_S1` forms are AXIOM-CLEAN — consume as
-  black boxes, do NOT re-derive a scrub or a bridge)**: the generic scrub
-  gadget **`S1SATComp.clearRange`** + `clearRange_get` / `clearRange_cost`
-  (`≤ 2n+1`) / `clearRange_usesBelow` and the frame closer
-  `get_nil_of_len_le`; **`scrub4`** + `scrub4_get`/`_cost`/`_usesBelow` and
-  **`headScrub`** + `headScrub_get`/`_cost`/`_usesBelow`; the layout facts
-  `headEncodeIn_length` / `flatTCC_encodeIn_length` /
-  `FrontS1Comp.headEncodeIn_eq` and the five `rfl` projections
-  `FrontS1Comp.get5_0`…`get5_4`; the two bridges **`S1SATComp.s1Bridge`**
-  (over an arbitrary S1 program) and **`FrontS1Comp.frontBridge`**; the seams
-  `s1_to_SAT_seamOf`/`s1_to_SAT_seam` and
-  `front_to_SAT_seamOf`/`front_to_SAT_seam`; the composites
-  `s1_to_SAT_witnessOf`/`s1_to_SAT_witness` (+ the frame equation
-  `s1_to_SAT_witnessOf_regBound = 57`) and
-  `front_to_SAT_witnessOf`/`front_to_SAT_witness`; the chained correctness iff
-  **`s1_to_SAT_correct`**; and the endpoints
-  `s1_to_SAT_reducesPolyMO'_of`/`s1_to_SAT_reducesPolyMO'`,
-  `front_to_SAT_reducesPolyMO'_of`/`front_to_SAT_reducesPolyMO'`,
-  **`SAT_NPhard''_of_S1`** (axiom-clean) / `SAT_NPhard''`.
-  In `S1Witness.lean`: **`s1WitnessOf`** and the **only remaining open S1
-  obligation**, the cost ladder `s1Program_cost_le`. Probe: `probes/SeamS1Probe.lean`.
+### The layer, the compiler and the cost ladder
 
-- **Stage C's copy/halt families and the emitter loop principle (2026-07-26-c,
-  `Reductions/S1CardEmit.lean`, sorry-free & axiom-clean — consume as black
-  boxes; do NOT re-derive a loop invariant or an append gadget)**: the loop
-  principle **`emitLoop_run`** (register-generic, dirty set as a `List Var`) and
-  its two frame helpers `nmem_sub` / `ne_of_nmem`; the atoms **`emitBlk2`** +
-  `emitBlk2_run` (`encNat (|src1|+|src2|)`) and **`emitId`** + `emitId_run`
-  (the identity card `p₁ p₂ p₃ p₁ p₂ p₃`); `encNats_nil`; **`copy_self_get`**
-  (the layer's no-op `Cmd.op (.copy r r)`); the register frame
-  `CBV`/`CS1`/`CS2`/`CQ1`/`CX`/`CH`/`CD`/`CE`/`CZ` and the dirty lists
-  `HD`/`ID`/`AD`; the constants bundle **`CConst`** + `CConst_frame`;
-  **`loadX`/`loadX_run`** (`1^(xv sig states x)` off a loop counter);
-  **`haltBody`/`haltFam`/`haltFam_run`** (the gated `q` loop with the carried
-  head-cell base and the `PHALT` drain — the shape all three halt families
-  share); the five families **`cCopy`/`cRight`/`cHaltLeft`/`cHaltCenter`/
-  `cHaltRight`** + `_run`; the preamble **`cPre`/`cPre_run`/`cPre_usesBelow`**;
-  and the assembly **`cFive`/`cFive_run`/`cFive_usesBelow`** (48).
-  In `S1Program.lean`: **`stageMYes`/`stageMYes_run`/`stageMYes_usesBelow`**
-  (closed) and the risk checks **`mem_AD_cases`/`cFive_frame`/`cFive_preserves`**
-  (the built families' dirty set sits inside `CDirty`, and they preserve
-  registers `1`–`5`, `PSIG`/`PSTATES`/`PHALT`/`PNTRANS`/`PTRANS`,
-  `EOUT_S`/`EOUT_I`). Probe: `probes/S1CardEmitProbe.lean`.
-- **The S1 program assembly (2026-07-26-b, `Reductions/S1Program.lean` — consume
-  as black boxes; do NOT re-assemble the program or restate a stage contract)**:
-  the output-key layout `s1Key`/`s1Extract`/`SIGMA`…`STEPS`/`s1RegBound` (moved
-  here from `S1Witness`); the coarse frame predicates **`EScratch`**/**`CDirty`**
-  + `ne_of_not_scratch`/`ne_of_not_cdirty` and the three corollaries
-  **`stageSig_frame`/`stageInit_frame`/`stageFin_frame`** (`¬ EScratch r →
-  r ≠ <own output> → get (stage.eval s) r = get s r` — the shape every new stage
-  should be stated in); the suffix defs `ySuf1`/`ySuf2`/`ySuf3` and **`yesBranch`
-  / `s1Program`**; `s1Key_s1No`; **`noBranch_computes`** (axiom-clean, over an
-  arbitrary yes branch) → `s1Program_computes_neg`; **`yesBranch_run`** and
-  **`s1Program_computes_pos`**; **`s1Program_computes`** (the witness field) and
-  **`s1Program_usesBelow`**. **Nothing is open in this file any more** —
-  `stageC` landed 2026-07-28-b and `s1Program_computes`/`s1Program_usesBelow`
-  are axiom-clean. Probes: `probes/S1ProgramProbe.lean`,
-  `probes/S1CardEmitProbe.lean`, `probes/S1StepLoopProbe.lean`.
-- **The S1 emitter atom + stages Σ / I / F (2026-07-26, `Reductions/S1Emit.lean`,
-  sorry-free & axiom-clean — consume as black boxes; do NOT re-derive an
-  append gadget or restate the prelude row / final patterns)**: the atom
-  **`emitBlk`** + `emitBlk_run` / `emitBlk_cost` (`≤ 3 + 5v + v²`) /
-  `emitBlk_usesBelow` (register-generic); `loadSg` / **`loadSg_run`**
-  (`1^(Sg M)`, the only multiplication, hoisted); **`stageSig`/`stageSig_run`/
-  `stageSig_usesBelow`**; the stage-F model `finBlocks` + **`finBlocks_eq`** and
-  **`stageFin`/`stageFin_run`/`stageFin_usesBelow`**; the stage-I models
-  `cellsA`/`cellsB`/`cellsC`/`initBlocks` + **`initBlocks_eq`** (guarded) and
-  **`stageInit`/`stageInit_run`/`stageInit_usesBelow`**; the shared loop
-  machinery `repOne`/`repOne_run`, `iniCellK`/**`iniLoopK_run`** (a
-  constant-value cell loop with a first-iteration bonus — reuse it for any
-  "same value every iteration except the first" stream), `enop`; and the codec
-  algebra `encNats_singleton`, `encFinal_append`, `encFinal_singleton`, plus the
-  list helpers `drop_getElem_cons`/`tail_drop_succ`/`getD_of_le`/
-  `encSyms_len_ge`. Probe: `probes/S1EmitProbe.lean`.
-- **The `encodable.size` list algebra (2026-07-26, `Reductions/S1Witness.lean`,
-  project-wide utility)**: `nat_size_append`, **`list_size_map_sum`**
-  (`size l = (l.map (size · + 1)).sum` — the lemma every list size argument
-  wants), `list_size_cons`, `nat_size_flatMap`, `length_eq_sum_ones`,
-  `mul_sum_map`; the per-field bounds `opts_size_le`/`moves_size_le`/
-  `halt_size_le` (each in the "payload + its own item slot ≤ 2·charge" shape)
-  and `entry_size_le`; and **`flattenTM_size_le`** (`≤ 3·size M + 3`).
-- **The stage-C pure model (2026-07-25-c, `Reductions/S1Cards.lean`,
-  sorry-free & axiom-clean — consume as black boxes; do NOT restate the card
-  stream from `guessCards`)**: the plumbing `cnats`/`cardsFlat` +
-  `cardsFlat_append`/`_flatMap`/`_map`/`_filterMap`, `encNats_append`,
-  `encCardsIn_eq_encNats`; the change-of-variables trio `flatMap_finRange` /
-  **`finRange_flatMap_congr`** / **`map_finRange_congr`** (turn any
-  `finRange` nest that only uses `.val` into a `List.range` nest — reusable
-  project-wide) and **`xOpts_flatMap`** (the `xOpts` enumeration as
-  `range (σ+2)`, index `0` = boundary marker, blank-flag ⇔ index `= σ+1`);
-  the cell arithmetic `bv`/`sgv`/`hv`/`xv`/`blk` + `bv_eq`/`sgv_eq`/`hv_eq`/
-  `tv_eq`/`xv_zero`/`xv_succ`/`xIsBlank_eq`/`xIsBlank_none`; `haltBit` +
-  **`haltBit_eq`** (the raw `PHALT` bit list decides `M.halt.getD` at every
-  index, in range or not); the option codec `oTag`/`oVal`/`oTag_oVal_inj`,
-  `rOf`/`wOf` + **`rOf_eq`/`wOf_eq`** (`optSym`/`wEff` as arithmetic on the
-  `(tag,val)` pairs); the seven family models `copyBlocks`/`copyRightBlocks`/
-  `haltLeft|Center|RightBlocks`/`stepBlocks` (`stepCenter|Left|Right|InBlocks`)/
-  `preludeBlocks` (`pBody`/`resOf`/`contigB`/`kindIdx`/`pcellv`/
-  `pKindList_flatMap`/`resOf_eq`/`contigB_eq`) with **one equation per family**
-  (`copyCards_flat`, `copyRightCards_flat`, `haltLeftCards_flat`,
-  `haltCenterCards_flat`, `haltRightCards_flat`, **`stepCardsOf_flat`**
-  (hypothesis-free — `headD` makes it hold for malformed entries too),
-  `stepCards_flat`, `preludeCardsOf_flat`, `preludeCards_flat`,
-  `cookCards_flat`); the endpoints **`cardBlocks_eq`** and **`encCards_eq`**;
-  the `normTrans` spec `keyOf`/`sameKey_eq`/`entryOK_eq`/`dedupK`/
-  `dedupK_subset`/`dedupGo_eq_dedupK`/`normModel`/**`normModel_eq`**; and
-  stage M's no-branch `stageMNo` + `stageMNo_run`/`_frame`/`_usesBelow`.
-  Probe: `probes/S1CardModelProbe.lean`. (⚠ this un-`private`d
-  `CookTableau.dedupGo` — visibility only.)
+| file | what it gives you |
+|---|---|
+| `Lang/Syntax.lean`, `Lang/Semantics.lean` | `Op`/`Cmd`/`State`, `eval`/`cost`, `Cmd.decides`, the compositional laws (`eval_seq`, `cost_seq`, `eval_ifBit_*`, `cost_ifBit_*`). |
+| `Lang/Compile*.lean` | the one-time compiler to `FlatTM`. **All 9 ops proven, no side conditions.** Do not restore unit cost, do not tighten the residue contract, do not rebuild the canonical `LangEncodable` layer. |
+| `Lang/CostFlat.lean` | `cost_le_flat`, `cost_forBnd_flat_le`, `cost_mulLoop_le`, `cost_constLoop_le`, `cost_tailLoop_le`, `Cmd.writes`, **`Cmd.eval_get_of_not_writes`** (the one-line frame closer), `Cmd.costReads`, `Cmd.get_length_eval_le`, `Cmd.forBnd_counter_le`. **The tool for a non-polynomial cost bound.** |
+| `Lang/CostGrow.lean` | **START HERE for every polynomial `cost_le` obligation.** Usually one line: `Cmd.costLeSize_of_chk c (2^k - 1) (by decide)`. `Cmd.CapCost`, `Cmd.NoGrow`/`ngm`, `Cmd.loopStep`, the decidable pass `Cmd.chk`/`chk_sound`. |
+| `Lang/Frame.lean` | `Op.UsesBelow`/`Cmd.UsesBelow` + monotonicity, the behavioural `forBnd` toolkit, `Cmd.foldlState_range_induct`. |
 
-- **The S1 program stages P + G (2026-07-25-b, `Reductions/S1Parse.lean`, all
-  axiom-clean, sorry-free — consume as black boxes; do NOT re-derive the parse
-  or the guard)**: the pinned register frame (`ZERO`…`I5`, see "Latest
-  session"); the pure stream model `optsFlat`/`transFlat` + `optsFlat_eq`/
-  `transFlat_eq`/`flattenEntry_eq`/`flattenEntry_append`/`flattenTM_eq`/
-  `flattenTM_cons` (the `foldl`→`flatMap` bridge, via the private
-  `foldl_append_nil`); the item algebra `itemOf`/`encSyms_nil`/`encSyms_cons`/
-  `encSyms_cons'`; **`readItem`/`readItem_run`** (one `encSyms` item off a
-  cursor, `RegOK` bundling `readNum_run`'s twelve side conditions);
-  `bitOf`/`haltBody`/**`haltLoop_run`**; **`stageP`/`stageP_run`** (all eight
-  parsed registers); the flag gadgets `nop`/`andIn`/`ltCheck`/`eqCheck` +
-  `andIn_run`/`ltCheck_run`/`eqCheck_run`; the scan invariants
-  `EInv`/`EInv_set`/`EInv_frame` + the step lemmas `readVal_step`/
-  `ltStates_step`/`ltSig_step`/`eqTapes_step`; **`optCheck`/`optCheck_run`**
-  (the variable-arity `Option Nat` core), `optLoop_run`/`skipLoop_run`,
-  `fieldCheck`/`arityOptCheck`/`arityMoveCheck` + `_run`, **`entryBody_run`**,
-  **`entryLoop_run`**; `SInv`/`sBody`/**`sLoop_run`** (the idle-tolerant input
-  scan); the `Bool` bridge `entryPB`/`entryPB_eq`/`isValidFlatTM_eq`/
-  **`s1GuardB_eq`**; **`stageG`/`stageG_run`**, **`stagePG`/`stagePG_run`**,
-  **`stagePG_usesBelow`** (`32`) and **`stagePG_frame`** (registers `1`–`5`
-  untouched). Probe: `probes/S1ParseProbe.lean`.
+### The chain, front to back
 
-- **The S1 reduction map (2026-07-25, `Reductions/S1Map.lean`, all axiom-clean
-  — consume as black boxes; do NOT re-derive the guard or the correctness
-  iff)**: `optAll_iff`/`entryB_iff` → **`isValidFlatTM_iff`** (`Bool` ↔
-  `validFlatTM`); `s1GuardB` + **`s1GuardB_iff`** (the three decidable
-  instance-validity conjuncts = exactly `guessTableau_correct`'s hypotheses);
-  `s1No` + `s1No_not_lang` (the off-guard image: `init = []` fails
-  `FlatTCC_wellformed`); `s1Map` with the branch equations
-  **`s1Map_pos`/`s1Map_neg`** (⚠ the `match` does NOT reduce under `unfold` —
-  always go through these); **`s1Map_correct`**; `s1_param_le` (every tableau
-  size parameter ≤ the instance's `encodable.size`); `s1Bound`/`_poly`/`_mono`
-  and **`s1Map_size_le`** (`≤ (2·(n+3))^10`, the `output_size_le` field).
-- **The S1 witness (2026-07-25/-26/-26-b, `Reductions/S1Witness.lean`)**:
-  `encNats_append`, `encCardsIn_eq`, `cardNats_injective`,
-  `flatMap_cardNats_injective`, **`encCardsIn_injective`**,
-  **`s1Key_injective`** (⇒ `decodeOut = Function.invFun s1Key` is honest);
-  `encSyms_length` (`= sum + 2·length`), `list_nat_size_eq`
-  (`encodable.size l = sum + length`), **`encSyms_length_le_size`**
-  (`≤ 2·encodable.size l` — the generic head-layout size step);
-  **`flattenTM_size_le`** (`≤ 3·size M + 3`) and `headEncodeIn_size_le`
-  (`≤ 8·n + 4`); the parameterised witness **`s1WitnessOf`** and its
-  instantiation **`s1_reductionLang`**, every mechanical field discharged.
-  **OPEN in this file: `s1Program_cost_le` only.**
-  (`s1Key`/`s1Extract`/`SIGMA`…`STEPS`/`s1RegBound` live in `S1Program`.)
-- **The C8-3 front-piece layer (2026-07-18-b,
-  `Reductions/FrontPieces.lean`, all axiom-clean, register-generic —
-  C8-4/C8-5 consume these verbatim)**: `appendConst_run` (seed-`Cmd`-glued
-  constant append, exact cost `+2/cell`), `emitConst_run`/`_bits`,
-  `appendItem_run` (the `encSyms` item), `reencBody`/`reencLoop_run`
-  (bit register → `encSyms ((·+off)`-shifted stream), `scan` drained, `src`
-  intact, quadratic cost), `mulStep_run`/`powLoop_run` (`acc := 1^(a·m^k)`
-  on `unaryMulLoop_run`, cost `powCost` + closed form `powCost_le`),
-  `unaryMonomial_run` (`dst := 1^(c·(n+1)^k+d)`, cost `monomialCost`);
-  `HeadLayout.encSyms_snoc` (the `encSyms` loop-invariant closer). **Added
-  2026-07-19-c**: `emitRegs`/`emitRegs_run` (the reg-2 input-string emitter —
-  `dst := encSyms (3 :: encodeRegs (srcs.map get))`, `src` regs intact, only
-  `dst`/`scan`/`tflg`/`cnt` touched) + **`emitRegs_cost`** (2026-07-24-b:
-  `≤ 11 + Σ_{src} emitRegCost |src|`, `emitRegCost L = 8+13L+2L²`; mirrors
-  `tallyCells_cost`'s `foldl` induction) and `HeadLayout.encSyms_append` (encSyms
-  distributes over `++` — the closer for every `encSyms`-of-a-concatenation goal).
-  **The whole-program cost `FrontProgram.frontProgram_cost_le`** (2026-07-24-b)
-  bounds `(frontProgram …).cost` by `emitRegs.cost + 2·monomialCost + emitConst +
-  the five copy costs` (copy sources read off the emitted registers), mirroring
-  `frontProgram_run`'s s1…s4 threading. **Added 2026-07-19-d**:
-  `tallyReg`/`tallyReg_run` (single register: `dst := dst ++ 1^|src|`,
-  `forBnd`-bounded-by-`src` appending one `1`/cell, cost `≤ 1+|src|·5+|src|²`
-  via `cost_constLoop_le`) and `tallyCells`/`tallyCells_run`/`tallyCells_cost`
-  (the R2 input-cell counter: `dst := 1^(Σ_{src ∈ srcs}|get src|)`, sources
-  read-only, only `dst`/`cnt` touched; for `srcs = List.range xWidth` the count
-  is `State.size (encX x)` — the `unaryMonomial` argument `n`; cost
-  `≤ 1 + Σ(2+|src|·5+|src|²)`, the foldl-cost template `emitRegs`'s missing cost
-  bound should copy). All `[propext, Quot.sound]`; probe `C8FrontProbe` §6.
-- **The C8-4 front machine + machine-iff (2026-07-20,
-  `Reductions/FrontMachine.lean`, all axiom-clean — consume as black boxes for
-  the C8-4 witness's correctness field)**: `MQ c k w` (the accept-by-halting
-  front machine over an abstract verifier `Cmd`), `rejectState`/`acceptState`
-  (`+2`/`+1` shifted, `acceptState_ne_rejectState`), `M2` (the demoted decider);
-  the structural lemmas `MQ_sig`(= 4)/`MQ_tapes`(= 1)/`MQ_states`/`MQ_valid` +
-  `paddedBitDeciderTM_sig`/`M2_sig`/`_tapes`/`_valid` +
-  `paddedBitDeciderTM_halt_rejectState`; the **explicit budget** `MQbudget c k s`
-  (the F6 overshoot target); **forward** `MQ_accepts_of_accept` (verifier
-  accepts `sx++[creg]` ⇒ `M_Q` accepts `(3::encodeRegs sx)++(shiftReg creg++[0,3])`
-  for `steps ≥ MQbudget`) and **backward** `MQ_no_reject_of_accepts` (`M_Q`
-  accepts `(3::encodeRegs sx)++cert` ⇒ `cert = shiftReg creg++[0,3]` bit-valid ∧
-  `(c.eval (sx++[creg])).get 0 ≠ [0]`; frame hyp is the single `w+1 ≤ k`).
-  Probe `probes/C8MachineProbe.lean` (`#eval acceptsFlatTM M_Q` on yes/no/garbage
-  certs). Do NOT re-derive the compose/demote/format-check plumbing.
-- **The C8-4 abstract lifting (2026-07-20-b, `Reductions/FrontLifting.lean`, all
-  axiom-clean — consume as black boxes for the C8-4 witness's correctness field;
-  do NOT re-derive the predicate-level lift)**: `fQ W maxSize steps` (the per-`Q`
-  front instance, `maxSize`/`steps` abstract), **`fQ_correct`** (the iff,
-  parameterized over `maxSize`/`steps` with the two domination hyps `hmax`
-  (`certBoundOf + 2 ≤ maxSize`) / `hsteps` (`MQbudget ≤ steps` on size-bounded
-  certs)), and **`fQ_correct_concrete`** (hypothesis-free, with concrete
-  `maxSizeOf`/`stepsOf`). Supporting: the codec `certReg`/`decodeReg` +
-  `certReg_decodeReg` + `certState_eq`; `list_length_le_size`; `encX_bit`/
-  `xWidth_succ_le`; `certBoundOf`/`cert_complete`/`cert_sound` (classical cert
-  bound from `rel_correct`); `argBound`/`dCap`/`front_state_bounds` (the split
-  pair `encX x ++ [certReg c] = verifier.encodeIn (x,c)`, so `State.size`/cost/
-  width route through the verifier's own bounds); `MQbudget_le`; the `inOPoly`
-  proofs `certBoundOf_poly`/`argBound_poly`/`dCap_poly`/`maxSizeOf_poly`/
-  `stepsOf_poly` (helper `lin_dCap_poly`).
-- **The C8-4 reduction program (2026-07-20-c, `Reductions/FrontProgram.lean`,
-  `[propext, Quot.sound]` — consume as a black box for the C8-4 witness's
-  `computes`/`cost` fields; do NOT re-derive the wiring)**: `frontProgram
-  MQconst xWidth B cm km dm cs ks ds` (the four-register emitter: `emitRegs`
-  into scratch `B`, two `unaryMonomial`s into `B+1`/`B+2`, `emitConst` into
-  `B+3`, then `clear 0` + 4 copies into output regs 0–4) and
-  **`frontProgram_run`** (regs 0–4 = `headEncodeIn (M_Q, 3::encodeRegs(input),
-  cm·(m+1)^km+dm, cs·(m+1)^ks+ds)` for input split as `encX x ++ [1^m]`,
-  hyps `5 ≤ B`, `xWidth < B`, `MQconst` bit-level, size reg `= 1^m`, sources
-  bit-level). Probe `probes/C8ProgramProbe.lean`; `emitRegs_cost` and
-  `frontProgram_cost_le` landed 2026-07-24-b.
-- **The C8-4 witness `WQ` + endpoint reduction (2026-07-24,
-  `Reductions/FrontWitness.lean`, all axiom-clean; consume verbatim)**: **`front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`** (the
-  endpoint) and `WQ` (the `PolyTimeComputableLang (fQ …)` witness);
-  `encSyms_injective` + `decodeSyms`/`decodeSyms_encSyms` (genuine left inverse,
-  no `Classical`); **`inOPoly_monomial_bound`** (F6 constant extractor,
-  reusable anywhere); the gadget `UsesBelow` family
-  `appendBit`/`appendConst`/`emitConst`/`appendItem`/`reencBody`/`reencLoop`/
-  `emitRegs`/`mulStep`/`powLoop`/`unaryMonomial`/`frontProgram`_`usesBelow`;
-  the list/state helpers `get_append_lt`/`get_append_last`/`map_range_get`/
-  `size_append_one`/`get_mem`/`encSyms_cons`; and the witness scaffolding
-  `encodeInQ`/`decodeOutQ`/`MmachineQ`/`MconstQ`/`BwidthQ`/`MmaxF`/`MstepF`/`cQ`
-  + `computesQ`/`encodeInQ_size_le`/`_width`/`_bit`/`_bits`/`decodeOutQ_agree`/
-  `BwidthQ_ge5`/`xWidth_lt_BwidthQ`. Do NOT re-derive the `computes`/lift wiring.
-- **The S1 cell-code algebra (2026-07-18-b, `Simulators/CookTableau.lean`)**:
-  `hCell_val_lb`/`hCell_val_ub`, `tCell_ne_hCell`/`hCell_ne_bCell`/
-  `tCell_ne_bCell`, `hCell_inj`/`tCell_inj` — the three disjoint code bands;
-  built for `halt_of_satFinal` (now proven), reused by the (1b) inversion's
-  card-classification stage.
-- **The S1 (1a) layer (2026-07-18, `Simulators/CookTableau.lean`, all
-  axiom-clean)**: `stepFlatTM_normM` + `normTrans_subset`/`dedupGo_subset` +
-  the `dedupGo` `find?` lemma family; `step_desc` (unfolded step: fired
-  entry + payload + successor shape) and `write_facts` (the packaged write
-  effect incl. the `wEff`-at-frontier-flag head-cell fact) — consume these
-  for EVERY remaining S1 direction; `ConfFits_init`/`ConfFits_step`; the
-  window machinery (`rowCell`/`rowX`/`confRow_window`/`take3_drop`/
-  `coversHead_take3`, frontier detection `tapeSymAt_blank_iff`/
-  `rowX_isBlank`, membership lemmas for all five step families + all four
-  copy/halt families, `copy_window`); `validStep_of_step`/
-  `validStep_of_halt`/`satFinal_of_halt`. **The S1 trajectory + right-marker
-  layer (2026-07-18-c)**: `ConfFits_mono`, `isValidFlatTapes_single`,
-  `relpower_of_run`/`cover_of_run`, `run_of_relpower`/`run_of_cover`, and
-  the marker machinery `copyRightCards` + `copyRightCard_mem(_cookCards)`,
-  `confRow_getElem_last`/`confRow_window_last`/`copyRight_window`.
-  **The S1 (1b) inversion layer (2026-07-18-d — all axiom-clean; the whole
-  bijection `cookTableau_correct` now sorry-free)**: `window_card`
-  (covering ⟹ six cell equations) on the total coordinate view
-  `rowCellM`/`confRow_getElem'`; `cookCards_cases`/`stepCardsOf_cases`
-  (membership by family); the shape lemmas `card_headfree_middle`/
-  `card_bfirst`/`card_blast`/`card_head_center`; key uniqueness
-  `dedupGo_notin_seen`/`dedupGo_pairwise`/`normTrans_find?_eq`;
-  `stateOf_inj_lt`/`optSym_inj_valid`/`xCell_inj`/`xCell_ne_hCell`; the
-  pinning lemmas `validStep_zero`/`validStep_last`/`validStep_away` and
-  the `assemble_row` scaffold — if the prelude layer special-cases row 0,
-  ALL of this is reused unchanged on rows 1…steps. **The frozen head layout**
-  (`Reductions/HeadLayout.lean`): `headEncodeIn`/`headRegBound`/`encSyms`/
-  `flattenTM` + `headEncodeIn_bitState` — the S1 witness's `encodeIn` and
-  C8-5's seam target; imported by `Complexity.lean`, consumed by
-  `probes/C8SeamProbe.lean`.
-- **The S1 prelude/guess layer (2026-07-19/-b, `Simulators/GuessTableau.lean`;
-  everything PROVEN & axiom-clean — `guessTableau_correct` is sorry-free)**:
-  the band alphabet `PSg`/`emb`/`embCard` + `emb_inj`/`emb_val_lt`/`pCell_ge`/
-  `preludeCard_shape`/`preludeCard_prem_ge`; the construction
-  `PKind`/`pCell`/`pResolutions`/`contigOK`/`preludeCardsOf`/`preludeCards`/
-  `guessCards`/`pKindAt`/`preludeRow`/`guessWidth`/`guessFinal`/
-  `guessTableau(Typed)` + `guessTableau_wellformed`; the Γ-transfer layer
-  `isPrefix_map_emb`/`prelude_no_cover_emb`/`coversHead_emb_of`/`_inv`/
-  **`validStep_emb` (T1)**/`exists_preimage_map_emb`/`validStep_emb_row`/
-  **`relpower_emb` (T2 — ⚠ requires `3 ≤ a.length`)**/`relpower_emb_of`/
-  **`satFinal_emb` (T3)**; **the shared coordinate spine** `gKind`/`gCls`/
-  `preludeRow_getElem?`/`gRes_mem`/`confRow_res_mem`/`gCls_cut_live`/
-  `gCls_contig` + the membership algebra `pCell_inj`/`pKindList_mem`/
-  `preludeCardsOf_mem`/`preludeCards_mem`/`pRes_*_mem`; **P1**
-  `prelude_validStep_of_cert`; **the P2 inversion** `cert_of_prelude_validStep`
-  with `decodeSym`(`_tCell`/`_hCell`)/`starRes_class`/`star_res_cases`/
-  `initStar_res_cases`/`prelude_window_shape`. The eventual S1 witness's guard
-  is exactly `guessTableau_correct`'s hypotheses; consume `guessTableau_correct`
-  as a black box. Probe: `probes/S1TableauProbe.lean` §6. (⚠ this un-`private`d
-  the `CookTableau.lean` window lemmas `rowCell`/`confRow_getElem[_last]`/
-  `confRow_window[_last]`/`take3_drop`/`coversHead_take3` — visibility only.)
-- **The S1 size-bound layer (2026-07-24-c, all axiom-clean — the generic
-  toolkit is a project-wide `encodable.size` utility, consume everywhere)**:
-  in `CookTableau.lean` — generic `encodable_size_list_le` (`size l ≤ (c+1)·|l|`),
-  `length_flatMap_le` (`(l.flatMap f).length ≤ |l|·c`, pass `c` EXPLICITLY),
-  `flattenString_size_le` (`≤ (k+1)·|xs|`), `flattenCard_size_le` (`≤ 6k+1`),
-  `pow_collapse` (`total ≤ C·b^d`, `C≤1024`, `d≤10` ⇒ `≤ (2b)^10`); the M-only
-  card counts `xOpts_length`, `copyCards`/`copyRightCards`/`haltLeftCards`/
-  `haltCenterCards`/`haltRightCards`/`stepCardsLeft`/`stepCardsOf`/`stepCards`_
-  `length_le`, `dedupGo_length_le`→`normTrans_length_le`, `cookCards_length_le`
-  (`≤12·(σ+states+|trans|+3)^4`), `cookFinal_length_le`/`_mem_length`; and
-  **`cookTableau_size_bound`** (`≤ (2·(n+1))^10`). In `GuessTableau.lean` —
-  `pResolutions_length_le`/`pKindList_length`/`preludeCardsOf_length_le`/
-  `preludeCards_length_le` (`≤ (5+2σ)³·(σ+1)³`), `guessFinal_length_le`/
-  `_mem_length`, `PSg M ≤ 2b²`, and **`guessTableau_size_bound`**
-  (`≤ (2·(gn+1))^10`, `gn` includes `maxSize`). Numerically validated:
-  `probes/SizeBoundProbe.lean`.
-- **The C8-2 gadget layer (2026-07-05)**: `AcceptHalt.demoteHalt` +
-  structure/step/halting lemmas, `demoteHalt_run_eq`/`_weak`, the transport
-  pair `demoteHalt_run_accept`/`_run_reject`, `acceptsFlatTM`-level
-  `demoteHalt_accepts`/`_not_accepts`, and `runFlatTM_first_halt`
-  (trajectory recovery from bare `run ∧ halting` — reusable wherever a
-  consumer lacks a no-early-halt conjunct). `FormatCheck.formatCheckTM` +
-  `formatCheck_run`/`_traj`/`_stuck`, `certOKB`/`certOKB_iff`/
-  `encodeTape_certSplit`, and the **`Seg` framework** (exact run +
-  done-state-free trajectory, additive composition — the template for any
-  bespoke single-halt-state scan machine). `composeFlatTM_stuck_M1`
-  (TMPrimitives): guard-stuck ⇒ composite-never-halts.
-- **The FlatCC→BinaryCC free-reduction stack**
-  (`Reductions/FlatCC_to_BinaryCC_free.lean`): `binConvert_run` (6-output run
-  lemma with guard), the item view (`encItems`/`expandItems`/`itemsOkB` +
-  `sitemsOf`/`citemsOf`/`fitemsOf` conversions), `sentLoop_run` (generic
-  sentinel-stream transform loop), `initLoop_run` (bare-block loop),
-  `mulLoop_run` (unary product), `remCheck_run` (truncated-subtraction
-  compare + flag), `validB_iff` (Bool ↔ `isValidFlattening`),
-  `encKeyB_injective`, `bitsNat_encodeString`/`cardsNat_encodeCards`/
-  `finalNat_encodeFinal` (flat-level ↔ `Fin`-level correspondence),
-  `encCardsOut_length_le`.
-- **The live seams**: (`Reductions/FlatTCC_to_BinaryCC_comp.lean`) `scrub` +
-  `scrub_eval`/`scrub_cost`, `flatTCC_to_binaryCC_seam`, the composed witness
-  + `flatTCC_to_binaryCC_reducesPolyMO'`; (`Reductions/BinaryCC_to_FSAT_comp.lean`,
-  2026-07-12) `scrub2`, `binConvert_key` (the predecessor's exit key as one
-  local lemma), `get_nil_of_len_le`, `binaryCC_to_FSAT_seam` (seam ON a
-  composed witness + the wider-right-frame length close),
-  `flatTCC_to_FSAT_witness` + `flatTCC_to_FSAT_reducesPolyMO'`.
-- **The `FSAT_to_SAT` run-lemma LEAVES** (`Reductions/FSAT_to_SAT_free.lean`,
-  2026-07-13, all axiom-clean): `encodeCnf_append`/`_cons` (foldr-over-`++`
-  distribution — the incremental-emission backbone); the emit-gadget
-  projections `emitLit_{cnfout,frame,run}`, `endClause_run`, and per gadget
-  `emit{TrueG,EquivG,AndG,OrG,NotG}_{cnfout,tally,frame}` (write exactly
-  `encodeCnf (tseytin…)` onto `CNFOUT` + `numClauses` ones onto `TALLY`;
-  frames via `Cmd.eval_get_of_not_writes`); the two sentinel-drain inner loops
-  `drainSkip_run` (subtreeScan fvar-payload skip) / `drainVar_run` (tokenBody
-  fvar read into `VREG`) + their per-shape `_done`/`_one`/`_zero` step helpers;
-  and the **complete `budgetBody` dispatch** `budgetBody_frame`,
-  `budgetBody_enter`, `budgetBody_{ftrue,fand,forr,fneg,fvar}` (⇒ pure
-  `budgetStep_*`), `budgetBody_freeze` (bud=0). `budgetBody` is now factored as
-  `nonEmpty NEB BUD ;; ifBit NEB budgetBodyInner nop`.
-- **The `FSAT_to_SAT` run-lemma LOOP ASSEMBLIES** (same file, 2026-07-15, all
-  axiom-clean — the machine ⇒ map obligation, DONE): **`subtreeScan_run`**
-  (Dyck-forest `∃ gs` invariant folding the `budgetBody_*` leaves;
-  `T = 1^(formula_size g)`), **`tokenBody_run`** (one iteration = one
-  `scanClauses` token, per-shape dispatch integrating `subtreeScan_run`/
-  `drainVar_run`/`emit*G`; frame via `tokenBody.writes`) with model bridge
-  `tokHead`/`tokRem`/`scanClauses_tok`, **`outerLoop_run`** (Dyck-forest token
-  loop; helpers `tokForest`/`tokForest_flatten`/`tokForest_sum`), **`Bloop_run`**
-  (the `B := 1^|serF|` length loop), and **`buildSAT_run`** (the assembly:
-  `(buildSAT.eval [serF f]).get CNFOUT = encodeCnf (fsatToSat f)` ∧
-  `.get TALLY = 1^|fsatToSat f|`). The next witness's `computes` field is
-  `buildSAT_run` + `decodeOut = invFun encodeCnf`. Do NOT re-derive.
-- **The `FSAT_to_SAT` MECHANICAL FIELDS + LEAF COSTS** (same file, 2026-07-15-b,
-  all axiom-clean): the 6 witness fields as standalone theorems — `serF_bit`/
-  `encodeIn_bitState` (`enc_bit`), `encodeIn_size_le` (`encBound = 4n`),
-  `encodeIn_width` (`width_le`), `buildSAT_usesBelow` (`FRAME = 27`),
-  `buildSAT_computes` (`buildSAT_run.1` + `KSat3Free.encodeCnf_injective`),
-  `fsatToSat_size_le` (`≤ 300·(n+1)²`, `output_size_le` fodder),
-  `buildSAT_decode_agree`; and the 3 leaf loop-cost lemmas `drainVar_cost`/
-  `drainSkip_cost` (via `Cmd.cost_forBnd_flat_le` + the `_SCAN_le`/`_SC2_le`
-  scan-monotonicity helpers) and `Bloop_cost` (via `cost_constLoop_le`). The
-  cost-assembly ladder consumes these unchanged. Do NOT re-derive.
-- **The `FSAT_to_SAT` COST ASSEMBLY + WITNESS + SEAM** (2026-07-16, all
-  axiom-clean): `tokenBody_cost` (`≤ tokFK·(E+N+3)³`; per-branch `private`
-  lemmas `brTrue/brBin/brVar/brTag11/tree_cost`, `X_facts`/`sq_le_X`
-  arithmetic helpers, precomputed `subtreeScan_fr_*`/`drainVarLoop_fr_*`
-  frame one-liners, `drainVar_cost_le`); `outerLoop_cost` (semantic-invariant
-  reuse + `tokRem_length_le`); `satOmega`/`satK`/`satBound` +
-  `satBound_poly/_mono/_output`; `buildSAT_cost_le`; the witness
-  `fsatSAT_reductionLang` + `fsatSAT_reducesPolyMO' : FSAT ⪯p' SAT`
-  (`Reductions/FSAT_to_SAT_free.lean`); and the third seam `scrub3` +
-  `fsat_to_SAT_seam` + `flatTCC_to_SAT_witness` +
-  `flatTCC_to_SAT_reducesPolyMO' : FlatTCC ⪯p' SAT`
-  (`Reductions/FSAT_to_SAT_comp.lean`). **The tail is closed; consume
-  `flatTCC_to_SAT_witness`/`flatTCC_to_SAT_reducesPolyMO'` from the endpoint
-  bridge — do not re-derive anything below it.**
-- **The FSAT output codec** (`Reductions/BinaryCC_to_FSAT_free.lean`, 2026-07-05):
-  `serF`/`deserF`/`decodeF` (prefix/Polish bit-serialization of the `formula`
-  tree) + the PROVEN round-trip `decodeF_serF` + `decodeOut_of_serF` — the
-  injectivity backbone of the target-#2 witness's `decodeOut`. This is the
-  reusable pattern for any TREE-typed reduction output.
-- **The `BinaryCC_to_FSAT` program** (`Reductions/BinaryCC_to_FSAT_free.lean`,
-  session 2): `buildFSAT`/`encodeIn` + all emitters (`emitBitsFromScan`/
-  `emitBitsFromSent`/`emitCardsAt`/`emitAllSteps`/`readOneFinal`/`emitFinal`) and
-  the on-machine guard (`computeWF`/`leCheck`/unary-modulo `dvdCheck`/
-  `cardLenCheck`) — pure `Cmd` DATA, `#eval`-validated end-to-end (`FSATSerProbe`
-  §4). Do not re-derive; session 3 proves the run/cost lemmas over these.
-- **The `BinaryCC_to_FSAT` run-lemma stack** (same file, session 3 parts 1–2,
-  all sorry-free & axiom-clean `[propext, Quot.sound]`): `encodeIn_size_le`
-  (+ helpers `encodable_size_bitsNat`/`_cardNat`/`_map_*`, `fresh_set_size`,
-  `get_unset_of_ne`); the serialization algebra `litFor`/`bitsPrefix`/
-  `serF_encodeBitsAt`/`bitsPrefix_append`/`bitsPrefix_take_succ` and its
-  card-level lift `cardsPrefix`/`cardsPrefix_append`/`serF_encodeCardsAt`
-  (steps/lines/final reduce to the same tag-then-child unrolling one level
-  up); the **generic `listAnd`/`listOr` algebras `andPrefix`/`serF_listAnd`
-  and `orPrefix`/`orPrefix_append`/`serF_listOr`** (one definition per
-  connective serves every level — do NOT re-specialize per level;
-  `serF_encodeFinalConstraint` is the `listOr` top closer); the OUT-only
-  gadget lemmas `emit{Ftrue,FandTag,ForrTag,False,VarW,LitAt}_run`/`_frame`;
-  the fold-invariant templates **`BSInv`** (plain, `emitBitsFromScan_run` —
-  now carries a **frame clause**), **`SBInv`** (two-phase sentinel with
-  past-the-terminator exit, `emitBitsFromSent_run`), **`RFInv`** (two-phase
-  sentinel *parse*, `readOneFinal_run` — outputs `FBITS`/`BLEN`, `SCANF`
-  past the terminator), **`CAInv`/`FFInv`** (`nonEmpty`-guarded stream loops
-  with black-boxed inner `_run` facts, `emitCardsAt_run`/`emitFinal_run` —
-  `FFInv`'s live iteration chains `readOneFinal_run` + `innerFinalSteps_run` +
-  `emitFalse`), **`ASInv`/`ALInv`/`FSInv`** (exact-bound nested `listAnd`/
-  `listOr` folds with a black-boxed inner-loop `_run`, `emitAllSteps_run`/
-  `innerFinalSteps_run`); **`stepBody_run`/`finalStepBody_run`** (var-index
-  arithmetic + on-machine bound guard ⇔ `encodeStepConstraint`/
-  `encodeFinalAtStep`'s dite); and the register-generic unary loops
-  **`unaryMulLoop_run`/`unarySubLoop_run`** (use these at every remaining
-  mul/truncated-subtraction site — do not re-derive). **The wellformedness
-  guard stack (2026-07-09):** `computeWF_run`, the three checks
-  `leCheck_run`/`dvdCheck_run` (reusable pure-arithmetic `DvdArith.subMod`/
-  `subMod_eq_mod` unary-`mod` + machine fold `dvdBody_step`)/`cardLenCheck_run`
-  (`CLInv` guarded card stream + `cardLenItem_run`/`CEInv` per-item parse), the
-  assembly helpers `andFlag_run`/`nonEmptyTFLG_run`, and the spec bridges
-  `wf_iff`/`cardsOKB_iff` (`cardsOKB` = the decidable `Bool` card-length flag);
-  `computeWF_run` now carries a **frame clause** (its 14-register write set).
-  **The assembly layer (2026-07-10):** `precompLen_run` (LREG/LREG1 off INIT)
-  and **`buildFSAT_run`** — `(buildFSAT.eval (encodeIn C)).get FOUT =
-  serF (BinaryCC_to_FSAT_instance C)` — the correctness crux of the
-  `BinaryCC ⪯p' FSAT` witness (`computes` = this + `decodeOut_of_serF`).
-  **Factor any monolithic
-  emitter into named defeq sub-`def`s (per loop level) BEFORE its run lemma**
-  (as `emitFinal` → `finalStepBody`/`finalStepIterBody`/`finalStringBody`);
-  the probe stays green (defeq). Copy these shapes; do not re-derive the
-  `clear_value`/`heval` bookkeeping.
-- **The cost toolkit (2026-07-10-b).** Generic (`Lang/CostFlat.lean`):
-  `Cmd.cost_le_flat` (loop-free flat bound over `Cmd.costReads` ceilings +
-  growth clause), `Cmd.writes`/`Cmd.eval_get_of_not_writes` (decide-able
-  frame), `cost_mulLoop_le`/`cost_tailLoop_le`/`cost_constLoop_le`,
-  `Cmd.cost_forBnd_flat_le`, `State.get_length_le_size`. In the witness file:
-  the `serF`-length algebra (`serF_length_le_size`,
-  `serF_length_le_of_mem_listAnd/Or`, `and/orPrefix_take_length_le`,
-  `and/orPrefix_range_succ/_le`, `bitsPrefix/cardsPrefix_take_length_le`,
-  `encSList/encCardsOut/encFinal_drop_length_le`, `encSList_length_ge`), the
-  WREG transports (`bsBody_WREG`/`sentBitBody_WREG`/`emitBitsFromScan_WREG`/
-  `emitBitsFromSent_WREG`/`emitCardsAt_WREG`), the arithmetic closers
-  (`mulLoopClose`/`subLoopClose`/`one_le_P`/`le_scale`), and the FULL
-  `_cost`/`_effect` stack for every emitter + guard (`emit*_cost`,
-  `computeWF_cost`, `leCheck/dvdCheck/cardLen*_cost`, `precompLen_cost`) up to
-  the assembly `buildFSAT_cost_le` at the master ceiling `masterOmega`/
-  `buildFSATBound`. **The whole `BinaryCC→FSAT` witness `binaryCCFSAT_reductionLang`
-  + `binaryCC_reducesPolyMO' : BinaryCC ⪯p' FSAT` is landed & axiom-clean** —
-  the mechanical fields (`buildFSAT_usesBelow`/`encodeIn_bitState`/`decode_agree`
-  via `Cmd.eval_agree`) are the copy-templates for the next witnesses. Do not
-  re-derive.
-- **The flatTCC free-reduction stack** (`Reductions/FlatTCC_to_FlatCC_free.lean`):
-  `blockMove_run`/`halfMove_run`, `cardStep_step`, `encSList` +
-  `encSList_append_inj`, `encKey_injective`/`extractKey`,
-  `flatTCC_to_flatCC_correct`.
-- **The chain-composition engine** (`PolyTime.lean`): `SeamData`/`comp`,
-  `State.get_append_replicate_nil`, `NPhard'`/`NPcomplete'` + bridges.
-- **The kSAT3 free-reduction stack** (`NP/kSAT_to_SAT_free.lean`): `kCnf3Check`
-  + run lemma + `kSAT3_precomposeData` + `encodeCnf_injective` +
-  `encodeCnf_tally_tight` + the `kCheckBudget_le_poly` monomial-domination
-  pattern.
-- **The free engine** (`PolyTime.lean`): `InNPWitnessLangFree`/`inNPLangFree`
-  + `inNPLangFree_to_inNP`, `FreePrecomposeData`/`precomposeFree`,
-  `red_inNP_of_langFree`, `reducesPolyMO'_of_langFree`.
-- **The verifier stacks** — `EvalCnfCmd.lean` (SAT) and `CliqueRelTM.lean`
-  (FlatClique; `readNum_run`/`readNum_cost`/`ltBit_run`, `memberEdge_run`
-  nested-loop template, length-only-invariant cost stack).
-- **The compiler assembly** (`Compile/`): `run_physical_residue_gen`,
-  `compileSeq_sound_physical_residue`(+`_traj`), `compileForBnd_…`,
-  `compileIfBit_…`, `bitDecider_run`, `paddedBitDecider_run`,
-  `paddedComputeTM`/`paddedCompute_run`; the op gadget stacks; the
-  branch/loop/move toolkit; the threading toolkit. ⚠ `Compile_sound`/
-  `Compile_run_physical`/`Compile_polyBound` are DEAD/superseded — do not
-  attempt to prove.
+| file | what it gives you |
+|---|---|
+| `Simulators/CookTableau.lean` + `GuessTableau.lean` | the S1 tableau mathematics: the bijection `cookTableau_correct`, the cert-guess layer `guessTableau_correct`, both size bounds (`≤ (2·(n+1))^10`), and the project-wide `encodable.size` toolkit (`encodable_size_list_le`, `length_flatMap_le`, `pow_collapse`). |
+| `Reductions/S1Map.lean` | the S1 reduction map, its guard `s1GuardB`, the branch equations `s1Map_pos`/`s1Map_neg` (⚠ the `match` does **not** reduce under `unfold` — always go through these), `s1Map_correct`, `s1Map_size_le`. |
+| `Reductions/S1Parse.lean` · `S1Emit.lean` · `S1Cards.lean` · `S1CardEmit.lean` · `S1StepModel.lean` · `S1StepEmit.lean` · `S1StepLoop.lean` · `S1Prelude.lean` · `S1PreludeEmit.lean` | the S1 program, stage by stage. Register frame pinned below. Reusable loop principles: **`S1CardEmit.emitLoop_run`** (index-driven) and **`S1Step.emitFold_run`** (stateful/cursor-driven — the one you want for anything carrying an accumulator). |
+| `Reductions/S1Program.lean` · `S1Witness.lean` | the assembly (`s1Program`, `stageC`, `s1Program_computes`/`_usesBelow`), the output-key layout `s1Key`/`s1RegBound`, the frame predicates `EScratch`/`CDirty`, and the parameterised witness `s1WitnessOf`. Nothing is open. |
+| `Reductions/HeadLayout.lean` · `FrontPieces.lean` · `FrontMachine.lean` · `FrontLifting.lean` · `FrontProgram.lean` · `FrontWitness.lean` | C8, the honest universal front. Endpoints: `FrontWitness.front_reducesPolyMO' : Q ⪯p' FlatSingleTMGenNP`, `FrontLifting.fQ_correct(_concrete)`, and the register/tally gadgets (`tallyCells`, `emitRegs`, `unaryMonomial`, `powLoop`). Also **`inOPoly_monomial_bound`** — the constant extractor, reusable anywhere. |
+| `Reductions/FlatTCC_to_FlatCC_free.lean` · `FlatCC_to_BinaryCC_free.lean` · `BinaryCC_to_FSAT_free*.lean` · `FSAT_to_SAT_free*.lean` | the sound tail as four free-line witnesses. **Templates — copy these, not first principles**: the unguarded-map pattern, the **guarded**-map pattern (on-machine validity flag), the Tseytin/tableau step, and the tree-traversal pattern (a TREE-typed input consumed by one forward token scan of its Polish serialization). |
+| `Reductions/*_comp.lean` (five files) | the five live seams. **`S1_to_FlatTCC_comp.lean` is the scrub-only seam — start there for any new seam.** `clearRange` lives there. |
+| `Deciders/EvalCnfCmd.lean` · `EvalCnfSplit.lean` · `CliqueRelTM.lean` | the two verifiers and the SAT membership half. **`EvalCnfSplit.lean` is the worked template for any future `InNPWitnessLangFreeSplit`, end to end.** |
+| `NP/kSAT_to_SAT_free.lean` | re-encoder + reduction sharing one program, fold invariants, tight `encodeIn_size`, `FreePrecomposeData` — the smallest complete free-line example in the repo. |
+
 
 ## Conventions & hard-won gotchas
 

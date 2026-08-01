@@ -925,18 +925,14 @@ theorem FSAT_to_SAT_size_le (f : formula) :
 
 -- ─── Final polynomial reduction theorems ────────────────────────────────────
 
-theorem FSAT_to_SAT_poly : FSAT ⪯p SAT :=
-  ⟨⟨FSAT_to_SAT_tseytin,
-    ⟨⟨fun n => 200 * n ^ 2 + 300,
-      ⟨2, ⟨201, 18, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
-      fun a b h => by nlinarith [Nat.pow_le_pow_left h 2],
-      FSAT_to_SAT_size_le⟩⟩,
-    FSAT_to_SAT_tseytin_correct⟩⟩
+/-! **`FSAT_to_SAT_poly` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/
 
-theorem FSAT_to_3SAT_poly : FSAT ⪯p kSAT 3 :=
-  ⟨⟨FSAT_to_SAT_tseytin,
-    ⟨⟨fun n => 200 * n ^ 2 + 300,
-      ⟨2, ⟨201, 18, by intro n hn; nlinarith [Nat.one_le_pow 2 n (by omega)]⟩⟩,
-      fun a b h => by nlinarith [Nat.pow_le_pow_left h 2],
-      FSAT_to_SAT_size_le⟩⟩,
-    FSAT_to_3SAT_tseytin_correct⟩⟩
+/-! **`FSAT_to_3SAT_poly` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/
