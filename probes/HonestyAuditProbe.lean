@@ -29,7 +29,7 @@ The audit's structural result (§1) is what makes the audit finite:
 machine-checked form of standing risk #1 — the reason the audit is a *reading*
 obligation that no typechecker can discharge.
 
-**2026-08-01 (top-down) added three things:**
+**2026-08-01 (top-down) added four things:**
 
 * **§3** — the tail decoder is now a real **parser** (`Serialize cnf` /
   `CnfSerialize.decCnf`, `dec_enc` proven) instead of `Function.invFun`. One of
@@ -40,6 +40,10 @@ obligation that no typechecker can discharge.
   whose `encX` lays the answer. It yields `Q ⪯p' SAT` for arbitrary `Q`. This is
   the bigger mouth of the S5 hole, and it is not on any witness we build — it is
   in the *statement* of `NPhard''`.
+* **§7b** — why the fix cannot be another *field*: a second cheat whose layout
+  writes the whole raw input out (size-faithful, injective, `Serialize`-able)
+  and merely *appends* the answer in a second register. Every "no compression"
+  or "canonical encoding" law holds of it.
 * **§8** — the fix: `NPhardStr` (`Lang/HardnessStr.lean`) quantifies over
   **string languages** with the canonical layout, where `encX` is not a field at
   all. Under it the composite's encode is a closed formula, checked here by
@@ -388,6 +392,140 @@ theorem cheat_reduction : Q ⪯p' SAT :=
   CookLevinHonest.SAT_NPhard'' Y inferInstance Q (every_predicate_presentable Q)
 
 end HypothesisCheat
+
+/-! ## §7b — why the fix must be a RESTRICTION, not another field
+
+The obvious patch to §7 is to forbid *compressing* layouts: add a field
+`∀ x, encodable.size x ≤ sizeLB (State.size (encX x))` (`sizeLB` polynomial),
+which would indeed kill §7 — its `encX x` has size `1` for every `x`.
+
+It would not kill this one. Here the input type is already `List Bool`, the
+layout writes the **whole raw string** into register `0`, and the answer is
+merely *appended* in register `1`. The layout is size-faithful, injective, and
+`Serialize`-able (`dec` reads register 0 and ignores register 1) — every
+plausible "no compression" or "canonically serialized" law holds — and the
+verifier is still a two-op program that reads the planted answer.
+
+**That is the argument for `NPhardStr`.** No law *about* `encX` can rule out
+"the honest encoding, plus one extra register"; only removing the field can.
+`InNPWitnessStr` removes it. -/
+
+namespace HypothesisCheat2
+
+attribute [local instance] Classical.propDecidable
+
+variable (Q : List Bool → Prop)
+
+/-- Honest first register, planted answer in the second. -/
+noncomputable def badEncX (x : List Bool) : State :=
+  [x.map (fun b => if b then 1 else 0), [if Q x then 1 else 0]]
+
+noncomputable def badEncodeIn (xc : List Bool × List Bool) : State :=
+  badEncX Q xc.1 ++ certState xc.2
+
+/-- The "verifier": copy the planted answer into the output register. -/
+def badCmd : Cmd := Cmd.op (.copy 0 1)
+
+theorem badCmd_get0 (s : State) : State.get (badCmd.eval s) 0 = State.get s 1 := by
+  show State.get (State.set s 0 (State.get s 1)) 0 = State.get s 1
+  rw [State.get_set_eq]
+
+theorem badEncodeIn_get1 (xc : List Bool × List Bool) :
+    State.get (badEncodeIn Q xc) 1 = [if Q xc.1 then 1 else 0] := rfl
+
+noncomputable def badVerifier :
+    DecidesLang (fun xc : List Bool × List Bool => Q xc.1) (fun n => 2 * n + 2) where
+  c := badCmd
+  encodeIn := badEncodeIn Q
+  encodeIn_size := by
+    intro xc
+    show (xc.1.map (fun b => if b then 1 else 0)).length
+        + (1 + ((xc.2.map (fun b => if b then 1 else 0)).length + 0))
+      ≤ 2 * encodable.size xc + 2
+    have h1 : xc.1.length ≤ encodable.size xc.1 := length_le_size xc.1
+    have h2 : xc.2.length ≤ encodable.size xc.2 := length_le_size xc.2
+    have h3 : encodable.size xc = encodable.size xc.1 + encodable.size xc.2 + 1 := rfl
+    rw [List.length_map, List.length_map]
+    omega
+  decides := by
+    intro xc
+    have hg : State.get (badCmd.eval (badEncodeIn Q xc)) 0
+        = [if Q xc.1 then 1 else 0] := by
+      rw [badCmd_get0, badEncodeIn_get1]
+    constructor
+    · show Q xc.1 ↔ (State.get (badCmd.eval (badEncodeIn Q xc)) 0 == [1]) = true
+      rw [hg]; by_cases h : Q xc.1 <;> simp [h]
+    · show ¬ Q xc.1 ↔ (State.get (badCmd.eval (badEncodeIn Q xc)) 0 == [0]) = true
+      rw [hg]; by_cases h : Q xc.1 <;> simp [h]
+  cost_bound := by
+    intro xc
+    show (State.get (badEncodeIn Q xc) 1).length + 1 ≤ 2 * encodable.size xc + 2
+    rw [badEncodeIn_get1]
+    show 1 + 1 ≤ 2 * encodable.size xc + 2
+    omega
+  enc_bit := by
+    intro xc reg hreg y hy
+    rcases List.mem_append.mp hreg with h | h
+    · rcases (by simpa [badEncX] using h :
+        reg = xc.1.map (fun b => if b then 1 else 0)
+          ∨ reg = [if Q xc.1 then 1 else 0]) with hr | hr
+      · subst hr
+        obtain ⟨b, _, hb⟩ := List.mem_map.mp hy
+        subst hb; cases b <;> simp
+      · subst hr
+        have hy' : y = (if Q xc.1 then 1 else 0) := by simpa using hy
+        subst hy'; by_cases hq : Q xc.1 <;> simp [hq]
+    · have hr : reg = xc.2.map (fun b => if b then 1 else 0) := by
+        simpa [certState] using h
+      subst hr
+      obtain ⟨b, _, hb⟩ := List.mem_map.mp hy
+      subst hb; cases b <;> simp
+  regBound := 3
+  usesBelow := ⟨Nat.zero_lt_succ 2, Nat.succ_lt_succ (Nat.zero_lt_succ 1)⟩
+  width_le := by
+    intro xc
+    show (badEncX Q xc.1 ++ certState xc.2).length ≤ 3
+    simp [badEncX, certState]
+
+/-- A size-faithful, injective, answer-appending presentation of an arbitrary
+predicate on bit strings. -/
+noncomputable def badSplitWitness : InNPWitnessLangFreeSplit Q where
+  rel := fun x _ => Q x
+  dBound := fun n => 2 * n + 2
+  dBound_poly := inOPoly_add (inOPoly_mul (inOPoly_const 2) inOPoly_id) (inOPoly_const 2)
+  dBound_mono := fun _ _ h => Nat.add_le_add_right (Nat.mul_le_mul_left 2 h) 2
+  verifier := badVerifier Q
+  rel_correct := ⟨{
+    bound := fun _ => 0
+    sound := fun {_ _} h => h
+    complete := fun {_} h => ⟨[], h, Nat.le_refl 0⟩
+    bound_poly := inOPoly_const 0
+    bound_mono := fun _ _ _ => Nat.le_refl 0 }⟩
+  encX := badEncX Q
+  encodeIn_eq := fun _ _ => rfl
+  xWidth := 2
+  encX_width := fun _ => rfl
+  encX_size := by
+    intro x
+    show (x.map (fun b => if b then 1 else 0)).length + (1 + 0)
+      ≤ 2 * encodable.size x + 2
+    have h1 : x.length ≤ encodable.size x := length_le_size x
+    rw [List.length_map]
+    omega
+
+/-- **The layout is size-faithful** — it writes the input out in full — and the
+witness is still a cheat. No `encX` law can separate these two facts. -/
+theorem badEncX_size_faithful (x : List Bool) :
+    encodable.size x ≤ 2 * State.size (badEncX Q x) := by
+  show encodable.size x ≤ 2 * ((x.map (fun b => if b then 1 else 0)).length + (1 + 0))
+  have h := size_le_two_mul_length x
+  rw [List.length_map]
+  omega
+
+theorem cheat_reduction : Q ⪯p' SAT :=
+  CookLevinHonest.SAT_NPhard'' (List Bool) inferInstance Q ⟨badSplitWitness Q⟩
+
+end HypothesisCheat2
 
 /-! ## §8 — THE FIX: under `NPhardStr` there is nothing left to choose
 
