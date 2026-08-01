@@ -14,12 +14,13 @@ verifier and reduction is a short DSL program instead of a hand-rolled TM.
 
 ---
 
-## Status snapshot (verified 2026-07-30-c)
+## Status snapshot (verified 2026-08-03)
 
 | | |
 |---|---|
-| `lake build` | ✅ green (~10 min from cold; `S1Witness.lean` alone spends ~3 min in the kernel on the cost ladder's `decide`) — **and since 2026-08-02 it is the soundness gate**: `#assert_library_axiom_clean Complexity` at the bottom of `Complexity.lean` fails elaboration unless every declaration in every module is `sorry`-free and uses only `propext`/`Classical.choice`/`Quot.sound` (12344 declarations, 96 modules, ~2 s). `Complexity/SoundnessGate.lean` gates the endpoints individually, `Complexity/HonestyGate.lean` pins risk S5's two audited functions (`encodeIn`/`decodeOut` of the composite, incl. `encodeIn x = certState x` under `NPhardStr`) as gated `rfl` theorems, and `Complexity/CostFaithfulness.lean` gates `Compile.cost_is_time_proxy`. No CI step and no `grep` is involved — see `Complexity/Meta/AxiomGate.lean`. |
+| `lake build` | ✅ green (~10 min from cold; `S1Witness.lean` alone spends ~3 min in the kernel on the cost ladder's `decide`) — **and since 2026-08-02 it is the soundness gate**: `#assert_library_axiom_clean Complexity` at the bottom of `Complexity.lean` fails elaboration unless every declaration in every module is `sorry`-free and uses only `propext`/`Classical.choice`/`Quot.sound` (~12 400 declarations, 99 modules, ~2 s). `Complexity/SoundnessGate.lean` gates the endpoints individually, `Complexity/HonestyGate.lean` pins risk S5's two audited functions (`encodeIn`/`decodeOut` of the composite, incl. `encodeIn x = certState x` under `NPhardStr`) as gated `rfl` theorems, `Complexity/CostFaithfulness.lean` gates `Compile.cost_is_time_proxy`, and `Complexity/NonVacuity.lean` gates non-vacuity of the `NPhardStr` hypothesis. No CI step and no `grep` is involved — see `Complexity/Meta/AxiomGate.lean`. |
 | **`sorry`s in built code** | **0**, and this is now *machine-checked by the build itself* (see the row above); `sorry` is only a warning in Lean, so it used not to be. (Was 5; the legacy `⪯p` front and its three dead files were **deleted** 2026-07-30-c — none was to be proved.) |
+| **non-vacuity of the published hypothesis (S7)** | ✅ **NEW 2026-08-03**, both directions, gated (`Complexity/NonVacuity.lean`). **Inhabited**: `inNPStr_squareStr` is a complete `InNPWitnessStr` for `SquareStr x := ∃ c, x = c ++ c` — a two-op verifier `Cmd` on the canonical layout, exact cost accounting, a load-bearing certificate — and `squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT` is `CookLevinStr` applied to it. **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd`, so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM`; the `Cmd`-level search is open (HANDOFF, top-down item 1). |
 | **encoding-honesty audit (S5)** | ⚠ **audited 2026-07-30-c, partly STRUCTURAL 2026-08-01, head side CLOSED 2026-08-02.** Tail: a real `Serialize`-backed parser. Head: the composite's `encodeIn` is now `W.encX` **verbatim** (no appended tally — the front counts its own input's cells), so under `NPhardStr` it is `certState x`, the raw string, by `rfl`. The hypothesis-side hole (FINDING AN/AO) is closed by *restricting* the statement — `CookLevinHonest.CookLevinStr : NPcompleteStr SAT` is the one to quote. Verdicts 1–14 below; evidence `probes/HonestyAuditProbe.lean` §§1–8. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | `[propext, Classical.choice, Quot.sound]` — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout, so the hypothesis has no free input encoder. Derived from `CookLevin''` via `NPcomplete''_to_NPcompleteStr`. |
 | compiler (Risk C2) | ✅ **DONE & CLEAN** (2026-07-04): all 9 ops proven, no side-conditions; the retired trio + both isolation walls **deleted** |
@@ -520,10 +521,12 @@ known to need step-bound machinery) and **S1** (the Cook tableau).
    accounting (linear-then-quadratic) and rewind-bracketing is real but
    structural-unknown-free work.*
 
-2. **Retire S3 — migrate `⪯p` to `polyTimeComputable'`.** Swap
-   `ReductionWitness.reduction_poly` to the TM-backed witness (the strengthening
-   lemma keeps size-bound lemmas valid). Infrastructure is built **on the free
-   line** (`⪯p'`, `reducesPolyMO'_of_langFree`; live instances
+2. **Retire S3 — the honest reduction type.** ⚠ *Historical framing: this was
+   written as a "migration" of `⪯p` to `polyTimeComputable'`. It was executed
+   instead as a **replacement** — the honest line was built alongside and the
+   `⪯p` API was deleted outright (2026-07-30-c, completed 2026-08-03). Read the
+   sub-items for the work, not the framing.* Infrastructure is built **on the
+   free line** (`⪯p'`, `reducesPolyMO'_of_langFree`; live instances
    `kSAT3_reducesPolyMO' : kSAT 3 ⪯p' SAT` and `flatTCC_reducesPolyMO' :
    FlatTCC ⪯p' FlatCC`). The work:
    - **The sound-tail reductions as free `PolyTimeComputableLang` witnesses**
@@ -592,10 +595,11 @@ compiler step-bound machinery (1).
 
 ### Destination B — honest conditional theorem (fallback)
 
-If C2 or the S3 tail ripple proves intractable for a side project, state
-`CookLevin` conditionally on a **documented axiomatic `inTimePoly` / `⪯p`
-interface**, keep the sound combinatorial tail, and stop. Trigger if step 1 or 2
-overruns its estimate ~3×.
+⚠ **Never triggered, and now unreachable: Destination A was reached.** Kept as a
+record of the fallback that was on the table. It said: if C2 or the S3 tail
+ripple proved intractable, state `CookLevin` conditionally on a documented
+axiomatic interface, keep the sound combinatorial tail, and stop. Trigger was
+step 1 or 2 overrunning ~3×.
 
 ---
 
@@ -609,7 +613,7 @@ the compiling-skeleton engineering. Refine the highest-ranked open item next.
 
 | # | Gap | Location | Status / fix |
 |---|-----|----------|--------------|
-| **S3** | `⪯p` bounds **output size only**, never runtime — the enabling weakness that let S1/S2 typecheck and made `NPcomplete` too weak to be faithful. | `NP.lean`, `Lang/PolyTime.lean` | ✅ **CLOSED by deletion (2026-07-30-c).** The honest line `⪯p'`/`NPhard''`/`NPcomplete''` is the only one left; `NPcomplete`/`NPhard`/`red_NPhard` survive in `NP.lean` as **unused** definitions (no live consumer — see the live-mention list below). Historical note: **Superseded, not migrated.** The honest line `⪯p'`/`NPhard''`/`NPcomplete''` is built end to end and `CookLevin''` quotes it; there is deliberately **no** `NPcomplete'' → NPcomplete` bridge. `⪯p` survives only under the legacy front, and dies with it. Historical note: **Engine live & endgame design SETTLED.** Honest target `polyTimeComputable'`/`⪯p'` built on the free line; live chain instances `kSAT3_reducesPolyMO'` and `flatTCC_reducesPolyMO'` (first sound-tail step, 2026-07-02). The `NPhard'` transport is settled & machine-validated: `SeamData`/`comp` (Cmd-level chain composition, fully proven) + `NPhard'`/`NPcomplete'`, hardness at endpoints only. Execute via plan step 2. |
+| **S3** | `⪯p` bounds **output size only**, never runtime — the enabling weakness that let S1/S2 typecheck and made `NPcomplete` too weak to be faithful. | ~~`NP.lean`~~, `Lang/PolyTime.lean` | ✅ **CLOSED by deletion (2026-07-30-c), and the notion itself is GONE (2026-08-03).** The honest line `⪯p'`/`NPhard''`/`NPcompleteStr` is the only one left, and it is now the only one in the library: `reducesPolyMO`, `ReductionWitness`, `PolyTimeComputableWitness`, `NPhard`, `NPcomplete`, `red_NPhard`, `NPhard_subtype_proj`, the nine wrapper theorems and the three downward bridges were deleted. Historical note: **Superseded, not migrated.** The honest line `⪯p'`/`NPhard''`/`NPcomplete''` is built end to end and `CookLevin''` quotes it; there is deliberately **no** `NPcomplete'' → NPcomplete` bridge. `⪯p` survives only under the legacy front, and dies with it. Historical note: **Engine live & endgame design SETTLED.** Honest target `polyTimeComputable'`/`⪯p'` built on the free line; live chain instances `kSAT3_reducesPolyMO'` and `flatTCC_reducesPolyMO'` (first sound-tail step, 2026-07-02). The `NPhard'` transport is settled & machine-validated: `SeamData`/`comp` (Cmd-level chain composition, fully proven) + `NPhard'`/`NPcomplete'`, hardness at endpoints only. Execute via plan step 2. |
 | **S1** | **if-on-the-answer** `FlatSingleTMGenNP ⪯p FlatTCC` (all-zeros tableau, never simulates `M`). Was the deepest unsoundness. | ~~`Reductions/FlatSingleTMGenNP_to_FlatTCC.lean`~~ (**deleted** 2026-07-30-c) | ✅ **CLOSED, and the dishonest file is GONE (2026-07-30-c).** Historically: closed on the honest line 2026-07-29-b. The tableau mathematics, both size bounds, the map, the guard, the correctness iff, all seven program stages and both head seams are built and axiom-clean; `FrontS1Comp.SAT_NPhard''` is unconditional and `sorry`-free. The vacuous `if (source is yes-instance) then yesInst else noInst` reduction that gave this risk its name was deleted with the legacy front — it was never proved, and nothing on the `CookLevin''` path referenced it. |
 | **S2** | **dummy TM bridges** — `bridgeMachine` discards `M`; predicates ignore `M`. | ~~`LM_to_mTM.lean`, `mTM_to_singleTapeTM.lean`, `L_to_LM.lean`, `NP/TM/IntermediateProblems.lean`, `Simulators/MultiToSingle.lean`~~ | ✅ **CLOSED by deletion (2026-07-30-c).** C8's per-`Q` front replaces the whole bridge stack, and the `Cmd` layer is single-tape by construction, so there is no multi-tape detour left to bridge. All five files are gone. |
 | **S0** | **hardness reduction reaches a `sorry`** — `NPhard_GenNP` relies on `hasDeciderClassical` (`sorry`). Its second defect (the vacuous `fun _ => 0` size bound) is **fixed** — Part 0.1, 2026-07-04-b: the bound is now the honest `certBound n + timeBound (n + certBound n) + 3`. | ~~`GenNP_is_hard.lean`~~ (**deleted** 2026-07-30-c) | ✅ **CLOSED by deletion (2026-07-30-c).** `FrontS1Comp.SAT_NPhard''` proves the hardness half without ever touching `hasDeciderClassical`. ⚠ The `sorry` was *classically closable* by the cheating encoder — deleting it is what keeps that door shut. The honest replacement is `NPhard''`'s hypothesis: a real verifier witness. |
@@ -635,29 +639,39 @@ what made it finite — see the "audit surface" note under "What we know".
 | 13 | the *hypothesis* side of `NPhardStr` (**the statement to quote**) | ✅ **honest, structurally.** `InNPWitnessStr` fixes the input type to `List Bool` and the layout to `certState`, so there is no `encX` field to choose: the composite's encode is `certState x` — the raw input string, one register, one cell per bit (`HonestyAuditProbe` §8, `rfl`; it was `certState x ++ [1^(size x)]` until 2026-08-02). The verifier must decide from that string. `CookLevinHonest.CookLevinStr : NPcompleteStr SAT`, axiom-clean, derived from `CookLevin''` in one line. |
 | 14 | the `sizeLB` field of `InNPWitnessLangFreeSplit` (**new 2026-08-02**) | ✅ **a genuine strengthening of the hypothesis, and it kills one cheat outright.** `encodable.size x ≤ sizeLB (State.size (encX x))` with `sizeLB` polynomial: the input's size must be recoverable from its own layout. §7's answer-planting layout is one cell wide for every input, so no `sizeLB` exists over an unbounded type — `HonestyAuditProbe.HypothesisCheat.badEncX_no_sizeLB` **proves** it, and `badSplitWitnessOf` keeps every other field discharged so it is machine-checked that this field is the sole obstruction. ⚠ It does **not** rescue `NPhard''`: §7b satisfies `sizeLB` by writing the input out and appending the answer (FINDING AO). Its real payoff is verdict 2 — the head encoding may now be `encX` itself. Live instance: `EvalCnfSplit.satSplitWitnessOf` takes `sizeLB := id`, from `CnfSerialize.size_le_encodeCnf_length`. |
 
-**What still mentions the legacy `⪯p` notions, after the demolition
-(recorded once, 2026-07-30-c — do not re-litigate).** All of it is **retained
-deliberately** and none of it has a live consumer:
+**The legacy `⪯p` notions are GONE (2026-08-03) — do not reintroduce them.**
+The 2026-07-30-c decision was to *retain* them (unused, on the grounds that `⪯p`
+is weak rather than wrong and `⪯p'` is defined as a strengthening of it). That
+was reconsidered and reversed: a vacuous notion with no live consumer, sitting
+one bridge (`reducesPolyMO'_to_reducesPolyMO`) away from the real statement, is a
+way for a reader to derive `NPcomplete SAT` from `NPcompleteStr SAT` and come
+away with the wrong theorem. Reading is the only thing standing between this
+development and its claim, so the reading hazard outweighed the convenience.
 
-* `Complexity/NP.lean` — `reducesPolyMO` (`⪯p`) + `ReductionWitness`,
-  `reducesPolyMO_reflexive`/`_transitive`, `NPhard`, `NPcomplete`, `red_NPhard`,
-  `NPhard_subtype_proj`, `inP`, `P_NP_incl`.
-* `Lang/PolyTime.lean` — `reducesPolyMO'_to_reducesPolyMO`,
-  `polyTimeComputable'_to_polyTimeComputable`, `NPhard'_to_NPhard`.
-* nine `⪯p` statements of real reductions, each a thin wrapper with no consumer:
-  `kSAT_to_SAT`, `kSAT_to_FlatClique_poly`, `FlatTCC_to_FlatCC_poly`,
-  `FlatCC_to_BinaryCC_poly`, `BinaryCC_to_FSAT_poly`, `FSAT_to_SAT_poly`,
-  `FSAT_to_3SAT_poly`.
-* `inNP` is still *produced* by `sat_NP`, `FlatClique_in_NP` and
-  `inNP_kSAT3_free`, and consumed by nothing.
+Deleted, in one commit: the nine `⪯p` wrapper theorems (`kSAT_to_SAT`,
+`kSAT_to_FlatClique_poly`, `FlatTCC_to_FlatCC_poly`, `FlatCC_to_BinaryCC_poly`,
+`BinaryCC_to_FSAT_poly`, `FSAT_to_SAT_poly`, `FSAT_to_3SAT_poly`, plus
+`reducesPolyMO_reflexive`/`_transitive`); the `NP.lean` block (`NPUniversal`,
+`ReductionWitness`, `reducesPolyMO`/`⪯p`, `reducesPolyMO_elim`, `NPhard`,
+`NPcomplete`, `red_NPhard`, `NPhard_subtype_proj`, `PolyTimeComputableWitness`,
+`polyTimeComputable`); and the bridges (`polyTimeComputable'_to_polyTimeComputable`,
+`reducesPolyMO'_to_reducesPolyMO`, `NPhard'_to_NPhard`,
+`NPcomplete'_to_NPcomplete`, `PolyTimeComputableLang.toFrameworkWitness`).
 
-**Why retained, not deleted:** `⪯p` is not *wrong*, it is *weak*, and `⪯p'` is
-defined as a strengthening of it — the bridge `reducesPolyMO'_to_reducesPolyMO`
-is what lets an honest result be restated in the classical vocabulary if ever
-wanted. What was dishonest was *proving `NPcomplete SAT` through a vacuous
-chain*, and that is gone. If a future session wants them out anyway, it is one
-self-contained commit (delete the nine wrappers, then the `NP.lean` block, then
-the three bridges) and a full rebuild — do not mix it with anything else.
+**What survived and why.** Every reduction *map*, its correctness lemma and its
+output-size bound (`kSAT_to_SAT_correct`, `kSAT_to_FlatClique_f_size_bound`,
+`FSAT_to_SAT_size_le`, …) — that is real mathematics and is what a future `⪯p'`
+witness for those steps is built from. `PolyTimeComputableWitness`'s four
+size-bound fields are **inlined into `Lang.PolyTimeComputableWitness'`**: the
+output-size bound is genuine content (`PolyTimeComputableLang.output_size_le`
+discharges it, seam length arguments consume it), it simply was never
+*sufficient*, and having it as a separate structure named for *time* invited
+exactly the "the size bound is the reduction" reading this project spent three
+sessions removing. `inNP` is still produced by `sat_NP`, `FlatClique_in_NP` and
+`inNP_kSAT3_free`, and consumed by nothing — it is the *framework* notion the
+free line bridges into, not part of the `⪯p` API.
+
+| **S7** | **vacuity of the published hardness statement** — `NPhardStr SAT` quantifies over `inNPStr Q`; if that class were empty the theorem would be vacuously true, and if it were everything the theorem would not be about NP. Sessions 2026-07-30…2026-08-02 made the class progressively harder to inhabit and **none checked that anything still inhabited it**; until 2026-08-03 the library contained no `InNPWitnessStr` at all. | `Complexity/NonVacuity.lean` | ✅ **CLOSED both directions (2026-08-03), gated.** *Inhabited*: `inNPStr_squareStr` (complete `InNPWitnessStr` for `SquareStr`, certificate load-bearing, language separates strings) and `squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT`. *Not everything*: `searchDecide_correct` — for any `W : InNPWitnessStr Q` and certificate bound, `Q x ↔ searchDecide W bound x = true`, where `searchDecide` is a **running** `def` that enumerates the certificate space and executes `W`'s own verifier `Cmd`; hence no undecidable `Q`. `searchDecide_calls` states the `2^(bound+1) - 1` cost. ⚠ **Open rung, do not overstate:** `searchDecide` is a Lean function, not a `Cmd`/`FlatTM`. `inNPStr Q → ∃ f, Nonempty (DecidesBy Q f)` inside this development's own computability model needs the search compiled to a `Cmd` with an exponential cost bound — HANDOFF top-down item 1. ⚠ Second open rung: `SquareStr` is in **P**; an NP-complete inhabitant (SAT as a *string* language) needs an on-machine CNF parser — HANDOFF bottom-up. |
 | **S4** | **membership half of the honest headline** — `inNPLangFreeSplit SAT`. Without it `NPcomplete'' SAT` cannot be stated and the honest hardness line has no headline to feed. | `Deciders/EvalCnfSplit.lean`, `CookLevinHonest.lean` | ✅ **CLOSED (2026-07-30-b).** `EvalCnfSplit.SAT_inNPLangFreeSplit` is unconditional and axiom-clean: the split layout, `xWidth = 3`, `polyCertRel SAT satRel`, the decoder `certDecode` with all three contracts (`CertBridge` from `certDecode_decodesAssgn`, cost and frame by `decide`), and all four composite `DecidesLang` bounds. `CookLevinHonest.CookLevin'' : NPcomplete'' SAT` follows. The two honesty verdicts this half still owes moved to **S5**. |
 | **Part 0.1** | ~~size-0 `instEncodableDefault`~~ | `Definitions.lean` | ✅ **CLOSED (2026-07-04-b)** — real sizes everywhere, the fallback **deleted** (missing instance = compile error). See plan step 5. |
 
