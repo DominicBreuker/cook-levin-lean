@@ -3,8 +3,11 @@ import Complexity.Complexity.TMDecider
 import Complexity.Complexity.TMEncoding
 import Complexity.Complexity.TMPrimitives
 import Complexity.Lang
+import Complexity.Lang.Serialize
+import Complexity.Lang.HardnessStr
 import Complexity.Simulators
 import Complexity.Complexity.Deciders.EvalCnfCmd
+import Complexity.Complexity.Deciders.CnfSerialize
 import Complexity.Complexity.Deciders.EvalCnfTM
 import Complexity.Complexity.Deciders.CliqueRelTM
 import Complexity.NP.kSAT_to_FlatClique

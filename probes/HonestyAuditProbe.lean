@@ -1,4 +1,5 @@
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
+import Complexity.Lang.HardnessStr
 
 /-! # The honesty audit, machine-checked (top-down session 2026-07-30-c)
 
@@ -27,6 +28,22 @@ The audit's structural result (§1) is what makes the audit finite:
 `PolyTimeComputableLang` while doing all of its work in `encodeIn`. It is the
 machine-checked form of standing risk #1 — the reason the audit is a *reading*
 obligation that no typechecker can discharge.
+
+**2026-08-01 (top-down) added three things:**
+
+* **§3** — the tail decoder is now a real **parser** (`Serialize cnf` /
+  `CnfSerialize.decCnf`, `dec_enc` proven) instead of `Function.invFun`. One of
+  the two audited functions is therefore pinned by a typeclass law, not a
+  reading.
+* **§7** — the negative control on the **hypothesis** side: a complete,
+  `sorry`-free `InNPWitnessLangFreeSplit Q` for an *arbitrary* predicate `Q`,
+  whose `encX` lays the answer. It yields `Q ⪯p' SAT` for arbitrary `Q`. This is
+  the bigger mouth of the S5 hole, and it is not on any witness we build — it is
+  in the *statement* of `NPhard''`.
+* **§8** — the fix: `NPhardStr` (`Lang/HardnessStr.lean`) quantifies over
+  **string languages** with the canonical layout, where `encX` is not a field at
+  all. Under it the composite's encode is a closed formula, checked here by
+  `rfl`, and `NPcompleteStr SAT` follows from `CookLevin''` in one line.
 
 Run: `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean probes/HonestyAuditProbe.lean`
 -/
@@ -94,17 +111,33 @@ example (W : InNPWitnessLangFreeSplit Q) (maxSize steps : X → Nat) (x : X) :
 
 end Head
 
-/-! ## §3 — the tail decoder is the inverse of the output layout
+/-! ## §3 — the tail decoder is a PARSER of the output layout
 
-`decodeOut s = invFun encodeCnf (get s CNFOUT)`: read one designated register
-and invert an **injective** serialization (`KSat3Free.encodeCnf_injective`).
-It does not look at the input, and it does not branch. -/
+⚠ **Changed 2026-08-01 (top-down).** `decodeOut` used to be
+`Function.invFun encodeCnf (get s CNFOUT)` — classical, noncomputable, and
+unconstrained off the image, so the audit had to argue the junk branch was
+unreachable. It is now `Serialize.dec` of one designated register: the canonical
+CNF parser `CnfSerialize.decCnf`, with `dec_enc` proven (no `Classical`), and a
+*constant* fallback off the image. It still does not look at the input and does
+not branch. -/
 
 example (s : State) :
     FSATSATFree.decodeOut s
-      = Function.invFun EvalCnfCmd.encodeCnf (State.get s FSATSATFree.CNFOUT) := rfl
+      = Serialize.decodeD ([] : cnf) (State.get s FSATSATFree.CNFOUT) := rfl
 
 example : FSATSATFree.CNFOUT = 2 := rfl
+
+/-- The parser is a genuine left inverse — the fact the whole tail verdict now
+rests on. -/
+example (N : cnf) : CnfSerialize.decCnf (EvalCnfCmd.encodeCnf N) = some N :=
+  CnfSerialize.decCnf_encodeCnf N
+
+/-- …and it really parses (round trip on a two-clause example, by `decide`). -/
+example : CnfSerialize.decCnf (EvalCnfCmd.encodeCnf [[(true, 0)], [(false, 2)]])
+    = some [[(true, 0)], [(false, 2)]] := by decide
+
+/-- Junk does not decode to a CNF — there is no "junk branch" left to audit. -/
+example : CnfSerialize.decCnf [1, 1, 0] = none := by decide
 
 /-- `encodeCnf` is a mechanical, self-delimiting, bit-level serialization —
 spelled out on a two-clause example so the "no work in the encoding" verdict is
@@ -217,5 +250,175 @@ theorem bad_polyTimeComputable' : polyTimeComputable' (fun n : Nat => n * n) :=
   badWitness.toFrameworkWitness'
 
 end Dishonest
+
+/-! ## §7 — NEGATIVE CONTROL, HYPOTHESIS SIDE (NEW 2026-08-01)
+
+§6 shows the *conclusion* side is not enforced. This section shows the
+**hypothesis** side of `NPhard''` is not either, and that is the sharper fact:
+
+> `NPhard'' P = ∀ Y, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNPLangFreeSplit Q → Q ⪯p' P`
+>
+> and `InNPWitnessLangFreeSplit` lets the *instantiator* choose `encX`, the
+> input layout the whole composite reduction is built on
+> (`FrontWitness.encodeInQ W x = W.encX x ++ [1^(size x)]`).
+
+Below is a complete, `sorry`-free `InNPWitnessLangFreeSplit Q` for an
+**arbitrary** predicate `Q` on an **arbitrary** encodable type: `encX x` is the
+single register `[if Q x then 1 else 0]` and the verifier is the layer's no-op
+`copy 0 0`, which "decides" `rel x c := Q x` by reading the planted answer.
+Every field is discharged — the certificate relation is sound, complete and
+polynomially bounded (certificates are ignored), the cost bound is `2`, the
+layout is bit-level, the frame is respected.
+
+Consequently `CookLevinHonest.SAT_NPhard''` yields `Q ⪯p' SAT` for an arbitrary
+`Q`, including undecidable ones (`cheat_reduction`). That is not an
+inconsistency — the produced `⪯p'` is a real machine on an answer-bearing
+encoding, exactly as in §6 — but it means **`NPhard''` cannot be read as "every
+NP problem reduces to SAT" without also reading the presentation's `encX`**.
+The audit obligation was on the *consumer*, where no discipline of ours could
+discharge it.
+
+§8 is the fix. -/
+
+namespace HypothesisCheat
+
+attribute [local instance] Classical.propDecidable
+
+variable {Y : Type} [encodable Y] (Q : Y → Prop)
+
+/-- The answer-laying input layout: ONE register holding the answer bit. -/
+noncomputable def badEncX (x : Y) : State := [[if Q x then 1 else 0]]
+
+noncomputable def badEncodeIn (xc : Y × List Bool) : State :=
+  badEncX Q xc.1 ++ certState xc.2
+
+/-- The "verifier": the layer's no-op. Register 0 already holds the answer. -/
+def badCmd : Cmd := Cmd.op (.copy 0 0)
+
+theorem badCmd_get0 (s : State) : State.get (badCmd.eval s) 0 = State.get s 0 := by
+  show State.get (State.set s 0 (State.get s 0)) 0 = State.get s 0
+  rw [State.get_set_eq]
+
+omit [encodable Y] in
+theorem badEncodeIn_get0 (xc : Y × List Bool) :
+    State.get (badEncodeIn Q xc) 0 = [if Q xc.1 then 1 else 0] := rfl
+
+/-- A complete `DecidesLang` for `fun xc => Q xc.1` — over the dishonest
+layout. The program does nothing; the layout already holds the answer. -/
+noncomputable def badVerifier :
+    DecidesLang (fun xc : Y × List Bool => Q xc.1) (fun n => n + 2) where
+  c := badCmd
+  encodeIn := badEncodeIn Q
+  encodeIn_size := by
+    intro xc
+    show (1 : Nat) + ((xc.2.map (fun b => if b then 1 else 0)).length + 0)
+      ≤ encodable.size xc + 2
+    have h1 : xc.2.length ≤ encodable.size xc.2 := length_le_size xc.2
+    have h2 : encodable.size xc = encodable.size xc.1 + encodable.size xc.2 + 1 := rfl
+    rw [List.length_map]
+    omega
+  decides := by
+    intro xc
+    have hg : State.get (badCmd.eval (badEncodeIn Q xc)) 0
+        = [if Q xc.1 then 1 else 0] := by
+      rw [badCmd_get0, badEncodeIn_get0]
+    constructor
+    · show Q xc.1 ↔ (State.get (badCmd.eval (badEncodeIn Q xc)) 0 == [1]) = true
+      rw [hg]
+      by_cases h : Q xc.1 <;> simp [h]
+    · show ¬ Q xc.1 ↔ (State.get (badCmd.eval (badEncodeIn Q xc)) 0 == [0]) = true
+      rw [hg]
+      by_cases h : Q xc.1 <;> simp [h]
+  cost_bound := by
+    intro xc
+    show Op.cost (.copy 0 0) (badEncodeIn Q xc) ≤ encodable.size xc + 2
+    show (State.get (badEncodeIn Q xc) 0).length + 1 ≤ encodable.size xc + 2
+    rw [badEncodeIn_get0]
+    show 1 + 1 ≤ encodable.size xc + 2
+    omega
+  enc_bit := by
+    intro xc reg hreg y hy
+    rcases List.mem_append.mp hreg with h | h
+    · have hr : reg = [if Q xc.1 then 1 else 0] := by simpa [badEncX] using h
+      subst hr
+      have hy' : y = (if Q xc.1 then 1 else 0) := by simpa using hy
+      subst hy'
+      by_cases hq : Q xc.1 <;> simp [hq]
+    · have hr : reg = xc.2.map (fun b => if b then 1 else 0) := by
+        simpa [certState] using h
+      subst hr
+      obtain ⟨b, _, hb⟩ := List.mem_map.mp hy
+      subst hb
+      cases b <;> simp
+  regBound := 2
+  usesBelow := ⟨Nat.zero_lt_two, Nat.zero_lt_two⟩
+  width_le := by
+    intro xc
+    show (badEncX Q xc.1 ++ certState xc.2).length ≤ 2
+    simp [badEncX, certState]
+
+/-- **THE HYPOTHESIS-SIDE NEGATIVE CONTROL.** Every predicate on every encodable
+type has a complete, `sorry`-free split verifier witness. -/
+noncomputable def badSplitWitness : InNPWitnessLangFreeSplit Q where
+  rel := fun x _ => Q x
+  dBound := fun n => n + 2
+  dBound_poly := inOPoly_add inOPoly_id (inOPoly_const 2)
+  dBound_mono := fun _ _ h => Nat.add_le_add_right h 2
+  verifier := badVerifier Q
+  rel_correct := ⟨{
+    bound := fun _ => 0
+    sound := fun {_ _} h => h
+    complete := fun {_} h => ⟨[], h, Nat.le_refl 0⟩
+    bound_poly := inOPoly_const 0
+    bound_mono := fun _ _ _ => Nat.le_refl 0 }⟩
+  encX := badEncX Q
+  encodeIn_eq := fun _ _ => rfl
+  xWidth := 1
+  encX_width := fun _ => rfl
+  encX_size := by
+    intro x
+    show (1 : Nat) + 0 ≤ encodable.size x + 2
+    omega
+
+theorem every_predicate_presentable : inNPLangFreeSplit Q := ⟨badSplitWitness Q⟩
+
+/-- …so the current hardness statement yields a real `⪯p'` into SAT for an
+**arbitrary** predicate — including undecidable ones. Axiom-clean, no `sorry`. -/
+theorem cheat_reduction : Q ⪯p' SAT :=
+  CookLevinHonest.SAT_NPhard'' Y inferInstance Q (every_predicate_presentable Q)
+
+end HypothesisCheat
+
+/-! ## §8 — THE FIX: under `NPhardStr` there is nothing left to choose
+
+`Complexity.Lang.InNPWitnessStr` pins the hypothesis to a **string language**
+with the canonical one-register layout `certState`. Then the composite
+reduction's input encoding is not a free function of the witness — it is a
+closed formula in `x`: the raw string, plus a unary tally of `x`'s own size.
+Reading *that one formula* is the whole head-side audit, once, forever. -/
+
+example (Q : List Bool → Prop) (W : InNPWitnessStr Q) (cm km dm cs ks ds : Nat)
+    (x : List Bool) :
+    (FrontS1Comp.front_to_SAT_witness W.toInNPWitnessLangFreeSplit cm km dm cs ks ds).encodeIn x
+      = certState x ++ [List.replicate (encodable.size x) 1] := by
+  show FrontWitness.encodeInQ W.toInNPWitnessLangFreeSplit x = _
+  show W.encX x ++ [List.replicate (encodable.size x) 1] = _
+  rw [W.encX_canonical x]
+
+/-- The canonical layout is one register holding one cell per bit … -/
+example (x : List Bool) : State.size (certState x) = x.length :=
+  State.size_certState x
+
+/-- … and it is size-faithful in **both** directions, so the handed-over tally
+register is now *provably* computable on-machine (`FrontPieces.tallyCells`
+already emits `1^(State.size (encX x))`, proven, with a cost lemma). This is the
+lower bound the C8-4 finding of 2026-07-20-c said could not exist for an
+abstract `encX`. -/
+example (x : List Bool) : x.length ≤ encodable.size x ∧ encodable.size x ≤ 2 * x.length :=
+  ⟨length_le_size x, size_le_two_mul_length x⟩
+
+/-- The honest headline, from the theorem the development already proves. -/
+example : NPcompleteStr SAT :=
+  NPcomplete''_to_NPcompleteStr CookLevinHonest.CookLevin''
 
 end HonestyAuditProbe
