@@ -1004,22 +1004,8 @@ theorem falseFml_unsat : ¬ FSAT falseFml := by
   rintro ⟨a, h⟩
   simp [satisfiesFormula, evalFormula] at h
 
-theorem BinaryCC_to_FSAT_poly : BinaryCCLang ⪯p FSAT := by
-  refine ⟨⟨BinaryCC_to_FSAT_instance, ?_, ?_⟩⟩
-  · -- Polynomial-time computability witness
-    refine ⟨⟨fun n => 500 * n ^ 6 + 500, ?_, ?_, ?_⟩⟩
-    · -- inOPoly: 500 * n^6 + 500 ≤ 1000 * n^6 for n ≥ 1
-      -- degree 6: n^4 (formula_size) * n^2 (maxVar); constant 1000 because 1000 * 1^6 = 1000 ≥ 1000 = 500 + 500
-      refine ⟨6, ⟨1000, 1, ?_⟩⟩
-      intro n hn
-      have hn6 : 1 ≤ n ^ 6 := Nat.one_le_pow 6 n (by omega)
-      linarith [Nat.mul_le_mul_left 500 hn6]
-    · -- Monotonicity
-      intro x x' hxx'
-      have hpow : x ^ 6 ≤ x' ^ 6 := Nat.pow_le_pow_left hxx' 6
-      linarith
-    · -- Bound valid
-      intro C
-      exact BinaryCC_to_FSAT_instance_size_bound C
-  · intro C
-    simpa using BinaryCC_to_FSAT_instance_correct C
+/-! **`BinaryCC_to_FSAT_poly` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/

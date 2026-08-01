@@ -212,39 +212,8 @@ theorem FlatTCC_to_FlatCC_instance_size_bound (C : FlatTCC) :
     | mk Sigma init cards final steps =>
         simp [FlatTCC_to_FlatCC_instance, h, flatCCNoInstance, encodable.size]
 
-theorem FlatTCC_to_FlatCC_poly : FlatTCC.FlatTCCLang ⪯p FlatCCLang := by
-  refine ⟨⟨FlatTCC_to_FlatCC_instance, ?_, fun {inst} => ?_⟩⟩
-  · refine ⟨⟨fun n => 5 * n + 5, ?_, ?_, FlatTCC_to_FlatCC_instance_size_bound⟩⟩
-    · refine ⟨1, ⟨10, 1, ?_⟩⟩
-      intro n hn
-      have h5 : 5 ≤ 5 * n := by
-        simpa using Nat.mul_le_mul_left 5 hn
-      calc
-        5 * n + 5 ≤ 5 * n + 5 * n := Nat.add_le_add_left h5 (5 * n)
-        _ = 10 * n := by ring
-        _ = 10 * n ^ 1 := by simp
-    · intro x x' hxx'
-      exact Nat.add_le_add_right (Nat.mul_le_mul_left 5 hxx') 5
-  · constructor
-    · rintro ⟨_, hflat, hlang⟩
-      have hEq := flatTCC_to_flatCC_eq inst hflat
-      rw [FlatTCC_to_FlatCC_instance, dif_pos hflat, hEq]
-      refine ⟨flattenCC_wellformed (C := TCC_to_CC (FlatTCC.unflattenTCC inst hflat)) (TCC_to_CC_lang _ hlang).1,
-        ⟨isValidFlattening_flattenCC _, ?_⟩⟩
-      simpa [unflatten_flattenCC] using TCC_to_CC_lang (FlatTCC.unflattenTCC inst hflat) hlang
-    · intro hFlat
-      by_cases hflat : FlatTCC.isValidFlattening inst
-      · have hEq := flatTCC_to_flatCC_eq inst hflat
-        rw [FlatTCC_to_FlatCC_instance, dif_pos hflat, hEq] at hFlat
-        rcases hFlat with ⟨_, hccflat, hlang⟩
-        refine ⟨?_, ⟨hflat, ?_⟩⟩
-        · simpa [FlatTCC.flatten_unflattenTCC inst hflat] using
-            FlatTCC.flattenTCC_wellformed (C := FlatTCC.unflattenTCC inst hflat)
-              (CC_to_TCC_lang (FlatTCC.unflattenTCC inst hflat) (by
-                simpa [unflatten_flattenCC] using hlang)).1
-        · simpa using
-            CC_to_TCC_lang (FlatTCC.unflattenTCC inst hflat) (by
-              simpa [unflatten_flattenCC] using hlang)
-      · exfalso
-        have : FlatCCLang flatCCNoInstance := by simpa [FlatTCC_to_FlatCC_instance, hflat] using hFlat
-        exact flatCCNoInstance_not_lang this
+/-! **`FlatTCC_to_FlatCC_poly` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/

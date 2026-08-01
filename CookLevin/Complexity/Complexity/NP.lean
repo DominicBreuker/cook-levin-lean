@@ -3,17 +3,14 @@ import Complexity.Complexity.MachineSemantics
 
 set_option autoImplicit false
 
-/-- A predicate indicating that a function is polynomial-time computable.
-This means there exists a polynomial-time bound for computing the function. -/
-structure PolyTimeComputableWitness {X Y : Type} [encodable X] [encodable Y]
-    (f : X → Y) where
-  bound : Nat → Nat
-  bound_poly : inOPoly bound
-  bound_mono : monotonic bound
-  bound_valid : ∀ x : X, encodable.size (f x) ≤ bound (encodable.size x)
+/-! **`PolyTimeComputableWitness` / `polyTimeComputable` were DELETED
+(2026-08-03), with the rest of the `⪯p` API at the bottom of this file.**
 
-abbrev polyTimeComputable {X Y : Type} [encodable X] [encodable Y] (f : X → Y) : Prop :=
-  Nonempty (PolyTimeComputableWitness f)
+The structure bounded only the reduction's **output size** — nothing about
+computing it — while being named as though it bounded time. Its four fields
+(`bound`/`bound_poly`/`bound_mono`/`bound_valid`) live on, inlined into
+`Lang.PolyTimeComputableWitness'`, which is the honest thing: an output-size
+bound *plus* a real `FlatTM` computing `f` inside a polynomial time bound. -/
 
 /-! ## TM-backed decision interface (Part 2, Step 4 onwards)
 
@@ -205,66 +202,6 @@ theorem P_NP_incl (X : Type) [encodable X] (P : X → Prop) : inP X P → inNP P
     · exact ⟨0, ⟨0, 0, fun _ _ => Nat.zero_le _⟩⟩
     · intros _ _ _; exact Nat.zero_le _
 
-/-- The current scaffold's universal NP source problem on `X`. Later phases can
-refine this placeholder into the full generic NP source used by the Coq proof. -/
-def NPUniversal (X : Type) [encodable X] : X → Prop := fun _ => True
-
-/-- A witness that `P` polynomial-time reduces to `Q`: a map together with proofs of
-polynomial-time computability and correctness (equivalence). -/
-structure ReductionWitness {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop) where
-  reduction : X → Y
-  reduction_poly : polyTimeComputable reduction
-  reduction_correct : ∀ ⦃x⦄, P x ↔ Q (reduction x)
-
-abbrev reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop) : Prop :=
-  Nonempty (ReductionWitness P Q)
-
-infix:50 " ⪯p " => reducesPolyMO
-
-theorem reducesPolyMO_elim {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop) :
-    P ⪯p Q → ∃ f : X → Y, (∀ x, P x → Q (f x)) ∧ (∀ x, P x ↔ Q (f x)) := by
-  rintro ⟨⟨f, _, hf_correct⟩⟩
-  refine ⟨f, fun x hx => (@hf_correct x).mp hx, fun x => @hf_correct x⟩
-
-theorem reducesPolyMO_reflexive (X : Type) [encodable X] (P : X → Prop) : P ⪯p P := by
-  refine ⟨⟨id, ?_, fun _ => Iff.rfl⟩⟩
-  refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
-  · have : inO (fun n => n) (fun x => x^1):= by
-      apply Exists.intro 1
-      apply Exists.intro 0
-      intros n hn
-      simp
-    apply Exists.intro 1
-    exact this
-  · intros x x' h
-    exact h
-  · intros x
-    simp
-
-theorem reducesPolyMO_transitive {X Y Z : Type}
-    [encodable X] [encodable Y] [encodable Z]
-    (P : X → Prop) (Q : Y → Prop) (R : Z → Prop) :
-    P ⪯p Q → Q ⪯p R → P ⪯p R := by
-  intros hPQ hQR
-  rcases hPQ with ⟨⟨f, hf_poly, hf_correct⟩⟩
-  rcases hQR with ⟨⟨g, hg_poly, hg_correct⟩⟩
-  refine ⟨⟨g ∘ f, ?_, fun {x} => ?_⟩⟩
-  rcases hf_poly with ⟨⟨bound_f, hbound_poly_f, hbound_mono_f, hbound_valid_f⟩⟩
-  rcases hg_poly with ⟨⟨bound_g, hbound_poly_g, hbound_mono_g, hbound_valid_g⟩⟩
-  have hbound_valid_comp : ∀ x : X, encodable.size ((g ∘ f) x) ≤ (bound_g ∘ bound_f) (encodable.size x) := by
-    intro x
-    calc encodable.size ((g ∘ f) x)
-      _ = encodable.size (g (f x)) := rfl
-      _ ≤ bound_g (encodable.size (f x)) := hbound_valid_g (f x)
-      _ ≤ bound_g (bound_f (encodable.size x)) := by apply hbound_mono_g; exact hbound_valid_f x
-  · exact ⟨⟨bound_g ∘ bound_f, inOPoly_comp hbound_poly_f hbound_poly_g,
-        monotonic_comp hbound_mono_f hbound_mono_g, hbound_valid_comp⟩⟩
-  · simpa using Iff.trans (@hf_correct x) (@hg_correct (f x))
-
-
 /-! **`red_inNP` was DELETED (2026-07-30-c).** It claimed `P ⪯p Q → inNP Q →
 inNP P`, and its `polyCertRel` half really is free (certificate-bound
 composition is predicate-level). Its `inTimePoly` half was a `sorry`, and it is
@@ -277,27 +214,35 @@ predicate (standing risk #6). The honest, live replacement is
 programs at the `Cmd` level. First live instance:
 `KSat3Free.inNP_kSAT3_free`. -/
 
-def NPhard {X : Type} [encodable X] (P : X → Prop) : Prop :=
-  ∀ Y : Type, ∀ _ : encodable Y, ∀ Q : Y → Prop, inNP Q → Q ⪯p P
+/-! ## **The `⪯p` API was DELETED (2026-08-03)** — `NPUniversal`,
+`ReductionWitness`, `reducesPolyMO` (`⪯p`), `reducesPolyMO_elim`,
+`reducesPolyMO_reflexive`, `reducesPolyMO_transitive`, `NPhard`, `NPcomplete`,
+`red_NPhard`, `NPhard_subtype_proj`, and with them the nine wrapper theorems
+that produced `⪯p` facts from the sound reductions and the three bridges down
+from `⪯p'`/`NPhard'`/`NPcomplete'`.
 
-def NPcomplete {X : Type} [encodable X] (P : X → Prop) : Prop := NPhard P ∧ inNP P
+**Why deleted rather than kept "for reference".** `⪯p` bounds only the
+reduction's *output size* — never its runtime, and the reduction function need
+not even be computable. So `NPhard`/`NPcomplete` as *defined here* were too weak
+to be faithful, which is why the legacy headline `CookLevin : NPcomplete SAT`
+was deleted on 2026-07-30-c and why there is deliberately **no**
+`NPcomplete'' → NPcomplete` bridge. What was left after that was a vacuous
+notion with no live consumer sitting next to the honest one, plus bridges whose
+only effect was to let a reader derive the vacuous statement from the real one
+and mistake it for a result. That is a *reading* hazard, and reading is the only
+thing standing between this development and its claim.
 
-theorem red_NPhard {X Y : Type} [encodable X] [encodable Y]
-    (P : X → Prop) (Q : Y → Prop) :
-    P ⪯p Q → NPhard P → NPhard Q := by
-  intro hPQ hHard Z hEncZ R hR
-  exact reducesPolyMO_transitive _ _ _ (hHard Z hEncZ R hR) hPQ
+The honest replacements, all live:
 
-theorem NPhard_subtype_proj (X : Type) [encodable X] (subtype_pred : X → Prop) (P : X → Prop) :
-    NPhard (fun x : {x // subtype_pred x} => P x.1) → NPhard P := by
-  intro hHard
-  intro Y hEncY Q hQ
-  have subtype_reduction : (fun x : {x // subtype_pred x} => P x.1) ⪯p P := by
-    refine ⟨⟨Subtype.val, ?_, fun {x} => Iff.rfl⟩⟩
-    refine ⟨⟨fun n => n, ?_, ?_, ?_⟩⟩
-    · exact inOPoly_id
-    · intros x x' h
-      exact h
-    · intro x
-      exact subtype_size_val_le x
-  exact reducesPolyMO_transitive _ _ _ (hHard Y hEncY Q hQ) subtype_reduction
+* `Lang.reducesPolyMO'` (`⪯p'`) — a reduction carrying a real `FlatTM`;
+* `Lang.NPhard''` / `Lang.NPcompleteStr` — hardness over problems presented with
+  a real verifier, the latter over string languages with the input layout pinned;
+* `Lang.PolyTimeComputableLang.SeamData`/`comp` — chain composition at the `Cmd`
+  level, which is what replaces `reducesPolyMO_transitive` (there is deliberately
+  no generic `⪯p'`-transitivity: two opaque TM-backed witnesses share no layout,
+  so no re-encoder is recoverable from them).
+
+The *mathematics* the wrappers wrapped is untouched: every reduction map, its
+correctness lemma and its output-size bound (`kSAT_to_SAT_correct`,
+`kSAT_to_FlatClique_f_size_bound`, `FSAT_to_SAT_size_le`, …) is still here, and
+is what a future `⪯p'` witness for those steps would be built from. -/

@@ -764,59 +764,8 @@ theorem FlatCC_to_BinaryCC_instance_size_bound (C : FlatCC) :
     simpa [FlatCC_to_BinaryCC_instance, h] using hsize
   · simp [FlatCC_to_BinaryCC_instance, h, binaryCCNoInstance, encodable.size]
 
-theorem FlatCC_to_BinaryCC_poly : FlatCCLang ⪯p BinaryCCLang := by
-  refine ⟨⟨FlatCC_to_BinaryCC_instance, ?_, ?_⟩⟩
-  · refine ⟨⟨fun n => 100 * n ^ 2 + 1, ?_, ?_, ?_⟩⟩
-    · refine ⟨2, ⟨101, 1, ?_⟩⟩
-      intro n hn
-      calc
-        100 * n ^ 2 + 1 ≤ 101 * n ^ 2 := by
-          have hn2 : 1 ≤ n ^ 2 := by
-            have : 1 ≤ n := hn
-            simpa [pow_two] using Nat.mul_le_mul this this
-          omega
-        _ = 101 * n ^ 2 := rfl
-    · intro x x' hxx'
-      have hpow : x ^ 2 ≤ x' ^ 2 := by
-        simpa [pow_two] using Nat.mul_le_mul hxx' hxx'
-      exact Nat.add_le_add_right (Nat.mul_le_mul_left 100 hpow) 1
-    · intro x
-      have hsize := FlatCC_to_BinaryCC_instance_size_bound x
-      have hx1 : 1 ≤ encodable.size x := by
-        cases x
-        simp [encodable.size]
-      calc
-        encodable.size (FlatCC_to_BinaryCC_instance x) ≤
-            50 * encodable.size x * encodable.size x + 50 * encodable.size x + 1 := hsize
-        _ ≤ 100 * encodable.size x ^ 2 + 1 := by
-          have hx2 : encodable.size x ≤ encodable.size x ^ 2 := by
-            simpa [pow_two] using Nat.mul_le_mul_left (encodable.size x) hx1
-          have hlin :
-              50 * encodable.size x * encodable.size x + 50 * encodable.size x + 1 ≤
-                50 * encodable.size x * encodable.size x + 50 * (encodable.size x ^ 2) + 1 := by
-            gcongr
-          calc
-            50 * encodable.size x * encodable.size x + 50 * encodable.size x + 1 ≤
-                50 * encodable.size x * encodable.size x + 50 * (encodable.size x ^ 2) + 1 := hlin
-            _ = 100 * encodable.size x ^ 2 + 1 := by
-                simp [pow_two]
-                ring
-  · intro C
-    constructor
-    · intro hFlat
-      rcases hFlat with ⟨_, hflat, hlang⟩
-      simpa [FlatCC_to_BinaryCC_instance, hflat] using
-        CC_to_BinaryCC_lang (unflattenCC C hflat) hlang
-    · intro hBC
-      by_cases hflat : isValidFlattening C
-      · have hcc : CC.CCLang (unflattenCC C hflat) := by
-          have hbc' : BinaryCCLang (CC_to_BinaryCC (unflattenCC C hflat)) := by
-            simpa [FlatCC_to_BinaryCC_instance, hflat] using hBC
-          exact BinaryCC_to_CC_lang (unflattenCC C hflat) hbc'
-        refine ⟨?_, ⟨hflat, hcc⟩⟩
-        simpa [flatten_unflattenCC C hflat] using
-          flattenCC_wellformed (C := unflattenCC C hflat) hcc.1
-      · exfalso
-        have : BinaryCCLang binaryCCNoInstance := by
-          simpa [FlatCC_to_BinaryCC_instance, hflat] using hBC
-        exact binaryCCNoInstance_not_lang this
+/-! **`FlatCC_to_BinaryCC_poly` was DELETED (2026-08-03)** with the `⪯p` API — it
+wrapped the reduction map above into a `reducesPolyMO` fact, i.e. into a
+statement that bounds only the *output size*. The map, its correctness
+lemma and its size bound are untouched, and are what a `⪯p'` witness for
+this step would be built from. -/

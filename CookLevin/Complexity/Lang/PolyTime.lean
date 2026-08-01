@@ -173,20 +173,11 @@ polynomial** `encodeBound` (owner-decision 2026-06-07; see `DecidesBy` in
 `NP.lean`), so the multi-register `EvalCnfCmd.encodeState` (`≤ 5·size+20`) is
 admissible. -/
 
-/-- **Bridge 3 (Part 4.1):** a layer-level `PolyTimeComputableLang`
-witness extends to a framework-level `PolyTimeComputableWitness`. -/
-theorem PolyTimeComputableLang.toFrameworkWitness
-    {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
-    (W : PolyTimeComputableLang f) :
-    polyTimeComputable f := by
-  -- The framework currently bounds *output size*, so this is the
-  -- easy direction. The forward bridge (use `Compile` to produce a
-  -- TM that computes `f` in poly time) is the more interesting
-  -- content; until the framework upgrades `polyTimeComputable` to
-  -- be TM-backed (Part 4.1 proper), this is what we have.
-  refine ⟨⟨W.cost_bound, W.cost_bound_poly, W.cost_bound_mono, ?_⟩⟩
-  intro x
-  exact W.output_size_le x
+/-! **Bridge 3 (Part 4.1) — `PolyTimeComputableLang.toFrameworkWitness` was
+DELETED 2026-08-03** with the `⪯p` API it landed in. It produced the size-only
+`polyTimeComputable f`, i.e. it threw the program away. The bridge that matters
+is `toFrameworkWitness'` below: it keeps the output-size bound *and* compiles
+`W.c` to a real `FlatTM`. -/
 
 /-! ### Layer composition & NP-routing — pointers (the live, proven route)
 
@@ -253,14 +244,25 @@ structure ComputesBy {X Y : Type} [encodable X] [encodable Y]
       haltingStateReached M cfg = true ∧
       decode cfg = f x
 
-/-- **(A) The upgraded witness.** It *extends* the size-only
-`PolyTimeComputableWitness` (so every existing size-bound consumer —
-`reducesPolyMO_transitive`, `red_inNP`'s `polyCertRel` half, … — keeps
-working verbatim) and additionally carries a real polynomial-time
-machine computing `f`. Replacing `PolyTimeComputableWitness` by this in
-`ReductionWitness` is exactly what retires S3. -/
+/-- **(A) The TM-backed reduction witness.** An **output-size** bound *and* a
+real polynomial-time machine computing `f`.
+
+⚠ Until 2026-08-03 this `extends`ed a separate `NP.PolyTimeComputableWitness`
+carrying only the first four fields — a structure named for time that bounded
+only size, and the base of the `⪯p` API that was deleted that day. The fields
+are inlined here now: the size bound is genuine content (it is what
+`PolyTimeComputableLang.output_size_le` discharges and what a seam's length
+arguments consume), it just was never *sufficient*, and separating it invited
+exactly the "the size bound is the reduction" reading this development spent
+three sessions removing. -/
 structure PolyTimeComputableWitness' {X Y : Type} [encodable X] [encodable Y]
-    (f : X → Y) extends PolyTimeComputableWitness f where
+    (f : X → Y) where
+  /-- Output-size bound: `f` does not blow the instance up super-polynomially. -/
+  bound      : Nat → Nat
+  bound_poly : inOPoly bound
+  bound_mono : monotonic bound
+  bound_valid : ∀ x : X, encodable.size (f x) ≤ bound (encodable.size x)
+  /-- …and the part `⪯p` never had: a real machine, inside a real time bound. -/
   timeBound      : Nat → Nat
   timeBound_poly : inOPoly timeBound
   timeBound_mono : monotonic timeBound
@@ -268,17 +270,6 @@ structure PolyTimeComputableWitness' {X Y : Type} [encodable X] [encodable Y]
 
 abbrev polyTimeComputable' {X Y : Type} [encodable X] [encodable Y] (f : X → Y) : Prop :=
   Nonempty (PolyTimeComputableWitness' f)
-
-/-- The upgrade is a genuine **strengthening**: a TM-backed witness
-yields the old size-only witness for free. Hence migrating `⪯p` to
-`polyTimeComputable'` keeps every size-bound lemma in `NP.lean` valid
-verbatim — only the *construction* of witnesses gets harder (which is
-the whole point: that is where S1/S2 stop typechecking). -/
-theorem polyTimeComputable'_to_polyTimeComputable
-    {X Y : Type} [encodable X] [encodable Y] {f : X → Y}
-    (h : polyTimeComputable' f) : polyTimeComputable f := by
-  obtain ⟨W⟩ := h
-  exact ⟨W.toPolyTimeComputableWitness⟩
 
 /-- The padded-compute time budget (numeric form), mirroring
 `DecidesLang.padTimeBound`: the runtime register-padding cost, the `+1` splice
@@ -371,8 +362,10 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
       Compile.physStepBudget_mono (by omega) hd
     exact Nat.add_le_add (Nat.add_le_add h1 (Nat.le_refl 1)) h2
   refine ⟨{
-    toPolyTimeComputableWitness :=
-      ⟨W.cost_bound, W.cost_bound_poly, W.cost_bound_mono, W.output_size_le⟩
+    bound := W.cost_bound
+    bound_poly := W.cost_bound_poly
+    bound_mono := W.cost_bound_mono
+    bound_valid := W.output_size_le
     timeBound := W.padTimeBound
     timeBound_poly := htb_poly
     timeBound_mono := htb_mono
@@ -429,8 +422,8 @@ theorem PolyTimeComputableLang.toFrameworkWitness'
 
 /-! ## (C) Composition — where the difficulty concentrates
 
-Replacing the witness forces `reducesPolyMO_transitive` and `red_inNP`
-to compose two TM-backed maps. At the **TM level** this needs a
+Composing two TM-backed maps — which any chain must do — needs, at the
+**TM level**, a
 re-encoding machine (the output tape of `f`'s TM must be re-laid-out as
 the input tape of `g`'s TM), because `ComputesBy.encode`/`decode` are
 free functions with no shared representation. In particular there is **no
@@ -1066,13 +1059,16 @@ theorem red_inNP_of_langFree {X Y Cert : Type}
     (hcorrect : ∀ x, P x ↔ Q (f x)) : inNP P :=
   inNPLangFree_to_inNP ⟨Cert, inferInstance, ⟨W.precompose Wf data hcorrect⟩⟩
 
-/-! ## `ReductionWitness'` / `⪯p'` — additive TM-backed reduction type
+/-! ## `ReductionWitness'` / `⪯p'` — THE reduction type
 
-The re-typing target of the S3 migration: swap `ReductionWitness.reduction_poly`'s
-`polyTimeComputable` for `polyTimeComputable'`. We introduce the upgraded type
-**additively** so the live `⪯p` chain keeps compiling. The bridge `⪯p' → ⪯p` is
-immediate from `polyTimeComputable'_to_polyTimeComputable`; per-step `⪯p'`
-witnesses come from free layer witnesses via `reducesPolyMO'_of_langFree`.
+A reduction that carries a real `FlatTM` computing it inside a polynomial time
+bound. Per-step `⪯p'` witnesses come from free layer witnesses via
+`reducesPolyMO'_of_langFree`.
+
+⚠ This used to be introduced *additively*, next to a size-only `⪯p` it bridged
+down to. Both `⪯p` and that bridge were deleted on 2026-08-03: a weaker notion
+with no live consumer, reachable from the real one, is a way for a reader to
+come away with the wrong theorem.
 
 ⚠ **There is deliberately NO generic `⪯p'`-transitivity.** Composing two opaque
 `polyTimeComputable'` witnesses is not honestly possible — their `ComputesBy`
@@ -1098,15 +1094,6 @@ abbrev reducesPolyMO' {X Y : Type} [encodable X] [encodable Y]
 
 @[inherit_doc] infix:50 " ⪯p' " => reducesPolyMO'
 
-/-- `⪯p'` is a strengthening of `⪯p`: a TM-backed reduction is in
-particular a size-only reduction. The framework's reduction chain (every
-`⪯p` lemma in `NP.lean`) survives the migration verbatim through this
-bridge. -/
-theorem reducesPolyMO'_to_reducesPolyMO {X Y : Type} [encodable X] [encodable Y]
-    {P : X → Prop} {Q : Y → Prop} : P ⪯p' Q → P ⪯p Q := by
-  rintro ⟨⟨f, hf_poly, hf_correct⟩⟩
-  exact ⟨⟨f, polyTimeComputable'_to_polyTimeComputable hf_poly, hf_correct⟩⟩
-
 /-- **The per-step `⪯p'` engine.** A free layer reduction witness (a concrete
 `Cmd` computing `f`) plus correctness yields the TM-backed `P ⪯p' Q`, via the
 free framework bridge `PolyTimeComputableLang.toFrameworkWitness'`. Every chain
@@ -1125,11 +1112,11 @@ theorem reducesPolyMO'_of_langFree {X Y : Type} [encodable X] [encodable Y]
 `NPhard'` mirrors `NPhard` verbatim over `⪯p'`. The load-bearing design
 decision is what it does **not** come with:
 
-**There is NO `red_NPhard` analogue for `NPhard'`, and none is needed.**
-`red_NPhard` transports hardness along the chain via
+**There is NO hardness-transport lemma for `NPhard'`, and none is needed.**
+The deleted `⪯p` API transported hardness along the chain via
 `reducesPolyMO_transitive`; `⪯p'` has no transitivity (opaque TM-backed
-witnesses cannot be honestly composed), so the migrated endgame *never states
-`NPhard'` of a chain intermediate*. Instead:
+witnesses cannot be honestly composed), so the endgame *never states `NPhard'`
+of a chain intermediate*. Instead:
 
 1. **The chain composes at the witness level.** Each chain step is a free
    `PolyTimeComputableLang` witness (live: `flatTCC_reductionLang`;
@@ -1146,9 +1133,8 @@ witnesses cannot be honestly composed), so the migrated endgame *never states
 3. **`NPhard' SAT` is then proven at the endpoint only**:
    `fun Y _ Q hQ => reducesPolyMO'_of_langFree ((W_Q).comp W_chain seam) hcorrect`.
    The single bridge to `⪯p'` happens after all composition.
-4. The old `⪯p` chain (`NPhard`/`red_NPhard`) keeps compiling untouched until
-   the endpoint proof exists, then `NPcomplete` swaps to `NPcomplete'` (that
-   is the moment S1/S2 must be honest — plan as one batch).
+4. That endpoint proof exists (`FrontS1Comp.SAT_NPhard''`), and the `⪯p` chain
+   this note was written against is gone (2026-08-03).
 
 Consequently `NPhard'` facts do not decompose; the decomposition lives in the
 `SeamData`/`comp` layer above. -/
@@ -1169,16 +1155,10 @@ retirement (`CookLevin' : NPcomplete' SAT` is the endgame headline). -/
 def NPcomplete' {X : Type} [encodable X] (P : X → Prop) : Prop :=
   NPhard' P ∧ inNP P
 
-/-- `NPhard'` strengthens `NPhard`: the current conditional chain survives the
-migration through this bridge. -/
-theorem NPhard'_to_NPhard {X : Type} [encodable X] {P : X → Prop}
-    (h : NPhard' P) : NPhard P :=
-  fun Y eY Q hQ => reducesPolyMO'_to_reducesPolyMO (h Y eY Q hQ)
-
-/-- `NPcomplete'` strengthens `NPcomplete`. -/
-theorem NPcomplete'_to_NPcomplete {X : Type} [encodable X] {P : X → Prop}
-    (h : NPcomplete' P) : NPcomplete P :=
-  ⟨NPhard'_to_NPhard h.1, h.2⟩
+/-! **`NPhard'_to_NPhard` / `NPcomplete'_to_NPcomplete` were DELETED
+(2026-08-03)** with `NPhard`/`NPcomplete` themselves. They let a reader derive
+the vacuous statement from the real one, which is the one direction nobody
+needs. -/
 
 /-! ## `InNPWitnessLangFreeSplit` / `NPhard''` — the honest hardness
 hypothesis (C8-0, owner-approved 2026-07-04)
@@ -1303,9 +1283,8 @@ def NPhard'' {X : Type} [encodable X] (P : X → Prop) : Prop :=
 /-- The honest endgame headline shape (`CookLevin'' : NPcomplete'' SAT`):
 hardness over verifier-presented NP problems, membership BY a split verifier
 witness. Note there is deliberately NO `NPcomplete'' → NPcomplete` bridge:
-the honest statement does not imply the vacuous one (`NPhard` needs the
-cheat-inhabited `inNP Q` for every `Q`), and the legacy conditional headline
-stays untouched until the endgame swap. -/
+the honest statement does not imply the vacuous one, and since 2026-08-03 the
+vacuous one is not in the library to be implied. -/
 def NPcomplete'' {X : Type} [encodable X] (P : X → Prop) : Prop :=
   NPhard'' P ∧ inNPLangFreeSplit P
 
