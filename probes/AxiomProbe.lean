@@ -26,7 +26,7 @@ exactly
 
 ## §1 measurement (2026-07-30-c)
 
-All 59 endpoints clean, including the headline:
+All 59 endpoints clean, including the headline (§6 added 7 more 2026-08-01):
 
 ```
 FrontS1Comp.SAT_NPhard''              clean   ← hardness   (2026-07-29-b)
@@ -125,3 +125,20 @@ section SATMembership
 -- ★ THE HEADLINE. `NPcomplete'' SAT`, unconditional.
 #print axioms CookLevinHonest.CookLevin''
 end SATMembership
+
+/-! ## §6 — the honesty-enforcement layer (2026-08-01, top-down)
+
+The canonical CNF serializer (which the tail's `decodeOut` is now pinned to) and
+the string-language headline. See `probes/HonestyAuditProbe.lean` §§3/7/8 for
+what these buy. -/
+
+section Honesty
+#print axioms CnfSerialize.decCnf_encodeCnf
+#print axioms CnfSerialize.size_le_encodeCnf_length
+#print axioms CnfSerialize.instSerializeCnf
+#print axioms FSATSATFree.buildSAT_computes
+#print axioms Complexity.Lang.NPhard''_to_NPhardStr
+#print axioms CookLevinHonest.SAT_NPhardStr
+-- ★ THE HONEST HEADLINE. `NPcompleteStr SAT` — no free input layout.
+#print axioms CookLevinHonest.CookLevinStr
+end Honesty

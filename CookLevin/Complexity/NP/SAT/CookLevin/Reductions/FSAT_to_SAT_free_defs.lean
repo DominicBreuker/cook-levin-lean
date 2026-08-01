@@ -2,6 +2,7 @@ import Complexity.NP.FSAT_to_SAT_pre
 import Complexity.NP.SAT.CookLevin.Reductions.BinaryCC_to_FSAT_free_defs
 import Complexity.Complexity.Deciders.EvalCnfCmd
 import Complexity.NP.kSAT_to_SAT_free
+import Complexity.Complexity.Deciders.CnfSerialize
 
 set_option autoImplicit false
 
@@ -19,10 +20,10 @@ is a valid instance, so the map is UNGUARDED (`FlatTCC_to_FlatCC_free` pattern).
 
 **Output layout (the SAT verifier's stream layout, `EvalCnfCmd.encodeState`
 registers 1/2):** `TALLY` (reg 1) = `replicate |N| 1`, `CNFOUT` (reg 2) =
-`encodeCnf N` where `N = preTseytin (serF f).length f`. `decodeOut` inverts the
-injective `encodeCnf` on reg 2 (`Function.invFun`, the `kSAT3_reductionLang`
-pattern). Honesty: input/output layouts are the natural ones; ALL reduction
-work happens in the `Cmd` below.
+`encodeCnf N` where `N = preTseytin (serF f).length f`. `decodeOut` **parses**
+reg 2 with the canonical CNF parser (`Serialize cnf`, `CnfSerialize.decCnf`;
+2026-08-01 — it used to be `Function.invFun encodeCnf`). Honesty: input/output
+layouts are the natural ones; ALL reduction work happens in the `Cmd` below.
 
 **The algorithm** (one forward scan, no stack — the Polish stream is the
 pre-order token sequence):
@@ -242,11 +243,20 @@ def buildSAT : Cmd :=
 scrub — `FOUT` (reg 0) holds `serF f`, everything else `[]`. -/
 def encodeIn (f : formula) : State := [serF f]
 
-/-- Decode the output cnf from the verifier-layout stream register
-(`Function.invFun` of the injective `encodeCnf` — the `kSAT3_reductionLang`
-pattern; `KSat3Free.encodeCnf_injective`). -/
-noncomputable def decodeOut (s : State) : cnf :=
-  Function.invFun encodeCnf (State.get s CNFOUT)
+/-- Decode the output cnf from the verifier-layout stream register.
+
+**This is one of the two functions the whole honesty audit rests on** (FINDING
+AK: the composite's `decodeOut` is the *rightmost* witness's, and this is the
+rightmost witness). It is `Serialize.dec` of ONE designated register, i.e. the
+canonical CNF parser `CnfSerialize.decCnf` — it does not look at the input and
+it does not branch.
+
+⚠ 2026-08-01: this replaced `Function.invFun encodeCnf`. `invFun` is classical,
+noncomputable and *unconstrained off the image*, so the audit had to argue that
+the junk branch is unreachable; the parser has no junk branch to argue about,
+and the fallback `[]` is a constant. -/
+def decodeOut (s : State) : cnf :=
+  Serialize.decodeD ([] : cnf) (State.get s CNFOUT)
 
 /-- The map the witness computes. -/
 def fsatToSat (f : formula) : cnf := preTseytin (serF f).length f

@@ -1856,13 +1856,13 @@ theorem buildSAT_usesBelow : Cmd.UsesBelow buildSAT FRAME := by
     T, NE, SKIP, IDX0, IDX1, IDX2, IDX3, H1B, H2B, NEB, DN2, FRAME]
   simp
 
-/-- **`computes`**: the decoded output is `fsatToSat f` (`buildSAT_run` +
-`encodeCnf` injectivity). -/
+/-- **`computes`**: the decoded output is `fsatToSat f` (`buildSAT_run` + the
+canonical CNF parser's `dec_enc`). -/
 theorem buildSAT_computes (f : formula) :
     decodeOut (buildSAT.eval (encodeIn f)) = fsatToSat f := by
   simp only [decodeOut]
   rw [(buildSAT_run f).1]
-  exact Function.leftInverse_invFun KSat3Free.encodeCnf_injective _
+  exact Serialize.decodeD_enc ([] : cnf) (fsatToSat f)
 
 /-- The output CNF's `encodable.size` is quadratically bounded in `|f|`
 (`output_size_le` fodder; via `preTseytin_size_le` with `b, |f| ≤ 4·|f|`). -/
