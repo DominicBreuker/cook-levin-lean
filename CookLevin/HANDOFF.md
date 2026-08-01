@@ -8,18 +8,19 @@ the owner says **`bottom-up`** (build the gadgets/lemmas the contracts need) or
 reasonably provable).
 
 **Read in this order.** "Where the proof stands" → "★ Latest session" → the
-**NEXT** section for your stream → "Probe regression list". Everything from
+**NEXT** section for your stream → "Before you push". Everything from
 "The S1 register frame" down is a **reference index**, not narration: consult it
 before building anything, do not read it front to back.
 
-## Where the proof stands (2026-08-01)
+## Where the proof stands (2026-08-02)
 
 **COOK–LEVIN IS PROVEN, on the honest statement, unconditionally — audited, and
-now also stated in a form with no dishonest instantiation.**
+stated in a form with no dishonest instantiation. Since this session, `lake
+build` itself proves the library is `sorry`-free.**
 
 ```
-CookLevinHonest.CookLevin''  : NPcomplete'' SAT      -- the general statement
-CookLevinHonest.CookLevinStr : NPcompleteStr SAT     -- ★ the one to quote
+CookLevinHonest.CookLevinStr : NPcompleteStr SAT      -- ★ the one to quote
+CookLevinHonest.CookLevin''  : NPcomplete'' SAT       -- the general statement
 both depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
 
@@ -28,222 +29,118 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 | sound tail, C8 front, tableau maths + both size bounds | ✅ axiom-clean |
 | S1 map + guard + program (all stages) + cost ladder | ✅ axiom-clean |
 | `FrontS1Comp.SAT_NPhard''` (hardness) / `EvalCnfSplit.SAT_inNPLangFreeSplit` (membership) | ✅ axiom-clean |
-| `CookLevinHonest.CookLevin'' : NPcomplete'' SAT` | ✅ axiom-clean |
-| **`CookLevinHonest.CookLevinStr : NPcompleteStr SAT`** | ✅ **NEW 2026-08-01** — hardness over *string languages*, no free input layout |
-| the tail decoder `FSATSATFree.decodeOut` | ✅ **a real parser** (`Serialize cnf`), no `Function.invFun` |
-| encoding honesty (risk S5) | ⚠ **partly structural now** — see "Latest session"; the *remaining* hole is one register at the head |
+| **`CookLevinHonest.CookLevinStr : NPcompleteStr SAT`** | ✅ the headline |
+| the tail decoder `FSATSATFree.decodeOut` | ✅ a real parser (`Serialize cnf`) |
+| the head encoder `FrontWitness.encodeInQ` | ✅ **NEW 2026-08-02** — literally `W.encX`, i.e. `certState x` under `NPhardStr` |
+| axiom/`sorry` hygiene | ✅ **NEW 2026-08-02** — a *build-time* obligation, not a probe |
 
-**Sorries in built code: 0.** No endpoint prints `sorryAx`; `probes/AxiomProbe.lean`
-sweeps 66 endpoints in ~6 s.
-
-⚠ **The CI gate is still NOT in place** (see NEXT-TOP-DOWN item 4). Earlier
-handoffs claimed it was; it was written and verified locally but never pushed.
-**Run the four gate probes by hand before every push** — see "Probe regression
-list".
+**The honesty surface that remains** is exactly: the *statement* (`NPcompleteStr`,
+`NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the faithfulness of
+`FlatTM`/`stepFlatTM` and of `Op.cost` as a time proxy, and `Serialize cnf`.
+Everything else is machine-checked. Read the README's "What a reviewer actually
+has to do".
 
 ## ★ Latest session
 
-**2026-08-01 (top-down) — the honesty hole was on the OTHER side, and the fix is
-a restriction.**
+**2026-08-02 (top-down) — enforcement: the build is the gate, and the head
+encoding is the input.**
 
-The brief was HANDOFF item 1: probe whether a canonical `Serialize` class can
-pin the two free functions of `ComputesBy`. Step 1 landed as designed; steps 2/3
-produced a different answer, and a finding that reorders the programme.
+**Landed (two independent pieces).**
 
-**Landed.**
+1. **`Complexity/Meta/AxiomGate.lean` + `Complexity/SoundnessGate.lean`.** Two
+   commands over `Lean.collectAxioms`: `#assert_axioms_clean f g h` and
+   `#assert_library_axiom_clean Complexity`. They **fail elaboration** — so
+   `lake build` goes red — if anything depends on an axiom outside
+   `{propext, Classical.choice, Quot.sound}`. The library sweep sits at the
+   bottom of `Complexity.lean` (the only module that transitively imports
+   everything) and covers 12344 declarations in 96 modules in ~2 s; imported
+   axiom sets are precomputed by `Lean.exportedAxiomsExt`, so it is a lookup per
+   declaration. Negative-tested: it rejects a `sorry` reachable only through a
+   theorem's *statement* (standing risk #7 — what no `grep` can see), and a
+   bespoke `axiom`.
+2. **The last handed-over register is gone.** `InNPWitnessLangFreeSplit` gained
+   `sizeLB`/`sizeLB_poly`/`encX_sizeLB` (`encodable.size x ≤ sizeLB (State.size
+   (encX x))`, the *no-compression* law). With it `FrontPieces.tallyCells` —
+   built in July, proven, parked UNUSED — counts the input's cells on-machine,
+   and `FrontWitness.encodeInQ W x` is now `W.encX x` with nothing appended.
 
-* `Lang/Serialize.lean` — the class (`enc`/`dec`/`dec_enc`, bit-level, plus the
-  two-sided size sandwich `size x ≤ |enc x| ≤ encLen (size x)`).
-* `Deciders/CnfSerialize.lean` — the `cnf` instance: a real fuel-based parser
-  for `EvalCnfCmd.encodeCnf` with `decCnf_encodeCnf` proven, and
-  `size_le_encodeCnf_length` (the no-compression law, new).
-* `FSATSATFree.decodeOut` is now `Serialize.dec` of one register. The classical
-  `Function.invFun` and its unconstrained junk branch are gone.
-* `Lang/HardnessStr.lean` + `CookLevinHonest.CookLevinStr`.
-* `probes/HonestyAuditProbe.lean` §§3/7/7b/8; `probes/AxiomProbe.lean` §6.
+**FINDING AQ — the §7 cheat is dead, and the probe now proves it rather than
+exhibits it.** `probes/HonestyAuditProbe.lean` §7 was a complete, `sorry`-free
+`InNPWitnessLangFreeSplit Q` for an *arbitrary* predicate (answer planted in a
+one-cell `encX`, verifier = the layer's no-op) yielding `Q ⪯p' SAT` for
+undecidable `Q`. It no longer typechecks. §7 keeps the construction as
+`badSplitWitnessOf`, parameterised by the missing field, so it is machine-checked
+that **`sizeLB` and nothing else** is the obstruction, and adds
+`badEncX_no_sizeLB` / `no_badEncX_witness`, which *prove* no `sizeLB` exists over
+`Nat`. The freedom removed is precisely the freedom to present an *unbounded*
+problem in a *bounded* layout.
 
-**FINDING AN — the bigger mouth of S5 is the HYPOTHESIS side, not ours.**
-`HonestyAuditProbe` §7 is a complete, `sorry`-free `InNPWitnessLangFreeSplit Q`
-for an **arbitrary** predicate on an arbitrary encodable type: `encX x =
-[[if Q x then 1 else 0]]`, verifier = the layer's no-op. It yields `Q ⪯p' SAT`
-for arbitrary `Q`, including undecidable ones, axiom-clean. Not an
-inconsistency — the machine is real, the encoding is not, exactly as in §6 —
-but **`NPhard''` cannot be read as "every NP problem reduces to SAT" without
-reading the presentation's `encX`.** Every previous session's S5 discipline was
-aimed at *our* witnesses; this hole is in the statement, and no discipline of
-ours could ever have discharged it.
+⚠ **FINDING AO still stands and always will.** §7b — the honest encoding with the
+answer *appended* in a second register — satisfies `sizeLB` without effort (it is
+discharged there now). **No law about `encX` closes the hypothesis side.** Quote
+`CookLevinStr`.
 
-**FINDING AO — no law about `encX` can fix it; only removing the field can.**
-§7b is a second cheat whose layout writes the whole raw input out
-(size-faithful, injective, `Serialize`-able — every "no compression" /
-"canonical encoding" law holds of it) and merely *appends* the answer in a
-second register. So the planned fix (a `Serialize X` instance supplied by the
-hypothesis) would **not** have worked: `enc x = realEnc x ++ [answer]` is
-injective and decodable. The fix is to pin the input **type**: `NPhardStr`
-quantifies over `Q : List Bool → Prop` with the canonical one-register layout
-`certState`, where `encX` is not a field at all. `NPhard''_to_NPhardStr` is one
-line; `CookLevinStr` follows from `CookLevin''`.
-
-**FINDING AP — under the string restriction the head's size sandwich is a
-THEOREM, not a hypothesis.** The C8-4 finding of 2026-07-20-c ("`encX` need not
-be injective, so no monomial in `State.size (encX x)` can be *proven* to
-dominate a `size x`-budget") is what forced `encodeIn` to hand over the unary
-register `1^(size x)`. For `certState` the sandwich is arithmetic:
-`x.length ≤ encodable.size x ≤ 2 * x.length` (`Lang/HardnessStr.lean`), and
-`State.size (certState x) = x.length`. So the handed-over register can be
-replaced by the already-built, already-proven `FrontPieces.tallyCells`. That is
-NEXT-TOP-DOWN item 1.
-
-**What `CookLevinStr` does and does not buy — say it plainly in any write-up.**
-It converts the head-side audit from "read every consumer's `encX`" to "read one
-closed formula in the statement", and the tail-side audit from "argue `invFun`'s
-junk branch is unreachable" to "read `Serialize cnf`". It does **not** reach
-zero: the irreducible trust is definitional and lives at the statement — is
-`FlatTM`/`stepFlatTM` a faithful Turing machine, is `Op.cost` a faithful proxy
-for time (this project has already found one real bug of that kind), is
-`Serialize cnf` a faithful CNF encoding beyond `dec_enc`, does `SAT` mean
-satisfiability. No prover reaches zero; the win is O(witnesses, forever) → O(1).
+**How the budget monomials survived the move** (the thing 2026-07-20-c said was
+impossible): `FrontWitness.exists_front_constants` applies
+`inOPoly_monomial_bound` **twice** — once to `maxSizeOf`/`stepsOf` (monomials in
+`encodable.size x`), then to that monomial composed with `sizeLB` (monomials in
+the tally). `inOPoly_comp` needs no monotonicity of the outer function, and the
+intermediate monomial *is* monotone, which is what lets `encX_sizeLB` be applied
+inside it. Reuse this shape if you ever need to move a budget between measures.
 
 ## NEXT TOP-DOWN session
 
-Item 1 is the only one that touches what the theorem means. Items 2–7 are
-consolidation and can be taken in any order; item 4 needs the owner.
+The proof is done and both chain ends are pinned. Top-down work is now **turning
+reading obligations into typechecking obligations**, in descending value. Items
+1–2 are the continuation of this session's theme; 3 is the last big *statement*
+question; 4–6 are hygiene.
 
-### 1. ★ Remove the last handed-over register — the on-machine size tally
+### 1. ★ Make the honesty pins build-time too (`Complexity/HonestyGate.lean`)
 
-**Goal: make the composite's `encodeIn` literally `certState x`, the raw input
-string.** After that the reduction's `ComputesBy.encode` is the identity string
-layout and there is nothing at the head left to read at all.
+**Goal: a green `lake build` should also assert that the two audited functions
+are what the audit says they are.** Right now `probes/HonestyAuditProbe.lean`
+§§1–5 and §8 are `rfl`s that nobody runs automatically; if a future refactor
+changes `PolyTimeComputableLang.comp` or a witness's `encodeIn`, the README's
+claim silently becomes false and only a human re-running the probe notices.
 
-Everything needed is built and proven; this is wiring plus arithmetic.
+* Create `CookLevin/Complexity/HonestyGate.lean`, imported by `Complexity.lean`
+  next to `SoundnessGate`. Move in — as `theorem`s, not `example`s, so they can
+  be gated and cited — the `rfl`-checkable pins:
+  `(front_to_SAT_witness W …).encodeIn = FrontWitness.encodeInQ W`,
+  `… .decodeOut = FSATSATFree.decodeOut`, `encodeInQ W x = W.encX x`,
+  `FSATSATFree.decodeOut s = Serialize.decodeD [] (get s CNFOUT)`,
+  `FSATSATFree.CNFOUT = 2`, and §8's
+  `(front_to_SAT_witness W.toInNPWitnessLangFreeSplit …).encodeIn x = certState x`.
+* Add them to `SoundnessGate`'s `#assert_axioms_clean` list.
+* **Leave the negative controls (§6, §7, §7b) in `probes/`** — they are
+  *supposed* to typecheck and must never be mistaken for claims of the library.
+  Leave a one-line pointer in each direction.
+* Blast radius: two leaf modules, seconds to build. No proof risk.
 
-* **The gadget exists.** `FrontPieces.tallyCells cnt dst srcs` emits
-  `1^(Σ_{src ∈ srcs} |get s src|) = 1^(State.size (encX x))`, with
-  `tallyCells_run` (correctness + frame) and `tallyCells_cost` already proven,
-  sorry-free. It was built for exactly this and then parked as UNUSED.
-* **The missing lower bound is now available** — FINDING AP.
-* **Two ways to take it; pick (a).**
-  * **(a) add one field to `InNPWitnessLangFreeSplit`** — `sizeLB : Nat → Nat`
-    (`inOPoly` + `monotonic`) with `∀ x, encodable.size x ≤ sizeLB (State.size (encX x))`.
-    Then `NPhard''` itself keeps the on-machine tally, `maxSizeOf ∘ sizeLB` is
-    still a polynomial so `inOPoly_monomial_bound` extracts the constants as
-    before, and the §7 cheat **stops typechecking** (its `encX` has size `1` for
-    every `x`). §7b still typechecks — that is the point of AO, and why item 1
-    is tidiness, not the honesty fix. ⚠ this edits `Lang/PolyTime.lean`, so
-    expect a **full rebuild (~15 min; `S1Witness.lean` alone is 11 min)** — plan
-    for exactly one such edit in the session.
-    The one construction site to update is `EvalCnfSplit.satSplitWitnessOf`,
-    where `sizeLB := id` works: `encodable.size N ≤ |encodeCnf N| ≤ State.size (satEncX N)`
-    is `CnfSerialize.size_le_encodeCnf_length`, proven this session.
-  * (b) build a Str-only front. Cheaper to prove, but then `NPhard''` and
-    `NPhardStr` need two fronts. Don't.
-* **The edit itself** (`Reductions/FrontProgram.lean`, `Reductions/FrontWitness.lean`):
-  prepend `tallyCells (B+4) (B+9) (List.range xWidth)` to `frontProgram` and
-  feed `B+9` to the two `unaryMonomial` stages instead of the register `xWidth`;
-  set `encodeInQ W x := W.encX x`; re-state `MmaxF`/`MstepF` over
-  `State.size (W.encX x)`; then chase `encodeInQ_size_le` / `_width` / `_bits` /
-  `_size_reg`, `cQ_cost_le` (add `tallyCells_cost`, which is quadratic — the
-  budget has ~12 orders of magnitude of slack) and `fQ_output_size_le`.
-  `fQ_correct` is already quantified over arbitrary `maxSize`/`steps`, so
-  `hmax`/`hsteps` just gain one `monotonic` step through `sizeLB`.
-* **Blast radius:** `FrontProgram`, `FrontWitness`, `Front_to_S1_comp`,
-  `CookLevinHonest` (all fast) — plus the full rebuild if you take (a).
-  **Not** `S1Program`, **not** the sound tail, **not** any `_run` lemma.
-* **Regression:** `probes/C8FrontProbe.lean` §6 already `#eval`s `tallyCells`;
-  add the new `encodeInQ` to `HonestyAuditProbe` §2/§8 and re-run `AxiomProbe`.
+### 2. `Op.cost` is a faithful time proxy — say so in ONE named theorem
 
-### 2. Make `NPhardStr` the statement the repo leads with
+**Goal: remove one entry from the irreducible-trust list by promoting a fact
+that is already proven but unreadable.** The README tells a reviewer to trust
+that `Op.cost` is a faithful proxy for TM time. It need not be *trusted*:
+`Compile.Compile_run_physical_residue` (`Lang/Compile/Assembly.lean:2596`)
+already proves that the compiled `FlatTM` halts at the exit state after
+`t ≤ Compile.physStepBudget (State.size s + s.length + c.cost s + 2) (c.cost s)`
+steps with the tape equal to `encodeTape (c.eval s)` (+ terminator-free residue).
+That *is* "cost is a polynomial proxy for real time".
 
-Mechanical, no proof risk, ~1 hour: `README.md`'s headline table and
-`ROADMAP.md`'s snapshot still lead with `NPcomplete''`. Lead with
-`CookLevinStr`, keep `CookLevin''` as the general form it is derived from, and
-state FINDING AN next to it — a reader who finds §7 by themselves before finding
-this note will not trust anything else in the repo. Decide with the owner
-whether `NPhard''` should stay exported at all (it is the honest *general*
-statement; it is also the one with the free `encX`).
+* State a corollary with a reader-facing name, e.g.
+  `Compile.cost_is_time_proxy`, in the shape "∃ a polynomial `p`, for every
+  `c`/`s` meeting the frame hypotheses the compiled machine halts within
+  `p (State.size s + c.cost s)` steps and its tape decodes to `c.eval s`", with
+  `Compile.physStepBudget_poly` supplying the `inOPoly`.
+* Gate it, cite it from the README's reviewer checklist, and **delete the
+  corresponding line from the trust list** — that is the deliverable, not the
+  proof.
+* ⚠ Check first whether the frame hypotheses (`hk`, `huses`, `hscratch`) are
+  discharged anywhere generically; if they are only ever discharged per-witness,
+  state the corollary over them and say so plainly rather than hiding them.
 
-### 3. Audit whatever the bottom-up stream lands (S5, standing but now SHORT)
-
-By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
-`decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
-
-* head extension → nothing to do if the chain is entered through `NPhardStr`
-  (the layout is fixed by the statement); otherwise audit `encX` against the
-  criterion: every register is a constant, a mechanical serialization of an
-  input field, or a *metric* of the input — never the reduction's output.
-* **tail extension → give the new output type a `Serialize` instance and define
-  `decodeOut := Serialize.decodeD default ∘ get OUTREG`.** Do not hand-write an
-  inverse and do not use `Function.invFun`. `Deciders/CnfSerialize.lean` is the
-  worked example (fuel-based parser, `dec_enc` by induction on the grammar,
-  ~200 lines including both size laws).
-* middle witness or seam `mfc` → nothing to audit; say so in one line.
-* a new **verifier** owes the `DecidesLang` version of the same check plus a
-  `polyCertRel` (machine-checked non-vacuity — do not re-derive it).
-* add a numbered verdict row to ROADMAP **S5**, and a section to
-  `probes/HonestyAuditProbe.lean` if it is `rfl`-checkable.
-
-### 4. ⚠ OWNER ACTION — gate the soundness instruments in CI (5 min, high value)
-
-Still open (this session wrote it, verified it locally, and had the push
-**rejected**: agent tokens have no `workflow` scope). `lake build` alone does not
-notice a `sorry`, and nothing runs the axiom sweep. Replace the `Build project`
-step with
-
-```yaml
-      - name: Build project
-        run: |
-          set -euo pipefail   # without this, `tee` would mask a failed build
-          lake build 2>&1 | tee /tmp/lake-build.log
-```
-
-⚠ the `set -euo pipefail` is load-bearing — GitHub's default shell is `bash -e`,
-**not** `-o pipefail`, so `lake build | tee` would exit `0` on a broken build.
-Then paste after it:
-
-```yaml
-      - name: No `sorry` in built code
-        run: |
-          if grep -F "declaration uses 'sorry'" /tmp/lake-build.log; then
-            echo "::error::a declaration in built code uses 'sorry'"
-            exit 1
-          fi
-          echo "OK: no 'declaration uses sorry' in the build log"
-
-      - name: Soundness probes (axioms + honesty audit)
-        run: |
-          set -euo pipefail
-          export LEAN_PATH="$(lake env printenv LEAN_PATH)"
-          lean probes/AxiomProbe.lean 2>&1 | tee /tmp/axioms.log
-          if grep -q sorryAx /tmp/axioms.log; then
-            echo "::error::an endpoint depends on sorryAx"
-            exit 1
-          fi
-          lean probes/HonestyAuditProbe.lean
-          lean probes/CostChkIntentProbe.lean
-```
-
-All three probes are ~5 s each after the build; verified green locally
-2026-08-01.
-
-### 5. Probe-suite consolidation + `probes/README.md`
-
-48 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
-which are regression gates and which were one-shot go/no-go scoping. Write the
-index (what each pins · runtime · "re-run after changing X"), mark the four
-CI-gated ones, and retire `probes/S1CardEmitProbe.lean` §1 (superseded by
-`S1StepLoopProbe` §1, which asserts the full equality).
-
-### 6. Repo hygiene (~1 hour)
-
-`.mcp.json.bak` is checked in; `Basic.lean` (`one_plus_one_is_two`) and
-`Main.lean` ("Hello, World!") are lakefile scaffolding with no role; `coqdoc/`
-is a 36K-file mirror whose only consumer is a human reading it — decide
-keep-as-reference vs. trim to the files actually cited. Separately, the residual
-`⪯p` API (nine wrapper theorems → the `NP.lean` block → three bridges) is
-retained-but-unused; deleting it is **one self-contained commit** and needs an
-owner decision. Do not mix the two.
-
-### 7. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
+### 3. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
 
 The natural next question is "does `inNPStr Q` have content, i.e. does it force
 `Q` to be decidable?". ⚠ **"Q is decidable" is not statable in Lean**:
@@ -252,21 +149,70 @@ both classically trivial. The only meaningful statement is in this project's own
 computability model — *exhibit a `Cmd` (or `FlatTM`) that decides `Q` by brute
 force over certificates of length `≤ bound`*, which costs a real search program
 and an exponential cost bound. Worth doing eventually as the ultimate
-non-vacuity certificate; do not start it as a side quest, and do not "prove"
-the trivial version and claim the result.
+non-vacuity certificate; **do not start it as a side quest**, and do not "prove"
+the trivial version and claim the result. Budget: a whole session, probably two.
+
+### 4. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
+
+By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
+`decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
+
+* head extension → nothing to do if the chain is entered through `NPhardStr`;
+  otherwise audit `encX` against the criterion: every register is a constant, a
+  mechanical serialization of an input field, or a *metric* of the input — never
+  the reduction's output. (And it must now supply `sizeLB`, which for any layout
+  that spells the input out is `id` or a small multiple.)
+* **tail extension → give the new output type a `Serialize` instance and define
+  `decodeOut := Serialize.decodeD default ∘ get OUTREG`.** Do not hand-write an
+  inverse and do not use `Function.invFun`. `Deciders/CnfSerialize.lean` is the
+  worked example (fuel-based parser, `dec_enc` by induction on the grammar,
+  ~200 lines including both size laws).
+* middle witness or seam `mfc` → nothing to audit; say so in one line.
+* a new **verifier** owes the `DecidesLang` version of the same check plus a
+  `polyCertRel` (machine-checked non-vacuity — do not re-derive it).
+* add a numbered verdict row to ROADMAP **S5**, a `#assert_axioms_clean` line to
+  `SoundnessGate`, and a section to `probes/HonestyAuditProbe.lean` if it is
+  `rfl`-checkable (or to `HonestyGate` once item 1 lands).
+
+### 5. Probe-suite consolidation + `probes/README.md`
+
+48 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
+which are regression gates and which were one-shot go/no-go scoping. Write the
+index (what each pins · runtime · "re-run after changing X"), mark the ones that
+are still gates *after* item 1 (should be just `HonestyAuditProbe`'s negative
+controls and `CostChkIntentProbe`), and retire `probes/S1CardEmitProbe.lean` §1
+(superseded by `S1StepLoopProbe` §1, which asserts the full equality).
+
+### 6. Repo hygiene (~1 hour) + the CI question
+
+* `.mcp.json.bak` is checked in; `Basic.lean` (`one_plus_one_is_two`) and
+  `Main.lean` ("Hello, World!") are lakefile scaffolding with no role — note
+  that they are the only modules the library axiom sweep does **not** cover
+  (it sweeps the `Complexity` root), so deleting them also removes that
+  footnote; `coqdoc/` is a 36K-file mirror whose only consumer is a human
+  reading it — decide keep-as-reference vs. trim to the files actually cited.
+* Separately, the residual `⪯p` API (nine wrapper theorems → the `NP.lean`
+  block → three bridges) is retained-but-unused; deleting it is **one
+  self-contained commit** and needs an owner decision. Do not mix the two.
+* **CI is no longer load-bearing for `sorry`/axioms** — the build gate covers
+  it, and agent tokens have no `workflow` scope anyway. If the owner adds a
+  workflow, `lake build` alone is now sufficient; add
+  `lean probes/HonestyAuditProbe.lean` and `lean probes/CostChkIntentProbe.lean`
+  only until top-down item 1 folds the positive pins into the build.
 
 ## NEXT BOTTOM-UP session
 
-**Nothing on the critical path is waiting on a gadget.** Bottom-up work is
-scope extension, and it is a well-templated multi-session programme.
+**Nothing on the critical path is waiting on a gadget.** Bottom-up work is scope
+extension, and it is a well-templated multi-session programme.
 
-⚠ **Check the top-down stream first.** Top-down item 1 (a) adds a field to
-`InNPWitnessLangFreeSplit`, which every *verifier* witness must then supply
-(`sizeLB`, one line — for a `Serialize`-able layout it is `id`). It does not
-touch `PolyTimeComputableLang`, so **reduction** witnesses are unaffected. If
-you are building a reduction, ignore the coupling entirely; if you are building
-a verifier/membership witness, either land item 1 first or expect to add one
-field afterwards.
+⚠ **Interface change you must know about (2026-08-02).**
+`InNPWitnessLangFreeSplit` now has three extra fields — `sizeLB`,
+`sizeLB_poly`, `encX_sizeLB`. Every **verifier/membership** witness must supply
+them; for any layout that writes the input out it is one line (`sizeLB := id`,
+plus the "the stream is at least `size x` long" lemma — see
+`EvalCnfSplit.satSplitWitnessOf`, which uses
+`CnfSerialize.size_le_encodeCnf_length`). `PolyTimeComputableLang` is untouched,
+so **reduction** witnesses are unaffected.
 
 1. **Membership for `FlatClique`** (~1 session, start here — the verifier
    already exists). Repeat `Deciders/EvalCnfSplit.lean` verbatim against
@@ -279,6 +225,7 @@ field afterwards.
    * a one-register re-encoder `Cmd` with its scratch **above** the verifier's
      `regBound` (FINDING AE — then it owes no scrub);
    * cost by `Cmd.chk` (`by decide`), frame by `Cmd.writes`;
+   * `sizeLB` (new — see above);
    * the `_run` lemma — and **write its loop invariant as a `Bool` function and
      `#eval` it at every index first** (FINDING AI; that is what made the SAT one
      ~110 lines with zero redesign).
@@ -292,7 +239,10 @@ field afterwards.
    `decodeOut` becomes the new last witness's — **so the new output type owes a
    `Serialize` instance** (`FlatClique`'s output is a graph + a `k`; write the
    parser, do not use `Function.invFun`). One verdict row, not a study; see
-   top-down item 3.
+   top-down item 4.
+4. **Then, and only then, a `NPcompleteStr` for the new problem.** The transport
+   is `NPcomplete''_to_NPcompleteStr` plus the membership half; do not restate
+   hardness from scratch.
 
 ⚠ Do **not** pre-factor `satPrecomposeData`/`satSplitWitnessOf` into a generic
 combinator before the second instance exists — copy first, factor when a third
@@ -308,19 +258,22 @@ table, the `copy r r` no-op (FINDING X),
 exact program). Stage C's 30-register licence is **exactly** exhausted. And do
 not rebuild `Cmd.PolyCost` (FINDING AJ) or the `LangEncodable` layer.
 
-## Probe regression list — run these, they are cheap
+## Before you push
 
-**The gate set (4)** — `AxiomProbe` (~6 s, 66 endpoints, also greps for
-`sorryAx`), `HonestyAuditProbe` (~5 s), `CostChkIntentProbe` (~4 s), plus
-`lake build` grepped for `declaration uses 'sorry'`. ⚠ **These are NOT wired
-into CI** (top-down item 4) — **run all four by hand before pushing.**
+**`lake build` is now the gate for `sorry`s and axioms.** If it is green, every
+declaration under `Complexity` is `sorry`-free and uses only Lean's three
+axioms — `#assert_library_axiom_clean` asserts it at elaboration time. You do
+not need to run `AxiomProbe`, and you must not "fix" a gate failure by deleting
+the assertion.
+
+Two things the build still does **not** check; run them by hand:
 
 ```
 export PATH="$HOME/.elan/bin:$PATH"
-lake build 2>&1 | tee /tmp/lake.log ; grep -F "declaration uses 'sorry'" /tmp/lake.log
+lake build                                   # the sorry/axiom gate
 export LEAN_PATH=$(lake env printenv LEAN_PATH)
-lean probes/AxiomProbe.lean | grep sorryAx ; lean probes/HonestyAuditProbe.lean
-lean probes/CostChkIntentProbe.lean
+lean probes/HonestyAuditProbe.lean           # ~5 s — the S5 evidence file
+lean probes/CostChkIntentProbe.lean          # ~4 s — what `Cmd.chk` must accept/reject
 ```
 
 ⚠ **Build-time gotcha:** a cold `lake build` is ~15 min and
@@ -329,36 +282,43 @@ lean probes/CostChkIntentProbe.lean
 pays it; `Reductions/FrontWitness.lean`, the sound tail and the probes do not.
 For iteration use
 `env LEAN_PATH=$(lake env printenv LEAN_PATH) lean <file>` on the single file —
-seconds instead of minutes — and `lake build` only at the end.
+seconds instead of minutes — and `lake build` only at the end. ⚠ `lean <file>`
+needs the *dependencies'* oleans to be current, so do one `lake build` of the
+subtree below your edit first.
 
-* **`probes/AxiomProbe.lean` — run it first thing in every session** and after
-  any change to the S1 program, the cost layer, a seam or the membership half.
-  §6 covers the honesty layer (`Serialize cnf`, `CookLevinStr`).
+### Probe regression list — cheap, and still worth running
+
 * **`probes/HonestyAuditProbe.lean`** — after any change to a witness's
   `encodeIn`/`decodeOut`, to `comp`/`SeamData`, or to `toFrameworkWitness'`. It
-  is the S5 evidence file; §6, §7 and §7b are negative controls and are
-  *supposed* to typecheck. **If §7 ever stops typechecking, that is good news —
-  record what killed it.**
+  is the S5 evidence file; §6 and §7b are negative controls and are *supposed*
+  to typecheck. §7 is a negative control that **died** — if you ever make §7
+  build again you have re-opened the hole, so read its comment before touching
+  `InNPWitnessLangFreeSplit`.
 * `probes/CostChkIntentProbe.lean` — after **any** change to `Lang/CostGrow.lean`.
   It pins the shapes `Cmd.chk` must reject (the squaring loop) and must accept
   (drained cursor, counter accumulator, flow-sensitive `concat`, `certDecode`).
+* `probes/AxiomProbe.lean` — now the *reporting* instrument, not a gate: use it
+  when you want to see an endpoint's axiom list. Keep it in sync with
+  `Complexity/SoundnessGate.lean`.
 * `probes/SATSplitProbe.lean` (4 s) — after any change to `EvalCnfSplit`,
   `EvalCnfCmd.encodeState` or `evalCnfCmd`'s frame.
-* `probes/SeamS1Probe.lean`, `probes/S1PreludeProbe.lean`,
-  `probes/S1StepModelProbe.lean`, `probes/S1StepEmitProbe.lean`,
-  `probes/S1CardEmitProbe.lean`, `probes/S1CardModelProbe.lean`,
+* `probes/C8FrontProbe.lean`, `probes/SeamS1Probe.lean` — after any change to
+  the front program or a seam. `C8FrontProbe` §6 `#eval`s `tallyCells`, which is
+  live in `frontProgram` since 2026-08-02.
+* `probes/S1PreludeProbe.lean`, `probes/S1StepModelProbe.lean`,
+  `probes/S1StepEmitProbe.lean`, `probes/S1CardModelProbe.lean`,
   `probes/S1GrowSafeProbe.lean` — after any register-frame, model or cost touch.
   ⚠ `probes/S1PreludeEmitProbe.lean` takes ~6 min and `probes/S1StepLoopProbe.lean`
   ~3 min (the emitter appends cell by cell, so interpreting it is quadratic —
   keep every new probe instance at `σ ≤ 1`).
 
-**Recommendation: run a TOP-DOWN session next, on item 1 (the on-machine
-tally), then item 2 (lead with `NPhardStr`).** Reasoning is build-order: item 1
-(a) edits `Lang/PolyTime.lean`, which every verifier witness the bottom-up
-stream is about to build would otherwise have to be migrated through. It is one
-field and one 15-minute rebuild if done first, and two migrations if done later.
-After that the streams are independent again and the cheapest well-templated win
-in the repository is bottom-up item 1, FlatClique membership.
+**Recommendation: run a BOTTOM-UP session next**, on `FlatClique` membership.
+Reasoning: the top-down stream has just finished the item that was blocking it
+(the `InNPWitnessLangFreeSplit` field change is *in*, so a verifier witness built
+now pays it once instead of being migrated later), and every remaining top-down
+item is independent of what bottom-up lands. Top-down item 1 (the honesty gate)
+is the cheapest thing in the repo and can be taken any time; item 2 is the
+highest-value one for a reader.
 
 ## The S1 register frame — PINNED
 
@@ -519,13 +479,13 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    trivial dishonest instantiation satisfies every field — and
    `probes/HonestyAuditProbe.lean` §6 *is* one, sorry-free, yielding a real
    `polyTimeComputable'`. **Every witness built so far is audited** (ROADMAP
-   risk S5, verdicts 1–13); **every witness you add owes a verdict.** The audit
+   risk S5, verdicts 1–14); **every witness you add owes a verdict.** The audit
    is short: by FINDING AK only the composite's *leftmost* `encodeIn` and
    *rightmost* `decodeOut` matter, and by FINDING AL a seam's `mfc` needs no
-   audit at all. Since 2026-08-01 the *tail* half is structural — give the new
-   output type a `Serialize` instance and take `decodeOut := Serialize.decodeD`
-   — and the *head* half is discharged by the statement if the chain is entered
-   through `NPhardStr`. See NEXT-TOP-DOWN item 3 for the recipe.
+   audit at all. **Both current ends are now pinned**: the *tail* by
+   `Serialize cnf` (give a new output type an instance and take
+   `decodeOut := Serialize.decodeD`), the *head* by `encodeIn = encX` plus the
+   `NPhardStr` statement. See NEXT-TOP-DOWN item 4 for the recipe.
 2. **Seam discipline**: pin each new witness's input layout to its
    predecessor's exit frame and document the exit layout (dirty registers
    included) for the successor. See "Composed-chain layouts — PINNED" above;
@@ -547,17 +507,18 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    is what killed `sizeFlatTM`. For every new type ask: *does some witness have
    to write this structure out cell by cell?* If yes, the size must be the
    data-field sum.
-6. **The hypothesis side of hardness is dishonest-capable too — and moving to
-   verifier witnesses did NOT close it (FINDING AN, 2026-08-01).**
+6. **The hypothesis side of hardness is dishonest-capable too — and neither
+   verifier witnesses nor the `sizeLB` field close it (FINDING AN/AO/AQ).**
    `inTimePoly`/`inNP` are classically TRUE for every predicate (the cheating
    `DecidesBy.encode`), which is why hardness is quantified over free-line
    verifier witnesses. But `InNPWitnessLangFreeSplit` still lets the
    *instantiator* choose `encX`, the input layout the whole composite reduction
-   is built on, so `probes/HonestyAuditProbe.lean` §7 presents an **arbitrary**
-   predicate with the answer planted in its input and gets `Q ⪯p' SAT` out of
-   `SAT_NPhard''`. §7b shows no law *about* `encX` can fix this (append the
-   answer to an otherwise perfect encoding). **The fix is to pin the input
-   type**: `NPhardStr` quantifies over `Q : List Bool → Prop` with the canonical
+   is built on. §7 of that probe used to present an **arbitrary** predicate with
+   the answer planted in its input and get `Q ⪯p' SAT` out of `SAT_NPhard''`;
+   the 2026-08-02 `sizeLB` field killed *that* instance (§7 now proves it
+   unbuildable), but **§7b still typechecks** — write the honest encoding out and
+   *append* the answer, and every law about `encX` holds. No further field will
+   help. **The fix is to pin the input type**: `NPhardStr` quantifies over `Q : List Bool → Prop` with the canonical
    `certState` layout — no `encX` field, nothing to choose. Quote
    `CookLevinStr`. Never "fix" a hardness obligation by strengthening only the
    conclusion side, and never reintroduce anything shaped like
@@ -605,14 +566,15 @@ still has to respect:
 - Both S1 size bounds are `≤ (2·(b+1))^10` and the **enlarged base is not
   optional**: a `C·b^d` collapse overshoots a tight `n^10` at small `n`, and
   guess's base includes `maxSize`.
-- `W_Q.encodeIn x := encX x ++ [1^(size x)]` carries a unary size register
-  because the `tallyCells` monomial argument could not discharge `fQ_correct`'s
-  `hmax`/`hsteps` — `encX` need not be injective, so `State.size (encX x)` has
-  no *lower* bound to `encodable.size x`; C8-5's `mfc` drops the register.
-  ⚠ 2026-08-01 (FINDING AP): for the canonical string layout that lower bound
-  **is** available (`length_le_size`), so `tallyCells` — built, proven, with a
-  cost lemma, and still UNUSED — can replace the handed-over register. That is
-  NEXT-TOP-DOWN item 1.
+- ~~`W_Q.encodeIn x := encX x ++ [1^(size x)]`~~ — **RESOLVED 2026-08-02.**
+  The unary size register existed because `encX` need not be injective, so
+  `State.size (encX x)` had no *lower* bound to `encodable.size x` and no
+  monomial in it could discharge `fQ_correct`'s `hmax`/`hsteps`. The
+  `sizeLB` field of `InNPWitnessLangFreeSplit` supplies that bound as a
+  hypothesis; `FrontPieces.tallyCells` is now live in `FrontProgram` and
+  `encodeIn = encX`. The reusable shape is
+  `FrontWitness.exists_front_constants`: `inOPoly_monomial_bound` applied twice,
+  the second time to the monomial composed with `sizeLB`.
 - The S1 v2 redesign's two machine-checked defects — non-local zero-padding
   jump-writes and the **phantom head** at the right row edge — are why the tape
   is append-only at the frontier and why `confRow` carries a right boundary
