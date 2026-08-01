@@ -1,5 +1,7 @@
 import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
+import Complexity.CostFaithfulness
+import Complexity.HonestyGate
 
 set_option autoImplicit false
 
