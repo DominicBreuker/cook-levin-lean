@@ -5,25 +5,55 @@ NP-complete), structured as a port of the Coq development by Forster, Kunze,
 Roth et al. (<https://github.com/uds-psl/cook-levin>, mirrored under `coqdoc/`).
 
 **The theorem is proven, on the honest statement, unconditionally
-(2026-07-30-b), audited (2026-07-30-c), and there are no `sorry`s left in the
-build.**
+(2026-07-30-b), audited (2026-07-30-c), stated in a form with no dishonest
+instantiation (2026-08-01), and there are no `sorry`s left in the build.**
 
 ```
-CookLevinHonest.CookLevin'' : NPcomplete'' SAT
-depends on axioms: [propext, Classical.choice, Quot.sound]
+CookLevinHonest.CookLevinStr : NPcompleteStr SAT   -- ★ the statement to quote
+CookLevinHonest.CookLevin''  : NPcomplete''  SAT   -- the general form it comes from
+both depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
 
-`NPcomplete'' SAT = NPhard'' SAT ∧ inNPLangFreeSplit SAT`: every NP problem
-*presented with a real split verifier program* reduces to SAT by a real
-`Cmd`-backed poly-time reduction, and SAT itself is verified by a real `Cmd`
-program against a `List Bool` certificate inside a real polynomial cost bound.
-Both halves are `sorry`-free and axiom-clean.
+`NPcompleteStr SAT = NPhardStr SAT ∧ inNPLangFreeSplit SAT`: every NP **string
+language** — a `Q : List Bool → Prop` presented with a real `Cmd` verifier
+reading the *raw string* in the canonical one-register layout — reduces to SAT
+by a real `Cmd`-backed poly-time reduction, and SAT itself is verified by a real
+`Cmd` program against a `List Bool` certificate inside a real polynomial cost
+bound. Both halves are `sorry`-free and axiom-clean.
+
+`NPcomplete''` is the same theorem over an *abstract* input type whose layout
+the hypothesis supplies. It is logically stronger and it is what the machinery
+proves — but that free layout is exactly where a dishonest reading gets in (see
+the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-01** (top-down; the honesty layer):
+
+* **The tail decoder is a real parser.** `FSATSATFree.decodeOut` — one of the
+  two functions the whole audit rests on — is now `Serialize.dec` of one
+  register (`Complexity/Lang/Serialize.lean`, instance in
+  `Deciders/CnfSerialize.lean`: a fuel-based parser for `encodeCnf` with
+  `dec_enc` proven, no `Classical`). It used to be `Function.invFun encodeCnf`,
+  whose behaviour off the image was unconstrained.
+* **The honesty hole was on the *hypothesis* side, and it was bigger than
+  believed.** `NPhard''` lets the instantiator supply `encX`, the input layout
+  the composite reduction is built on. `probes/HonestyAuditProbe.lean` §7 is a
+  complete, `sorry`-free split verifier witness for an **arbitrary** predicate —
+  undecidable ones included — with the answer planted in its input; it yields
+  `Q ⪯p' SAT`, axiom-clean. §7b shows no law *about* `encX` can rule this out
+  (append the answer to an otherwise perfect encoding).
+* **The fix is a restriction, not a class.** `NPhardStr` quantifies over string
+  languages with the canonical layout, where `encX` is not a field at all.
+  `CookLevinStr` follows from `CookLevin''` in one line, and the composite's
+  input encoding becomes a closed formula pinned by `rfl`
+  (`HonestyAuditProbe` §8).
 
 **What changed on 2026-07-30-c** (the top-down audit-and-demolition session):
 
 * **The encoding-honesty audit was done end to end** — the last thing that could
   have made the theorem mean less than it says. Verdict: **it means what it
-  says.** Per-witness verdicts are in the ROADMAP risk register (**S5**);
+  says** — ⚠ *with one exception found 2026-08-01: that session's verdict 12,
+  on the hypothesis side of `NPhard''`, was wrong; see below.* Per-witness
+  verdicts are in the ROADMAP risk register (**S5**);
   the evidence is `probes/HonestyAuditProbe.lean`. The audit's structural
   result is what made it finite: for a witness built by
   `PolyTimeComputableLang.comp`, the honesty surface is **two functions** — the
@@ -38,21 +68,16 @@ Both halves are `sorry`-free and axiom-clean.
   **no** `NPcomplete'' → NPcomplete` bridge. See
   `CookLevin/Complexity/NP/SAT/CookLevin.lean` for the demolition table.
 
-⚠ **The one standing caveat.** Encoding honesty is per-witness *discipline*, and
-the structures do not enforce it: `probes/HonestyAuditProbe.lean` §6 exhibits a
-complete, `sorry`-free `PolyTimeComputableLang` whose program is a no-op and
-whose `encodeIn` lays the answer on the tape. The audit above covers every
-witness that exists **today**; every witness added tomorrow needs its own
-one-line verdict in the register. See ROADMAP risk **S5**.
-
-The **structural fix is scoped and is the next top-down item**: the whole hole is
-two free fields (`encode`/`decode`) on `ComputesBy`, and by the audit's own
-result they only matter at the two ends of the chain, where the types are
-concrete. Replacing them with a canonical `Serialize` class makes the dishonest
-witness *unwriteable* — the textbook definition, enforced by the typechecker —
-and takes the audit from O(witnesses, forever) to O(1), read once at the
-statement. Three-step go/no-go probe and a fallback in
-[`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) item 1.
+⚠ **What is still not enforced.** Encoding honesty for *intermediate* witnesses
+remains per-witness discipline (`HonestyAuditProbe` §6 is the counterexample) —
+though by the audit's structural result those layouts cannot license a cheat,
+only make a seam bridge harder. The chain's two *ends* are now pinned: the tail
+by `Serialize cnf`, the head by the `NPhardStr` statement. What no formalisation
+removes is the definitional trust at the statement: is `FlatTM`/`stepFlatTM` a
+faithful Turing machine, is `Op.cost` a faithful proxy for time (this project
+found one real bug of that kind), is `Serialize cnf` a faithful CNF encoding
+beyond `dec_enc`, does `SAT` mean satisfiability. See ROADMAP risk **S5**,
+verdicts 1–13.
 
 Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
 and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
@@ -63,8 +88,9 @@ working.
 | | |
 |---|---|
 | `lake build` | ✅ green |
+| **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
-| **the encoding-honesty audit (ROADMAP risk S5)** | ✅ **DONE 2026-07-30-c** — end-to-end verdict: **the theorem means what it says.** Evidence `probes/HonestyAuditProbe.lean`, per-witness verdicts in the ROADMAP register. Key structural result: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. |
+| **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01.** The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–13 in the ROADMAP register. |
 | ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
 | `#print axioms FlatClique_in_NP` | **`[propext, Classical.choice, Quot.sound]`** — **FlatClique's in-NP half is sorry-free & axiom-clean** (2026-07-01; `cliqueRelDecidesLang` complete, `cost_bound` proven). |
@@ -111,7 +137,7 @@ working.
 > honest line `⪯p'` / `NPhard''` / `NPcomplete''` was built alongside it, and why
 > the last five `sorry`s were **deleted with the legacy front rather than
 > proved**. The count is `0` today, but what makes the theorem trustworthy is the
-> `NPcomplete''` *statement* plus the S5 audit — not the count.
+> `NPcompleteStr` *statement* plus the S5 audit — not the count.
 
 ## What the theorem says, and what stands behind it
 
@@ -121,7 +147,7 @@ program with a proven polynomial cost bound:
 ```
 Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT ⪯p' SAT
 └─ C8 front ─┘└─ S1 ─┘└──────────────── the sound tail ───────────────────┘
-        = ONE composed free-layer witness = `NPhard'' SAT`
+        = ONE composed free-layer witness = `NPhard'' SAT` ⊇ `NPhardStr SAT`
 ```
 
 for every NP problem `Q` **presented with a split free-line verifier witness**
@@ -129,7 +155,9 @@ for every NP problem `Q` **presented with a split free-line verifier witness**
 `List Bool` certificates in a canonical one-register format). Composition is at
 the `Cmd` level, through five `SeamData`/`comp` seams; hardness is proven at the
 chain endpoint only. Together with `EvalCnfSplit.SAT_inNPLangFreeSplit`
-(membership), that is `CookLevinHonest.CookLevin'' : NPcomplete'' SAT`.
+(membership), that is `CookLevinHonest.CookLevin'' : NPcomplete'' SAT` — and,
+restricted to string languages, `CookLevinHonest.CookLevinStr :
+NPcompleteStr SAT`, the statement to quote.
 
 **Why the hypothesis is a verifier witness and not `inNP Q`.** `inNP`/`inTimePoly`
 are *classically true for every predicate* — the framework's `DecidesBy` lets the
@@ -138,6 +166,24 @@ is unprovable-honestly by construction (ROADMAP risk **S0/S6**). `NPhard''`
 quantifies over problems that arrive with a real verifier program. That is the
 textbook verifier definition of NP, and it is the same role the L-computable
 verifiers play in the Coq original.
+
+**Why the published statement restricts further, to string languages
+(2026-08-01).** A verifier witness still supplies its *own* input layout `encX`,
+and the composite reduction's encoding is built from it. That is enough freedom
+to present an **arbitrary** predicate — even an undecidable one — with the answer
+planted in its input and a no-op verifier, which makes `NPhard'' SAT` yield
+`Q ⪯p' SAT` for that `Q` (machine-checked, `probes/HonestyAuditProbe.lean` §7;
+§7b shows no side-condition on `encX` can prevent it). Fixing the input type to
+`List Bool` and the layout to the canonical `certState` removes the field
+entirely:
+
+```
+NPhardStr SAT : ∀ Q : List Bool → Prop, inNPStr Q → Q ⪯p' SAT
+```
+
+is `NPhard'' SAT` restricted along `NPhard''_to_NPhardStr`, and under it the
+reduction's input encoding is a closed formula in `x` rather than a choice of
+the reader's. `CookLevinHonest.CookLevinStr` is the corresponding headline.
 
 **Why there is no `NPcomplete'' → NPcomplete` bridge.** `⪯p` (`reducesPolyMO`)
 bounds only the reduction's *output size*, never its runtime — the reduction
@@ -172,8 +218,10 @@ verdict 6. The `FlatTM` model, the `encodable`/`inOPoly` machinery, the
 `DecidesBy`/`inTimePoly` interface, and the `composeFlatTM`/`loopTM` combinator
 family are also sound.
 
-**The one thing that is not enforced:** encoding honesty. See the caveat at the
-top of this file and ROADMAP risk **S5**.
+**The one thing that is not enforced:** encoding honesty for *intermediate*
+witnesses. The two chain ends are pinned (tail: `Serialize cnf`; head: the
+`NPhardStr` statement). See the caveat at the top of this file and ROADMAP risk
+**S5**.
 
 
 ## The strategy: a higher-level computable layer
@@ -266,9 +314,11 @@ CookLevin/
 │   │   ├── MachineSemantics.lean    -- FlatTM, stepFlatTM, runFlatTM
 │   │   ├── NP.lean                  -- DecidesBy, inTimePoly, inNP; the legacy ⪯p/NPhard (no live consumer)
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
-│   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half)
+│   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
-│   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one), CostGrow/CostFlat, gadgets
+│   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one),
+│   │   │                               HardnessStr (NPhardStr — read this one too),
+│   │   │                               Serialize, CostGrow/CostFlat, gadgets
 │   │   └── …
 │   ├── Simulators/                  -- CookTableau + GuessTableau (the S1 tableau, sorry-free)
 │   └── NP/
@@ -303,12 +353,16 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 ## Where to look first
 
 - **The theorem:** `NP/SAT/CookLevin/CookLevinHonest.lean`, and the statement it
-  proves — `NPcomplete''`/`NPhard''`/`InNPWitnessLangFreeSplit` in
+  proves — `NPcompleteStr`/`NPhardStr`/`InNPWitnessStr` in
+  `Complexity/Lang/HardnessStr.lean`, and the general
+  `NPcomplete''`/`NPhard''`/`InNPWitnessLangFreeSplit` in
   `Complexity/Lang/PolyTime.lean`. Read the statement before the proof.
 - **The working plan:** [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md); the risk
   register: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
-- **Is it honest?** `probes/HonestyAuditProbe.lean` (including §6, a witness that
-  satisfies every field while computing nothing) and ROADMAP risk **S5**.
+- **Is it honest?** `probes/HonestyAuditProbe.lean` — §6 is a witness that
+  satisfies every field while computing nothing, §7/§7b present an *arbitrary*
+  predicate with the answer planted in its input, and §8 is the restriction that
+  removes the field they exploit. Then ROADMAP risk **S5**, verdicts 1–13.
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
   `NP/FSAT_to_SAT.lean`; the tableau in `Simulators/CookTableau.lean`.
