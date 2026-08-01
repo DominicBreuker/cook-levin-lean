@@ -43,15 +43,21 @@ import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
 import Complexity.Complexity.Deciders.EvalCnfSplit
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
+import Complexity.HonestyGate
 
 set_option autoImplicit false
 
 /-! # The library root — and the whole-library soundness gate
 
-`Complexity/SoundnessGate.lean` gates the *endpoints*. This file is the only
-place that transitively imports **every** module of the development, so it is
-where the sweep belongs: the line below asserts that no declaration anywhere
-under `Complexity` depends on `sorryAx` or on a bespoke `axiom`.
+Two gates are part of the default build target and run on every `lake build`:
+
+* `Complexity/SoundnessGate.lean` — the axiom sweep, endpoint by endpoint;
+* `Complexity/HonestyGate.lean` — what the composite reduction's `encodeIn` and
+  `decodeOut` actually *are* (risk S5's two audited functions).
+
+This file is the only module that transitively imports **every** other, so it is
+where the whole-library sweep belongs: the line below asserts that no declaration
+anywhere under `Complexity` depends on `sorryAx` or on a bespoke `axiom`.
 
 `sorry` is a *warning* in Lean, so `lake build` succeeding proves nothing about
 it on its own. With this line, it does: **a green `lake build` is a machine-

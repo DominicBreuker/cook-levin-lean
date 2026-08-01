@@ -29,6 +29,14 @@ The audit's structural result (§1) is what makes the audit finite:
 machine-checked form of standing risk #1 — the reason the audit is a *reading*
 obligation that no typechecker can discharge.
 
+⚠ **Since 2026-08-02 the positive pins of §§1–3 and §8 also live in
+`CookLevin/Complexity/HonestyGate.lean`, which IS part of `lake build`.** They
+are kept here too, as narration with their reasoning attached; if the two ever
+disagree the build is the one that is checked. The **negative controls (§6, §7b,
+and §7's corpse) must stay here and only here** — they are constructions that are
+*supposed* to typecheck, and a reader who found them inside the library would
+rightly read them as claims of it.
+
 **The state of the two ends of the chain (read this):**
 
 * **§3** — the tail decoder is a real **parser** (`Serialize cnf` /

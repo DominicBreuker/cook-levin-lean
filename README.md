@@ -17,13 +17,18 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 
 ### What a reviewer actually has to do
 
-1. **`lake build`.** If it is green then every one of the ~12 300 declarations
-   under `Complexity` is `sorry`-free and uses only `propext`,
-   `Classical.choice` and `Quot.sound` — that is asserted at elaboration time by
-   `#assert_library_axiom_clean` (`Complexity/Meta/AxiomGate.lean`, swept from
-   `Complexity.lean`; endpoint-by-endpoint in `Complexity/SoundnessGate.lean`).
-   `sorry` is only a *warning* in Lean, so a green build did not use to mean
-   this; now it does.
+1. **`lake build`.** If it is green then two things are machine-checked, both
+   at elaboration time, with no CI step and no `grep` involved:
+   * every one of the ~12 350 declarations under `Complexity` is `sorry`-free
+     and uses only `propext`, `Classical.choice` and `Quot.sound`
+     (`#assert_library_axiom_clean` in `Complexity/Meta/AxiomGate.lean`, swept
+     from `Complexity.lean`; endpoint-by-endpoint in
+     `Complexity/SoundnessGate.lean`). `sorry` is only a *warning* in Lean, so a
+     green build did not use to mean this;
+   * the composite reduction's `encodeIn` and `decodeOut` — the **only two
+     functions** encoding honesty depends on (FINDING AK) — are the ones the
+     audit says they are, including `encodeIn x = certState x` under `NPhardStr`
+     (`Complexity/HonestyGate.lean`).
 2. **Read four definitions**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else:
    * `NPcompleteStr` / `NPhardStr` / `InNPWitnessStr` (`Complexity/Lang/HardnessStr.lean`)
@@ -53,6 +58,13 @@ the caveat below), which is why the headline is the string form.
 
 **What changed on 2026-08-02** (top-down; enforcement):
 
+* **The honesty pins are a typechecking obligation.**
+  `Complexity/HonestyGate.lean` states, as gated `rfl` theorems inside the
+  library, what the composite's two audited functions are — so a refactor of
+  `PolyTimeComputableLang.comp`, of `toFrameworkWitness'`, or of a chain end's
+  layout breaks the build instead of silently falsifying this file. The
+  *negative* controls stay in `probes/HonestyAuditProbe.lean`, deliberately:
+  they are constructions that are supposed to typecheck.
 * **Axiom hygiene is a typechecking obligation.** `#assert_axioms_clean` and
   `#assert_library_axiom_clean` (`Complexity/Meta/AxiomGate.lean`) fail
   elaboration on any dependence outside `{propext, Classical.choice,
@@ -137,7 +149,7 @@ working.
 
 | | |
 |---|---|
-| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12344 declarations in all 96 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint. Runs in ~2 s. |
+| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12354 declarations in all 97 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, and `Complexity/HonestyGate.lean` pins the two audited functions. Runs in ~2 s. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
 | **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01; head side CLOSED 2026-08-02** — the composite's `encodeIn` is now `W.encX` verbatim, i.e. `certState x` under `NPhardStr`, so there is no head-side encoding of ours left to read.<br> The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–14 in the ROADMAP register. |
@@ -368,6 +380,7 @@ CookLevin/
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
 │   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize
 │   ├── SoundnessGate.lean          -- the axiom sweep, run BY `lake build`
+│   ├── HonestyGate.lean            -- risk S5's two audited functions, pinned BY `lake build`
 │   ├── Meta/AxiomGate.lean          -- `#assert_axioms_clean` / `#assert_library_axiom_clean`
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
 │   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one),
@@ -419,9 +432,9 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
   survives every law about `encX`; §8 is the restriction that removes the field
   they exploit, and pins the composite's encode to `certState x` by `rfl`. Then
   ROADMAP risk **S5**, verdicts 1–14.
-- **Is it enforced?** `Complexity/Meta/AxiomGate.lean` and
-  `Complexity/SoundnessGate.lean` — what a green `lake build` proves, and what
-  it does not.
+- **Is it enforced?** `Complexity/Meta/AxiomGate.lean`,
+  `Complexity/SoundnessGate.lean` and `Complexity/HonestyGate.lean` — what a
+  green `lake build` proves, and what it does not.
 - **Real mathematics:** `NP/SAT/CookLevin/Subproblems/FlatTCC.lean` and the
   `Reductions/FlatTCC_to_FlatCC.lean → … → BinaryCC_to_FSAT.lean` chain, then
   `NP/FSAT_to_SAT.lean`; the tableau in `Simulators/CookTableau.lean`.

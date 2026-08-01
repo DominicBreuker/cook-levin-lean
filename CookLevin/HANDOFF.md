@@ -33,6 +33,7 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 | the tail decoder `FSATSATFree.decodeOut` | ✅ a real parser (`Serialize cnf`) |
 | the head encoder `FrontWitness.encodeInQ` | ✅ **NEW 2026-08-02** — literally `W.encX`, i.e. `certState x` under `NPhardStr` |
 | axiom/`sorry` hygiene | ✅ **NEW 2026-08-02** — a *build-time* obligation, not a probe |
+| the two audited functions (risk S5) | ✅ **NEW 2026-08-02** — pinned by `Complexity/HonestyGate.lean`, also at build time |
 
 **The honesty surface that remains** is exactly: the *statement* (`NPcompleteStr`,
 `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the faithfulness of
@@ -45,7 +46,7 @@ has to do".
 **2026-08-02 (top-down) — enforcement: the build is the gate, and the head
 encoding is the input.**
 
-**Landed (two independent pieces).**
+**Landed (three independent pieces).**
 
 1. **`Complexity/Meta/AxiomGate.lean` + `Complexity/SoundnessGate.lean`.** Two
    commands over `Lean.collectAxioms`: `#assert_axioms_clean f g h` and
@@ -58,7 +59,14 @@ encoding is the input.**
    declaration. Negative-tested: it rejects a `sorry` reachable only through a
    theorem's *statement* (standing risk #7 — what no `grep` can see), and a
    bespoke `axiom`.
-2. **The last handed-over register is gone.** `InNPWitnessLangFreeSplit` gained
+2. **`Complexity/HonestyGate.lean`.** The `rfl`-checkable honesty pins — what
+   the composite's `encodeIn` and `decodeOut` *are*, at both nesting levels, and
+   that under `NPhardStr` the encode is `certState x` — moved out of the probe
+   and into the build, as gated `theorem`s. The negative controls stayed in
+   `probes/` on purpose: they are constructions that are *supposed* to
+   typecheck, and a reader who found them in the library would rightly read them
+   as claims of it.
+3. **The last handed-over register is gone.** `InNPWitnessLangFreeSplit` gained
    `sizeLB`/`sizeLB_poly`/`encX_sizeLB` (`encodable.size x ≤ sizeLB (State.size
    (encX x))`, the *no-compression* law). With it `FrontPieces.tallyCells` —
    built in July, proven, parked UNUSED — counts the input's cells on-machine,
@@ -90,34 +98,13 @@ inside it. Reuse this shape if you ever need to move a budget between measures.
 
 ## NEXT TOP-DOWN session
 
-The proof is done and both chain ends are pinned. Top-down work is now **turning
-reading obligations into typechecking obligations**, in descending value. Items
-1–2 are the continuation of this session's theme; 3 is the last big *statement*
-question; 4–6 are hygiene.
+The proof is done, both chain ends are pinned, and both gates run inside
+`lake build`. Top-down work is now **turning the remaining reading obligations
+into typechecking obligations**, in descending value. Item 1 removes a line from
+the reviewer's trust list; item 2 is the last big *statement* question; 3–5 are
+maintenance.
 
-### 1. ★ Make the honesty pins build-time too (`Complexity/HonestyGate.lean`)
-
-**Goal: a green `lake build` should also assert that the two audited functions
-are what the audit says they are.** Right now `probes/HonestyAuditProbe.lean`
-§§1–5 and §8 are `rfl`s that nobody runs automatically; if a future refactor
-changes `PolyTimeComputableLang.comp` or a witness's `encodeIn`, the README's
-claim silently becomes false and only a human re-running the probe notices.
-
-* Create `CookLevin/Complexity/HonestyGate.lean`, imported by `Complexity.lean`
-  next to `SoundnessGate`. Move in — as `theorem`s, not `example`s, so they can
-  be gated and cited — the `rfl`-checkable pins:
-  `(front_to_SAT_witness W …).encodeIn = FrontWitness.encodeInQ W`,
-  `… .decodeOut = FSATSATFree.decodeOut`, `encodeInQ W x = W.encX x`,
-  `FSATSATFree.decodeOut s = Serialize.decodeD [] (get s CNFOUT)`,
-  `FSATSATFree.CNFOUT = 2`, and §8's
-  `(front_to_SAT_witness W.toInNPWitnessLangFreeSplit …).encodeIn x = certState x`.
-* Add them to `SoundnessGate`'s `#assert_axioms_clean` list.
-* **Leave the negative controls (§6, §7, §7b) in `probes/`** — they are
-  *supposed* to typecheck and must never be mistaken for claims of the library.
-  Leave a one-line pointer in each direction.
-* Blast radius: two leaf modules, seconds to build. No proof risk.
-
-### 2. `Op.cost` is a faithful time proxy — say so in ONE named theorem
+### 1. ★ `Op.cost` is a faithful time proxy — say so in ONE named theorem
 
 **Goal: remove one entry from the irreducible-trust list by promoting a fact
 that is already proven but unreadable.** The README tells a reviewer to trust
@@ -140,7 +127,7 @@ That *is* "cost is a polynomial proxy for real time".
   discharged anywhere generically; if they are only ever discharged per-witness,
   state the corollary over them and say so plainly rather than hiding them.
 
-### 3. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
+### 2. Non-vacuity of the `NPhardStr` hypothesis — scoped, and READ THIS FIRST
 
 The natural next question is "does `inNPStr Q` have content, i.e. does it force
 `Q` to be decidable?". ⚠ **"Q is decidable" is not statable in Lean**:
@@ -152,7 +139,7 @@ and an exponential cost bound. Worth doing eventually as the ultimate
 non-vacuity certificate; **do not start it as a side quest**, and do not "prove"
 the trivial version and claim the result. Budget: a whole session, probably two.
 
-### 4. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
+### 3. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
 
 By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 `decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
@@ -172,18 +159,19 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
   `polyCertRel` (machine-checked non-vacuity — do not re-derive it).
 * add a numbered verdict row to ROADMAP **S5**, a `#assert_axioms_clean` line to
   `SoundnessGate`, and a section to `probes/HonestyAuditProbe.lean` if it is
-  `rfl`-checkable (or to `HonestyGate` once item 1 lands).
+  `rfl`-checkable — prefer `Complexity/HonestyGate.lean` for a positive pin, the
+  probe for a negative control.
 
-### 5. Probe-suite consolidation + `probes/README.md`
+### 4. Probe-suite consolidation + `probes/README.md`
 
 48 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
 which are regression gates and which were one-shot go/no-go scoping. Write the
 index (what each pins · runtime · "re-run after changing X"), mark the ones that
-are still gates *after* item 1 (should be just `HonestyAuditProbe`'s negative
-controls and `CostChkIntentProbe`), and retire `probes/S1CardEmitProbe.lean` §1
+are still gates now that the build covers axioms *and* the honesty pins (should
+be just `HonestyAuditProbe`'s negative controls and `CostChkIntentProbe`), and retire `probes/S1CardEmitProbe.lean` §1
 (superseded by `S1StepLoopProbe` §1, which asserts the full equality).
 
-### 6. Repo hygiene (~1 hour) + the CI question
+### 5. Repo hygiene (~1 hour) + the CI question
 
 * `.mcp.json.bak` is checked in; `Basic.lean` (`one_plus_one_is_two`) and
   `Main.lean` ("Hello, World!") are lakefile scaffolding with no role — note
@@ -198,7 +186,8 @@ controls and `CostChkIntentProbe`), and retire `probes/S1CardEmitProbe.lean` §1
   it, and agent tokens have no `workflow` scope anyway. If the owner adds a
   workflow, `lake build` alone is now sufficient; add
   `lean probes/HonestyAuditProbe.lean` and `lean probes/CostChkIntentProbe.lean`
-  only until top-down item 1 folds the positive pins into the build.
+  only for `CostChkIntentProbe` and the negative controls — the positive honesty
+  pins are already in the build (`Complexity/HonestyGate.lean`).
 
 ## NEXT BOTTOM-UP session
 
@@ -239,7 +228,7 @@ so **reduction** witnesses are unaffected.
    `decodeOut` becomes the new last witness's — **so the new output type owes a
    `Serialize` instance** (`FlatClique`'s output is a graph + a `k`; write the
    parser, do not use `Function.invFun`). One verdict row, not a study; see
-   top-down item 4.
+   top-down item 3.
 4. **Then, and only then, a `NPcompleteStr` for the new problem.** The transport
    is `NPcomplete''_to_NPcompleteStr` plus the membership half; do not restate
    hardness from scratch.
@@ -316,9 +305,9 @@ subtree below your edit first.
 Reasoning: the top-down stream has just finished the item that was blocking it
 (the `InNPWitnessLangFreeSplit` field change is *in*, so a verifier witness built
 now pays it once instead of being migrated later), and every remaining top-down
-item is independent of what bottom-up lands. Top-down item 1 (the honesty gate)
-is the cheapest thing in the repo and can be taken any time; item 2 is the
-highest-value one for a reader.
+item is independent of what bottom-up lands. Top-down item 1 is the
+highest-value one for a reader and is a corollary-plus-doc job, not new
+mathematics — take it whenever a short top-down slot appears.
 
 ## The S1 register frame — PINNED
 
@@ -485,7 +474,7 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    audit at all. **Both current ends are now pinned**: the *tail* by
    `Serialize cnf` (give a new output type an instance and take
    `decodeOut := Serialize.decodeD`), the *head* by `encodeIn = encX` plus the
-   `NPhardStr` statement. See NEXT-TOP-DOWN item 4 for the recipe.
+   `NPhardStr` statement. See NEXT-TOP-DOWN item 3 for the recipe.
 2. **Seam discipline**: pin each new witness's input layout to its
    predecessor's exit frame and document the exit layout (dirty registers
    included) for the successor. See "Composed-chain layouts — PINNED" above;
