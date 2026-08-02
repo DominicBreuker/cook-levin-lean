@@ -1,6 +1,7 @@
 import Complexity.Meta.AxiomGate
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
+import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 
 set_option autoImplicit false
 
@@ -139,12 +140,38 @@ namespace Complexity.SoundnessGate
   CookLevinHonest.CookLevin''_of_decoder
   CookLevinHonest.CookLevin''_of_decodesAssgn
 
-/-! ## The honesty layer — the serializer at the chain's tail -/
+/-! ## The honesty layer — the serializers at the chain's two ends -/
 
 #assert_axioms_clean
   CnfSerialize.decCnf_encodeCnf
   CnfSerialize.size_le_encodeCnf_length
   CnfSerialize.instSerializeCnf
   FSATSATFree.buildSAT_computes
+  Complexity.Lang.decBits_strBits
+  Complexity.Lang.strBits_boolsOf
+  Complexity.Lang.instSerializeListBool
+
+/-! ## `SATStr` — NP-completeness with `List Bool` on BOTH sides (2026-08-05)
+
+The sixth seam and the endpoints it produces. `SATStrComp.SATStr_NPcompleteStr`
+is the statement whose hypothesis *and* conclusion are languages of bit strings;
+`CookLevinHonest.CookLevinStr` remains the statement about SAT itself. -/
+
+#assert_axioms_clean
+  SATToSATStr.strBits_satToStr
+  SATToSATStr.satStr_satToStr
+  SATToSATStr.strCmd_computes
+  SATToSATStr.satToStr_reductionLang
+  SATToSATStr.sat_reducesPolyMO'_satStr
+  SATStrComp.comp_exit
+  SATStrComp.exitsOnCNFOUT_comp
+  SATStrComp.fsat_exitsOnCNFOUT
+  SATStrComp.s1_exitsOnCNFOUT
+  SATStrComp.front_exitsOnCNFOUT
+  SATStrComp.front_to_SATStr_seam
+  SATStrComp.front_to_SATStr_witness
+  SATStrComp.front_to_SATStr_reducesPolyMO'
+  SATStrComp.satStr_NPhardStr
+  SATStrComp.SATStr_NPcompleteStr
 
 end Complexity.SoundnessGate

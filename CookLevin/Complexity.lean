@@ -43,6 +43,9 @@ import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
 import Complexity.Complexity.Deciders.EvalCnfSplit
 import Complexity.Complexity.Deciders.CnfWellFormed
 import Complexity.Complexity.Deciders.SATStr
+import Complexity.Lang.SerializeStr
+import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_free
+import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
 import Complexity.HonestyGate

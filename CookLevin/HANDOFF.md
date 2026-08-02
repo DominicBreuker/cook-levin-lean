@@ -12,16 +12,18 @@ reasonably provable).
 architecture risks" down is a **reference index**: consult it before building
 anything, do not read it front to back.
 
-## Where the proof stands (2026-08-04)
+## Where the proof stands (2026-08-05)
 
 **COOK–LEVIN IS PROVEN, on the honest statement, unconditionally — audited,
-stated in a form with no dishonest instantiation, and non-vacuous. `lake build`
-itself proves the library is `sorry`-free and axiom-clean.**
+stated in a form with no dishonest instantiation, non-vacuous, and now also
+stated with `List Bool` on BOTH sides of the arrow. `lake build` itself proves
+the library is `sorry`-free and axiom-clean.**
 
 ```
-CookLevinHonest.CookLevinStr : NPcompleteStr SAT      -- ★ the one to quote
-CookLevinHonest.CookLevin''  : NPcomplete'' SAT       -- the general statement
-both depend on axioms: [propext, Classical.choice, Quot.sound]
+CookLevinHonest.CookLevinStr    : NPcompleteStr SAT      -- SAT is NP-complete
+SATStrComp.SATStr_NPcompleteStr : NPcompleteStr SATStr   -- …as a LANGUAGE of bit strings
+CookLevinHonest.CookLevin''     : NPcomplete''  SAT      -- the general statement
+all depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
 
 | piece | status |
@@ -29,93 +31,84 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
 | sound tail, C8 front, tableau maths + both size bounds | ✅ axiom-clean |
 | S1 map + guard + program (all stages) + cost ladder | ✅ axiom-clean |
 | `FrontS1Comp.SAT_NPhard''` (hardness) / `EvalCnfSplit.SAT_inNPLangFreeSplit` (membership) | ✅ axiom-clean |
-| **`CookLevinHonest.CookLevinStr : NPcompleteStr SAT`** | ✅ the headline |
-| the tail decoder `FSATSATFree.decodeOut` | ✅ a real parser (`Serialize cnf`) |
-| the head encoder `FrontWitness.encodeInQ` | ✅ literally `W.encX`, i.e. `certState x` under `NPhardStr` |
-| axiom/`sorry` hygiene · the two audited functions · `Op.cost` as a time proxy | ✅ *build-time* obligations, not probes |
-| non-vacuity: every inhabitant of `inNPStr` is decidable | ✅ `NonVacuity.searchDecide_correct` (gated) |
-| **non-vacuity: the class contains a HARD problem** | ✅ **NEW 2026-08-04** — `SATStr.inNPStr_SATStr` (SAT as a bit-string language) and `NonVacuity.satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` |
+| **`CookLevinHonest.CookLevinStr : NPcompleteStr SAT`** | ✅ |
+| **`SATStrComp.SATStr_NPcompleteStr : NPcompleteStr SATStr`** | ✅ **NEW 2026-08-05** — the sixth seam |
+| both chains' `decodeOut`s (`Serialize cnf` / `Serialize (List Bool)`) | ✅ real parsers, gated in `HonestyGate` |
+| the head encoder `FrontWitness.encodeInQ` | ✅ literally `certState x` under `NPhardStr` |
+| axiom/`sorry` hygiene · the audited functions · `Op.cost` as a time proxy · non-vacuity | ✅ *build-time* obligations, not probes |
+| non-vacuity: the class contains an NP-**complete** problem | ✅ `NonVacuity.npcompleteStr_SATStr` |
 
 **The honesty surface that remains** is exactly: the *statement*
 (`NPcompleteStr`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the
-faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine, and `Serialize cnf`.
-Four definitions, read once. Everything else is machine-checked. Read the
-README's "What a reviewer actually has to do".
+faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine, and **one** encoding
+— `Serialize cnf` if you quote `CookLevinStr`, `EvalCnfCmd.encodeCnf` (through
+`SATStr.satStr_iff`) if you quote `SATStr_NPcompleteStr`. Read the README's
+"What a reviewer actually has to do", which now states this trade honestly.
 
-⚠ **Do not let that list grow.** If you find yourself adding a fourth kind of
+⚠ **Do not let that list grow.** If you find yourself adding a fifth kind of
 thing a reviewer must trust, *that is the finding* — write it down before you
-write any Lean. **And there is now a live plan to make it SHORTER**: bottom-up
-item 1 below (`NPcompleteStr SATStr`) would put `List Bool` on *both* sides of
-the headline, which takes `Serialize cnf` off the list.
+write any Lean. ⚠ And do **not** repeat the 2026-08-04 plan's overclaim: the
+`SATStr` headline did **not** take the list from four items to three; it
+replaced a parser-plus-encoder obligation with an encoder-in-the-language
+obligation and removed the *second* serialization. Both headlines are worth
+keeping.
 
 ## ★ Latest session
 
-**2026-08-04 (bottom-up) — SAT as a string language, and a scoping error found
-by probing first.**
+**2026-08-05 (bottom-up) — the loop closes, and a class law was found wrong.**
 
-**FINDING AS — the on-machine CNF parser this document scoped does not exist and
-is not needed.** The plan of record for bottom-up item 2 was "an on-machine
-parser `Cmd` from a self-delimiting bit format into the twelve-register layout,
-because the canonical layout is one register of raw bits while `EvalCnfCmd`'s
-verifier wants `CLAUSE_TALLY`/`CNF_STREAM`". `probes/SATStrProbe.lean` was
-written first (FINDING AI) and measured that there is **nothing to parse**:
-`EvalCnfCmd.encodeCnf` is *already* a flat `0`/`1` cell stream and `certState x`
-is *already* one register of `0`/`1` cells, so `CNF_STREAM` is a **copy of the
-input register**. The only field of the twelve-register layout the raw string
-does not carry is `CLAUSE_TALLY = 1^|N|` — a *count*. So the machine owes a
-**validator plus a counter**, not a parser: one left-to-right scan, one `forBnd`,
-11 ops. The generalisable lesson: *before scoping a parser, check whether the
-target layout's fields are (a) the input verbatim, (b) derived counts, or
-(c) genuinely re-structured data* — only (c) needs a parser, and this
-development's encodings are flat by construction (`BitState`), so (c) is rarer
-than it looks.
+**Landed: `Lang/SerializeStr.lean`, `Reductions/SAT_to_SATStr_free.lean`,
+`Reductions/SAT_to_SATStr_comp.lean`, `probes/SATToSATStrProbe.lean`** (all in
+the default build target; new endpoints gated in `SoundnessGate`, `HonestyGate`
+and `NonVacuity`).
 
-**Landed: `Deciders/CnfWellFormed.lean` + `Deciders/SATStr.lean`** (both in the
-default build target; the new endpoints are gated in `Complexity/NonVacuity.lean`).
+1. **`NPcompleteStr SATStr`.** `SAT ⪯p' SATStr` plus the sixth seam. The
+   hypothesis class of the published headline now contains a problem that is
+   NP-complete *in this development's own sense*, both halves proven here.
+2. **FINDING AT — `Serialize`'s no-compression law was unsatisfiable for the
+   canonical bit-string layout.** `size_le_enc_length` read
+   `encodable.size x ≤ (enc x).length`; but `encodable.size ([true] : List Bool)
+   = 2` against `(strBits [true]).length = 1`, because the generic `List`
+   instance charges one per element *plus* the element's own size. Nothing is
+   compressed — `strBits` is a bijection onto `{0,1}^n`. An instance meeting the
+   identity form would need two cells per bit and would then **disagree with
+   `certState`**, the layout `NPhardStr` already pins. The law is now
+   `size x ≤ sizeLB |enc x|` for a polynomial, monotone `sizeLB` — *the same
+   shape `InNPWitnessLangFreeSplit.sizeLB` has carried since 2026-08-02*.
+   `Serialize cnf` keeps `sizeLB := id`. **The generalisable lesson: before
+   pinning a chain end with a class, check the class's laws against the layout
+   the statement already pins — the statement wins.** Negative control:
+   `probes/SATToSATStrProbe.lean` §1.
+3. **FINDING AU — a seam needs the left composite's exit REGISTER, and
+   `computes` does not give it.** `PolyTimeComputableLang.computes` says the
+   output register *parses* to the output, which junk could also do.
+   `SATStrComp.ExitsOnCNFOUT` is the missing statement and it **transports along
+   a seam in one line** (`exitsOnCNFOUT_comp`), carrying
+   `FSATSATFree.buildSAT_run` out through four `comp`s to the whole chain.
+   ⚠ **Any future tail extension needs exactly this and nothing else** — do not
+   unfold a four-deep composite program.
+4. **The reduction map is the identity on tape cells**
+   (`strBits (satToStr N) = encodeCnf N`), so its `Cmd` is `copy r r`. The
+   content is `satStr_satToStr : SATStr (satToStr N) ↔ SAT N`, whose `⇒` half
+   needs `encodeCnf` injective (`CnfSerialize.decCnf_encodeCnf`). ⚠ A no-op
+   `Cmd` is dishonest exactly when `encodeIn`/`decodeOut` compute
+   (`HonestyAuditProbe` §6); here both are canonical `Serialize` layouts. ROADMAP
+   S5 verdict 17.
+5. **`strBits` was hoisted out of `Deciders/SATStr.lean` into
+   `Lang/SerializeStr.lean`**, so the canonical *head* layout and the `SATStr`
+   chain's *tail* serialization are now literally one function
+   (`certState x = [Serialize.enc x]`, `rfl`, `HonestyGate` §5).
 
-1. **The grammar as a DFA, both directions.** `scanStep` is four states
-   (`inLit`, `pending`) plus a clause counter, and
-   `wfCnfB_iff : wfCnfB l = true ↔ ∃ N, encodeCnf N = l` holds over every `0`/`1`
-   stream. The `⇐` half is a bottom-up induction through the grammar; the `⇒`
-   half is a strong induction that proves the "rest of a clause" statement
-   *simultaneously* — the two states `(false,false)` and `(false,true)` have the
-   same transitions and differ only in acceptance, which is exactly what makes
-   one induction serve both. `cnfCount_eq_length` is the same pass's counter.
-2. **The `pending` bit is load-bearing.** A three-state scanner accepts
-   `[1,1,0]` — a literal run with no clause terminator — which is not an
-   encoding of anything (`not_wfCnfB_lit_unterminated`). Probe §2 finds this at
-   length 3; do not "simplify" the automaton.
-3. **"Not an encoding" and "unsatisfiable" are made the SAME verdict.**
-   `parseTotal` sends every non-validating stream to `[[]]`, the one-empty-clause
-   CNF, which is unsatisfiable (`not_sat_botCnf`). That is why *one* verifier
-   decides both and the malformed branch is four ops (`clear/appendZero
-   CNF_STREAM ;; clear/appendOne CLAUSE_TALLY`) instead of a second mechanism.
-4. **`EvalCnfSplit.certDecode` is reused verbatim, bridge included.** The builder
-   leaves registers `16`–`18` untouched and hands the decoder *exactly* its own
-   input layout `satEIn (cnfOf x, c)`, so `Cmd.eval_agree` at `19` pushes
-   `certDecode_bridge` straight through. No new certificate work at all.
-5. **The payoff.** `NonVacuity.satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is
-   `CookLevinStr` applied to (a string form of) **its own target** — the whole
-   chain, C8 front through the sound tail, running on SAT. This replaces
-   `SquareStr` (in **P**) as the evidence that the hypothesis class contains
-   something hard.
-
-⚠ **What is deliberately NOT claimed, and the file says so.** `NPhardStr SATStr`
-is **not** proven. It needs a reduction in the *other* direction
-(`SAT ⪯p' SATStr`) plus a `SeamData`/`comp` seam, because this development has
-no generic `⪯p'`-transitivity by design. That is bottom-up item 1 below, and it
-is now the highest-value item in either stream.
-
-**Cost was free.** `Cmd.chk` accepts the re-encoder (`by decide`, ~5 s), so
-`cost_le` is one line — the `Lang/CostGrow.lean` ladder handled a fresh program
-with no tuning.
+**Cost was free.** The new witness's `cost_le` is `|encodeCnf N| + 1`; no ladder
+was involved. The whole session did not touch anything at or above
+`Lang/PolyTime.lean`, so no 15-minute rebuild was ever paid — see the note in
+bottom-up item 1 below for how to keep it that way.
 
 ## NEXT TOP-DOWN session
 
-The proof is done and five gates run inside `lake build` (axioms, the honesty
-pins, cost-as-time, and non-vacuity in both directions). Top-down work is still
+The proof is done and five gates run inside `lake build`. Top-down work is still
 **turning reading obligations into typechecking obligations**. Item 1 is the only
-real build; 2 is a short consumer of bottom-up item 1; 3–5 are maintenance.
+real build; 2 is new and cheap; 3–5 are maintenance.
 
 ### 1. The `Cmd`-level certificate search — the last rung of non-vacuity
 
@@ -123,7 +116,8 @@ real build; 2 is a short consumer of bottom-up item 1; 3–5 are maintenance.
 `Q` is decided by a real `FlatTM` in *this development's own computability
 model*, not merely by a Lean function. `Complexity/NonVacuity.lean` already
 pins the statement this must reach (`searchDecide_correct` is the pure-model
-half), so this is a program-and-cost job, not a design job.
+half), so this is a program-and-cost job, not a design job. **This is now the
+only open rung under ROADMAP risk S7.**
 
 ✅ **The go/no-go is DONE (2026-08-03) and the answer is GREEN — do not redo
 it, but do read the caveat.** The question was whether the bridge to a real
@@ -167,32 +161,24 @@ scrub of its own state:
 * the `_run` lemma is a stateful loop: use **`S1Step.emitFold_run`**, invariant
   "`FOUND = 1` ↔ `∃ j < i`, the verifier accepts candidate `j`" ∧ "`CAND` is the
   binary representation of `i`". ⚠ **Write that invariant as a `Bool` function
-  and `#eval` it at every index before proving anything** (FINDING AI). The
-  2026-08-04 session did exactly this for a much smaller loop and the `_run`
-  lemma came out mechanical; `probes/SATStrProbe.lean` §6 is the shape to copy.
+  and `#eval` it at every index before proving anything** (FINDING AI).
+  `probes/SATStrProbe.lean` §6 is the shape to copy.
 
 Budget: one session for the program + `_run` (the go/no-go is already spent), a
 second for the cost bound. **Do not start it as a side quest**, and do not
 weaken the target to the classically trivial existential
 (`NonVacuity.inNPStr_exists_decider` is already there, labelled).
 
-### 2. Consume bottom-up item 1: `NPcompleteStr SATStr` — SHORT, high value
+### 2. Retire `SATStr.strEIn`'s duplicate of the canonical layout — SHORT
 
-When `SAT ⪯p' SATStr` and its seam land (bottom-up item 1), top-down owes three
-short things and the payoff is the biggest remaining honesty win in the
-document:
-
-* `NPhardStr SATStr` — transport `NPhardStr SAT` along the new seam;
-* `NPcompleteStr SATStr` — pair it with `inNPLangFreeSplit SATStr`, which
-  `SATStr.satStrWitness.toInNPWitnessLangFreeSplit` already gives;
-* a **README rewrite of "what a reviewer has to do"**: with `List Bool` on both
-  sides of the statement, `Serialize cnf` comes **off** the reviewer's trust
-  list (the tail decoder of the new composite is a `Serialize (List Bool)`,
-  which is the identity on cells). That takes the list from four definitions to
-  three, and is the only concrete plan on the table for shrinking it.
-
-Also owed: a verdict row under ROADMAP **S5**, and an `#assert_axioms_clean`
-line for the new endpoints.
+`Deciders/SATStr.lean` still defines `strEIn v = certState v.1 ++ certState v.2`
+locally, and `EvalCnfSplit.satEIn` does the same job on the CNF side. Now that
+`Lang/SerializeStr.lean` owns `strBits`, check whether `strEIn` can be stated as
+`certState`-only (it can: `strEIn_lit` is already `[strBits x, strBits c]`) and
+whether a single `certPairState` in the `Lang` layer would serve both. **Do this
+only if it stays a rename** — the `_run` lemmas in `SATStr.lean` are pinned to
+`strEIn`'s exact shape, so if the change reaches a proof body, stop and leave a
+note instead. Value: one fewer layout name for a reviewer.
 
 ### 3. Audit whatever the bottom-up stream lands (S5, standing but SHORT)
 
@@ -206,9 +192,14 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
   that spells the input out is `id` or a small multiple.)
 * **tail extension → give the new output type a `Serialize` instance and define
   `decodeOut := Serialize.decodeD default ∘ get OUTREG`.** Do not hand-write an
-  inverse and do not use `Function.invFun`. `Deciders/CnfSerialize.lean` is the
-  worked example (fuel-based parser, `dec_enc` by induction on the grammar,
-  ~200 lines including both size laws).
+  inverse and do not use `Function.invFun`. Two worked examples now:
+  `Deciders/CnfSerialize.lean` (a fuel-based parser for a real grammar, ~200
+  lines) and `Lang/SerializeStr.lean` (the cell-wise one, ~40). ⚠ **Check the
+  new type's `encodable.size` against the layout's cell count before writing the
+  instance** (FINDING AT).
+* **tail extension also needs the left composite's exit register** — use
+  `SATStrComp.ExitsOnCNFOUT`/`exitsOnCNFOUT_comp` (FINDING AU); do not unfold the
+  composite.
 * middle witness or seam `mfc` → nothing to audit; say so in one line.
 * a new **verifier** owes the `DecidesLang` version of the same check plus a
   `polyCertRel` (machine-checked non-vacuity — do not re-derive it).
@@ -220,14 +211,16 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 
 ### 4. Probe-suite consolidation + `probes/README.md`
 
-49 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
+50 probe files, no index, runtimes from 4 s to ~6 min, and a reader cannot tell
 which are regression gates and which were one-shot go/no-go scoping. Write the
 index (what each pins · runtime · "re-run after changing X"), mark the ones that
 are still gates now that the build covers axioms, the honesty pins, cost-as-time
 *and* non-vacuity (should be just `HonestyAuditProbe`'s negative controls,
-`CostChkIntentProbe`, and `NonVacuityProbe`'s `#eval`s), and retire
+`CostChkIntentProbe`, `NonVacuityProbe` and `SATToSATStrProbe` §1/§3), and retire
 `probes/S1CardEmitProbe.lean` §1 (superseded by `S1StepLoopProbe` §1, which
-asserts the full equality).
+asserts the full equality). **This is the highest-value maintenance item for the
+"a stranger can check this" goal** — a reviewer currently has no map of the
+evidence files.
 
 ### 5. The `.github/` residue — owner decision, not ours
 
@@ -235,19 +228,22 @@ asserts the full equality).
 `lake build`**, so the "CI question" of earlier handoffs is answered: CI is
 green-gated on the axiom sweep today, and `lake build` alone is sufficient for
 `sorry`/axioms. If the owner wants the *negative* controls covered too, add
-`lean probes/HonestyAuditProbe.lean`, `lean probes/CostChkIntentProbe.lean` and
-`lean probes/NonVacuityProbe.lean` — the positive pins are already in the build.
+`lean probes/HonestyAuditProbe.lean`, `lean probes/CostChkIntentProbe.lean`,
+`lean probes/NonVacuityProbe.lean` and `lean probes/SATToSATStrProbe.lean` — the
+positive pins are already in the build. ⚠ **Agent sessions have no workflow
+permission; do not attempt this edit.**
 
 ⚠ Stale after 2026-08-03, **not fixed here**: `.github/scripts/researcher.py`
 still names the deleted `coqdoc/` folder as "the blueprint", and
-`.github/prompts/step*.md` still cite files under it. Agent sessions have no
-workflow permission and that subtree is the owner's legacy porting harness.
-Flag it, do not quietly edit it.
+`.github/prompts/step*.md` still cite files under it. That subtree is the
+owner's legacy porting harness. Flag it, do not quietly edit it.
 
 ## NEXT BOTTOM-UP session
 
-**Nothing on the critical path is waiting on a gadget.** Item 1 is new, is the
-highest-value item in either stream, and is *cheap* — start there.
+**Nothing on the critical path is waiting on a gadget.** The chain is closed at
+both ends and both headline statements are proven. Everything below is *scope
+extension*: more problems in the class, which is what makes the development
+useful beyond the single theorem.
 
 ⚠ **Interface note.** `InNPWitnessLangFreeSplit` carries `sizeLB` /
 `sizeLB_poly` / `encX_sizeLB` (since 2026-08-02). Every **verifier/membership**
@@ -255,46 +251,17 @@ witness must supply them; for any layout that writes the input out it is one
 line. `PolyTimeComputableLang` is untouched, so **reduction** witnesses are
 unaffected.
 
-### 1. `SAT ⪯p' SATStr` + its seam — the honesty win (~1 session, START HERE)
+⚠ **Build-cost note (worth planning around).** A session that touches only
+`Deciders/*`, `Reductions/*` and the gates pays seconds per file. A session that
+touches `Lang/PolyTime.lean`, `Lang/Syntax.lean` or `Lang/Semantics.lean` pays
+the full ~15 min rebuild (`Reductions/S1Witness.lean` alone is ~11 min). The
+2026-08-05 session deliberately put three generic lemmas
+(`comp_exit`, `exitsOnCNFOUT_comp`, `lt_comp_regBound`) in a *leaf* file rather
+than in `PolyTime.lean` where they conceptually belong. **Move them up when a
+second consumer appears** — and when you do, batch it with every other
+`PolyTime.lean` edit you have queued.
 
-**Why this first.** `SATStr` (2026-08-04) put SAT into the hypothesis class of
-the headline; this closes the loop the other way and gives
-**`NPcompleteStr SATStr`** — an NP-completeness statement with `List Bool` on
-*both* sides. That takes `Serialize cnf` **off the reviewer's trust list**
-(README "What a reviewer actually has to do"): the new composite's `decodeOut`
-becomes a `Serialize (List Bool)`, which is the identity on cells, so there is
-no encoding of ours left to read at either end of the chain. It is the only
-concrete plan on the table for making that list *shorter*.
-
-**Why it is cheap.** The reduction map is
-`N ↦ (the bit string whose cells are encodeCnf N)`. By FINDING AS the machine
-work is a **copy**: `encodeCnf N` is already the cell stream that `strBits`
-of the output must equal.
-
-* **the map**: `satToStr : cnf → List Bool`, with
-  `strBits (satToStr N) = encodeCnf N` — and `SATStr (satToStr N) ↔ SAT N`
-  follows from `SATStr.satStr_iff` in two lines.
-* **the witness**: a `PolyTimeComputableLang satToStr` whose `encodeIn` is the
-  *natural* layout of a `cnf` — reuse `EvalCnfSplit.satEncX`
-  (`[[], 1^|N|, encodeCnf N]`) so the seam below is a pure scrub — and whose
-  `c` is essentially `copy OUT CNF_STREAM ;; clear` of the rest.
-* ⚠ **the chain end moves, so `decodeOut` is a fresh honesty obligation**
-  (standing risk 1, FINDING AK). Give `List Bool` a **`Serialize` instance**
-  (`Lang/Serialize.lean`; `enc := strBits`, `dec` reads cells back, `dec_enc` by
-  induction — a dozen lines) and take
-  `decodeOut := Serialize.decodeD default ∘ get OUTREG`. **Do not hand-write an
-  inverse and do not use `Function.invFun`.** `Deciders/CnfSerialize.lean` is
-  the worked example.
-* **the seam**: the left witness is the existing composite
-  `FrontS1Comp.front_to_SAT_witness` (exit frame `regBound = 57`, reg 1 =
-  `1^|N|`, reg 2 = `encodeCnf N`, everything else dirty); the right witness's
-  `encodeIn` is `satEncX N`. So the `mfc` **keeps registers 1–2 and erases
-  `{0} ∪ [3, 57)`** — the *scrub-only* shape. Copy
-  `Reductions/S1_to_FlatTCC_comp.lean` and `S1SATComp.clearRange`; this is the
-  fifth instance of that pattern and the cheapest of them.
-* then `NPhardStr SATStr` transports, and top-down item 2 finishes it.
-
-### 2. Membership for `FlatClique` (~1 session, well-templated)
+### 1. Membership for `FlatClique` (~1 session, well-templated) — START HERE
 
 Repeat `Deciders/EvalCnfSplit.lean` verbatim against `cliqueRelDecidesLang`
 (axiom-clean since 2026-07-01):
@@ -312,45 +279,60 @@ Repeat `Deciders/EvalCnfSplit.lean` verbatim against `cliqueRelDecidesLang`
   `#eval` it at every index first** (FINDING AI). `probes/SATStrProbe.lean` §6
   is the most recent worked example.
 
-### 3. `FlatCliqueStr` / `kSAT3Str` — string forms, now that the recipe exists
+Why first: it is the only remaining item that adds a *second* problem to the NP
+side of this development, and everything it needs already exists.
 
-`Deciders/SATStr.lean` is a **template**, not a one-off: a string language for
-any problem whose canonical `encodeIn` is already a flat `0`/`1` stream is
-(a) a DFA recognising that encoder's image, (b) a `parseTotal` sending
-non-encodings to a canonical *rejecting* value, (c) a validate-and-count scan,
-(d) `precomposeFree` onto the existing verifier. Steps (a)–(c) are ~350 lines
-each. Do this only if a top-down consumer asks for it — one string language in
-the class is already enough for non-vacuity.
-
-### 4. Membership for `kSAT 3` (~1 session) — same shape as item 2
-
-`KSat3Free` already has the re-encoder pattern.
-
-### 5. Hardness — `SAT ⪯p' kSAT 3`, `kSAT 3 ⪯p' FlatClique`
+### 2. Hardness — `SAT ⪯p' kSAT 3`, `kSAT 3 ⪯p' FlatClique`
 
 Free-line witnesses (template: `NP/kSAT_to_SAT_free.lean`, which already does
 the mirror-image `kSAT 3 ⪯p' SAT`), then one `SeamData`/`comp` each onto
 `FrontS1Comp.front_to_SAT_witness`, and `NPhard''`/`NPhardStr` transport for
-free. ⚠ **This extends the chain at the TAIL**, so the composite's `decodeOut`
-becomes the new last witness's — **so the new output type owes a `Serialize`
-instance** (`FlatClique`'s output is a graph + a `k`; write the parser, do not
-use `Function.invFun`). One verdict row, not a study; see top-down item 3.
+free. ⚠ **This extends the chain at the TAIL**, so:
+* the composite's `decodeOut` becomes the new last witness's — **the new output
+  type owes a `Serialize` instance** (`FlatClique`'s output is a graph + a `k`;
+  write the parser, do not use `Function.invFun`), and check FINDING AT first;
+* you will need the left composite's **exit register**: use
+  `SATStrComp.ExitsOnCNFOUT`/`exitsOnCNFOUT_comp` (FINDING AU). Note that the
+  existing statement is specialised to `CNFOUT` and to `cnf`-valued maps —
+  generalising it over the register and the output type is ~10 lines and is
+  exactly the "third consumer" trigger for moving it into `Lang/PolyTime.lean`.
+
+One verdict row, not a study; see top-down item 3.
+
+### 3. Membership for `kSAT 3` (~1 session) — same shape as item 1
+
+`KSat3Free` already has the re-encoder pattern.
+
+### 4. `FlatCliqueStr` / `kSAT3Str` — string forms, now that the recipe exists
+
+`Deciders/SATStr.lean` is a **template**: a string language for any problem whose
+canonical `encodeIn` is already a flat `0`/`1` stream is (a) a DFA recognising
+that encoder's image, with the `⇔` proven; (b) a `parseTotal` sending
+non-encodings to a canonical *rejecting* value; (c) one validate-and-count scan;
+(d) `precomposeFree` onto the existing verifier. Steps (a)–(c) are ~350 lines
+each. **And the reverse direction is now also templated**:
+`Reductions/SAT_to_SATStr_free.lean` + `_comp.lean` is ~250 lines end to end,
+of which the seam is 40. Do this only if a consumer asks — one string language
+in the class is already enough for non-vacuity, and `SATStr` is already
+NP-complete.
 
 ⚠ Do **not** pre-factor `satPrecomposeData`/`satSplitWitnessOf`/
 `strPrecomposeData` into a generic combinator before a third consumer exists —
 copy first, factor when a third appears (that is how `emitFold_run` was found).
 
 **Do NOT re-open**, on pain of re-proving an axiom-clean theorem: `s1Key`,
-`s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s statement, the two seams'
-scrub ranges, `S1Step.stepSeg`/`stepEmit`'s contract, the entry loop's register
+`s1RegBound`, `EScratch`/`CDirty`, `stageC_run`'s statement, the seams' scrub
+ranges, `S1Step.stepSeg`/`stepEmit`'s contract, the entry loop's register
 table, the `copy r r` no-op (FINDING X),
 **`EvalCnfCmd.encodeState`/`evalCnfCmd`/`regBound = 16`**,
 **`satEncX`/`satEIn`/`xWidth = 3`** (FINDING AD), **`certDecode`/
 `decodeBody`/`DCUR`=16/`DIDX`=17/`DHD`=18** (the `_run` lemma is pinned to that
-exact program), or **`SATStr`'s scan frame `WCUR`=19…`WTAL`=24 and
+exact program), **`SATStr`'s scan frame `WCUR`=19…`WTAL`=24 and
 `CnfWellFormed.scanStep`** (`scanBody_run` and `satStrBuild_get` are pinned to
-both). Stage C's 30-register licence is **exactly** exhausted. And do not
-rebuild `Cmd.PolyCost` (FINDING AJ) or the `LangEncodable` layer.
+both), or **`SATToSATStr.OUT`=0 / `SATStrComp.strMfc`** (the sixth seam's bridge
+is `AgreeBelow 1` and depends on both). Stage C's 30-register licence is
+**exactly** exhausted. And do not rebuild `Cmd.PolyCost` (FINDING AJ) or the
+`LangEncodable` layer.
 
 ## Before you push
 
@@ -405,6 +387,13 @@ tell in advance.
   the `scanBody_run` loop invariant at every index. Every line must print
   `true` (one prints `[false, false, false, false]` — the negative controls for
   the `pending` bit — and one prints a cost pair).
+* **`probes/SATToSATStrProbe.lean`** (~5 s) — after any change to
+  `Lang/Serialize.lean`, `Lang/SerializeStr.lean`,
+  `Reductions/SAT_to_SATStr_free.lean` or `_comp.lean`. §1 is the **negative
+  control for FINDING AT**: it must print `true` (the identity form of
+  `size_le_enc_length` is unsatisfiable for `List Bool`). §3's third line prints
+  `([0], [1], false)` — the control showing `strBits_boolsOf` really needs its
+  bit hypothesis. §6 prints `(true, false)`; every other line prints `true`.
 * `probes/CostChkIntentProbe.lean` — after **any** change to `Lang/CostGrow.lean`.
   It pins the shapes `Cmd.chk` must reject (the squaring loop) and must accept
   (drained cursor, counter accumulator, flow-sensitive `concat`, `certDecode`).
@@ -423,15 +412,29 @@ tell in advance.
   ~3 min (the emitter appends cell by cell, so interpreting it is quadratic —
   keep every new probe instance at `σ ≤ 1`).
 
-**Recommendation: run a BOTTOM-UP session next**, on `SAT ⪯p' SATStr` and its
-seam (bottom-up item 1). Reasoning: it is cheap (the map is a copy — FINDING AS;
-the seam is the scrub-only shape), it finishes the result this session started
-(`NPcompleteStr SATStr`), and it is the **only** item in either stream that
-makes the reviewer's trust list *shorter* rather than merely keeping it from
-growing — `List Bool` on both sides of the headline retires `Serialize cnf`.
-Top-down item 2 then costs an hour. `FlatClique` membership is well-templated
-and will still be there; top-down item 1 is a two-session build that nothing
-else is waiting on.
+**Recommendation: run a TOP-DOWN session next**, on top-down item 4 (the probe
+index / `probes/README.md`) followed by item 2 if time remains.
+
+Reasoning, stated against the project's actual goal — *a stranger who knows
+textbook Cook–Levin should be able to `lake build` and then check a handful of
+places*. That goal is now **blocked on navigation, not on mathematics**. Both
+headline statements are proven, both chain ends are pinned by `Serialize`
+instances, five gates run inside the build, and the reviewer checklist in the
+README is four items long. What a stranger cannot do today is tell which of the
+50 files under `probes/` are live evidence and which are archaeology — so the
+evidence that *is* there does not reach them. That is a one-session fix with a
+disproportionate payoff, and no Lean risk.
+
+The two alternatives, and why they come second. **Top-down item 1** (the
+`Cmd`-level certificate search) is the last genuinely open rung of the
+mathematics, but it is a two-session build, it forces a `Lang/PolyTime.lean`
+edit (~15 min per rebuild), and nothing is waiting on it — the statement it
+would strengthen is already labelled honestly in three places. **Bottom-up item
+1** (`FlatClique` membership) is well-templated and adds a second problem to the
+class; take it if the next session prefers building to curating, but it does not
+move the reviewability goal. Do **not** start a bottom-up string-language item
+(`FlatCliqueStr`, `kSAT3Str`): `SATStr` is already NP-complete, so a second one
+buys nothing a reader will check.
 
 ## The S1 register frame — PINNED
 
@@ -520,6 +523,11 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
 * **S1 exit = tail entry**: `FlatTCCFree.encodeIn C = [] :: S1Program.s1Key C`
   (6 registers). The fourth seam's `mfc` keeps `1`–`5`, erases `0` and
   `[6,48)`; `[48,57)` closes by `Cmd.eval_length_le`.
+* **`SATStr` chain end** (`regBound = 1`, 2026-08-05): the sixth seam's `mfc`
+  is `copy 0 2`, the right witness's `encodeIn N = [Serialize.enc N]` and its
+  `decodeOut` is `Serialize.decodeD [] ∘ get 0`. The bridge is `AgreeBelow 1`,
+  so **nothing above register 0 is constrained** — changing `SATToSATStr.OUT`
+  re-opens it, nothing else does.
 * **tail exit** (`regBound = 57`): reg 1 = `1^|N|`, reg 2 = `encodeCnf N` (the
   SAT verifier's `CLAUSE_TALLY`/`CNF_STREAM` layout; `decodeOut =
   `Serialize.dec` on reg 2 — the canonical CNF **parser**
@@ -544,18 +552,25 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
   `Lang/HardnessStr.lean`), which is the same thing with the input layout pinned
   to `certState`. **Quote `CookLevinStr`; see standing risk 6.**
 - **Serialization at a chain END**: `Lang/Serialize.lean` — one instance per
-  concrete type, `dec_enc` + bit-level + the size sandwich. Live:
-  `Serialize cnf` (`Deciders/CnfSerialize.lean`), which the tail's `decodeOut`
-  is defined from. A new chain end owes an instance, not a hand-written
-  inverse.
+  concrete type, `dec_enc` + bit-level + the size sandwich (the lower half is a
+  *polynomial* law, `sizeLB`, since FINDING AT). Live: `Serialize cnf`
+  (`Deciders/CnfSerialize.lean`) and `Serialize (List Bool)`
+  (`Lang/SerializeStr.lean`, whose `enc` is `strBits` — the same function as the
+  canonical head layout `certState`). A new chain end owes an instance, not a
+  hand-written inverse — and owes a check of the type's `encodable.size` against
+  the layout's cell count *before* the instance is written.
 - **Reductions**: free `PolyTimeComputableLang` → `toFrameworkWitness'`/
   `reducesPolyMO'_of_langFree`; verifier precomposition via
   `DecidesLang.FreePrecomposeData`/`red_inNP_of_langFree`; **witness-witness
-  composition via `SeamData`/`comp` — LIVE FIVE TIMES**
+  composition via `SeamData`/`comp` — LIVE SIX TIMES**
   (`FlatTCCBinComp.flatTCC_to_binaryCC_seam` →
   `BinaryCCFSATComp.binaryCC_to_FSAT_seam` → `FSATSATComp.fsat_to_SAT_seam` →
-  `S1SATComp.s1_to_SAT_seam` → `FrontS1Comp.front_to_SAT_seam`).
-  Four seam shapes exist; pick the one that matches:
+  `S1SATComp.s1_to_SAT_seam` → `FrontS1Comp.front_to_SAT_seam` →
+  `SATStrComp.front_to_SATStr_seam`).
+  ⚠ A seam whose bridge needs the LEFT composite's **exit register content**
+  cannot get it from `computes` (FINDING AU) — use
+  `SATStrComp.ExitsOnCNFOUT`/`exitsOnCNFOUT_comp`.
+  Five seam shapes exist; pick the one that matches:
   - **wider right frame** → length argument (`BinaryCC_to_FSAT_comp.lean`);
   - **narrower right frame** → no scrub above it (`FSAT_to_SAT_comp.lean`);
   - **left is a composite** → stacked seam, unfold its `.c` with one `heval`
@@ -563,7 +578,10 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
     (`BinaryCC_to_FSAT_comp.lean`);
   - **right is a composite** (preferred at the head of the chain — FINDING A)
     → nothing to unfold, just scrub to the composite's frame
-    (`Front_to_S1_comp.lean`).
+    (`Front_to_S1_comp.lean`);
+  - **right frame is ONE register** (a tail extension onto a `Serialize`-pinned
+    end) → no scrub at all, the `mfc` is a single `copy`
+    (`SAT_to_SATStr_comp.lean` — the cheapest of the six).
 - **Templates for new reduction witnesses** — copy these, not first principles:
   - `NP/kSAT_to_SAT_free.lean`: re-encoder + reduction sharing one program,
     fold invariants, tight `encodeIn_size`, `FreePrecomposeData`.
@@ -680,6 +698,24 @@ Narration lives in git history; the durable results are in "Locked invariants",
 "Proven, reusable" and "Conventions". These are the *findings* a new gadget
 still has to respect:
 
+- **Check a class's laws against the layout the STATEMENT already pins, before
+  using the class (2026-08-05, FINDING AT).** `Serialize`'s no-compression law
+  was `encodable.size x ≤ (enc x).length`, and it is unsatisfiable for
+  `List Bool` under the canonical one-cell-per-bit layout — not because anything
+  compresses but because the generic `List` instance's `encodable.size`
+  over-counts (2 for a `true`, 1 for a `false`). The wrong fix is a two-cells-
+  per-bit encoding, which would disagree with `certState` and leave a reviewer
+  two serializations to reconcile. The right fix is the form the development
+  already used for the same obligation elsewhere:
+  `size x ≤ sizeLB |enc x|` for a polynomial `sizeLB`
+  (cf. `InNPWitnessLangFreeSplit.sizeLB`). **When a law and a pinned layout
+  conflict, the layout wins — the statement is the thing a reviewer reads.**
+- **A seam needs the left composite's exit REGISTER, and `computes` does not
+  give it (2026-08-05, FINDING AU).** `computes` says the output register
+  *parses* to the output; a junk register could do that too. State the register
+  fact separately (`SATStrComp.ExitsOnCNFOUT`) and **transport it along seams**
+  (`exitsOnCNFOUT_comp`, one line per seam) rather than unfolding a multi-level
+  composite program. This is the whole cost of extending the chain at the tail.
 - **Before scoping a parser, ask what the target layout's fields actually are
   (2026-08-04, FINDING AS).** Classify each field of the layout you must produce
   as (a) the input verbatim, (b) a derived *count* or other metric, or (c)
@@ -1037,7 +1073,8 @@ prefer `rg` over both.
 | `Lang/HardnessStr.lean` | `InNPWitnessStr` / `inNPStr` / `NPhardStr` / `NPcompleteStr`, the two bridges from `NPhard''`, and the canonical-layout size sandwich (`State.size_certState`, `size_le_two_mul_length`, `length_le_size`, `canonical_sizeLB`). **Read this one too.** |
 | `Complexity/NonVacuity.lean` | non-vacuity, both directions (2026-08-03, upgraded 2026-08-04 §6 with `inNPStr_SATStr` / `satStr_reducesPolyMO'_SAT`): `bitStringsUpTo` + `mem_bitStringsUpTo` + `bitStringsUpTo_length`; `searchDecide`/`searchDecide_correct`/`searchDecide_calls`; the `SquareStr` inhabitant (`squareCmd`, `squareVerifier`, `squareCertRel`, `squareWitness`, `inNPStr_squareStr`) and `squareStr_reducesPolyMO'_SAT`. |
 | `Meta/AxiomGate.lean`, `SoundnessGate.lean`, `HonestyGate.lean`, `CostFaithfulness.lean` | the four build-time gates. Add to them; never delete an assertion to make a build pass. |
-| `Lang/Serialize.lean` + `Deciders/CnfSerialize.lean` | the chain-end serialization discipline and the one live instance (`Serialize cnf`, fuel-based parser, `dec_enc`, both size laws). A new chain end owes an **instance**, not a hand-written inverse. |
+| `Lang/Serialize.lean` + `Deciders/CnfSerialize.lean` + `Lang/SerializeStr.lean` | the chain-end serialization discipline and its **two** live instances: `Serialize cnf` (fuel-based parser for a real grammar, `dec_enc`, both size laws) and `Serialize (List Bool)` (cell-wise; `enc = strBits`, i.e. the canonical head layout's own function, plus `boolsOf`/`strBits_boolsOf` for going the other way). A new chain end owes an **instance**, not a hand-written inverse. ⚠ FINDING AT is in `Serialize.lean`'s header. |
+| `Reductions/SAT_to_SATStr_free.lean` + `SAT_to_SATStr_comp.lean` | **`NPcompleteStr SATStr`** and the template for any future tail extension: `satToStr`/`strBits_satToStr`/`satStr_satToStr`, the one-register witness, and the reusable `ExitsOnCNFOUT`/`exitsOnCNFOUT_comp`/`comp_exit`/`lt_comp_regBound` (currently leaf-local by convention — move to `PolyTime.lean` on the third consumer). |
 
 ### The layer, the compiler and the cost ladder
 

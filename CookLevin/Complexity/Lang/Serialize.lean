@@ -31,11 +31,12 @@ one-time *typechecking* one.
 |---|---|
 | `dec_enc` | a lossy/answer-only layout: `dec ∘ enc = some` forces injectivity, so `enc x` still determines `x` |
 | `enc_bit` | numbers smuggled into a single cell (the layer's states are `BitState`) |
-| `size_le_enc_length` | **compression**: the encoding may not be shorter than the type's own `encodable.size` |
+| `size_le_enc_length` | **compression**: `encodable.size x` is recoverable from the encoding's own cell count, up to a fixed polynomial `sizeLB` |
 | `enc_length_le` | blow-up: the encoding is polynomially bounded in `encodable.size` |
 
-The last two are the **sandwich** `size x ≤ |enc x| ≤ encLen (size x)`, and the
-lower half is the one the *head* of the chain needs. `FrontProgram`'s monomial
+The last two are the **sandwich** `size x ≤ sizeLB |enc x|` and
+`|enc x| ≤ encLen (size x)`, and the lower half is the one the *head* of the
+chain needs. `FrontProgram`'s monomial
 argument must dominate budgets stated in `encodable.size x`; the front witness
 currently gets that by having `encodeIn` **hand over** a unary size register
 `1^(size x)` (`FrontWitness.encodeInQ`), because the C8-4 finding of 2026-07-20-c
@@ -44,6 +45,46 @@ established that `State.size (encX x)` has only an *upper* bound to
 `size x` from the input. `size_le_enc_length` is exactly the missing direction:
 with it the tally is computable on-machine (`FrontPieces.tallyCells`) and the
 handed-over register can go.
+
+## ⚠ FINDING AT (2026-08-05): the no-compression law is a POLYNOMIAL law
+
+`size_le_enc_length` used to read `encodable.size x ≤ (enc x).length` — the
+identity form. That form is **unsatisfiable for the canonical bit-string
+layout**, and the canonical bit-string layout is not negotiable: it is
+`certState`, the one register with one `0`/`1` cell per bit that the whole
+`NPhardStr` statement is pinned to. The obstruction is arithmetic and has
+nothing to do with compression:
+
+```
+encodable.size ([true] : List Bool) = 2      -- the generic list instance
+                                             -- charges 1 per element PLUS
+                                             -- `size true = 1`
+(strBits [true]).length              = 1
+```
+
+i.e. `encodable.size` on `List Bool` *over*-counts by up to a factor two, so a
+layout that is a bijection onto `{0,1}^n` — which cannot compress anything —
+fails the identity form. Any instance that satisfied it would have to spend two
+cells on a bit, and would then no longer agree with `certState`; the development
+would carry two different serializations of a bit string and a reviewer would
+have to check they denote the same strings. That is strictly worse.
+
+The fix is the form the rest of the development already uses for exactly this
+obligation: `InNPWitnessLangFreeSplit.sizeLB` (2026-08-02) asks for a
+*polynomial* recovering `encodable.size x` from the layout's own cell count, and
+`InNPWitnessStr` discharges it with `fun n => 2 * n`. The purpose of the law is
+served identically — a program reading `enc x` builds `1^|enc x|` and applies
+`sizeLB` on-machine (`FrontPieces.tallyCells` + `FrontProgram.unaryMonomial`) —
+so the law is generalised here, not weakened in substance. `Serialize cnf` keeps
+the identity (`sizeLB := id`, `CnfSerialize.size_le_encodeCnf_length`), so
+nothing about the current chain end changes.
+
+⚠ **What this does cost.** The identity form was checkable by eye; the
+polynomial form is only meaningful because `sizeLB` must be `inOPoly` and
+`monotonic`. An instance that supplied a huge `sizeLB` would satisfy the letter
+of the law while encoding a single bit as `[]`; the guard against that is
+`dec_enc` (injectivity), which no `sizeLB` can weaken. State a *small* `sizeLB`
+or explain why not.
 
 ⚠ **This is NOT the retired `LangEncodable` layer.** That died because its
 *generic, nestable product instance* was size-unsound
@@ -73,10 +114,15 @@ class Serialize (X : Type) [encodable X] where
   dec_enc : ∀ x, dec (enc x) = some x
   /-- Every cell is a bit (`Compile.BitState` fodder). -/
   enc_bit : ∀ x, ∀ v ∈ enc x, v ≤ 1
-  /-- **No compression.** The encoding is at least as long as the type's own
-  size measure — so a program reading `enc x` can build a unary register that
-  dominates any `encodable.size x`-stated budget. -/
-  size_le_enc_length : ∀ x, encodable.size x ≤ (enc x).length
+  /-- **No compression**, as a polynomial law (FINDING AT). `encodable.size x`
+  is recoverable from the encoding's own cell count up to `sizeLB` — so a
+  program reading `enc x` can count its cells and build a unary register that
+  dominates any `encodable.size x`-stated budget. Same shape as
+  `InNPWitnessLangFreeSplit.sizeLB`; keep it small (`id` or `2 * ·`). -/
+  sizeLB : Nat → Nat
+  sizeLB_poly : inOPoly sizeLB
+  sizeLB_mono : monotonic sizeLB
+  size_le_enc_length : ∀ x, encodable.size x ≤ sizeLB (enc x).length
   /-- The blow-up bound, as a polynomial. -/
   encLen : Nat → Nat
   encLen_poly : inOPoly encLen

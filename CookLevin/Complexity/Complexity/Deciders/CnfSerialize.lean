@@ -40,6 +40,9 @@ because every clause costs at least one cell.
   **no-compression** half of the sandwich, and it is new. It is what a future
   head-side fix needs (see `Lang/Serialize.lean`): the front program can only
   build `1^(size x)` on-machine if the input register is at least that long.
+  ⚠ Since FINDING AT (2026-08-05) the law is stated up to a polynomial
+  `sizeLB`; `encodeCnf` satisfies the identity form, so this instance takes
+  `sizeLB := id` and the theorem below is unchanged.
 -/
 
 namespace CnfSerialize
@@ -263,6 +266,11 @@ instance instSerializeCnf : Serialize cnf where
   dec := decCnf
   dec_enc := decCnf_encodeCnf
   enc_bit := EvalCnfCmd.encodeCnf_bit
+  -- the identity form of the no-compression law: `encodeCnf` is long enough
+  -- that no polynomial slack is needed (FINDING AT).
+  sizeLB := fun n => n
+  sizeLB_poly := inOPoly_id
+  sizeLB_mono := fun _ _ h => h
   size_le_enc_length := size_le_encodeCnf_length
   encLen := fun n => 5 * n
   encLen_poly := inOPoly_mul (inOPoly_const 5) inOPoly_id

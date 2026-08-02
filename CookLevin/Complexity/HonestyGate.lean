@@ -1,6 +1,7 @@
 import Complexity.Meta.AxiomGate
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
+import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 
 set_option autoImplicit false
 
@@ -110,7 +111,56 @@ theorem tail_parser_left_inverse (N : cnf) :
     CnfSerialize.decCnf (EvalCnfCmd.encodeCnf N) = some N :=
   CnfSerialize.decCnf_encodeCnf N
 
+/-! ## 5 — the SECOND chain end: `SATStr`, `List Bool` on both sides
+
+Extending the chain at the tail (2026-08-05) *moves* the rightmost `decodeOut`,
+which is one of the two audited functions — so the new one is pinned here too,
+exactly as the old one is. It is `Serialize.decodeD` of one register again, and
+this time the `Serialize` instance is the **same function** the head layout uses
+(`certState x = [Serialize.enc x]`): there is no encoding of ours left to read
+at either end of that chain, only `strBits`, read once. -/
+
+section StrTail
+variable {X : Type} [encodable X] {Q : X → Prop}
+
+/-- The `SATStr` composite's input layout is still the front witness's. -/
+theorem strComposite_encodeIn (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
+    (SATStrComp.front_to_SATStr_witness W cm km dm cs ks ds).encodeIn
+      = FrontWitness.encodeInQ W := rfl
+
+/-- …and its output decoder is the **new last** witness's, verbatim. -/
+theorem strComposite_decodeOut (W : InNPWitnessLangFreeSplit Q) (cm km dm cs ks ds : Nat) :
+    (SATStrComp.front_to_SATStr_witness W cm km dm cs ks ds).decodeOut
+      = SATToSATStr.decodeOut := rfl
+
+end StrTail
+
+/-- The new tail decoder is a parser of one register — same shape as the old
+one, different `Serialize` instance. -/
+theorem strTail_decodeOut_is_parser (s : State) :
+    SATToSATStr.decodeOut s
+      = Serialize.decodeD ([] : List Bool) (State.get s SATToSATStr.OUT) := rfl
+
+theorem strTail_outputRegister : SATToSATStr.OUT = 0 := rfl
+
+/-- The new tail parser is a genuine left inverse of its encoder. -/
+theorem strTail_parser_left_inverse (x : List Bool) :
+    decBits (strBits x) = some x := decBits_strBits x
+
+/-- **The head layout and the new tail serialization are the same function.**
+This is what "no encoding of ours left to read at either end" means, as a
+`rfl`. -/
+theorem strTail_enc_eq_head (x : List Bool) : certState x = [Serialize.enc x] := rfl
+
 /-! ## The gate -/
+
+#assert_axioms_clean
+  Complexity.HonestyGate.strComposite_encodeIn
+  Complexity.HonestyGate.strComposite_decodeOut
+  Complexity.HonestyGate.strTail_decodeOut_is_parser
+  Complexity.HonestyGate.strTail_outputRegister
+  Complexity.HonestyGate.strTail_parser_left_inverse
+  Complexity.HonestyGate.strTail_enc_eq_head
 
 #assert_axioms_clean
   Complexity.HonestyGate.composite_encodeIn

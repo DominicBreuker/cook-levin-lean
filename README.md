@@ -9,14 +9,28 @@ Roth et al. (<https://github.com/uds-psl/cook-levin>).
 instantiation (2026-08-01), gated by `lake build` itself — which *proves* there
 are no `sorry`s and no bespoke axioms anywhere in the library (2026-08-02) — and
 machine-checked to be **non-vacuous**: every inhabitant of the class it
-quantifies over is decidable (2026-08-03), and the class contains **SAT itself,
-presented as a language of bit strings** (2026-08-04).**
+quantifies over is decidable (2026-08-03), the class contains **SAT itself,
+presented as a language of bit strings** (2026-08-04), and that inhabitant is
+**NP-complete in this development's own sense** (2026-08-05).**
 
 ```
-CookLevinHonest.CookLevinStr : NPcompleteStr SAT   -- ★ the statement to quote
-CookLevinHonest.CookLevin''  : NPcomplete''  SAT   -- the general form it comes from
-both depend on axioms: [propext, Classical.choice, Quot.sound]
+CookLevinHonest.CookLevinStr   : NPcompleteStr SAT      -- ★ SAT is NP-complete
+SATStrComp.SATStr_NPcompleteStr: NPcompleteStr SATStr   -- ★ …as a LANGUAGE OF BIT STRINGS
+CookLevinHonest.CookLevin''    : NPcomplete''  SAT      -- the general form they come from
+all three depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
+
+**Which one to quote.** They are the same mathematics presented at two
+granularities, and each costs a reviewer something different (see the checklist
+below). `CookLevinStr` says *SAT — satisfiability of a `cnf`* is NP-complete;
+its hypothesis and conclusion sit on different types, and reading its
+conclusion means reading one encoding of ours (`Serialize cnf`).
+`SATStr_NPcompleteStr` is the textbook shape — a language `L ⊆ {0,1}*` that is
+NP-complete among languages of bit strings, `List Bool` on *both* sides — and
+reading it means reading instead what `SATStr` *is*
+(`SATStr.satStr_iff : SATStr x ↔ ∃ N, strBits x = encodeCnf N ∧ SAT N`).
+Neither is stronger; the second is closer to the textbook and the first is
+closer to the name "SAT".
 
 ### What a reviewer actually has to do
 
@@ -38,15 +52,34 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
      it is decidable by brute-force search over its own verifier
      (`Complexity/NonVacuity.lean`) — so the theorem is neither vacuously true
      for want of an instance, nor true of arbitrary predicates.
-2. **Read three definitions**, and nothing else, to know the theorem is about
+2. **Read four definitions**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else:
    * `NPcompleteStr` / `NPhardStr` / `InNPWitnessStr` (`Complexity/Lang/HardnessStr.lean`)
      — what is being claimed, and over which hypothesis;
    * `SAT` (`Complexity/NP/SAT.lean`) — that it means satisfiability;
    * `FlatTM` / `stepFlatTM` (`Complexity/Complexity/MachineSemantics.lean`) —
-     that the machine model is a Turing machine.
-   * `Serialize cnf` (`Complexity/Complexity/Deciders/CnfSerialize.lean`) — the
-     one encoding at a chain end that is ours to choose.
+     that the machine model is a Turing machine;
+   * **one encoding, and which one depends on the headline you quote:**
+     * for `CookLevinStr : NPcompleteStr SAT` — `Serialize cnf`
+       (`Complexity/Complexity/Deciders/CnfSerialize.lean`), the canonical CNF
+       layout plus its parser, because the chain's `decodeOut` is
+       `Serialize.dec` of one register;
+     * for `SATStr_NPcompleteStr : NPcompleteStr SATStr` — the *language*
+       `SATStr` (`Complexity/Complexity/Deciders/SATStr.lean`), best read
+       through `satStr_iff`, i.e. `EvalCnfCmd.encodeCnf` (a 12-line CNF
+       encoder). That chain's own `decodeOut` costs nothing extra: it is
+       `Serialize (List Bool)`, whose `enc` is `strBits` — **the same function
+       the head layout `certState` already is** (`certState x = [Serialize.enc
+       x]`, a `rfl` in `Complexity/HonestyGate.lean`).
+
+   ⚠ **Say this precisely, because the plan of record used to overstate it.**
+   Extending the chain to `SATStr` does *not* take the list from four items to
+   three. It replaces "an encoder **plus** a ~200-line parser **plus**
+   `dec_enc`, chosen by us for a witness field" with "an encoder, appearing in
+   the definition of the language the theorem is about" — a smaller and
+   better-placed obligation, but still an obligation. What it *does* remove
+   outright is the second serialization: on the `SATStr` chain the head layout
+   and the tail layout are literally the same function.
 
    Two things have come *off* that list. The head-side encoding
    (2026-08-02): the composite reduction's `ComputesBy.encode` is now literally
@@ -73,6 +106,46 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-05** (bottom-up; the loop closes, and a class law was
+wrong):
+
+* **`NPcompleteStr SATStr` — NP-completeness with `List Bool` on both sides.**
+  `SAT ⪯p' SATStr` (`Reductions/SAT_to_SATStr_free.lean`) plus the **sixth
+  seam** (`SAT_to_SATStr_comp.lean`) give `SATStrComp.satStr_NPhardStr` and
+  `SATStrComp.SATStr_NPcompleteStr`. So the inhabitant of the published
+  hypothesis class is not merely *hard given Cook–Levin* — it is NP-complete in
+  this development's own sense, both halves proven here
+  (`NonVacuity.npcompleteStr_SATStr`).
+* **The reduction is the identity on tape cells, and that is a measurement.**
+  `strBits (satToStr N) = encodeCnf N`: the CNF's canonical stream *is* the bit
+  string. The `Cmd` is therefore the layer's no-op — and the honest content sits
+  in `satStr_satToStr : SATStr (satToStr N) ↔ SAT N`, whose forward half needs
+  `encodeCnf` to be injective. ⚠ A no-op program is dishonest exactly when
+  `encodeIn`/`decodeOut` do the computing (`HonestyAuditProbe` §6); here both
+  are canonical `Serialize` layouts and the *map* is the identity. ROADMAP S5
+  verdict 17 says this in full.
+* **A seam needs the left composite's exit REGISTER, and `computes` does not
+  give it.** `computes` says the output register *parses* to the output, which a
+  junk register could also do. `SATStrComp.ExitsOnCNFOUT` is the missing
+  statement, and it **transports along a seam in one line**
+  (`exitsOnCNFOUT_comp`), carrying `FSATSATFree.buildSAT_run` out through four
+  `comp`s to the whole chain. Any future tail extension needs exactly this and
+  nothing else.
+* ⚠ **FINDING AT — `Serialize`'s no-compression law was unsatisfiable for the
+  canonical bit-string layout, and had to be generalised.** It read
+  `encodable.size x ≤ (enc x).length`; but `encodable.size ([true] : List Bool)
+  = 2` while `(strBits [true]).length = 1`, because the generic list instance
+  charges one per element *plus* the element's own size. Nothing is compressed —
+  `strBits` is a bijection onto `{0,1}^n`. Any instance meeting the identity
+  form would spend two cells per bit and so **disagree with `certState`**, the
+  layout the `NPhardStr` statement already pins, leaving two serializations of a
+  bit string to reconcile. The law is now `size x ≤ sizeLB |enc x|` for a
+  polynomial, monotone `sizeLB` — the same shape
+  `InNPWitnessLangFreeSplit.sizeLB` has had since 2026-08-02 for the same
+  obligation. `Serialize cnf` keeps `sizeLB := id`, so nothing about the
+  existing chain end changed. Negative control: `probes/SATToSATStrProbe.lean`
+  §1.
 
 **What changed on 2026-08-04** (bottom-up; SAT as a string language):
 
@@ -226,15 +299,16 @@ Read [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md) for the full risk register
 and [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md) for the working plan before
 working.
 
-## Honest status (verified 2026-08-03)
+## Honest status (verified 2026-08-05)
 
 | | |
 |---|---|
 | `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12466 declarations in all 99 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, and `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis. Runs in ~2 s. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
-| **non-vacuity of the `NPhardStr` hypothesis** | ✅ **both directions, gated** (`Complexity/NonVacuity.lean`). **Inhabited — by a hard problem (2026-08-04)**: `SATStr.inNPStr_SATStr` is a complete `InNPWitnessStr` for SAT as a bit-string language, and `satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is `CookLevinStr` applied to it. (`inNPStr_squareStr`, 2026-08-03, stays as the minimal example; `SquareStr` is in P.) **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM`; and `NPhardStr SATStr` is **not** claimed. Both rungs are open and labelled. Probes: `probes/NonVacuityProbe.lean`, `probes/SATStrProbe.lean`. |
+| **non-vacuity of the `NPhardStr` hypothesis** | ✅ **both directions, gated** (`Complexity/NonVacuity.lean`). **Inhabited — by a hard problem (2026-08-04)**: `SATStr.inNPStr_SATStr` is a complete `InNPWitnessStr` for SAT as a bit-string language, and `satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is `CookLevinStr` applied to it. (`inNPStr_squareStr`, 2026-08-03, stays as the minimal example; `SquareStr` is in P.) **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM` — that rung is open and labelled. ~~`NPhardStr SATStr` is not claimed~~ — **proven 2026-08-05**, so the inhabitant is NP-**complete** in this development's own sense (`NonVacuity.npcompleteStr_SATStr`). Probes: `probes/NonVacuityProbe.lean`, `probes/SATStrProbe.lean`. |
 | `#print axioms SATStr.inNPStr_SATStr` | **`[propext, Classical.choice, Quot.sound]`** — **SAT as a STRING language, with a real verifier** (2026-08-04). `Deciders/CnfWellFormed.lean` is the four-state DFA and the characterisation `wfCnfB l = true ↔ ∃ N, encodeCnf N = l`; `Deciders/SATStr.lean` is the 11-op scan, its `_run` lemma, the bridge onto `EvalCnfSplit.satEIn`, and the witness. ⚠ FINDING AS: the on-machine CNF *parser* the plan called for does not exist and is not needed — the canonical encoding is already the raw stream, so the machine owes a validator and a clause counter, not a parser. Probe: `probes/SATStrProbe.lean` (exhaustive at length ≤ 8/7/6). |
+| **`#print axioms SATStrComp.SATStr_NPcompleteStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SATStr`, NP-completeness with `List Bool` on BOTH sides of the arrow** (2026-08-05). Hardness is the whole honest chain with a **sixth seam** on its tail (`SAT_to_SATStr_comp.lean`); membership is `SATStr.satStrWitness`. The reduction map `satToStr` is the identity on tape cells (`strBits (satToStr N) = encodeCnf N`), so its `Cmd` is the layer's no-op and the content is `satStr_satToStr`, which needs `encodeCnf` injective. New reusable piece: `SATStrComp.ExitsOnCNFOUT` + `exitsOnCNFOUT_comp` — the left composite's **exit register** (which `computes` does not give), transported along a seam in one line. ⚠ FINDING AT: this landed together with a **generalisation of `Serialize`'s no-compression law** to a polynomial `sizeLB`; the identity form was unsatisfiable for the canonical bit-string layout. Probe: `probes/SATToSATStrProbe.lean`. |
 | **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01; head side CLOSED 2026-08-02** — the composite's `encodeIn` is now `W.encX` verbatim, i.e. `certState x` under `NPhardStr`, so there is no head-side encoding of ours left to read.<br> The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–14 in the ROADMAP register. |
 | ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
@@ -286,14 +360,19 @@ working.
 
 ## What the theorem says, and what stands behind it
 
-There is now exactly **one** chain, and every arrow in it is a real `Cmd`
+There is exactly **one** chain, and every arrow in it is a real `Cmd`
 program with a proven polynomial cost bound:
 
 ```
-Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT ⪯p' SAT
-└─ C8 front ─┘└─ S1 ─┘└──────────────── the sound tail ───────────────────┘
+Q ⪯p' FlatSingleTMGenNP ⪯p' FlatTCC ⪯p' FlatCC ⪯p' BinaryCC ⪯p' FSAT ⪯p' SAT ⪯p' SATStr
+└─ C8 front ─┘└─ S1 ─┘└──────────────── the sound tail ───────────────────┘└ 2026-08-05 ┘
         = ONE composed free-layer witness = `NPhard'' SAT` ⊇ `NPhardStr SAT`
+        …and, one seam longer, `NPhardStr SATStr`
 ```
+
+The last arrow is a *re-typing*, not a computation: `satToStr` is the identity
+on tape cells, so its `Cmd` is the layer's no-op. It is there because the
+statement it produces has bit strings on both sides.
 
 for every NP problem `Q` **presented with a split free-line verifier witness**
 (`InNPWitnessLangFreeSplit`: a real `Cmd` verifier over a bit-level layout, with
@@ -372,9 +451,10 @@ verdict 6. The `FlatTM` model, the `encodable`/`inOPoly` machinery, the
 family are also sound.
 
 **The one thing that is not enforced:** encoding honesty for *intermediate*
-witnesses. The two chain ends are pinned (tail: `Serialize cnf`; head: the
-`NPhardStr` statement). See the caveat at the top of this file and ROADMAP risk
-**S5**.
+witnesses. The chain ends are pinned (head: the `NPhardStr` statement; tail:
+`Serialize cnf`, or `Serialize (List Bool)` on the one-seam-longer chain, which
+is the head's own function). See the caveat at the top of this file and ROADMAP
+risk **S5**.
 
 
 ## The strategy: a higher-level computable layer
