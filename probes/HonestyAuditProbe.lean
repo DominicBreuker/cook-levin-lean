@@ -578,6 +578,40 @@ theorem badEncX_size_faithful (x : List Bool) :
 theorem cheat_reduction : Q ⪯p' SAT :=
   CookLevinHonest.SAT_NPhard'' (List Bool) inferInstance Q ⟨badSplitWitness Q⟩
 
+/-! ### §7c — the corollary nobody had drawn: `inNPLangFreeSplit` is VACUOUS
+
+§7b was written as a statement about the *hypothesis* side of `NPhard''`. It is
+also, verbatim, a statement about the **conclusion** side of `NPcompleteStr`,
+and that had gone unrecorded until the S8 audit of 2026-08-07.
+
+`NPcompleteStr P = NPhardStr P ∧ inNPLangFreeSplit P`. The line below shows the
+second conjunct holds for an **arbitrary** `Q : List Bool → Prop` — undecidable
+ones included, since `Q` here is a bare variable. A conjunct that is true of
+every language is not a claim about `P`; the whole informational content of
+`NPcompleteStr`'s membership half is that the *instance* we supply is honest,
+which is risk S5's business and cannot be read off the statement (FINDING AW,
+again).
+
+**The fix is the same shape as `NPhardStr`'s: remove the free field, do not add
+a law.** `Complexity.Lang.NPcompleteStr' P = NPhardStr P ∧ inNPStr P` pins the
+membership layout to `certState` too, and `SATStrComp.SATStr_NPcompleteStr'`
+proves it for `SATStr` — at zero cost, because `SATStr.satStrWitness` was
+already an `InNPWitnessStr` and the old headline was throwing the
+`encX_canonical` field away. ⚠ The `#assert_statement_surface` block for the
+strict headline is in `Complexity/StatementGate.lean`; do not let the two drift.
+
+⚠ This does **not** apply to `CookLevinHonest.CookLevinStr : NPcompleteStr SAT`
+in the same one-line way — `SAT`'s instances live in `cnf`, not `List Bool`, so
+the cheat has to be re-run over that type — but nothing about the argument is
+special to `List Bool`, and no `inNPStr` exists for a non-string language to
+strengthen it with. That is a third reason to quote the `SATStr` headline. -/
+
+/-- ⚠ **The membership conjunct of `NPcompleteStr` is satisfiable for every
+string language.** `Q` is a variable: this is not a statement about a cleverly
+chosen language, it is a statement about the class. -/
+theorem membership_conjunct_is_vacuous : inNPLangFreeSplit Q :=
+  ⟨badSplitWitness Q⟩
+
 end HypothesisCheat2
 
 /-! ## §8 — THE FIX: under `NPhardStr` there is nothing left to choose

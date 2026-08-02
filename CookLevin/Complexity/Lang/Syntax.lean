@@ -10,11 +10,26 @@ are written here, a single one-time compiler emits `FlatTM`s, and
 every downstream verifier / reduction is a short program in the
 layer rather than a hand-rolled TM.
 
-Skeleton status: types are concrete; `eval`, `cost`, and `Compile`
-have committed signatures but are deferred to Part 3.2 / 3.3 of the
-roadmap (declared as `axiom`s in `Semantics.lean` and `Compile.lean`).
-The point of the skeleton is to nail down the *interfaces* so any
-gaps in the high-level architecture surface immediately. -/
+**Status: complete, and there are no axioms anywhere in it.** `Op.eval`,
+`Op.cost`, `Cmd.run` (hence `Cmd.eval`/`Cmd.cost`) are ordinary recursive
+definitions in `Semantics.lean`, and `Compile` is a real compiler with all
+nine ops proven sound. `lake build` proves this: `#assert_library_axiom_clean
+Complexity` at the bottom of `Complexity.lean` fails elaboration if any
+declaration under `Complexity` uses `sorry` or a bespoke `axiom`.
+
+⚠ This paragraph used to say the opposite — that `eval`, `cost` and `Compile`
+were "deferred" and "declared as `axiom`s". That was true of the May 2026
+skeleton and has been false since Part 3.2/3.3 landed. It is corrected here
+because this file is the **second entry** in the reviewer's reading list
+(`Complexity/StatementGate.lean`, group 2), so a stale note here is read by
+exactly the person who can least afford it (ROADMAP risk S8, FINDING AY).
+
+Two properties of the language worth knowing before reading on, both relied on
+throughout: it is **total** — `forBnd` samples its bound register's length once
+at entry, so no program can diverge and `Cmd.cost` is a closed form, not a
+partial function — and its cost is **size-aware**, so cost dominates the size
+the program writes (`Op.size_eval_le`). See `Complexity/CostFaithfulness.lean`
+for the proof that this cost is a polynomial proxy for real `stepFlatTM` time. -/
 
 namespace Complexity.Lang
 

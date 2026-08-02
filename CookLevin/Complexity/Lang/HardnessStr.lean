@@ -91,9 +91,47 @@ TM-backed poly-time reduction. -/
 def NPhardStr {X : Type} [encodable X] (P : X → Prop) : Prop :=
   ∀ Q : List Bool → Prop, inNPStr Q → Q ⪯p' P
 
-/-- **The honest completeness statement.** -/
+/-- **The honest completeness statement.**
+
+⚠ **Read the note on `NPcompleteStr'` below before quoting this one.** Its
+*hardness* conjunct is the honest one — `NPhardStr` has no `encX` to choose. Its
+*membership* conjunct `inNPLangFreeSplit P` is not: that class is inhabited for
+**every** string language, undecidable ones included
+(`probes/HonestyAuditProbe.lean` §7b/§7c). So the second half of this statement
+carries no information on its own; all of its content is that *our* instance is
+honest, which is risk S5's business, not this statement's. -/
 def NPcompleteStr {X : Type} [encodable X] (P : X → Prop) : Prop :=
   NPhardStr P ∧ inNPLangFreeSplit P
+
+/-- **The completeness statement to quote for a bit-string language** — both
+halves over the canonical layout (top-down audit, ROADMAP risk S8, 2026-08-07).
+
+`NPcompleteStr` states membership as `inNPLangFreeSplit P`, whose witness
+structure still carries a free input layout `encX`. By FINDING AO no law about
+`encX` can rule out "the honest encoding, plus one register holding the answer",
+and `probes/HonestyAuditProbe.lean` §7c turns that into the flat statement:
+`inNPLangFreeSplit Q` holds for **every** `Q : List Bool → Prop`. A conjunct
+that is true of everything says nothing.
+
+`inNPStr P` is the same claim with the layout pinned to `certState` — the raw
+input string, one register, one cell per bit — exactly as the hardness half
+already pins it. There is nothing left for an instantiator to choose on either
+side of the conjunction, so this statement, unlike `NPcompleteStr`, has no
+dishonest instantiation in *either* half.
+
+This costs nothing: `SATStr.satStrWitness` is already an `InNPWitnessStr`, and
+`SATStrComp.SATStr_NPcompleteStr` was discarding precisely the `encX_canonical`
+field that makes the conjunct real. Live at
+`SATStrComp.SATStr_NPcompleteStr'`. -/
+def NPcompleteStr' (P : List Bool → Prop) : Prop :=
+  NPhardStr P ∧ inNPStr P
+
+/-- The strict statement implies the general one: `InNPWitnessStr` forgets to
+`InNPWitnessLangFreeSplit`. The converse does **not** hold, which is the whole
+point — see the docstrings above. -/
+theorem NPcompleteStr'_to_NPcompleteStr {P : List Bool → Prop}
+    (h : NPcompleteStr' P) : NPcompleteStr P :=
+  ⟨h.1, by obtain ⟨W⟩ := h.2; exact ⟨W.toInNPWitnessLangFreeSplit⟩⟩
 
 /-- `NPhard''` implies `NPhardStr`: the string presentation is one of the
 presentations `NPhard''` quantifies over. One line — the whole point is that the

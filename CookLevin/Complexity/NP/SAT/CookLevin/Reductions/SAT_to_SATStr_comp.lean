@@ -250,10 +250,28 @@ theorem satStr_NPhardStr : NPhardStr SATStr.SATStr := by
   obtain ⟨W⟩ := hP
   exact front_to_SATStr_reducesPolyMO' W.toInNPWitnessLangFreeSplit
 
-/-- **`NPcompleteStr SATStr`** — ★ **NP-completeness with `List Bool` on both
-sides of the arrow.** Membership is `SATStr.satStrWitness` (2026-08-04);
-hardness is the whole chain with one more seam on its tail. -/
+/-- **`NPcompleteStr' SATStr`** — ★★ **THE STATEMENT TO QUOTE.** NP-completeness
+with `List Bool` on both sides of the arrow, and with **both** conjuncts pinned
+to the canonical layout.
+
+Hardness is the whole chain with one more seam on its tail; membership is
+`SATStr.satStrWitness` (2026-08-04), an `InNPWitnessStr` — so its input layout
+is `certState x`, the raw bit string, fixed by the statement rather than chosen
+by us.
+
+The distinction from `SATStr_NPcompleteStr` below is not cosmetic. That one
+states membership as `inNPLangFreeSplit`, a class whose witness still carries a
+free layout `encX` and which is therefore inhabited by **every** string
+language, undecidable ones included (`probes/HonestyAuditProbe.lean` §7c). Its
+membership conjunct is true of everything and so says nothing; this one's does
+not and is not. Found by the S8 audit, 2026-08-07. -/
+theorem SATStr_NPcompleteStr' : NPcompleteStr' SATStr.SATStr :=
+  ⟨satStr_NPhardStr, SATStr.inNPStr_SATStr⟩
+
+/-- **`NPcompleteStr SATStr`** — the same theorem with the weaker membership
+conjunct, kept because the earlier literature of this repository (README,
+ROADMAP, `NonVacuity`) quotes it. Prefer `SATStr_NPcompleteStr'`. -/
 theorem SATStr_NPcompleteStr : NPcompleteStr SATStr.SATStr :=
-  ⟨satStr_NPhardStr, ⟨SATStr.satStrWitness.toInNPWitnessLangFreeSplit⟩⟩
+  NPcompleteStr'_to_NPcompleteStr SATStr_NPcompleteStr'
 
 end SATStrComp

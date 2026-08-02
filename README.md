@@ -14,29 +14,50 @@ presented as a language of bit strings** (2026-08-04), and that inhabitant is
 **NP-complete in this development's own sense** (2026-08-05).**
 
 ```
-CookLevinHonest.CookLevinStr   : NPcompleteStr SAT      -- ★ SAT is NP-complete
-SATStrComp.SATStr_NPcompleteStr: NPcompleteStr SATStr   -- ★ …as a LANGUAGE OF BIT STRINGS
-CookLevinHonest.CookLevin''    : NPcomplete''  SAT      -- the general form they come from
-all three depend on axioms: [propext, Classical.choice, Quot.sound]
+SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr  -- ★★ QUOTE THIS ONE
+CookLevinHonest.CookLevinStr     : NPcompleteStr  SAT     -- ★ SAT is NP-complete
+SATStrComp.SATStr_NPcompleteStr  : NPcompleteStr  SATStr  -- the weaker membership half
+CookLevinHonest.CookLevin''      : NPcomplete''   SAT     -- the general form they come from
+all four depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
 
-**Which one to quote.** They are the same mathematics presented at two
-granularities, and each costs a reviewer something different (see the checklist
-below). `CookLevinStr` says *SAT — satisfiability of a `cnf`* is NP-complete;
-its hypothesis and conclusion sit on different types, and reading its
-conclusion means reading one encoding of ours (`Serialize cnf`).
-`SATStr_NPcompleteStr` is the textbook shape — a language `L ⊆ {0,1}*` that is
-NP-complete among languages of bit strings, `List Bool` on *both* sides — and
-reading it means reading instead what `SATStr` *is*
-(`SATStr.satStr_iff : SATStr x ↔ ∃ N, strBits x = encodeCnf N ∧ SAT N`).
-Neither is stronger; the second is closer to the textbook and the first is
-closer to the name "SAT".
+**Which one to quote — and this changed on 2026-08-07.** `NPcompleteStr P` is a
+conjunction: `NPhardStr P ∧ inNPLangFreeSplit P`. The hardness half has no free
+input encoder, which is the whole reason `NPhardStr` exists. The **membership**
+half had one, and the S8 audit found that it is fatal: `InNPWitnessLangFreeSplit`
+still carries a free layout `encX`, so by FINDING AO a witness may write the
+input out honestly *and append the answer in one more register* — and
+`probes/HonestyAuditProbe.lean` §7c now proves the consequence outright,
+`inNPLangFreeSplit Q` **for an arbitrary `Q : List Bool → Prop`**, undecidable
+ones included. A conjunct that is true of every language is not a claim about
+`P`.
+
+`NPcompleteStr' P = NPhardStr P ∧ inNPStr P` removes the field rather than
+legislating about it — the same fix `NPhardStr` applied on the hypothesis side —
+so the input layout is `certState` on **both** sides of the conjunction and
+there is nothing left for anyone to choose. It cost nothing to prove:
+`SATStr.satStrWitness` was already an `InNPWitnessStr`, and the old headline was
+discarding precisely the field that makes the conjunct real. **And it costs a
+reviewer nothing either — 112 definitions against 113** (`inNPLangFreeSplit`
+drops out of the statement surface; `inNPStr` was already in it). The honest
+statement here is also the smaller read.
+
+The other two remain and are still true. `CookLevinStr` says *SAT —
+satisfiability of a `cnf`* is NP-complete; its hypothesis and conclusion sit on
+different types, and reading its conclusion means reading one encoding of ours
+(`Serialize cnf`). ⚠ It **cannot** be strengthened the way `SATStr` was: `SAT`
+lives on `cnf`, not `List Bool`, and `inNPStr` is only defined for string
+languages — so its membership conjunct keeps the weakness described above, and
+all of that conjunct's content is that *our* instance is honest (risk S5), not
+that the statement demands it. That is the third independent reason to prefer
+the string headline; the other two are the textbook shape (`List Bool` on both
+sides) and the input measure (see the checklist).
 
 ### What a reviewer actually has to do
 
-1. **`lake build`.** If it is green then three things are machine-checked, all
+1. **`lake build`.** If it is green then five things are machine-checked, all
    at elaboration time, with no CI step and no `grep` involved:
-   * every one of the ~12 400 declarations under `Complexity` is `sorry`-free
+   * every one of the ~12 700 declarations under `Complexity` is `sorry`-free
      and uses only `propext`, `Classical.choice` and `Quot.sound`
      (`#assert_library_axiom_clean` in `Complexity/Meta/AxiomGate.lean`, swept
      from `Complexity.lean`; endpoint-by-endpoint in
@@ -54,12 +75,24 @@ closer to the name "SAT".
      for want of an instance, nor true of arbitrary predicates;
    * **the reading list in step 2 is complete.** `Complexity/StatementGate.lean`
      names every constant *of this repository* that the headline statements are
-     built from — 103 for `CookLevinStr`, 113 for `SATStr_NPcompleteStr` — and
-     `#assert_statement_surface` recomputes the closure of each statement's type
-     and fails the build unless the list matches **exactly**. So the list below
-     cannot quietly grow, and no definition of ours can reach the meaning of the
-     theorem without appearing in a file you have read
-     (`Complexity/Meta/StatementSurface.lean` says what "reach" means).
+     built from — **112** for `SATStr_NPcompleteStr'`, 103 for `CookLevinStr`,
+     113 for `SATStr_NPcompleteStr` — and `#assert_statement_surface` recomputes
+     the closure of each statement's type and fails the build unless the list
+     matches **exactly**. So the list below cannot quietly grow, and no
+     definition of ours can reach the meaning of the theorem without appearing
+     in a file you have read (`Complexity/Meta/StatementSurface.lean` says what
+     "reach" means);
+   * **and that list has been read.** `Complexity/StatementMeaning.lean` carries
+     the checkable half of the audit of it (2026-08-07, ROADMAP risk **S8**, the
+     verdict table): the headline **restated in ordinary mathematical language
+     and proved from itself**, plus machine-checked answers to the questions a
+     reviewer would otherwise have to resolve by reading — that rejection is a
+     real verdict rather than the absence of acceptance, what the tape does at
+     its frontier and its left end, that a `runFlatTM` result is not by itself a
+     halting claim, that the empty clause is unsatisfiable and the empty CNF
+     satisfiable, and what the input measure actually measures. **Read that file
+     immediately after the statement gate** — it is the shortest path from "the
+     list is complete" to "I believe the list".
 2. **Read four things**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else. These are four *topics*; the exact
    definitions under each, in reading order, are the five groups of
@@ -100,6 +133,25 @@ closer to the name "SAT".
    language through the 12-line `EvalCnfCmd.encodeCnf`, and it is axiom-clean.
    Choose the headline on which shape you want, not on which is cheaper to read;
    the two costs are within eleven definitions of each other either way.
+
+   ⚠ **One thing the audit of 2026-08-07 added, and it is the strongest
+   argument for the string headline.** `encodable.size` on `Nat` is `id` —
+   **numbers are measured in unary, uniformly, throughout this development**.
+   On the hardness side that is invisible and harmless: an input is a `List
+   Bool` and its size is between its length and twice it, so "polynomial in
+   `encodable.size x`" *is* "polynomial in the length of the input string". On
+   the membership side of `CookLevinStr` it is not invisible: `SAT`'s input is a
+   `cnf` whose measured size counts every variable *index* in unary, so a
+   formula mentioning variable `2^40` measures as astronomically large and a
+   polynomial bound in that measure is a **weaker** claim than the same bound
+   over a binary encoding. It is not a cheat — the measure agrees with the
+   layout the machines actually use (everything on the proof path is a flat
+   `0`/`1` stream with unary numbers, and `sizeLB` forces the input's size to be
+   recoverable from its own layout's cell count), so the polynomials do bound
+   real time on a real tape. But it is a caveat a textbook reader will not
+   expect, and over `SATStr` it simply does not arise: the input **is** the bit
+   string on both sides, and `instEncodableNat` is exactly the one name of the
+   103 that is *not* among the 113. See ROADMAP S8 verdict 12.
 
    Two things have come *off* that list. The head-side encoding
    (2026-08-02): the composite reduction's `ComputesBy.encode` is now literally
@@ -345,7 +397,7 @@ working.
 | | |
 |---|---|
 | `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all **12680** declarations in all **106** modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, `Complexity/CostFaithfulness.lean` gates `Op.cost` as a time proxy, `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis, and **`Complexity/StatementGate.lean` (2026-08-06) gates the reviewer's reading list itself**. Warm rebuild ~2 s; cold ~15 min. |
-| **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
+| **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). ⚠ **No longer the statement to quote** — its *membership* conjunct is `inNPLangFreeSplit SAT`, which by FINDING AX claims nothing (see `SATStr_NPcompleteStr'`). It remains the statement whose subject is literally called "SAT". |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
 | **non-vacuity of the `NPhardStr` hypothesis** | ✅ **both directions, gated** (`Complexity/NonVacuity.lean`). **Inhabited — by a hard problem (2026-08-04)**: `SATStr.inNPStr_SATStr` is a complete `InNPWitnessStr` for SAT as a bit-string language, and `satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is `CookLevinStr` applied to it. (`inNPStr_squareStr`, 2026-08-03, stays as the minimal example; `SquareStr` is in P.) **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM` — that rung is open and labelled. ~~`NPhardStr SATStr` is not claimed~~ — **proven 2026-08-05**, so the inhabitant is NP-**complete** in this development's own sense (`NonVacuity.npcompleteStr_SATStr`). Probes: `probes/NonVacuityProbe.lean`, `probes/SATStrProbe.lean`. |
 | `#print axioms SATStr.inNPStr_SATStr` | **`[propext, Classical.choice, Quot.sound]`** — **SAT as a STRING language, with a real verifier** (2026-08-04). `Deciders/CnfWellFormed.lean` is the four-state DFA and the characterisation `wfCnfB l = true ↔ ∃ N, encodeCnf N = l`; `Deciders/SATStr.lean` is the 11-op scan, its `_run` lemma, the bridge onto `EvalCnfSplit.satEIn`, and the witness. ⚠ FINDING AS: the on-machine CNF *parser* the plan called for does not exist and is not needed — the canonical encoding is already the raw stream, so the machine owes a validator and a clause counter, not a parser. Probe: `probes/SATStrProbe.lean` (exhaustive at length ≤ 8/7/6). |
@@ -423,7 +475,12 @@ the `Cmd` level, through five `SeamData`/`comp` seams; hardness is proven at the
 chain endpoint only. Together with `EvalCnfSplit.SAT_inNPLangFreeSplit`
 (membership), that is `CookLevinHonest.CookLevin'' : NPcomplete'' SAT` — and,
 restricted to string languages, `CookLevinHonest.CookLevinStr :
-NPcompleteStr SAT`, the statement to quote.
+NPcompleteStr SAT`. ⚠ **The statement to quote is neither of those two** — it is
+`SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr`, because the
+*membership* conjunct of `NPcompleteStr` still ranges over
+`InNPWitnessLangFreeSplit`, which supplies its own `encX` and is therefore
+inhabited by every string language (FINDING AX, 2026-08-07). See the top of this
+file.
 
 **Why the hypothesis is a verifier witness and not `inNP Q`.** `inNP`/`inTimePoly`
 are *classically true for every predicate* — the framework's `DecidesBy` lets the

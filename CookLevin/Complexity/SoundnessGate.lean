@@ -22,13 +22,21 @@ endpoint's axiom list, which is what you want when investigating. This file is
 the *gate*: it says nothing and fails loudly. Keep the two lists in sync; when
 you add an endpoint, add it here first.
 
-## The three that matter
+## The four that matter
 
 ```
-CookLevinHonest.CookLevinStr : NPcompleteStr SAT   -- ★ the statement to quote
-CookLevinHonest.CookLevin''  : NPcomplete''  SAT   -- the general form
-FrontS1Comp.SAT_NPhard''                           -- the hardness half
+SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr -- ★★ the statement to quote
+CookLevinHonest.CookLevinStr     : NPcompleteStr  SAT    -- ★ the one named "SAT"
+CookLevinHonest.CookLevin''      : NPcomplete''   SAT    -- the general form
+FrontS1Comp.SAT_NPhard''                                 -- the hardness half
 ```
+
+⚠ The order changed on 2026-08-07. `NPcompleteStr`'s *membership* conjunct
+(`inNPLangFreeSplit P`) is satisfied by **every** string language — the witness
+class still carries a free input layout `encX`
+(`probes/HonestyAuditProbe.lean` §7c, FINDING AX) — so it claims nothing on its
+own. `NPcompleteStr' P = NPhardStr P ∧ inNPStr P` pins the layout on both sides
+and is what a reviewer should quote.
 
 Everything else below is the chain that feeds them, gated so that a regression
 is attributed to the piece that caused it rather than to the headline.
@@ -153,8 +161,11 @@ namespace Complexity.SoundnessGate
 
 /-! ## `SATStr` — NP-completeness with `List Bool` on BOTH sides (2026-08-05)
 
-The sixth seam and the endpoints it produces. `SATStrComp.SATStr_NPcompleteStr`
-is the statement whose hypothesis *and* conclusion are languages of bit strings;
+The sixth seam and the endpoints it produces. `SATStrComp.SATStr_NPcompleteStr'`
+is the statement whose hypothesis *and* conclusion are languages of bit strings
+*and* whose two conjuncts both pin the canonical layout — the statement to
+quote. `SATStr_NPcompleteStr` is its weakening through
+`NPcompleteStr'_to_NPcompleteStr`, kept because earlier documentation names it;
 `CookLevinHonest.CookLevinStr` remains the statement about SAT itself. -/
 
 #assert_axioms_clean
@@ -172,6 +183,8 @@ is the statement whose hypothesis *and* conclusion are languages of bit strings;
   SATStrComp.front_to_SATStr_witness
   SATStrComp.front_to_SATStr_reducesPolyMO'
   SATStrComp.satStr_NPhardStr
+  SATStrComp.SATStr_NPcompleteStr'
   SATStrComp.SATStr_NPcompleteStr
+  Complexity.Lang.NPcompleteStr'_to_NPcompleteStr
 
 end Complexity.SoundnessGate
