@@ -517,6 +517,19 @@ tail. This is the strongest non-vacuity statement available: the hypothesis of
 theorem npcompleteStr_SATStr : NPcompleteStr SATStr.SATStr :=
   SATStrComp.SATStr_NPcompleteStr
 
+/-- **…and in the strict sense, where the membership conjunct is not vacuous**
+(2026-08-07, FINDING AX). `NPcompleteStr`'s membership half quantifies over
+`InNPWitnessLangFreeSplit`, a class that carries a free input layout and is
+therefore inhabited by *every* string language
+(`probes/HonestyAuditProbe.lean` §7c) — so the statement above, read alone, says
+only that `SATStr` is NP-**hard**. `NPcompleteStr' = NPhardStr P ∧ inNPStr P`
+pins the membership layout to `certState` as well, and `SATStr.satStrWitness`
+already meets it. **This is the non-vacuity claim to quote**: the hypothesis
+class of `NPhardStr` contains a problem that is NP-complete in this
+development's own sense, with both conjuncts making a real claim. -/
+theorem npcompleteStr'_SATStr : NPcompleteStr' SATStr.SATStr :=
+  SATStrComp.SATStr_NPcompleteStr'
+
 /-! ## The gate -/
 
 #assert_axioms_clean
@@ -533,6 +546,7 @@ theorem npcompleteStr_SATStr : NPcompleteStr SATStr.SATStr :=
   Complexity.NonVacuity.inNPStr_SATStr
   Complexity.NonVacuity.satStr_reducesPolyMO'_SAT
   Complexity.NonVacuity.npcompleteStr_SATStr
+  Complexity.NonVacuity.npcompleteStr'_SATStr
   SATStr.satStr_iff
   SATStr.inNPStr_SATStr
   SATStr.verifier_reads_certificate

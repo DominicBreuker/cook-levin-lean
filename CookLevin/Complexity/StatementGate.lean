@@ -310,4 +310,150 @@ groups 1–5 above minus `instEncodableNat`, plus group 6. -/
   CnfSerialize.decClause
   CnfSerialize.scanUnary
 
+/-! ## ★★ `SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr` — **quote this one**
+
+The same theorem as the block above with **both** conjuncts pinned to the
+canonical layout, and the S8 audit of 2026-08-07 is why it exists.
+
+`NPcompleteStr P = NPhardStr P ∧ inNPLangFreeSplit P`. The hardness half has no
+free input encoder — that is what `NPhardStr` is for. The membership half had
+one: `InNPWitnessLangFreeSplit` still carries `encX`, and by FINDING AO no *law*
+about `encX` can exclude "the honest encoding, plus one register holding the
+answer". `probes/HonestyAuditProbe.lean` §7c draws the conclusion nobody had
+drawn: `inNPLangFreeSplit Q` holds for an **arbitrary** `Q : List Bool → Prop`.
+A conjunct true of every language is not a claim about `P` (FINDING AX).
+
+`NPcompleteStr' P = NPhardStr P ∧ inNPStr P` removes the field instead of
+legislating about it, exactly as `NPhardStr` did on the hypothesis side. It cost
+nothing to prove — `SATStr.satStrWitness` was already an `InNPWitnessStr`, and
+the weaker headline was discarding precisely the `encX_canonical` field that
+makes the conjunct real.
+
+**And it costs a reviewer nothing either: 112 definitions against 113.** The
+strict statement is *both* strictly stronger and one name cheaper, because
+`inNPLangFreeSplit` drops out of the surface and `inNPStr` was already in it
+(the hardness half quantifies over it). That is unusual enough to say plainly:
+here the honest statement is the smaller read, and the measurement is what
+shows it. -/
+
+#assert_statement_surface SATStrComp.SATStr_NPcompleteStr' =>
+  -- 1. What is claimed. (`inNPLangFreeSplit` is GONE — that is FINDING AX's fix.)
+  Complexity.Lang.NPcompleteStr'
+  Complexity.Lang.NPhardStr
+  Complexity.Lang.inNPStr
+  Complexity.Lang.InNPWitnessStr
+  Complexity.Lang.InNPWitnessLangFreeSplit
+  Complexity.Lang.InNPWitnessLangFreeSplit.encX
+  Complexity.Lang.certState
+  Complexity.Lang.reducesPolyMO'
+  Complexity.Lang.ReductionWitness'
+  Complexity.Lang.polyTimeComputable'
+  Complexity.Lang.PolyTimeComputableWitness'
+  Complexity.Lang.ComputesBy
+  Complexity.Lang.DecidesLang
+  Complexity.Lang.DecidesLang.encodeIn
+  polyCertRel
+  PolyCertRelWitness
+  inOPoly
+  inO
+  monotonic
+  -- 2. The programming layer.
+  Complexity.Lang.Var
+  Complexity.Lang.State
+  Complexity.Lang.State.get
+  Complexity.Lang.State.set
+  Complexity.Lang.State.size
+  Complexity.Lang.State.isAccept
+  Complexity.Lang.State.isReject
+  Complexity.Lang.Op
+  Complexity.Lang.Op.clear
+  Complexity.Lang.Op.copy
+  Complexity.Lang.Op.concat
+  Complexity.Lang.Op.head
+  Complexity.Lang.Op.tail
+  Complexity.Lang.Op.appendZero
+  Complexity.Lang.Op.appendOne
+  Complexity.Lang.Op.eqBit
+  Complexity.Lang.Op.nonEmpty
+  Complexity.Lang.Op.eval
+  Complexity.Lang.Op.cost
+  Complexity.Lang.Op.UsesBelow
+  Complexity.Lang.Cmd
+  Complexity.Lang.Cmd.op
+  Complexity.Lang.Cmd.seq
+  Complexity.Lang.Cmd.ifBit
+  Complexity.Lang.Cmd.forBnd
+  Complexity.Lang.Cmd.eval
+  Complexity.Lang.Cmd.cost
+  Complexity.Lang.Cmd.run
+  Complexity.Lang.Cmd.decides
+  Complexity.Lang.Cmd.UsesBelow
+  Complexity.Lang.Compile.BitState
+  -- 3. The machine.
+  FlatTM
+  flatTM
+  FlatTM.sig
+  FlatTM.tapes
+  FlatTM.states
+  FlatTM.start
+  FlatTM.halt
+  FlatTM.trans
+  FlatTMTransEntry
+  FlatTMTransEntry.src_state
+  FlatTMTransEntry.src_tape_vals
+  FlatTMTransEntry.dst_state
+  FlatTMTransEntry.dst_write_vals
+  FlatTMTransEntry.move_dirs
+  TMMove
+  TMMove.Lmove
+  TMMove.Rmove
+  TMMove.Nmove
+  FlatTMConfig
+  FlatTMConfig.state_idx
+  FlatTMConfig.tapes
+  stepFlatTM
+  runFlatTM
+  tapeStep
+  applyTransitionEntry
+  entryMatchesConfig
+  currentTapeSymbol
+  writeCurrentTapeSymbol
+  moveTapeHead
+  initFlatConfig
+  initialTapes
+  haltingStateReached
+  validFlatTM
+  flatTMTransEntryValid
+  flatTMOptionSymbolsBounded
+  -- 4. SAT.
+  SAT
+  cnf
+  clause
+  literal
+  var
+  assgn
+  satisfiesCnf
+  evalCnf
+  evalClause
+  evalLiteral
+  evalVar
+  -- 5. Input size.
+  encodable
+  encodable.size
+  instEncodableBool
+  instEncodableList
+  instEncodableProd
+  -- 6. The language `SATStr` itself.
+  SATStr.SATStr
+  SATStr.cnfOf
+  Complexity.Lang.strBits
+  CnfWellFormed.parseTotal
+  CnfWellFormed.wfCnfB
+  CnfWellFormed.scanRun
+  CnfWellFormed.scanStep
+  CnfSerialize.decCnf
+  CnfSerialize.decCnfAux
+  CnfSerialize.decClause
+  CnfSerialize.scanUnary
+
 end Complexity.StatementGate

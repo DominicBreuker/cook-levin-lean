@@ -2,35 +2,33 @@ import Complexity.Lang.Syntax
 
 set_option autoImplicit false
 
-/-! # Lang semantics (skeleton)
+/-! # Lang semantics
 
-Denotational and cost semantics of the layer's commands. The
-definitions are deferred to Part 3.2 of `ROADMAP.md`; the skeleton
-commits to the *signatures* and key algebraic laws.
+Denotational and cost semantics of the layer's operations and commands. **These
+are concrete definitions — there is nothing deferred and nothing axiomatised
+here**; `lake build` proves it (`#assert_library_axiom_clean Complexity`).
 
-The natural implementation is mutually recursive: `eval` and `cost`
-descend on `Cmd` structurally, but `forBnd`'s loop iterates over a
-runtime-determined bound. The clean shape is
+⚠ Until 2026-08-07 this header said the definitions were "deferred to Part 3.2"
+and that the file "commits to the *signatures*", which had been false since Part
+3.2 landed. It is corrected because this file is in the reviewer's reading list
+(`Complexity/StatementGate.lean`, group 2) — see ROADMAP risk S8, FINDING AY.
 
-```lean
-def Cmd.run : Cmd → State → State × Nat
-  | .op o, s             => (Op.eval o s, Op.cost o s)
-  | .seq c1 c2, s        =>
-      let (s', n1) := Cmd.run c1 s
-      let (s'', n2) := Cmd.run c2 s'
-      (s'', 1 + n1 + n2)
-  | .ifBit t c1 c2, s    =>
-      let (s', n) :=
-        if (s.get t) = [1] then Cmd.run c1 s else Cmd.run c2 s
-      (s', 1 + n)
-  | .forBnd cnt bnd b, s =>
-      ((List.range (s.get bnd).length).foldl ...)
-```
+Three choices in `Cmd.run` below are load-bearing and easy to skim past:
 
-which is structurally recursive on `Cmd` (Lean accepts the foldl
-because the body recurses on a smaller `Cmd`). It is deferred to
-Part 3.2 so the skeleton does not commit to specific syntactic
-choices (e.g. is `seq`'s cost `n1 + n2` or `1 + n1 + n2`?).
+* **`Cmd.run` returns the post-state and the cost in one pass.** `Cmd.eval` and
+  `Cmd.cost` are its two projections, which is what avoids a mutual recursion
+  between them and keeps the whole thing structurally recursive on `Cmd`.
+* **`forBnd` reads its bound register's length once, at entry**, and iterates
+  that many times with the index in unary in the counter register. The body may
+  therefore write the bound register without changing the trip count. This is
+  what makes the language **total**: no program in it can diverge, so `cost` is
+  a closed form rather than a partial function.
+* **`forBnd`'s cost carries an extra `iters * iters` term.** It pays for
+  materialising the unary loop counter `replicate i 1` before each iteration —
+  real cells written, and real TM steps — which the fold accumulator does not
+  charge. Without it `Cmd.size_eval_le` (`size (eval s) ≤ size s + cost s`) is
+  false for loops, and the cost model stops being a faithful proxy for output
+  size. Same principle as the size-aware `Op.cost` immediately below.
 -/
 
 namespace Complexity.Lang

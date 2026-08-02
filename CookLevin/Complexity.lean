@@ -49,6 +49,7 @@ import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
 import Complexity.StatementGate
+import Complexity.StatementMeaning
 import Complexity.HonestyGate
 import Complexity.CostFaithfulness
 import Complexity.NonVacuity
@@ -57,13 +58,19 @@ set_option autoImplicit false
 
 /-! # The library root — and the whole-library soundness gate
 
-Two gates are part of the default build target and run on every `lake build`:
+The gates below are part of the default build target and run on every
+`lake build`:
 
 * `Complexity/SoundnessGate.lean` — the axiom sweep, endpoint by endpoint;
 * `Complexity/StatementGate.lean` — the complete list of *this repository's*
   definitions that the headline **statements** are built from, asserted exact.
   It is the reading list a reviewer works through, and the build proves nothing
   is missing from it;
+* `Complexity/StatementMeaning.lean` — the headline restated in ordinary
+  mathematical language, plus the checkable half of the S8 audit of that reading
+  list: that rejection is a real verdict, what the tape does at its edges, that
+  a `runFlatTM` result is not a halting claim, that SAT means satisfiability and
+  what the input measure is. Read it right after the statement gate;
 * `Complexity/HonestyGate.lean` — what the composite reduction's `encodeIn` and
   `decodeOut` actually *are* (risk S5's two audited functions);
 * `Complexity/CostFaithfulness.lean` — that `Op.cost`, the number every

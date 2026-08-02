@@ -14,17 +14,20 @@ reasonably provable).
 to back. For the evidence files, [`../probes/README.md`](../probes/README.md) is
 the authoritative map — this document does not duplicate it.
 
-## Where the proof stands (2026-08-06)
+## Where the proof stands (2026-08-07)
 
 **COOK–LEVIN IS PROVEN, on the honest statement, unconditionally — audited,
-stated in a form with no dishonest instantiation, non-vacuous, and now also
-stated with `List Bool` on BOTH sides of the arrow. `lake build` itself proves
-the library is `sorry`-free and axiom-clean.**
+non-vacuous, stated with `List Bool` on both sides of the arrow, and since
+2026-08-07 stated with the canonical layout pinned on BOTH sides of the
+completeness conjunction. `lake build` proves the library is `sorry`-free and
+axiom-clean, proves the reviewer's reading list is complete, and now also
+carries the checkable half of the audit of that list.**
 
 ```
-CookLevinHonest.CookLevinStr    : NPcompleteStr SAT      -- SAT is NP-complete
-SATStrComp.SATStr_NPcompleteStr : NPcompleteStr SATStr   -- …as a LANGUAGE of bit strings
-CookLevinHonest.CookLevin''     : NPcomplete''  SAT      -- the general statement
+SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr  -- ★★ QUOTE THIS ONE
+CookLevinHonest.CookLevinStr     : NPcompleteStr  SAT     -- SAT is NP-complete
+SATStrComp.SATStr_NPcompleteStr  : NPcompleteStr  SATStr  -- weaker membership half
+CookLevinHonest.CookLevin''      : NPcomplete''   SAT     -- the general statement
 all depend on axioms: [propext, Classical.choice, Quot.sound]
 ```
 
@@ -33,178 +36,148 @@ all depend on axioms: [propext, Classical.choice, Quot.sound]
 | sound tail, C8 front, tableau maths + both size bounds | ✅ axiom-clean |
 | S1 map + guard + program (all stages) + cost ladder | ✅ axiom-clean |
 | `FrontS1Comp.SAT_NPhard''` (hardness) / `EvalCnfSplit.SAT_inNPLangFreeSplit` (membership) | ✅ axiom-clean |
-| **`CookLevinHonest.CookLevinStr : NPcompleteStr SAT`** | ✅ |
-| **`SATStrComp.SATStr_NPcompleteStr : NPcompleteStr SATStr`** | ✅ **NEW 2026-08-05** — the sixth seam |
+| **`SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr`** | ✅ **NEW 2026-08-07** — both conjuncts canonical |
 | both chains' `decodeOut`s (`Serialize cnf` / `Serialize (List Bool)`) | ✅ real parsers, gated in `HonestyGate` |
 | the head encoder `FrontWitness.encodeInQ` | ✅ literally `certState x` under `NPhardStr` |
 | axiom/`sorry` hygiene · the audited functions · `Op.cost` as a time proxy · non-vacuity | ✅ *build-time* obligations, not probes |
 | non-vacuity: the class contains an NP-**complete** problem | ✅ `NonVacuity.npcompleteStr_SATStr` |
-| **the reviewer's reading list is COMPLETE** | ✅ **NEW 2026-08-06** — `Complexity/StatementGate.lean`, gated |
+| the reviewer's reading list is COMPLETE | ✅ `Complexity/StatementGate.lean`, gated |
+| **the reading list has been READ, and the checkable verdicts are gated** | ✅ **NEW 2026-08-07** — `Complexity/StatementMeaning.lean` |
 
 **The honesty surface that remains** is exactly: the *statement*
-(`NPcompleteStr`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the
+(`NPcompleteStr'`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the
 faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine, and **one** encoding
-— `Serialize cnf` if you quote `CookLevinStr`, `EvalCnfCmd.encodeCnf` (through
-`SATStr.satStr_iff`) if you quote `SATStr_NPcompleteStr`.
+— `EvalCnfCmd.encodeCnf` (through `SATStr.satStr_iff`) if you quote the string
+headline, `Serialize cnf` if you quote `CookLevinStr`.
 
-**Since 2026-08-06 that sentence is no longer the primary artifact — the gate
-is.** `Complexity/StatementGate.lean` lists **every** constant of this
-repository reachable from each headline's *type*, and `lake build` fails unless
-the list is exactly right: **103** definitions for `CookLevinStr`, **113** for
-`SATStr_NPcompleteStr`. The four-topic summary above is a true *grouping* of
-that list, not a substitute for it. Two things the measurement settled:
+That sentence is not the primary artifact; the **gates** are.
+`Complexity/StatementGate.lean` lists every constant of this repository
+reachable from each headline's *type* and `lake build` fails unless the list is
+exactly right: **112** for `SATStr_NPcompleteStr'`, 103 for `CookLevinStr`, 113
+for `SATStr_NPcompleteStr`. `Complexity/StatementMeaning.lean` then answers, by
+`decide`/`rfl`, the questions reading those definitions raises.
 
-* the `SATStr` headline's surface is **larger**, not smaller — the language is
-  *defined by parsing*, so `parseTotal`/`wfCnfB`/`decCnf` are part of what it
-  literally says, and the escape to `encodeCnf` is a **theorem** (`satStr_iff`),
-  not a definition. Both headlines stay; choose on shape, not on cost;
-* **no reduction, no `decodeOut`, no `Serialize` instance is in either
-  surface**, because they are existentially quantified. That is the structural
-  reason encoding honesty needs its own gate and can never be read off the
-  statement — S5 and S8 are different claims with different instruments.
-
-⚠ **Do not let either list grow silently.** You cannot: the gate fails. But when
-it does fail, *do not paste the new list in*. A new name means a reviewer's
+⚠ **Do not let any list grow silently.** You cannot: the gate fails. But when it
+does fail, *do not paste the new list in*. A new name means a reviewer's
 obligation changed — say what and why in `README.md` in the same commit.
 
 ## ★ Latest session
 
-**2026-08-06 (top-down) — the reading list stopped being a claim.**
+**2026-08-07 (top-down) — the 103 were read, and the published statement had a
+hole in the conjunct nobody was watching.**
 
-**Landed: `Complexity/Meta/StatementSurface.lean`,
-`Complexity/StatementGate.lean` (both in the default build target),
-`probes/StatementSurfaceProbe.lean`, `probes/README.md`.** Two probe files were
-deleted; two module docstrings and the README's reviewer checklist were
-corrected.
+**Landed: `Complexity/StatementMeaning.lean` (in the default build target),
+`Complexity.Lang.NPcompleteStr'` + `SATStrComp.SATStr_NPcompleteStr'`, a third
+`#assert_statement_surface` block, `probes/HonestyAuditProbe.lean` §7c, the S8
+verdict table in ROADMAP, and two rewritten module headers.**
 
-1. **`#assert_statement_surface` — FINDING AV's instrument.** It computes the
-   repository-local constant closure of a theorem's **type** (through definition
-   bodies, inductive constructors and field types; stopping at Lean core and
-   Mathlib; *not* through proofs) and fails elaboration unless the set is
-   **exactly** the list written down. Equality, not containment, so the list can
-   neither grow silently nor rot into a superset that says nothing.
-   `#print_statement_surface` is the reporting twin — use it when you add an
-   endpoint. ROADMAP risk **S8**.
-2. **FINDING AV — the string headline's statement surface is LARGER, not
-   smaller (113 vs 103), and the plan of record implied otherwise.** `SATStr` is
-   *defined by parsing* its input (`cnfOf = parseTotal ∘ strBits`), so the
-   well-formedness DFA and the CNF parser are literally part of what the
-   textbook-shaped headline says. The cheaper reading exists but goes through
-   `satStr_iff`, a **theorem**. **The generalisable lesson: "which statement is
-   cheaper to audit" is a measurable question, and prose about it drifts.**
-3. **FINDING AW — the honesty gate and the statement gate can never be merged,
-   and the reason is structural.** Neither surface contains a reduction, a
-   `decodeOut` or a `Serialize` instance: `reducesPolyMO'` quantifies over them
-   existentially. So *no* strengthening of the statement can pin the witness we
-   chose, and *no* audit of the witness tells a reader what the theorem says.
-   Two claims, two gates, permanently. Say this when someone proposes to
-   simplify the gate story.
-4. **`probes/README.md` — 48 files sorted into GATE / REGRESSION /
-   ARCHAEOLOGY**, each with what it pins, its measured runtime and when to
-   re-run it. Every probe was run and timed to build it (the first time that had
-   been done), which found the item below.
-5. **THREE probes did not elaborate and were deleted.** `EqBitBudgetProbe`
-   (30 errors), `CompareRegsAssemblyProbe` (13) and `ShrinkEmptyProbe` (20) all
-   named `Compile.compareRegsTM` / `growTwoEmptyM` / `shrinkTwoEmptyM` /
-   `shrinkEmptyTM` — the design-(A) `eqBit` scratch stack, deleted when
-   Resolution B shipped on 2026-06-21b. They probed a *rejected* design, the
-   rejection is recorded in a file that still runs (`EqBitNoGrowProbe.lean`),
-   and git has them (`git show 39f491c:probes/EqBitBudgetProbe.lean`).
-   **The rule: a probe file that does not elaborate is worse than no probe file
-   — it reads as evidence and is not.** ⚠ And `GrowEmptyProbe` *passed* only
-   because it models an abstract machine and names no live constant: passing is
-   not the same as being evidence.
-6. **A stale runtime in the plan of record.** `S1StepLoopProbe` was documented
-   as "~3 min"; measured, it is **21 s**. The only slow file in `probes/` is
-   `S1PreludeEmitProbe` at **402 s**; everything else is under 35 s. Iterating
-   on the S1 stack is much cheaper than this document has been claiming.
+1. **The S8 verdicts — fifteen rows, one per question the 103 raise.** In
+   ROADMAP's S8 row. Where a verdict was checkable it is checked by the build,
+   not asserted in prose: `StatementMeaning` restates the headline in ordinary
+   language and **proves the restatement from the theorem**, then pins that
+   rejection is a positive verdict, what the tape does at its edges, that a
+   `runFlatTM` result is not a halting claim, that the empty clause is
+   unsatisfiable and the empty CNF satisfiable, and what the input measure is.
+2. **FINDING AX — the membership conjunct of the published headline was
+   VACUOUS.** `NPcompleteStr P = NPhardStr P ∧ inNPLangFreeSplit P`. Three
+   sessions hardened the *hardness* conjunct until it had no free input encoder;
+   nobody re-asked the question of the other one. `InNPWitnessLangFreeSplit`
+   still carries `encX`, so by FINDING AO a witness may write the input out
+   honestly and *append the answer* — `HonestyAuditProbe` §7c now proves
+   `inNPLangFreeSplit Q` for an **arbitrary** `Q : List Bool → Prop`. Fixed the
+   same way `NPhardStr` fixed the hypothesis side: **remove the field, do not
+   add a law.** `NPcompleteStr' P = NPhardStr P ∧ inNPStr P`. It cost three
+   lines — `SATStr.satStrWitness` was already an `InNPWitnessStr` and the old
+   headline was calling `.toInNPWitnessLangFreeSplit` on it, deleting exactly
+   the field that makes the conjunct real. ★ **And it is 112 names against 113:
+   strictly stronger *and* one definition cheaper to read.**
+3. **FINDING AY — two files in the reading list said their own definitions were
+   `axiom`s.** `Lang/Syntax.lean` and `Lang/Semantics.lean`, the **first two
+   files of group 2**, still carried May-2026 skeleton headers ("deferred to
+   Part 3.2", "declared as `axiom`s"). Both rewritten. The lesson:
+   `#assert_statement_surface` measures definitions, and **nothing in this
+   repository can gate a docstring** — audit the prose inside the surface.
+4. **Two verdicts a reviewer must be *told*, not shown.** `encodable.size` on
+   `Nat` is `id`, so **numbers are unary everywhere** (S8 verdict 12 — harmless
+   on the hardness side, a real caveat for `CookLevinStr`'s membership half, and
+   a third argument for the string headline); and `encodable.size_ge_logical` is
+   logically vacuous with zero consumers (verdict 13).
+5. **What the audit did NOT find.** `Cmd.decides` is genuinely two-sided,
+   `ComputesBy` genuinely demands halting, `polyCertRel`'s bound is on the right
+   side, `inO`/`inOPoly`/`monotonic` are textbook, `SAT` is satisfiability with
+   both degenerate cases the right way round, and `writeCurrentTapeSymbol`'s
+   append-only frontier is deliberate and the alternative is *unsound*. Groups
+   1–5 are otherwise clean.
 
-**Cost was nearly free.** Everything except two comment fixes in
-`Lang/Compile/{OpSound,RunClear}.lean` is in leaf modules; the gate itself
-elaborates in ~3 s. Budget the comment fixes' rebuild, not the gate.
+**Cost.** `StatementMeaning` elaborates in ~3 s and everything else is leaf work
+— except the two docstring fixes in `Lang/Syntax.lean`/`Lang/Semantics.lean`,
+which bought a full ~15 min rebuild. Budget that, not the new file.
 
 ## ★ Recommendation for the next session
 
-**Run a TOP-DOWN session, on top-down item 1: read the 103 and write the S8
-verdicts.**
+**Run a TOP-DOWN session, on top-down item 1: meter the gate theorems
+themselves.**
 
-Stated against the project's actual goal — *a stranger who knows textbook
-Cook–Levin should be able to `lake build` and then check a handful of places*.
-As of 2026-08-06 the machine side of that is finished: the build proves the
-theorem is proved, that the two audited functions are what the audit says, that
-`Op.cost` is real time, that the hypothesis class contains an NP-complete
-problem and nothing undecidable, and — new — that the list of definitions a
-reviewer must read is **complete and exactly 103 names**. `probes/README.md`
-tells them which evidence files are live. Everything a machine can check about
-reviewability is now checked.
-
-What is left is the part a machine cannot do: **nobody has read the 103 and
-written down what they mean.** That is one session, needs no Lean engineering,
-touches no proof, and is the last step between "the list is complete" and "the
-list has been audited". It is also the step most likely to *find* something —
-every previous session that read a definition adversarially (FINDING AN, AO, AT,
-AV) found a defect or an overclaim.
+The reasoning is the reasoning of FINDING AX, applied one level up. A reviewer
+is told: `lake build` is green, therefore the library is axiom-clean, the two
+audited functions are what the audit says, `Op.cost` is a real time proxy, the
+hypothesis class is non-vacuous, and the reading list is complete. Every one of
+those is a **theorem whose statement the reviewer must also read** — and *those*
+statements are not metered by anything. `#assert_statement_surface` exists, it
+costs seconds per endpoint, and pointing it at `Compile.cost_is_time_proxy`,
+`NonVacuity.searchDecide_correct`, the `HonestyGate` pins and
+`StatementMeaning.hardness_spelled_out` closes the last place where a
+reviewer's obligation can grow without anyone noticing. It is one session, no
+proof work, all leaf files.
 
 The alternatives, and why they come second. **Top-down item 2** (the `Cmd`-level
 certificate search) is the last genuinely open rung of the mathematics, but it
 is a two-session build, it forces a `Lang/PolyTime.lean` edit (~15 min per
-rebuild), and nothing is waiting on it — the statement it would strengthen is
-labelled honestly in three places. **Bottom-up item 1** (`FlatClique`
-membership) is well-templated, adds a second problem to the class, and costs a
-reviewer nothing; take it if the next session prefers building to reading. Do
-**not** start a bottom-up string-language item (`FlatCliqueStr`, `kSAT3Str`):
-`SATStr` is already NP-complete, so a second one buys nothing a reader will
-check — and by the statement-surface note it would *add* to what they must read.
+rebuild), and nothing is waiting on it. **Top-down item 3** (relating `FlatTM`
+to a standard TM model) is the highest-value item in the whole plan and also the
+riskiest — start it only after its go/no-go probe, and only as a *dedicated*
+session. **Bottom-up item 1** (`FlatClique` membership) is well-templated, adds
+a second problem to the class, and costs a reviewer nothing; take it if the next
+session prefers building to reading.
 
 ## NEXT TOP-DOWN session
 
-The proof is done and six gates run inside `lake build`. Top-down work is still
-**turning reading obligations into typechecking obligations** — and, now that
-the reading obligation is finally *enumerated*, discharging it. Item 1 is new
-and is the highest-value one; item 2 is the last open rung of the mathematics;
-3–5 are maintenance.
+The proof is done and seven obligations run inside `lake build`. Top-down work
+is still **turning reading obligations into typechecking obligations** — and,
+since 2026-08-07, keeping the *gates* under the same discipline as the theorems
+they gate.
 
-### 1. Read the 103, and write the S8 verdicts — START HERE
+### 1. Meter the gate theorems themselves — START HERE
 
-`Complexity/StatementGate.lean` now proves the reading list is complete. It does
-**not** say anyone has read it. That is the whole remaining distance between
-"the build checks everything a machine can check" and the project's actual goal
-— *a stranger who knows textbook Cook–Levin can convince themself this is real*.
+`Complexity/StatementGate.lean` meters the three headlines. Nothing meters the
+five theorems a reviewer reads *instead of* re-doing the work:
 
-**Deliverable.** A verdict table in ROADMAP **S8**, in the shape of the S5
-verdicts (numbered, one row per finding, ✅/⚠/❌), covering the five groups of
-the gate file. For each group answer one question: *could a subtly wrong
-definition here make the headline true but meaningless, and would anything
-notice?* Write the answer for the group, and a named row for every definition
-where the answer is not obviously "no".
+* `Compile.cost_is_time_proxy` (`CostFaithfulness.lean`) — the reason `Op.cost`
+  is off the trust list. Its statement mentions `physStepBudget`,
+  `paddedComputeTM`, `paddedBitDeciderTM`, `timeProxyBound` and their whole
+  definitional closure, and **nobody has measured that closure.** Start here: it
+  is the largest and the one most likely to surprise.
+* `NonVacuity.searchDecide_correct` and `searchDecide_calls` — the reason the
+  hypothesis class contains nothing undecidable.
+* `Complexity/HonestyGate.lean`'s `rfl` pins — the S5 evidence.
+* `StatementMeaning.hardness_spelled_out` — the restatement. ⚠ Meter this one
+  **first** as a control: its surface should be a subset of the 112, and if it
+  is not, the restatement is saying something the headline does not.
 
-**Where the risk actually is** — do not spend the session uniformly:
+**Deliverable.** A `Complexity/GateSurfaceGate.lean` (leaf, name it better) with
+one `#assert_statement_surface` block per endpoint, grouped and commented like
+`StatementGate.lean`, plus one paragraph in the README saying what a reviewer
+now has to read to *believe the gates* as opposed to *believe the theorem*.
+**Run `#print_statement_surface` on all five before committing to the shape** —
+if `cost_is_time_proxy`'s surface is enormous, the finding is that the gate is
+cheaper to trust than to read, and *that* is the deliverable (say so, and
+propose a smaller corollary to publish in its place).
 
-* **Group 1 (what is claimed) is where a silent weakening would live.**
-  `ComputesBy` — does it demand the machine *halt* with the output, or merely
-  that a halting run has it? `DecidesLang` — is rejection a real verdict or the
-  absence of acceptance? `polyCertRel` — is the certificate bound on the right
-  side? ⚠ `inO`/`inOPoly` were **spot-checked on 2026-08-06 and are the textbook
-  definitions** (`inO f g = ∃ c n₀, ∀ n ≥ n₀, f n ≤ c·g n`,
-  `inOPoly f = ∃ k, inO f (·^k)`); record that as a verdict rather than
-  re-deriving it.
-* **Group 3 (the machine) has one thing a reviewer will stumble on and must be
-  told**: `writeCurrentTapeSymbol` is **append-only at the frontier** and a
-  silent no-op strictly beyond it. That looks like a restriction smuggled in to
-  make the tableau work — it is deliberate, it is a *locked invariant*, and the
-  reason is that the zero-padding jump-write it replaced is non-local and
-  falsifies every local-window simulation. Say so in the verdict, with the
-  pointer to `probes/S1TableauProbe.lean` §5.
-* **Group 5** is one question: does `encodable.size` dominate what a machine
-  must write out? Standing risk #5 is the general form and `sizeFlatTM` is the
-  worked failure.
-* Groups 2 and 4 are cheap. Group 2's only real question is `Op.cost`, and
-  `Complexity/CostFaithfulness.lean` already answers it — cite, do not re-open.
-
-**Method.** Where a definition's meaning is checkable, *pin it* rather than
-describing it: a `rfl` in `Complexity/HonestyGate.lean` or an `#eval` in a
-probe beats a paragraph. That is the move that has paid off every time here.
-Budget one session; it needs no Lean engineering and touches no proof.
+⚠ Expect a genuine design question and decide it explicitly: a gate theorem's
+surface will overlap the headline's almost entirely. Report the **difference**,
+not the whole set, or the reader learns nothing. `StatementSurface.lean` does
+not have a diff mode yet; ~20 lines to add one, and that is probably the right
+first move.
 
 ### 2. The `Cmd`-level certificate search — the last rung of non-vacuity
 
@@ -265,7 +238,45 @@ second for the cost bound. **Do not start it as a side quest**, and do not
 weaken the target to the classically trivial existential
 (`NonVacuity.inNPStr_exists_decider` is already there, labelled).
 
-### 3. Retire `SATStr.strEIn`'s duplicate of the canonical layout — SHORT
+### 3. Is `FlatTM` a Turing machine? — GO/NO-GO PROBE FIRST, then a dedicated session
+
+This is the **last irreducible item on the reviewer's trust list** and the
+highest-value thing left in the whole plan. Everything else a reviewer must take
+on faith has been converted into something they can check; "`stepFlatTM` really
+is the transition relation of a Turing machine" has not, and cannot be, from
+inside — it is a claim about our model matching the literature's.
+
+**The move that would close it:** exhibit a simulation between `FlatTM` (at
+`tapes = 1`, which is all the compiler emits) and an *independently specified*
+machine — Mathlib's `Turing.TM0` or `Turing.TM1` — and prove the two agree on
+acceptance. Then "is this a Turing machine?" becomes "is Mathlib's `Turing.TM0`
+a Turing machine?", which is not our problem.
+
+⚠ **Do NOT start building this.** Spend the first half-session on a probe that
+answers three questions, and write the verdict down whatever it says:
+
+1. **Tape shape.** Ours is `(left, head : Nat, right)` with the head indexing
+   into `right`, one-way infinite, append-only at the frontier, blank = `none`
+   (`StatementMeaning` §3). Mathlib's `Turing.Tape` is two-way infinite with a
+   `Blank` inhabitant. Is there a mapping, and does append-only survive it?
+2. **Symbols.** Ours are `Nat` bounded by `M.sig` with `Option` for "off the
+   written region"; Mathlib's are an arbitrary `Inhabited` type. Fine in
+   principle — check `validFlatTM` is enough to build the `Fin M.sig` version.
+3. **Direction of the simulation, and which one is worth having.** *Ours
+   simulates theirs* would say our model is at least as strong. *Theirs
+   simulates ours* would say our model is not too strong (no smuggled power) —
+   **that is the one a reviewer needs**, and it is the harder one. If only the
+   easy direction is feasible, the honest deliverable is a written verdict
+   saying so, not half a simulation.
+
+The cheap fallback, worth doing even if the probe says no-go: a
+`Complexity/MachineFaithfulness.lean` that states, in one place and with `#eval`
+witnesses, the handful of behaviours that define the model (the three write
+cases, the left wall, blank ≠ zero, `find?`-determinism, stuck ≠ halted) — most
+of which `StatementMeaning` §§3–4 already pins. That converts "read
+`MachineSemantics.lean` carefully" into "read six theorems".
+
+### 4. Retire `SATStr.strEIn`'s duplicate of the canonical layout — SHORT
 
 `Deciders/SATStr.lean` still defines `strEIn v = certState v.1 ++ certState v.2`
 locally, and `EvalCnfSplit.satEIn` does the same job on the CNF side. Now that
@@ -276,7 +287,7 @@ only if it stays a rename** — the `_run` lemmas in `SATStr.lean` are pinned to
 `strEIn`'s exact shape, so if the change reaches a proof body, stop and leave a
 note instead. Value: one fewer layout name for a reviewer.
 
-### 4. Audit whatever the bottom-up stream lands (S5 + S8, standing but SHORT)
+### 5. Audit whatever the bottom-up stream lands (S5 + S8, standing but SHORT)
 
 By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 `decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
@@ -304,38 +315,39 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
   `probes/HonestyAuditProbe.lean` if it is `rfl`-checkable — prefer
   `Complexity/HonestyGate.lean` for a positive pin, the probe for a negative
   control.
-* **NEW (S8): if the session publishes a new *headline* — an `NPcompleteStr P`
-  for a new `P` — it owes a `#assert_statement_surface` block in
-  `Complexity/StatementGate.lean` and a sentence in the README saying what a
-  reviewer now has to read.** Run `#print_statement_surface` **before** you
-  commit to the shape of the statement: it is seconds, and it tells you what the
-  choice costs a reader. Extending the *chain* costs nothing here (reductions
-  are existentially quantified); publishing a new *language* pulls that
-  language's whole definition in — `SATStr` cost eleven names.
+* **(S8) if the session publishes a new *headline*, it owes a
+  `#assert_statement_surface` block in `Complexity/StatementGate.lean` and a
+  sentence in the README saying what a reviewer now has to read.** Run
+  `#print_statement_surface` **before** you commit to the shape of the
+  statement: it is seconds, and it tells you what the choice costs a reader.
+  Extending the *chain* costs nothing (reductions are existentially quantified);
+  publishing a new *language* pulls that language's whole definition in.
+  ⚠ **NEW (FINDING AX): if the new headline is a completeness statement for a
+  string language, state it as `NPcompleteStr'` (`NPhardStr P ∧ inNPStr P`), not
+  `NPcompleteStr`.** The witness you build must be an `InNPWitnessStr`; do not
+  weaken it with `.toInNPWitnessLangFreeSplit` on the way into the headline.
 * a new row in `probes/README.md` if the session adds a probe.
 
-### 5. The `.github/` residue — owner decision, not ours
+### 6. The `.github/` residue — owner decision, not ours
 
 `.github/workflows/lake-build.yml` **already exists and already runs
 `lake build`**, so the "CI question" of earlier handoffs is answered: CI is
-green-gated on the axiom sweep and, since 2026-08-06, on the statement surface
-too — `lake build` alone is sufficient for `sorry`s, axioms, the audited
-functions, cost-faithfulness, non-vacuity and the reading list. If the owner
-wants the *negative* controls covered, add `lean probes/HonestyAuditProbe.lean`,
+green-gated on everything the build gates. If the owner wants the *negative*
+controls covered, add `lean probes/HonestyAuditProbe.lean`,
 `lean probes/CostChkIntentProbe.lean`, `lean probes/NonVacuityProbe.lean`,
 `lean probes/SATToSATStrProbe.lean` and `lean probes/StatementSurfaceProbe.lean`
 — the positive pins are already in the build. ⚠ **Agent sessions have no
 workflow permission; do not attempt this edit.**
 
-⚠ Stale after 2026-08-03, **not fixed here**: `.github/scripts/researcher.py`
-still names the deleted `coqdoc/` folder as "the blueprint", and
-`.github/prompts/step*.md` still cite files under it. That subtree is the
-owner's legacy porting harness. Flag it, do not quietly edit it.
+⚠ Stale, **not fixed here**: `.github/scripts/researcher.py` still names the
+deleted `coqdoc/` folder as "the blueprint", and `.github/prompts/step*.md`
+still cite files under it. That subtree is the owner's legacy porting harness.
+Flag it, do not quietly edit it.
 
 ## NEXT BOTTOM-UP session
 
 **Nothing on the critical path is waiting on a gadget.** The chain is closed at
-both ends and both headline statements are proven. Everything below is *scope
+both ends and all headline statements are proven. Everything below is *scope
 extension*: more problems in the class, which is what makes the development
 useful beyond the single theorem.
 
@@ -345,28 +357,37 @@ witness must supply them; for any layout that writes the input out it is one
 line. `PolyTimeComputableLang` is untouched, so **reduction** witnesses are
 unaffected.
 
-⚠ **Statement-surface note (new 2026-08-06, and it should shape what you
-pick).** `Complexity/StatementGate.lean` fails the build if a headline's
-statement changes. Three cases, and they are very different in cost:
+⚠ **NEW (2026-08-07, FINDING AX — read this before choosing an item).** A
+membership witness is worth strictly more if it is an **`InNPWitnessStr`** (the
+canonical `certState` layout) rather than a bare `InNPWitnessLangFreeSplit`:
+the latter class is inhabited by *every* string language, so a headline stated
+over it makes no claim (`probes/HonestyAuditProbe.lean` §7c). If the problem you
+are giving membership to is (or can be given as) a string language, build the
+`InNPWitnessStr` and publish through `NPcompleteStr'`. If it is not a string
+language, say so in the verdict row rather than letting a reader assume the
+conjunct means more than it does.
+
+⚠ **Statement-surface note.** `Complexity/StatementGate.lean` fails the build if
+a headline's statement changes. Three cases, very different in cost:
 
 * **extending the chain** (a new reduction, a new seam) changes **nothing** —
   reductions are existentially quantified and never appear in a surface. Free;
 * **membership for another problem** (`inNPLangFreeSplit FlatClique`) does not
-  touch either published headline either. Also free;
-* **publishing a new headline** (`NPcompleteStr FlatCliqueStr`) pulls that
-  language's entire definition into a reviewer's obligation — `SATStr` cost
-  eleven names, and a graph problem will cost more. Run
-  `#print_statement_surface` on the candidate *before* building it, and say in
-  the README what you are asking a reader to take on.
+  touch any published headline either. Also free;
+* **publishing a new headline** pulls that language's entire definition into a
+  reviewer's obligation — `SATStr` cost eleven names, and a graph problem will
+  cost more. Run `#print_statement_surface` on the candidate *before* building
+  it, and say in the README what you are asking a reader to take on.
 
 ⚠ **Build-cost note (worth planning around).** A session that touches only
 `Deciders/*`, `Reductions/*` and the gates pays seconds per file. A session that
 touches `Lang/PolyTime.lean`, `Lang/Syntax.lean` or `Lang/Semantics.lean` pays
-the full ~15 min rebuild (`Reductions/S1Witness.lean` alone is ~11 min). The
-2026-08-05 session deliberately put three generic lemmas
-(`comp_exit`, `exitsOnCNFOUT_comp`, `lt_comp_regBound`) in a *leaf* file rather
-than in `PolyTime.lean` where they conceptually belong. **Move them up when a
-second consumer appears** — and when you do, batch it with every other
+the full ~15 min rebuild (`Reductions/S1Witness.lean` alone is ~11 min) —
+**including for a comment fix**, which is what the 2026-08-07 session paid for
+two stale module headers. The 2026-08-05 session deliberately put three generic
+lemmas (`comp_exit`, `exitsOnCNFOUT_comp`, `lt_comp_regBound`) in a *leaf* file
+rather than in `PolyTime.lean` where they conceptually belong. **Move them up
+when a second consumer appears** — and when you do, batch it with every other
 `PolyTime.lean` edit you have queued.
 
 ### 1. Membership for `FlatClique` (~1 session, well-templated) — START HERE
@@ -390,7 +411,12 @@ Repeat `Deciders/EvalCnfSplit.lean` verbatim against `cliqueRelDecidesLang`
 Why first: it is the only remaining item that adds a *second* problem to the NP
 side of this development, everything it needs already exists, and by the
 statement-surface note above it costs a reviewer **nothing** — it does not touch
-either published headline's statement.
+any published headline's statement.
+
+⚠ Per FINDING AX, note in the verdict row that this produces an
+`inNPLangFreeSplit`, i.e. a witness whose honesty is a per-witness fact (S5) and
+**not** something the class enforces. Do not describe it as "`FlatClique` is in
+NP" without that qualification, and do not publish it as a headline conjunct.
 
 ### 2. Hardness — `SAT ⪯p' kSAT 3`, `kSAT 3 ⪯p' FlatClique`
 
@@ -407,11 +433,11 @@ free. ⚠ **This extends the chain at the TAIL**, so:
   generalising it over the register and the output type is ~10 lines and is
   exactly the "third consumer" trigger for moving it into `Lang/PolyTime.lean`.
 
-One verdict row, not a study; see top-down item 4.
+One verdict row, not a study; see top-down item 5.
 
 ### 3. Membership for `kSAT 3` (~1 session) — same shape as item 1
 
-`KSat3Free` already has the re-encoder pattern.
+`KSat3Free` already has the re-encoder pattern. Same FINDING AX caveat.
 
 ### 4. `FlatCliqueStr` / `kSAT3Str` — string forms, now that the recipe exists
 
@@ -424,7 +450,7 @@ each. **And the reverse direction is now also templated**:
 `Reductions/SAT_to_SATStr_free.lean` + `_comp.lean` is ~250 lines end to end,
 of which the seam is 40. Do this only if a consumer asks — one string language
 in the class is already enough for non-vacuity, and `SATStr` is already
-NP-complete.
+NP-complete in the strict sense.
 
 ⚠ Do **not** pre-factor `satPrecomposeData`/`satSplitWitnessOf`/
 `strPrecomposeData` into a generic combinator before a third consumer exists —
@@ -446,22 +472,29 @@ is `AgreeBelow 1` and depends on both). Stage C's 30-register licence is
 
 ## Before you push
 
-**`lake build` is the gate, and it now carries six obligations.** If it is
+**`lake build` is the gate, and it now carries seven obligations.** If it is
 green, then every declaration under `Complexity` is `sorry`-free and uses only
 Lean's three axioms (`#assert_library_axiom_clean`), the two audited functions
 are what the audit says they are (`Complexity/HonestyGate.lean`), `Op.cost` is a
 proven time proxy (`Complexity/CostFaithfulness.lean`), the hypothesis of the
-headline is non-vacuous (`Complexity/NonVacuity.lean`), and **the reviewer's
-reading list is exactly the one written down** (`Complexity/StatementGate.lean`).
-You do not need to run `AxiomProbe`, and you must **never** "fix" a gate failure
-by deleting the assertion or by pasting the new list in without reading it.
+headline is non-vacuous (`Complexity/NonVacuity.lean`), **the reviewer's reading
+list is exactly the one written down** (`Complexity/StatementGate.lean`, three
+headlines) and — since 2026-08-07 — **the checkable verdicts of the audit of
+that list still hold** (`Complexity/StatementMeaning.lean`). You do not need to
+run `AxiomProbe`, and you must **never** "fix" a gate failure by deleting the
+assertion or by pasting the new list in without reading it.
+
+⚠ `StatementMeaning.lean` is a **gate, not documentation.** If one of its pins
+breaks, a definition in the reading list changed meaning and a ROADMAP S8
+verdict is now wrong. Fix the verdict in the same commit — do not delete the
+pin.
 
 Five things the build does **not** check — the negative controls. They are the
 files that prove the positive gates could still fail:
 
 ```
 export PATH="$HOME/.elan/bin:$PATH"
-lake build                                   # the six-obligation gate
+lake build                                   # the seven-obligation gate
 export LEAN_PATH=$(lake env printenv LEAN_PATH)
 lean probes/HonestyAuditProbe.lean           # ~3 s — the S5 evidence file
 lean probes/CostChkIntentProbe.lean          # ~3 s — what `Cmd.chk` must accept/reject
@@ -469,6 +502,12 @@ lean probes/NonVacuityProbe.lean             # ~4 s — the decider actually run
 lean probes/SATToSATStrProbe.lean            # ~5 s — §1 is FINDING AT's control
 lean probes/StatementSurfaceProbe.lean       # ~10 s — the surface gate can still fail
 ```
+
+⚠ **`probes/HonestyAuditProbe.lean` §7c is the newest negative control and the
+most load-bearing one**: it proves `inNPLangFreeSplit Q` for an *arbitrary*
+`Q`, i.e. that the membership conjunct of `NPcompleteStr` says nothing. It is
+what justifies `NPcompleteStr'` existing at all (FINDING AX). If it ever stops
+elaborating, the argument for the strict headline has lost its evidence.
 
 ⚠ **Build-time gotcha:** a cold `lake build` is ~15 min and
 `Reductions/S1Witness.lean` alone is **11 min** (the cost ladder's
@@ -618,7 +657,8 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
   hardness is quantified over `InNPWitnessLangFreeSplit` (`NPhard''`), and — for
   the statement we publish — over `InNPWitnessStr` (`NPhardStr`,
   `Lang/HardnessStr.lean`), which is the same thing with the input layout pinned
-  to `certState`. **Quote `CookLevinStr`; see standing risk 6.**
+  to `certState`. **Quote `SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr`
+  — see standing risks 6 and 10.**
 - **Serialization at a chain END**: `Lang/Serialize.lean` — one instance per
   concrete type, `dec_enc` + bit-level + the size sandwich (the lower half is a
   *polynomial* law, `sizeLB`, since FINDING AT). Live: `Serialize cnf`
@@ -759,6 +799,22 @@ layout `1`–`5`, `PSIG`/`PSTATES`/`PSTART`/`PHALT`/`PNTRANS`/`PTRANS`, and
    improvement worth its own commit. ⚠ Do not try to shrink the surface by
    hiding a definition behind an `abbrev` — the closure runs through definition
    bodies (`probes/StatementSurfaceProbe.lean` §3 is the control).
+10. **Every conjunct of a published statement needs its own
+    dishonest-instantiation question, every time you touch any of them
+    (2026-08-07, FINDING AX).** `NPcompleteStr`'s membership conjunct was
+    inhabited by *every* string language for as long as it existed, because the
+    three sessions that hardened the hardness conjunct each asked the question
+    only of the half they were editing. The general form: a hypothesis you
+    strengthen is a hypothesis you must re-inhabit (risk 8 above), and a
+    **conclusion** you strengthen is a conclusion whose *other* halves you must
+    re-attack. Before publishing any `A ∧ B`, try to inhabit `B` for an
+    arbitrary predicate — it takes minutes and `probes/HonestyAuditProbe.lean`
+    §7/§7b/§7c are three worked attempts, two of which succeeded.
+    ⚠ And when a class turns out to be vacuous, **remove the free field rather
+    than legislating about it**: that has now worked three times
+    (`hasDeciderClassical` → `InNPWitnessLangFreeSplit`, `encX` → `NPhardStr`,
+    `encX` again → `NPcompleteStr'`), and adding a law has worked zero times
+    (FINDING AO).
 
 ## C8 — the honest universal front: DONE (C8-0…C8-5)
 
@@ -776,6 +832,30 @@ Narration lives in git history; the durable results are in "Locked invariants",
 "Proven, reusable" and "Conventions". These are the *findings* a new gadget
 still has to respect:
 
+- **A conjunction is only as honest as its weakest conjunct, and "we hardened
+  the hypothesis" is not a statement about the conclusion (2026-08-07,
+  FINDING AX).** `NPcompleteStr P = NPhardStr P ∧ inNPLangFreeSplit P`. Three
+  consecutive sessions tightened the *hardness* conjunct until it had no free
+  input encoder left; none re-asked the dishonest-instantiation question of the
+  *membership* conjunct, which still had one. It turned out to be inhabited by
+  **every** string language (`probes/HonestyAuditProbe.lean` §7c). **When you
+  tighten one side of a published `∧`, re-ask the question of the other side in
+  the same session.** The fix was the same shape as the original one — remove
+  the free field (`NPcompleteStr' = NPhardStr P ∧ inNPStr P`), do not add a law
+  about it — and it cost three lines, because the honest witness already
+  existed and the headline was throwing a field away on the way out. ★ It was
+  also *cheaper to read*: 112 names against 113. Do not assume the honest
+  statement is the expensive one; measure.
+- **Nothing in this repository can gate a docstring — audit the prose inside
+  the statement surface (2026-08-07, FINDING AY).** `Lang/Syntax.lean` and
+  `Lang/Semantics.lean`, the first two files of the reading list's group 2,
+  carried May-2026 skeleton headers announcing that `eval`/`cost`/`Compile`
+  were "deferred" and "declared as `axiom`s" — false since Part 3.2/3.3 landed
+  and contradicted by every build since the axiom gate. `#assert_statement_surface`
+  measures *definitions*; a stale comment in a file it names is worth more
+  damage than a stale comment anywhere else, because the reading list is
+  exactly what a reviewer is instructed to trust. When you touch a file in a
+  surface, read its header.
 - **"Which statement is cheaper to audit" is a measurable question, and prose
   about it drifts (2026-08-06, FINDING AV).** The plan of record implied the
   `List Bool`-on-both-sides headline was the cheaper read. Measured, it is the
@@ -1163,10 +1243,11 @@ prefer `rg` over both.
 | file | what it gives you |
 |---|---|
 | `Lang/PolyTime.lean` | the whole free line: `DecidesLang`, `PolyTimeComputableLang`, `⪯p'`, `InNPWitnessLangFreeSplit`, `NPhard''`, `SeamData`/`comp`, `FreePrecomposeData`/`precomposeFree`, `toFrameworkWitness'`. **Read this one.** |
-| `Lang/HardnessStr.lean` | `InNPWitnessStr` / `inNPStr` / `NPhardStr` / `NPcompleteStr`, the two bridges from `NPhard''`, and the canonical-layout size sandwich (`State.size_certState`, `size_le_two_mul_length`, `length_le_size`, `canonical_sizeLB`). **Read this one too.** |
+| `Lang/HardnessStr.lean` | `InNPWitnessStr` / `inNPStr` / `NPhardStr` / `NPcompleteStr` / **`NPcompleteStr'`** (the strict form — `NPhardStr P ∧ inNPStr P`, canonical layout on BOTH sides; FINDING AX, 2026-08-07) and `NPcompleteStr'_to_NPcompleteStr`, the two bridges from `NPhard''`, and the canonical-layout size sandwich (`State.size_certState`, `size_le_two_mul_length`, `length_le_size`, `canonical_sizeLB`). **Read this one too.** |
 | `Complexity/NonVacuity.lean` | non-vacuity, both directions (2026-08-03, upgraded 2026-08-04 §6 with `inNPStr_SATStr` / `satStr_reducesPolyMO'_SAT`): `bitStringsUpTo` + `mem_bitStringsUpTo` + `bitStringsUpTo_length`; `searchDecide`/`searchDecide_correct`/`searchDecide_calls`; the `SquareStr` inhabitant (`squareCmd`, `squareVerifier`, `squareCertRel`, `squareWitness`, `inNPStr_squareStr`) and `squareStr_reducesPolyMO'_SAT`. |
-| `Meta/AxiomGate.lean`, `SoundnessGate.lean`, `HonestyGate.lean`, `CostFaithfulness.lean`, `NonVacuity.lean` | five of the six build-time gates. Add to them; never delete an assertion to make a build pass. |
-| `Meta/StatementSurface.lean` + `StatementGate.lean` | the sixth (2026-08-06): `#assert_statement_surface` / `#print_statement_surface`, and the two exact lists — **103** definitions behind `CookLevinStr`, **113** behind `SATStr_NPcompleteStr`, grouped in reading order. **This is the file to hand a reviewer first.** Negative controls: `probes/StatementSurfaceProbe.lean`. |
+| `Meta/AxiomGate.lean`, `SoundnessGate.lean`, `HonestyGate.lean`, `CostFaithfulness.lean`, `NonVacuity.lean` | five of the seven build-time gates. Add to them; never delete an assertion to make a build pass. |
+| `Meta/StatementSurface.lean` + `StatementGate.lean` | the sixth gate (2026-08-06): `#assert_statement_surface` / `#print_statement_surface`, and the three exact lists — **112** definitions behind `SATStr_NPcompleteStr'`, 103 behind `CookLevinStr`, 113 behind `SATStr_NPcompleteStr`, grouped in reading order. **This is the file to hand a reviewer first.** Negative controls: `probes/StatementSurfaceProbe.lean`. |
+| `StatementMeaning.lean` | the seventh gate (2026-08-07): the checkable half of the S8 audit of that reading list — `hardness_spelled_out` (the headline restated in ordinary language and **proved from itself**; hand a reviewer this one *second*), plus the pins behind ROADMAP S8 verdicts 2, 3, 9, 11, 12 and 13. Extend it whenever an S8 verdict turns out to be `decide`-able. |
 | `Lang/Serialize.lean` + `Deciders/CnfSerialize.lean` + `Lang/SerializeStr.lean` | the chain-end serialization discipline and its **two** live instances: `Serialize cnf` (fuel-based parser for a real grammar, `dec_enc`, both size laws) and `Serialize (List Bool)` (cell-wise; `enc = strBits`, i.e. the canonical head layout's own function, plus `boolsOf`/`strBits_boolsOf` for going the other way). A new chain end owes an **instance**, not a hand-written inverse. ⚠ FINDING AT is in `Serialize.lean`'s header. |
 | `Reductions/SAT_to_SATStr_free.lean` + `SAT_to_SATStr_comp.lean` | **`NPcompleteStr SATStr`** and the template for any future tail extension: `satToStr`/`strBits_satToStr`/`satStr_satToStr`, the one-register witness, and the reusable `ExitsOnCNFOUT`/`exitsOnCNFOUT_comp`/`comp_exit`/`lt_comp_regBound` (currently leaf-local by convention — move to `PolyTime.lean` on the third consumer). |
 
