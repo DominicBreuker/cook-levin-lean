@@ -2,6 +2,7 @@ import Complexity.NP.SAT.CookLevin.Reductions.Front_to_S1_comp
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.CostFaithfulness
 import Complexity.HonestyGate
+import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 
 set_option autoImplicit false
 
@@ -157,4 +158,11 @@ section Honesty
 #print axioms CookLevinHonest.SAT_NPhardStr
 -- ★ THE HONEST HEADLINE. `NPcompleteStr SAT` — no free input layout.
 #print axioms CookLevinHonest.CookLevinStr
+-- …and the same statement with `List Bool` on BOTH sides (2026-08-05).
+#print axioms Complexity.Lang.instSerializeListBool
+#print axioms SATToSATStr.satStr_satToStr
+#print axioms SATToSATStr.satToStr_reductionLang
+#print axioms SATStrComp.front_exitsOnCNFOUT
+#print axioms SATStrComp.satStr_NPhardStr
+#print axioms SATStrComp.SATStr_NPcompleteStr
 end Honesty

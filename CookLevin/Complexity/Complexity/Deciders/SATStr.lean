@@ -1,6 +1,7 @@
 import Complexity.Complexity.Deciders.EvalCnfSplit
 import Complexity.Complexity.Deciders.CnfWellFormed
 import Complexity.Lang.HardnessStr
+import Complexity.Lang.SerializeStr
 
 set_option autoImplicit false
 set_option linter.dupNamespace false
@@ -72,19 +73,12 @@ open Complexity.Lang EvalCnfCmd CnfWellFormed
 
 /-! ## The language -/
 
-/-- The machine's view of a bit string: one `0`/`1` cell per bit. This is the
-content of `certState x`'s only register. -/
-def strBits (x : List Bool) : List Nat := x.map (fun b => if b then 1 else 0)
-
-theorem certState_eq_strBits (x : List Bool) : certState x = [strBits x] := rfl
-
-theorem strBits_length (x : List Bool) : (strBits x).length = x.length :=
-  List.length_map _
-
-theorem strBits_bit (x : List Bool) : ∀ v ∈ strBits x, v ≤ 1 := by
-  intro v hv
-  obtain ⟨b, -, hb⟩ := List.mem_map.mp hv
-  rw [← hb]; cases b <;> simp
+/-! `strBits` — the machine's view of a bit string, one `0`/`1` cell per bit —
+lives in `Lang/SerializeStr.lean` together with `certState_eq_strBits`,
+`strBits_length`, `strBits_bit` and the `Serialize (List Bool)` instance it is
+the encoder of. It used to be defined here; it was hoisted on 2026-08-05 so
+that the chain-head layout (`certState`) and the chain-*end* serialization of a
+bit string are the same function and not two readings. -/
 
 /-- The CNF a bit string denotes: the canonical parse where the string is an
 encoding, the unsatisfiable `[[]]` where it is not. -/

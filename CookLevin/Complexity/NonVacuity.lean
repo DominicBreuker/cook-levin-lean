@@ -1,6 +1,7 @@
 import Complexity.Meta.AxiomGate
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.Complexity.Deciders.SATStr
+import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 
 set_option autoImplicit false
 
@@ -494,13 +495,12 @@ four-state validating scan.
 form of) **its own target** — the whole chain, C8 front through the sound tail,
 running on SAT.
 
-⚠ **What this does and does not say.** It says the hypothesis class of
-`NPhardStr` contains SAT-as-a-string-language, and that the theorem's conclusion
-holds there. It does **not** say `NPhardStr SATStr` — that needs a reduction in
-the *other* direction (`SAT ⪯p' SATStr`, i.e. a `Cmd` writing `encodeCnf N` onto
-the canonical string register) plus a `SeamData`/`comp` seam, because this
-development deliberately has no generic `⪯p'`-transitivity. That is scoped in
-`HANDOFF.md` as the next bottom-up item. -/
+✅ **Closed 2026-08-05: the class contains an NP-*complete* problem.** The
+reverse reduction `SAT ⪯p' SATStr` and its seam landed
+(`Reductions/SAT_to_SATStr_free.lean` + `SAT_to_SATStr_comp.lean`), so
+`NPhardStr SATStr` and `NPcompleteStr SATStr` are theorems. The inhabitant this
+section exhibits is therefore not merely "hard given Cook–Levin" but
+NP-complete *in this development's own sense*, both halves proven here. -/
 
 theorem inNPStr_SATStr : inNPStr SATStr.SATStr := SATStr.inNPStr_SATStr
 
@@ -508,6 +508,14 @@ theorem inNPStr_SATStr : inNPStr SATStr.SATStr := SATStr.inNPStr_SATStr
 SAT presented as a string language. -/
 theorem satStr_reducesPolyMO'_SAT : SATStr.SATStr ⪯p' SAT :=
   CookLevinHonest.CookLevinStr.1 SATStr.SATStr SATStr.inNPStr_SATStr
+
+/-- **…and the class's inhabitant is NP-complete, not merely non-trivial**
+(2026-08-05). Both halves are theorems of this development: membership is
+`SATStr.satStrWitness`, hardness is the whole chain with a sixth seam on its
+tail. This is the strongest non-vacuity statement available: the hypothesis of
+`NPhardStr` is inhabited by a problem to which *every* inhabitant reduces. -/
+theorem npcompleteStr_SATStr : NPcompleteStr SATStr.SATStr :=
+  SATStrComp.SATStr_NPcompleteStr
 
 /-! ## The gate -/
 
@@ -524,6 +532,7 @@ theorem satStr_reducesPolyMO'_SAT : SATStr.SATStr ⪯p' SAT :=
   Complexity.NonVacuity.squareStr_reducesPolyMO'_SAT
   Complexity.NonVacuity.inNPStr_SATStr
   Complexity.NonVacuity.satStr_reducesPolyMO'_SAT
+  Complexity.NonVacuity.npcompleteStr_SATStr
   SATStr.satStr_iff
   SATStr.inNPStr_SATStr
   SATStr.verifier_reads_certificate
