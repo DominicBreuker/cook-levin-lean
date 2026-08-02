@@ -7,10 +7,10 @@ Roth et al. (<https://github.com/uds-psl/cook-levin>).
 **The theorem is proven, on the honest statement, unconditionally
 (2026-07-30-b), audited (2026-07-30-c), stated in a form with no dishonest
 instantiation (2026-08-01), gated by `lake build` itself — which *proves* there
-are no `sorry`s and no bespoke axioms anywhere in the library (2026-08-02) — and,
-since 2026-08-03, machine-checked to be **non-vacuous**: the class it quantifies
-over is inhabited by a concrete problem, and every inhabitant of that class is
-decidable.**
+are no `sorry`s and no bespoke axioms anywhere in the library (2026-08-02) — and
+machine-checked to be **non-vacuous**: every inhabitant of the class it
+quantifies over is decidable (2026-08-03), and the class contains **SAT itself,
+presented as a language of bit strings** (2026-08-04).**
 
 ```
 CookLevinHonest.CookLevinStr : NPcompleteStr SAT   -- ★ the statement to quote
@@ -32,9 +32,10 @@ both depend on axioms: [propext, Classical.choice, Quot.sound]
      functions** encoding honesty depends on (FINDING AK) — are the ones the
      audit says they are, including `encodeIn x = certState x` under `NPhardStr`
      (`Complexity/HonestyGate.lean`);
-   * the hypothesis class of the hardness half is **inhabited** by a concrete
-     language with a real verifier `Cmd`, and **every** inhabitant of it is
-     decidable by brute-force search over its own verifier
+   * the hypothesis class of the hardness half is **inhabited by SAT itself**,
+     as a language of bit strings, with a real verifier `Cmd`
+     (`Complexity/Complexity/Deciders/SATStr.lean`), and **every** inhabitant of
+     it is decidable by brute-force search over its own verifier
      (`Complexity/NonVacuity.lean`) — so the theorem is neither vacuously true
      for want of an instance, nor true of arbitrary predicates.
 2. **Read three definitions**, and nothing else, to know the theorem is about
@@ -72,6 +73,35 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-04** (bottom-up; SAT as a string language):
+
+* **The hypothesis class contains a hard problem, not just an inhabitant.**
+  `SATStr x := SAT (parseTotal (strBits x))` — proven equal to
+  `∃ N, strBits x = encodeCnf N ∧ SAT N` (`SATStr.satStr_iff`) — has a complete
+  `InNPWitnessStr`, and `NonVacuity.satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT`
+  is the published theorem applied to (a string form of) **its own target**: the
+  whole chain, C8 front through the sound tail, running on SAT. The 2026-08-03
+  inhabitant `SquareStr` is in **P**, so it showed the class was non-empty and
+  nothing more.
+* **The planned on-machine CNF parser turned out not to exist.** The plan of
+  record was "a `Cmd` parsing a self-delimiting bit format into the verifier's
+  twelve-register layout". There is nothing to parse: `encodeCnf` is *already* a
+  flat `0`/`1` cell stream and `certState x` is *already* one register of `0`/`1`
+  cells, so `CNF_STREAM` is a **copy of the input register**. The only derived
+  field is `CLAUSE_TALLY = 1^|N|`. The whole re-encoder is one left-to-right
+  scan — a four-state DFA that validates the grammar and counts the clauses,
+  11 ops — with `wfCnfB_iff : wfCnfB l = true ↔ ∃ N, encodeCnf N = l` proven in
+  both directions over `0`/`1` streams (`Deciders/CnfWellFormed.lean`).
+* **"Not an encoding" and "unsatisfiable" are made the same verdict.** Every
+  non-encoding decodes to `[[]]`, the one-empty-clause CNF, which is
+  unsatisfiable (`not_sat_botCnf`) — so one verifier decides both and the
+  malformed branch is four ops. `EvalCnfSplit.certDecode` is reused verbatim,
+  its proven bridge pushed through by `Cmd.eval_agree`.
+* ⚠ **Not claimed: `NPhardStr SATStr`.** That needs a reduction in the other
+  direction (`SAT ⪯p' SATStr`) plus a `SeamData`/`comp` seam, because this
+  development deliberately has no generic `⪯p'`-transitivity. Scoped in the
+  HANDOFF.
 
 **What changed on 2026-08-03** (top-down; non-vacuity, and demolition):
 
@@ -203,7 +233,8 @@ working.
 | `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12466 declarations in all 99 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, and `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis. Runs in ~2 s. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
-| **non-vacuity of the `NPhardStr` hypothesis** | ✅ **NEW 2026-08-03**, both directions, gated (`Complexity/NonVacuity.lean`). **Inhabited**: `inNPStr_squareStr` — a complete `InNPWitnessStr` for `SquareStr`, and `squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT` is `CookLevinStr` applied to it. **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM`; that rung is open. Probe: `probes/NonVacuityProbe.lean`. |
+| **non-vacuity of the `NPhardStr` hypothesis** | ✅ **both directions, gated** (`Complexity/NonVacuity.lean`). **Inhabited — by a hard problem (2026-08-04)**: `SATStr.inNPStr_SATStr` is a complete `InNPWitnessStr` for SAT as a bit-string language, and `satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is `CookLevinStr` applied to it. (`inNPStr_squareStr`, 2026-08-03, stays as the minimal example; `SquareStr` is in P.) **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM`; and `NPhardStr SATStr` is **not** claimed. Both rungs are open and labelled. Probes: `probes/NonVacuityProbe.lean`, `probes/SATStrProbe.lean`. |
+| `#print axioms SATStr.inNPStr_SATStr` | **`[propext, Classical.choice, Quot.sound]`** — **SAT as a STRING language, with a real verifier** (2026-08-04). `Deciders/CnfWellFormed.lean` is the four-state DFA and the characterisation `wfCnfB l = true ↔ ∃ N, encodeCnf N = l`; `Deciders/SATStr.lean` is the 11-op scan, its `_run` lemma, the bridge onto `EvalCnfSplit.satEIn`, and the witness. ⚠ FINDING AS: the on-machine CNF *parser* the plan called for does not exist and is not needed — the canonical encoding is already the raw stream, so the machine owes a validator and a clause counter, not a parser. Probe: `probes/SATStrProbe.lean` (exhaustive at length ≤ 8/7/6). |
 | **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01; head side CLOSED 2026-08-02** — the composite's `encodeIn` is now `W.encX` verbatim, i.e. `certState x` under `NPhardStr`, so there is no head-side encoding of ours left to read.<br> The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–14 in the ROADMAP register. |
 | ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
@@ -436,7 +467,7 @@ CookLevin/
 │   │   ├── MachineSemantics.lean    -- FlatTM, stepFlatTM, runFlatTM
 │   │   ├── NP.lean                  -- DecidesBy, inTimePoly, inNP, polyCertRel (the ⪯p API was deleted 2026-08-03)
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
-│   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize
+│   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize, CnfWellFormed + SATStr (SAT as a string language)
 │   ├── SoundnessGate.lean          -- the axiom sweep, run BY `lake build`
 │   ├── HonestyGate.lean            -- risk S5's two audited functions, pinned BY `lake build`
 │   ├── CostFaithfulness.lean       -- `Op.cost` is a polynomial proxy for real TM time
