@@ -60,10 +60,13 @@ def fiveOut (x : FlatTM × List Nat × Nat × Nat) : List Nat :=
 def cardTarget (x : FlatTM × List Nat × Nat × Nat) : List Nat :=
   FlatTCCFree.encNats (S1Cards.cardBlocks x.1)
 
-/-! ⚠ The load-bearing check: `cFive`'s output must be a genuine PREFIX of the
-whole card register. If a later family were inserted before one of these five,
-or the order inside `cardBlocks` changed, this is the only thing that would
-notice. -/
+/-! ⚠ **Superseded as a gate (2026-08-06), retained as a locator.** When this was
+written, stage C stopped after five families and this prefix check was the only
+thing that would notice a reordering of `cardBlocks`. Stage C is complete now and
+`probes/S1StepLoopProbe.lean` §1 asserts the **full equality** of stage C's output
+with `encNats (cardBlocks M)`, which implies this. Keep it: `fiveOut` is what §3
+and §4 measure, and a failure here says *which family* moved, which the full
+equality does not. -/
 #eval qCases.map (fun x => (fiveOut x).isPrefixOf (cardTarget x))   -- expect all true
 
 /-! …and the five families are *not* the whole thing: the next session's two
@@ -72,8 +75,10 @@ families are non-empty on every instance, the trivial machine included. -/
 
 /-! ## §2 — stage M-yes, end to end
 
-Stage C is still a placeholder, so its output register is injected by hand; the
-other four registers come from the real emitter stages. -/
+Stage C's output register is injected by hand from the model (which is what
+isolates M-yes from the emitter); the other four registers come from the real
+emitter stages. ⚠ Stage C was a placeholder when this was written and is a real
+`Cmd` now — `probes/S1StepLoopProbe.lean` is the one that runs it. -/
 
 def yesState (x : FlatTM × List Nat × Nat × Nat) : State :=
   let t := (preC ;; S1Emit.stageFin).eval (qIn x)

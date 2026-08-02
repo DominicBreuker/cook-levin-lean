@@ -2081,7 +2081,8 @@ finding above that theorem). The looser constant is free against `physStepBudget
 (8× headroom, `54 ≤ 72`). `omega` atomises `L*L`.
 
 **2026-06-20d (bottom-up):** loosened `27 → 54`. The prior `27` was calibrated to
-the `EqBitBudgetProbe` **#eval real** step counts (~70% of `(9·L²)·2`) times an
+the `EqBitBudgetProbe` **#eval real** step counts (~70% of `(9·L²)·2`; that probe
+was deleted 2026-08-06 — see `probes/README.md`) times an
 assumed `1.7×` "provable" factor. But the bounds actually *recoverable from the
 sub-gadgets* (the d2-iv symbolic component sum: `navSteps_le` 2×, each
 `branchComposeFlatTM`/`composeFlatTM` seam additive, `opTailSelf ≤ 6L+14`,

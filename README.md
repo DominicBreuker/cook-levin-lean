@@ -51,9 +51,19 @@ closer to the name "SAT".
      (`Complexity/Complexity/Deciders/SATStr.lean`), and **every** inhabitant of
      it is decidable by brute-force search over its own verifier
      (`Complexity/NonVacuity.lean`) — so the theorem is neither vacuously true
-     for want of an instance, nor true of arbitrary predicates.
-2. **Read four definitions**, and nothing else, to know the theorem is about
-   Cook–Levin and not about something else:
+     for want of an instance, nor true of arbitrary predicates;
+   * **the reading list in step 2 is complete.** `Complexity/StatementGate.lean`
+     names every constant *of this repository* that the headline statements are
+     built from — 103 for `CookLevinStr`, 113 for `SATStr_NPcompleteStr` — and
+     `#assert_statement_surface` recomputes the closure of each statement's type
+     and fails the build unless the list matches **exactly**. So the list below
+     cannot quietly grow, and no definition of ours can reach the meaning of the
+     theorem without appearing in a file you have read
+     (`Complexity/Meta/StatementSurface.lean` says what "reach" means).
+2. **Read four things**, and nothing else, to know the theorem is about
+   Cook–Levin and not about something else. These are four *topics*; the exact
+   definitions under each, in reading order, are the five groups of
+   `Complexity/StatementGate.lean`:
    * `NPcompleteStr` / `NPhardStr` / `InNPWitnessStr` (`Complexity/Lang/HardnessStr.lean`)
      — what is being claimed, and over which hypothesis;
    * `SAT` (`Complexity/NP/SAT.lean`) — that it means satisfiability;
@@ -81,6 +91,16 @@ closer to the name "SAT".
    outright is the second serialization: on the `SATStr` chain the head layout
    and the tail layout are literally the same function.
 
+   ⚠ **And now it is measured, which sharpens it further (2026-08-06).** The
+   string headline's *statement surface* is **larger**, not smaller: 113
+   definitions against 103, because `SATStr` is **defined by parsing** its input
+   (`cnfOf = parseTotal ∘ strBits`), so the well-formedness scanner and the CNF
+   parser are part of what it literally says. The escape route is real but it is
+   a **theorem, not a definition** — `SATStr.satStr_iff` re-presents the
+   language through the 12-line `EvalCnfCmd.encodeCnf`, and it is axiom-clean.
+   Choose the headline on which shape you want, not on which is cheaper to read;
+   the two costs are within eleven definitions of each other either way.
+
    Two things have come *off* that list. The head-side encoding
    (2026-08-02): the composite reduction's `ComputesBy.encode` is now literally
    `certState x`, the raw input string, pinned by the honesty gate. And
@@ -106,6 +126,27 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-06** (top-down; the reading list stopped being a
+claim):
+
+* **`Complexity/StatementGate.lean` — the reading list, gated.** Every constant
+  of this repository reachable from a headline's *type* is listed there, and
+  `#assert_statement_surface` fails the build unless the list is **exactly**
+  right — equality, not containment, so it can neither grow silently nor rot
+  into a superset that says nothing. 103 names for `CookLevinStr`, 113 for
+  `SATStr_NPcompleteStr`, grouped in reading order. `probes/README.md` does the
+  same job for the 48 evidence files: which are gates, which are regression
+  checks, which are archaeology, and how long each takes.
+* ⚠ **It corrected this README.** The string-language headline is *not* the
+  cheaper read — its statement surface is larger. See the caveat under item 2 of
+  the checklist above.
+* ⚠ **And it says something permanent about the gate architecture.** Neither
+  surface contains a reduction, a `decodeOut` or a `Serialize` instance, because
+  `reducesPolyMO'` quantifies over them existentially. No strengthening of the
+  *statement* can ever pin the witness we chose, and no audit of the witness
+  says what the theorem means. That is why there are two gates and why they
+  cannot be merged.
 
 **What changed on 2026-08-05** (bottom-up; the loop closes, and a class law was
 wrong):
@@ -303,12 +344,13 @@ working.
 
 | | |
 |---|---|
-| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all 12466 declarations in all 99 modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, and `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis. Runs in ~2 s. |
+| `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all **12680** declarations in all **106** modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, `Complexity/CostFaithfulness.lean` gates `Op.cost` as a time proxy, `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis, and **`Complexity/StatementGate.lean` (2026-08-06) gates the reviewer's reading list itself**. Warm rebuild ~2 s; cold ~15 min. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). **This is the statement to quote.** |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
 | **non-vacuity of the `NPhardStr` hypothesis** | ✅ **both directions, gated** (`Complexity/NonVacuity.lean`). **Inhabited — by a hard problem (2026-08-04)**: `SATStr.inNPStr_SATStr` is a complete `InNPWitnessStr` for SAT as a bit-string language, and `satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is `CookLevinStr` applied to it. (`inNPStr_squareStr`, 2026-08-03, stays as the minimal example; `SquareStr` is in P.) **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM` — that rung is open and labelled. ~~`NPhardStr SATStr` is not claimed~~ — **proven 2026-08-05**, so the inhabitant is NP-**complete** in this development's own sense (`NonVacuity.npcompleteStr_SATStr`). Probes: `probes/NonVacuityProbe.lean`, `probes/SATStrProbe.lean`. |
 | `#print axioms SATStr.inNPStr_SATStr` | **`[propext, Classical.choice, Quot.sound]`** — **SAT as a STRING language, with a real verifier** (2026-08-04). `Deciders/CnfWellFormed.lean` is the four-state DFA and the characterisation `wfCnfB l = true ↔ ∃ N, encodeCnf N = l`; `Deciders/SATStr.lean` is the 11-op scan, its `_run` lemma, the bridge onto `EvalCnfSplit.satEIn`, and the witness. ⚠ FINDING AS: the on-machine CNF *parser* the plan called for does not exist and is not needed — the canonical encoding is already the raw stream, so the machine owes a validator and a clause counter, not a parser. Probe: `probes/SATStrProbe.lean` (exhaustive at length ≤ 8/7/6). |
 | **`#print axioms SATStrComp.SATStr_NPcompleteStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SATStr`, NP-completeness with `List Bool` on BOTH sides of the arrow** (2026-08-05). Hardness is the whole honest chain with a **sixth seam** on its tail (`SAT_to_SATStr_comp.lean`); membership is `SATStr.satStrWitness`. The reduction map `satToStr` is the identity on tape cells (`strBits (satToStr N) = encodeCnf N`), so its `Cmd` is the layer's no-op and the content is `satStr_satToStr`, which needs `encodeCnf` injective. New reusable piece: `SATStrComp.ExitsOnCNFOUT` + `exitsOnCNFOUT_comp` — the left composite's **exit register** (which `computes` does not give), transported along a seam in one line. ⚠ FINDING AT: this landed together with a **generalisation of `Serialize`'s no-compression law** to a polynomial `sizeLB`; the identity form was unsatisfiable for the canonical bit-string layout. Probe: `probes/SATToSATStrProbe.lean`. |
+| **the reviewer's reading list (ROADMAP risk S8)** | ✅ **COMPLETE AND GATED (2026-08-06)** — `Complexity/StatementGate.lean` names every constant *of this repository* reachable from a headline's **type**, and `#assert_statement_surface` (`Complexity/Meta/StatementSurface.lean`) recomputes that closure on every build and fails unless the list matches **exactly**. **103** definitions behind `CookLevinStr`, **113** behind `SATStr_NPcompleteStr`, grouped in reading order. ⚠ Two things the measurement settled: the string-language headline's surface is **larger**, not smaller (`SATStr` is *defined by parsing*, so the well-formedness DFA and the CNF parser are part of what it literally says; the cheaper route through `EvalCnfCmd.encodeCnf` is `satStr_iff`, a **theorem**); and **no reduction, `decodeOut` or `Serialize` instance is in either surface**, because they are existentially quantified — which is the structural reason encoding honesty (S5) needs its own gate and can never be read off the statement. What is *not* yet claimed: that anyone has read the 103. Negative controls: `probes/StatementSurfaceProbe.lean`. |
 | **the encoding-honesty audit (ROADMAP risk S5)** | ⚠ **audited 2026-07-30-c; PARTLY STRUCTURAL 2026-08-01; head side CLOSED 2026-08-02** — the composite's `encodeIn` is now `W.encX` verbatim, i.e. `certState x` under `NPhardStr`, so there is no head-side encoding of ours left to read.<br> The 2026-07-30-c audit's structural result stands: the honesty surface of a `comp`-built witness is the **leftmost `encodeIn`** and the **rightmost `decodeOut`**, and nothing else. Since 2026-08-01 the tail one is pinned by `Serialize cnf` and the head one by the `NPhardStr` statement. ⚠ verdict 12 (the hypothesis side of `NPhard''`) was **corrected to ❌** — `probes/HonestyAuditProbe.lean` §7/§7b — and superseded by verdict 13. Evidence `probes/HonestyAuditProbe.lean` §§1–8; verdicts 1–14 in the ROADMAP register. |
 | ~~`#print axioms CookLevin`~~ | **DELETED 2026-07-30-c** together with the whole legacy `⪯p` front — it was the only remaining `sorryAx` anywhere, and it was never a statement about the mathematics. |
 | `#print axioms SAT_inNP.sat_NP` | **`[propext, Classical.choice, Quot.sound]`** — the **in-NP half is sorry-free & axiom-clean** (2026-06-28, Route A). |
@@ -549,10 +591,13 @@ CookLevin/
 │   │   ├── TMPrimitives.lean        -- composeFlatTM / branchComposeFlatTM / loopTM (~4K LOC, sound)
 │   │   └── Deciders/                -- EvalCnfCmd/EvalCnfTM (SAT verifier), CliqueRelTM, EvalCnfSplit (membership half), CnfSerialize, CnfWellFormed + SATStr (SAT as a string language)
 │   ├── SoundnessGate.lean          -- the axiom sweep, run BY `lake build`
+│   ├── StatementGate.lean          -- ★ THE READING LIST: every definition of ours the
+│   │                                  headline STATEMENTS are built from, asserted exact
 │   ├── HonestyGate.lean            -- risk S5's two audited functions, pinned BY `lake build`
 │   ├── CostFaithfulness.lean       -- `Op.cost` is a polynomial proxy for real TM time
 │   ├── NonVacuity.lean             -- the NPhardStr hypothesis is neither empty nor free (gated)
 │   ├── Meta/AxiomGate.lean          -- `#assert_axioms_clean` / `#assert_library_axiom_clean`
+│   ├── Meta/StatementSurface.lean   -- `#assert_statement_surface` / `#print_statement_surface`
 │   ├── Lang/                        -- the layer: Syntax, Semantics, Compile (C1/C2/C6), Frame,
 │   │   │                               PolyTime (⪯p'/NPhard''/comp — read this one),
 │   │   │                               HardnessStr (NPhardStr — read this one too),
@@ -566,7 +611,9 @@ CookLevin/
 │           ├── CookLevinHonest.lean -- ★ the theorem
 │           ├── Reductions/          -- the free-line witnesses, the S1 program, the five seams
 │           └── Subproblems/         -- FlatTCC / FlatCC / BinaryCC / SingleTMGenNP
-probes/                              -- #eval/decide risk checks (AxiomProbe, HonestyAuditProbe, …)
+probes/                              -- #eval/decide risk checks — START AT probes/README.md,
+                                        which says which files are live gates and which are
+                                        the archaeology of a design session
 ```
 
 `CookLevin/` is the whole build. There is no second `lean_lib` root and no
@@ -594,11 +641,18 @@ env LEAN_PATH=$(lake env printenv LEAN_PATH) lean /tmp/chk.lean   # `#print axio
 
 ## Where to look first
 
+- **What exactly do I have to read?** `Complexity/StatementGate.lean` — the
+  complete, build-verified list of this repository's definitions that the
+  headline statements are made of, in reading order, grouped by what each group
+  settles. **Start here**; it is the map for everything below.
 - **The theorem:** `NP/SAT/CookLevin/CookLevinHonest.lean`, and the statement it
   proves — `NPcompleteStr`/`NPhardStr`/`InNPWitnessStr` in
   `Complexity/Lang/HardnessStr.lean`, and the general
   `NPcomplete''`/`NPhard''`/`InNPWitnessLangFreeSplit` in
   `Complexity/Lang/PolyTime.lean`. Read the statement before the proof.
+- **Which of the 48 probe files are evidence, and which are archaeology?**
+  [`probes/README.md`](probes/README.md) — what each pins, how long it takes,
+  and when to re-run it.
 - **The working plan:** [`CookLevin/HANDOFF.md`](CookLevin/HANDOFF.md); the risk
   register: [`CookLevin/ROADMAP.md`](CookLevin/ROADMAP.md).
 - **Is it honest?** `probes/HonestyAuditProbe.lean` — §6 is a witness that

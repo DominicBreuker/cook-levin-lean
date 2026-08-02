@@ -467,7 +467,9 @@ loop rounds (`cost = |src|+1` for `copy`/`tail`) and is free for the consumer:
 (`#eval`-validated against the real machines in `probes/CursorCopyProbe.lean`).
 
 **⚠ 2026-06-20c — budget constant LOOSENED `9 → 27` (the `eqBit` enabler).** A
-risk probe of the *full* `compareRegsTM` + d1 wrapper (`probes/EqBitBudgetProbe.lean`)
+risk probe of the *full* `compareRegsTM` + d1 wrapper (`probes/EqBitBudgetProbe.lean`,
+deleted 2026-08-06 — it probed the abandoned design (A) and stopped elaborating; see
+`git show 39f491c:probes/EqBitBudgetProbe.lean` and `probes/README.md`)
 found that while the REAL steps fit `(9·L²+…)·2` at ~70%, the *provable* loose
 bounds (every sub-gadget's `t ≤ …` recovered via the 2×-loose `navSteps_le` etc.)
 **compound to ~121%** of the `cost=1` budget — and even near-perfect tight bounds

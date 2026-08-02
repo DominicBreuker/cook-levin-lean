@@ -48,6 +48,7 @@ import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_free
 import Complexity.NP.SAT.CookLevin.Reductions.SAT_to_SATStr_comp
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
+import Complexity.StatementGate
 import Complexity.HonestyGate
 import Complexity.CostFaithfulness
 import Complexity.NonVacuity
@@ -59,6 +60,10 @@ set_option autoImplicit false
 Two gates are part of the default build target and run on every `lake build`:
 
 * `Complexity/SoundnessGate.lean` — the axiom sweep, endpoint by endpoint;
+* `Complexity/StatementGate.lean` — the complete list of *this repository's*
+  definitions that the headline **statements** are built from, asserted exact.
+  It is the reading list a reviewer works through, and the build proves nothing
+  is missing from it;
 * `Complexity/HonestyGate.lean` — what the composite reduction's `encodeIn` and
   `decodeOut` actually *are* (risk S5's two audited functions);
 * `Complexity/CostFaithfulness.lean` — that `Op.cost`, the number every
