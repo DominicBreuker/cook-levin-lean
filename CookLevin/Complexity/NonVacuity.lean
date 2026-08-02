@@ -46,6 +46,9 @@ This file closes both, machine-checked, and is gated:
 * **§5 (the payoff).** `CookLevinStr` applied to that witness yields a concrete
   `SquareStr ⪯p' SAT` — the whole chain, front to tail, instantiated at a real
   problem rather than quantified over an empty class.
+* **§6 (not nothing, and not easy either).** The same, at `SATStr` — SAT
+  presented as a language of bit strings — so the class demonstrably contains a
+  problem nobody expects to be in P.
 
 ## ⚠ What this file does NOT claim — read before extending it
 
@@ -62,11 +65,14 @@ predicate and is worth exactly nothing. `inNPStr_exists_decider` states it at
 the bottom of §2 with that warning attached, precisely so nobody re-derives it
 and mistakes it for the result.
 
-Likewise, `SquareStr` is in **P** — it is an inhabitant, not evidence that the
-class contains hard problems. The class-membership question that would settle
-that (SAT itself as a *string* language, i.e. an `InNPWitnessStr` for a bit-level
-encoding of `SAT`) needs an on-machine CNF parser and is bottom-up work; see
-`HANDOFF.md`.
+Likewise, `SquareStr` (§3) is in **P** — it is an inhabitant, not evidence that
+the class contains hard problems. **§6 settles that**: `SATStr`
+(`Complexity/Complexity/Deciders/SATStr.lean`) is SAT itself as a bit-string
+language, with a complete `InNPWitnessStr`. `SquareStr` is kept as the minimal
+example — two ops, every field readable at a glance.
+
+⚠ §6 does **not** claim `NPhardStr SATStr`; that needs a reduction in the other
+direction plus a seam. See `HANDOFF.md`, bottom-up item 1.
 -/
 
 namespace Complexity.NonVacuity
