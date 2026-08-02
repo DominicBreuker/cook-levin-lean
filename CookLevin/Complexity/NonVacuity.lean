@@ -1,5 +1,6 @@
 import Complexity.Meta.AxiomGate
 import Complexity.NP.SAT.CookLevin.CookLevinHonest
+import Complexity.Complexity.Deciders.SATStr
 
 set_option autoImplicit false
 
@@ -474,6 +475,34 @@ is what makes `NPhardStr SAT` a statement with consequences. -/
 theorem squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT :=
   CookLevinHonest.CookLevinStr.1 SquareStr inNPStr_squareStr
 
+/-! ## 6 — the inhabitant that is not in P: SAT itself, as a string language
+
+`SquareStr` shows the class is non-empty; it does not show the class contains
+anything *hard* — it is decidable in linear time. `SATStr`
+(`Complexity/Complexity/Deciders/SATStr.lean`) is the upgrade: the language of
+bit strings that spell out a satisfiable CNF, with a complete `InNPWitnessStr`
+whose verifier is the development's own SAT verifier `Cmd` preceded by a
+four-state validating scan.
+
+`satStr_reducesPolyMO'_SAT` is then the published theorem applied to (a string
+form of) **its own target** — the whole chain, C8 front through the sound tail,
+running on SAT.
+
+⚠ **What this does and does not say.** It says the hypothesis class of
+`NPhardStr` contains SAT-as-a-string-language, and that the theorem's conclusion
+holds there. It does **not** say `NPhardStr SATStr` — that needs a reduction in
+the *other* direction (`SAT ⪯p' SATStr`, i.e. a `Cmd` writing `encodeCnf N` onto
+the canonical string register) plus a `SeamData`/`comp` seam, because this
+development deliberately has no generic `⪯p'`-transitivity. That is scoped in
+`HANDOFF.md` as the next bottom-up item. -/
+
+theorem inNPStr_SATStr : inNPStr SATStr.SATStr := SATStr.inNPStr_SATStr
+
+/-- **The payoff, at a hard problem.** `CookLevinStr`'s hardness half applied to
+SAT presented as a string language. -/
+theorem satStr_reducesPolyMO'_SAT : SATStr.SATStr ⪯p' SAT :=
+  CookLevinHonest.CookLevinStr.1 SATStr.SATStr SATStr.inNPStr_SATStr
+
 /-! ## The gate -/
 
 #assert_axioms_clean
@@ -487,5 +516,18 @@ theorem squareStr_reducesPolyMO'_SAT : SquareStr ⪯p' SAT :=
   Complexity.NonVacuity.not_squareStr_tf2
   Complexity.NonVacuity.verifier_reads_certificate
   Complexity.NonVacuity.squareStr_reducesPolyMO'_SAT
+  Complexity.NonVacuity.inNPStr_SATStr
+  Complexity.NonVacuity.satStr_reducesPolyMO'_SAT
+  SATStr.satStr_iff
+  SATStr.inNPStr_SATStr
+  SATStr.verifier_reads_certificate
+  SATStr.verifier_rejects_malformed
+  SATStr.not_satStr_true
+  SATStr.not_satStr_x0_and_not_x0
+  SATStr.satStr_x0
+  CnfWellFormed.wfCnfB_iff
+  CnfWellFormed.cnfCount_eq_length
+  CnfWellFormed.encodeCnf_parseTotal
+  CnfWellFormed.not_sat_botCnf
 
 end Complexity.NonVacuity
