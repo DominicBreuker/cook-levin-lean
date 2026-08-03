@@ -50,6 +50,7 @@ import Complexity.NP.SAT.CookLevin.CookLevinHonest
 import Complexity.SoundnessGate
 import Complexity.StatementGate
 import Complexity.StatementMeaning
+import Complexity.MachineFaithfulness
 import Complexity.HonestyGate
 import Complexity.CostFaithfulness
 import Complexity.NonVacuity
@@ -72,6 +73,13 @@ The gates below are part of the default build target and run on every
   list: that rejection is a real verdict, what the tape does at its edges, that
   a `runFlatTM` result is not a halting claim, that SAT means satisfiability and
   what the input measure is. Read it right after the statement gate;
+* `Complexity/MachineFaithfulness.lean` — that the machine model has the
+  defining properties of a Turing machine: a step reads one cell and changes at
+  most that cell, moves the head at most one place and never past the left end,
+  grows the tape by at most one cell, selects its transition from the state and
+  the symbols read alone, stays inside a finite (and enforced) alphabet and a
+  finite state set, and therefore uses space ≤ time. It is the instrument for
+  the last irreducible model question on a reviewer's trust list;
 * `Complexity/HonestyGate.lean` — what the composite reduction's `encodeIn` and
   `decodeOut` actually *are* (risk S5's two audited functions);
 * `Complexity/CostFaithfulness.lean` — that `Op.cost`, the number every
