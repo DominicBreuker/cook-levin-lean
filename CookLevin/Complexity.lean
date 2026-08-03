@@ -53,6 +53,7 @@ import Complexity.StatementMeaning
 import Complexity.HonestyGate
 import Complexity.CostFaithfulness
 import Complexity.NonVacuity
+import Complexity.GateSurfaceGate
 
 set_option autoImplicit false
 
@@ -79,7 +80,15 @@ The gates below are part of the default build target and run on every
 * `Complexity/NonVacuity.lean` — that the hypothesis of the published hardness
   statement is neither empty (a complete `InNPWitnessStr` is exhibited) nor
   satisfiable by an arbitrary predicate (every inhabitant is decidable by a
-  brute-force search over its own verifier program).
+  brute-force search over its own verifier program);
+* `Complexity/GateSurfaceGate.lean` — the same discipline applied to the gates
+  *themselves*: what each of the instruments above costs a reviewer to read
+  **beyond** the headline, asserted exact. It also carries the measurement that
+  reorganises the trust list — the hardness conjunct of the headline is stated
+  in `runFlatTM` steps and never mentions `Op.cost`, the membership conjunct is
+  stated in `Cmd.cost` and never mentions a Turing machine, and the membership
+  conjunct is restated at the machine level so that neither half needs the cost
+  model.
 
 This file is the only module that transitively imports **every** other, so it is
 where the whole-library sweep belongs: the line below asserts that no declaration
