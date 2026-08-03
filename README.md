@@ -53,9 +53,40 @@ that the statement demands it. That is the third independent reason to prefer
 the string headline; the other two are the textbook shape (`List Bool` on both
 sides) and the input measure (see the checklist).
 
+### ★ The two trust items do not compound (2026-08-08)
+
+Before the checklist, the single most useful structural fact about the headline,
+and it is machine-checked (`Complexity/GateSurfaceGate.lean` §1).
+`NPcompleteStr' SATStr` is a conjunction, and its two conjuncts are stated over
+**disjoint vocabularies**:
+
+| conjunct | its "polynomial time" is counted in | it never mentions |
+|---|---|---|
+| **hardness** — every NP string language reduces to `SATStr` | `runFlatTM` steps of a real `FlatTM` | `Op.cost`, `Cmd.cost`, `Cmd` |
+| **membership** — `SATStr` has a verifier | `Cmd.cost`, the layer's own cost model | `FlatTM`, `runFlatTM`, `stepFlatTM` |
+
+Two obligations are left on a reviewer's trust list after everything below:
+*is `FlatTM` really a Turing machine?* and *is `Op.cost` really a proxy for
+time?* The table says they **do not multiply**. Each is load-bearing for exactly
+one conjunct, so a reader who doubts one still has the other conjunct in full.
+
+Two consequences worth stating plainly, because neither is visible from the
+theorem:
+
+* a reviewer who distrusts our cost model **entirely** still has the whole
+  hardness half of Cook–Levin, unweakened — its polynomial bound already counts
+  `stepFlatTM` steps, inside `ComputesBy`;
+* conversely, "SAT is in NP" *as the headline states it* is a claim about
+  `Cmd.cost` with no machine in it. `Complexity/CostFaithfulness.lean` is what
+  makes it a claim about time, and `GateSurfaceGate.satStr_membership_is_machine_time`
+  restates it with the layer discharged: a sound, complete, polynomially bounded
+  certificate relation for `SATStr` decided by a real `FlatTM` inside a real
+  `runFlatTM` bound. **After reading that one theorem, neither half needs the
+  cost model.**
+
 ### What a reviewer actually has to do
 
-1. **`lake build`.** If it is green then five things are machine-checked, all
+1. **`lake build`.** If it is green then six things are machine-checked, all
    at elaboration time, with no CI step and no `grep` involved:
    * every one of the ~12 700 declarations under `Complexity` is `sorry`-free
      and uses only `propext`, `Classical.choice` and `Quot.sound`
@@ -92,7 +123,30 @@ sides) and the input measure (see the checklist).
      halting claim, that the empty clause is unsatisfiable and the empty CNF
      satisfiable, and what the input measure actually measures. **Read that file
      immediately after the statement gate** — it is the shortest path from "the
-     list is complete" to "I believe the list".
+     list is complete" to "I believe the list";
+   * **and the gates above are themselves metered** (2026-08-08,
+     `Complexity/GateSurfaceGate.lean`). Each instrument is a theorem whose
+     *statement* a reviewer must also read, so each is measured for what it
+     costs **beyond** the headline, and the number is asserted exact. The
+     measurement sorts them into two kinds, and this is the practical part:
+     * **reading gates**, which you can audit the way you audit the headline.
+       `StatementMeaning`'s four restatements cost **zero** additional
+       definitions — they say nothing the headline does not — and
+       `NonVacuity`'s brute-force decider costs **ten**, of which three are its
+       actual content. The `HonestyGate` pins about the chain *ends* cost 0, 1
+       and 7;
+     * **construction gates**, which you cannot. `Compile.cost_is_time_proxy`
+       costs **265** and `HonestyGate.str_encodeIn_eq_certState` **1045** — the
+       whole compiler and the whole six-seam chain. That is not fixable and not
+       a defect: both are statements *about the witness we built*, and the
+       witness is existentially quantified out of every headline, so their
+       surfaces can never sit inside one. **They are regression gates, not
+       reading instruments**, and this README no longer asks anyone to read
+       them: their value is that `lake build` fails if the construction they
+       describe changes. What *is* readable about them is pinned separately —
+       including (new) that the machine `CostFaithfulness.lean` bounds is by
+       `rfl` the machine the membership bridge actually builds, which nothing
+       had checked before.
 2. **Read four things**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else. These are four *topics*; the exact
    definitions under each, in reading order, are the five groups of
@@ -178,6 +232,44 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-08** (top-down; the gates were metered, and the trust
+list split in two):
+
+* **`Complexity/GateSurfaceGate.lean` — the instruments, measured.**
+  `StatementGate.lean` meters the headlines; nothing metered the six theorems a
+  reviewer reads *instead of* re-doing the work. Now something does, and it
+  reports the **difference** against the headline, because a gate about the
+  headline shares nearly all of its surface and only the difference carries
+  information (`#assert_statement_surface_delta`, plus `_contains`/`_omits` for
+  shape claims; negative controls in `probes/StatementSurfaceProbe.lean`
+  §§6–9). Eight obligations now run inside `lake build`.
+* ★ **FINDING AZ — the two conjuncts of the headline rest on disjoint
+  vocabularies, so the two remaining trust items do not compound.** See the
+  table at the top of the reviewer checklist. The hardness conjunct is stated in
+  `runFlatTM` steps and never mentions `Op.cost`; the membership conjunct is
+  stated in `Cmd.cost` and never mentions a Turing machine. Both directions are
+  gated. The second half of that is the surprising one — *as the headline states
+  it*, "SAT is in NP" is a claim about our cost model — and
+  `GateSurfaceGate.satStr_membership_is_machine_time` now restates it with the
+  layer discharged, so **neither half needs the cost model** once that one
+  theorem is read.
+* ★ **FINDING BA — the gates are two different kinds of evidence and were being
+  advertised as one.** Measured: `StatementMeaning`'s restatements cost **0**
+  additional definitions, `NonVacuity`'s decider **10** — auditable by reading.
+  `Compile.cost_is_time_proxy` costs **265** and
+  `HonestyGate.str_encodeIn_eq_certState` **1045** — not auditable by reading,
+  and not fixable, because by FINDING AW both are statements about a witness
+  that every headline quantifies away. They are **regression gates**; the README
+  no longer asks anyone to read them.
+* **A gap the metering found and closed.** `CostFaithfulness.lean` proves a time
+  bound for `Compile.paddedBitDeciderTM`, and nothing said that this is the
+  machine `DecidesLang.toDecidesBy` actually produces — a retarget would have
+  left the gate green and about a machine off the proof path.
+  `GateSurfaceGate.deciderBridge_machine`/`_states` pin it by `rfl`. ⚠ The
+  reduction side has no counterpart and needs none:
+  `toFrameworkWitness'` returns `Nonempty`, so its machine is unreachable — and
+  by FINDING AZ the hardness conjunct does not depend on the cost model at all.
 
 **What changed on 2026-08-06** (top-down; the reading list stopped being a
 claim):
