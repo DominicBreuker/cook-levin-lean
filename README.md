@@ -70,6 +70,15 @@ Two obligations are left on a reviewer's trust list after everything below:
 time?* The table says they **do not multiply**. Each is load-bearing for exactly
 one conjunct, so a reader who doubts one still has the other conjunct in full.
 
+⚠ **And since 2026-08-09 the first of the two has an instrument.**
+`Complexity/MachineFaithfulness.lean` proves the seven properties a textbook uses
+to *define* a deterministic single-tape Turing machine — plus the run-level
+consequence they force — universally quantified over machines, tapes and cells — see item 3 of the reading list below. It does
+not remove the obligation (nothing formal can: it is a claim about our
+definitions matching the literature's), but it turns "read
+`MachineSemantics.lean` carefully" into "read eight theorem statements", and it
+costs **two definitions** beyond the headline to do so.
+
 Two consequences worth stating plainly, because neither is visible from the
 theorem:
 
@@ -86,7 +95,7 @@ theorem:
 
 ### What a reviewer actually has to do
 
-1. **`lake build`.** If it is green then six things are machine-checked, all
+1. **`lake build`.** If it is green then seven things are machine-checked, all
    at elaboration time, with no CI step and no `grep` involved:
    * every one of the ~12 700 declarations under `Complexity` is `sorry`-free
      and uses only `propext`, `Classical.choice` and `Quot.sound`
@@ -147,6 +156,15 @@ theorem:
        including (new) that the machine `CostFaithfulness.lean` bounds is by
        `rfl` the machine the membership bridge actually builds, which nothing
        had checked before.
+   * **and the machine model has the defining properties of a Turing machine**
+     (2026-08-09, `Complexity/MachineFaithfulness.lean`). Ten metered theorems,
+     universally quantified over machines, tapes and cells: locality (a step
+     changes at most the head cell and moves the head at most one place), a
+     finite and *enforced* alphabet, a finite and closed state set, and
+     space ≤ time. Metered at **two** definitions beyond the headline, which is
+     as close to free as a reading gate gets — see item 3 of the list below,
+     and `probes/MachineFaithfulnessProbe.lean` for the negative controls and
+     for the go/no-go on a full simulation into Mathlib's `Turing.TM0`.
 2. **Read four things**, and nothing else, to know the theorem is about
    Cook–Levin and not about something else. These are four *topics*; the exact
    definitions under each, in reading order, are the five groups of
@@ -155,7 +173,24 @@ theorem:
      — what is being claimed, and over which hypothesis;
    * `SAT` (`Complexity/NP/SAT.lean`) — that it means satisfiability;
    * `FlatTM` / `stepFlatTM` (`Complexity/Complexity/MachineSemantics.lean`) —
-     that the machine model is a Turing machine;
+     that the machine model is a Turing machine. ★ **Read
+     `Complexity/MachineFaithfulness.lean` instead of re-deriving this** (new
+     2026-08-09): it proves, for *every* machine, tape and cell, that a step
+     reads one cell and it is the one under the head; changes **at most that
+     cell**; moves the head by **at most one** and never past the left end;
+     grows the tape by **at most one cell**; selects its transition from
+     `(state, symbols read)` alone; stays inside a finite alphabet, which is
+     *enforced* — an out-of-alphabet symbol stalls a valid machine — and inside
+     a finite state set; and therefore uses **space ≤ time** with a head that
+     cannot jump. Those are the defining properties, and none of them holds of a
+     random-access machine. ⚠ It also states the one place where our model is
+     **not** the textbook one (FINDING BB): the tape is **append-only**, so a
+     write strictly beyond the frontier is dropped, and a step's effect is
+     therefore *not* a function of `(state, symbol read)`. That is a
+     **restriction** — the machine loses a write — so the hardness conjunct is
+     if anything stronger than the textbook statement, and
+     `probes/MachineFaithfulnessProbe.lean` §2 exhibits the two configurations
+     that separate them;
    * **one encoding, and which one depends on the headline you quote:**
      * for `CookLevinStr : NPcompleteStr SAT` — `Serialize cnf`
        (`Complexity/Complexity/Deciders/CnfSerialize.lean`), the canonical CNF
@@ -232,6 +267,47 @@ bound. Both halves are `sorry`-free and axiom-clean.
 the hypothesis supplies. It is logically stronger and it is what the machinery
 proves — but that free layout is exactly where a dishonest reading gets in (see
 the caveat below), which is why the headline is the string form.
+
+**What changed on 2026-08-09** (top-down; the last model question got an
+instrument):
+
+* ★ **`Complexity/MachineFaithfulness.lean` — `FlatTM` has the defining
+  properties of a Turing machine, proven.** After FINDING AZ this was the *last*
+  irreducible item on the trust list, and the only answer was "read
+  `MachineSemantics.lean` carefully". Now it is a file of theorems quantified over
+  every machine, tape and cell: the head reads one cell and it is the cell it is
+  on; a step changes **at most** that cell; the head moves **at most one** place
+  and never past the left end; the tape grows by **at most one cell**; the
+  transition is selected from `(state, symbols read)` alone; the alphabet is
+  finite, closed *and enforced* (a symbol `≥ sig` stalls a valid machine); the
+  state set is finite and closed; and therefore **space ≤ time** with a head
+  that cannot jump. `lake build` now carries nine obligations.
+* ★ **The asymmetry that makes those the right theorems.** A model *weaker* than
+  a Turing machine makes "the reduction is computed by a `FlatTM` in polynomial
+  time" a **stronger** claim, so Cook–Levin's hardness half holds a fortiori.
+  The only dangerous direction is *stronger* — a step doing more work than a TM
+  step — and that is exactly what locality closes.
+* ★ **FINDING BB — our model is the textbook class RESTRICTED to append-only
+  tapes, and nothing had said so.** A `FlatTM` step's effect is **not** a
+  function of `(state, symbol read)`: on `([], 1, [5])` and `([], 2, [5])` the
+  head reads the same blank and the same write appends on the first, is dropped
+  on the second. Four lines in `probes/MachineFaithfulnessProbe.lean` §2. Safe,
+  by the asymmetry above; stated rather than hidden.
+* **The go/no-go on a simulation into Mathlib's `Turing.TM0`: feasible, ~2–4
+  sessions, and it buys a second opinion rather than a new guarantee.** The four
+  obstructions (one action per TM0 step, no "stay", the left wall, append-only)
+  are each pinned against Mathlib's real definitions and are each bookkeeping.
+  But FINDING BB means half of that work would be proving our model is *weaker*
+  — the safe direction — while the direction a reviewer needs is already given,
+  in the model's own vocabulary, by the theorems above. ROADMAP risk
+  **S10** carries the full verdict.
+* **One thing the probe turned up.** `validFlatTM` bounds the symbols in the
+  transition *table*, not on the initial *tape*, and `ComputesBy.computes` calls
+  `runFlatTM` directly rather than `execFlatTM` — so a witness's `encode` can put
+  an out-of-alphabet symbol on the tape. It is harmless, and
+  `stuck_of_symbol_ge_sig` is the reason: a valid machine has no entry that can
+  match such a symbol, so it stalls. `M.sig` is enforced by the semantics, not
+  merely declared.
 
 **What changed on 2026-08-08** (top-down; the gates were metered, and the trust
 list split in two):
@@ -474,7 +550,11 @@ by `Serialize cnf`, the head by the `NPhardStr` statement **and** by
 `encodeIn = encX` (2026-08-02). What no formalisation
 removes is the definitional trust at the statement: is `FlatTM`/`stepFlatTM` a
 faithful Turing machine, is `Serialize cnf` a faithful CNF encoding beyond
-`dec_enc`, does `SAT` mean satisfiability. (⚠ "is `Op.cost` a faithful proxy for
+`dec_enc`, does `SAT` mean satisfiability. (⚠ The first of those is *narrowed*,
+not removed, by `Complexity/MachineFaithfulness.lean` since 2026-08-09: the
+defining structural properties are proven, so what is left to trust is only that
+those properties are the right list — which is a question about textbooks, not
+about this repository.) (⚠ "is `Op.cost` a faithful proxy for
 time" used to be on this list — this project found one real bug of that kind —
 and came **off** it on 2026-08-02: `Compile.cost_is_time_proxy`,
 `Complexity/CostFaithfulness.lean`, gated.) See ROADMAP risk **S5**,
@@ -489,6 +569,7 @@ working.
 | | |
 |---|---|
 | `lake build` | ✅ green — **and it is the gate**: `#assert_library_axiom_clean Complexity` (bottom of `Complexity.lean`) fails elaboration unless all **12680** declarations in all **106** modules are `sorry`-free and axiom-clean; `Complexity/SoundnessGate.lean` does the same endpoint by endpoint, `Complexity/HonestyGate.lean` pins the two audited functions, `Complexity/CostFaithfulness.lean` gates `Op.cost` as a time proxy, `Complexity/NonVacuity.lean` gates non-vacuity of the hypothesis, and **`Complexity/StatementGate.lean` (2026-08-06) gates the reviewer's reading list itself**. Warm rebuild ~2 s; cold ~15 min. |
+| **`FlatTM` is a Turing machine (ROADMAP S10)** | ✅ **INSTRUMENTED AND GATED (2026-08-09)** — `Complexity/MachineFaithfulness.lean`. Ten metered theorems, quantified over every machine, tape and cell, covering each property a textbook uses to *define* a deterministic single-tape Turing machine: the head reads one cell and it is the cell it is on; a step changes **at most** that cell (`tapeCell_tapeStep_of_ne`); the head moves **at most one** place and never past the left end; the tape grows by **at most one cell**; the transition entry is selected from `(state, symbols read)` alone (`find?_congr_of_read`); the alphabet is finite, closed and **enforced** — a symbol `≥ M.sig` stalls a valid machine (`stuck_of_symbol_ge_sig`); the state set is finite and closed; and therefore **space ≤ time and the head cannot jump** (`runFlatTM_init_local`). ★ Why these and not a simulation: a model *weaker* than a TM makes the hardness conjunct **stronger**, so the only dangerous direction is *stronger*, and that is exactly what locality closes. ★ Metered at **two definitions** beyond the headline (ten exact deltas in `GateSurfaceGate.lean` §2) — a model question answered in the model's own vocabulary. ⚠ **FINDING BB**: our tape is **append-only**, so `FlatTM` is the textbook class *restricted*, not the full class; safe by the asymmetry above, and exhibited in four lines by `probes/MachineFaithfulnessProbe.lean` §2. The go/no-go on a full simulation into Mathlib's `Turing.TM0` is written up in ROADMAP **S10**: feasible, ~2–4 sessions, buys a second opinion rather than a new guarantee. |
 | **`#print axioms CookLevinHonest.CookLevinStr`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcompleteStr SAT`** (2026-08-01): hardness over NP **string languages** with the canonical one-register layout `certState`, so the hypothesis carries **no free input encoder**. Derived from `CookLevin''` in one line (`NPcomplete''_to_NPcompleteStr`, `Complexity/Lang/HardnessStr.lean`). ⚠ **No longer the statement to quote** — its *membership* conjunct is `inNPLangFreeSplit SAT`, which by FINDING AX claims nothing (see `SATStr_NPcompleteStr'`). It remains the statement whose subject is literally called "SAT". |
 | **`#print axioms CookLevinHonest.CookLevin''`** | **`[propext, Classical.choice, Quot.sound]`** — ★ **`NPcomplete'' SAT`, UNCONDITIONAL** (2026-07-30-b). Hardness (`FrontS1Comp.SAT_NPhard''`, 2026-07-29-b) and membership (`EvalCnfSplit.SAT_inNPLangFreeSplit`, 2026-07-30-b) are both closed. **This is the theorem this development proves.** |
 | **non-vacuity of the `NPhardStr` hypothesis** | ✅ **both directions, gated** (`Complexity/NonVacuity.lean`). **Inhabited — by a hard problem (2026-08-04)**: `SATStr.inNPStr_SATStr` is a complete `InNPWitnessStr` for SAT as a bit-string language, and `satStr_reducesPolyMO'_SAT : SATStr ⪯p' SAT` is `CookLevinStr` applied to it. (`inNPStr_squareStr`, 2026-08-03, stays as the minimal example; `SquareStr` is in P.) **Not everything**: `searchDecide_correct` — every inhabitant is decided by brute-force search over its own verifier `Cmd` (`searchDecide_calls`: `2^(bound+1) - 1` runs), so no undecidable predicate inhabits the class. ⚠ The decider is a Lean function, not a compiled `FlatTM` — that rung is open and labelled. ~~`NPhardStr SATStr` is not claimed~~ — **proven 2026-08-05**, so the inhabitant is NP-**complete** in this development's own sense (`NonVacuity.npcompleteStr_SATStr`). Probes: `probes/NonVacuityProbe.lean`, `probes/SATStrProbe.lean`. |

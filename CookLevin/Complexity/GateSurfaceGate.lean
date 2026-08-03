@@ -1,4 +1,5 @@
 import Complexity.StatementMeaning
+import Complexity.MachineFaithfulness
 import Complexity.CostFaithfulness
 import Complexity.NonVacuity
 import Complexity.HonestyGate
@@ -253,6 +254,82 @@ inside one file, which prose could not do. -/
   Complexity.Lang.instSerializeListBool
   Complexity.Lang.strBits_bit
   inOPoly_id
+
+/-! ### The machine gates (2026-08-09)
+
+`Complexity/MachineFaithfulness.lean` is the instrument for the **last**
+irreducible model question on a reviewer's list — *is `FlatTM` a Turing
+machine?* — so it is the one gate whose surface most needs to be near zero: an
+answer stated in vocabulary the reader has not already met would not be an
+answer.
+
+It is. The whole machine group of `StatementGate.lean` (`stepFlatTM`,
+`tapeStep`, `writeCurrentTapeSymbol`, `moveTapeHead`, `currentTapeSymbol`,
+`entryMatchesConfig`, `runFlatTM`, `validFlatTM`, …) is *already* in the
+headline's surface, because the headline's hardness conjunct is stated in
+`runFlatTM` steps. So these theorems say things about definitions a reviewer has
+already been told to read.
+
+★ **Measured: the whole file costs exactly two definitions.** Nine of the ten
+gates below add either nothing or the single new name `tapeCell` — the cell-wise
+view of the tape, four tokens long — and the tenth adds `tapeSymbolsBounded`,
+which is the alphabet predicate `validFlatTM` is already stated with. There is
+no cheaper way to answer a model question than in the model's own vocabulary,
+and that is the strongest evidence that this is a **reading** gate and not a
+regression gate (FINDING BA). -/
+
+/-! The head reads one cell, and `tapeCell` is that cell. One new name, and it
+is the only one the whole file introduces. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.currentTapeSymbol_eq_tapeCell
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  Complexity.MachineFaithfulness.tapeCell
+
+/-! ★ Locality: one step changes at most the cell under the head. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.tapeCell_tapeStep_of_ne
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  Complexity.MachineFaithfulness.tapeCell
+
+/-! The head moves at most one cell, and the tape grows by at most one cell —
+both stated purely in the headline's own vocabulary. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.tapeStep_head_le
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  -- (empty)
+
+#assert_statement_surface_delta Complexity.MachineFaithfulness.tapeStep_length_le_succ
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  -- (empty)
+
+/-! The finite control consults only the state and the symbols under the heads. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.find?_congr_of_read
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  -- (empty)
+
+/-! The alphabet is closed under a step. The one new name is the alphabet
+predicate itself. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.tapeStep_bounded
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  tapeSymbolsBounded
+
+/-! ★ …and it is enforced: an out-of-alphabet symbol stalls a valid machine. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.stuck_of_symbol_ge_sig
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  -- (empty)
+
+/-! The control state set is finite and closed. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.stepFlatTM_state_lt
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  -- (empty)
+
+/-! ★ Space ≤ time, and the head cannot jump. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.runFlatTM_init_local
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  -- (empty)
+
+/-! The written region is always a prefix — the invariant the append-only write
+rule maintains. -/
+#assert_statement_surface_delta Complexity.MachineFaithfulness.written_prefix
+  beyond SATStrComp.SATStr_NPcompleteStr' =>
+  Complexity.MachineFaithfulness.tapeCell
 
 /-! ## §3 · The construction gates — measured, and reclassified
 

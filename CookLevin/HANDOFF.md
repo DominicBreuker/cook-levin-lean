@@ -14,16 +14,17 @@ reasonably provable).
 to back. For the evidence files, [`../probes/README.md`](../probes/README.md) is
 the authoritative map — this document does not duplicate it.
 
-## Where the proof stands (2026-08-08)
+## Where the proof stands (2026-08-09)
 
 **COOK–LEVIN IS PROVEN, on the honest statement, unconditionally — audited,
 non-vacuous, stated with `List Bool` on both sides of the arrow and with the
 canonical layout pinned on BOTH sides of the completeness conjunction. `lake
-build` carries EIGHT obligations: the library is `sorry`-free and axiom-clean,
+build` carries NINE obligations: the library is `sorry`-free and axiom-clean,
 the two audited functions are what the audit says, `Op.cost` is a proven time
 proxy, the hypothesis class is non-vacuous, the reviewer's reading list is
-complete, that list has been read, and — since 2026-08-08 — the *gates
-themselves* are metered for what believing them costs.**
+complete, that list has been read, the *gates themselves* are metered for what
+believing them costs, and — since 2026-08-09 — **the machine model has the
+defining properties of a Turing machine**.**
 
 ```
 SATStrComp.SATStr_NPcompleteStr' : NPcompleteStr' SATStr  -- ★★ QUOTE THIS ONE
@@ -44,16 +45,22 @@ all depend on axioms: [propext, Classical.choice, Quot.sound]
 | the reviewer's reading list is COMPLETE, and has been READ | ✅ `StatementGate.lean` + `StatementMeaning.lean` |
 | **the gates are metered, and split into reading vs regression gates** | ✅ **NEW 2026-08-08** — `Complexity/GateSurfaceGate.lean` |
 | **the two conjuncts rest on DISJOINT trust (FINDING AZ)** | ✅ **NEW 2026-08-08** — gated, both directions |
+| **`FlatTM` has the defining properties of a Turing machine** | ✅ **NEW 2026-08-09** — `Complexity/MachineFaithfulness.lean`, metered at 2 defs |
 
 **The honesty surface that remains** is exactly: the *statement*
-(`NPcompleteStr'`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, **the
-faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine**, and **one**
+(`NPcompleteStr'`, `NPhardStr`, `InNPWitnessStr`), the meaning of `SAT`, the
+faithfulness of `FlatTM`/`stepFlatTM` as a Turing machine, and **one**
 encoding — `EvalCnfCmd.encodeCnf` (through `SATStr.satStr_iff`) if you quote the
 string headline, `Serialize cnf` if you quote `CookLevinStr`.
 
 ⚠ **After 2026-08-08 that list is shorter than it reads.** `Op.cost` is off it
-for *both* conjuncts (FINDING AZ), so the only irreducible *model* question left
-is `FlatTM`. That is why the next top-down item is what it is.
+for *both* conjuncts (FINDING AZ). ⚠ **And after 2026-08-09 the `FlatTM` item is
+narrowed rather than open**: `Complexity/MachineFaithfulness.lean` proves the
+seven textbook-defining properties (locality, one-cell head motion, finite and
+*enforced* alphabet, finite control, space ≤ time), so what a reviewer still
+takes on trust is only that *those are the right seven* — a question about
+textbooks, not about this repository. **Nothing on either work stream is now
+blocked on a model question.**
 
 ⚠ **Do not let any surface list grow silently.** You cannot: the gates fail. But
 when one does fail, *do not paste the new list in*. A new name means a
@@ -62,123 +69,148 @@ commit.
 
 ## ★ Latest session
 
-**2026-08-08 (top-down) — the gates were metered, and the trust list turned out
-to split in two.**
+**2026-08-09 (top-down) — the last model question got an instrument, and the
+model turned out not to be quite the textbook one.**
 
-**Landed: `Complexity/GateSurfaceGate.lean` (in the default build target), three
-new commands in `Meta/StatementSurface.lean` (`#assert_statement_surface_delta`
-+ `_contains`/`_omits`, and the `#print_` form of the first),
-`probes/StatementSurfaceProbe.lean` §§6–9, README's new "the two trust items do
-not compound" table, ROADMAP rows S9 / AZ / BA.**
+**Landed: `Complexity/MachineFaithfulness.lean` (in the default build target,
+imported by `Complexity.lean` and by `GateSurfaceGate.lean`),
+`probes/MachineFaithfulnessProbe.lean`, ten new exact deltas in
+`GateSurfaceGate.lean` §2, ROADMAP rows S10 / BB / the simulation verdict,
+README's new item 3 of the reading list.**
 
-1. **The diff mode was the right first move, as predicted.** A gate about the
-   headline shares nearly all of the headline's surface, so only the difference
-   informs. `#assert_statement_surface_delta thm beyond base => …` asserts
-   `surface(thm) \ surface(base)` **exactly** — equality, not containment, in
-   both directions.
-2. **The control passed.** `StatementMeaning`'s four spelled-out restatements
-   cost **zero** definitions beyond the headline they restate. ⚠ Getting the
-   *baseline* right mattered: against the string headline `hardness_spelled_out`
-   shows one extra name, `instEncodableNat` — which is the 103-vs-112 difference
-   (S8 verdict 12), not a property of the restatement. Meter a restatement
-   against the headline it restates.
-3. **FINDING AZ — the two conjuncts rest on disjoint vocabularies.** Hardness is
-   stated in `runFlatTM` steps and omits `Op.cost`/`Cmd.cost`/`Cmd`; membership
-   is stated in `Cmd.cost` and omits `FlatTM`/`runFlatTM`/`stepFlatTM`. So the
-   two trust items do **not** compound. The uncomfortable half: *as stated*,
-   `inNPStr SATStr` contains no machine at all.
-   `GateSurfaceGate.satStr_membership_is_machine_time` fixes that in one line
-   (`DecidesLang.toInTimePoly`), and after it **neither** half needs `Op.cost`.
-4. **FINDING BA — two of the gates are not reading instruments and should stop
-   being advertised as ones.** `cost_is_time_proxy` costs 265 definitions beyond
-   the headline, `HonestyGate.str_encodeIn_eq_certState` 1045. Unfixable and not
-   a defect (FINDING AW: both are about a witness every headline quantifies
-   away). They are **regression gates**. Pasting their lists would have been the
-   wrong deliverable.
-5. **A real gap, found by the metering and closed.** Nothing tied
-   `CostFaithfulness.lean`'s `paddedBitDeciderTM` to the machine
-   `DecidesLang.toDecidesBy` actually produces. `deciderBridge_machine`/`_states`
-   pin it by `rfl`. The reduction side cannot be pinned (`toFrameworkWitness'`
-   returns `Nonempty`) and by AZ does not need to be.
+1. **The go/no-go was run and the answer is: the simulation is feasible but is
+   NOT the next thing to build.** ROADMAP risk S10 carries the full verdict with
+   all four obstructions pinned against Mathlib's real `Turing.TM0` definitions.
+   The reason it comes second is the asymmetry in the next point.
+2. ★ **The asymmetry that reframes the whole question.** A model *weaker* than a
+   Turing machine makes "the reduction is computed by a `FlatTM` in polynomial
+   time" a **stronger** claim, so hardness holds a fortiori. Only *stronger* is
+   dangerous. That direction is closed by **locality**, directly and cheaply —
+   and a `TM0` simulation would largely be proving the safe direction.
+3. **So the deliverable is a file of universally quantified theorems, not a
+   simulation.** A step reads one cell and it is the head's; changes at most that
+   cell; moves the head at most one place and never past the left end; grows the
+   tape by at most one cell; selects its entry from `(state, symbols read)`
+   alone; stays inside a finite and *enforced* alphabet and a finite state set;
+   and therefore uses **space ≤ time** with a head that cannot jump.
+4. ★ **FINDING BB — `FlatTM` is the textbook class RESTRICTED to append-only
+   tapes, and nobody had said so.** Four lines
+   (`probes/MachineFaithfulnessProbe.lean` §2): on `([], 1, [5])` and
+   `([], 2, [5])` the head reads the *same* blank, and the *same* write appends
+   on the first and is **dropped** on the second. So a step's tape effect is not
+   a function of `(state, symbol read)` — it consults the frontier, which the
+   control cannot see. Safe by point 2, and now stated rather than hidden. ⚠ Do
+   not read `find?_congr_of_read` as being about the tape effect; it is about the
+   *entry selected*, and the two come apart exactly here.
+5. **Metered at TWO definitions beyond the headline**, across ten exact deltas.
+   The whole machine group of `StatementGate.lean` was already in the headline's
+   surface (the hardness conjunct is stated in `runFlatTM` steps), so the file
+   answers a model question in the model's own vocabulary. That is the sharpest
+   *reading* gate in the repo and the cleanest illustration of FINDING BA's
+   distinction.
+6. **A small gap the probe turned up.** `validFlatTM` bounds the symbols in the
+   transition *table*, not on the initial *tape*, and `ComputesBy.computes` calls
+   `runFlatTM` directly, so it never runs `execFlatTM`'s `isValidFlatTapes`
+   check — a witness's `encode` *can* put an out-of-alphabet symbol on the tape.
+   Harmless: `stuck_of_symbol_ge_sig` proves a valid machine then has no entry
+   that can match and stalls. `M.sig` is enforced by the semantics.
 
-**Cost.** All leaf work. `Meta/StatementSurface.lean` has only two importers, so
-editing it is seconds, not minutes. ⚠ **Gotcha that cost ten minutes:** a new
-`#assert_…` command is a *token*, and `lean <file>` reads the stale olean — the
-tokenizer then splits `#assert_statement_surface_contains` into the older token
-plus an identifier and reports a baffling `expected '=>'`. `lake build` the meta
-module before running any file that uses a newly added command. ⚠ A second one:
-a `/-- … -/` docstring cannot precede a `#command`; use `/-! … -/`.
+**Cost.** All leaf work; `MachineFaithfulness.lean` imports only
+`Complexity.Complexity.Definitions` + `TapeMono` + `Batteries.Data.List.Lemmas`
+and typechecks in **under 2 s**, so iterate with `lean <file>` and never pay a
+rebuild. ⚠ **The gotcha that cost ten minutes, and it is the same one as last
+session in a new dress:** a `/-- … -/` docstring cannot precede a `#guard`
+either — use `/-! … -/`. ⚠ Second: `List.set_eq_take_cons_drop` takes the
+*element* as its explicit argument, not the list, and is in `Batteries`, not in
+Lean core — importing `Batteries.Data.List.Lemmas` keeps the module off Mathlib
+entirely, which is worth preserving.
 
 ## ★ Recommendation for the next session
 
-**Run a TOP-DOWN session, on top-down item 1: the `FlatTM`-is-a-Turing-machine
-go/no-go probe.**
+**Run a BOTTOM-UP session, on bottom-up item 1: membership for `FlatClique`.**
 
-The reasoning is FINDING AZ's. Before this session a reviewer had two irreducible
-model questions — *is `FlatTM` a Turing machine?* and *is `Op.cost` faithful?* —
-and no way to see how they interacted. The second is now discharged for both
-conjuncts. **`FlatTM` is the last one**, it is the highest-value item in the whole
-plan, and it is also the riskiest, which is exactly why the next session should
-spend a half-session on the probe and write down the verdict whatever it says. Do
-not start building the simulation.
+The reasoning is that the top-down stream has just cleared its last *blocking*
+item. Every remaining top-down entry is either short and mechanical (items 2–5
+below, half an hour to an afternoon each) or a two-session build with nothing
+waiting on it (item 1, the `Cmd`-level certificate search). Meanwhile the
+development still contains exactly **one** problem on the NP side, which is the
+most visible remaining gap to a reader who knows Cook–Levin from a textbook:
+they expect a *class*, and they are shown a class with one inhabitant plus a
+proof that it has no undecidable ones.
 
-The alternatives, and why they come second. **Top-down item 2** (the `Cmd`-level
-certificate search) is the last open rung of the mathematics but nothing waits on
-it and it is a two-session build touching `Lang/PolyTime.lean`. **Top-down item
-3** (generalise `satStr_membership_is_machine_time` to the whole class) is a
-genuine strengthening and is ~30 lines, but it is a good *warm-up* inside another
-session rather than a session of its own. **Bottom-up item 1** (`FlatClique`
-membership) is well-templated, adds a second problem to the class, and costs a
-reviewer nothing; take it if the next session prefers building to reading.
+`FlatClique` membership is well-templated (`Deciders/EvalCnfSplit.lean` verbatim
+against `cliqueRelDecidesLang`, axiom-clean since 2026-07-01), costs a reviewer
+**nothing** — it touches no published headline's statement — and it is the only
+remaining item that adds a second problem. Budget one session.
+
+⚠ It now owes **one extra line** beyond the 2026-08-08 rule: per FINDING AZ each
+new membership witness owes its machine-level restatement, and per FINDING BB
+that restatement is a claim about the *append-only* machine class. One sentence
+in the verdict row, not a study.
+
+The alternatives, and why they come second. **Top-down item 3** (the `Cmd`-level
+certificate search) is still the last open rung of the mathematics but nothing
+waits on it and it touches `Lang/PolyTime.lean` (≈15 min cold rebuild).
+**Top-down items 4–6** are good *warm-ups* inside another session rather than
+sessions of their own — take item 4 or 5 as the first hour of the session after
+next. **Bottom-up item 2** (hardness for `kSAT 3`/`FlatClique`) is the natural
+follow-on once item 1 lands, and is the first thing that will exercise the tail
+extension machinery again.
 
 ## NEXT TOP-DOWN session
 
-The proof is done and eight obligations run inside `lake build`. Top-down work is
+The proof is done and nine obligations run inside `lake build`. Top-down work is
 still **turning reading obligations into typechecking obligations** — and, since
 2026-08-08, keeping the *gates* under the same discipline as the theorems they
 gate, and the *linkages* under the same discipline as the gates.
 
-### 1. Is `FlatTM` a Turing machine? — GO/NO-GO PROBE FIRST — START HERE
+⚠ **The model question is no longer the top item.** It was, for three sessions;
+`Complexity/MachineFaithfulness.lean` closed the actionable part of it on
+2026-08-09 (ROADMAP S10). What is left of it is item 6 below, and it is
+optional.
 
-**This is now the last irreducible item on the reviewer's trust list**, not merely
-the highest-value one. FINDING AZ discharged `Op.cost` for both conjuncts, so
-"`stepFlatTM` really is the transition relation of a Turing machine" is what is
-left, and it cannot be closed from inside — it is a claim about our model matching
-the literature's.
+### 1. Extend the meaning gates to the two remaining hypotheses — SHORT, START HERE if top-down
 
-**The move that would close it:** exhibit a simulation between `FlatTM` (at
-`tapes = 1`, which is all the compiler emits) and an *independently specified*
-machine — Mathlib's `Turing.TM0` or `Turing.TM1` — and prove the two agree on
-acceptance. Then "is this a Turing machine?" becomes "is Mathlib's `Turing.TM0` a
-Turing machine?", which is not our problem.
+The pattern that has paid off four times now (`StatementMeaning`,
+`GateSurfaceGate`, `MachineFaithfulness`) is: *find the thing a reviewer is told
+to read, and state its defining properties as theorems in its own vocabulary*.
+Two candidates remain, both cheap:
 
-⚠ **Do NOT start building this.** Spend the first half-session on a probe that
-answers three questions, and write the verdict down whatever it says:
+* **`SAT`/`cnf` (S8 verdict 11).** `StatementMeaning.lean` §5 pins the two
+  degenerate cases and three separations at concrete formulas. The general
+  statements are missing and are one-liners: `evalCnf` is `List.all` of
+  `evalClause`, `evalClause` is `List.any` of `evalLiteral`, so *monotonicity in
+  the clause list* and *`SAT (N₁ ++ N₂) ↔ ∃ a, …`* are the shape. Value: it
+  turns "read `NP/SAT.lean`" into "read four theorems", exactly as this session
+  did for the machine. Meter it in `GateSurfaceGate.lean` §2 — predicted cost
+  **0** definitions beyond the headline, and if it is not 0, that is the finding.
+* **`certState`/`strBits` (the layout on both sides of the conjunction).**
+  `HonestyGate.certState_size` costs 0 and `strTail_enc_eq_head` costs 7. What is
+  *not* stated is that `strBits` is injective **as a general theorem** rather
+  than through `decBits_strBits`. Half an hour.
 
-1. **Tape shape.** Ours is `(left, head : Nat, right)` with the head indexing
-   into `right`, one-way infinite, append-only at the frontier, blank = `none`
-   (`StatementMeaning` §3). Mathlib's `Turing.Tape` is two-way infinite with a
-   `Blank` inhabitant. Is there a mapping, and does append-only survive it?
-2. **Symbols.** Ours are `Nat` bounded by `M.sig` with `Option` for "off the
-   written region"; Mathlib's are an arbitrary `Inhabited` type. Fine in
-   principle — check `validFlatTM` is enough to build the `Fin M.sig` version.
-3. **Direction of the simulation, and which one is worth having.** *Ours
-   simulates theirs* would say our model is at least as strong. *Theirs simulates
-   ours* would say our model is not too strong (no smuggled power) — **that is
-   the one a reviewer needs**, and it is the harder one. If only the easy
-   direction is feasible, the honest deliverable is a written verdict saying so,
-   not half a simulation.
+⚠ Both are `_delta`-metered against `SATStrComp.SATStr_NPcompleteStr'`. Run
+`#print_statement_surface_delta` before committing to a statement's shape.
 
-The cheap fallback, worth doing even if the probe says no-go: a
-`Complexity/MachineFaithfulness.lean` that states, in one place and with `#eval`
-witnesses, the handful of behaviours that define the model (the three write
-cases, the left wall, blank ≠ zero, `find?`-determinism, stuck ≠ halted) — most of
-which `StatementMeaning` §§3–4 already pins. That converts "read
-`MachineSemantics.lean` carefully" into "read six theorems". ⚠ If you build it,
-meter it in `GateSurfaceGate.lean` in the same commit: a *reading* gate about the
-machine should cost near zero beyond the headline, and if it does not, say why.
+### 2. Finish the machine story — OPTIONAL, and only with a consumer
 
-### 2. The `Cmd`-level certificate search — the last rung of non-vacuity
+Two things `MachineFaithfulness.lean` deliberately did **not** do.
+
+* **The `TM0` simulation** (ROADMAP S10's verdict: feasible, ~2–4 sessions).
+  ⚠ **Do not start it as a side quest.** Its value is a second opinion, not a new
+  guarantee; the four obstructions are itemised with costs in
+  `probes/MachineFaithfulnessProbe.lean` §5. If a future session does take it,
+  the direction that matters is *theirs simulates ours*, the alphabet is
+  `Option (Fin sig)` decorated with a frontier marker and a left-end marker, and
+  the step blowup is a constant.
+* **The multi-tape lift.** §§1–6 of `MachineFaithfulness.lean` are stated for the
+  tape primitives and are already general; §7's run-level statements
+  (`runFlatTM_single_local`) are single-tape, which is all `Compile` emits. If a
+  multi-tape machine ever reaches the proof path, generalise via a `zipWith`
+  index argument — `stepFlatTM_single` is the lemma to widen, and everything
+  above it follows unchanged.
+
+### 3. The `Cmd`-level certificate search — the last rung of non-vacuity
 
 **Target.** `inNPStr Q → ∃ f, Nonempty (DecidesBy Q f)` with `f` exponential: `Q`
 is decided by a real `FlatTM` in *this development's own computability model*, not
@@ -236,7 +268,7 @@ second for the cost bound. **Do not start it as a side quest**, and do not weake
 the target to the classically trivial existential
 (`NonVacuity.inNPStr_exists_decider` is already there, labelled).
 
-### 3. Generalise `satStr_membership_is_machine_time` to the whole class — SHORT (~30 lines)
+### 4. Generalise `satStr_membership_is_machine_time` to the whole class — SHORT (~30 lines)
 
 `GateSurfaceGate.satStr_membership_is_machine_time` discharges the cost model for
 `SATStr`'s membership conjunct. The same statement holds for **every** inhabitant
@@ -259,7 +291,7 @@ keep the concrete pins as the gated evidence and add the general theorem
 un-metered; or add a conclusion-only helper to meter; or state the verdict in
 prose and say why it cannot be gated. Do not quietly drop the `_omits`.
 
-### 4. Meter the rest of `StatementMeaning` — SHORT, mechanical
+### 5. Meter the rest of `StatementMeaning` — SHORT, mechanical
 
 Only the four spelled-out restatements are metered. §§2–5's pins (rejection is a
 verdict, the tape's edges, the empty CNF, the input measure) are not. Their
@@ -268,7 +300,7 @@ pin is saying something about a definition outside the reading list and the S8
 verdict behind it needs re-checking. Half an hour, and it either confirms the
 classification or finds something.
 
-### 5. Retire `SATStr.strEIn`'s duplicate of the canonical layout — SHORT
+### 6. Retire `SATStr.strEIn`'s duplicate of the canonical layout — SHORT
 
 `Deciders/SATStr.lean` still defines `strEIn v = certState v.1 ++ certState v.2`
 locally, and `EvalCnfSplit.satEIn` does the same job on the CNF side. Now that
@@ -279,7 +311,7 @@ only if it stays a rename** — the `_run` lemmas in `SATStr.lean` are pinned to
 `strEIn`'s exact shape, so if the change reaches a proof body, stop and leave a
 note instead. Value: one fewer layout name for a reviewer.
 
-### 6. Audit whatever the bottom-up stream lands (S5 + S8 + S9, standing but SHORT)
+### 7. Audit whatever the bottom-up stream lands (S5 + S8 + S9, standing but SHORT)
 
 By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
 `decodeOut`** matter, and by FINDING AL a seam's `mfc` needs no audit.
@@ -330,7 +362,7 @@ By FINDING AK only the composite's **leftmost `encodeIn`** and **rightmost
     what `deciderBridge_machine` is, and it is the thing that was missing.
 * a new row in `probes/README.md` if the session adds a probe.
 
-### 7. The `.github/` residue — owner decision, not ours
+### 8. The `.github/` residue — owner decision, not ours
 
 `.github/workflows/lake-build.yml` **already exists and already runs
 `lake build`**, so the "CI question" of earlier handoffs is answered: CI is
@@ -351,7 +383,24 @@ do not quietly edit it.
 **Nothing on the critical path is waiting on a gadget.** The chain is closed at
 both ends and all headline statements are proven. Everything below is *scope
 extension*: more problems in the class, which is what makes the development
-useful beyond the single theorem.
+useful beyond the single theorem — and after 2026-08-09 it is also **the most
+visible remaining gap to a textbook reader**, who expects a class of problems and
+is currently shown a class with one inhabitant. That is why item 1 is the
+recommendation for the next session, not merely the first item in a list.
+
+⚠ **NEW (2026-08-09, FINDING BB — one sentence per verdict row, and it is not
+optional).** `FlatTM` is the class of deterministic single-tape Turing machines
+**restricted to append-only tapes**: a write strictly beyond the frontier is
+dropped, so a step's tape effect is *not* a function of `(state, symbol read)`
+(`probes/MachineFaithfulnessProbe.lean` §2). This is safe — the restriction makes
+every "computed by a `FlatTM` in polynomial time" claim *stronger* than the
+textbook one — but it means a verdict row must not say "decided by a Turing
+machine" without the qualification. Say **"by a `FlatTM`, i.e. a Turing machine
+with an append-only tape (ROADMAP S10 / FINDING BB)"**, once, and move on. ⚠ The
+practical corollary for a *builder*: never write a gadget that relies on writing
+past the frontier and coming back — the write is silently lost.
+`Complexity/MachineFaithfulness.lean` §3 is the reference for what a step can and
+cannot do.
 
 ⚠ **Interface note.** `InNPWitnessLangFreeSplit` carries `sizeLB` /
 `sizeLB_poly` / `encX_sizeLB` (since 2026-08-02). Every **verifier/membership**
@@ -454,7 +503,7 @@ free. ⚠ **This extends the chain at the TAIL**, so:
   generalising it over the register and the output type is ~10 lines and is
   exactly the "third consumer" trigger for moving it into `Lang/PolyTime.lean`.
 
-One verdict row, not a study; see top-down item 5.
+One verdict row, not a study; see top-down item 6.
 
 ### 3. Membership for `kSAT 3` (~1 session) — same shape as item 1
 
@@ -493,7 +542,7 @@ is `AgreeBelow 1` and depends on both). Stage C's 30-register licence is
 
 ## Before you push
 
-**`lake build` is the gate, and it now carries eight obligations.** If it is
+**`lake build` is the gate, and it now carries nine obligations.** If it is
 green, then every declaration under `Complexity` is `sorry`-free and uses only
 Lean's three axioms (`#assert_library_axiom_clean`), the two audited functions
 are what the audit says they are (`Complexity/HonestyGate.lean`), `Op.cost` is a
@@ -503,7 +552,9 @@ list is exactly the one written down** (`Complexity/StatementGate.lean`, three
 headlines), **the checkable verdicts of the audit of that list still hold**
 (`Complexity/StatementMeaning.lean`) and — since 2026-08-08 — **each of those
 instruments still costs a reviewer exactly what it is documented to cost**
-(`Complexity/GateSurfaceGate.lean`). You do not need to run `AxiomProbe`, and you
+(`Complexity/GateSurfaceGate.lean`) and — since 2026-08-09 — **the machine model
+still has the defining properties of a Turing machine**
+(`Complexity/MachineFaithfulness.lean`). You do not need to run `AxiomProbe`, and you
 must **never** "fix" a gate failure by deleting the assertion or by pasting the
 new list in without reading it.
 
@@ -518,12 +569,22 @@ disjoint trust*. If one of them fires, a conjunct has started depending on
 something it was advertised as independent of, and the README's trust table is
 now wrong. Fix the table, not the assertion.
 
-Five things the build does **not** check — the negative controls. They are the
+⚠ `MachineFaithfulness.lean` is the same again. If one of its theorems stops
+holding, the *machine model* changed — and by ROADMAP S10 that is the one place
+where a change is a change to what the theorem means, not to how it is proved.
+Fix the model or the ROADMAP verdict; do not weaken a locality statement to make
+it pass. ⚠ The one that is easiest to break by accident is
+`tapeCell_write_of_ne` (locality): any edit to `writeCurrentTapeSymbol` that
+re-introduces padding, shifting or multi-cell effects breaks it, which is exactly
+what it is there for. `probes/MachineFaithfulnessProbe.lean` §1 carries the
+rejected model that fails it.
+
+Six things the build does **not** check — the negative controls. They are the
 files that prove the positive gates could still fail:
 
 ```
 export PATH="$HOME/.elan/bin:$PATH"
-lake build                                   # the eight-obligation gate
+lake build                                   # the nine-obligation gate
 export LEAN_PATH=$(lake env printenv LEAN_PATH)
 lean probes/HonestyAuditProbe.lean           # ~3 s — the S5 evidence file
 lean probes/CostChkIntentProbe.lean          # ~3 s — what `Cmd.chk` must accept/reject
@@ -531,6 +592,8 @@ lean probes/NonVacuityProbe.lean             # ~4 s — the decider actually run
 lean probes/SATToSATStrProbe.lean            # ~5 s — §1 is FINDING AT's control
 lean probes/StatementSurfaceProbe.lean       # ~10 s — the surface gates can still fail
                                              #          (§§6-9: the delta + shape forms)
+lean probes/MachineFaithfulnessProbe.lean    # ~3 s — locality's negative control (§1),
+                                             #        FINDING BB (§2), the TM0 go/no-go
 ```
 
 ⚠ **`probes/HonestyAuditProbe.lean` §7c is the newest negative control and the
@@ -554,11 +617,11 @@ tell in advance.
 ### The probe regression list — now indexed
 
 **[`../probes/README.md`](../probes/README.md) is the authoritative map**: all
-48 files sorted into ★ GATE / REGRESSION / ARCHAEOLOGY, each with what it pins,
+49 files sorted into ★ GATE / REGRESSION / ARCHAEOLOGY, each with what it pins,
 its **measured** runtime and when to re-run it. Do not re-derive that list here;
 the short version is:
 
-* the five gates above, always;
+* the six gates above, always;
 * `probes/SATStrProbe.lean` (10 s), `SATSplitProbe` (4 s), `SeamS1Probe` (4 s)
   and the `S1*` family — after touching the module each names;
 * ⚠ **one** slow file, not two: `S1PreludeEmitProbe` is **402 s** measured.

@@ -1,6 +1,6 @@
 # `probes/` — the evidence files, and which of them are still evidence
 
-**Read this before opening anything in this directory.** There are 48 files
+**Read this before opening anything in this directory.** There are 49 files
 here, written across four months, and they are not all the same kind of thing.
 Some are live regression gates. Some are the *negative controls* that make the
 build's positive gates worth something. Most are the archaeology of a design
@@ -59,6 +59,7 @@ lean probes/CostChkIntentProbe.lean      # what `Cmd.chk` must accept and reject
 lean probes/NonVacuityProbe.lean         # the brute-force decider actually runs
 lean probes/SATToSATStrProbe.lean        # §1 = the FINDING AT negative control
 lean probes/StatementSurfaceProbe.lean   # the surface gate can still fail
+lean probes/MachineFaithfulnessProbe.lean # the machine-model go/no-go + its controls
 ```
 
 Under a minute in total. Everything else is conditional on what you touched.
@@ -72,6 +73,7 @@ Under a minute in total. Everything else is conditional on what you touched.
 | `NonVacuityProbe.lean` | `Complexity/NonVacuity.lean` *proves* every inhabitant of `inNPStr` is decidable by brute-force search over its own verifier. This *runs* that search, so the theorem is not about a function that diverges. ⚠ Keep every `#eval` at inputs of length ≤ 6 — the search is exponential on purpose. | 4 s | any change to `NonVacuity.lean`, `certState`, `Cmd.eval`/`Op.eval`, or `InNPWitnessStr` |
 | `SATToSATStrProbe.lean` | §1 is the negative control for **FINDING AT**: it prints `true` for the fact that the *identity* form of `Serialize`'s no-compression law (`encodable.size x ≤ (enc x).length`) is **unsatisfiable** for `List Bool` under the canonical one-cell-per-bit layout — which is why the law is now `size x ≤ sizeLB ∣enc x∣`. §3's third line prints `([0], [1], false)`, the control showing `strBits_boolsOf` really needs its bit hypothesis. §6 prints `(true, false)`; every other line prints `true`. | 4 s | any change to `Lang/Serialize.lean`, `Lang/SerializeStr.lean`, `Reductions/SAT_to_SATStr_free.lean` or `_comp.lean` |
 | `StatementSurfaceProbe.lean` | The negative controls for `Complexity/StatementGate.lean` **and** (§§6–9, 2026-08-08) for `Complexity/GateSurfaceGate.lean`. §§1–5: a definition in a statement is in the surface, one used only in a *proof* is not, the closure runs transitively through definition bodies, and **both** failure directions fire (a list that is incomplete, and a list that is stale). §§6–8: the same two directions for the **delta** form, plus the empty delta as a positive pin. §9: `_contains` and `_omits` each fire, and — the subtle one — `_omits` is checked against the **raw** closure, so a name the report filter hides (`ToyPair.mk`) is still caught; an absence claim that used the filtered list would be satisfiable by a statement that reaches the name through a generated companion. Every section must elaborate **silently** — `#guard_msgs` turns a wrong answer into an error, so no output is the pass condition. | 4 s | any change to `Complexity/Meta/StatementSurface.lean` |
+| `MachineFaithfulnessProbe.lean` | The evidence behind `Complexity/MachineFaithfulness.lean` and ROADMAP risk **S10** — *is `FlatTM` a Turing machine?* §1 is the negative control for locality: it defines the **pre-2026-07-17** zero-padding write and shows one step changing three cells the head is not on, so `tapeCell_write_of_ne` is not vacuous. §2 is the four-line separation that decides the whole question (FINDING BB): two tapes on which the head reads the *same* blank, given the *same* write, end up different — one appends, one drops — so a `FlatTM` step's tape effect is **not** a function of `(state, symbol read)` and our model is the append-only *restriction* of the textbook class. §§4–6 are the go/no-go against Mathlib's real `Turing.TM0`/`Turing.Tape` definitions: the four obstructions, each pinned as a Lean `example`, with the cost of clearing each. §6 also exhibits the stall that makes `M.sig` enforced rather than declared. §7 shows the space-≤-time bound is attained, not slack. Every line must elaborate **silently** — `#guard` turns a false claim into an error. | 2.4 s | any change to `Complexity/Complexity/MachineSemantics.lean`, `validFlatTM`, or `Complexity/MachineFaithfulness.lean` |
 | `AxiomProbe.lean` | *Not a gate* — the **reporting** instrument. `Complexity/SoundnessGate.lean` is the gate and runs in the build; this file prints each endpoint's axiom list, which is what you want when investigating a regression rather than detecting one. Keep the two lists in sync. | 3 s | adding an endpoint to `SoundnessGate.lean` |
 
 ## Regression probes
