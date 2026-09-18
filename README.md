@@ -75,3 +75,7 @@ by Cook's tableau (`FlatTCC`), which is rewritten in stages into a Boolean formu
 and then, by a Tseytin transformation, into a CNF. The steps are composed at the level of
 programs and the composite is compiled once. Membership is a verifier program for SAT that
 checks an assignment against the formula.
+
+## License
+
+MIT, see [LICENSE](LICENSE).
