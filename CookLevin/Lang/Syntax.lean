@@ -1,0 +1,118 @@
+import CookLevin.Basic.MachineSemantics
+
+/-!
+# Syntax of the register language
+
+Programs manipulate a state `State = List (List Nat)` of registers. The primitive operations
+`Op` append a bit to a register, clear it, copy, take the tail, read the head bit, test for
+emptiness, compare two registers and concatenate. A command `Cmd` is an operation, a
+sequence `c₁ ;; c₂`, a branch `ifBit r c₁ c₂` on the head bit of register `r`, or a bounded
+loop `forBnd r n c` iterating `c` once per cell of register `r`. Every reduction and
+verifier of this development is such a program; `Lang/Compile.lean` turns it into a Turing
+machine.
+-/
+
+set_option autoImplicit false
+
+namespace CookLevin.Lang
+
+/-- Register index. Programs read and write a finite list of
+"registers", each of which holds a `List Nat`. -/
+abbrev Var := Nat
+
+/-- The state of a Lang program: a list of registers, each a `List Nat`.
+
+By convention, **register 0 holds the program's output**: the program
+"accepts" iff register 0 contains `[1]` after evaluation and "rejects"
+iff it contains `[0]`. Inputs are placed in registers 1, 2, …. -/
+abbrev State := List (List Nat)
+
+namespace State
+
+/-- Read register `v`, returning `[]` if unset. -/
+def get (s : State) (v : Var) : List Nat := (s[v]?).getD []
+
+/-- Write `val` to register `v`, extending the state with `[]`-padding
+if `v` is past the current length. -/
+def set (s : State) (v : Var) (val : List Nat) : State :=
+  if v < s.length then List.set s v val
+  else
+    let padded := s ++ List.replicate (v + 1 - s.length) []
+    List.set padded v val
+
+/-- The aggregate size of a state — used to express polynomial cost
+bounds. -/
+def size (s : State) : Nat := (s.map List.length).foldr (· + ·) 0
+
+end State
+
+/-- Primitive operations on the state. Each `Op` evaluates in unit
+cost. Programs compose `Op`s via `Cmd.op`. -/
+inductive Op : Type where
+  /-- `clear dst` : `s[dst] := []` -/
+  | clear  (dst : Var)
+  /-- `appendOne dst` : `s[dst] := s[dst] ++ [1]` (used to extend a
+  unary counter by one). -/
+  | appendOne (dst : Var)
+  /-- `appendZero dst` : `s[dst] := s[dst] ++ [0]` -/
+  | appendZero (dst : Var)
+  /-- `copy dst src` : `s[dst] := s[src]` -/
+  | copy   (dst src : Var)
+  /-- `tail dst src` : `s[dst] := (s[src]).tail` -/
+  | tail   (dst src : Var)
+  /-- `head dst src` : `s[dst] := if s[src] is empty then [] else [s[src].head]` -/
+  | head   (dst src : Var)
+  /-- `eqBit dst src1 src2` : `s[dst] := [1]` if `s[src1] = s[src2]`,
+  else `[0]`. -/
+  | eqBit  (dst src1 src2 : Var)
+  /-- `nonEmpty dst src` : `s[dst] := [1]` if `s[src]` is non-empty,
+  else `[0]`. -/
+  | nonEmpty (dst src : Var)
+  /-- `concat dst src1 src2` : `s[dst] := s[src1] ++ s[src2]`. -/
+  | concat (dst src1 src2 : Var)
+  deriving Repr, BEq
+
+/-- Commands. The layer is a structured while-language with:
+- primitive operations (`op`),
+- sequencing (`seq`),
+- conditional on a one-bit register (`ifBit`),
+- counted iteration (`forBnd`) — iterates `body` once per element of
+  register `bound`, placing the iteration index (in unary, i.e.
+  `List.replicate i 1`) into register `counter`.
+
+`forBnd`'s bound is read from a register, not computed: the layer is
+**total** by construction, and cost is closed-form in the input size. -/
+inductive Cmd : Type where
+  | op       (o : Op)
+  | seq      (c1 c2 : Cmd)
+  | ifBit    (test : Var) (cThen cElse : Cmd)
+  | forBnd   (counter bound : Var) (body : Cmd)
+  deriving Repr
+
+/-- Sequencing notation. -/
+infixr:30 " ;; " => Cmd.seq
+
+/-- **`forBnd` nesting depth** — the number of loop levels along the deepest
+path of the command. Drives the compiler's static scratch-register assignment
+: a `forBnd` compiled at scratch base `sb` keeps its loop counts in
+the two scratch registers `sb`, `sb + 1` (which the machine requires empty at
+entry and restores to empty at exit) and compiles its body at scratch base
+`sb + 2`, so a program compiled at base `sb` touches registers
+`< sb + 2 * loopDepth` in total. Sequential/branching composition *reuses*
+scratch (each loop restores its pair to `[]`), so the depth — not the loop
+count — is what widens the register footprint. -/
+def Cmd.loopDepth : Cmd → Nat
+  | .op _               => 0
+  | .seq c1 c2          => max c1.loopDepth c2.loopDepth
+  | .ifBit _ cT cE      => max cT.loopDepth cE.loopDepth
+  | .forBnd _ _ body    => body.loopDepth + 1
+
+/-- Output convention: a state `s` is `accept` iff register 0
+contains exactly `[1]`. -/
+def State.isAccept (s : State) : Bool := s.get 0 == [1]
+
+/-- Output convention: a state `s` is `reject` iff register 0
+contains exactly `[0]`. -/
+def State.isReject (s : State) : Bool := s.get 0 == [0]
+
+end CookLevin.Lang

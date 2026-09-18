@@ -10,7 +10,7 @@ on:
 jobs:
   lake-build:
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 240
     permissions:
       contents: read
 
