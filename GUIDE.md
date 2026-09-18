@@ -145,6 +145,8 @@ polynomial-time Turing machine can be simulated by a program of the register lan
 polynomial cost. That is the usual simulation of a Turing machine by a while-program with
 unary counters and is expected to hold, but it is not formalised. The hardness half is
 therefore a statement about `inNPCmd`, a subclass of NP that contains `SATStr`.
+[PLAN.md](PLAN.md) lays out how to formalise the missing inclusion and restate the theorem
+with `inNP` as hypothesis.
 
 ### 4.4 SAT (`Basic/Definitions.lean`, `SAT/SAT.lean`, `SAT/SATStr.lean`)
 

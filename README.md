@@ -14,7 +14,8 @@ theorem cook_levin : NPcomplete SATStr
 `NPcomplete P` says that every language with a polynomial-time verifier reduces to `P` by a
 polynomial-time Turing machine, and that `P` itself has a polynomial-time verifier. What
 these words mean here, what a reader has to check to trust the theorem, and how it compares
-to the textbook statement is explained in [GUIDE.md](GUIDE.md).
+to the textbook statement is explained in [GUIDE.md](GUIDE.md). One step of the textbook
+argument is not formalised (GUIDE §4.3); [PLAN.md](PLAN.md) describes how to close it.
 
 ## Checking the proof
 
