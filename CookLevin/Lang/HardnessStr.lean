@@ -50,9 +50,17 @@ theorem inNPCmd_inNP {Q : List Bool → Prop} (h : inNPCmd Q) : inNP Q := by
     W.verifier.toMachine W.dBound_poly W.dBound_mono
       (fun x c => by rw [W.encodeIn_eq, W.encX_canonical])
   obtain ⟨B⟩ := W.rel_correct
-  refine ⟨W.rel, fun n => B.bound (2 * n), t, M, acc, rej,
-    inOPoly_comp (inOPoly_mul (inOPoly_const 2) inOPoly_id) B.bound_poly,
-    ht, hM, h1, ?_, hdec⟩
+  obtain ⟨k, a, n0, hB⟩ := B.bound_poly
+  -- `B.bound (2 n) ≤ (a · 2^k) · n^k + B.bound n0` for every `n`.
+  have hpoly : ∀ n, B.bound (2 * n) ≤ a * 2 ^ k * n ^ k + B.bound n0 := by
+    intro n
+    by_cases hn : n0 ≤ 2 * n
+    · have h : B.bound (2 * n) ≤ a * (2 * n) ^ k := hB (2 * n) hn
+      rw [Nat.mul_pow, ← Nat.mul_assoc] at h
+      omega
+    · have := B.bound_mono _ _ (Nat.le_of_lt (Nat.lt_of_not_le hn))
+      omega
+  refine ⟨W.rel, a * 2 ^ k, k, B.bound n0, t, M, acc, rej, ht, hM, h1, ?_, hdec⟩
   intro x
   constructor
   · intro hx
@@ -61,6 +69,7 @@ theorem inNPCmd_inNP {Q : List Bool → Prop} (h : inNPCmd Q) : inNP Q := by
     calc c.length ≤ encodable.size c := length_le_size c
       _ ≤ B.bound (encodable.size x) := hsize
       _ ≤ B.bound (2 * x.length) := B.bound_mono _ _ (size_le_two_mul_length x)
+      _ ≤ a * 2 ^ k * x.length ^ k + B.bound n0 := hpoly _
   · rintro ⟨c, -, hc⟩
     exact B.sound hc
 

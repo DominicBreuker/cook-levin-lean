@@ -69,13 +69,20 @@ def reducesPoly (Q P : List Bool → Prop) : Prop :=
 @[inherit_doc] infix:50 " ⪯p " => reducesPoly
 
 /-- **The class NP** (verifier form). `Q` is in NP when there are a relation `R` on pairs
-of strings, polynomials `p` and `t`, and a valid single-tape Turing machine `M` deciding
-`R` within time `t`, such that `x ∈ Q` iff some certificate `c` of length at most
-`p x.length` satisfies `R x c`. -/
+of strings, a polynomial `t`, and a valid single-tape Turing machine `M` deciding `R`
+within time `t`, such that `x ∈ Q` iff some certificate `c` of length at most
+`a · |x|^k + b` satisfies `R x c`.
+
+The certificate bound is an explicit polynomial, not merely a function bounded by one
+(`inOPoly`): with an arbitrary function `p` in that place, `x ∈ Q ↔ ∃ c, |c| ≤ p |x| ∧ R x c`
+can encode an arbitrary set of lengths into `Q` (take `R x c := |c| = |x| + 1` and
+`p n = n + [n ∈ H]`), and the class would contain undecidable languages. The running time
+`t` may be any function bounded by a polynomial: it only bounds a halting time. -/
 def inNP (Q : List Bool → Prop) : Prop :=
-  ∃ (R : List Bool → List Bool → Prop) (p t : Nat → Nat) (M : FlatTM) (acc rej : Nat),
-    inOPoly p ∧ inOPoly t ∧ validFlatTM M ∧ M.tapes = 1 ∧
-    (∀ x, Q x ↔ ∃ c, c.length ≤ p x.length ∧ R x c) ∧
+  ∃ (R : List Bool → List Bool → Prop) (a k b : Nat) (t : Nat → Nat) (M : FlatTM)
+    (acc rej : Nat),
+    inOPoly t ∧ validFlatTM M ∧ M.tapes = 1 ∧
+    (∀ x, Q x ↔ ∃ c, c.length ≤ a * x.length ^ k + b ∧ R x c) ∧
     decidesPairInTime M acc rej R t
 
 /-! ## `encodable.size` of a bit string
