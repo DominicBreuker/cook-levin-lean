@@ -71,13 +71,23 @@ applies it; `runFlatTM n M cfg` runs at most `n` steps and stops early at a halt
 or when no entry matches. `haltingStateReached` is the halting test. Time is the number of
 steps; the theorems only use single-tape machines (`M.tapes = 1`).
 
-Two details differ from the usual textbook picture, both in the direction that makes the
-machine weaker and the hardness statement therefore stronger:
+Two details differ from the usual textbook picture; both make the machine weaker:
 
 * the tape is one-way infinite: moving left at cell `0` leaves the head at `0`;
 * the tape is append-only: a write is performed when the head is at or before the end of
   the written region and dropped when it is strictly beyond it (a head can be moved beyond
   the region; it then reads blanks). A machine can therefore never create an unwritten gap.
+
+The machine model occurs on both sides of the theorem, with opposite effects. The reduction
+is a machine of this model, so a weaker model makes the hardness half *stronger*. The
+verifiers in the hypothesis `inNP` are machines of this model too, so a weaker model could
+make the class `inNP` *smaller* than NP. It does not, but this rests on the standard
+robustness of the Turing-machine model, which is not formalised here: a textbook machine
+(two-way infinite tape, writes anywhere) is simulated by one of this model with polynomial
+overhead, by folding the tape at cell `0` and writing a blank-standing symbol whenever the
+head steps onto a new cell. What *is* formalised is that the class is robust in another
+sense: `inNP` coincides with the class of languages that have a polynomial-cost verifier in
+the register language of §4.6 (`inNP_iff_inNPCmd`).
 
 `MachineFaithfulness.lean` proves, for every machine, that a step reads one cell, changes at
 most that cell, moves the head by at most one, extends the tape by at most one cell, is
@@ -185,7 +195,7 @@ as described; they are checked by the build.
 
 | textbook | here |
 |---|---|
-| deterministic single-tape Turing machine, two-way infinite tape | `FlatTM` with one tape, one-way infinite, append-only (§4.1); both restrictions weaken the machine |
+| deterministic single-tape Turing machine, two-way infinite tape | `FlatTM` with one tape, one-way infinite, append-only (§4.1); equivalent up to polynomial overhead by the standard simulation, which is not formalised (§4.1) |
 | input written on the tape | `stringTape`: one symbol per bit between markers (§4.2) |
 | `Q ≤p P` | `Q ⪯p P` (§4.2), the same notion |
 | `P ∈ NP` via a polynomial-time verifier | `inNP` (§4.2), the same notion, certificates of length at most `a·n^k + b` |
