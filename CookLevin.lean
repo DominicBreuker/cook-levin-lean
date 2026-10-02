@@ -94,6 +94,12 @@ import CookLevin.SAT.FSAT_to_SAT_pre
 import CookLevin.SAT.KCNF
 import CookLevin.SAT.SAT
 import CookLevin.SAT.SATStr
+import CookLevin.Simulation.Cost
+import CookLevin.Simulation.Gadgets
+import CookLevin.Simulation.Program
+import CookLevin.Simulation.Step
+import CookLevin.Simulation.Witness
+import CookLevin.Simulation.Zipper
 import CookLevin.Tableau.CookTableau
 import CookLevin.Tableau.GuessTableau
 

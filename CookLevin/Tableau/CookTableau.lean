@@ -897,9 +897,9 @@ theorem cookFinal_mem_length (M : FlatTM) :
 The card list dominates: `copyCards`
 is `Θ(|Σ|³)` cards, and each normalised entry contributes `Θ(|Σ|³)`
 incoming-head cards; with `|Σ| ≤ n²` the total is a low-degree polynomial in
-`n`. The *previously stated* bound `n^10` is numerically true but is **not
-provable from loose factored bounds** — a loose `≤ 102·(n+1)^6` already
-overshoots `n^10` at `n = 2` (`n^10 = 1024`). We bound instead by
+`n`. The bound `n^10` would be numerically true but is not provable from loose factored
+bounds — a loose `≤ 102·(n+1)^6` already overshoots `n^10` at `n = 2`
+(`n^10 = 1024`). We bound instead by
 `(2·(n+1))^10 = 1024·(n+1)^10`, whose `2^10` slack absorbs loose constants;
 it is `inOPoly`/`monotonic` all the same (all `⪯p` needs). See
 `guessTableau_size_bound` for the sibling bound (which additionally *requires*

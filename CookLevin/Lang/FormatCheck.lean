@@ -795,7 +795,7 @@ theorem rewind_seg (w : Nat) (l t : List Nat) :
       have hcomp := h1.comp h2
       rwa [Nat.add_comm 1 p] at hcomp
 
-/-! ### The valid-tape forward run (F5 forward direction) -/
+/-! ### The valid-tape forward run (forward direction) -/
 
 /-- **The full valid-tape segment**: on `encodeTape s` (`BitState s`,
 `s.length = w + 1`) the format check runs `2·|tape| + 1` steps to the done
@@ -870,7 +870,7 @@ theorem formatCheck_seg (w : Nat) (s : State) (hbit : Compile.BitState s)
   rwa [show 1 + R + 1 + 1 + 1 + R + 1 = 2 * T.length + 1 from by
     rw [hTlen]; omega] at hcomp
 
-/-- **F5 forward run lemma** (the `composeFlatTM_run` `h_run1` shape): a valid
+/-- **Forward run lemma** (the `composeFlatTM_run` `h_run1` shape): a valid
 `encodeTape` passes the format check in `2·|tape| + 1` steps, tape unchanged,
 head `0`, halting at the unique halt state `w + 6`. -/
 theorem formatCheck_run (w : Nat) (s : State) (hbit : Compile.BitState s)
@@ -880,7 +880,7 @@ theorem formatCheck_run (w : Nat) (s : State) (hbit : Compile.BitState s)
       = some ⟨w + 6, [([], 0, Compile.encodeTape s)]⟩ :=
   (formatCheck_seg w s hbit hlen).1
 
-/-- **F5 forward trajectory** (the `composeFlatTM_run` `h_traj1` shape): no
+/-- **Forward trajectory** (the `composeFlatTM_run` `h_traj1` shape): no
 early exit, no early halt. -/
 theorem formatCheck_traj (w : Nat) (s : State) (hbit : Compile.BitState s)
     (hlen : s.length = w + 1) :
@@ -893,7 +893,7 @@ theorem formatCheck_traj (w : Nat) (s : State) (hbit : Compile.BitState s)
   have hne := (formatCheck_seg w s hbit hlen).2 k hk ck hck
   exact ⟨hne, formatCheck_halting_of_ne w ck hne⟩
 
-/-! ### The invalid-cert stuck direction (F5 backward direction) -/
+/-! ### The invalid-cert stuck direction (backward direction) -/
 
 private theorem stuck_forever (w : Nat) (cfg : FlatTMConfig)
     (hne : cfg.state_idx ≠ w + 6)
@@ -1003,7 +1003,7 @@ theorem certScan_stuck (w : Nat) :
           (step_phase_none w w (Nat.le_refl w) l t p
             (Or.inr ⟨v, hget, hv0, hv1, hv2⟩))
 
-/-- **F5 backward direction.** On a tape whose (well-formed) input prefix is
+/-- **Backward direction.** On a tape whose (well-formed) input prefix is
 followed by a grammar-violating cert region, the format check NEVER reaches a
 halting configuration — under accept-by-halting, garbage certificates cannot
 produce an accept. -/

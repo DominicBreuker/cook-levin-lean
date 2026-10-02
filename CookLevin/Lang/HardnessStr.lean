@@ -28,13 +28,13 @@ structure NPWitnessStr (Q : List Bool → Prop) extends NPWitness Q where
 /-- `Q` has a polynomial-cost verifier program reading the raw input string. -/
 def inNPCmd (Q : List Bool → Prop) : Prop := Nonempty (NPWitnessStr Q)
 
-/-- `P` is NP-hard: every language with a polynomial-cost verifier program reduces to `P`
-in polynomial time (`⪯p`, `Basic/StringTM.lean`). -/
-def NPhard (P : List Bool → Prop) : Prop := ∀ Q : List Bool → Prop, inNPCmd Q → Q ⪯p P
+/-- Every language with a polynomial-cost verifier program reduces to `P` in polynomial
+time (`⪯p`, `Basic/StringTM.lean`). This is `NPhard` (`Basic/StringTM.lean`) with `inNPCmd`
+in place of `inNP`; the two classes coincide (`Theorem.lean`). -/
+def NPhardCmd (P : List Bool → Prop) : Prop := ∀ Q : List Bool → Prop, inNPCmd Q → Q ⪯p P
 
-/-- `P` is NP-complete: NP-hard, and itself presented by a polynomial-cost verifier
-program. -/
-def NPcomplete (P : List Bool → Prop) : Prop := NPhard P ∧ inNPCmd P
+/-- `NPhardCmd P`, and `P` itself is presented by a polynomial-cost verifier program. -/
+def NPcompleteCmd (P : List Bool → Prop) : Prop := NPhardCmd P ∧ inNPCmd P
 
 /-- The canonical layout of `x` has `x.length` cells. -/
 theorem State.size_certState (x : List Bool) : State.size (certState x) = x.length := by
@@ -50,9 +50,17 @@ theorem inNPCmd_inNP {Q : List Bool → Prop} (h : inNPCmd Q) : inNP Q := by
     W.verifier.toMachine W.dBound_poly W.dBound_mono
       (fun x c => by rw [W.encodeIn_eq, W.encX_canonical])
   obtain ⟨B⟩ := W.rel_correct
-  refine ⟨W.rel, fun n => B.bound (2 * n), t, M, acc, rej,
-    inOPoly_comp (inOPoly_mul (inOPoly_const 2) inOPoly_id) B.bound_poly,
-    ht, hM, h1, ?_, hdec⟩
+  obtain ⟨k, a, n0, hB⟩ := B.bound_poly
+  -- `B.bound (2 n) ≤ (a · 2^k) · n^k + B.bound n0` for every `n`.
+  have hpoly : ∀ n, B.bound (2 * n) ≤ a * 2 ^ k * n ^ k + B.bound n0 := by
+    intro n
+    by_cases hn : n0 ≤ 2 * n
+    · have h : B.bound (2 * n) ≤ a * (2 * n) ^ k := hB (2 * n) hn
+      rw [Nat.mul_pow, ← Nat.mul_assoc] at h
+      omega
+    · have := B.bound_mono _ _ (Nat.le_of_lt (Nat.lt_of_not_le hn))
+      omega
+  refine ⟨W.rel, a * 2 ^ k, k, B.bound n0, t, M, acc, rej, ht, hM, h1, ?_, hdec⟩
   intro x
   constructor
   · intro hx
@@ -61,6 +69,7 @@ theorem inNPCmd_inNP {Q : List Bool → Prop} (h : inNPCmd Q) : inNP Q := by
     calc c.length ≤ encodable.size c := length_le_size c
       _ ≤ B.bound (encodable.size x) := hsize
       _ ≤ B.bound (2 * x.length) := B.bound_mono _ _ (size_le_two_mul_length x)
+      _ ≤ a * 2 ^ k * x.length ^ k + B.bound n0 := hpoly _
   · rintro ⟨c, -, hc⟩
     exact B.sound hc
 

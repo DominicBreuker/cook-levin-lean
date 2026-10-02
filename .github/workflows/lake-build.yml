@@ -27,3 +27,6 @@ jobs:
 
       - name: Build project
         run: lake build
+
+      - name: Check the main theorem with Lean's built-in commands
+        run: lake env lean Verify.lean

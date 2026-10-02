@@ -42,10 +42,9 @@ that cost dominates the per-step size growth (`Op.size_eval_le`). `eqBit` also
 charges `|src1|+|src2|`: even though it only *writes* one cell, the compiled
 register-equality tester copies and consumes both source registers, leaving a
 `|src1|+|src2|` residue on the tape that the factor-1 W-invariant of the
-physical-residue contract can only absorb if `Op.cost` accounts for it. This is the
-fix for the cost-model gap: under the previous unit-cost model `concat`/`copy`
-could grow `State.size` multiplicatively in one step, making the layer cost an
-unfaithful proxy for the compiled TM's running time (output size — hence TM
+physical-residue contract can only absorb if `Op.cost` accounts for it. Under a unit-cost
+model `concat`/`copy` could grow `State.size` multiplicatively in one step, making the
+layer cost an unfaithful proxy for the compiled TM's running time (output size — hence TM
 steps — could be exponential in layer cost). With this cost the global invariant
 `State.size (Op.eval o s) ≤ State.size s + Op.cost o s` holds. The ops that only
 write `O(1)` cells and read no register data (`clear`, `appendOne/Zero`, `head`,
@@ -66,9 +65,9 @@ def Op.cost : Op → State → Nat
 
 `State.size_set_add` is the exact bookkeeping identity for `State.set`; from it
 `Op.size_eval_le` shows each op's realistic cost dominates its size growth.
-`Op.size_eval_le` is the invariant that was **false** under the old unit-cost
-model (e.g. `concat dst src src` with empty `dst` grew size by `2·|src|` at cost
-`1`); it now holds, validating the cost model. -/
+`Op.size_eval_le` is the invariant a unit-cost model would violate (`concat dst src src`
+with empty `dst` grows the size by `2·|src|` at cost `1`); with the cost above it holds,
+which is what makes the cost model faithful. -/
 
 /-- `State.set` on an in-range index is exactly `List.set`; its size obeys the
 balance `size(set) + |old| = size + |new|`. -/
@@ -147,7 +146,7 @@ private theorem State.size_set_le_cost (s : State) (dst : Var) (v : List Nat) (c
 
 /-- **Cost-model soundness (op level).** The realistic `Op.cost` dominates the
 per-op size growth: `size(Op.eval o s) ≤ size s + Op.cost o s`. This is the
-invariant the budget needs and the one the old unit-cost model violated. -/
+invariant the compiler's step budget needs. -/
 theorem Op.size_eval_le (o : Op) (s : State) :
     State.size (Op.eval o s) ≤ State.size s + Op.cost o s := by
   cases o with

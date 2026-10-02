@@ -107,7 +107,7 @@ private theorem sym_bound_encodeTape (c : Cmd) (k w : Nat) (s : State)
 
 /-! ## Forward: verifier accept ⇒ `M_Q` accepts -/
 
-/-- **The explicit acceptance budget** (the F6 monomial-overshoot target): the
+/-- **The explicit acceptance budget** (the target of the monomial overshoot): the
 format-scan `2·|encodeTape s| + 1`, the composition bridge step, and the padded
 decider's own budget (`paddedBitDecider_run`). The witness's `steps x` must
 overshoot `MQbudget c k (encX x ++ [creg])` — a concrete polynomial in `|s|`. -/

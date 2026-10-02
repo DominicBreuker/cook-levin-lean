@@ -15,8 +15,7 @@ def isValidCert {σ : Type} (k : Nat) (cert : List σ) : Prop :=
 
 /-- The single-tape universal front problem, in the Coq original's form
 : the instance's strings are over the
-*machine's* alphabet (`list_ofFlatType M.sig`, NOT the earlier port bug
-`list_ofFlatType 1`, which admitted only all-zero strings), and the machine
+*machine's* alphabet (`list_ofFlatType M.sig`), and the machine
 is single-tape (`M.tapes = 1`). Acceptance is accept-by-HALTING
 (`acceptsFlatTM` = a halt state is reached within `steps`). -/
 def FlatSingleTMGenNP : flatTM × List Nat × Nat × Nat → Prop

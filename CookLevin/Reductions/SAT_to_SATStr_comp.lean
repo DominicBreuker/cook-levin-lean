@@ -6,7 +6,7 @@ import CookLevin.Reductions.SAT_to_SATStr_free
 
 Composes the chain `Q → SAT` of `Front_to_S1_comp.lean` with the witness of `SAT → SATStr`
 into one program witness for every `W : NPWitnessStr Q`. Compiled to a Turing machine
-(`Lang/ToMachine.lean`), this gives `satStr_NPhard : NPhard SATStr`.
+(`Lang/ToMachine.lean`), this gives `satStr_NPhard : NPhardCmd SATStr`.
 -/
 
 set_option autoImplicit false
@@ -188,10 +188,10 @@ theorem front_to_SATStr_decodeOut (W : NPWitness Q) (cm km dm cs ks ds : Nat) (s
 
 end Front
 
-/-- **`NPhard SATStr`.** Every language with a polynomial-cost verifier program reduces to
+/-- **`NPhardCmd SATStr`.** Every language with a polynomial-cost verifier program reduces to
 `SATStr` in polynomial time: the reduction is the composite program, compiled to a
 single-tape Turing machine (`PolyTimeComputableLang.toMachine`). -/
-theorem satStr_NPhard : NPhard SATStr := by
+theorem satStr_NPhard : NPhardCmd SATStr := by
   intro Q hQ
   obtain ⟨W⟩ := hQ
   obtain ⟨cm, km, dm, cs, ks, ds, hmax, hsteps⟩ :=

@@ -94,7 +94,7 @@ theorem cert_sound (W : NPWitness Q) {x : X} {c : List Bool}
 /-! ## The per-`Q` front instance -/
 
 /-- **The per-`Q` front instance.** `maxSize`/`steps` are supplied abstractly;
-piece 2 (F6) instantiates them with concrete `inOPoly` monomials that discharge
+`FrontWitness` instantiates them with concrete `inOPoly` monomials that discharge
 `hmax`/`hsteps` below. -/
 def fQ (W : NPWitness Q) (maxSize steps : X → Nat) (x : X) :
     flatTM × List Nat × Nat × Nat :=
@@ -272,8 +272,8 @@ noncomputable def maxSizeOf (W : NPWitness Q) (n : Nat) : Nat :=
 
 /-! ### The concrete budgets are `inOPoly`
 
-This proves the F6 monomials *exist* as polynomials — the standing risk that a
-poly-time front witness can materialize the size/step registers. -/
+The size and step budgets are polynomials, so a polynomial-time program can write them
+into registers. -/
 
 theorem certBoundOf_poly (W : NPWitness Q) : inOPoly (certBoundOf W) :=
   (Classical.choice W.rel_correct).bound_poly
