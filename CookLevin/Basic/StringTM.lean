@@ -85,6 +85,12 @@ def inNP (Q : List Bool → Prop) : Prop :=
     (∀ x, Q x ↔ ∃ c, c.length ≤ a * x.length ^ k + b ∧ R x c) ∧
     decidesPairInTime M acc rej R t
 
+/-- `P` is NP-hard: every language in NP reduces to `P` in polynomial time. -/
+def NPhard (P : List Bool → Prop) : Prop := ∀ Q : List Bool → Prop, inNP Q → Q ⪯p P
+
+/-- `P` is NP-complete: NP-hard and in NP. -/
+def NPcomplete (P : List Bool → Prop) : Prop := NPhard P ∧ inNP P
+
 /-! ## `encodable.size` of a bit string
 
 `encodable.size` (`Basic/Definitions.lean`) is the size measure the layer's cost bounds

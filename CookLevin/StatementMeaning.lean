@@ -18,15 +18,21 @@ open CookLevin.Lang
 /-! ## The theorem, unfolded
 
 `NPcomplete SATStr` is, by definition, the conjunction below: every language with a
-polynomial-cost verifier program reduces to `SATStr` by a polynomial-time single-tape
-Turing machine, and `SATStr` itself has a polynomial-cost verifier program. -/
+polynomial-time Turing-machine verifier and polynomially bounded certificates reduces to
+`SATStr` by a polynomial-time single-tape Turing machine, and `SATStr` itself has such a
+verifier. -/
 
 theorem cook_levin_unfolded :
-    (∀ Q : List Bool → Prop, inNPCmd Q →
+    (∀ Q : List Bool → Prop,
+        (∃ (R : List Bool → List Bool → Prop) (a k b : Nat) (t : Nat → Nat) (M : FlatTM)
+            (acc rej : Nat),
+          inOPoly t ∧ validFlatTM M ∧ M.tapes = 1 ∧
+          (∀ x, Q x ↔ ∃ c, c.length ≤ a * x.length ^ k + b ∧ R x c) ∧
+          decidesPairInTime M acc rej R t) →
         ∃ (f : List Bool → List Bool) (t : Nat → Nat) (M : FlatTM),
           inOPoly t ∧ validFlatTM M ∧ M.tapes = 1 ∧ computesInTime M f t ∧
           ∀ x, Q x ↔ SATStr (f x)) ∧
-    inNPCmd SATStr :=
+    inNP SATStr :=
   cook_levin
 
 /-! ## Accepting and rejecting are two distinct verdicts
