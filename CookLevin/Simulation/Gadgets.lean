@@ -1,4 +1,4 @@
-import CookLevin.Reductions.FrontPieces
+import CookLevin.Reductions.FrontWitness
 import CookLevin.Simulation.Zipper
 
 set_option autoImplicit false
