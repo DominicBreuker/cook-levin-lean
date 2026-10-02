@@ -1192,19 +1192,6 @@ theorem Compile.testBitReg_run_neg (t : Var) (s : State) (res : List Nat)
           (fun k hk ck hck => hpos_traj k hk ck hck)
         exact ⟨T, hjoin, hjoin_traj, by omega⟩
 
-/-! ### The dual-target *duplicating* move gadget `moveRegion2TM`
-
-`moveRegion2TM src dst1 dst2` transfers `src`'s content (FIFO, one bit/iter) to the
-**end of BOTH** `dst1` and `dst2`, emptying `src`. It is the duplicating primitive
-the `copy`/`tail`/`concat` ops need — a single-target move (`moveRegionTM`) cannot
-duplicate data (the number of copies is invariant). The structure mirrors
-`moveRegionTM` exactly; the content branch appends the read bit to **two** registers
-instead of one (`moveBitM3TM = moveBitM2TM b dst1 ⨾ appendAtThenTwoPhaseRewind(b+1, dst2)`).
-The dual-append body yields the exact `encodeTape`
-(head→`0`, clean halt). Only the structural scaffolding (validity/halts) is built
-here; the run lemma `moveRegion2TM_run` mirrors `moveRegionTM_run` (a three-register
-coupled invariant) and is the next step. -/
-
 /-- **`clearAppendM` run + no-early-halt + budget.** From head `0` on
 `encodeTape s ++ res`, clearing register `dst` then appending bit `bit` reaches
 the unique exit at head `0` with tape `encodeTape (s.set dst [bit]) ++ res'`

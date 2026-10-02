@@ -1,5 +1,7 @@
 # The Cook–Levin theorem in Lean 4
 
+[![Lake Build](https://github.com/DominicBreuker/cook-levin-lean/actions/workflows/lake-build.yml/badge.svg)](https://github.com/DominicBreuker/cook-levin-lean/actions/workflows/lake-build.yml)
+
 A machine-checked proof that SAT is NP-complete, with the theorem stated in terms of
 Turing machines on bit strings and every definition the statement depends on laid out for
 inspection.
@@ -17,15 +19,18 @@ polynomial-time Turing machine, and that `P` itself is in NP. What these words m
 what a reader has to check to trust the theorem, and how it compares to the textbook
 statement is explained in [GUIDE.md](GUIDE.md).
 
-## Checking the proof
+## Checking the proof yourself
+
+You need the Lean toolchain named in `lean-toolchain`, installed by
+[elan](https://github.com/leanprover/elan). Then:
 
 ```
-lake build
+lake exe cache get        # download Mathlib's precompiled build cache
+lake build                # check every proof in the repository
+lake env lean Verify.lean # print the theorem, its definitions and its axioms
 ```
 
-This needs the Lean toolchain named in `lean-toolchain` (installed by
-[elan](https://github.com/leanprover/elan)); the first build downloads Mathlib's build
-cache. A green build establishes:
+`lake build` re-checks every proof with Lean's kernel. A green build also establishes:
 
 * **No `sorry`, no extra axioms.** The last line of `CookLevin.lean` runs
   `#assert_library_axiom_clean CookLevin`, which inspects every declaration of every module
@@ -37,11 +42,28 @@ cache. A green build establishes:
   exactly the ones listed there (68 definitions: Turing machines, the tape conventions,
   polynomials, CNF formulas).
 
-`#print axioms CookLevin.cook_levin` prints `[propext, Classical.choice, Quot.sound]`.
+[`Verify.lean`](Verify.lean) does not rely on these repository-specific checks: it uses only
+Lean's built-in `#check`, `#print` and `#print axioms`, and should print
+`'CookLevin.cook_levin' depends on axioms: [propext, Classical.choice, Quot.sound]`.
+
+## What you have to accept
+
+The kernel guarantees that the proof is correct. Whether the *statement* is the Cook–Levin
+theorem is for a reader to judge, by reading the definitions on the reading list;
+[GUIDE.md](GUIDE.md) walks through them. Two modelling choices differ from a typical
+textbook and are discussed there:
+
+* The Turing machines are single-tape machines with a one-way infinite tape on which a
+  write beyond the written region is ignored (GUIDE §4.1). The equivalence with textbook
+  machines up to polynomial overhead is the standard simulation argument; it is not
+  formalised.
+* CNF formulas are encoded as bit strings with variable indices in unary (GUIDE §4.4),
+  polynomially equivalent to a binary encoding.
 
 ## Layout
 
 ```
+Verify.lean                       standalone check with Lean's built-in commands
 CookLevin.lean                    root module; the whole-library axiom check
 CookLevin/Theorem.lean            the main theorem
 CookLevin/ReadingList.lean        the definitions the statement depends on, checked by the build

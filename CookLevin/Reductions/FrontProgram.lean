@@ -18,7 +18,7 @@ open HeadLayout (encSyms)
 
 /-- **The front reduction program.** `MQconst = encSyms (flattenTM M_Q)` (a
 per-`Q` constant); `xWidth` is the input width; `B` the scratch base; the six
-`cm km dm`/`cs ks ds` are the F6 overshoot-monomial constants for
+`cm km dm`/`cs ks ds` are the overshoot-monomial constants for
 `maxSize`/`steps`. Builds `s_x`/the two budgets/the machine into scratch, then
 moves them into output registers 0–4. -/
 def frontProgram (MQconst : List Nat) (xWidth B : Nat)

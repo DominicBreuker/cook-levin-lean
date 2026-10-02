@@ -54,6 +54,11 @@ properties exists, so a wrong construction could only have made the proof fail.
 * the sanity checks of `StatementMeaning.lean`, `MachineFaithfulness.lean` and
   `SearchDecide.lean` (§5), which are ordinary theorems about the definitions.
 
+The axiom check and the reading-list check are commands defined in this repository
+(`Meta/`). To check the result without trusting them, run `lake env lean Verify.lean`: it
+prints the main theorem, its central definitions and its axioms using only Lean's built-in
+commands.
+
 ## 4. Reading the statement
 
 The reading list groups the definitions by topic. File names are relative to `CookLevin/`.

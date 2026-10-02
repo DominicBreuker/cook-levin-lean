@@ -759,7 +759,7 @@ theorem powCost_le (m a k : Nat) (h1 : 1 ≤ m) :
             omega
         _ = (a + 1) + (k + 1) * (13 * Y) := by ring
 
-/-! ## Piece 4 — the input-cell counter (the monomial argument, R2/F6)
+/-! ## Piece 4 — the input-cell counter (the monomial argument)
 
 `unaryMonomial` (regs 3/4) consumes `src = 1^n`, but the program's input is bit
 registers, not a unary number. The natural argument is a unary measure of the

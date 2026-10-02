@@ -2142,13 +2142,13 @@ theorem Compile.forBndBudget_arith (G iters SC S2 : Nat)
         Nat.add_le_add_right core _
     _ = Compile.physStepBudget G (SC + iters) + 1 + Compile.physStepBudget G q := by ring
 
-/-- **Residue-tolerant `compileForBnd` contract.** The scratch-register fix for the snapshot-vs-clobber gap: the previous
-pinning (no scratch interface) was **unprovable** — `Cmd.run` snapshots
+/-- **Residue-tolerant `compileForBnd` contract.** The loop count lives in scratch
+registers: without them the contract would be unprovable — `Cmd.run` snapshots
 `iters = |s.get bound|` at loop entry, the body may legally clobber `bound` AND
 `counter` mid-loop, a TM cannot hold a runtime count in finite control, and no
 tape region past the terminator survives a body run (the body contract's exit
 residue is existential). The only sound storage is a register the body provably
-never touches, so `compileForBnd` is now compiled at a **static scratch base
+never touches, so `compileForBnd` is compiled at a **static scratch base
 `sb`** with `K1 = sb` (remaining count, snapshotted from `bound` at entry) and
 `K2 = sb + 1` (done count, an all-`1`s block — exactly the `replicate i 1` that
 `counter` is re-materialised from each round). See `compileForBnd`'s docstring
@@ -2541,10 +2541,9 @@ exit tape is `encodeTape (c.eval s) ++ res` for some `ValidResidue` residue `res
 head rewound to `0`. Provable for ALL ops (including deletion ops like
 `clear`/`tail`) because the residue absorbs the cells vacated by left-shifting.
 
-The budget is `physStepBudget G (c.cost s)`, the **correct, provable** shape
-(exactly superadditive under `seq`). The earlier `overhead (size + cost)` form was
-unprovable — too small in both degree and the register count `s.length`;
-`physStepBudget`'s tape bound `G = State.size s + s.length + c.cost s + 2` carries
+The budget is `physStepBudget G (c.cost s)`, a shape that is exactly superadditive under
+`seq`. A budget of the form `overhead (size + cost)` would be too small, in degree and in
+the register count `s.length`; `physStepBudget`'s tape bound `G = State.size s + s.length + c.cost s + 2` carries
 `s.length` explicitly. The threading hypotheses (`Cmd.UsesBelow c k` /
 `k ≤ s.length` / `Cmd.NoConsLen c`) are what the bridge supplies.
 

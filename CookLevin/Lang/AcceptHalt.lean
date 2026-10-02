@@ -265,7 +265,7 @@ theorem runFlatTM_first_halt (M : FlatTM) :
                   rw [hunfold j cfg1 hstep] at hck
                   exact htraj' j (Nat.lt_of_succ_lt_succ hk) ck hck
 
-/-- **Accept transport (F4 forward).** An `M`-run that halts at a state `≠ r`
+/-- **Accept transport.** An `M`-run that halts at a state `≠ r`
 with no earlier halt is preserved by the wrapper, for every budget `≥ t`. -/
 theorem demoteHalt_run_accept (M : FlatTM) (r : Nat) {t : Nat}
     {cfg0 cfg : FlatTMConfig}
@@ -300,7 +300,7 @@ theorem demoteHalt_run_accept (M : FlatTM) (r : Nat) {t : Nat}
   obtain ⟨k, rfl⟩ : ∃ k, m = t + k := ⟨m - t, by omega⟩
   exact runFlatTM_extend hrund hhaltd
 
-/-- **Reject transport (F4 backward).** An `M`-run that halts AT `r` with no
+/-- **Reject transport.** An `M`-run that halts AT `r` with no
 earlier halt makes the wrapped machine non-halting forever: the wrapped run
 parks at `r` (non-halting, stuck) and stays there. -/
 theorem demoteHalt_run_reject (M : FlatTM) (r : Nat) {t : Nat}

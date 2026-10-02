@@ -117,11 +117,11 @@ noncomputable def decodeSyms : List Nat → List Nat :=
 theorem decodeSyms_encSyms (l : List Nat) : decodeSyms (encSyms l) = l :=
   Function.leftInverse_invFun encSyms_injective l
 
-/-! ## The global monomial bound (F6 constants extractor)
+/-! ## The global monomial bound (constants extractor)
 
 `inOPoly f` gives `f n ≤ c·n^k` past `n0`; folding the `< n0` prefix into an
 additive constant yields a bound of the form `c·(n+1)^k + d` valid for **all**
-`n`. This is the reusable helper that extracts the F6 overshoot monomials'
+`n`. This is the reusable helper that extracts the overshoot monomials'
 constants for both `maxSize` and `steps`. -/
 
 /-- **Global monomial bound.** A polynomially-bounded function is everywhere
@@ -265,7 +265,7 @@ theorem frontProgram_usesBelow (MQconst : List Nat) (xWidth B : Nat)
 /-! ## The per-`Q` reduction witness `W_Q`
 
 Everything is assembled over a verifier witness `W`, the
-extracted F6 monomial constants `(cm,km,dm)`/`(cs,ks,ds)`, and their domination
+extracted monomial constants `(cm,km,dm)`/`(cs,ks,ds)`, and their domination
 bounds `hmB`/`hsB`. -/
 
 variable {X : Type} [encodable X] {Q : X → Prop}
@@ -292,7 +292,7 @@ def MconstQ (W : NPWitness Q) : List Nat :=
 /-- The scratch base: high enough for both the head layout and the input. -/
 def BwidthQ (W : NPWitness Q) : Nat := max headRegBound (W.xWidth + 1)
 
-/-- The F6 overshoot monomials, as functions of the **on-machine tally**
+/-- The overshoot monomials, as functions of the **on-machine tally**
 `State.size (W.encX x)` — the quantity the program can actually count. Their
 constants are extracted through `W.sizeLB` in `front_reducesPoly`. -/
 def MmaxF (W : NPWitness Q) (cm km dm : Nat) (x : X) : Nat :=
@@ -720,7 +720,7 @@ noncomputable def WQ (W : NPWitness Q) (cm km dm cs ks ds : Nat) :
   width_le := encodeInQ_width W
   decode_agree := decodeOutQ_agree W cm km dm cs ks ds
 
-/-- **The F6 constants, extracted through `sizeLB`.** The budget registers the
+/-- **The constants, extracted through `sizeLB`.** The budget registers the
 program emits are monomials in the *on-machine tally* `State.size (encX x)`;
 `fQ_correct` needs them to dominate budgets in `encodable.size x`. Two
 applications of `inOPoly_monomial_bound` bridge the two:

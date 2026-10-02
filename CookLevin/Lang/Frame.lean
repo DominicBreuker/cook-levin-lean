@@ -406,7 +406,7 @@ pure-state loop fold (`Cmd.foldlState`), shows `forBnd`'s `eval` *is* that fold
 (`Cmd.eval_forBnd`), and provides the workhorse **invariant principle**
 (`Cmd.foldlState_range_induct`). These are the reusable tools for building and
 verifying loop-based layer programs — `map` over a list, the SAT verifier
-`evalCnfCmd` (C7), the Tseytin-as-`Cmd` reduction tail — none of
+`evalCnfCmd`, the Tseytin-as-`Cmd` reduction tail — none of
 which had any loop-reasoning lemma to stand on before. -/
 
 /-- State-only loop fold: apply `body` once per `i ∈ L`, with the counter
