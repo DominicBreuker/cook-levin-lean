@@ -14,22 +14,19 @@ theorem cook_levin : NPcomplete SATStr
 
 which unfolds (`StatementMeaning.cook_levin_unfolded`) to the conjunction of
 
-1. **hardness**: for every language `Q ⊆ {0,1}*` that has a polynomial-cost verifier
-   program (`inNPCmd Q`, §4.3) there are a function `f : {0,1}* → {0,1}*`, a single-tape
-   Turing machine `M` and a polynomial `t` such that `M`, started on the tape holding `x`,
-   halts within `t(|x|)` steps with `f(x)` written on the tape, and `x ∈ Q ⇔ f(x) ∈ SATStr`;
-2. **membership**: `SATStr` has a polynomial-cost verifier program.
+1. **hardness**: for every language `Q ⊆ {0,1}*` in NP (`inNP Q`, §4.2) there are a function
+   `f : {0,1}* → {0,1}*`, a single-tape Turing machine `M` and a polynomial `t` such that
+   `M`, started on the tape holding `x`, halts within `t(|x|)` steps with `f(x)` written on
+   the tape, and `x ∈ Q ⇔ f(x) ∈ SATStr`;
+2. **membership**: `SATStr` is in NP.
 
-Two further theorems in the same file state membership at the level of Turing machines and
-relate the two notions of "verifier":
+Both halves are stated with Turing machines only. The proof works in a small register
+language with an explicit cost model (§4.6); the same file proves that the class of
+languages with a polynomial-cost verifier program in that language is exactly NP:
 
 ```lean
-theorem SATStr_inNP : inNP SATStr             -- a polynomial-time Turing-machine verifier
-theorem inNPCmd_subset_inNP : ∀ Q, inNPCmd Q → inNP Q
+theorem inNP_iff_inNPCmd (Q : List Bool → Prop) : inNP Q ↔ inNPCmd Q
 ```
-
-`inNP` is the textbook verifier definition of NP (§4.2). So the hardness half is proved for
-a class `inNPCmd` that is contained in NP; whether it is all of NP is discussed in §4.3.
 
 ## 2. What you have to trust
 
@@ -39,10 +36,10 @@ a class `inNPCmd` that is contained in NP; whether it is all of NP is discussed 
    and is therefore excluded. You can also run `#print axioms CookLevin.cook_levin`.
 2. **The definitions the statement is built from.** A theorem is only as good as its
    statement. `CookLevin/ReadingList.lean` lists every definition of this repository that
-   the statement of `cook_levin` (and of `SATStr_inNP`) depends on, and the build fails
-   unless the list is exact. Everything the statement mentions that is not on the list comes
-   from Lean's core library (`List`, `Nat`, `Bool`, …); Mathlib is used in proofs only.
-   §4 walks through the list.
+   the statement of `cook_levin` depends on (68 of them), and the build fails unless the
+   list is exact. Everything the statement mentions that is not on the list comes from
+   Lean's core library (`List`, `Nat`, `Bool`, …); Mathlib is used in proofs only. §4 walks
+   through the list.
 
 Nothing about the *proof* has to be read: it is checked by the kernel. Nothing about the
 *reduction* has to be read either: the theorem asserts that a machine with the stated
@@ -100,53 +97,26 @@ the same way: after the leading `3`, the symbols up to the first `0` or `3`, wit
 * `Q ⪯p P` (`reducesPoly`): there are `f`, a polynomial `t` (`inOPoly`: bounded by
   `c · n^k` for large `n`) and a valid single-tape `M` with `computesInTime M f t` and
   `Q x ↔ P (f x)` for all `x`. This is polynomial-time many-one reducibility.
-* `inNP Q`: there are a relation `R` on pairs of strings, polynomials `p`, `t`, a valid
-  single-tape machine `M` and two states `acc`, `rej` such that `M` on `pairTape x c` halts
-  within `t (|x| + |c|)` steps, in state `acc` exactly when `R x c` and in state `rej`
-  exactly when not (`decidesPairInTime`), and `x ∈ Q` iff some `c` with `|c| ≤ p |x|` has
-  `R x c`. This is the verifier definition of NP.
+* `inNP Q`: there are a relation `R` on pairs of strings, natural numbers `a`, `k`, `b`, a
+  polynomial `t`, a valid single-tape machine `M` and two states `acc`, `rej` such that `M`
+  on `pairTape x c` halts within `t (|x| + |c|)` steps, in state `acc` exactly when `R x c`
+  and in state `rej` exactly when not (`decidesPairInTime`), and `x ∈ Q` iff some `c` with
+  `|c| ≤ a·|x|^k + b` has `R x c`. This is the verifier definition of NP.
+* `NPhard P`: every `Q` with `inNP Q` has `Q ⪯p P`; `NPcomplete P`: `NPhard P ∧ inNP P`.
 
-### 4.3 Verifier programs (`Lang/Syntax.lean`, `Lang/Semantics.lean`, `Lang/PolyTime.lean`, `Lang/HardnessStr.lean`)
+The certificate bound is an explicit polynomial on purpose. If it were only required to be
+*bounded* by a polynomial (`inOPoly`, as the time bound `t` is), the class would contain
+undecidable languages: with `R x c := (|c| = |x| + 1)`, which a machine decides in
+polynomial time, and the bound `p n = n + [n ∈ H]` for an arbitrary set `H ⊆ ℕ`,
+`x ∈ Q ⇔ |x| ∈ H`. Such a `Q` cannot reduce to `SATStr`, so the hardness half would be
+false. For the time bound `t` the weaker requirement is harmless: it only bounds when the
+machine halts, and every such `t` lies below an explicit polynomial.
 
-The hypothesis of the hardness half is not `inNP Q` but `inNPCmd Q`: `Q` has a verifier
-written in a small register language. This is the one place where the development departs
-from the textbook, and the reason is practical: reductions are written as programs of this
-language and compiled to Turing machines, so hardness is naturally proved for languages
-whose verifier is itself such a program.
+### 4.3 What is not in the statement
 
-The language (`Lang/Syntax.lean`): a state is a list of registers, each a list of natural
-numbers (in every program used here, of bits). The nine operations clear a register, append
-`0` or `1`, copy, take the tail or the head of a register, test two registers for equality,
-test a register for non-emptiness, and concatenate two registers into a third. Commands are
-operations, sequencing, a branch on whether a register holds exactly `[1]`, and a loop
-`forBnd counter bound body` that runs `body` once per element of the `bound` register,
-with the iteration index in unary in `counter`. Register `0` holds the verdict: `[1]`
-accepts, `[0]` rejects. `Lang/Semantics.lean` gives the meaning (`Cmd.eval`) and the cost
-(`Cmd.cost`): one unit per control step, plus the lengths of the registers an operation
-reads.
-
-`NPWitness Q` (`Lang/PolyTime.lean`) is a certificate relation `rel` together with a
-program deciding it on the layout `encX x ++ certState c` within a polynomial cost bound
-(`DecidesLang`), the requirement that `rel` is sound and complete for `Q` with certificates
-of polynomial size (`polyCertRel`, `Basic/NP.lean`), and bounds on the layout `encX`.
-`NPWitnessStr` (`Lang/HardnessStr.lean`) fixes `encX x = certState x`: one register holding
-the bits of `x`. `inNPCmd Q` says such a witness exists.
-
-What is proved about this class:
-
-* `inNPCmd_subset_inNP`: every language in `inNPCmd` is in `inNP` — the verifier program
-  compiles to a polynomial-time Turing machine (`Lang/ToMachine.lean`). So the cost model
-  of the language never undercounts machine time by more than a polynomial.
-* `SearchDecide.searchDecide_correct`: every language in `inNPCmd` is decidable, by running
-  the verifier on all short certificates. The class is not degenerate.
-
-What is not proved is the converse inclusion `inNP ⊆ inNPCmd`, i.e. that every
-polynomial-time Turing machine can be simulated by a program of the register language at
-polynomial cost. That is the usual simulation of a Turing machine by a while-program with
-unary counters and is expected to hold, but it is not formalised. The hardness half is
-therefore a statement about `inNPCmd`, a subclass of NP that contains `SATStr`.
-[PLAN.md](PLAN.md) lays out how to formalise the missing inclusion and restate the theorem
-with `inNP` as hypothesis.
+The statement contains no verifier programs, no cost model and no size measure on data:
+the register language of `Lang/` is a proof device (§4.6). Everything a reader has to
+check is in §4.1, §4.2, §4.4, §4.5 and the reading list.
 
 ### 4.4 SAT (`Basic/Definitions.lean`, `SAT/SAT.lean`, `SAT/SATStr.lean`)
 
@@ -168,26 +138,48 @@ The variable indices are unary. A CNF with `m` literals can be renamed to use va
 below `m`, after which the encoding has length `O(m²)`, so this is polynomially equivalent to
 the usual binary encoding; the renaming is not part of the formal development.
 
-### 4.5 Sizes (`Basic/Definitions.lean`)
+### 4.5 Polynomials (`Basic/Definitions.lean`)
 
-The cost bounds of verifier programs are stated in `encodable.size`, a size measure on
-the input type. On a bit string it lies between the length and twice the length
-(`StatementMeaning.size_faithful_lower`, `size_faithful_upper`), so "polynomial in the
-size" is "polynomial in the length"; on natural numbers it is the number itself (unary).
-All statements about Turing machines in §4.2 use the length `|x|` directly.
+`inOPoly t` says `t n ≤ c · n^k` for all `n` beyond some `n₀`. It is used for running times
+only (`reducesPoly`, `inNP`); certificate lengths are bounded by an explicit polynomial
+(§4.2).
+
+### 4.6 How the proof is organised (not part of the statement)
+
+Reductions and verifiers are written as programs of a small register language
+(`Lang/Syntax.lean`, `Lang/Semantics.lean`): a state is a list of registers holding lists
+of bits; nine operations (clear, append `0` or `1`, copy, tail, head, equality test,
+non-emptiness test, concatenation), sequencing, a branch on a register holding `[1]`, and a
+loop `forBnd` running its body once per cell of a register. Every operation has a cost: one
+unit plus the lengths of the registers it reads. `inNPCmd Q` (`Lang/HardnessStr.lean`)
+says that `Q` has a verifier program in this language with polynomial cost, measured in
+`encodable.size` (between the length and twice the length of a string).
+
+* `inNPCmd_inNP` (`Lang/HardnessStr.lean`): every verifier program compiles to a
+  polynomial-time single-tape Turing machine (`Lang/ToMachine.lean`).
+* `Sim.inNP_inNPCmd` (`Simulation/Witness.lean`): every polynomial-time verifier machine
+  is simulated by a polynomial-cost verifier program. The program keeps the tape as a
+  zipper of fixed-width blocks and the state in unary, performs one machine step with a
+  loop-free fragment that tests the transition entries in order (`Simulation/Step.lean`),
+  runs that step `T(|x| + |c|)` times for a polynomial `T` bounding the running time, and
+  checks the certificate length (`Simulation/Program.lean`, `Simulation/Cost.lean`).
+* `SATStrComp.satStr_NPhard`: every language in `inNPCmd` reduces to `SATStr` along the
+  chain described in the README; `SATStr.inNPCmd_SATStr`: `SATStr` has a verifier program.
+  `cook_levin_cmd : NPcompleteCmd SATStr` is this form of the theorem.
 
 ## 5. Sanity checks
 
 Three files contain theorems whose only purpose is to confirm that the definitions behave
 as described; they are checked by the build.
 
-* `StatementMeaning.lean`: the theorem unfolds to the quantifier structure of §1; accept and
-  reject are two distinct verdicts, so a program is obliged to reject; what a write does at
-  the tape's end; a run returning `some` is not a halting claim (the halting conjunct is
-  separate); the empty clause is unsatisfiable and the empty CNF satisfiable; the size
-  measure is as described.
+* `StatementMeaning.lean`: the theorem unfolds to the quantifier structure of §1; what a
+  write does at the tape's end; a run returning `some` is not a halting claim (the halting
+  conjunct is separate); the empty clause is unsatisfiable and the empty CNF satisfiable;
+  and two facts about the register language of the proof (accepting and rejecting are
+  distinct verdicts; the size measure on strings).
 * `MachineFaithfulness.lean`: the locality and finiteness properties of §4.1.
-* `SearchDecide.lean`: decidability of every language in `inNPCmd`.
+* `SearchDecide.lean`: decidability of every language in `inNPCmd`, hence (by
+  `inNP_iff_inNPCmd`) of every language in NP.
 
 ## 6. Comparison with the textbook theorem
 
@@ -196,7 +188,7 @@ as described; they are checked by the build.
 | deterministic single-tape Turing machine, two-way infinite tape | `FlatTM` with one tape, one-way infinite, append-only (§4.1); both restrictions weaken the machine |
 | input written on the tape | `stringTape`: one symbol per bit between markers (§4.2) |
 | `Q ≤p P` | `Q ⪯p P` (§4.2), the same notion |
-| `P ∈ NP` via a polynomial-time verifier | `inNP` (§4.2), the same notion |
-| hardness: for all `Q ∈ NP`, `Q ≤p SAT` | for all `Q ∈ inNPCmd`, `Q ⪯p SATStr`, where `inNPCmd ⊆ inNP` is the class of languages with a verifier program (§4.3) |
+| `P ∈ NP` via a polynomial-time verifier | `inNP` (§4.2), the same notion, certificates of length at most `a·n^k + b` |
+| hardness: for all `Q ∈ NP`, `Q ≤p SAT` | `NPhard SATStr` (§4.2), the same notion |
 | SAT over CNF formulas in some fixed encoding | `SATStr`: CNFs in the encoding of §4.4, variables in unary |
 | `SAT ∈ NP` | `SATStr_inNP` |

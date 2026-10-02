@@ -15,8 +15,8 @@ is read back the same way: after the leading marker, the symbols up to the first
 `3` are the output, `2` standing for `true` and any other symbol for `false`.
 
 With these conventions the file defines polynomial-time computability of a function on
-strings, polynomial-time many-one reducibility `⪯p`, and the class NP in its verifier
-form. These are the notions the main theorem is stated with.
+strings, polynomial-time many-one reducibility `⪯p`, the class NP in its verifier form,
+NP-hardness and NP-completeness. These are the notions the main theorem is stated with.
 -/
 
 namespace CookLevin

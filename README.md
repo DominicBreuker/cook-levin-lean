@@ -11,11 +11,11 @@ theorem cook_levin : NPcomplete SATStr
 ```
 
 `SATStr` is satisfiability of CNF formulas, presented as a language of bit strings.
-`NPcomplete P` says that every language with a polynomial-time verifier reduces to `P` by a
-polynomial-time Turing machine, and that `P` itself has a polynomial-time verifier. What
-these words mean here, what a reader has to check to trust the theorem, and how it compares
-to the textbook statement is explained in [GUIDE.md](GUIDE.md). One step of the textbook
-argument is not formalised (GUIDE §4.3); [PLAN.md](PLAN.md) describes how to close it.
+`NPcomplete P` says that every language in NP — every language with a polynomial-time
+Turing-machine verifier and polynomially bounded certificates — reduces to `P` by a
+polynomial-time Turing machine, and that `P` itself is in NP. What these words mean here,
+what a reader has to check to trust the theorem, and how it compares to the textbook
+statement is explained in [GUIDE.md](GUIDE.md).
 
 ## Checking the proof
 
@@ -34,7 +34,8 @@ cache. A green build establishes:
   proves there is none.
 * **The reading list is complete.** `CookLevin/ReadingList.lean` fails the build unless the
   definitions of this repository that the *statement* of the main theorem depends on are
-  exactly the ones listed there.
+  exactly the ones listed there (68 definitions: Turing machines, the tape conventions,
+  polynomials, CNF formulas).
 
 `#print axioms CookLevin.cook_levin` prints `[propext, Classical.choice, Quot.sound]`.
 
@@ -53,6 +54,7 @@ CookLevin/SAT/                    CNF formulas, SAT, the CNF encoding, the SAT v
 CookLevin/Problems/               the intermediate problems of the reduction chain
 CookLevin/Tableau/                Cook's tableau: a machine run as a covering problem
 CookLevin/Reductions/             the reduction chain and its composition
+CookLevin/Simulation/             Turing-machine verifiers simulated by register programs
 CookLevin/Meta/                   the build-time checks (axioms, statement surface)
 ```
 
@@ -76,6 +78,12 @@ by Cook's tableau (`FlatTCC`), which is rewritten in stages into a Boolean formu
 and then, by a Tseytin transformation, into a CNF. The steps are composed at the level of
 programs and the composite is compiled once. Membership is a verifier program for SAT that
 checks an assignment against the formula.
+
+The hypothesis of the theorem is a Turing-machine verifier, not a verifier program. The two
+are equivalent (`inNP_iff_inNPCmd`): programs compile to machines (`Lang/ToMachine.lean`),
+and a machine is simulated by a program that keeps the tape as a zipper of fixed-width
+blocks and runs one loop-free step fragment a polynomial number of times
+(`CookLevin/Simulation`).
 
 ## License
 
